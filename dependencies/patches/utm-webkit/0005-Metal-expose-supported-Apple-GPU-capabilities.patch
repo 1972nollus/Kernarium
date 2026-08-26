@@ -1,0 +1,126 @@
+From 73cffa92a45bd1dbf8b84ea74b41c0217cc249b5 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 27 Aug 2026 08:22:21 +0900
+Subject: [PATCH 5/5] Metal: expose supported Apple GPU capabilities
+
+Keep the arm64 Simulator swizzle, float-filtering, and sampler-comparison capabilities together with the Apple8 float-filtering capability.
+---
+ .../src/libANGLE/renderer/metal/DisplayMtl.mm | 19 ++++++++++++++++---
+ .../renderer/metal/mtl_format_map.json        |  6 +++---
+ .../metal/mtl_format_table_autogen.mm         | 12 ++++++++----
+ 3 files changed, 27 insertions(+), 10 deletions(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+index 75013aedf0..5a0199b107 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+@@ -1263,8 +1263,10 @@ void DisplayMtl::initializeFeatures()
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowMultisampleStoreAndResolve,
+                             supportsEitherGPUFamily(3, 1));
+ 
++    // Modern arm64 Simulator runtimes implement sampler comparison even though their
++    // virtual Metal device does not advertise an Apple or Mac GPU family.
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowRuntimeSamplerCompareMode,
+-                            supportsEitherGPUFamily(3, 1));
++                            supportsEitherGPUFamily(3, 1) || (isSimulator && isARM));
+     // AMD does not support sample_compare_grad
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowSamplerCompareGradient,
+                             supportsEitherGPUFamily(3, 1) && !isAMD());
+@@ -1275,8 +1277,11 @@ void DisplayMtl::initializeFeatures()
+     ANGLE_FEATURE_CONDITION((&mFeatures), hasShaderStencilOutput,
+                             supportsMetal2_1() && !isIntel() && !isNVIDIA());
+ 
++    // Modern arm64 Simulator runtimes implement swizzled Metal texture views.  ANGLE needs
++    // those views to preserve GLES legacy alpha, luminance, and depth sampling semantics.
+     ANGLE_FEATURE_CONDITION((&mFeatures), hasTextureSwizzle,
+-                            supportsMetal2_2() && supportsEitherGPUFamily(3, 2) && !isSimulator);
++                            supportsMetal2_2() &&
++                                (supportsEitherGPUFamily(3, 2) || (isSimulator && isARM)));
+ 
+     ANGLE_FEATURE_CONDITION((&mFeatures), avoidStencilTextureSwizzle, isIntel());
+ 
+@@ -1452,7 +1457,15 @@ bool DisplayMtl::supports32BitFloatFiltering() const
+     (defined(__IPHONE_14_0) && __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_14_0)
+     if (@available(ios 14.0, macOS 11.0, *))
+     {
+-        return [mMetalDevice supports32BitFloatFiltering];
++        bool supported = [mMetalDevice supports32BitFloatFiltering];
++#    if (defined(__MAC_13_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_13_0) || \
++        (defined(__IPHONE_16_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_16_0)
++        if (@available(ios 16.0, macOS 13.0, *))
++        {
++            supported = supported || [mMetalDevice supportsFamily:MTLGPUFamilyApple8];
++        }
++#    endif
++        return supported;
+     }
+     else
+ #endif
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
+index 84e467ce46..1da648ae0a 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
+@@ -410,7 +410,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatR32Float":{
+-                "filterable": "display->supportsMacGPUFamily(1)",
++                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
+                 "writable": "true",
+                 "blendable": "true",
+                 "multisample": "true",
+@@ -602,7 +602,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatRG32Float":{
+-                "filterable": "display->supportsMacGPUFamily(1)",
++                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
+                 "writable": "true",
+                 "blendable": "true",
+                 "multisample": "display->supportsEitherGPUFamily(7, 1)",
+@@ -610,7 +610,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatRGBA32Float":{
+-                "filterable": "display->supportsMacGPUFamily(1)",
++                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
+                 "writable": "true",
+                 "blendable": "display->supportsMacGPUFamily(1)",
+                 "multisample": "display->supportsEitherGPUFamily(7, 1)",
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
+index 5a6c3fd077..6527d0e37d 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
+@@ -3627,7 +3627,8 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatR32Float, /** filterable*/ display->supportsMacGPUFamily(1),
++    setFormatCaps(MTLPixelFormatR32Float,
++                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
+                   /** writable*/ true, /** blendable*/ true, /** multisample*/ true,
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+@@ -3684,7 +3685,8 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatRG32Float, /** filterable*/ display->supportsMacGPUFamily(1),
++    setFormatCaps(MTLPixelFormatRG32Float,
++                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
+                   /** writable*/ true, /** blendable*/ true,
+                   /** multisample*/ display->supportsEitherGPUFamily(7, 1),
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+@@ -3756,8 +3758,10 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatRGBA32Float, /** filterable*/ display->supportsMacGPUFamily(1),
+-                  /** writable*/ true, /** blendable*/ display->supportsMacGPUFamily(1),
++    setFormatCaps(MTLPixelFormatRGBA32Float,
++                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
++                  /** writable*/ true,
++                  /** blendable*/ display->supportsMacGPUFamily(1),
+                   /** multisample*/ display->supportsEitherGPUFamily(7, 1),
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);

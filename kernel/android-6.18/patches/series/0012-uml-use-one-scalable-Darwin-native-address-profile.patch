@@ -1,46 +1,31 @@
-From 7476ad2642a7864682fc6e8e6ed31dab442775f6 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
-Date: Thu, 13 Aug 2026 23:44:10 +0900
-Subject: [PATCH 12/35] uml: use one scalable Darwin native address profile
+From f791e93c2d0d4f8870b0bfbf4fadf26987895d29 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 23:39:10 +0000
+Subject: [PATCH 12/22] uml: use one scalable Darwin native address profile
 
-All Apple products should exercise one sparse software guest address contract
-instead of allowing macOS to hide bugs behind a different kernel image or
-virtual-address model. Remove the build-time standard/iOS split and give
-macOS, Simulator, and device one 128 TiB software guest task range with a
-scalable native hole.
+Use one sparse Apple guest address contract, size the native hole from configured RAM, give auxiliary mappings a RAM-sized allowance within the supported bounds, and let vmalloc consume that whole window.
 
-Size the direct map from configured guest memory and retain a page-rounded
-one-eighth auxiliary allowance with a 32 MiB floor. Apply that same limit to
-UML vmalloc, and reject mmap, uaccess, and fault ranges which intersect the
-active native hole rather than shrinking guest userspace around it.
-
-Keep the shared ET_DYN kernel linked at 48 GiB. The host places it in the
-physical-iOS window below 62 GiB on device and Simulator, or in macOS's high
-native window. Derive the hole endpoint and kernel host-task ceiling from the
-actual relocated image base so the same kernel bytes support both placements.
-
-Make the signal-return trampoline follow the common task ceiling and carry
-that constant through the versioned Darwin ABI.
+Change-Id: I9866f4d01a202c51aec837991def1618d515a716
 ---
- arch/arm64/Makefile.um                        | 33 +++-------
- arch/arm64/um/asm/mman.h                      | 23 +++++++
+ arch/arm64/Makefile.um                        | 40 ++++------
+ arch/arm64/um/asm/mman.h                      | 23 ++++++
  arch/arm64/um/signal.c                        |  3 +-
  arch/um/include/asm/processor-generic.h       |  2 +-
  arch/um/include/asm/uaccess.h                 | 10 +++
- arch/um/include/shared/darwin-address-space.h | 48 ++++++++++++++
- arch/um/kernel/trap.c                         |  7 ++-
- arch/um/kernel/um_arch.c                      | 63 ++++++++++++++++---
- arch/um/os-Darwin/skas/process.c              |  9 +--
+ arch/um/include/shared/darwin-address-space.h | 48 ++++++++++++
+ arch/um/kernel/trap.c                         |  7 +-
+ arch/um/kernel/um_arch.c                      | 78 ++++++++++++++++---
+ arch/um/os-Darwin/skas/process.c              |  9 ++-
  arch/um/os-Darwin/uml_darwin_abi.h            |  6 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h   |  4 +-
- 11 files changed, 164 insertions(+), 44 deletions(-)
+ 11 files changed, 186 insertions(+), 44 deletions(-)
  create mode 100644 arch/um/include/shared/darwin-address-space.h
 
 diff --git a/arch/arm64/Makefile.um b/arch/arm64/Makefile.um
-index ecf8bbeb93d1b784561f0d9457af06be4699f5d9..509ae73cf3c93def1319f028dfbc44a3172141d9 100644
+index ecf8bbeb93d1b784561f0d9457af06be4699f5d9..935bc927ac93d45f62e6a84e7929b4b5309c8e0e 100644
 --- a/arch/arm64/Makefile.um
 +++ b/arch/arm64/Makefile.um
-@@ -1,46 +1,31 @@
+@@ -1,46 +1,38 @@
  # SPDX-License-Identifier: GPL-2.0
  
  # Keep native kernel mappings disjoint from the software guest task range.
@@ -61,6 +46,11 @@ index ecf8bbeb93d1b784561f0d9457af06be4699f5d9..509ae73cf3c93def1319f028dfbc44a3
 -UML_DARWIN_SIGRETURN_TRAMPOLINE := 0x3fffffffff00ULL
 -UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR := 1
 -else ifeq ($(UML_DARWIN_ADDRESS_SPACE),ios-device)
++# The auxiliary half of the hole is address space, not memory: vmalloc's pages
++# come from the guest page allocator and are already bounded by mem=. It tracks
++# RAM one-for-one between a 1 GiB floor and a 4 GiB ceiling so vmalloc is never
++# the binding constraint; the ceiling keeps RAM plus auxiliary inside the
++# 14 GiB iOS envelope for every guest up to 10 GiB.
 +# All Apple products use one relocatable image, RAM-scaled native hole, and
 +# sparse guest range. The kernel is linked at the bottom of the iOS envelope;
 +# the host loader keeps it below 62 GiB on iOS and moves the same bytes into
@@ -74,8 +64,9 @@ index ecf8bbeb93d1b784561f0d9457af06be4699f5d9..509ae73cf3c93def1319f028dfbc44a3
  UML_DARWIN_NATIVE_ADDRESS_START := 0xc00000000UL
  UML_DARWIN_NATIVE_ADDRESS_END := 0xf80000000UL
 -UML_DARWIN_NATIVE_AUXILIARY_SIZE := 0x100000000UL
-+UML_DARWIN_NATIVE_AUXILIARY_DIVISOR := 8
-+UML_DARWIN_NATIVE_AUXILIARY_MINIMUM := 0x2000000UL
++UML_DARWIN_NATIVE_AUXILIARY_DIVISOR := 1
++UML_DARWIN_NATIVE_AUXILIARY_MINIMUM := 0x40000000UL
++UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM := 0x100000000UL
  UML_DARWIN_DYNAMIC_NATIVE_LAYOUT := 1
  UML_DARWIN_SIGRETURN_TRAMPOLINE := 0x7fffffffff00ULL
  UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR := 1
@@ -93,6 +84,7 @@ index ecf8bbeb93d1b784561f0d9457af06be4699f5d9..509ae73cf3c93def1319f028dfbc44a3
 -	-DUML_DARWIN_NATIVE_AUXILIARY_SIZE=$(UML_DARWIN_NATIVE_AUXILIARY_SIZE) \
 +	-DUML_DARWIN_NATIVE_AUXILIARY_DIVISOR=$(UML_DARWIN_NATIVE_AUXILIARY_DIVISOR) \
 +	-DUML_DARWIN_NATIVE_AUXILIARY_MINIMUM=$(UML_DARWIN_NATIVE_AUXILIARY_MINIMUM) \
++	-DUML_DARWIN_NATIVE_AUXILIARY_MAXIMUM=$(UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM) \
  	-DUML_DARWIN_DYNAMIC_NATIVE_LAYOUT=$(UML_DARWIN_DYNAMIC_NATIVE_LAYOUT) \
  	-DDARWIN_UML_SIGRETURN_TRAMPOLINE=$(UML_DARWIN_SIGRETURN_TRAMPOLINE) \
  	-DUML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR=$(UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR)
@@ -260,7 +252,7 @@ index 1c8cd2c41d8a57acc9fb5bfecc96d5b2cdcbcdd9..8b6366d7a20b14c691457697c5226039
  		panic("Kernel tried to access user memory at addr 0x%lx, ip 0x%lx",
  		       address, ip);
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83ec5bc430e 100644
+index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..d3c969b0c7ecc2b8999def0f6ed751a135214da6 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -125,6 +125,9 @@ const struct seq_operations cpuinfo_op = {
@@ -273,7 +265,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
  
  unsigned long uml_reserved; /* Also modified in mem_init */
  unsigned long start_vm;
-@@ -298,16 +301,47 @@ static void __init parse_cache_line(char *line)
+@@ -298,16 +301,54 @@ static void __init parse_cache_line(char *line)
  	}
  }
  
@@ -287,6 +279,13 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
 +
 +	if (size < UML_DARWIN_NATIVE_AUXILIARY_MINIMUM)
 +		size = UML_DARWIN_NATIVE_AUXILIARY_MINIMUM;
++	/*
++	 * Capped so RAM plus auxiliary stays inside the signed iOS envelope.
++	 * What vmalloc consumes is bounded by the guest page allocator, not by
++	 * the size of this reservation.
++	 */
++	if (size > UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM)
++		size = UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM;
 +	return size;
 +#else
 +	(void)memory;
@@ -325,7 +324,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
  #else
  	unsigned long top_addr = (unsigned long) &top_addr;
  	int i;
-@@ -329,6 +363,9 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -329,6 +370,9 @@ int __init linux_main(int argc, char **argv, char **envp)
  {
  	unsigned long avail, diff;
  	unsigned long virtmem_size, max_physmem;
@@ -335,7 +334,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
  	unsigned long stack;
  	unsigned int i;
  	int add;
-@@ -355,17 +392,20 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -355,17 +399,20 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* Limit TASK_SIZE to what is addressable by the page table */
  	task_size = host_task_size;
  #ifdef UML_HOST_DARWIN
@@ -361,7 +360,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
  
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
-@@ -422,6 +462,11 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -422,9 +469,22 @@ int __init linux_main(int argc, char **argv, char **envp)
  	avail = stack - start_vm;
  #ifdef UML_HOST_DARWIN
  	avail = host_task_size - start_vm;
@@ -369,10 +368,21 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..6188055ccf6c9632e1d88af7f7a7c83e
 +	auxiliary_size = darwin_native_auxiliary_size(physmem_size);
 +	if (avail > auxiliary_size)
 +		avail = auxiliary_size;
-+#endif
  #endif
++	/*
++	 * vmalloc owns the whole auxiliary window rather than only as much of
++	 * it as there is RAM. Clamping to physmem_size would leave the tail of
++	 * the window past end_vm, where the kernel fault handler no longer
++	 * recognises a vmalloc address.
++	 */
++	virtmem_size = avail;
++#else
  	if (physmem_size > avail)
  		virtmem_size = avail;
++#endif
+ 	end_vm = start_vm + virtmem_size;
+ 
+ 	if (virtmem_size < physmem_size)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 index 8591d5a58460b8fb08b615469a88663c5e7609b7..670642c881364fa0c14e9a2530b7780928b68dde 100644
 --- a/arch/um/os-Darwin/skas/process.c

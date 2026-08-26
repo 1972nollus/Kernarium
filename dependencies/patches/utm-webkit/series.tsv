@@ -1,13 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	237fa9cf480011c7af70b6954c4333633e08236d3ea1cb8feca59aa6457ee11f	Add check for iOS simulator when initializing caps in metal
-2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	89201ab96c634c9e831ef869d9c769159834e34bf1145718b7b439cb6e8dfcb1	Metal: disable native GL backends in Apple product
-3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	87117046815411398bdd6be6194589f409dc94e260a72c82d7fa8a6303e613ec	Apple: use flat authenticated ANGLE frameworks
-4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	facaf05e0059e200507226a67b56288cd897b912428da368cf4d3c97be695c58	Metal: accept the arm64 macOS product baseline
-5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	9f6396e9c93d4c74bbc1e32e41d294b86095595ef7c21e7bb73a7fa707f7ebe9	Metal: preserve boolean mix bit patterns
-6	0006-Metal-count-transform-feedback-queries-per-draw.patch	cd928c5939daea89ba11ba78992a82d0c965affe	9a1d58cbafaeef74fa295a19890a9c59be20de52738f8a5c3af6bbda29ca24e6	Metal: count transform feedback queries per draw
-7	0007-Metal-preserve-non-finite-shader-semantics.patch	762201186149ae7ec035b091819f485b32d5afa3	613aa651a938c1cbedbcd976514dfd28efd1bfdba289b2ff1324b4003bd0e342	Metal: preserve non-finite shader semantics
-8	0008-Metal-enable-texture-swizzles-on-arm64-Simulator.patch	906310dbca467b4abd547d5f17c276f9eae8af54	d1c8b3cb018d7b3add49224fb6a32f2fc53867fe9cfef88e57747001fe40856a	Metal: enable texture swizzles on arm64 Simulator
-9	0009-Metal-expose-Simulator-32-bit-float-filtering.patch	3c6b4e334a298c4702028839687e7964028b446d	2b318837e9ddef2603c39f8c505e0176c5d9240d09feac79a823731d3c167fc9	Metal: expose Simulator 32-bit float filtering
-10	0010-Metal-enable-sampler-comparison-on-arm64-Simulator.patch	9a19cd5cbf84da1740a609c4b6ba337b3e461919	d1f453c58257aa3cfbcdf3e9a4bb1c7ac0c3fe16715806ad9effb34e35e67fe1	Metal: enable sampler comparison on arm64 Simulator
-11	0011-Metal-enable-32-bit-float-filtering-on-Apple8.patch	7491b897dad6da71dece5e35a4d32c3c2535fed3	5d2f854fbebf53442c91f94a87b6e4b4790dffe6b9849980ec141fdcaef8bfb6	Metal: enable 32-bit float filtering on Apple8
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	d3ace2042d9e69a455612e8a7233d467a0e3a09b23fce05e7bcc08c54092dfa3	Add check for iOS simulator when initializing caps in metal
+2	0002-Apple-integrate-the-Metal-only-ANGLE-product.patch	32719ad61c8551bb4aa6bd285d91b4946586c948	399eda2b58be07305d6458508eb0fff9281252e406474b1daf2005005a180ed2	Apple: integrate the Metal-only ANGLE product
+3	0003-Metal-preserve-shader-value-semantics.patch	52a0c41ed60cd1218277c14d345c5bcdc9d09642	ffcc6fd1373125ee8a5479280ad323702f7e61e50d66c7b6b90d69da6dc8c81c	Metal: preserve shader value semantics
+4	0004-Metal-count-transform-feedback-queries-per-draw.patch	cd928c5939daea89ba11ba78992a82d0c965affe	2d4412592c9ae2b4ba72fa9f426bcdb759ffd6c3b39561f74e5978323baa3422	Metal: count transform feedback queries per draw
+5	0005-Metal-expose-supported-Apple-GPU-capabilities.patch	39d6a12a42036e11cfbf12fe47b23e6580825256	b6c0a62345c1692bc83ae17d3eacc13b187c6b1551a1a14150620925a9567511	Metal: expose supported Apple GPU capabilities

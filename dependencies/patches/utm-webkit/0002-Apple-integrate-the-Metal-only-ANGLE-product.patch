@@ -1,0 +1,101 @@
+From cda849a3ab04d3faef06cee203483269bc643173 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 27 Aug 2026 08:22:16 +0900
+Subject: [PATCH 2/5] Apple: integrate the Metal-only ANGLE product
+
+Keep Apple product backend selection, packaged framework lookup, and the arm64 macOS product baseline in one integration topic.
+---
+ .../ANGLE/Configurations/BaseTarget.xcconfig           | 10 ++++++----
+ .../ANGLE/src/common/apple_platform_utils.mm           |  9 ++++++++-
+ Source/ThirdParty/ANGLE/src/common/system_utils.cpp    |  8 ++++----
+ Source/ThirdParty/ANGLE/src/libEGL/libEGL_autogen.cpp  |  6 +++---
+ 4 files changed, 21 insertions(+), 12 deletions(-)
+
+diff --git a/Source/ThirdParty/ANGLE/Configurations/BaseTarget.xcconfig b/Source/ThirdParty/ANGLE/Configurations/BaseTarget.xcconfig
+index 0ef4ae5626..5f058daa08 100644
+--- a/Source/ThirdParty/ANGLE/Configurations/BaseTarget.xcconfig
++++ b/Source/ThirdParty/ANGLE/Configurations/BaseTarget.xcconfig
+@@ -30,12 +30,14 @@ HEADER_SEARCH_PATHS = ${DERIVED_FILES_DIR} $(ANGLE_HEADER_PATH_PREFIX)/WebKit $(
+ USE_HEADERMAP = NO;
+ 
+ GCC_PREPROCESSOR_DEFINITIONS = $(DEBUG_DEFINES) LIBGLESV2_IMPLEMENTATION LIBANGLE_IMPLEMENTATION ANGLE_CAPTURE_ENABLED=0 ANGLE_ENABLE_METAL ANGLE_METAL_XCODE_BUILDS_SHADERS ANGLE_ENABLE_METAL_OWNERSHIP_IDENTITY GL_APICALL=__attribute__((visibility(\"default\"))) GL_API=__attribute__((visibility(\"default\"))) $(GCC_PREPROCESSOR_DEFINITIONS_$(WK_PLATFORM_NAME)) $(GCC_PREPROCESSOR_DEFINITIONS_LIBFUZZER_$(ENABLE_LIBFUZZER));
+-GCC_PREPROCESSOR_DEFINITIONS_macosx = ANGLE_ENABLE_GLSL ANGLE_ENABLE_ESSL ANGLE_ENABLE_OPENGL ANGLE_ENABLE_GL_DESKTOP_BACKEND ANGLE_ENABLE_APPLE_WORKAROUNDS ANGLE_ENABLE_CGL GL_SILENCE_DEPRECATION;
++// Keep the linux-um-darwin Apple GPU product on one Metal renderer across
++// macOS, Simulator, and device. None of its Apple slices compile CGL or EAGL
++// as a hidden fallback.
++GCC_PREPROCESSOR_DEFINITIONS_macosx = ANGLE_ENABLE_GLSL ANGLE_ENABLE_ESSL ANGLE_ENABLE_APPLE_WORKAROUNDS;
+ GCC_PREPROCESSOR_DEFINITIONS_maccatalyst = $(GCC_PREPROCESSOR_DEFINITIONS_macosx);
+-GCC_PREPROCESSOR_DEFINITIONS_maccatalyst[arch=arm*] = $(GCC_PREPROCESSOR_DEFINITIONS_macosx) ANGLE_ENABLE_EAGL GLES_SILENCE_DEPRECATION ANGLE_CPU_ARM64;
++GCC_PREPROCESSOR_DEFINITIONS_maccatalyst[arch=arm*] = $(GCC_PREPROCESSOR_DEFINITIONS_macosx) ANGLE_CPU_ARM64;
+ GCC_PREPROCESSOR_DEFINITIONS_LIBFUZZER_YES = ANGLE_ASSERT_ALWAYS_ON;
+-// FIXME: Rest of the iOS family does not need EAGL, these will be removed when upstream is able to compile without it.
+-GCC_PREPROCESSOR_DEFINITIONS_iphoneos = ANGLE_ENABLE_GLSL ANGLE_ENABLE_ESSL ANGLE_ENABLE_OPENGL ANGLE_ENABLE_APPLE_WORKAROUNDS ANGLE_ENABLE_EAGL GLES_SILENCE_DEPRECATION
++GCC_PREPROCESSOR_DEFINITIONS_iphoneos = ANGLE_ENABLE_GLSL ANGLE_ENABLE_ESSL ANGLE_ENABLE_APPLE_WORKAROUNDS
+ GCC_PREPROCESSOR_DEFINITIONS_iphonesimulator = $(GCC_PREPROCESSOR_DEFINITIONS_iphoneos);
+ GCC_PREPROCESSOR_DEFINITIONS_watchos = $(GCC_PREPROCESSOR_DEFINITIONS_iphoneos);
+ GCC_PREPROCESSOR_DEFINITIONS_watchsimulator = $(GCC_PREPROCESSOR_DEFINITIONS_iphoneos);
+diff --git a/Source/ThirdParty/ANGLE/src/common/apple_platform_utils.mm b/Source/ThirdParty/ANGLE/src/common/apple_platform_utils.mm
+index 20af932d94..daf48b7f71 100644
+--- a/Source/ThirdParty/ANGLE/src/common/apple_platform_utils.mm
++++ b/Source/ThirdParty/ANGLE/src/common/apple_platform_utils.mm
+@@ -98,6 +98,12 @@ bool IsMetalRendererAvailable()
+ #if defined(ANGLE_PLATFORM_MACOS) || defined(ANGLE_PLATFORM_MACCATALYST)
+                 // Old Macs, such as MacBookPro11,4, cannot use ANGLE's Metal backend.
+                 // This check can be removed once they are no longer supported.
++#    if defined(__arm64__)
++                // linux-um-darwin supports arm64 macOS 14 or newer. Every
++                // machine in that product contract has the required Metal
++                // baseline once a system default device exists.
++                gpuFamilySufficient = true;
++#    else
+                 if (ANGLE_APPLE_AVAILABLE_XCI(10.15, 13.1, 13))
+                 {
+                     if ([device supportsFamily:MTLGPUFamilyMac2])
+@@ -110,9 +116,10 @@ bool IsMetalRendererAvailable()
+                     const NSUInteger macFamily2v1 = 10005;
+                     ANGLE_APPLE_ALLOW_DEPRECATED_BEGIN
+                     if ([device supportsFeatureSet:static_cast<MTLFeatureSet>(macFamily2v1)])
+-                        gpuFamilySufficient = true;
++                    gpuFamilySufficient = true;
+                     ANGLE_APPLE_ALLOW_DEPRECATED_END
+                 }
++#    endif
+ #elif ANGLE_PLATFORM_IOS_FAMILY && !ANGLE_PLATFORM_IOS_FAMILY_SIMULATOR
+                 // Hardcode constant to sidestep compiler errors. Call will
+                 // return false on older macOS versions.
+diff --git a/Source/ThirdParty/ANGLE/src/common/system_utils.cpp b/Source/ThirdParty/ANGLE/src/common/system_utils.cpp
+index 83beb4aff2..c3663bb43f 100644
+--- a/Source/ThirdParty/ANGLE/src/common/system_utils.cpp
++++ b/Source/ThirdParty/ANGLE/src/common/system_utils.cpp
+@@ -218,10 +218,10 @@ void *OpenSystemLibraryAndGetError(const char *libraryName,
+                                    SearchType searchType,
+                                    std::string *errorOut)
+ {
+-#if defined(ANGLE_PLATFORM_MACOS)
+-    std::string frameworkPath = std::string(libraryName) + ".framework/Versions/Current/" + std::string(libraryName);
+-    return OpenSystemLibraryWithExtensionAndGetError(frameworkPath.c_str(), SearchType::SystemDir, errorOut);
+-#elif defined(ANGLE_PLATFORM_IOS_FAMILY)
++#if defined(ANGLE_PLATFORM_MACOS) || defined(ANGLE_PLATFORM_IOS_FAMILY)
++    // linux-um-darwin packages the same flat, symlink-free framework shape on
++    // macOS and iOS. Keep ANGLE's internal EGL-to-GLES load inside that exact
++    // authenticated runtime closure.
+     std::string frameworkPath = std::string(libraryName) + ".framework/" + std::string(libraryName);
+     return OpenSystemLibraryWithExtensionAndGetError(frameworkPath.c_str(), SearchType::SystemDir, errorOut);
+ #else
+diff --git a/Source/ThirdParty/ANGLE/src/libEGL/libEGL_autogen.cpp b/Source/ThirdParty/ANGLE/src/libEGL/libEGL_autogen.cpp
+index e86ea9fd78..45f80f175a 100644
+--- a/Source/ThirdParty/ANGLE/src/libEGL/libEGL_autogen.cpp
++++ b/Source/ThirdParty/ANGLE/src/libEGL/libEGL_autogen.cpp
+@@ -718,9 +718,9 @@ EGLSurface EGLAPIENTRY eglCreatePlatformWindowSurfaceEXT(EGLDisplay dpy,
+     return EGL_CreatePlatformWindowSurfaceEXT(dpy, config, native_window, attrib_list);
+ }
+ 
+-EGLDisplay EGLAPIENTRY eglGetPlatformDisplayEXT(EGLenum platform,
+-                                                void *native_display,
+-                                                const EGLint *attrib_list)
++EGLAPI EGLDisplay EGLAPIENTRY eglGetPlatformDisplayEXT(EGLenum platform,
++                                                       void *native_display,
++                                                       const EGLint *attrib_list)
+ {
+     EnsureEGLLoaded();
+     return EGL_GetPlatformDisplayEXT(platform, native_display, attrib_list);

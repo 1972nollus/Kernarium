@@ -1,26 +1,53 @@
-From 5b84f1df428256ec7fa5a6003d7fba2bf27120b8 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
-Date: Thu, 13 Aug 2026 16:08:25 +0900
-Subject: [PATCH 13/35] uml: run Darwin guests on fixed vCPU carriers
+From 5360c194330ee03a24e2aa341bf6966e58b86df1 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 23:39:10 +0000
+Subject: [PATCH 13/22] uml: run Darwin guests on fixed vCPU carriers
 
-iOS limits an application to a small fixed host-thread population. The Darwin scheduler currently creates one detached pthread for every Linux task, so a normal Chromium workload reaches pthread_create failure long before guest resources are exhausted.
+Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-vCPU lookup together as one fixed-carrier scheduler topic.
 
-Give each UML vCPU, including vCPU0, one persistent host carrier instead. Save and restore stackful Linux task contexts on their guest-kernel stacks, allowing the ordinary Linux scheduler to migrate tasks across all vCPUs without allocating a host thread per task.
-
-Keep a native return context on every carrier so shutdown returns to its Darwin-managed stack before libpthread teardown. Install CPU0 signal stack on its carrier, retain carriers across secondary CPU hotplug, and name each thread uml-vcpu-N-carrier for profiling. Construct that name without a variadic host-libc call because Linux AAPCS64 and Apple arm64 use different variadic conventions. Apply the mechanism to every Darwin build so macOS, iOS Simulator, and iOS devices share the same scheduler.
-
-ITIMER_REAL is process-directed on Darwin. Installing its handler on the
-launcher must not unblock SIGALRM there: only the primary carrier accepts the
-early calibration timer, before all carriers switch to cooperative deadlines.
+Change-Id: I48ed14d83b557802ad98de6b148898da4bdb4d35
 ---
- arch/um/kernel/process.c         |  14 +-
- arch/um/kernel/skas/process.c    |   2 +
- arch/um/os-Darwin/internal.h     |  18 +-
- arch/um/os-Darwin/signal.c       |  17 +-
- arch/um/os-Darwin/skas/process.c | 561 ++-----------------------------
- arch/um/os-Darwin/smp.c          | 180 +++++++---
- 6 files changed, 200 insertions(+), 592 deletions(-)
+ arch/arm64/um/asm/processor.h               |   9 +
+ arch/um/kernel/process.c                    |  14 +-
+ arch/um/kernel/skas/process.c               |   2 +
+ arch/um/os-Darwin/internal.h                |  20 +-
+ arch/um/os-Darwin/main.c                    |   5 +-
+ arch/um/os-Darwin/signal.c                  |  17 +-
+ arch/um/os-Darwin/skas/process.c            | 584 ++------------------
+ arch/um/os-Darwin/smp.c                     | 207 +++++--
+ arch/um/os-Darwin/time.c                    |  17 +-
+ arch/um/os-Darwin/uml_darwin_abi.h          |   6 +-
+ arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
+ arch/um/os-Darwin/uml_darwin_host.h         |   2 +
+ 12 files changed, 284 insertions(+), 603 deletions(-)
 
+diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
+index 3cf7106cc489ca9442d562b9a938233804f938d6..c113d51b88be1c7c68818bcbce0d4dc78763da46 100644
+--- a/arch/arm64/um/asm/processor.h
++++ b/arch/arm64/um/asm/processor.h
+@@ -39,13 +39,22 @@ static inline void arch_copy_thread(struct arch_thread *from,
+ 	((address) + 65536 + 32 * sizeof(unsigned long) >= \
+ 	 UPT_SP(&current->thread.regs.regs))
+ 
++#ifdef UML_HOST_DARWIN
++void darwin_cpu_relax(void);
++#endif
++
+ static __always_inline void cpu_relax(void)
+ {
+ 	if (time_travel_mode == TT_MODE_INFCPU ||
+ 	    time_travel_mode == TT_MODE_EXTERNAL)
+ 		time_travel_ndelay(1);
++#ifdef UML_HOST_DARWIN
++	else
++		darwin_cpu_relax();
++#else
+ 	else
+ 		asm volatile("yield" : : : "memory");
++#endif
+ }
+ 
+ #define task_pt_regs(task) (&(task)->thread.regs)
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
 index 9dcd8758ffb3648b055b801886c121e8c5002355..838272e9b62f582c94227f216f0b8ca2943ce8a8 100644
 --- a/arch/um/kernel/process.c
@@ -68,10 +95,17 @@ index b53004892d3424457ba0bd5ed3c7c31b84a6e4e1..64b45ceee19d24bb51dd736faa6c87df
  	init_new_thread_signals();
  
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 400668265c263671486b6b9d41b0c6fd301fa3e5..60fbc7aaa5842059da88c2a4ba46af8ce8714e1a 100644
+index 400668265c263671486b6b9d41b0c6fd301fa3e5..ec61427d7257278e9ea61a293403a98066c05291 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
-@@ -18,10 +18,8 @@ int darwin_wait_for_embedded_threads(unsigned int timeout_ms);
+@@ -13,15 +13,15 @@ int darwin_task_shutdown_requested(void);
+ int darwin_reserve_embedded_thread(void);
+ void darwin_release_embedded_thread(void);
+ int darwin_wait_for_embedded_threads(unsigned int timeout_ms);
++void darwin_host_stop_checkpoint(void);
++void __attribute__((noreturn)) darwin_host_stop(void);
+ 
+ #if IS_ENABLED(CONFIG_SMP)
  void darwin_set_current_cpu(int cpu);
  void darwin_publish_cpu_thread(int cpu, pthread_t thread);
  void darwin_retire_cpu_thread(pthread_t thread);
@@ -84,7 +118,7 @@ index 400668265c263671486b6b9d41b0c6fd301fa3e5..60fbc7aaa5842059da88c2a4ba46af8c
  void darwin_ipi_poll(void);
  int darwin_ipi_idle_fd(void);
  void darwin_ipi_idle_begin(void);
-@@ -42,6 +40,18 @@ static inline void darwin_retire_cpu_thread(pthread_t thread)
+@@ -42,6 +42,18 @@ static inline void darwin_retire_cpu_thread(pthread_t thread)
  {
  	(void)thread;
  }
@@ -103,6 +137,22 @@ index 400668265c263671486b6b9d41b0c6fd301fa3e5..60fbc7aaa5842059da88c2a4ba46af8c
  static inline void darwin_ipi_poll(void) { }
  static inline int darwin_ipi_idle_fd(void) { return -1; }
  static inline void darwin_ipi_idle_begin(void) { }
+diff --git a/arch/um/os-Darwin/main.c b/arch/um/os-Darwin/main.c
+index cf597442f04361423a906926d07df47e28cac18a..6ddd3fbe0fdd6115bd24d7b049a74119a8eeb346 100644
+--- a/arch/um/os-Darwin/main.c
++++ b/arch/um/os-Darwin/main.c
+@@ -13,7 +13,10 @@ long elf_aux_hwcap;
+ 
+ static void fatal_exit(int signal)
+ {
+-	uml_cleanup();
++	/* This is the second-signal/last-ditch path.  Exit immediately instead of
++	 * running sleepable Linux exitcalls from whichever fixed carrier received a
++	 * process-directed signal (which may be that vCPU's idle task).
++	 */
+ 	_exit(128 + signal);
+ }
+ 
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
 index 297d5b15b40a1235b8dfbaa9e3b6958073668ab1..948a794aa59f264e84dca8515228639d9b7862ec 100644
 --- a/arch/um/os-Darwin/signal.c
@@ -139,7 +189,7 @@ index 297d5b15b40a1235b8dfbaa9e3b6958073668ab1..948a794aa59f264e84dca8515228639d
  	sigaddset(&unblock, signal);
  	if (pthread_sigmask(SIG_UNBLOCK, &unblock, NULL) != 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972edeb7cdccb 100644
+index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2daf886a0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -10,6 +10,7 @@
@@ -150,6 +200,17 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
  #include <os.h>
  #include <darwin-address-space.h>
  #include <skas.h>
+@@ -23,8 +24,8 @@
+  * These checks make an ABI drift fail at the kernel compiler rather than at a
+  * guest boundary after register state has been reinterpreted. */
+ _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");
+-_Static_assert(DARWIN_UML_ABI_VERSION == 7U, "unexpected ABI version");
+-_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefcbbdbbf473686eULL,
++_Static_assert(DARWIN_UML_ABI_VERSION == 8U, "unexpected ABI version");
++_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x3871ad612337ea76ULL,
+ 	       "unexpected ABI fingerprint");
+ _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
+ 	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
 @@ -46,7 +47,6 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
  	       "uml_pt_regs ABI prefix size drift");
  
@@ -583,7 +644,11 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
 -	/* A carrier must not receive the process-wide timer after it gives up its
 -	 * virtual CPU.  If cooperative mode becomes active while this task waits,
 -	 * leave the timer blocked permanently when it resumes.
--	 */
++	/* The scheduler enters with local IRQs disabled.  Keep the logical IRQ/TLS
++	 * state on this vCPU carrier while only the stackful Linux task context
++	 * moves.  Dead tasks are never resumed, so their final stack need not be
++	 * saved.
+ 	 */
 -	timer_signal_mask(SIG_BLOCK, NULL);
 -	from = get_current_host_task();
 -	if (from == NULL || from->key != from_key) {
@@ -654,11 +719,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
 -	/* Timer signal state belongs to the virtual CPU, not to the Linux task's
 -	 * pthread.  A task may resume on a different CPU, so derive the native mask
 -	 * from its new CPU rather than restoring the mask it had before migration.
-+	/* The scheduler enters with local IRQs disabled.  Keep the logical IRQ/TLS
-+	 * state on this vCPU carrier while only the stackful Linux task context
-+	 * moves.  Dead tasks are never resumed, so their final stack need not be
-+	 * saved.
- 	 */
+-	 */
 -	if (!darwin_timers_cooperative() && cpu == 0)
 -		timer_signal_mask(SIG_UNBLOCK, NULL);
 +	if (from_dead)
@@ -759,7 +820,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
  void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
  {
  	procedure(argument);
-@@ -738,43 +245,24 @@ void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
+@@ -738,43 +245,41 @@ void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
  
  static void shutdown_kernel(int reboot)
  {
@@ -803,10 +864,27 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
  	darwin_wake_cpu_threads_for_shutdown();
 -	pthread_exit(NULL);
 +	darwin_exit_cpu_carrier();
++}
++
++void darwin_host_stop_checkpoint(void)
++{
++	/* A public embedding stop is a forced host boundary, not a Linux poweroff.
++	 * Skip Linux exitcalls: the selected task may be the idle task and several
++	 * sibling vCPUs are still live.  The owning app tears down host devices only
++	 * after every fixed carrier has returned to its native pthread stack.
++	 */
++	if (darwin_uml_stop_requested())
++		shutdown_kernel(0);
++}
++
++void __attribute__((noreturn)) darwin_host_stop(void)
++{
++	shutdown_kernel(0);
++	__builtin_unreachable();
  }
  
  #ifndef CONFIG_PAGE_SIZE_16KB
-@@ -882,7 +370,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -882,7 +387,8 @@ void userspace(struct uml_pt_regs *registers)
  {
  	/* Deliver the host timer only at kernel/guest boundaries.  Allowing a
  	 * POSIX handler to schedule from the native guest register window would
@@ -816,11 +894,20 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..93d674346bb32783c7501dcebc1972ed
  	 */
  	if (!darwin_timers_cooperative())
  		change_sig(SIGALRM, 0);
+@@ -967,6 +473,8 @@ void userspace(struct uml_pt_regs *registers)
+ 				mm_id == NULL ? 0 : mm_id->darwin_generation,
+ 				&guest_tls);
+ 		darwin_ipi_guest_end();
++		if (event == DARWIN_UML_EVENT_STOP)
++			darwin_host_stop();
+ 		/*
+ 		 * Close the guest-to-kernel IPI race before handling an event that
+ 		 * may block.  A sender can publish an IPI after the translated loop's
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46184acdaa 100644
+index e05157ba51b59a3cbe7c6acddc66413ca474933a..00a5d2f34a5585a474987fee808924b4981c6ba6 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -6,17 +6,23 @@
+@@ -6,21 +6,28 @@
  #include <pthread.h>
  #include <sched.h>
  #include <signal.h>
@@ -845,7 +932,12 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  };
  
  static pthread_key_t current_cpu_key;
-@@ -33,20 +39,35 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
+ static pthread_once_t current_cpu_once = PTHREAD_ONCE_INIT;
++static int current_cpu_key_ready;
+ static uintptr_t cpu_threads[CONFIG_NR_CPUS];
+ static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
+ static unsigned int pending_ipis[CONFIG_NR_CPUS];
+@@ -33,20 +40,41 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
  static pthread_mutex_t futex_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t futex_condition = PTHREAD_COND_INITIALIZER;
  
@@ -869,6 +961,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
 +	 */
 +	if (pthread_key_create(&current_cpu_key, retire_cpu_carrier) != 0)
  		panic("Darwin: unable to create current CPU key");
++	__atomic_store_n(&current_cpu_key_ready, 1, __ATOMIC_RELEASE);
  }
  
  int uml_curr_cpu(void)
@@ -876,16 +969,23 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
 -	uintptr_t encoded;
 +	struct cpu_thread_data *carrier;
  
- 	if (pthread_once(&current_cpu_once, create_current_cpu_key) != 0)
- 		panic("Darwin: unable to initialize current CPU key");
+-	if (pthread_once(&current_cpu_once, create_current_cpu_key) != 0)
+-		panic("Darwin: unable to initialize current CPU key");
 -	encoded = (uintptr_t)pthread_getspecific(current_cpu_key);
 -	return encoded == 0 ? 0 : (int)encoded - 1;
++	/* cpu_relax() reaches this on every spin iteration, so the read path
++	 * carries no pthread_once.  Every carrier creates the key before it runs
++	 * any Linux code, and a thread which reads before that has no carrier at
++	 * all, for which CPU0 is already the answer the key would have given.
++	 */
++	if (__atomic_load_n(&current_cpu_key_ready, __ATOMIC_ACQUIRE) == 0)
++		return 0;
 +	carrier = pthread_getspecific(current_cpu_key);
 +	return carrier == NULL ? 0 : carrier->cpu;
  }
  
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
-@@ -63,9 +84,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -63,9 +91,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
  	int cpu;
  
  	/* Stop new IPI senders from acquiring this pthread before waiting for a
@@ -898,7 +998,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  	 */
  	for (cpu = 0; cpu < uml_ncpus; cpu++) {
  		expected = retiring;
-@@ -84,19 +105,60 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -84,19 +112,60 @@ void darwin_retire_cpu_thread(pthread_t thread)
  	}
  }
  
@@ -966,7 +1066,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  static void drain_ipis(void)
  {
  	int cpu = uml_curr_cpu();
-@@ -129,7 +191,7 @@ void darwin_ipi_poll(void)
+@@ -129,7 +198,7 @@ void darwin_ipi_poll(void)
  	int cpu;
  
  	if (darwin_task_shutdown_requested())
@@ -975,16 +1075,32 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  	/* Finishing a reschedule batch may resume this task on another virtual
  	 * CPU.  Recheck there before returning so callers never continue from an
  	 * IPI boundary with a stale CPU identity or an already-pending local
-@@ -141,7 +203,7 @@ void darwin_ipi_poll(void)
+@@ -141,7 +210,23 @@ void darwin_ipi_poll(void)
  			drain_ipis();
  	} while (cpu != uml_curr_cpu());
  	if (darwin_task_shutdown_requested())
 -		pthread_exit(NULL);
 +		darwin_exit_cpu_carrier();
++}
++
++void darwin_cpu_relax(void)
++{
++	int cpu = uml_curr_cpu();
++
++	asm volatile("yield" : : : "memory");
++	/* Darwin signals are wake edges, not Linux interrupt frames.  A carrier
++	 * waiting synchronously for remote kernel work must therefore service a
++	 * pending call-function IPI itself; otherwise two vCPUs can wait on one
++	 * another forever inside csd_lock_wait().  Only enter Linux interrupt code
++	 * when local IRQs are enabled.  Other spin loops retain the ordinary yield.
++	 */
++	if (__atomic_load_n(&pending_ipis[cpu], __ATOMIC_ACQUIRE) != 0 &&
++	    um_get_signals())
++		darwin_ipi_poll();
  }
  
  int darwin_ipi_idle_fd(void)
-@@ -320,36 +382,65 @@ int os_send_ipi(int cpu, int vector)
+@@ -320,36 +405,65 @@ int os_send_ipi(int cpu, int vector)
  	return pipe_error != 0 ? pipe_error : -error;
  }
  
@@ -1060,7 +1176,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  	if (!darwin_reserve_embedded_thread()) {
  		free(data);
  		return -ESHUTDOWN;
-@@ -366,9 +457,11 @@ int os_start_cpu_thread(int cpu)
+@@ -366,9 +480,11 @@ int os_start_cpu_thread(int cpu)
  	sigemptyset(&block);
  	sigaddset(&block, SIGALRM);
  	error = pthread_sigmask(SIG_BLOCK, &block, &previous);
@@ -1075,7 +1191,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  		panic("Darwin: unable to restore CPU creator signal mask");
  	pthread_attr_destroy(&attributes);
  	if (error != 0) {
-@@ -379,21 +472,32 @@ int os_start_cpu_thread(int cpu)
+@@ -379,21 +495,32 @@ int os_start_cpu_thread(int cpu)
  	return 0;
  }
  
@@ -1116,3 +1232,113 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..53b74bb06e6cb4107cde8ace59e7be46
  }
  
  void os_init_smp(void)
+diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
+index 06199debb04605afe3d519c63c9ab0602d462e6b..1f1209910aa4aea0d11a2c4f774cf978342cb2f5 100644
+--- a/arch/um/os-Darwin/time.c
++++ b/arch/um/os-Darwin/time.c
+@@ -13,6 +13,7 @@
+ #include <kern_util.h>
+ #include <os.h>
+ #include <smp.h>
++#include "bridge.h"
+ #include "irq.h"
+ #include "internal.h"
+ 
+@@ -202,6 +203,8 @@ void os_idle_sleep(void)
+ 		unsigned long long now;
+ 		unsigned long long remaining;
+ 		int ipi_fd;
++		int stop_fd;
++		int wake_fd;
+ 		int fire_timer = 0;
+ 
+ 		if (cpu == 0)
+@@ -228,6 +231,7 @@ void os_idle_sleep(void)
+ 			timeout_pointer = &timeout;
+ 		}
+ 		ipi_fd = darwin_ipi_idle_fd();
++		stop_fd = darwin_uml_stop_fd();
+ 		FD_ZERO(&read_fds);
+ 		if (ipi_fd >= FD_SETSIZE)
+ 			panic("Darwin: CPU%d IPI wake fd %d exceeds FD_SETSIZE",
+@@ -244,9 +248,17 @@ void os_idle_sleep(void)
+ 				1U << ((unsigned int)ipi_fd %
+ 					(sizeof(read_fds.fds_bits[0]) * 8));
+ 		}
++		if (stop_fd >= FD_SETSIZE)
++			panic("Darwin: host stop fd %d exceeds FD_SETSIZE", stop_fd);
++		if (stop_fd >= 0)
++			read_fds.fds_bits[(unsigned int)stop_fd /
++				(sizeof(read_fds.fds_bits[0]) * 8)] |=
++				1U << ((unsigned int)stop_fd %
++					(sizeof(read_fds.fds_bits[0]) * 8));
++		wake_fd = ipi_fd > stop_fd ? ipi_fd : stop_fd;
+ 		darwin_ipi_idle_begin();
+-		(void)pselect(ipi_fd >= 0 ? ipi_fd + 1 : 0,
+-			      ipi_fd >= 0 ? &read_fds : NULL, NULL, NULL,
++		(void)pselect(wake_fd >= 0 ? wake_fd + 1 : 0,
++			      wake_fd >= 0 ? &read_fds : NULL, NULL, NULL,
+ 			      timeout_pointer, &mask);
+ 		/* Clear before draining.  A sender which observed the idle state has
+ 		 * already left a pipe byte; a later sender will use the signal wake
+@@ -260,6 +272,7 @@ void os_idle_sleep(void)
+ 			darwin_irq_idle_end(&previous_mask);
+ 		else
+ 			pthread_sigmask(SIG_SETMASK, &previous_mask, NULL);
++		darwin_host_stop_checkpoint();
+ 		/* Drain the pipe before the bitmask.  An IPI which races after the
+ 		 * mask exchange leaves a fresh byte readable for the next idle wait;
+ 		 * one which races before it is included in this drain.
+diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
+index 9e483105fb3667c2841e89cd7391f01ac18c94f3..8e770d81be5b491dd65d25007cf0cee7dfc1908d 100644
+--- a/arch/um/os-Darwin/uml_darwin_abi.h
++++ b/arch/um/os-Darwin/uml_darwin_abi.h
+@@ -45,6 +45,7 @@ enum darwin_uml_guest_event {
+ 	DARWIN_UML_EVENT_GCS_FAULT = 6,
+ 	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
+ 	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
++	DARWIN_UML_EVENT_STOP = 9,
+ 	DARWIN_UML_EVENT_FATAL = -1,
+ };
+ 
+@@ -119,10 +120,11 @@ struct darwin_uml_guest_fp_registers {
+ 
+ #if defined(__cplusplus)
+ #include <stddef.h>
+-static_assert(DARWIN_UML_ABI_VERSION == 7U);
+-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefcbbdbbf473686eULL);
++static_assert(DARWIN_UML_ABI_VERSION == 8U);
++static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x3871ad612337ea76ULL);
+ static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
+ static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
++static_assert(DARWIN_UML_EVENT_STOP == 9);
+ static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
+ static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
+ 		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
+diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
+index 5cbdcbc4aca953903b6851d574c24de6ac876832..3dd57da3e4fe970b1d8385230a5828d7e7cc3109 100644
+--- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
++++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
+@@ -3,7 +3,7 @@
+ #ifndef UML_DARWIN_ABI_IDENTITY_H
+ #define UML_DARWIN_ABI_IDENTITY_H
+ 
+-#define DARWIN_UML_ABI_VERSION 7U
+-#define DARWIN_UML_ABI_FINGERPRINT 0xefcbbdbbf473686eULL
++#define DARWIN_UML_ABI_VERSION 8U
++#define DARWIN_UML_ABI_FINGERPRINT 0x3871ad612337ea76ULL
+ 
+ #endif
+diff --git a/arch/um/os-Darwin/uml_darwin_host.h b/arch/um/os-Darwin/uml_darwin_host.h
+index 9f808c5dc4ad1d7b967b1747b81ec33ee8418de0..d4e0f91623ebf7f683e389780cda5686e605f80b 100644
+--- a/arch/um/os-Darwin/uml_darwin_host.h
++++ b/arch/um/os-Darwin/uml_darwin_host.h
+@@ -10,6 +10,8 @@ int darwin_uml_open(const char *path, int flags, int mode);
+ int darwin_uml_close(int fd);
+ int darwin_uml_fcntl(int fd, int command, long argument);
+ int darwin_uml_ioctl(int fd, unsigned long command, void *argument);
++int darwin_uml_stop_fd(void);
++int darwin_uml_stop_requested(void);
+ void darwin_uml_abort(void) __attribute__((noreturn));
+ void darwin_uml_exit(int status, void *caller) __attribute__((noreturn));
+ 

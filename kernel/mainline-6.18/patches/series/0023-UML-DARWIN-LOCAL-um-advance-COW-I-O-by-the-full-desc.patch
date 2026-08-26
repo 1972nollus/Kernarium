@@ -1,0 +1,24 @@
+From e1aaa0f449d2b81841555cf356749ad153a79006 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 04:36:14 +0000
+Subject: [PATCH 23/23] UML-DARWIN-LOCAL: um: advance COW I/O by the full
+ descriptor
+
+Change-Id: I8d7371166860d0db7dfc0958cda0957b5c6e7236
+---
+ arch/um/drivers/ubd_kern.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
+index 6d235135a..06f14e514 100644
+--- a/arch/um/drivers/ubd_kern.c
++++ b/arch/um/drivers/ubd_kern.c
+@@ -1583,7 +1583,7 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
+ 		start = end;
+ 	} while(start < nsectors);
+ 
+-	req->offset += len;
++	req->offset += desc->length;
+ 	req->error = update_bitmap(req, desc);
+ }
+ 

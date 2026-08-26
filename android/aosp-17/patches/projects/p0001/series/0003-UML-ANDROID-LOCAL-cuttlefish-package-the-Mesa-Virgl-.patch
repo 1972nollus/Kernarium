@@ -1,0 +1,30 @@
+From 8969308bd6f69843f9019fb8da4cb59bde1aa947 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 23:23:09 +0000
+Subject: [PATCH 3/3] UML-ANDROID-LOCAL: cuttlefish package the Mesa Virgl GLES
+ stack
+
+Change-Id: Iaeca10c431fdd65d39ce10c91307b6eb9f18465d
+---
+ shared/virgl/device_vendor.mk | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/shared/virgl/device_vendor.mk b/shared/virgl/device_vendor.mk
+index 347eb163ca27ba978b1d5d56638c5e886be0fdce..5006deb8c9e67fa20b1fb220ea0d8c95d14112f3 100644
+--- a/shared/virgl/device_vendor.mk
++++ b/shared/virgl/device_vendor.mk
+@@ -14,5 +14,13 @@
+ # limitations under the License.
+ #
+ 
+-
++ifeq ($(UML_ANDROID_SOURCE_MESA),true)
++PRODUCT_PACKAGES += \
++    gallium_dri \
++    libEGL_mesa \
++    libGLESv1_CM_mesa \
++    libGLESv2_mesa \
++    uml_virgl_dri_symlink
++else
+ PRODUCT_PACKAGES += libGLES_mesa
++endif

@@ -1,7 +1,7 @@
-From 64b9d5f89278bed0a4901b7a0c4330f175411be7 Mon Sep 17 00:00:00 2001
+From bdd19fb92bef3c387da0a6c52391d9347c0e5182 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:02 +0900
-Subject: [PATCH 01/32] uml: establish shared architecture contracts and build
+Subject: [PATCH 01/23] uml: establish shared architecture contracts and build
  wiring
 
 Apply the reviewed final-state topic without intermediate churn.
