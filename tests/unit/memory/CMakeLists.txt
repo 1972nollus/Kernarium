@@ -39,3 +39,13 @@ target_compile_options(uml_execution_gate_profile_tests PRIVATE
 uml_add_unit_test(NAME memory-execution-gate-profile
     COMMAND uml_execution_gate_profile_tests)
 add_dependencies(unit-test-binaries uml_execution_gate_profile_tests)
+
+add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
+target_link_libraries(uml_shared_backing_view_tests PRIVATE
+    UML::MemorySharedBacking)
+target_compile_features(uml_shared_backing_view_tests PRIVATE cxx_std_20)
+target_compile_options(uml_shared_backing_view_tests PRIVATE
+    -Wall -Wextra -Werror)
+uml_add_unit_test(NAME memory-shared-backing-view
+    COMMAND uml_shared_backing_view_tests)
+add_dependencies(unit-test-binaries uml_shared_backing_view_tests)

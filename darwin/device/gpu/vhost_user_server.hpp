@@ -7,6 +7,7 @@
 #include "vhost_user_message.hpp"
 #include "display.hpp"
 #include "../input/vnc/vnc_input.hpp"
+#include "../../memory/shared_backing.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -55,7 +56,7 @@ private:
         std::uint64_t size {};
         std::uint64_t mmapOffset {};
         UniqueDescriptor descriptor;
-        std::uint8_t* address {};
+        uml::memory::SharedBackingView backing;
     };
 
     struct Queue {

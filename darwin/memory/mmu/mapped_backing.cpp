@@ -12,6 +12,7 @@
 #include <mutex>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <utility>
 
 namespace uml::memory {
 namespace {
@@ -37,47 +38,42 @@ std::shared_ptr<MappedBacking> MappedBacking::create(
 	    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX)
 		return {};
 	const auto size = static_cast<std::size_t>(status.st_size);
-	void *mapping = map_shared_backing(nullptr, size, PROT_READ | PROT_WRITE,
-		MAP_SHARED, fd, 0);
-	if (mapping == MAP_FAILED)
+	auto mapping = acquire_shared_backing_view(
+		fd, 0, size, PROT_READ | PROT_WRITE);
+	if (!mapping)
 		return {};
 	UML_MEMORY_BACKING_MAPPING_CREATED();
-	struct MappingGuard final {
-		void *mapping;
-		std::size_t size;
+	struct CounterGuard final {
 		bool owned{true};
-		~MappingGuard()
+		~CounterGuard()
 		{
-			if (!owned)
-				return;
-			(void)munmap(mapping, size);
-			UML_MEMORY_BACKING_MAPPING_DESTROYED();
+			if (owned)
+				UML_MEMORY_BACKING_MAPPING_DESTROYED();
 		}
-	} guard{mapping, size};
+	} guard;
 	UML_MEMORY_ALLOCATION_CHECKPOINT(
 		testing::AllocationSite::backing);
-	auto *backing = new MappedBacking{
-		static_cast<std::byte *>(mapping), size};
+	auto *backing = new MappedBacking{std::move(mapping), size};
 	guard.owned = false;
 	return std::shared_ptr<MappedBacking>{backing};
 }
 
-MappedBacking::MappedBacking(std::byte *data, std::size_t size) noexcept
-	: data_(data), size_(size)
+MappedBacking::MappedBacking(
+	SharedBackingView mapping, std::size_t size) noexcept
+	: mapping_(std::move(mapping)), size_(size)
 {
 }
 
 MappedBacking::~MappedBacking()
 {
-	if (data_ != nullptr)
-		(void)munmap(data_, size_);
-	if (data_ != nullptr)
+	if (mapping_)
 		UML_MEMORY_BACKING_MAPPING_DESTROYED();
 }
 
 std::byte *MappedBacking::at(std::uint64_t offset) const noexcept
 {
-	return offset < size_ ? data_ + static_cast<std::size_t>(offset) : nullptr;
+	auto *data = static_cast<std::byte *>(mapping_.data());
+	return offset < size_ ? data + static_cast<std::size_t>(offset) : nullptr;
 }
 
 std::uint8_t MappedBacking::load_allocation_tag(

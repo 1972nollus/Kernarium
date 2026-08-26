@@ -522,10 +522,6 @@ void VhostUserServer::resetQueues() noexcept
 
 void VhostUserServer::clearMappings() noexcept
 {
-    for (auto& mapping : mappings_) {
-        if (mapping.address != nullptr && mapping.size != 0)
-            ::munmap(mapping.address, static_cast<std::size_t>(mapping.size));
-    }
     mappings_.clear();
 }
 
@@ -579,11 +575,6 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
 
     std::vector<Mapping> replacements;
     const auto releaseReplacements = [&replacements] {
-        for (auto& mapping : replacements) {
-            if (mapping.address != nullptr && mapping.size != 0)
-                (void)::munmap(
-                    mapping.address, static_cast<std::size_t>(mapping.size));
-        }
         replacements.clear();
     };
     try {
@@ -638,14 +629,12 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
                 throw std::runtime_error(
                     "guest-memory region exceeds its backing descriptor");
             }
-            void* mapped = ::uml::memory::map_shared_backing(
-                nullptr,
-                static_cast<std::size_t>(region.size),
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED,
+            auto backing = ::uml::memory::acquire_shared_backing_view(
                 descriptor,
-                region.mmapOffset);
-            if (mapped == MAP_FAILED)
+                region.mmapOffset,
+                static_cast<std::size_t>(region.size),
+                PROT_READ | PROT_WRITE);
+            if (!backing)
                 throw std::runtime_error(
                     "guest-memory mmap failed: " +
                     std::string(std::strerror(errno)));
@@ -654,14 +643,9 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
                 .userAddress = region.userAddress,
                 .size = region.size,
                 .mmapOffset = region.mmapOffset,
-                .address = static_cast<std::uint8_t*>(mapped),
+                .backing = std::move(backing),
             };
-            try {
-                replacements.push_back(std::move(mapping));
-            } catch (...) {
-                (void)::munmap(mapped, static_cast<std::size_t>(region.size));
-                throw;
-            }
+            replacements.push_back(std::move(mapping));
             replacements.back().descriptor =
                 std::move(message.descriptors[index]);
         }
@@ -755,7 +739,8 @@ std::uint8_t* VhostUserServer::translate(
         const std::uint64_t offset = address - base;
         if (offset <= mapping.size &&
             length <= mapping.size - offset) {
-            return mapping.address + offset;
+            auto* data = static_cast<std::uint8_t*>(mapping.backing.data());
+            return data + offset;
         }
     }
     return nullptr;

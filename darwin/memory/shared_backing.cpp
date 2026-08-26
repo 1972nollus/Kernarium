@@ -32,32 +32,32 @@ AnonymousSharedBacking anonymous_backing;
 		status.st_ino == anonymous_backing.inode;
 }
 
-[[nodiscard]] void *map_anonymous_alias(void *address, std::size_t length,
-	int protection, int flags, std::uint64_t offset,
-	const struct stat &status) noexcept
+[[nodiscard]] bool prepare_anonymous_root_locked(
+	const struct stat &status, std::uint64_t offset,
+	std::size_t length) noexcept
 {
-	std::lock_guard lock{anonymous_backing.mutex};
 	if (!same_backing(status)) {
 		errno = EBADF;
-		return MAP_FAILED;
+		return false;
 	}
 	if (status.st_size <= 0 ||
-	    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX) {
+	    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX ||
+	    length == 0 || offset % vm_page_size != 0) {
 		errno = EINVAL;
-		return MAP_FAILED;
+		return false;
 	}
 	const auto backing_size = static_cast<std::size_t>(status.st_size);
 	if (offset > backing_size || length > backing_size - offset) {
 		errno = EINVAL;
-		return MAP_FAILED;
+		return false;
 	}
 	if (anonymous_backing.root == nullptr) {
 		/* The sparse descriptor is only an identity token; every consumer
-		 * aliases this anonymous root rather than mapping the token. */
+		 * shares this anonymous root or aliases a protected subrange of it. */
 		void *root = mmap(nullptr, backing_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANON, -1, 0);
 		if (root == MAP_FAILED)
-			return MAP_FAILED;
+			return false;
 #if UML_WIRE_ANONYMOUS_GUEST_RAM
 		struct rlimit lock_limit {};
 		if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
@@ -81,7 +81,7 @@ AnonymousSharedBacking anonymous_backing;
 				backing_size, saved_errno);
 			(void)munmap(root, backing_size);
 			errno = saved_errno;
-			return MAP_FAILED;
+			return false;
 		}
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: committed and wired %zu "
@@ -97,8 +97,18 @@ AnonymousSharedBacking anonymous_backing;
 		anonymous_backing.size = backing_size;
 	} else if (anonymous_backing.size != backing_size) {
 		errno = EINVAL;
-		return MAP_FAILED;
+		return false;
 	}
+	return true;
+}
+
+[[nodiscard]] void *map_anonymous_alias(void *address, std::size_t length,
+	int protection, int flags, std::uint64_t offset,
+	const struct stat &status) noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	if (!prepare_anonymous_root_locked(status, offset, length))
+		return MAP_FAILED;
 
 	const bool fixed = (flags & MAP_FIXED) != 0;
 	vm_address_t target = fixed ? reinterpret_cast<vm_address_t>(address) : 0;
@@ -131,6 +141,50 @@ AnonymousSharedBacking anonymous_backing;
 
 } // namespace
 
+SharedBackingView::SharedBackingView(
+	void *data, std::size_t size, bool owns_mapping) noexcept
+	: data_(data), size_(size), owns_mapping_(owns_mapping)
+{
+}
+
+SharedBackingView::SharedBackingView(SharedBackingView &&other) noexcept
+	: data_(other.data_), size_(other.size_),
+	  owns_mapping_(other.owns_mapping_)
+{
+	other.data_ = nullptr;
+	other.size_ = 0;
+	other.owns_mapping_ = false;
+}
+
+SharedBackingView &SharedBackingView::operator=(
+	SharedBackingView &&other) noexcept
+{
+	if (this == &other)
+		return *this;
+	reset();
+	data_ = other.data_;
+	size_ = other.size_;
+	owns_mapping_ = other.owns_mapping_;
+	other.data_ = nullptr;
+	other.size_ = 0;
+	other.owns_mapping_ = false;
+	return *this;
+}
+
+SharedBackingView::~SharedBackingView()
+{
+	reset();
+}
+
+void SharedBackingView::reset() noexcept
+{
+	if (owns_mapping_ && data_ != nullptr)
+		(void)munmap(data_, size_);
+	data_ = nullptr;
+	size_ = 0;
+	owns_mapping_ = false;
+}
+
 bool register_anonymous_shared_backing(int fd) noexcept
 {
 	struct stat status {};
@@ -158,6 +212,31 @@ bool is_anonymous_shared_backing(int fd) noexcept
 		return false;
 	std::lock_guard lock{anonymous_backing.mutex};
 	return same_backing(status);
+}
+
+SharedBackingView acquire_shared_backing_view(int fd,
+	std::uint64_t offset, std::size_t length, int protection) noexcept
+{
+	struct stat status {};
+	if (fd < 0 || fstat(fd, &status) != 0)
+		return {};
+	{
+		std::lock_guard lock{anonymous_backing.mutex};
+		if (same_backing(status) &&
+		    protection == (PROT_READ | PROT_WRITE)) {
+			if (!prepare_anonymous_root_locked(status, offset, length))
+				return {};
+			auto *data = static_cast<std::byte *>(
+				anonymous_backing.root) + offset;
+			return SharedBackingView{data, length, false};
+		}
+	}
+
+	void *mapping = map_shared_backing(nullptr, length, protection,
+		MAP_SHARED, fd, offset);
+	if (mapping == MAP_FAILED)
+		return {};
+	return SharedBackingView{mapping, length, true};
 }
 
 void *map_shared_backing(void *address, std::size_t length,

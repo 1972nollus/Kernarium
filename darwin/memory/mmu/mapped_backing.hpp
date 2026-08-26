@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../shared_backing.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -29,9 +31,9 @@ public:
 
 private:
 	struct TagPage;
-	MappedBacking(std::byte *data, std::size_t size) noexcept;
+	MappedBacking(SharedBackingView mapping, std::size_t size) noexcept;
 
-	std::byte *data_;
+	SharedBackingView mapping_;
 	std::size_t size_;
 	mutable std::shared_mutex tags_mutex_;
 	std::unordered_map<std::uint64_t, std::unique_ptr<TagPage>> tag_pages_;
