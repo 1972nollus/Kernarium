@@ -140,7 +140,8 @@ NativeDisplay::NativeDisplay(
     std::uint32_t width,
     std::uint32_t height,
     uml::input::vnc::VncInputSink,
-    void* nativeView)
+    void* nativeView,
+    uml::input::vnc::PointerMode)
     : state_(std::make_shared<NativeDisplayState>(width, height))
 {
     state_->attachView(nativeView);

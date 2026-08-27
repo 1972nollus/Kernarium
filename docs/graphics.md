@@ -18,10 +18,11 @@ teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend.
 
-macOS native and VNC primary-pointer input is exposed to guests as one direct
-touch contact with absolute coordinates. It does not also emit a legacy mouse
-button for the same contact; touch-oriented Android and recovery interfaces
-would otherwise receive two competing interactions.
+Pointer semantics are selected by the product launcher. Android native and VNC
+input is exposed as one direct touch contact with absolute coordinates; hover,
+auxiliary buttons, and wheel events are suppressed, and coordinates are sent
+only for touch down, drag, and release. Non-Android guests retain absolute
+pointer hover, primary and auxiliary mouse buttons, and wheel input.
 
 ## Guest capability boundary
 

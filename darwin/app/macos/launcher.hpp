@@ -10,6 +10,7 @@ struct LaunchConfiguration {
 	std::string_view default_guest_memory;
 	std::string_view default_guest_cpus;
 	bool top_byte_ignore{};
+	bool touchscreen_input{};
 };
 
 int runEmbeddedKernel(int argc, char *argv[], char *envp[],

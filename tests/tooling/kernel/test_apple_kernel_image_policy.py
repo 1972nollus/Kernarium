@@ -558,6 +558,10 @@ def main() -> int:
             f".{member} = {value}" in macos_linux_main,
             f"Linux launcher does not select {value}",
         )
+    require(
+        ".touchscreen_input = true" not in macos_linux_main,
+        "Linux launcher must retain desktop mouse input",
+    )
 
     android_cmake = read(arguments.android_cmake)
     for contract in (
@@ -581,6 +585,7 @@ def main() -> int:
     for contract in (
         'android_default_guest_memory{"mem=4G"}',
         'android_default_guest_cpus{"ncpus=10"}',
+        ".touchscreen_input = true",
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'boot_mode_option{"--android-boot-mode="}',

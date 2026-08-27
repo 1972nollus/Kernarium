@@ -42,6 +42,10 @@ The local series provides the durable Android-specific behavior:
 - anonymous host VM for Android physical memory, with page reporting disabled
   when no file extent exists.
 
+Pure touchscreen input is specific to this Android line because Android and
+recovery must not enter pointer mode. The mainline kernel continues to expose
+desktop mouse buttons, hover, and wheel input for non-Android guests.
+
 Physical iOS wires the complete anonymous RAM root before guest start. macOS
 and Simulator retain demand allocation. Normal image descriptors remain
 file-backed.

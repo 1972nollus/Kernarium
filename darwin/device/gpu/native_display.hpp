@@ -18,7 +18,9 @@ public:
         std::uint32_t width,
         std::uint32_t height,
         uml::input::vnc::VncInputSink inputSink = {},
-        void* nativeView = nullptr);
+        void* nativeView = nullptr,
+        uml::input::vnc::PointerMode pointerMode =
+            uml::input::vnc::PointerMode::mouse);
     ~NativeDisplay() override;
 
     NativeDisplay(const NativeDisplay&) = delete;

@@ -502,6 +502,9 @@ int uml::app::runEmbeddedKernel(
 						.height = prepared.gpu.height,
 						.dotsPerInch =
 							prepared.gpu.dots_per_inch,
+						.pointerMode = configuration.touchscreen_input ?
+							uml::input::vnc::PointerMode::touchscreen :
+							uml::input::vnc::PointerMode::mouse,
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +

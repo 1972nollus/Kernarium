@@ -450,7 +450,8 @@ VhostUserServer::VhostUserServer(
     uml::input::vnc::VncInputSink inputSink,
     DisplayMode displayMode,
     void* nativeView,
-    std::uint32_t dotsPerInch)
+    std::uint32_t dotsPerInch,
+    uml::input::vnc::PointerMode pointerMode)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , display_(makeDisplay(
@@ -461,7 +462,8 @@ VhostUserServer::VhostUserServer(
           width,
           height,
           std::move(inputSink),
-          nativeView))
+          nativeView,
+          pointerMode))
 {
     device_ = std::make_unique<GpuVhostUserDevice>(
         *display_,

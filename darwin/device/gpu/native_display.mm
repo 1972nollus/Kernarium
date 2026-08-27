@@ -177,9 +177,11 @@ struct NativeDisplayState final :
     NativeDisplayState(
         std::uint32_t width,
         std::uint32_t height,
-        native_input::VncInputSink sink)
+        native_input::VncInputSink sink,
+        native_input::PointerMode mode)
         : presentation(width, height)
         , inputSink(std::move(sink))
+        , pointerMode(mode)
     {
     }
 
@@ -208,6 +210,8 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
+    native_input::PointerMode pointerMode;
+    native_input::DirectTouchContact touchContact;
     // AppKit stops delivering keyUp and flagsChanged once the window loses key
     // status, so remember what the guest still believes is held and release it
     // at that boundary. Keyboard codes are all below BTN_MISC.
@@ -507,11 +511,16 @@ void NativeDisplayState::releaseHeldInput() noexcept
         if (heldKeys[code])
             sendLinuxKey(static_cast<std::uint16_t>(code), 0);
     }
-    // Touch contact and auxiliary pointer buttons live above the tracked
-    // keyboard range, so clear them explicitly when the window loses focus.
-    sendLinuxKey(native_input::buttonTouch, 0);
-    sendLinuxKey(native_input::buttonMiddle, 0);
-    sendLinuxKey(native_input::buttonRight, 0);
+    // Pointer contacts live above the tracked keyboard range, so clear them
+    // explicitly when the window loses focus.
+    if (pointerMode == native_input::PointerMode::touchscreen) {
+        if (touchContact.release())
+            sendLinuxKey(native_input::buttonTouch, 0);
+    } else {
+        sendLinuxKey(native_input::buttonLeft, 0);
+        sendLinuxKey(native_input::buttonMiddle, 0);
+        sendLinuxKey(native_input::buttonRight, 0);
+    }
 }
 
 void NativeDisplayState::sendModifier(NSEvent* event) noexcept
@@ -536,6 +545,10 @@ void NativeDisplayState::sendPointer(
 {
     if (!inputSink || bounds.width <= 0.0 || bounds.height <= 0.0)
         return;
+    const bool pressed = (buttons & 1U) != 0;
+    if (pointerMode == native_input::PointerMode::touchscreen &&
+        !touchContact.update(pressed))
+        return;
     const auto scale = [](double coordinate, double extent) {
         const double normalized = std::clamp(coordinate / extent, 0.0, 1.0);
         return static_cast<std::int32_t>(std::lround(
@@ -556,29 +569,36 @@ void NativeDisplayState::sendPointer(
         native_input::eventAbsolute,
         native_input::absoluteY,
         scale(bounds.height - location.y, bounds.height));
-    append(
-        native_input::eventKey,
-        native_input::buttonTouch,
-        (buttons & 1U) != 0 ? 1 : 0);
-    append(
-        native_input::eventKey,
-        native_input::buttonMiddle,
-        (buttons & 4U) != 0 ? 1 : 0);
-    append(
-        native_input::eventKey,
-        native_input::buttonRight,
-        (buttons & 2U) != 0 ? 1 : 0);
-    if (verticalWheel != 0.0) {
+    if (pointerMode == native_input::PointerMode::touchscreen) {
         append(
-            native_input::eventRelative,
-            native_input::relativeWheel,
-            verticalWheel > 0.0 ? 1 : -1);
-    }
-    if (horizontalWheel != 0.0) {
+            native_input::eventKey,
+            native_input::buttonTouch,
+            pressed ? 1 : 0);
+    } else {
         append(
-            native_input::eventRelative,
-            native_input::relativeHorizontalWheel,
-            horizontalWheel > 0.0 ? 1 : -1);
+            native_input::eventKey,
+            native_input::buttonLeft,
+            pressed ? 1 : 0);
+        append(
+            native_input::eventKey,
+            native_input::buttonMiddle,
+            (buttons & 4U) != 0 ? 1 : 0);
+        append(
+            native_input::eventKey,
+            native_input::buttonRight,
+            (buttons & 2U) != 0 ? 1 : 0);
+        if (verticalWheel != 0.0) {
+            append(
+                native_input::eventRelative,
+                native_input::relativeWheel,
+                verticalWheel > 0.0 ? 1 : -1);
+        }
+        if (horizontalWheel != 0.0) {
+            append(
+                native_input::eventRelative,
+                native_input::relativeHorizontalWheel,
+                horizontalWheel > 0.0 ? 1 : -1);
+        }
     }
     append(native_input::eventSync, native_input::syncReport, 0);
     if (!native_input::tryDeliver(inputSink, std::span(events).first(count)))
@@ -624,9 +644,10 @@ NativeDisplay::NativeDisplay(
     std::uint32_t width,
     std::uint32_t height,
     native_input::VncInputSink inputSink,
-    void*)
+    void*,
+    native_input::PointerMode pointerMode)
     : state_(std::make_shared<NativeDisplayState>(
-          width, height, std::move(inputSink)))
+          width, height, std::move(inputSink), pointerMode))
 {
     state_->scheduleWindow();
 }

@@ -36,6 +36,26 @@ void primaryPointerContactUsesTheDirectTouchCode()
     require(
         uml::input::vnc::buttonTouch == 0x14a,
         "primary pointer contact did not use Linux BTN_TOUCH");
+    require(
+        uml::input::vnc::buttonLeft == 0x110,
+        "desktop mouse input did not retain Linux BTN_LEFT");
+}
+
+void directTouchContactSuppressesHoverAndTracksAContact()
+{
+    uml::input::vnc::DirectTouchContact contact;
+    require(!contact.update(false),
+        "an idle pointer move was exposed as a touch event");
+    require(contact.update(true) && contact.update(true),
+        "touch down or drag was suppressed");
+    require(contact.update(false),
+        "touch release was suppressed");
+    require(!contact.update(false),
+        "hover after touch release was exposed as a touch event");
+    require(!contact.release(),
+        "an idle contact reported a focus-loss release");
+    require(contact.update(true) && contact.release(),
+        "focus loss did not release an active touch contact");
 }
 
 void inputDeliveryContainsSinkFailuresAndCanRetry()
@@ -78,6 +98,7 @@ int main()
     try {
         keySymbolsMapToStableGuestCodes();
         primaryPointerContactUsesTheDirectTouchCode();
+        directTouchContactSuppressesHoverAndTracksAContact();
         inputDeliveryContainsSinkFailuresAndCanRetry();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

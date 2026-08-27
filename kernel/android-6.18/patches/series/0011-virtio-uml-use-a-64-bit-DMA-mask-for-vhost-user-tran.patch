@@ -1,4 +1,4 @@
-From 2b0a27ceeaacf064e1925a0a196cb58ba59c176b Mon Sep 17 00:00:00 2001
+From d7e989faa0f1f82b2f52e00e609f39170bdba240 Mon Sep 17 00:00:00 2001
 From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
 Date: Tue, 4 Aug 2026 12:44:59 +0900
 Subject: [PATCH 11/37] virtio: uml: use a 64-bit DMA mask for vhost-user

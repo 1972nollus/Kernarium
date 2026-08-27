@@ -33,7 +33,9 @@ public:
         uml::input::vnc::VncInputSink inputSink = {},
         DisplayMode displayMode = DisplayMode::vnc,
         void* nativeView = nullptr,
-        std::uint32_t dotsPerInch = 0);
+        std::uint32_t dotsPerInch = 0,
+        uml::input::vnc::PointerMode pointerMode =
+            uml::input::vnc::PointerMode::mouse);
     explicit VhostUserServer(
         std::unique_ptr<uml::virtio::VhostUserDevice> device);
     ~VhostUserServer();

@@ -17,6 +17,8 @@ struct InProcessGpuOptions {
     std::uint32_t width {1280};
     std::uint32_t height {720};
     std::uint32_t dotsPerInch {};
+    uml::input::vnc::PointerMode pointerMode {
+        uml::input::vnc::PointerMode::mouse};
     void* nativeView {};
 };
 

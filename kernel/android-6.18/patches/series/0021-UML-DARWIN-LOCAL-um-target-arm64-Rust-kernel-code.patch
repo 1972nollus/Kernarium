@@ -1,4 +1,4 @@
-From 1a1cd40e8ac2188ce569cbaa7e8bcc60e421e964 Mon Sep 17 00:00:00 2001
+From ddfd38a64be61d7a37441ba64d5d9d7ea0a9a828 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:04:02 +0000
 Subject: [PATCH 21/37] UML-DARWIN-LOCAL: um: target arm64 Rust kernel code

@@ -1,4 +1,4 @@
-From 5b84f1df428256ec7fa5a6003d7fba2bf27120b8 Mon Sep 17 00:00:00 2001
+From 67bf94686ddb57fddc2f1586c62de11372e7194c Mon Sep 17 00:00:00 2001
 From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
 Date: Thu, 13 Aug 2026 16:08:25 +0900
 Subject: [PATCH 13/37] uml: run Darwin guests on fixed vCPU carriers

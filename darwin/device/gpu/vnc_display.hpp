@@ -29,7 +29,9 @@ public:
         std::string password,
         std::uint32_t width,
         std::uint32_t height,
-        uml::input::vnc::VncInputSink inputSink = {});
+        uml::input::vnc::VncInputSink inputSink = {},
+        uml::input::vnc::PointerMode pointerMode =
+            uml::input::vnc::PointerMode::mouse);
     ~VncDisplay();
 
     VncDisplay(const VncDisplay&) = delete;
@@ -78,6 +80,8 @@ private:
     std::string password_;
     std::array<char*, 2> passwordList_ {};
     rfbScreenInfoPtr screen_ {};
+    uml::input::vnc::PointerMode pointerMode_;
+    uml::input::vnc::DirectTouchContact touchContact_;
     std::atomic_bool running_ {true};
     std::atomic_bool inputFailureReported_ {};
     std::thread eventThread_;

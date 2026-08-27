@@ -58,10 +58,12 @@ VncDisplay::VncDisplay(
     std::string password,
     std::uint32_t width,
     std::uint32_t height,
-    vnc_input::VncInputSink inputSink)
+    vnc_input::VncInputSink inputSink,
+    vnc_input::PointerMode pointerMode)
     : inputSink_(std::move(inputSink))
     , framebuffer_(width, height)
     , password_(std::move(password))
+    , pointerMode_(pointerMode)
 {
     int argumentCount = 0;
     screen_ = rfbGetScreen(
@@ -291,6 +293,10 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 {
     if (!inputSink_)
         return;
+    const bool pressed = (buttonMask & 1) != 0;
+    if (pointerMode_ == vnc_input::PointerMode::touchscreen &&
+        !touchContact_.update(pressed))
+        return;
     const auto scale = [](int coordinate, std::uint32_t extent) {
         if (extent <= 1)
             return 0;
@@ -311,29 +317,33 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
     };
     append(vnc_input::eventAbsolute, vnc_input::absoluteX, scale(x, width()));
     append(vnc_input::eventAbsolute, vnc_input::absoluteY, scale(y, height()));
-    append(vnc_input::eventKey, vnc_input::buttonTouch, buttonMask & 1);
-    append(
-        vnc_input::eventKey,
-        vnc_input::buttonMiddle,
-        (buttonMask >> 1) & 1);
-    append(
-        vnc_input::eventKey,
-        vnc_input::buttonRight,
-        (buttonMask >> 2) & 1);
-    if ((buttonMask & 8) != 0)
-        append(vnc_input::eventRelative, vnc_input::relativeWheel, 1);
-    if ((buttonMask & 16) != 0)
-        append(vnc_input::eventRelative, vnc_input::relativeWheel, -1);
-    if ((buttonMask & 32) != 0)
+    if (pointerMode_ == vnc_input::PointerMode::touchscreen) {
+        append(vnc_input::eventKey, vnc_input::buttonTouch, pressed ? 1 : 0);
+    } else {
+        append(vnc_input::eventKey, vnc_input::buttonLeft, buttonMask & 1);
         append(
-            vnc_input::eventRelative,
-            vnc_input::relativeHorizontalWheel,
-            -1);
-    if ((buttonMask & 64) != 0)
+            vnc_input::eventKey,
+            vnc_input::buttonMiddle,
+            (buttonMask >> 1) & 1);
         append(
-            vnc_input::eventRelative,
-            vnc_input::relativeHorizontalWheel,
-            1);
+            vnc_input::eventKey,
+            vnc_input::buttonRight,
+            (buttonMask >> 2) & 1);
+        if ((buttonMask & 8) != 0)
+            append(vnc_input::eventRelative, vnc_input::relativeWheel, 1);
+        if ((buttonMask & 16) != 0)
+            append(vnc_input::eventRelative, vnc_input::relativeWheel, -1);
+        if ((buttonMask & 32) != 0)
+            append(
+                vnc_input::eventRelative,
+                vnc_input::relativeHorizontalWheel,
+                -1);
+        if ((buttonMask & 64) != 0)
+            append(
+                vnc_input::eventRelative,
+                vnc_input::relativeHorizontalWheel,
+                1);
+    }
     append(vnc_input::eventSync, vnc_input::syncReport, 0);
     if (!vnc_input::tryDeliver(inputSink_, std::span(events).first(count)))
         reportInputFailure();
