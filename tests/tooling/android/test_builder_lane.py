@@ -671,6 +671,14 @@ def synthetic_orangefox_ramdisk(
             2,
         ),
         newc_entry(
+            "init.recovery.cutf_cvm.rc",
+            0o100644,
+            b"service recovery_ethernet /system/bin/ifconfig eth0 10.0.2.15 "
+            b"netmask 255.255.255.0 up\n"
+            b"    seclabel u:r:su:s0\n",
+            15,
+        ),
+        newc_entry(
             "system/bin/recovery", 0o100755,
             synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),

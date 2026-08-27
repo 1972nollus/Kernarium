@@ -331,6 +331,16 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
     ):
         if token not in properties:
             fail(f"OrangeFox properties omit {token.decode()}")
+    recovery_hardware_init = entries.get("init.recovery.cutf_cvm.rc")
+    if recovery_hardware_init is None:
+        fail("OrangeFox ramdisk omits the UML recovery hardware init script")
+    for token in (
+        b"/system/bin/ifconfig eth0 10.0.2.15",
+        b"netmask 255.255.255.0 up",
+        b"seclabel u:r:su:s0",
+    ):
+        if token not in recovery_hardware_init.payload:
+            fail(f"OrangeFox recovery Ethernet setup omits {token.decode()}")
     if b"FOX_CODE_BASE=" not in entries["system/etc/fox.cfg"].payload:
         fail("OrangeFox build identity is missing")
 
