@@ -56,6 +56,16 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("--net-forward=tcp:127.0.0.1:15555-5555", command)
         self.assertFalse(any("0.0.0.0" in argument for argument in command))
 
+    def test_recovery_flag_selects_recovery_boot(self) -> None:
+        options = boot_android.parse_arguments(["--recovery"])
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertEqual(options.boot_mode, "recovery")
+        self.assertIn("--android-boot-mode=recovery", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--recovery", "--boot-mode=auto"])
+
     def test_accepted_descriptor_selects_installed_release(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)

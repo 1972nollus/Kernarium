@@ -105,8 +105,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=("gadgets", "jit", "interpreter"),
         default="gadgets",
     )
-    parser.add_argument(
+    boot_mode = parser.add_mutually_exclusive_group()
+    boot_mode.add_argument(
         "--boot-mode", choices=("auto", "normal", "recovery"), default="normal"
+    )
+    boot_mode.add_argument(
+        "--recovery",
+        action="store_const",
+        const="recovery",
+        dest="boot_mode",
+        help="boot the accepted release into recovery",
     )
     parser.add_argument(
         "--build",
