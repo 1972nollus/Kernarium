@@ -31,6 +31,8 @@ DEFAULT_EMULATOR = (
 )
 DEFAULT_ADB_PORT = 5555
 GUEST_ADB_PORT = 5555
+DEFAULT_DISPLAY_WIDTH = 720
+DEFAULT_DISPLAY_HEIGHT = 1280
 
 
 class LauncherError(RuntimeError):
@@ -100,6 +102,18 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument("--memory", default="8G")
+    parser.add_argument(
+        "--width",
+        type=positive_integer,
+        default=DEFAULT_DISPLAY_WIDTH,
+        help=f"guest display width in pixels (default: {DEFAULT_DISPLAY_WIDTH})",
+    )
+    parser.add_argument(
+        "--height",
+        type=positive_integer,
+        default=DEFAULT_DISPLAY_HEIGHT,
+        help=f"guest display height in pixels (default: {DEFAULT_DISPLAY_HEIGHT})",
+    )
     parser.add_argument(
         "--engine",
         choices=("gadgets", "jit", "interpreter"),
@@ -240,6 +254,8 @@ def emulator_command(
         f"--net-forward=tcp:127.0.0.1:{options.adb_port}-{GUEST_ADB_PORT}",
         "--gpu",
         "--gpu-display=native",
+        f"--gpu-width={options.width}",
+        f"--gpu-height={options.height}",
         f"ncpus={options.cpus}",
         f"mem={options.memory}",
         f"--execution-engine={options.engine}",

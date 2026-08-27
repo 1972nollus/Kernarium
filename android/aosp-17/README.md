@@ -213,9 +213,9 @@ macOS launcher. It selects the accepted installed release, keeps a release-
 specific persistent COW, exposes guest ADB only on host loopback, waits for the
 transport, and disconnects it when the guest stops. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
-8 GiB of RAM, and the gadgets engine. Pass `--build` to refresh that executable
-incrementally or `--recovery` to boot OrangeFox; run
-`scripts/boot_android.py --help` for other overrides.
+8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
+`--build` to refresh that executable incrementally or `--recovery` to boot
+OrangeFox; run `scripts/boot_android.py --help` for other overrides.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 

@@ -32,7 +32,7 @@ class BootAndroidTests(unittest.TestCase):
         (release / "guest/android-17-uml-arm64.img").write_bytes(b"image")
         return release
 
-    def test_defaults_use_native_gadgets_ten_cpus_and_eight_gib(self) -> None:
+    def test_defaults_use_native_portrait_configuration(self) -> None:
         options = boot_android.parse_arguments([])
         command = boot_android.emulator_command(
             options,
@@ -41,6 +41,8 @@ class BootAndroidTests(unittest.TestCase):
             Path("/tmp/uml-darwin-android17"),
         )
         self.assertIn("--gpu-display=native", command)
+        self.assertIn("--gpu-width=720", command)
+        self.assertIn("--gpu-height=1280", command)
         self.assertIn("--execution-engine=gadgets", command)
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
@@ -101,6 +103,8 @@ class BootAndroidTests(unittest.TestCase):
     def test_cli_rejects_invalid_resources(self) -> None:
         for arguments in (
             ["--cpus", "0"],
+            ["--width", "0"],
+            ["--height", "0"],
             ["--adb-port", "65536"],
             ["--memory", "8 G"],
         ):
