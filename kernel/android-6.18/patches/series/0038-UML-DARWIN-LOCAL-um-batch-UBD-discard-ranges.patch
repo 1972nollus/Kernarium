@@ -1,0 +1,134 @@
+From 7dd3cba646885b6202c921d3afebffa3524cff1d Mon Sep 17 00:00:00 2001
+From: linux-um-darwin kernel patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Fri, 28 Aug 2026 00:47:49 +0900
+Subject: [PATCH 38/38] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+
+---
+ arch/um/drivers/ubd_kern.c | 63 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 53 insertions(+), 10 deletions(-)
+
+diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
+index 06f14e51410f322e60a5e8ad8d92a86583af513a..e5d8955f7bea0cd714fa8940d4a074bdefff5dc7 100644
+--- a/arch/um/drivers/ubd_kern.c
++++ b/arch/um/drivers/ubd_kern.c
+@@ -45,8 +45,10 @@
+ #include <os.h>
+ #include "cow.h"
+ 
+-/* Max request size is determined by sector mask - 32K */
++/* Max data request size is determined by the sector mask - 32K. */
+ #define UBD_MAX_REQUEST (8 * sizeof(long))
++/* Keep discard aligned with Android's vold target while batching host holes. */
++#define UBD_MAX_DISCARD_SECTORS (128U * 1024U * 1024U >> SECTOR_SHIFT)
+ 
+ struct io_desc {
+ 	char *buffer;
+@@ -66,6 +68,9 @@ struct io_thread_req {
+ 	unsigned long long offset;
+ 	int sectorsize;
+ 	int error;
++	unsigned char *cow_bitmap;
++	unsigned long cow_bitmap_len;
++	unsigned long long cow_bitmap_offset;
+ 
+ 	int desc_cnt;
+ 	/* io_desc has to be the last element of the struct */
+@@ -859,7 +864,7 @@ static int ubd_add(int n, char **error_out)
+ 	if (ubd_dev->cow.file)
+ 		lim.max_hw_sectors = 8 * sizeof(long);
+ 	if (!ubd_dev->no_trim) {
+-		lim.max_hw_discard_sectors = UBD_MAX_REQUEST;
++		lim.max_hw_discard_sectors = UBD_MAX_DISCARD_SECTORS;
+ 		lim.max_write_zeroes_sectors = UBD_MAX_REQUEST;
+ 	}
+ 
+@@ -1243,7 +1248,7 @@ static void ubd_map_req(struct ubd *dev, struct io_thread_req *io_req,
+ 		}
+ 	}
+ 
+-	if (dev->cow.file) {
++	if (dev->cow.file && op != REQ_OP_DISCARD) {
+ 		for (i = 0; i < io_req->desc_cnt; i++) {
+ 			cowify_req(io_req, &io_req->io_desc[i], byte_offset,
+ 				   dev->cow.bitmap, dev->cow.bitmap_offset,
+@@ -1277,6 +1282,9 @@ static struct io_thread_req *ubd_alloc_req(struct ubd *dev, struct request *req,
+ 	io_req->offset = (u64) blk_rq_pos(req) << SECTOR_SHIFT;
+ 	io_req->offsets[0] = 0;
+ 	io_req->offsets[1] = dev->cow.data_offset;
++	io_req->cow_bitmap = (unsigned char *)dev->cow.bitmap;
++	io_req->cow_bitmap_len = dev->cow.bitmap_len;
++	io_req->cow_bitmap_offset = dev->cow.bitmap_offset;
+ 
+ 	for (i = 0 ; i < desc_cnt; i++) {
+ 		io_req->io_desc[i].sector_mask = 0;
+@@ -1515,6 +1523,44 @@ static int update_bitmap(struct io_thread_req *req, struct io_desc *segment)
+ 	return map_error(0);
+ }
+ 
++static int discard_range(struct io_thread_req *req, struct io_desc *segment)
++{
++	unsigned long long sector, sector_count, first_byte, end_byte, i;
++	int bitmap_bytes = 0;
++	int bit = req->cow_bitmap != NULL;
++	int n;
++
++	if (req->cow_bitmap != NULL) {
++		sector = req->offset / req->sectorsize;
++		sector_count = segment->length / req->sectorsize;
++		first_byte = sector / 8;
++		end_byte = DIV_ROUND_UP(sector + sector_count, 8);
++		if (end_byte > req->cow_bitmap_len)
++			return map_error(EIO);
++		bitmap_bytes = end_byte - first_byte;
++	}
++
++	n = os_falloc_punch(req->fds[bit],
++			    req->offset + req->offsets[bit], segment->length);
++	if (n)
++		return map_error(-n);
++
++	if (req->cow_bitmap != NULL) {
++		for (i = 0; i < sector_count; i++)
++			ubd_set_bit(sector + i, req->cow_bitmap);
++
++		n = ubd_pwrite_full(req->fds[1],
++				    req->cow_bitmap + first_byte,
++				    bitmap_bytes,
++				    req->cow_bitmap_offset + first_byte);
++		if (n != bitmap_bytes)
++			return map_error(-n);
++	}
++
++	req->offset += segment->length;
++	return map_error(0);
++}
++
+ static void do_io(struct io_thread_req *req, struct io_desc *desc)
+ {
+ 	char *buf = NULL;
+@@ -1529,6 +1575,10 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
+ 		req->error = map_error(-os_sync_file(req->fds[0]));
+ 		return;
+ 	}
++	if (req_op(req->req) == REQ_OP_DISCARD) {
++		req->error = discard_range(req, desc);
++		return;
++	}
+ 
+ 	nsectors = desc->length / req->sectorsize;
+ 	start = 0;
+@@ -1560,13 +1610,6 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
+ 				return;
+ 			}
+ 			break;
+-		case REQ_OP_DISCARD:
+-			n = os_falloc_punch(req->fds[bit], off, len);
+-			if (n) {
+-				req->error = map_error(-n);
+-				return;
+-			}
+-			break;
+ 		case REQ_OP_WRITE_ZEROES:
+ 			n = os_falloc_zeroes(req->fds[bit], off, len);
+ 			if (n) {

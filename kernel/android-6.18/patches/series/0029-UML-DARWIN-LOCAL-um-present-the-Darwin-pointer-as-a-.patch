@@ -1,7 +1,7 @@
-From 5a1688941e210b96a834502d762861c31f27a815 Mon Sep 17 00:00:00 2001
+From 796bea80323e67130e831ec3306f88fd379e0bb5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 04:16:53 +0000
-Subject: [PATCH 29/37] UML-DARWIN-LOCAL: um: present the Darwin pointer as a
+Subject: [PATCH 29/38] UML-DARWIN-LOCAL: um: present the Darwin pointer as a
  direct touchscreen
 
 Android and recovery interfaces must see the Darwin display as a touchscreen,

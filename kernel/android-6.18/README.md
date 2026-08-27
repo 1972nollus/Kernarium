@@ -33,7 +33,8 @@ The local series provides the durable Android-specific behavior:
 - free-page reporting for file-backed guest RAM where supported;
 - virtually mapped 128 KiB task stacks and the common RAM-scaled auxiliary
   address window;
-- correct COW-backed UBD request advancement;
+- correct COW-backed UBD request advancement and 128 MiB batched discard,
+  including persistent bitmap updates after reclaiming host COW extents;
 - validated initramfs ranges inside the static GPT;
 - a Kernarium Virtio battery power-supply driver for host percentage and
   charging-state passthrough;

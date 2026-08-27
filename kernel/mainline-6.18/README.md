@@ -83,7 +83,9 @@ itself after the anonymous provider rejects range punching.
 Darwin's cooperative scheduler services timer deadlines at safe kernel spin,
 retry, TLB-walk, and `cond_resched()` boundaries. The Darwin network receive
 path uses NAPI, the display-mapped absolute pointer is a direct touchscreen,
-and UBD advances mixed COW requests by each complete descriptor.
+and UBD advances mixed COW requests by each complete descriptor. UBD advertises
+discard ranges up to 128 MiB and services each range with one host hole punch
+while persisting the corresponding COW bitmap span.
 
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit
