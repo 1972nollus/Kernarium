@@ -33,7 +33,9 @@ The local series provides the durable Android-specific behavior:
 - correct COW-backed UBD request advancement;
 - validated initramfs ranges inside the static GPT;
 - a Kernarium Virtio battery power-supply driver for host percentage and
-  charging-state passthrough; and
+  charging-state passthrough;
+- system suspend and wake through the management console, including secondary
+  vCPU hotplug across an Apple host background interval; and
 - anonymous host VM for Android physical memory, with page reporting disabled
   when no file extent exists.
 

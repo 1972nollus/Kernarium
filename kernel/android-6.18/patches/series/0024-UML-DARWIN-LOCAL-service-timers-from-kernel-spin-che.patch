@@ -2,7 +2,7 @@ From 592744ee4c387947e14ddfc3cbeb7aef5efd3a1a Mon Sep 17 00:00:00 2001
 From: linux-um-darwin kernel patch maintainer
  <noreply@linux-um-darwin.invalid>
 Date: Fri, 21 Aug 2026 04:11:17 +0000
-Subject: [PATCH 24/36] UML-DARWIN-LOCAL: service timers from kernel spin
+Subject: [PATCH 24/37] UML-DARWIN-LOCAL: service timers from kernel spin
  checkpoints
 
 Change-Id: Ib011cee9d37ffccef57cc6b86b2ee77df023dc28
