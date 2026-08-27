@@ -1804,14 +1804,19 @@ def main() -> None:
         "BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true",
         "BOARD_BOOT_HEADER_VERSION := 4",
         "PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 65536",
-        "TW_INCLUDE_CRYPTO_FBE := true",
-        "TW_INCLUDE_FBE_METADATA_DECRYPT := true",
         "TW_NO_SCREEN_BLANK := true",
         "TW_NO_SCREEN_TIMEOUT := true",
         "BOARD_RECOVERY_IMAGE_PREPARE",
     ):
         if token not in orangefox_device:
             fail(f"OrangeFox device tree is missing fixed policy: {token}")
+    for token in (
+        "TW_INCLUDE_CRYPTO := true",
+        "TW_INCLUDE_CRYPTO_FBE := true",
+        "TW_INCLUDE_FBE_METADATA_DECRYPT := true",
+    ):
+        if token in orangefox_device:
+            fail(f"OrangeFox device tree enables unsupported crypto policy: {token}")
     for token in (
         '"$root/FFiles/ps"',
         '"$root/sbin/magiskboot"',

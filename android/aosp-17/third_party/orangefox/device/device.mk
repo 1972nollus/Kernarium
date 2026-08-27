@@ -25,10 +25,11 @@ TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
 TARGET_RECOVERY_FSTAB := device/kernarium/darwin/recovery/root/system/etc/recovery.fstab
 
 TW_THEME := portrait_hdpi
-TW_USE_FSCRYPT_POLICY := 2
-TW_INCLUDE_CRYPTO := true
-TW_INCLUDE_CRYPTO_FBE := true
-TW_INCLUDE_FBE_METADATA_DECRYPT := true
+# The guest uses Android metadata encryption, but this emulator deliberately
+# ships no Keymaster/KeyMint HAL. OrangeFox's FBE decrypt path waits forever
+# for that nonexistent service after Android has initialized userdata. Keep
+# decryption out of the recovery image: encrypted userdata remains wipeable,
+# and a freshly formatted filesystem can be mounted before Android encrypts it.
 TW_NO_SCREEN_BLANK := true
 TW_NO_SCREEN_TIMEOUT := true
 TW_MAX_BRIGHTNESS := 255
