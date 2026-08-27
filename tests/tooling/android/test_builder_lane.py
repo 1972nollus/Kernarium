@@ -1881,8 +1881,8 @@ def main() -> None:
     if "android.hardware.microphone" in core_hardware:
         fail("device overlay advertises unsupported audio capture hardware")
     battery_sysfs = (
-        "genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/"
-        "virtio4/power_supply u:object_r:sysfs_batteryinfo:s0"
+        "genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/"
+        "virtio2/power_supply u:object_r:sysfs_batteryinfo:s0"
     )
     if battery_sysfs not in vendor_genfs_contexts:
         fail("battery sysfs is not labeled for the stock Health HAL")
