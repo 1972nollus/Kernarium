@@ -1,4 +1,4 @@
-From d0d71db9f010ffd1b6ded3dbaea967296a5f562d Mon Sep 17 00:00:00 2001
+From f7bf046a363f4cbeb735b4736925a3f39a1dfe17 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 19:51:26 +0000
 Subject: [PATCH 22/23] UML-ANDROID-LOCAL: cuttlefish relax audio TimeCheck

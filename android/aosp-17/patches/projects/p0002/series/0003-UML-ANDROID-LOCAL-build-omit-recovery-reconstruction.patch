@@ -1,4 +1,4 @@
-From 3269b9f01638caa72f4b60cc11a19b5ba16ed920 Mon Sep 17 00:00:00 2001
+From 619017cf4b381163e40813efbd2318609aab9b65 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 15:04:19 +0000
 Subject: [PATCH 3/3] UML-ANDROID-LOCAL: build: omit recovery reconstruction

@@ -1,4 +1,4 @@
-From 142a9defd8d8fdab4fa67b639db6109aae520b79 Mon Sep 17 00:00:00 2001
+From 02eec2bac4d3d38ee35e9d7c0a91d3fabc90e14f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 15:14:00 +0000
 Subject: [PATCH 19/23] UML-ANDROID-LOCAL: cuttlefish drop the Bluetooth audio

@@ -1,4 +1,4 @@
-From 8896cf9efa403043116cd5edf4747d6147a1eba0 Mon Sep 17 00:00:00 2001
+From bef6cb2f472faa69e878d591bbe183f74ad86167 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 18:43:12 +0000
 Subject: [PATCH 08/23] UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init

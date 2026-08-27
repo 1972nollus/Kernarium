@@ -23,6 +23,10 @@ UML_ANDROID_BUILTIN_KERNEL := true
 UML_ANDROID_STATIC_STORAGE := true
 UML_ANDROID_DISABLE_PROJECT_QUOTAS := true
 UML_ANDROID_SOURCE_MESA := true
+UML_ANDROID_DISABLE_AVF := true
+UML_ANDROID_DISABLE_IDENTITY := true
+UML_ANDROID_DISABLE_REBOOT_ESCROW := true
+UML_ANDROID_DISABLE_LEGACY_VNDK := true
 BOARD_HAVE_BLUETOOTH := false
 CF_VENDOR_NO_UWB := true
 CF_VENDOR_NO_THREADNETWORK := true
@@ -117,8 +121,10 @@ KERNARIUM_REMOVED_PACKAGES := \
     CarrierDefaultApp \
     CellBroadcastLegacyApp \
     Contacts \
+    CuttlefishService \
     DeskClock \
     DeviceAsWebcam \
+    DynamicSystemInstallationService \
     Dialer \
     EasterEgg \
     EmergencyInfo \
@@ -143,23 +149,54 @@ KERNARIUM_REMOVED_PACKAGES := \
     android.hardware.motioncontext-service.default \
     androidx.camera.extensions.impl \
     com.android.cellbroadcast \
+    com.android.compos \
+    com.android.hardware.authsecret \
     com.android.hardware.biometrics.face.virtual \
     com.android.hardware.biometrics.fingerprint.virtual \
+    com.android.hardware.cas \
+    com.android.hardware.graphics.composer.ranchu \
     com.android.hardware.contexthub \
     com.android.hardware.gnss \
+    com.android.hardware.input.processor \
+    com.android.hardware.net.nlinterceptor \
+    com.android.hardware.rebootescrow \
     com.android.hardware.secure_element \
+    com.android.hardware.security.authgraph \
+    com.android.hardware.security.secretkeeper \
+    com.android.hardware.tetheroffload \
+    com.android.hardware.thermal \
+    com.android.hardware.usb \
     com.android.hardware.vibrator \
     com.android.hardware.wifi \
+    com.android.vndk.v31 \
+    com.android.vndk.v32 \
+    com.android.vndk.v33 \
+    com.android.vndk.v34 \
     com.google.emulated.camera.provider.hal \
     com.google.emulated.camera.provider.hal.v4l2 \
+    com.google.cf.confirmationui \
     com.google.cf.health \
     com.google.cf.bt \
+    com.google.cf.identity \
+    com.google.cf.ir \
     com.google.cf.wifi \
     com.google.cf.wpa_supplicant \
     cuttlefish_telephony_satellite_configs \
+    gsi_tool \
+    gsid \
     android.hardware.health-service.cuttlefish_recovery \
     messaging \
+    pmg_daemon \
     sample_camera_extensions.xml \
+    snapshotctl \
+    snapuserd \
+    snapuserd_ramdisk \
+    socket_vsock_proxy \
+    suspend_blocker \
+    tombstone_transmit \
+    update_engine \
+    update_engine_client \
+    update_verifier \
     wificond \
     wificond_compat_symlink_module
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)

@@ -1,4 +1,4 @@
-From dfdc9738e61c4c34d317c132d869b461837a9018 Mon Sep 17 00:00:00 2001
+From 8ebde3f9457c5f24a4c8c72d4eac1848e08f5353 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 12:53:11 +0000
 Subject: [PATCH 23/23] UML-ANDROID-LOCAL: cuttlefish retire legacy UML product
@@ -9,7 +9,10 @@ The fresh Kernarium device overlay owns the supported UML product, board policy,
 Change-Id: I8cc4560bc82118272457ae19f496589076f3b0a1
 ---
  AndroidProducts.mk                            |   2 -
+ shared/desktop/common.mk                      |   4 +-
  shared/device.mk                              |  10 +-
+ shared/phone/device_vendor.mk                 |   8 +-
+ vsoc_arm64_pgagnostic/phone/aosp_cf.mk        |   4 +-
  vsoc_uml_arm64_pgagnostic/BoardConfig.mk      | 124 ------------------
  vsoc_uml_arm64_pgagnostic/config/Android.bp   |  70 ----------
  vsoc_uml_arm64_pgagnostic/config/fstab.uml    |  11 --
@@ -18,7 +21,7 @@ Change-Id: I8cc4560bc82118272457ae19f496589076f3b0a1
  vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk   | 114 ----------------
  .../sepolicy/vendor/file_contexts             |   5 -
  .../sepolicy/vendor/genfs_contexts            |   8 --
- 10 files changed, 1 insertion(+), 374 deletions(-)
+ 13 files changed, 14 insertions(+), 377 deletions(-)
  delete mode 100644 vsoc_uml_arm64_pgagnostic/BoardConfig.mk
  delete mode 100644 vsoc_uml_arm64_pgagnostic/config/Android.bp
  delete mode 100644 vsoc_uml_arm64_pgagnostic/config/fstab.uml
@@ -48,6 +51,22 @@ index a2a1242a936e26d3338d749caeae7e39101a0ba6..eb4ffcd0dd2fc42a7caa1a5c0b436690
  	aosp_cf_riscv64_phone-trunk_staging-userdebug \
  	aosp_cf_x86_64_only_phone_hsum-trunk_staging-userdebug \
  	aosp_cf_x86_64_desktop-trunk_staging-userdebug \
+diff --git a/shared/desktop/common.mk b/shared/desktop/common.mk
+index 8cb4085e2eb1d07c9641358a7af013f1d209bec1..8d71b13c406fc16d07fbf9709003e4837914fea4 100644
+--- a/shared/desktop/common.mk
++++ b/shared/desktop/common.mk
+@@ -83,8 +83,10 @@ PRODUCT_PROPERTY_OVERRIDES += \
+ # containing uncompressed ext4 payload.
+ OVERRIDE_PRODUCT_COMPRESSED_APEX := false
+ PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs
+-# Include com.android.virt APEX
++# Include com.android.virt APEX when the product has an AVF-capable host.
++ifneq ($(UML_ANDROID_DISABLE_AVF),true)
+ $(call inherit-product, packages/modules/Virtualization/apex/product_packages.mk)
++endif
+ 
+ # Large screen config. e.g. Enables dual-pane Settings UI.
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/large_screen_common.mk)
 diff --git a/shared/device.mk b/shared/device.mk
 index 3610bbe69fe98304bc820b1519b3f9851797dc3a..b173afba75dc3b61e0192970202e083a0c362ca6 100644
 --- a/shared/device.mk
@@ -83,6 +102,51 @@ index 3610bbe69fe98304bc820b1519b3f9851797dc3a..b173afba75dc3b61e0192970202e083a
  endif
  
  # Packages for HAL implementations
+diff --git a/shared/phone/device_vendor.mk b/shared/phone/device_vendor.mk
+index fdbc727046b29b819223ac950058bbb9a529819a..cb466adf0123255f01cfc627b22fcf565453bd38 100644
+--- a/shared/phone/device_vendor.mk
++++ b/shared/phone/device_vendor.mk
+@@ -30,8 +30,12 @@ $(call inherit-product, device/google/cuttlefish/shared/bluetooth/device_vendor.
+ $(call inherit-product, device/google/cuttlefish/shared/consumerir/device_vendor.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/gnss/device_vendor.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/graphics/device_vendor.mk)
++ifneq ($(UML_ANDROID_DISABLE_IDENTITY),true)
+ $(call inherit-product, device/google/cuttlefish/shared/identity/device_vendor.mk)
++endif
++ifneq ($(UML_ANDROID_DISABLE_REBOOT_ESCROW),true)
+ $(call inherit-product, device/google/cuttlefish/shared/reboot_escrow/device_vendor.mk)
++endif
+ $(call inherit-product, device/google/cuttlefish/shared/vibrator/device_vendor.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/secure_element/device_vendor.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/swiftshader/device_vendor.mk)
+@@ -44,8 +48,10 @@ $(call inherit-product, device/google/cuttlefish/shared/device.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/camera/device_vendor.mk)
+ $(call inherit-product, device/google/cuttlefish/shared/camera/config/standard.mk)
+ 
+-# Support mixing CF system onto previous versions of vendor
++# Support mixing CF system onto previous versions of vendor.
++ifneq ($(UML_ANDROID_DISABLE_LEGACY_VNDK),true)
+ PRODUCT_EXTRA_VNDK_VERSIONS := 31 32 33 34
++endif
+ 
+ TARGET_PRODUCT_PROP := $(LOCAL_PATH)/product.prop
+ TARGET_VENDOR_PROP := $(LOCAL_PATH)/vendor.prop
+diff --git a/vsoc_arm64_pgagnostic/phone/aosp_cf.mk b/vsoc_arm64_pgagnostic/phone/aosp_cf.mk
+index 8f7a2774f9318f2cbc677a2fff98292890c13a9c..c6e761ef0c9fc57007c7c35811677e91bc13947f 100644
+--- a/vsoc_arm64_pgagnostic/phone/aosp_cf.mk
++++ b/vsoc_arm64_pgagnostic/phone/aosp_cf.mk
+@@ -42,8 +42,10 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_product.mk)
+ #
+ $(call inherit-product, device/google/cuttlefish/shared/phone/device_vendor.mk)
+ 
+-# Nested virtualization support
++# Nested virtualization support.
++ifneq ($(UML_ANDROID_DISABLE_AVF),true)
+ $(call inherit-product, packages/modules/Virtualization/apex/product_packages.mk)
++endif
+ 
+ #
+ # Special settings for the target
 diff --git a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
 deleted file mode 100644
 index 6384a20912eab22082ad9d896709bddffe6ec625..0000000000000000000000000000000000000000

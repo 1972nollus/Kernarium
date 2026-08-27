@@ -322,8 +322,17 @@ PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
 for package in \
 	android.hardware.health-service.example \
 	android.hardware.health-service.example_recovery \
+	com.android.bt \
+	com.android.devicelock \
 	com.android.hardware.gatekeeper.nonsecure \
 	com.android.hardware.keymint.rust_nonsecure \
+	com.android.nfcservices \
+	com.android.rkpd \
+	com.android.telephonycore \
+	com.android.tethering \
+	com.android.uwb \
+	com.android.virt \
+	com.android.wifi \
 	Jelly \
 	LatinIME \
 	ThemePicker; do
@@ -337,28 +346,69 @@ for package in \
 	Calendar \
 	Camera2 \
 	Contacts \
+	CuttlefishService \
 	DeskClock \
 	Dialer \
+	DynamicSystemInstallationService \
 	Gallery2 \
 	QuickSearchBox \
 	TeleService \
 	Telecom \
 	TelephonyProvider \
+	com.android.compos \
+	com.android.hardware.authsecret \
+	com.android.hardware.cas \
+	com.android.hardware.graphics.composer.ranchu \
 	android.hardware.health-service.cuttlefish_recovery \
 	com.android.hardware.wifi \
 	com.android.hardware.contexthub \
+	com.android.hardware.input.processor \
+	com.android.hardware.net.nlinterceptor \
+	com.android.hardware.rebootescrow \
+	com.android.hardware.security.authgraph \
+	com.android.hardware.security.secretkeeper \
+	com.android.hardware.tetheroffload \
+	com.android.hardware.thermal \
+	com.android.hardware.usb \
+	com.android.vndk.v31 \
+	com.android.vndk.v32 \
+	com.android.vndk.v33 \
+	com.android.vndk.v34 \
 	com.google.cf.bt \
+	com.google.cf.confirmationui \
 	com.google.cf.health \
+	com.google.cf.identity \
+	com.google.cf.ir \
 	com.google.cf.wifi \
 	com.google.cf.wpa_supplicant \
 	CuttlefishTetheringOverlay \
 	CuttlefishWifiOverlay \
+	gsi_tool \
+	gsid \
 	messaging \
+	pmg_daemon \
+	snapshotctl \
+	snapuserd \
+	snapuserd_ramdisk \
+	socket_vsock_proxy \
+	suspend_blocker \
+	tombstone_transmit \
+	update_engine \
+	update_engine_client \
+	update_verifier \
 	wificond \
 	wificond_compat_symlink_module; do
 	[[ "$PRODUCT_PACKAGES_EXCLUDE" == *" $package "* ]] ||
 		fail "unneeded product package is not excluded: $package"
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "excluded product package remains resolved: $package"
 done
+
+[[ -z "$(get_build_var PRODUCT_EXTRA_VNDK_VERSIONS)" ]] ||
+	fail "PRODUCT_EXTRA_VNDK_VERSIONS must be empty for the fixed vendor image"
+PRODUCT_VENDOR_PROPERTIES=" $(get_build_var PRODUCT_VENDOR_PROPERTIES) "
+[[ "$PRODUCT_VENDOR_PROPERTIES" != *" ro.rebootescrow.device="* ]] ||
+	fail "the unsupported reboot-escrow backing property remains present"
 
 PRODUCT_PRODUCT_PROPERTIES=" $(get_build_var PRODUCT_PRODUCT_PROPERTIES) "
 for property in \

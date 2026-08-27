@@ -47,6 +47,17 @@ VIRGL_EGL_ENTRIES = {
     "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
     "VENDOR/lib64/egl/libGLESv2_mesa.so",
 }
+REQUIRED_SDK_APEX_ENTRIES = {
+    "SYSTEM/apex/com.android.bt.apex",
+    "SYSTEM/apex/com.android.devicelock.apex",
+    "SYSTEM/apex/com.android.nfcservices.apex",
+    "SYSTEM/apex/com.android.rkpd.apex",
+    "SYSTEM/apex/com.android.telephonycore.apex",
+    "SYSTEM/apex/com.android.tethering.apex",
+    "SYSTEM/apex/com.android.uwb.apex",
+    "SYSTEM/apex/com.android.virt.apex",
+    "SYSTEM/apex/com.android.wifi.apex",
+}
 
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
@@ -88,6 +99,7 @@ REQUIRED_ENTRIES = {
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
     *VIRGL_ELF_ENTRIES,
     VIRGL_DRI_SYMLINK,
+    *REQUIRED_SDK_APEX_ENTRIES,
 }
 REQUIRED_PREOPT_APKS = {
     "PRODUCT/app/Jelly/Jelly.apk",
@@ -209,14 +221,49 @@ FORBIDDEN_STATIC_ENTRIES = {
     "SYSTEM/vendor/etc/recovery-resource.dat",
     "SYSTEM/vendor/recovery-from-boot.p",
 }
+FORBIDDEN_APEX_FILENAMES = {
+    "com.android.hardware.authsecret.apex",
+    "com.android.hardware.cas.apex",
+    "com.android.hardware.graphics.composer.ranchu.apex",
+    "com.android.hardware.input.processor.apex",
+    "com.android.hardware.net.nlinterceptor.apex",
+    "com.android.hardware.rebootescrow.apex",
+    "com.android.hardware.security.authgraph.apex",
+    "com.android.hardware.security.secretkeeper.apex",
+    "com.android.hardware.tetheroffload.apex",
+    "com.android.hardware.thermal.apex",
+    "com.android.hardware.usb.apex",
+    "com.android.vndk.v31.apex",
+    "com.android.vndk.v32.apex",
+    "com.android.vndk.v33.apex",
+    "com.android.vndk.v34.apex",
+    "com.google.cf.confirmationui.apex",
+    "com.google.cf.identity.apex",
+    "com.google.cf.ir.apex",
+}
+FORBIDDEN_EXECUTABLE_FILENAMES = {
+    "gsi_tool",
+    "gsid",
+    "pmgd",
+    "snapshotctl",
+    "snapuserd",
+    "socket_vsock_proxy",
+    "suspend_blocker",
+    "tombstone_transmit",
+    "update_engine",
+    "update_engine_client",
+    "update_verifier",
+}
 FORBIDDEN_APP_DIRECTORIES = {
     "BasicDreams",
     "BluetoothMidiService",
     "Calendar",
     "Camera2",
     "Contacts",
+    "CuttlefishService",
     "DeskClock",
     "Dialer",
+    "DynamicSystemInstallationService",
     "Gallery2",
     "QuickSearchBox",
     "TeleService",
@@ -359,6 +406,10 @@ def reject_nonstatic_payload(path: PurePosixPath) -> None:
         fail(f"system_other payload is forbidden: {path}")
     if canonical in FORBIDDEN_STATIC_ENTRIES:
         fail(f"nonstatic image or metadata is forbidden: {path}")
+    if path.name in FORBIDDEN_APEX_FILENAMES and "apex" in path.parts:
+        fail(f"unneeded APEX payload is forbidden: {path}")
+    if path.name in FORBIDDEN_EXECUTABLE_FILENAMES:
+        fail(f"unneeded static-layout executable is forbidden: {path}")
     if path.parts[:2] == ("OTA", "bin"):
         fail(f"OTA tool payload is forbidden: {path}")
     if path.parts[0] == "IMAGES" and path.name.endswith("_dlkm.img"):

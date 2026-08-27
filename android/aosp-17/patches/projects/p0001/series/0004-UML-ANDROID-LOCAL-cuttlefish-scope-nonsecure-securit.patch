@@ -1,4 +1,4 @@
-From c8950c7d54f953bb9552b5b0bc38bf1f4282ac85 Mon Sep 17 00:00:00 2001
+From cbd2e195caece6f44984be83196da1ad00c84cfc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 17:20:26 +0000
 Subject: [PATCH 04/23] UML-ANDROID-LOCAL: cuttlefish: scope nonsecure security

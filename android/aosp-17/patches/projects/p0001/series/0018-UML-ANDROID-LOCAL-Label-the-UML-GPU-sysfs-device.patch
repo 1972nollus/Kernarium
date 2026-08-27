@@ -1,4 +1,4 @@
-From caab1fe05ff69a8bb3c0f3c12b18303a762c60dc Mon Sep 17 00:00:00 2001
+From 30c9cff581179765c5481a6a0223857cb1cb8954 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 17:59:54 +0000
 Subject: [PATCH 18/23] UML-ANDROID-LOCAL: Label the UML GPU sysfs device

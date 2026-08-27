@@ -200,6 +200,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_virgl_dependency: bool = False,
                           missing_virgl_runpath: bool = False,
                           system_other: bool = False,
+                          missing_sdk_apex: bool = False,
+                          removed_payload: bool = False,
                           missing_required_preopt: bool = False,
                           half_preopt_pair: bool = False,
                           virgl_alignment: int = 16384,
@@ -269,6 +271,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "erofs" if wrong_apex_filesystem else "ext4"
                     ),
                 )
+                required_sdk_apexes = (
+                    "com.android.bt",
+                    "com.android.devicelock",
+                    "com.android.nfcservices",
+                    "com.android.rkpd",
+                    "com.android.telephonycore",
+                    "com.android.tethering",
+                    "com.android.uwb",
+                    "com.android.virt",
+                    "com.android.wifi",
+                )
+                for index, apex in enumerate(required_sdk_apexes):
+                    if missing_sdk_apex and index == 0:
+                        continue
+                    archive.writestr(
+                        f"SYSTEM/apex/{apex}.apex", synthetic_apex("ext4")
+                    )
                 fstab = (
                     UML_FSTAB.replace("/system ext4", "/system erofs", 1)
                     if wrong_fstab
@@ -441,6 +460,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr(
                         "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
                     )
+                if removed_payload:
+                    archive.writestr(
+                        "SYSTEM/apex/com.android.hardware.rebootescrow.apex",
+                        synthetic_apex("ext4"),
+                    )
 
         good = root / "good.zip"
         write_fixture(good)
@@ -486,6 +510,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("virgl-dependency", {"missing_virgl_dependency": True}),
             ("virgl-runpath", {"missing_virgl_runpath": True}),
             ("system-other", {"system_other": True}),
+            ("missing-sdk-apex", {"missing_sdk_apex": True}),
+            ("removed-payload", {"removed_payload": True}),
             ("missing-preopt", {"missing_required_preopt": True}),
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("virgl-alignment", {"virgl_alignment": 4096}),
@@ -1344,9 +1370,12 @@ def main() -> None:
             (android_root / "patches/projects/p0001/series").glob("*.patch")
         )
     )
-    virtualization_patch = next(
-        (android_root / "patches/projects/p0008/series").glob("*.patch")
-    ).read_text()
+    virtualization_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0008/series").glob("*.patch")
+        )
+    )
     settings_patch = "\n".join(
         path.read_text()
         for path in sorted(
@@ -1616,6 +1645,17 @@ def main() -> None:
     if "QuickSearchBox" not in removed_packages:
         fail("device overlay retains Launcher3's unwanted home-screen search provider")
     for removed in (
+        "CuttlefishService",
+        "DynamicSystemInstallationService",
+        "com.android.hardware.authsecret",
+        "com.android.hardware.rebootescrow",
+        "com.android.vndk.v31",
+        "com.android.vndk.v34",
+        "com.google.cf.identity",
+        "gsid",
+        "pmg_daemon",
+        "snapuserd_ramdisk",
+        "update_engine",
         "com.android.hardware.wifi",
         "com.google.cf.bt",
         "com.google.cf.wifi",
@@ -1626,7 +1666,7 @@ def main() -> None:
         "wificond_compat_symlink_module",
     ):
         if removed not in removed_packages:
-            fail(f"device overlay retains unsupported radio package: {removed}")
+            fail(f"device overlay retains an excluded product package: {removed}")
     added_packages = device_product.split("PRODUCT_PACKAGES +=", 1)[1].split(
         "# Replace the handheld feature declaration", 1
     )[0]

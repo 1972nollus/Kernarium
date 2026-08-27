@@ -1,4 +1,4 @@
-From fc41e14d468ceb625cdf0f6f1bcddb9cbc1d970f Mon Sep 17 00:00:00 2001
+From 39dfca0f37986200946cc1d2a909ff74d34bed38 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 18:05:18 +0000
 Subject: [PATCH 05/23] UML-ANDROID-LOCAL: cuttlefish: avoid duplicate SoC
