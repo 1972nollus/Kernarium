@@ -1844,12 +1844,15 @@ def main() -> None:
         "BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true",
         "BOARD_BOOT_HEADER_VERSION := 4",
         "PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 65536",
+        "TARGET_RECOVERY_PIXEL_FORMAT := BGRA_8888",
         "TW_NO_SCREEN_BLANK := true",
         "TW_NO_SCREEN_TIMEOUT := true",
         "BOARD_RECOVERY_IMAGE_PREPARE",
     ):
         if token not in orangefox_device:
             fail(f"OrangeFox device tree is missing fixed policy: {token}")
+    if "TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888" in orangefox_device:
+        fail("OrangeFox writes RGBX bytes into Virtio-GPU's XRGB dumb buffer")
     for token in (
         "TW_INCLUDE_CRYPTO := true",
         "TW_INCLUDE_CRYPTO_FBE := true",

@@ -21,7 +21,10 @@ PRODUCT_SHIPPING_API_LEVEL := 34
 PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 65536
 PRODUCT_NO_BIONIC_PAGE_SIZE_MACRO := true
 
-TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
+# Virtio-GPU allocates legacy dumb buffers as host XRGB8888 resources before
+# drmModeAddFB2 labels the framebuffer. OrangeFox's BGRA path writes the BGRX
+# byte order expected by that fixed resource format.
+TARGET_RECOVERY_PIXEL_FORMAT := BGRA_8888
 TARGET_RECOVERY_FSTAB := device/kernarium/darwin/recovery/root/system/etc/recovery.fstab
 
 TW_THEME := portrait_hdpi
