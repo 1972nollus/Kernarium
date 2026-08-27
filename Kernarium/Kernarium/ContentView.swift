@@ -580,7 +580,7 @@ private struct PreparedBoot: Sendable {
         paths = [
             nil,
             nil,
-            bundle.manifest.path,
+            nil,
             bundle.baseDisk.path,
             bundle.instance.path,
             bundle.commandLine.path,

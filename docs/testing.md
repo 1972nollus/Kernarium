@@ -121,9 +121,11 @@ scripts/build-xcframework.sh
 
 Kernarium has separate runtime presets for device and Simulator, 16 KiB and
 4 KiB Linux, and 16 KiB Android. `Kernarium/scripts/package-ios-frameworks.sh`
-packages all selected runtime and graphics slices for Xcode. Apple builds only
-validate and embed accepted artifacts; they never prepare sources or invoke a
-kernel/AOSP build.
+packages all selected runtime and graphics slices for Xcode. Apple builds
+validate the kernel bridge ABI, page profile, product family, and `6.18` series
+before embedding an artifact; they do not bind to its patch release or source
+commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
+are launch inputs, not emulator build inputs.
 
 Kernarium defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on physical
 devices, and the processor count reported by `NSProcessInfo`. Android fixes the

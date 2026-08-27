@@ -107,18 +107,22 @@ executor-owned link cell before use.
 `kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned
 source identity, configuration, generated patch series, and standalone build
 policy. `kernel/common` owns only contracts shared across families. The Apple
-CMake graph imports compact accepted artifacts.
+CMake graph imports compact artifacts and checks their bridge ABI, page
+profile, product family, and `6.18` release series. Patch releases, commit
+identities, and producer provenance do not become runtime compatibility keys.
 
 `android/aosp-17` owns the Android product, static GPT layout, ramdisks, rootfs
 release, and producer tools. Kernel and rootfs releases are selected
-independently. The `uml-darwin-android17` product embeds the ACK ELF and rootfs
-manifest identity, reads the GPT through a per-instance COW, and has no 4 KiB
-variant.
+independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
+and command-line paths are launch inputs. The `uml-darwin-android17` product
+reads the supplied GPT through a per-instance COW and has no 4 KiB variant.
 
 A Kernarium `.kern` bundle contains one guest's rootfs payload and persistent
-COW. Android bundles contain a release manifest, kernel command line, and one
-GPT image; the kernel comes from the selected runtime framework. Incomplete or
-mismatched bundles are rejected.
+COW. Android bundles provide a kernel command line and one GPT image; a release
+manifest may accompany them as provenance. The kernel comes from the selected
+runtime framework. Launch does not compare kernel, runtime, or rootfs release
+identities; missing or malformed inputs fail at their ordinary file or image
+boundary.
 
 ## Devices and graphics
 

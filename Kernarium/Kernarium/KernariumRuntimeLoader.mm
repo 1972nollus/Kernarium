@@ -159,7 +159,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 [[nodiscard]] bool validApi(
     const kernarium_runtime_api* api,
-    NSURL* framework,
     uint32_t guestFlavor,
     uint32_t guestPageSize)
 {
@@ -168,8 +167,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->struct_size < sizeof(kernarium_runtime_api) ||
         api->guest_page_size != guestPageSize ||
         api->guest_flavor != guestFlavor ||
-        api->kernel_release == nullptr ||
-        api->framework_name == nullptr ||
         api->run == nullptr ||
         api->request_stop == nullptr ||
         api->sync == nullptr ||
@@ -180,29 +177,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_console_output_callback == nullptr ||
         api->send_console_input == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
-        return false;
-    }
-
-    NSString* release = [NSString stringWithUTF8String:api->kernel_release];
-    NSString* reportedName = [NSString stringWithUTF8String:api->framework_name];
-    NSString* variant = pageVariant(guestPageSize);
-    NSString* prefix = flavorPrefix(guestFlavor);
-    if (release == nil || reportedName == nil || variant == nil || prefix == nil)
-        return false;
-    NSString* releaseComponent = [release stringByReplacingOccurrencesOfString:@"."
-                                                                    withString:@"_"];
-    NSString* expectedName = [NSString stringWithFormat:
-        @"%@%@_%@", prefix, releaseComponent, variant];
-    NSString* bundledName = framework.URLByDeletingPathExtension.lastPathComponent;
-    if (![reportedName isEqualToString:expectedName] ||
-        ![bundledName isEqualToString:expectedName]) {
-        std::fprintf(
-            stderr,
-            "Kernarium: runtime identity mismatch: bundled=%s reported=%s "
-            "expected=%s\n",
-            bundledName.UTF8String,
-            reportedName.UTF8String,
-            expectedName.UTF8String);
         return false;
     }
     return true;
@@ -243,7 +217,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     const auto getter = reinterpret_cast<
         const kernarium_runtime_api* (*)(void)>(symbol);
     const kernarium_runtime_api* api = getter();
-    if (!validApi(api, framework, guestFlavor, guestPageSize)) {
+    if (!validApi(api, guestFlavor, guestPageSize)) {
         (void)dlclose(handle);
         return -1;
     }
@@ -254,9 +228,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
     std::printf(
-        "Kernarium: loaded %s (Linux %s, %u-byte guest pages)\n",
-        api->framework_name,
-        api->kernel_release,
+        "Kernarium: loaded runtime with %u-byte guest pages\n",
         api->guest_page_size);
     return 0;
 }

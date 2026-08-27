@@ -97,8 +97,6 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
         --linker-patch
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0001-uml-establish-shared-architecture-contracts-and-buil.patch
-        --metadata
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/metadata.env
         --package-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
         --xcode-project
@@ -113,8 +111,6 @@ uml_add_tooling_test(
         --macos-linux-main
             ${PROJECT_SOURCE_DIR}/darwin/app/macos/linux_main.cpp
         --android-cmake ${PROJECT_SOURCE_DIR}/android/aosp-17/CMakeLists.txt
-        --android-release-cmake
-            ${PROJECT_SOURCE_DIR}/android/aosp-17/cmake/AndroidRelease.cmake
         --android-main
             ${PROJECT_SOURCE_DIR}/darwin/app/macos/android17_main.cpp
         --toolchain-env

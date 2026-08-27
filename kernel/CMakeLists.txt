@@ -10,15 +10,13 @@ set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS mainline-6.18 android-17)
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
-    # The ACK kernel and Android rootfs are independent accepted inputs. The
-    # application may advance its signed kernel carrier without republishing
-    # or invalidating an otherwise compatible guest disk bundle.
+    # Apple targets consume the ACK artifact only. Rootfs bundles are selected
+    # at launch and are not inputs to the emulator build.
     if(NOT UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
             "The Android 17 product supports only 16 KiB guest pages")
     endif()
-    if(NOT TARGET uml_android17_kernel_artifact OR
-       NOT TARGET uml_android17_rootfs_release)
+    if(NOT TARGET uml_android17_kernel_artifact)
         add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
             "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
     endif()
@@ -46,6 +44,7 @@ uml_read_artifact_env(
     "${_uml_mainline_acceptance}"
     UML_KERNEL_ARTIFACT_DIRECTORY_NAME
     _uml_mainline_directory_name)
+uml_watch_artifact_inputs("${_uml_mainline_acceptance}")
 set(_uml_mainline_artifact_default
     "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/${_uml_mainline_directory_name}")
 set(UML_MAINLINE_618_KERNEL_ARTIFACT_DIR
@@ -55,10 +54,9 @@ set(UML_MAINLINE_618_KERNEL_ARTIFACT_DIR
 uml_import_kernel_artifact(
     TARGET uml_mainline_kernel_artifact
     ARTIFACT_ROOT "${UML_MAINLINE_618_KERNEL_ARTIFACT_DIR}"
-    ACCEPTANCE "${_uml_mainline_acceptance}"
     COMMON_ROOT "${UML_KERNEL_COMMON_ROOT}"
-    LINE_ROOT "${UML_KERNEL_LINE_ROOT}"
     EXPECTED_FAMILY mainline-6.18
+    EXPECTED_RELEASE_SERIES 6.18
     EXPECTED_PAGE_SIZE "${_uml_expected_page_size}")
 
 set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET uml_mainline_kernel_artifact

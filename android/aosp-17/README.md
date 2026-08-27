@@ -108,20 +108,21 @@ android/aosp-17/tools/install-release.py \
 The installer validates the candidate, expands the compressed GPT as a sparse
 local file, revalidates the staged tree, and installs it atomically below
 `.build/android/releases`. It never replaces an existing release. Apple CMake
-performs read-only installed verification and does not invoke Repo, Soong,
-Kbuild, image assembly, publication, or transport.
+does not import the rootfs release and does not invoke Repo, Soong, Kbuild,
+image assembly, publication, or transport.
 
 The release manifest may retain the ACK build that qualified its target files,
-but Apple runtime selection uses the independently accepted ACK artifact. The
-runtime compares the rootfs manifest identity only, so a kernel-only app update
-continues to accept existing `.kern` bundles and their COWs.
+but that value is historical provenance. Apple runtime selection uses an
+independent compatible ACK artifact and performs no rootfs, kernel commit, or
+emulator release comparison at launch. Existing `.kern` bundles and COWs remain
+bootable across app and kernel updates within the `6.18` line.
 
 ## Apple consumers and guest bundles
 
-The macOS Android product is configured with the `macos-android17` preset. It
-requires the accepted rootfs release, accepted ACK artifact, and a dedicated
-writable instance COW. It does not alter the normal Linux executable or search
-for `rootfs.erofs`.
+The macOS Android product is configured with the `macos-android17` preset. Its
+build requires a compatible ACK artifact; launch takes any rootfs directory
+with the expected payload layout and a dedicated writable instance COW. It
+does not alter the normal Linux executable or search for `rootfs.erofs`.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 
@@ -130,10 +131,11 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 - exactly one `guest/*.img`; and
 - `userdata.cow` after first boot.
 
-The kernel is supplied by the runtime framework and is not bundle payload. A
-bundle is selectable only when complete and matching the installed rootfs
-release. Android fixes Kernarium's page selection at 16 KiB and appends the
-host-owned display density and tagged-pointer option at launch.
+The kernel is supplied by the runtime framework and is not bundle payload. The
+manifest is provenance rather than a runtime compatibility token, and legacy
+bundles without it remain selectable. Missing files and malformed disk images
+fail when opened or parsed. Android fixes Kernarium's page selection at 16 KiB
+and appends the host-owned display density and tagged-pointer option at launch.
 
 Do not recreate a bundle merely to relaunch it; that would discard persistent
 guest state. When copying to physical iOS, target the complete

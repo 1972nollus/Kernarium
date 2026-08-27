@@ -17,7 +17,6 @@ struct GuestBundle: Equatable {
     /// Android rootfs payload layout. The signed runtime carries its kernel
     /// independently, so a kernel-only app update does not rewrite the bundle.
     enum Android {
-        static let manifest = "release-manifest.json"
         static let commandLine = "boot/kernel-command-line.txt"
         static let guestDirectory = "guest"
         static let diskExtension = "img"
@@ -32,7 +31,6 @@ struct GuestBundle: Equatable {
     let baseDisk: URL
 
     var name: String { url.lastPathComponent }
-    var manifest: URL { url.appendingPathComponent(Android.manifest) }
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
     var instance: URL { url.appendingPathComponent(Android.instance) }
 
@@ -60,9 +58,8 @@ struct GuestBundle: Equatable {
         }
     }
 
-    /// Recognises a bundle from its payload rather than its name. A directory
-    /// that does not carry a complete payload is not offered at all, so a
-    /// half-copied bundle cannot be selected and then fail at boot.
+    /// Recognises a bundle from the inputs needed to launch it. The release
+    /// manifest is provenance for people and tools, not a runtime identity.
     static func load(
         at url: URL,
         fileManager: FileManager = .default
@@ -72,14 +69,6 @@ struct GuestBundle: Equatable {
         else {
             return nil
         }
-        for relative in [Android.manifest, Android.commandLine] {
-            guard isRegularFile(
-                url.appendingPathComponent(relative),
-                fileManager: fileManager
-            ) else {
-                return nil
-            }
-        }
         guard let baseDisk = androidBaseDisk(in: url, fileManager: fileManager)
         else {
             return nil
@@ -87,10 +76,8 @@ struct GuestBundle: Equatable {
         return GuestBundle(url: url, flavor: .android, baseDisk: baseDisk)
     }
 
-    /// The base image name carries the rootfs release it was published for, so
-    /// it is discovered rather than assumed. Exactly one candidate keeps the
-    /// choice unambiguous; the runtime still checks its size against the release
-    /// the framework was built from.
+    /// The base image is discovered rather than named by a release. Exactly one
+    /// candidate keeps the launch input unambiguous.
     private static func androidBaseDisk(
         in url: URL,
         fileManager: FileManager

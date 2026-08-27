@@ -32,9 +32,9 @@ enum {
 };
 
 /* A boot request. Linux guests supply rootfs_path and overlay_path; Android
- * guests supply the rootfs manifest, base disk, command line, persistent
- * instance disk, and desired boot mode. The Android kernel is carried and
- * versioned independently by the runtime framework. */
+ * guests supply a base disk, command line, persistent instance disk, and
+ * desired boot mode. android_manifest_path is retained for API v4 layout
+ * compatibility and is ignored. The kernel is carried by the runtime. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -91,6 +91,7 @@ typedef struct kernarium_runtime_api {
     uint32_t struct_size;
     uint32_t guest_page_size;
     uint32_t guest_flavor;
+    /* Informational values only. The loader does not use them for admission. */
     const char* kernel_release;
     const char* framework_name;
     kernarium_runtime_run_function run;

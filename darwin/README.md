@@ -22,14 +22,16 @@ The standalone macOS application supports embedded Linux kernels with 16 KiB
 or 4 KiB guest pages. When omitted, `mem=` defaults to 8 GiB and `ncpus=` to
 10; explicit kernel arguments override either value independently.
 
-Kernarium uses versioned iOS runtime frameworks for 16 KiB Linux, 4 KiB Linux,
-and 16 KiB Android. It defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on
+Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
+Linux, and 16 KiB Android. Framework names remain stable across patch releases
+and kernel commits. It defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on
 physical devices, and all processors reported by `NSProcessInfo`. It loads one
 runtime for the process lifetime.
 
-The Android macOS composition is a separate product. It consumes the accepted
-ACK kernel and rootfs release, requires a per-instance COW, and does not search
-for the Linux desktop image.
+The Android macOS composition is a separate product. Its build consumes a
+compatible ACK kernel artifact; launch accepts a rootfs directory and
+per-instance COW without comparing rootfs release identity, and it does not
+search for the Linux desktop image.
 
 ## Runtime and scheduling
 

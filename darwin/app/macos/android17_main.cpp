@@ -3,41 +3,19 @@
 #include "launcher.hpp"
 #include "block/android_boot.hpp"
 
-#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#ifndef UML_ANDROID17_ROOTFS_DIRECTORY_NAME
-#error "Android rootfs release directory identity is required"
-#endif
-#ifndef UML_ANDROID17_ROOTFS_RELEASE_ID
-#error "Android rootfs release identity is required"
-#endif
-#ifndef UML_ANDROID17_ROOTFS_PRODUCT_FAMILY
-#error "Android rootfs product-family identity is required"
-#endif
-#ifndef UML_ANDROID17_BASE_DISK_SIZE
-#error "Android base-disk size is required"
-#endif
-extern "C" {
-extern const unsigned char uml_android_rootfs_manifest_start[]
-	__asm("section$start$__DATA$__uml_rootfs");
-extern const unsigned char uml_android_rootfs_manifest_end[]
-	__asm("section$end$__DATA$__uml_rootfs");
-}
 
 namespace {
 
@@ -87,27 +65,6 @@ std::string environment_value(const char *name)
 	return value == nullptr ? std::string{} : std::string{value};
 }
 
-bool starts_with_any(std::string_view value,
-		     std::initializer_list<std::string_view> prefixes)
-{
-	for (const auto prefix : prefixes)
-		if (value.starts_with(prefix))
-			return true;
-	return false;
-}
-
-void reject_protected_kernel_argument(std::string_view argument)
-{
-	if (starts_with_any(argument,
-				    {"ubd0", "initrd=", "initrd_offset=", "initrd_size=",
-				     "init=", "root=", "rootfstype=",
-			     "androidboot.", "console=", "8250.nr_uarts=",
-			     "firmware_class.path="}))
-		throw std::invalid_argument(
-			"release-owned kernel argument cannot be overridden: " +
-			std::string{argument});
-}
-
 AndroidOptions parse_options(int argc, char *const argv[])
 {
 	AndroidOptions options;
@@ -152,8 +109,6 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		has_gpu |= argument == "--gpu";
 		has_gpu_display |= argument.starts_with("--gpu-display=");
 		has_audio |= argument == "--audio";
-		if (!argument.starts_with("--"))
-			reject_protected_kernel_argument(argument);
 		options.forwarded.emplace_back(argument);
 	}
 	if (options.release.empty())
@@ -174,23 +129,19 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	return options;
 }
 
-std::size_t checked_regular_file_size(
-	const std::filesystem::path &path, std::uintmax_t expected_size = 0)
+std::size_t checked_regular_file_size(const std::filesystem::path &path)
 {
 	struct stat details {};
 	if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
-	    details.st_size < 0 ||
-	    (expected_size != 0 &&
-	     static_cast<std::uintmax_t>(details.st_size) != expected_size))
+	    details.st_size < 0)
 		throw std::runtime_error("release payload is missing or unsafe: " +
 					 std::string{path});
 	return static_cast<std::size_t>(details.st_size);
 }
 
-std::vector<unsigned char> read_regular_file(
-	const std::filesystem::path &path, std::uintmax_t expected_size = 0)
+std::vector<unsigned char> read_regular_file(const std::filesystem::path &path)
 {
-	const auto size = checked_regular_file_size(path, expected_size);
+	const auto size = checked_regular_file_size(path);
 	FILE *file = std::fopen(path.c_str(), "rb");
 	if (file == nullptr)
 		throw std::system_error(errno, std::generic_category(),
@@ -216,21 +167,8 @@ std::filesystem::path validated_release_root(
 			"Android release must be a real local directory");
 	std::error_code error;
 	auto release = std::filesystem::canonical(candidate, error);
-	if (error || release.filename() != UML_ANDROID17_ROOTFS_DIRECTORY_NAME)
-		throw std::invalid_argument(
-			"Android rootfs directory does not match the accepted identity");
-	const auto manifest = read_regular_file(release / "release-manifest.json");
-	const std::size_t embedded_size = static_cast<std::size_t>(
-		uml_android_rootfs_manifest_end -
-		uml_android_rootfs_manifest_start);
-	if (manifest.size() != embedded_size ||
-	    !std::equal(manifest.begin(), manifest.end(),
-		       uml_android_rootfs_manifest_start))
-		throw std::invalid_argument(
-			"Android rootfs manifest differs from the embedded identity");
-	(void)checked_regular_file_size(
-		release / "guest/android-17-uml-arm64.img",
-		UML_ANDROID17_BASE_DISK_SIZE);
+	if (error)
+		throw std::invalid_argument("Android release cannot be resolved");
 	return release;
 }
 
@@ -240,41 +178,6 @@ void validate_ubd_path(const std::filesystem::path &path, const char *label)
 	if (value.find_first_of(",:") != std::string::npos)
 		throw std::invalid_argument(std::string{label} +
 			" path contains a UBD delimiter");
-}
-
-void write_receipt(const std::filesystem::path &path)
-{
-	const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
-	if (descriptor < 0) {
-		if (errno == EEXIST)
-			return;
-		throw std::system_error(errno, std::generic_category(),
-					"cannot create Android instance receipt");
-	}
-	const unsigned char *cursor = uml_android_rootfs_manifest_start;
-	std::size_t remaining = static_cast<std::size_t>(
-		uml_android_rootfs_manifest_end -
-		uml_android_rootfs_manifest_start);
-	while (remaining != 0) {
-		const ssize_t count = write(descriptor, cursor, remaining);
-		if (count < 0 && errno == EINTR)
-			continue;
-		if (count <= 0) {
-			const int error = count < 0 ? errno : EIO;
-			close(descriptor);
-			throw std::system_error(
-				error, std::generic_category(),
-				"cannot write Android instance receipt");
-		}
-		cursor += count;
-		remaining -= static_cast<std::size_t>(count);
-	}
-	const int sync_error = fsync(descriptor) == 0 ? 0 : errno;
-	const int close_error = close(descriptor) == 0 ? 0 : errno;
-	if (sync_error != 0 || close_error != 0)
-		throw std::system_error(sync_error != 0 ? sync_error : close_error,
-					std::generic_category(),
-					"cannot finish Android instance receipt");
 }
 
 std::filesystem::path validated_instance(
@@ -305,18 +208,6 @@ std::filesystem::path validated_instance(
 		throw std::system_error(errno, std::generic_category(),
 					"cannot inspect Android instance disk");
 	}
-	const auto receipt = std::filesystem::path{instance.string() +
-							 ".release-manifest.json"};
-	write_receipt(receipt);
-	const auto stored = read_regular_file(receipt);
-	const std::size_t embedded_size = static_cast<std::size_t>(
-		uml_android_rootfs_manifest_end -
-		uml_android_rootfs_manifest_start);
-	if (stored.size() != embedded_size ||
-	    !std::equal(stored.begin(), stored.end(),
-			uml_android_rootfs_manifest_start))
-		throw std::invalid_argument(
-			"Android instance belongs to another rootfs release");
 	return instance;
 }
 
@@ -358,7 +249,7 @@ void print_usage()
 {
 	std::fputs(
 		"Android 17 options:\n"
-			"  --android-release=/absolute/accepted/release\n"
+			"  --android-release=/absolute/release\n"
 			"  --android-instance=/absolute/writable-instance.cow\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
@@ -401,9 +292,8 @@ int main(int argc, char *argv[], char *envp[])
 				release / "boot/kernel-command-line.txt");
 			std::fprintf(
 				stderr,
-					"Android release %s (%s), %s boot, writable instance %s\n",
-					UML_ANDROID17_ROOTFS_RELEASE_ID,
-					UML_ANDROID17_ROOTFS_PRODUCT_FAMILY,
+					"Android rootfs %s, %s boot, writable instance %s\n",
+					release.c_str(),
 					boot.mode == uml::android::BootMode::recovery
 						? "recovery" : "normal",
 					instance.c_str());

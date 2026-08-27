@@ -38,21 +38,6 @@ def env_value(source: str, key: str) -> str:
     return rows[0].strip("'")
 
 
-def kernel_release(metadata: str) -> str:
-    prefix = "UML_KERNEL_RELEASE_VERSION='"
-    rows = [
-        row[len(prefix) : -1]
-        for row in metadata.splitlines()
-        if row.startswith(prefix) and row.endswith("'")
-    ]
-    require(len(rows) == 1, "kernel metadata lacks one release identity")
-    require(
-        all(component.isdigit() for component in rows[0].split(".")),
-        "kernel release identity is not numeric",
-    )
-    return rows[0]
-
-
 def synthetic_elf(
     *,
     late_nonexecutable_overlap: bool,
@@ -182,7 +167,6 @@ def main() -> int:
     parser.add_argument("--serial-console-view", type=Path, required=True)
     parser.add_argument("--carrier-verifier", type=Path, required=True)
     parser.add_argument("--linker-patch", type=Path, required=True)
-    parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--package-script", type=Path, required=True)
     parser.add_argument("--xcode-project", type=Path, required=True)
     parser.add_argument("--package-resolved", type=Path, required=True)
@@ -191,7 +175,6 @@ def main() -> int:
     parser.add_argument("--macos-app", type=Path, required=True)
     parser.add_argument("--macos-linux-main", type=Path, required=True)
     parser.add_argument("--android-cmake", type=Path, required=True)
-    parser.add_argument("--android-release-cmake", type=Path, required=True)
     parser.add_argument("--android-main", type=Path, required=True)
     parser.add_argument("--toolchain-env", type=Path, required=True)
     arguments = parser.parse_args()
@@ -283,6 +266,10 @@ def main() -> int:
         )
     for contract in (
         "verify-kernel-artifact.py",
+        "--compatible",
+        "EXPECTED_RELEASE_SERIES",
+        "--expected-release-series",
+        "--abi-metadata",
         "add_library(\"${ARTIFACT_TARGET}\" INTERFACE)",
         "UML_KERNEL_IMAGE",
         "UML_KERNEL_MODULES_BUILTIN",
@@ -339,21 +326,22 @@ def main() -> int:
         "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
         "UML_ARTIFACT_FAMILY",
         "UML_KERNEL_PAGE_SIZE",
-        "UML_KERNEL_RELEASE",
+        'KERNARIUM_KERNEL_RELEASE_SERIES "6.18"',
         "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
         'OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"',
         "verify-signed-kernel-carrier.py",
         "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
         'LINK_DEPENDS "${_kernarium_kernel_image}"',
-        "UML_ANDROID17_ROOTFS_RELEASE_TARGET",
-        "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
-        "LINKER:-sectcreate,__DATA,__uml_rootfs",
     ):
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
     for forbidden in (
         "UML_KERNARIUM_KERNEL_IMAGE",
         "/Volumes/Kernel/build-16k",
         "/Volumes/Kernel/build-4k",
+        "UML_ANDROID17_ROOTFS_RELEASE_TARGET",
+        "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
+        "LINKER:-sectcreate,__DATA,__uml_rootfs",
+        "KERNARIUM_ANDROID_BASE_DISK_SIZE",
     ):
         require(
             forbidden not in runtime_cmake,
@@ -369,6 +357,15 @@ def main() -> int:
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
+    for forbidden in (
+        "boot->android_manifest_path",
+        "uml_android_rootfs_manifest_start",
+        "KERNARIUM_ANDROID_BASE_DISK_SIZE",
+    ):
+        require(
+            forbidden not in runtime_source,
+            f"runtime retains rootfs identity check {forbidden}",
+        )
     require(
         "__attribute__((constructor))" not in runtime_source,
         "deferred runtime still owns the pre-main timer constructor",
@@ -394,6 +391,15 @@ def main() -> int:
         "kernarium_runtime_loader_send_console_input",
     ):
         require(contract in loader_source, f"application runtime loader lacks {contract}")
+    for forbidden in (
+        "api->kernel_release == nullptr",
+        "api->framework_name == nullptr",
+        "runtime identity mismatch",
+    ):
+        require(
+            forbidden not in loader_source,
+            f"application loader retains release admission {forbidden}",
+        )
     require(
         "KernariumConsoleOutputHandler" in loader_header,
         "application runtime loader does not expose serial output",
@@ -408,11 +414,9 @@ def main() -> int:
     )
     verify_carrier_tool(arguments.carrier_verifier)
 
-    metadata = read(arguments.metadata)
-    release = kernel_release(metadata)
-    release_component = release.replace(".", "_")
-    runtime_4k = f"KernariumRuntime_{release_component}_4K"
-    runtime_16k = f"KernariumRuntime_{release_component}_16K"
+    runtime_4k = "KernariumRuntime_6_18_4K"
+    runtime_16k = "KernariumRuntime_6_18_16K"
+    runtime_android = "KernariumRuntimeAndroid_6_18_16K"
     package_script = read(arguments.package_script)
     for contract in (
         "kernarium-runtime-ios-device-4k",
@@ -421,11 +425,12 @@ def main() -> int:
         "kernarium-runtime-ios-simulator-16k",
         'create_xcframework "$RUNTIME_4K"',
         'create_xcframework "$RUNTIME_16K"',
+        'create_xcframework "$RUNTIME_ANDROID_16K"',
     ):
         require(contract in package_script, f"runtime packaging lacks {contract}")
 
     xcode_project = read(arguments.xcode_project)
-    for runtime in (runtime_4k, runtime_16k):
+    for runtime in (runtime_4k, runtime_16k, runtime_android):
         require(
             f"{runtime}.xcframework in Embed Frameworks" in xcode_project,
             f"Xcode does not embed {runtime}",
@@ -505,6 +510,10 @@ def main() -> int:
         "cmake --build --preset kernarium-ios-simulator-4k",
     ):
         require(contract in simulator_script, f"Simulator launcher lacks {contract}")
+    require(
+        '-DUML_ANDROID17_ROOTFS_RELEASE_DIR=' not in simulator_script,
+        "Simulator build still passes a rootfs release into CMake",
+    )
 
     macos_app_cmake = read(arguments.macos_app_cmake)
     for contract in (
@@ -514,10 +523,14 @@ def main() -> int:
         "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}",
         "uml-darwin linux_main.cpp",
         "uml-darwin-android17 android17_main.cpp",
-        "LINKER:-sectcreate,__DATA,__uml_rootfs,${_uml_android_manifest}",
     ):
         require(contract in macos_app_cmake, f"macOS app binding lacks {contract}")
-    for forbidden in ("TARGET uml_kernel", "UML_KERNEL_BUILD_DIR"):
+    for forbidden in (
+        "TARGET uml_kernel",
+        "UML_KERNEL_BUILD_DIR",
+        "UML_ANDROID17_ROOTFS_RELEASE_TARGET",
+        "LINKER:-sectcreate,__DATA,__uml_rootfs",
+    ):
         require(
             forbidden not in macos_app_cmake,
             f"macOS app binding retains producer-global input {forbidden}",
@@ -547,26 +560,21 @@ def main() -> int:
         )
 
     android_cmake = read(arguments.android_cmake)
-    android_release_cmake = read(arguments.android_release_cmake)
     for contract in (
         "if(NOT UML_GUEST_16K_PAGES)",
-        "UML_ANDROID17_ROOTFS_RELEASE_DIR",
         "UML_ANDROID17_KERNEL_ARTIFACT_DIR",
-        "uml_import_android17_rootfs_release",
         "uml_import_kernel_artifact",
+        "EXPECTED_RELEASE_SERIES 6.18",
     ):
         require(contract in android_cmake, f"Android product lacks {contract}")
-    for contract in (
-        "verify-release.py",
-        "--installed",
-        'STREQUAL "android-17-ack-6.18-16k"',
-        'STREQUAL "android-6.18"',
+    for forbidden in (
+        "UML_ANDROID17_ROOTFS_RELEASE_DIR",
+        "uml_import_android17_rootfs_release",
         "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
-        "UML_ANDROID_BASE_DISK",
     ):
         require(
-            contract in android_release_cmake,
-            f"Android release importer lacks {contract}",
+            forbidden not in android_cmake,
+            f"Android product still imports rootfs identity {forbidden}",
         )
 
     android_main = read(arguments.android_main)
@@ -576,16 +584,25 @@ def main() -> int:
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'boot_mode_option{"--android-boot-mode="}',
-        "section$start$__DATA$__uml_rootfs",
         '"ubd0=" + instance.string()',
         '"initrd=" + base_disk.string()',
         '"initrd_offset=" + std::to_string(boot.ramdisk.offset)',
         '"initrd_size=" + std::to_string(boot.ramdisk.size)',
         '"root=/dev/ram0"',
+    ):
+        require(contract in android_main, f"Android launcher lacks {contract}")
+    for forbidden in (
+        "section$start$__DATA$__uml_rootfs",
+        "UML_ANDROID17_ROOTFS_RELEASE_ID",
+        "UML_ANDROID17_ROOTFS_DIRECTORY_NAME",
+        "UML_ANDROID17_BASE_DISK_SIZE",
         "release-owned kernel argument cannot be overridden",
         "Android instance belongs to another rootfs release",
     ):
-        require(contract in android_main, f"Android launcher lacks {contract}")
+        require(
+            forbidden not in android_main,
+            f"Android launcher retains runtime identity check {forbidden}",
+        )
 
     for path, source in (
         (arguments.presets, presets_source),
@@ -595,7 +612,6 @@ def main() -> int:
         (arguments.macos_app, macos_app),
         (arguments.macos_linux_main, macos_linux_main),
         (arguments.android_cmake, android_cmake),
-        (arguments.android_release_cmake, android_release_cmake),
         (arguments.android_main, android_main),
         (arguments.toolchain_env, toolchain_env),
     ):

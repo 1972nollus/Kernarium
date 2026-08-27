@@ -29,12 +29,12 @@ endfunction()
 function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
-        TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_FAMILY
-        EXPECTED_PAGE_SIZE)
+        TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY
+        EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
-            TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_FAMILY
-            EXPECTED_PAGE_SIZE)
+            TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY
+            EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
         if(NOT ARTIFACT_${_uml_required})
             message(FATAL_ERROR
                 "uml_import_kernel_artifact requires ${_uml_required}")
@@ -48,8 +48,6 @@ function(uml_import_kernel_artifact)
     endif()
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(_uml_kernel_metadata "${ARTIFACT_LINE_ROOT}/patches/metadata.env")
-    set(_uml_patch_manifest "${ARTIFACT_LINE_ROOT}/patches/series/manifest.tsv")
     set(_uml_abi_metadata "${ARTIFACT_COMMON_ROOT}/abi/identity.env")
     set(_uml_verifier
         "${ARTIFACT_COMMON_ROOT}/artifacts/verify-kernel-artifact.py")
@@ -57,16 +55,17 @@ function(uml_import_kernel_artifact)
         COMMAND "${Python3_EXECUTABLE}" -B "${_uml_verifier}"
             --artifact "${ARTIFACT_ARTIFACT_ROOT}"
             --common-root "${ARTIFACT_COMMON_ROOT}"
-            --kernel-metadata "${_uml_kernel_metadata}"
-            --patch-manifest "${_uml_patch_manifest}"
             --abi-metadata "${_uml_abi_metadata}"
-            --acceptance "${ARTIFACT_ACCEPTANCE}"
+            --compatible
+            --expected-family "${ARTIFACT_EXPECTED_FAMILY}"
+            --expected-release-series "${ARTIFACT_EXPECTED_RELEASE_SERIES}"
+            --expected-page-size "${ARTIFACT_EXPECTED_PAGE_SIZE}"
         RESULT_VARIABLE _uml_artifact_result
         OUTPUT_VARIABLE _uml_artifact_output
         ERROR_VARIABLE _uml_artifact_error)
     if(NOT _uml_artifact_result EQUAL 0)
         message(FATAL_ERROR
-            "Cannot import the accepted kernel artifact:\n"
+            "Cannot import the compatible kernel artifact:\n"
             "${_uml_artifact_output}${_uml_artifact_error}")
     endif()
 
@@ -74,7 +73,6 @@ function(uml_import_kernel_artifact)
     file(READ "${_uml_manifest}" _uml_manifest_json)
     string(JSON _uml_family GET "${_uml_manifest_json}" family)
     string(JSON _uml_page_size GET "${_uml_manifest_json}" page_size)
-    string(JSON _uml_release GET "${_uml_manifest_json}" release)
     string(JSON _uml_release_id GET "${_uml_manifest_json}" release_id)
     string(JSON _uml_directory_name GET "${_uml_manifest_json}" directory_name)
     if(NOT _uml_family STREQUAL "${ARTIFACT_EXPECTED_FAMILY}")
@@ -98,8 +96,6 @@ function(uml_import_kernel_artifact)
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_ARTIFACT_RELEASE_ID "${_uml_release_id}")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_KERNEL_RELEASE "${_uml_release}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_PAGE_SIZE "${_uml_page_size}")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_IMAGE "${ARTIFACT_ARTIFACT_ROOT}/kernel/vmlinux")
@@ -110,10 +106,7 @@ function(uml_import_kernel_artifact)
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin")
 
     uml_watch_artifact_inputs(
-        "${ARTIFACT_ACCEPTANCE}"
         "${_uml_manifest}"
-        "${_uml_kernel_metadata}"
-        "${_uml_patch_manifest}"
         "${_uml_abi_metadata}"
         "${_uml_verifier}"
         "${ARTIFACT_COMMON_ROOT}/artifacts/kernel_artifact.py"

@@ -53,7 +53,9 @@ local bundle below `.build/kernel/artifacts`.
 
 Kernel publication is independent of AOSP/rootfs publication. Advancing the
 accepted ACK artifact must not rebuild or rename the rootfs release, recreate a
-`.kern` bundle, or invalidate its persistent COW.
+`.kern` bundle, or invalidate its persistent COW. Apple consumers validate the
+bridge ABI, 16 KiB page profile, Android family, and `6.18` series at build
+time; patch releases and commit identities are provenance, not runtime gates.
 
 ## Patch maintenance
 

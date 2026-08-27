@@ -51,15 +51,6 @@ extern const unsigned char uml_elf_start[]
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
 #endif
-#if KERNARIUM_RUNTIME_ANDROID_GUEST
-/* The accepted rootfs identity is fixed at link time independently of the ACK
- * kernel artifact, so updating the signed carrier does not invalidate an
- * existing bundle or its persistent COW. */
-extern const unsigned char uml_android_rootfs_manifest_start[]
-    __asm("section$start$__DATA$__uml_rootfs");
-extern const unsigned char uml_android_rootfs_manifest_end[]
-    __asm("section$end$__DATA$__uml_rootfs");
-#endif
 int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
 int uml_slirp_net_irq_fd(void*);
 int uml_slirp_net_read(void*, void*, std::size_t);
@@ -823,15 +814,11 @@ const char* selectedExecutionEngine()
 }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-std::size_t checkedRegularFileSize(
-    const std::filesystem::path& path,
-    std::uintmax_t expectedSize = 0)
+std::size_t checkedRegularFileSize(const std::filesystem::path& path)
 {
     struct stat details {};
     if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
-        details.st_size < 0 ||
-        (expectedSize != 0U &&
-         static_cast<std::uintmax_t>(details.st_size) != expectedSize)) {
+        details.st_size < 0) {
         throw std::runtime_error(
             "bundle payload is missing or unexpected: " + std::string {path});
     }
@@ -839,10 +826,9 @@ std::size_t checkedRegularFileSize(
 }
 
 std::vector<unsigned char> readRegularFile(
-    const std::filesystem::path& path,
-    std::uintmax_t expectedSize = 0)
+    const std::filesystem::path& path)
 {
-    const auto size = checkedRegularFileSize(path, expectedSize);
+    const auto size = checkedRegularFileSize(path);
     std::FILE* file = std::fopen(path.c_str(), "rb");
     if (file == nullptr)
         throw std::runtime_error("cannot open " + std::string {path});
@@ -985,8 +971,7 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        if (boot->android_manifest_path == nullptr ||
-            boot->android_base_disk_path == nullptr ||
+        if (boot->android_base_disk_path == nullptr ||
             boot->android_instance_path == nullptr ||
             boot->android_command_line_path == nullptr) {
             std::fputs("Kernarium: incomplete Android bundle\n", stderr);
@@ -994,23 +979,6 @@ int runtimeRun(
         }
         const std::filesystem::path baseDisk {boot->android_base_disk_path};
         const std::filesystem::path instance {boot->android_instance_path};
-        const auto manifest = readRegularFile(boot->android_manifest_path);
-        const std::size_t embeddedManifestSize = static_cast<std::size_t>(
-            uml_android_rootfs_manifest_end -
-            uml_android_rootfs_manifest_start);
-        if (manifest.size() != embeddedManifestSize ||
-            !std::equal(
-                manifest.begin(),
-                manifest.end(),
-                uml_android_rootfs_manifest_start)) {
-            std::fputs(
-                "Kernarium: the bundle belongs to a different Android "
-                "rootfs release than this runtime\n",
-                stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        (void)checkedRegularFileSize(
-            baseDisk, KERNARIUM_ANDROID_BASE_DISK_SIZE);
         validateUbdPath(baseDisk, "Android base disk");
         validateUbdPath(instance, "Android instance");
         prepareAndroidInstance(instance);
@@ -1358,7 +1326,7 @@ const kernarium_runtime_api runtimeApi {
     .guest_flavor = KERNARIUM_RUNTIME_ANDROID_GUEST
         ? KERNARIUM_RUNTIME_GUEST_ANDROID
         : KERNARIUM_RUNTIME_GUEST_LINUX,
-    .kernel_release = KERNARIUM_KERNEL_RELEASE,
+    .kernel_release = KERNARIUM_KERNEL_RELEASE_SERIES,
     .framework_name = KERNARIUM_RUNTIME_FRAMEWORK_NAME,
     .run = runtimeRun,
     .request_stop = runtimeRequestStop,

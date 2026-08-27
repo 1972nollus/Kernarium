@@ -105,6 +105,27 @@ struct KernariumTests {
     }
 
     @Test
+    func androidBundleSelectionDoesNotRequireReleaseMetadata() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(GuestBundle.pathExtension)
+        let guestDirectory = directory.appendingPathComponent("guest")
+        try manager.createDirectory(
+            at: guestDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+        let baseDisk = guestDirectory.appendingPathComponent("legacy.img")
+        #expect(manager.createFile(atPath: baseDisk.path, contents: Data()))
+
+        let bundle = GuestBundle.load(at: directory, fileManager: manager)
+
+        #expect(bundle?.baseDisk == baseDisk)
+        #expect(bundle?.flavor == .android)
+    }
+
+    @Test
     func configurationDefaultsUseMaximumCPUAndRequestedDefaults() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

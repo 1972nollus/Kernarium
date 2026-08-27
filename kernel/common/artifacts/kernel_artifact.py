@@ -450,7 +450,6 @@ def verify_tracked_identity(
     abi_metadata_path: Path,
 ) -> None:
     kernel = parse_env(kernel_metadata_path)
-    abi = parse_env(abi_metadata_path)
     expected_source = {
         "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
         "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
@@ -463,6 +462,11 @@ def verify_tracked_identity(
     for key, value in expected_source.items():
         if manifest["source"][key] != value:
             fail(f"artifact source identity differs from tracked {key}")
+    verify_abi_identity(manifest, abi_metadata_path)
+
+
+def verify_abi_identity(manifest: dict, abi_metadata_path: Path) -> None:
+    abi = parse_env(abi_metadata_path)
     expected_abi = {
         "version": int(abi["DARWIN_UML_ABI_VERSION"]),
         "fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
@@ -470,6 +474,35 @@ def verify_tracked_identity(
     for key, value in expected_abi.items():
         if manifest["abi"][key] != value:
             fail(f"artifact ABI identity differs from tracked {key}")
+
+
+def verify_compatible_identity(
+    manifest: dict,
+    abi_metadata_path: Path,
+    expected_family: str,
+    expected_release_series: str,
+    expected_page_size: int,
+) -> None:
+    verify_abi_identity(manifest, abi_metadata_path)
+    if manifest["family"] != expected_family:
+        fail(
+            f"artifact family {manifest['family']} differs from "
+            f"required {expected_family}"
+        )
+    if manifest["page_size"] != expected_page_size:
+        fail(
+            f"artifact page size {manifest['page_size']} differs from "
+            f"required {expected_page_size}"
+        )
+    release = manifest["release"]
+    release_pattern = re.compile(
+        rf"^{re.escape(expected_release_series)}(?:$|[.-].*)"
+    )
+    if release_pattern.fullmatch(release) is None:
+        fail(
+            f"kernel release {release} is outside required "
+            f"{expected_release_series} series"
+        )
 
 
 def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
@@ -519,6 +552,39 @@ def verify_artifact(
     )
     if acceptance_path is not None:
         verify_acceptance(manifest, acceptance_path)
+    verify_inventory(artifact_root, manifest)
+    release = (artifact_root / "kernel/kernel.release").read_text(
+        encoding="utf-8"
+    ).strip()
+    if release != manifest["release"]:
+        fail("kernel release payload differs from its manifest")
+    verify_config(artifact_root / "kernel/config", manifest["page_size"])
+    verify_elf(artifact_root / "kernel/vmlinux", manifest["page_size"], common_root)
+    return manifest
+
+
+def verify_compatible_artifact(
+    artifact_root: Path,
+    common_root: Path,
+    abi_metadata_path: Path,
+    expected_family: str,
+    expected_release_series: str,
+    expected_page_size: int,
+) -> dict:
+    if not artifact_root.is_absolute():
+        fail("artifact root must be an absolute local path")
+    if not artifact_root.is_dir() or artifact_root.is_symlink():
+        fail("artifact root must be a regular local directory")
+    manifest = load_manifest(artifact_root)
+    if artifact_root.name != manifest["directory_name"]:
+        fail("artifact directory basename differs from its manifest")
+    verify_compatible_identity(
+        manifest,
+        abi_metadata_path,
+        expected_family,
+        expected_release_series,
+        expected_page_size,
+    )
     verify_inventory(artifact_root, manifest)
     release = (artifact_root / "kernel/kernel.release").read_text(
         encoding="utf-8"

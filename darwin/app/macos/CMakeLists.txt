@@ -82,41 +82,14 @@ if(UML_BUILD_CLI)
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)
-    if(NOT UML_ANDROID17_ROOTFS_RELEASE_TARGET OR
-       NOT TARGET "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}" OR
-       NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
+    if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
        NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
         message(FATAL_ERROR
-            "uml-darwin-android17 requires independent ACK and rootfs releases")
+            "uml-darwin-android17 requires a compatible ACK artifact")
     endif()
-    get_target_property(_uml_android_family
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}" UML_ANDROID_ROOTFS_FAMILY)
-    get_target_property(_uml_android_directory_name
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}"
-        UML_ANDROID_ROOTFS_DIRECTORY_NAME)
-    get_target_property(_uml_android_release_id
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}" UML_ANDROID_ROOTFS_RELEASE_ID)
-    get_target_property(_uml_android_manifest
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}"
-        UML_ANDROID_ROOTFS_RELEASE_MANIFEST)
-    get_target_property(_uml_android_base_disk
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}" UML_ANDROID_BASE_DISK)
-    file(SIZE "${_uml_android_base_disk}" _uml_android_base_disk_size)
 
     uml_add_macos_embedded_kernel_app(
         uml-darwin-android17 android17_main.cpp
         "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
-    target_compile_definitions(uml-darwin-android17 PRIVATE
-        UML_ANDROID17_ROOTFS_DIRECTORY_NAME="${_uml_android_directory_name}"
-        UML_ANDROID17_ROOTFS_RELEASE_ID="${_uml_android_release_id}"
-        UML_ANDROID17_ROOTFS_PRODUCT_FAMILY="${_uml_android_family}"
-        UML_ANDROID17_BASE_DISK_SIZE=${_uml_android_base_disk_size})
     target_link_libraries(uml-darwin-android17 PRIVATE UML::AndroidBoot)
-    target_link_options(uml-darwin-android17 PRIVATE
-        "LINKER:-sectcreate,__DATA,__uml_rootfs,${_uml_android_manifest}")
-    set_property(TARGET uml-darwin-android17 APPEND PROPERTY LINK_DEPENDS
-        "${_uml_android_manifest}"
-        "${_uml_android_base_disk}")
-    add_dependencies(uml-darwin-android17
-        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}")
 endif()

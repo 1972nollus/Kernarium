@@ -8,27 +8,58 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 from pathlib import Path
 
-from kernel_artifact import verify_artifact
+from kernel_artifact import verify_artifact, verify_compatible_artifact
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--common-root", type=Path, required=True)
-    parser.add_argument("--kernel-metadata", type=Path, required=True)
-    parser.add_argument("--patch-manifest", type=Path, required=True)
+    parser.add_argument("--kernel-metadata", type=Path)
+    parser.add_argument("--patch-manifest", type=Path)
     parser.add_argument("--abi-metadata", type=Path, required=True)
     parser.add_argument("--acceptance", type=Path)
+    parser.add_argument("--compatible", action="store_true")
+    parser.add_argument("--expected-family")
+    parser.add_argument("--expected-release-series")
+    parser.add_argument("--expected-page-size", type=int)
     args = parser.parse_args()
 
-    manifest = verify_artifact(
-        args.artifact,
-        args.common_root,
-        args.kernel_metadata,
-        args.patch_manifest,
-        args.abi_metadata,
-        acceptance_path=args.acceptance,
-    )
+    if args.compatible:
+        if (
+            args.expected_family is None
+            or args.expected_release_series is None
+            or args.expected_page_size is None
+            or args.kernel_metadata is not None
+            or args.patch_manifest is not None
+            or args.acceptance is not None
+        ):
+            parser.error(
+                "--compatible requires expected family, release series, and "
+                "page size without tracked-source or acceptance inputs"
+            )
+        manifest = verify_compatible_artifact(
+            args.artifact,
+            args.common_root,
+            args.abi_metadata,
+            args.expected_family,
+            args.expected_release_series,
+            args.expected_page_size,
+        )
+    else:
+        if args.kernel_metadata is None or args.patch_manifest is None:
+            parser.error(
+                "tracked verification requires --kernel-metadata and "
+                "--patch-manifest"
+            )
+        manifest = verify_artifact(
+            args.artifact,
+            args.common_root,
+            args.kernel_metadata,
+            args.patch_manifest,
+            args.abi_metadata,
+            acceptance_path=args.acceptance,
+        )
     print(
         f"verified {manifest['family']} {manifest['page_size'] // 1024} KiB "
         f"kernel artifact: {manifest['directory_name']}"

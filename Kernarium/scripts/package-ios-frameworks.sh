@@ -34,32 +34,14 @@ find_tool()
 
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
-find_tool PYTHON3 python3
 
-. "$ROOT_DIR/kernel/mainline-6.18/patches/metadata.env"
-case "$UML_KERNEL_RELEASE_VERSION" in
-''|*[!0-9.]*|.*|*..*|*.) fail "invalid kernel release identity" ;;
-esac
-RUNTIME_RELEASE=$(printf '%s\n' "$UML_KERNEL_RELEASE_VERSION" | tr . _)
-RUNTIME_4K="KernariumRuntime_${RUNTIME_RELEASE}_4K"
-RUNTIME_16K="KernariumRuntime_${RUNTIME_RELEASE}_16K"
+RUNTIME_4K="KernariumRuntime_6_18_4K"
+RUNTIME_16K="KernariumRuntime_6_18_16K"
 
 # The Android runtime carries an independently accepted ACK artifact. Rootfs
 # release updates do not rename this framework and kernel-only updates do not
 # invalidate an existing guest bundle.
-. "$ROOT_DIR/kernel/android-6.18/artifacts/accepted-16k.env"
-ANDROID_KERNEL_ARTIFACT_ROOT="$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
-[ -d "$ANDROID_KERNEL_ARTIFACT_ROOT" ] ||
-	fail "the accepted Android kernel artifact is not installed: $ANDROID_KERNEL_ARTIFACT_ROOT"
-ANDROID_KERNEL_RELEASE=$("$PYTHON3" -B -c 'import json,re,sys
-release = json.load(open(sys.argv[1]))["release"]
-match = re.match(r"^[0-9]+(\.[0-9]+)+", release)
-if not match:
-    raise SystemExit("cannot derive the Android kernel release")
-print(match.group(0).replace(".", "_"))' \
-	"$ANDROID_KERNEL_ARTIFACT_ROOT/kernel-artifact.json") ||
-	fail "cannot read the accepted Android kernel artifact identity"
-RUNTIME_ANDROID_16K="KernariumRuntimeAndroid_${ANDROID_KERNEL_RELEASE}_16K"
+RUNTIME_ANDROID_16K="KernariumRuntimeAndroid_6_18_16K"
 
 SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
