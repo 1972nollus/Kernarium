@@ -52,6 +52,14 @@ TARGET_NO_RECOVERY := false
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
 $(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
 
+# The inherited desktop product installs the complete historical AOSP sound
+# library. Keep its compact alarm, notification, and UI defaults, but omit the
+# legacy ringtone banks: this product has no telephony stack and the files
+# otherwise crowd useful app payloads out of the fixed 256 MiB product image.
+PRODUCT_COPY_FILES_EXCLUDE += \
+    frameworks/base/data/sounds/newwavelabs/% \
+    frameworks/base/data/sounds/ringtones/%
+
 PRODUCT_NAME := aosp_kernarium_darwin
 PRODUCT_DEVICE := darwin
 PRODUCT_BRAND := Android

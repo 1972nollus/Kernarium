@@ -96,6 +96,10 @@ AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
 BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1073741824
 BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 268435456
 BOARD_PRODUCTIMAGE_PARTITION_SIZE := 268435456
+# The inherited ext4 default reserves one inode per 4 KiB block, consuming
+# 16 MiB in this small image. Product currently contains fewer than 300 files;
+# keep generous growth room without crowding app payloads out of the image.
+BOARD_PRODUCTIMAGE_EXTFS_INODE_COUNT := 4096
 BOARD_VENDORIMAGE_PARTITION_SIZE := 268435456
 BOARD_ODMIMAGE_PARTITION_SIZE := 16777216
 BOARD_METADATAIMAGE_PARTITION_SIZE := 67108864
