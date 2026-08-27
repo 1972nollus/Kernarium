@@ -35,11 +35,14 @@ for relative in $boot_control_libraries; do
 done
 
 # The upstream copies are 4 KiB-only. MagiskBoot cannot patch Kernarium's
-# app-owned ACK ELF, and the built 64 KiB-aligned toybox implements ps.
+# app-owned ACK ELF, and the built 64 KiB-aligned toybox implements ps. The
+# prebuilt staging makefile copies the MTP library unconditionally even when
+# TW_EXCLUDE_MTP keeps it out of recovery; remove that unused USB payload too.
 rm -f -- \
 	"$root/FFiles/ps" \
 	"$root/sbin/magiskboot" \
-	"$root/system/bin/magiskboot"
+	"$root/system/bin/magiskboot" \
+	"$root/system/lib64/libtwrpmtp-ffs.so"
 ln -s -- /system/bin/toybox "$root/FFiles/ps"
 
 # OrangeFox links recovery against the AOSP boot-control client but its
@@ -61,9 +64,11 @@ for path in "$files" "$hashes"; do
 	}
 done
 sed -e '\#sbin/magiskboot$#d' -e '\#system/bin/magiskboot$#d' \
+	-e '\#system/lib64/libtwrpmtp-ffs.so$#d' \
 	"$files" > "$files.kernarium"
 mv -- "$files.kernarium" "$files"
 sed -e '\#FFiles/ps$#d' -e '\#sbin/magiskboot$#d' \
+	-e '\#system/lib64/libtwrpmtp-ffs.so$#d' \
 	"$hashes" > "$hashes.kernarium"
 mv -- "$hashes.kernarium" "$hashes"
 for relative in $boot_control_libraries; do
