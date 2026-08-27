@@ -171,6 +171,14 @@ build requires a compatible ACK artifact; launch takes any rootfs directory
 with the expected payload layout and a dedicated writable instance COW. It
 does not alter the normal Linux executable or search for `rootfs.erofs`.
 
+[`../../scripts/boot_android.py`](../../scripts/boot_android.py) is the ordinary
+macOS launcher. It selects the accepted installed release, keeps a release-
+specific persistent COW, exposes guest ADB only on host loopback, waits for the
+transport, and disconnects it when the guest stops. The default session uses
+the existing `macos-android17` executable with native Metal display, 10 vCPUs,
+8 GiB of RAM, and the gadgets engine. Pass `--build` to refresh that executable
+incrementally; run `scripts/boot_android.py --help` for other overrides.
+
 Kernarium represents one Android guest as a `.kern` directory containing:
 
 - `release-manifest.json`;

@@ -39,3 +39,10 @@ uml_add_tooling_test(
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME android17-macos-launcher-options
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_boot_android.py
+    LABELS android
+    TIMEOUT 30)
