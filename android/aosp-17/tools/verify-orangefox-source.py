@@ -341,6 +341,10 @@ def verify_checkout(
             raise VerificationError(f"OrangeFox external checkout is dirty: {path}")
         if values[repository_key] not in remote_urls(checkout):
             raise VerificationError(f"OrangeFox external origin differs: {path}")
+        if path in route_paths:
+            # The routed history below owns its base/final identity. The
+            # external pin still owns this checkout's transport and base.
+            continue
         if run("git", "rev-parse", "HEAD", cwd=checkout) != values[commit_key]:
             raise VerificationError(f"OrangeFox external commit differs: {path}")
         if run("git", "rev-parse", "HEAD^{tree}", cwd=checkout) != values[tree_key]:
