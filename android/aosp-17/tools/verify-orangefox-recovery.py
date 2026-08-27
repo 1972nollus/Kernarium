@@ -345,6 +345,8 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
         fail("OrangeFox build identity is missing")
     if "system/lib64/libtwrpmtp-ffs.so" in entries:
         fail("OrangeFox retains unsupported USB MTP support")
+    if "system/bin/keystore_cli_v2" in entries:
+        fail("OrangeFox retains the unsupported KeyMint command-line client")
 
     try:
         cgroups = json.loads(entries["system/etc/cgroups.json"].payload)

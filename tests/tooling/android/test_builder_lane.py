@@ -1820,6 +1820,7 @@ def main() -> None:
     for token in (
         '"$root/FFiles/ps"',
         '"$root/sbin/magiskboot"',
+        '"$root/system/bin/keystore_cli_v2"',
         'ln -s -- /system/bin/toybox "$root/FFiles/ps"',
     ):
         if token not in orangefox_prepare:

@@ -38,10 +38,13 @@ done
 # app-owned ACK ELF, and the built 64 KiB-aligned toybox implements ps. The
 # prebuilt staging makefile copies the MTP library unconditionally even when
 # TW_EXCLUDE_MTP keeps it out of recovery; remove that unused USB payload too.
+# The same staging path retains keystore_cli_v2 when crypto is disabled, but
+# its KeyMint dependency closure is deliberately absent from this product.
 rm -f -- \
 	"$root/FFiles/ps" \
 	"$root/sbin/magiskboot" \
 	"$root/system/bin/magiskboot" \
+	"$root/system/bin/keystore_cli_v2" \
 	"$root/system/lib64/libtwrpmtp-ffs.so"
 ln -s -- /system/bin/toybox "$root/FFiles/ps"
 
@@ -64,10 +67,12 @@ for path in "$files" "$hashes"; do
 	}
 done
 sed -e '\#sbin/magiskboot$#d' -e '\#system/bin/magiskboot$#d' \
+	-e '\#system/bin/keystore_cli_v2$#d' \
 	-e '\#system/lib64/libtwrpmtp-ffs.so$#d' \
 	"$files" > "$files.kernarium"
 mv -- "$files.kernarium" "$files"
 sed -e '\#FFiles/ps$#d' -e '\#sbin/magiskboot$#d' \
+	-e '\#system/bin/keystore_cli_v2$#d' \
 	-e '\#system/lib64/libtwrpmtp-ffs.so$#d' \
 	"$hashes" > "$hashes.kernarium"
 mv -- "$hashes.kernarium" "$hashes"
