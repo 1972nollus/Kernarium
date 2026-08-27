@@ -115,12 +115,17 @@ int main(int argumentCount, char** arguments)
     const bool inputMode =
         remainingArguments == 2 &&
         std::strcmp(arguments[argumentIndex], "--input") == 0;
-    if (remainingArguments != 1 && !captureMode && !inputMode) {
+    const bool clickMode =
+        remainingArguments == 4 &&
+        std::strcmp(arguments[argumentIndex], "--click") == 0;
+    if (remainingArguments != 1 && !captureMode && !inputMode && !clickMode) {
         std::cerr << "usage: " << arguments[0]
                   << " [--password PASS] PORT\n       " << arguments[0]
                   << " [--password PASS] --capture OUTPUT.ppm PORT\n       "
                   << arguments[0]
-                  << " [--password PASS] --input PORT\n";
+                  << " [--password PASS] --input PORT\n       "
+                  << arguments[0]
+                  << " [--password PASS] --click X Y PORT\n";
         return 2;
     }
     try {
@@ -128,7 +133,8 @@ int main(int argumentCount, char** arguments)
             captureMode ? arguments[argumentIndex + 1] : "";
         const int port =
             std::stoi(arguments[
-                argumentIndex + (captureMode ? 2 : inputMode ? 1 : 0)]);
+                argumentIndex +
+                (captureMode ? 2 : inputMode ? 1 : clickMode ? 3 : 0)]);
         rfbClient* client = rfbGetClient(8, 3, 4);
         if (client == nullptr)
             throw std::runtime_error("rfbGetClient failed");
@@ -171,21 +177,29 @@ int main(int argumentCount, char** arguments)
             throw std::runtime_error("invalid framebuffer dimensions");
         }
 
-        if (inputMode) {
-            const int x = 24;
-            const int y = client->height - 24;
+        if (inputMode || clickMode) {
+            const int x = clickMode ?
+                std::stoi(arguments[argumentIndex + 1]) : 24;
+            const int y = clickMode ?
+                std::stoi(arguments[argumentIndex + 2]) : client->height - 24;
+            if (x < 0 || x >= client->width || y < 0 || y >= client->height)
+                throw std::runtime_error("VNC click is outside the framebuffer");
             if (!SendPointerEvent(client, x, y, 0) ||
                 !SendPointerEvent(client, x, y, 1) ||
                 !SendPointerEvent(client, x, y, 0) ||
-                !SendKeyEvent(client, 'a', TRUE) ||
-                !SendKeyEvent(client, 'a', FALSE)) {
+                (!clickMode &&
+                 (!SendKeyEvent(client, 'a', TRUE) ||
+                  !SendKeyEvent(client, 'a', FALSE)))) {
                 throw std::runtime_error("failed to send VNC input events");
             }
             const auto inputDeadline =
                 std::chrono::steady_clock::now() + std::chrono::seconds(2);
             while (std::chrono::steady_clock::now() < inputDeadline)
                 processOneMessage(client);
-            std::cout << "VNC pointer and keyboard events sent\n";
+            if (clickMode)
+                std::cout << "VNC click sent at " << x << ',' << y << '\n';
+            else
+                std::cout << "VNC pointer and keyboard events sent\n";
             rfbClientCleanup(client);
             return 0;
         }

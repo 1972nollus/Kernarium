@@ -311,7 +311,7 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
     };
     append(vnc_input::eventAbsolute, vnc_input::absoluteX, scale(x, width()));
     append(vnc_input::eventAbsolute, vnc_input::absoluteY, scale(y, height()));
-    append(vnc_input::eventKey, vnc_input::buttonLeft, buttonMask & 1);
+    append(vnc_input::eventKey, vnc_input::buttonTouch, buttonMask & 1);
     append(
         vnc_input::eventKey,
         vnc_input::buttonMiddle,

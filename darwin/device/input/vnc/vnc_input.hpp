@@ -28,9 +28,9 @@ constexpr std::uint16_t relativeWheel = 8;
 constexpr std::uint16_t absoluteX = 0;
 constexpr std::uint16_t absoluteY = 1;
 
-constexpr std::uint16_t buttonLeft = 0x110;
 constexpr std::uint16_t buttonRight = 0x111;
 constexpr std::uint16_t buttonMiddle = 0x112;
+constexpr std::uint16_t buttonTouch = 0x14a;
 
 constexpr std::int32_t absoluteMaximum = 32767;
 

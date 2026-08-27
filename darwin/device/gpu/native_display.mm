@@ -507,9 +507,9 @@ void NativeDisplayState::releaseHeldInput() noexcept
         if (heldKeys[code])
             sendLinuxKey(static_cast<std::uint16_t>(code), 0);
     }
-    // Pointer buttons live above the tracked keyboard range and the guest only
-    // ever learns their state from a pointer report, so clear all three.
-    sendLinuxKey(native_input::buttonLeft, 0);
+    // Touch contact and auxiliary pointer buttons live above the tracked
+    // keyboard range, so clear them explicitly when the window loses focus.
+    sendLinuxKey(native_input::buttonTouch, 0);
     sendLinuxKey(native_input::buttonMiddle, 0);
     sendLinuxKey(native_input::buttonRight, 0);
 }
@@ -558,7 +558,7 @@ void NativeDisplayState::sendPointer(
         scale(bounds.height - location.y, bounds.height));
     append(
         native_input::eventKey,
-        native_input::buttonLeft,
+        native_input::buttonTouch,
         (buttons & 1U) != 0 ? 1 : 0);
     append(
         native_input::eventKey,

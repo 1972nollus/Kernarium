@@ -31,6 +31,13 @@ void keySymbolsMapToStableGuestCodes()
         "an unsupported key symbol unexpectedly mapped to a guest key");
 }
 
+void primaryPointerContactUsesTheDirectTouchCode()
+{
+    require(
+        uml::input::vnc::buttonTouch == 0x14a,
+        "primary pointer contact did not use Linux BTN_TOUCH");
+}
+
 void inputDeliveryContainsSinkFailuresAndCanRetry()
 {
     const std::array events{
@@ -70,6 +77,7 @@ int main()
 {
     try {
         keySymbolsMapToStableGuestCodes();
+        primaryPointerContactUsesTheDirectTouchCode();
         inputDeliveryContainsSinkFailuresAndCanRetry();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

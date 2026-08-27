@@ -18,6 +18,11 @@ teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend.
 
+macOS native and VNC primary-pointer input is exposed to guests as one direct
+touch contact with absolute coordinates. It does not also emit a legacy mouse
+button for the same contact; touch-oriented Android and recovery interfaces
+would otherwise receive two competing interactions.
+
 ## Guest capability boundary
 
 The maintained guest path exposes Virgl desktop OpenGL 2.1 and OpenGL ES 3.0
