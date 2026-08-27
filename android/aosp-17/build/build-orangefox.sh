@@ -158,6 +158,10 @@ lunch "${ORANGEFOX_PRODUCT}-${ORANGEFOX_RELEASE_CONFIG}-eng"
 [[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == 65536 ]] ||
 	fail "OrangeFox userspace is not page-size agnostic through 64 KiB"
 
+# Recovery's assembled ramdisk is install staging, not a dependency-tracked
+# view of every rebuilt shared library. Refresh it so an incremental source
+# patch cannot leave an older library sealed into recovery.img.
+m installclean
 m -j"$JOBS" recoveryimage
 set -u
 RECOVERY_IMAGE="$OUT_DIR_ABSOLUTE/target/product/darwin/recovery.img"

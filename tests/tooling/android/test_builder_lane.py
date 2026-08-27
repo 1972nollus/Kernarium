@@ -1779,7 +1779,7 @@ def main() -> None:
         "ORANGEFOX_SE_OMAPI_COMMIT": "9ea6e4a9ecfe04ffb82767d7cbcab3e8dc6295af",
         "ORANGEFOX_PRODUCT": "twrp_darwin",
         "ORANGEFOX_RELEASE_CONFIG": "ap2a",
-        "ORANGEFOX_PATCH_COUNT": "2",
+        "ORANGEFOX_PATCH_COUNT": "3",
     }
     for key, expected in expected_orangefox.items():
         if orangefox_metadata.get(key) != expected:
