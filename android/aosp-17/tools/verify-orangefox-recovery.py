@@ -26,6 +26,11 @@ NEWC_HEADER_SIZE = 110
 ELF_MAGIC = b"\x7fELF"
 EM_AARCH64 = 183
 PT_LOAD = 1
+PT_DYNAMIC = 2
+DT_NULL = 0
+DT_NEEDED = 1
+DT_STRTAB = 5
+DT_STRSZ = 10
 PAGE_SIZE = 16384
 REQUIRED_PATHS = {
     "init",
@@ -237,6 +242,76 @@ def verify_elf(name: str, payload: bytes) -> bool:
     return True
 
 
+def elf_needed(name: str, payload: bytes) -> set[str]:
+    program_offset = struct.unpack_from("<Q", payload, 32)[0]
+    entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
+    loads: list[tuple[int, int, int]] = []
+    dynamic: tuple[int, int] | None = None
+    for index in range(entry_count):
+        offset = program_offset + index * entry_size
+        (
+            kind, _flags, file_offset, virtual_address, _physical_address,
+            file_size, _memory_size, _alignment,
+        ) = struct.unpack_from("<IIQQQQQQ", payload, offset)
+        if kind == PT_LOAD:
+            loads.append((file_offset, virtual_address, file_size))
+        elif kind == PT_DYNAMIC:
+            if dynamic is not None:
+                fail(f"target ELF has multiple dynamic segments: {name}")
+            dynamic = (file_offset, file_size)
+    if dynamic is None:
+        return set()
+
+    dynamic_offset, dynamic_size = dynamic
+    if dynamic_size % 16:
+        fail(f"target ELF dynamic segment is malformed: {name}")
+    string_address: int | None = None
+    string_size: int | None = None
+    needed_offsets: list[int] = []
+    terminated = False
+    for offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
+        tag, value = struct.unpack_from("<qQ", payload, offset)
+        if tag == DT_NULL:
+            terminated = True
+            break
+        if tag == DT_NEEDED:
+            needed_offsets.append(value)
+        elif tag == DT_STRTAB:
+            string_address = value
+        elif tag == DT_STRSZ:
+            string_size = value
+    if not terminated:
+        fail(f"target ELF dynamic segment lacks DT_NULL: {name}")
+    if not needed_offsets:
+        return set()
+    if string_address is None or string_size is None:
+        fail(f"target ELF dynamic string table is incomplete: {name}")
+
+    string_offset: int | None = None
+    for file_offset, virtual_address, file_size in loads:
+        if virtual_address <= string_address < virtual_address + file_size:
+            string_offset = file_offset + string_address - virtual_address
+            break
+    if string_offset is None or string_offset + string_size > len(payload):
+        fail(f"target ELF dynamic string table is outside a load segment: {name}")
+    strings = payload[string_offset : string_offset + string_size]
+    needed: set[str] = set()
+    for offset in needed_offsets:
+        if offset >= len(strings):
+            fail(f"target ELF DT_NEEDED offset is out of bounds: {name}")
+        end = strings.find(b"\0", offset)
+        if end < 0:
+            fail(f"target ELF DT_NEEDED string is unterminated: {name}")
+        try:
+            library = strings[offset:end].decode("utf-8", errors="strict")
+        except UnicodeError as error:
+            fail(f"target ELF DT_NEEDED string is not UTF-8: {name}: {error}")
+        if not library or "/" in library or library in (".", ".."):
+            fail(f"target ELF has an unsafe DT_NEEDED name: {name}")
+        needed.add(library)
+    return needed
+
+
 def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
     missing = sorted(REQUIRED_PATHS - entries.keys())
     if missing:
@@ -258,14 +333,27 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
         fail("OrangeFox build identity is missing")
 
     elf_count = 0
+    needed_by: dict[str, set[str]] = {}
+    available_libraries: set[str] = set()
     for name, entry in entries.items():
         basename = PurePosixPath(name).name.lower()
         if basename.endswith(".ko") or ".ko." in basename or basename in FORBIDDEN_MODULE_METADATA:
             fail(f"loadable-module payload remains in OrangeFox: {name}")
         if stat.S_ISREG(entry.mode) and verify_elf(name, entry.payload):
             elf_count += 1
+            needed_by[name] = elf_needed(name, entry.payload)
+            path = PurePosixPath(name)
+            if path.parent.name in ("lib", "lib64"):
+                available_libraries.add(path.name)
     if elf_count == 0:
         fail("OrangeFox ramdisk contains no target ELF payloads")
+    for name, needed in needed_by.items():
+        missing_libraries = sorted(needed - available_libraries)
+        if missing_libraries:
+            fail(
+                f"OrangeFox ELF dependency closure is incomplete for {name}: "
+                f"{missing_libraries}"
+            )
     return elf_count
 
 

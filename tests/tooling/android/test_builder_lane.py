@@ -657,7 +657,9 @@ def verify_boot_image_fixtures(verifier: Path) -> None:
                 fail(f"boot-image verifier accepted {label}")
 
 
-def synthetic_orangefox_ramdisk(fstab: bytes, *, alignment: int = 16384) -> bytes:
+def synthetic_orangefox_ramdisk(
+    fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False
+) -> bytes:
     entries = [
         newc_entry("init", 0o100750, b"init", 1),
         newc_entry(
@@ -670,8 +672,14 @@ def synthetic_orangefox_ramdisk(fstab: bytes, *, alignment: int = 16384) -> byte
         ),
         newc_entry(
             "system/bin/recovery", 0o100755,
-            synthetic_aarch64_elf(alignment), 3,
+            synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),
+        *([] if omit_dependency else [
+            newc_entry(
+                "system/lib64/libfixture.so", 0o100644,
+                synthetic_aarch64_elf(alignment), 12,
+            )
+        ]),
         newc_entry("system/etc/fox.cfg", 0o100644, b"FOX_CODE_BASE=fixture\n", 4),
         newc_entry("system/etc/recovery.fstab", 0o100644, fstab, 5),
     ]
@@ -714,6 +722,24 @@ def verify_orangefox_recovery_fixtures(verifier: Path, android_root: Path) -> No
         )
         if result.returncode == 0:
             fail("OrangeFox verifier accepted a 4 KiB-only recovery ELF")
+        missing_dependency = root / "recovery-missing-dependency.img"
+        missing_dependency.write_bytes(
+            synthetic_boot_image(
+                synthetic_orangefox_ramdisk(fstab, omit_dependency=True)
+            )
+        )
+        result = subprocess.run(
+            [
+                sys.executable, "-B", str(verifier),
+                "--android-root", str(android_root),
+                "--image", str(missing_dependency),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if result.returncode == 0:
+            fail("OrangeFox verifier accepted a missing ELF dependency")
 
 
 def synthetic_sparse_image() -> bytes:
@@ -1123,8 +1149,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "6efe7cdb6a8fa83b8229e8cc27f376b67d6606c0",
-        "UML_KERNEL_PATCH_COUNT": "36",
+        "UML_KERNEL_FINAL_TREE": "0b665061a2b4edc1459d788e0cc0339f15140f21",
+        "UML_KERNEL_PATCH_COUNT": "37",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
