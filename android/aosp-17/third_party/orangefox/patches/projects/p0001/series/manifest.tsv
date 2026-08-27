@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Ordered generated OrangeFox build/make topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-OrangeFox-add-recovery-build-hooks.patch	802e8baa8722b1eafd7ea5e1e0bdff088597f65a	26aba7fd1c5bddcb81c023b3704ff82cd0faadee402a851ed5f61106b494ad94	UML-ANDROID-LOCAL: OrangeFox add recovery build hooks

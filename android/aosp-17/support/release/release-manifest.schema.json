@@ -14,13 +14,14 @@
     "android",
     "aosp",
     "jelly",
+    "orangefox",
     "kernel",
     "outer",
     "producer",
     "inventory"
   ],
   "properties": {
-    "schema_version": { "const": 2 },
+    "schema_version": { "const": 3 },
     "release_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "directory_name": { "type": "string" },
     "product_family": { "const": "android-17-ack-6.18-16k" },
@@ -29,6 +30,7 @@
     "android": { "type": "object" },
     "aosp": { "type": "object" },
     "jelly": { "type": "object" },
+    "orangefox": { "type": "object" },
     "kernel": { "type": "object" },
     "outer": { "type": "object" },
     "producer": { "type": "object" },

@@ -231,6 +231,7 @@ def write_receipt(path: Path, rows: list[tuple[str, object]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--aosp-source", type=Path, required=True)
+    parser.add_argument("--orangefox-source", type=Path, required=True)
     parser.add_argument("--kernel-source", type=Path, required=True)
     parser.add_argument("--kernel-build", type=Path, required=True)
     parser.add_argument("--target-files", type=Path, required=True)
@@ -252,6 +253,7 @@ def main() -> None:
     android_root = Path(__file__).resolve().parents[1]
     outer_root = android_root.parents[1]
     aosp_source = regular_directory(args.aosp_source, "AOSP source")
+    orangefox_source = regular_directory(args.orangefox_source, "OrangeFox source")
     kernel_source = regular_directory(args.kernel_source, "ACK source")
     kernel_build = regular_directory(args.kernel_build, "ACK build")
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
@@ -270,6 +272,9 @@ def main() -> None:
 
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
+    orangefox_metadata = parse_env(
+        android_root / "third_party/orangefox/metadata.env"
+    )
     kernel_root = outer_root / "kernel/android-6.18"
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
     abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
@@ -295,6 +300,16 @@ def main() -> None:
         str(aosp_source),
         "--expect",
         "final",
+    ])
+    run([
+        str(android_root / "tools/verify-orangefox-source.py"),
+        "--android-root",
+        str(android_root),
+        "--orangefox-source",
+        str(orangefox_source),
+        "--expect",
+        "final",
+        "--allow-prebuilt-kernel",
     ])
     run([
         str(outer_root / "kernel/common/tooling/verify-series-policy.py"),
@@ -428,6 +443,15 @@ def main() -> None:
             provenance = staging / "provenance/aosp-repo-manifest.xml"
             provenance.parent.mkdir(parents=True, exist_ok=True)
             provenance.write_text(resolved_manifest + "\n", encoding="utf-8")
+            orangefox_manifest = run(
+                ["repo", "manifest", "-r"], cwd=orangefox_source, capture=True
+            )
+            orangefox_provenance = (
+                staging / "provenance/orangefox-repo-manifest.xml"
+            )
+            orangefox_provenance.write_text(
+                orangefox_manifest + "\n", encoding="utf-8"
+            )
 
             kernel_release = kernel_release_file.read_text(
                 encoding="utf-8", errors="strict"
@@ -435,6 +459,9 @@ def main() -> None:
             projects_manifest_sha = sha256_path(android_root / "patches/projects.tsv")
             jelly_manifest_sha = sha256_path(
                 android_root / "third_party/jelly/series/manifest.tsv"
+            )
+            orangefox_projects_sha = sha256_path(
+                android_root / "third_party/orangefox/patches/projects.tsv"
             )
             kernel_manifest_sha = sha256_path(kernel_root / "patches/series/manifest.tsv")
             receipt_rows = [
@@ -449,6 +476,12 @@ def main() -> None:
                 ("jelly_upstream_commit", jelly_metadata["JELLY_UPSTREAM_COMMIT"]),
                 ("jelly_final_tree", jelly_metadata["JELLY_FINAL_TREE"]),
                 ("jelly_patch_manifest_sha256", jelly_manifest_sha),
+                ("orangefox_manifest_commit", orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"]),
+                ("orangefox_base_manifest_sha256", orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"]),
+                ("orangefox_projects_manifest_sha256", orangefox_projects_sha),
+                ("orangefox_bootable_recovery_commit", orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"]),
+                ("orangefox_vendor_recovery_commit", orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"]),
+                ("orangefox_se_omapi_commit", orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"]),
                 ("ack_final_tree", kernel_metadata["UML_KERNEL_FINAL_TREE"]),
                 ("ack_patch_manifest_sha256", kernel_manifest_sha),
                 ("kernel_release", kernel_release),
@@ -459,6 +492,7 @@ def main() -> None:
                 ("android_build_id", build_id),
                 ("source_role_aosp", "pinned AOSP 17 Repo workspace"),
                 ("source_role_jelly", "pinned external LineageOS Jelly topic"),
+                ("source_role_orangefox", "pinned OrangeFox 14.1 recovery workspace"),
                 ("source_role_ack", "replayed ACK 6.18 worktree"),
                 ("input_role_kernel", "verified standalone ACK UML build"),
                 ("input_role_disk", "verified fixed-layout UBD image"),
@@ -466,7 +500,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -505,6 +539,37 @@ def main() -> None:
                     "destination": jelly_metadata["JELLY_DESTINATION"],
                     "license": jelly_metadata["JELLY_LICENSE"],
                 },
+                "orangefox": {
+                    "sync_repository": orangefox_metadata["ORANGEFOX_SYNC_REPOSITORY"],
+                    "sync_branch": orangefox_metadata["ORANGEFOX_SYNC_BRANCH"],
+                    "sync_commit": orangefox_metadata["ORANGEFOX_SYNC_COMMIT"],
+                    "sync_tree": orangefox_metadata["ORANGEFOX_SYNC_TREE"],
+                    "sync_script_sha256": orangefox_metadata["ORANGEFOX_SYNC_SCRIPT_SHA256"],
+                    "manifest_repository": orangefox_metadata["ORANGEFOX_MANIFEST_REPOSITORY"],
+                    "manifest_branch": orangefox_metadata["ORANGEFOX_MANIFEST_BRANCH"],
+                    "manifest_commit": orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"],
+                    "manifest_tree": orangefox_metadata["ORANGEFOX_MANIFEST_TREE"],
+                    "base_manifest_sha256": orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"],
+                    "branch": orangefox_metadata["ORANGEFOX_BRANCH"],
+                    "bootable_recovery_repository": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"],
+                    "bootable_recovery_commit": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"],
+                    "bootable_recovery_tree": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_TREE"],
+                    "vendor_recovery_repository": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
+                    "vendor_recovery_commit": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"],
+                    "vendor_recovery_tree": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_TREE"],
+                    "se_omapi_repository": orangefox_metadata["ORANGEFOX_SE_OMAPI_REPOSITORY"],
+                    "se_omapi_commit": orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"],
+                    "se_omapi_tree": orangefox_metadata["ORANGEFOX_SE_OMAPI_TREE"],
+                    "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
+                    "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
+                    "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
+                    "patch_count": int(orangefox_metadata["ORANGEFOX_PATCH_COUNT"]),
+                    "projects_manifest_sha256": orangefox_projects_sha,
+                    "routes": read_routes(
+                        android_root / "third_party/orangefox/patches/projects.tsv"
+                    ),
+                    "license": orangefox_metadata["ORANGEFOX_LICENSE"],
+                },
                 "kernel": {
                     "family": kernel_metadata["UML_KERNEL_FAMILY"],
                     "repository": kernel_metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
@@ -527,10 +592,12 @@ def main() -> None:
                     "functional_options": [
                         "pinned AOSP source",
                         "pinned external Jelly source",
+                        "pinned OrangeFox 14.1 source and local topics",
                         "clean replayed ACK source",
                         "verified standalone ACK build",
                         "verified AOSP target files",
                         "verified partition-backed UML initramfs",
+                        "verified kernel-less OrangeFox recovery partition",
                         "verified fixed-layout UBD disk",
                         "explicit Darwin SDK",
                         "explicit pinned Clang",

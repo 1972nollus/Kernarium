@@ -143,6 +143,13 @@ For an opt-in Simulator diagnostic, pass one SLiRP forwarding specification as
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
 launches leave the variable unset and publish no host port.
 
+Android recovery qualification uses a fresh disposable bundle and sets
+`SIMCTL_CHILD_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the OrangeFox UI,
+touch input, ADB, fixed-GPT partition discovery, read-only payload mounts,
+userdata/metadata mount and format behavior, backup/restore, file manager,
+terminal, battery display, and normal/recovery reboot paths. Never run wipe or
+restore checks against an existing user bundle.
+
 When copying a `.kern` bundle to a device, target the complete
 `Documents/<name>.kern` destination. Never copy into or replace the Documents
 directory itself, because doing so can flatten the bundle or destroy unrelated

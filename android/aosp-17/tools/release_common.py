@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PRODUCT_FAMILY = "android-17-ack-6.18-16k"
 DIRECTORY_PREFIX = "android17-ack6.18-16k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -33,6 +33,7 @@ PAYLOAD_SPECS = {
     "kernel/modules.builtin.modinfo": ("built-in-module-metadata", "binary-records"),
     "kernel/vmlinux": ("kernel-elf", "elf64-aarch64-et-dyn"),
     "provenance/aosp-repo-manifest.xml": ("aosp-resolved-manifest", "xml"),
+    "provenance/orangefox-repo-manifest.xml": ("orangefox-resolved-manifest", "xml"),
     "provenance/build-receipt.tsv": ("build-receipt", "tsv"),
     "support/compatibility-matrix.xml": ("vendor-compatibility-matrix", "xml"),
     "support/fstab.uml": ("android-fstab", "utf8-text"),
@@ -49,6 +50,7 @@ TOP_LEVEL_KEYS = {
     "android",
     "aosp",
     "jelly",
+    "orangefox",
     "kernel",
     "outer",
     "producer",
@@ -95,6 +97,35 @@ JELLY_KEYS = {
     "destination",
     "license",
 }
+ORANGEFOX_KEYS = {
+    "sync_repository",
+    "sync_branch",
+    "sync_commit",
+    "sync_tree",
+    "sync_script_sha256",
+    "manifest_repository",
+    "manifest_branch",
+    "manifest_commit",
+    "manifest_tree",
+    "base_manifest_sha256",
+    "branch",
+    "bootable_recovery_repository",
+    "bootable_recovery_commit",
+    "bootable_recovery_tree",
+    "vendor_recovery_repository",
+    "vendor_recovery_commit",
+    "vendor_recovery_tree",
+    "se_omapi_repository",
+    "se_omapi_commit",
+    "se_omapi_tree",
+    "device_destination",
+    "product",
+    "release_config",
+    "patch_count",
+    "projects_manifest_sha256",
+    "routes",
+    "license",
+}
 KERNEL_KEYS = {
     "family",
     "repository",
@@ -136,6 +167,12 @@ ACCEPTANCE_KEYS = {
     "ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT",
     "ANDROID17_ACCEPTED_JELLY_FINAL_TREE",
     "ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256",
+    "ANDROID17_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT",
+    "ANDROID17_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256",
+    "ANDROID17_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256",
+    "ANDROID17_ACCEPTED_ORANGEFOX_BOOTABLE_RECOVERY_COMMIT",
+    "ANDROID17_ACCEPTED_ORANGEFOX_VENDOR_RECOVERY_COMMIT",
+    "ANDROID17_ACCEPTED_ORANGEFOX_SE_OMAPI_COMMIT",
     "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE",
     "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256",
     "ANDROID17_ACCEPTED_OUTER_REVISION",
@@ -294,6 +331,68 @@ def validate_manifest(value: object) -> dict:
     if jelly["license"] != "Apache-2.0":
         fail("Jelly license identity changed")
 
+    orangefox = require_exact_keys(
+        manifest["orangefox"], ORANGEFOX_KEYS, "orangefox"
+    )
+    expected_strings = {
+        "sync_repository": "https://gitlab.com/OrangeFox/sync.git",
+        "manifest_repository": (
+            "https://github.com/nebrassy/platform_manifest_twrp_aosp.git"
+        ),
+        "branch": "fox_14.1",
+        "bootable_recovery_repository": (
+            "https://gitlab.com/OrangeFox/bootable/Recovery.git"
+        ),
+        "vendor_recovery_repository": (
+            "https://gitlab.com/OrangeFox/vendor/recovery.git"
+        ),
+        "se_omapi_repository": "https://gitlab.com/OrangeFox/external/se_omapi.git",
+        "device_destination": "device/kernarium/darwin",
+        "product": "twrp_darwin",
+        "release_config": "ap2a",
+        "license": "GPL-3.0-or-later",
+    }
+    for key, expected in expected_strings.items():
+        if orangefox[key] != expected:
+            fail(f"orangefox.{key} is not the reviewed value")
+    for key in ("sync_branch", "manifest_branch"):
+        require_string(orangefox[key], f"orangefox.{key}")
+    for key in (
+        "sync_commit", "sync_tree", "manifest_commit", "manifest_tree",
+        "bootable_recovery_commit", "bootable_recovery_tree",
+        "vendor_recovery_commit", "vendor_recovery_tree",
+        "se_omapi_commit", "se_omapi_tree",
+    ):
+        require_hex(orangefox[key], 40, f"orangefox.{key}")
+    for key in (
+        "sync_script_sha256", "base_manifest_sha256",
+        "projects_manifest_sha256",
+    ):
+        require_hex(orangefox[key], 64, f"orangefox.{key}")
+    require_integer(orangefox["patch_count"], "OrangeFox patch count", minimum=1)
+    routes = orangefox["routes"]
+    if not isinstance(routes, list) or not routes:
+        fail("OrangeFox routes must be a nonempty array")
+    seen_routes = set()
+    for index, raw_route in enumerate(routes):
+        route = require_exact_keys(raw_route, ROUTE_KEYS, f"OrangeFox route {index}")
+        route_id = require_string(route["route_id"], f"OrangeFox route {index} ID")
+        if route_id in seen_routes:
+            fail(f"duplicate OrangeFox route ID: {route_id}")
+        seen_routes.add(route_id)
+        for key in ("manifest_project", "checkout_path"):
+            safe_relative(route[key], f"OrangeFox route {route_id} {key}")
+        for key in ("base_commit", "base_tree", "final_tree"):
+            require_hex(route[key], 40, f"OrangeFox route {route_id} {key}")
+        require_integer(
+            route["patch_count"], f"OrangeFox route {route_id} patch count",
+            minimum=1,
+        )
+        require_hex(
+            route["series_manifest_sha256"], 64,
+            f"OrangeFox route {route_id} series manifest SHA-256",
+        )
+
     kernel = require_exact_keys(manifest["kernel"], KERNEL_KEYS, "kernel")
     if kernel["family"] != "android-6.18":
         fail("kernel family is not android-6.18")
@@ -372,6 +471,9 @@ def sha256_path(path: Path) -> str:
 def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
+    orangefox_metadata = parse_env(
+        android_root / "third_party/orangefox/metadata.env"
+    )
     kernel_root = android_root.parents[1] / "kernel/android-6.18"
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
     abi_metadata = parse_env(android_root.parents[1] / "kernel/common/abi/identity.env")
@@ -405,6 +507,40 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     for key, value in jelly_expected.items():
         if manifest["jelly"][key] != value:
             fail(f"release Jelly identity differs from tracked {key}")
+
+    orangefox_expected = {
+        "sync_repository": orangefox_metadata["ORANGEFOX_SYNC_REPOSITORY"],
+        "sync_branch": orangefox_metadata["ORANGEFOX_SYNC_BRANCH"],
+        "sync_commit": orangefox_metadata["ORANGEFOX_SYNC_COMMIT"],
+        "sync_tree": orangefox_metadata["ORANGEFOX_SYNC_TREE"],
+        "sync_script_sha256": orangefox_metadata["ORANGEFOX_SYNC_SCRIPT_SHA256"],
+        "manifest_repository": orangefox_metadata["ORANGEFOX_MANIFEST_REPOSITORY"],
+        "manifest_branch": orangefox_metadata["ORANGEFOX_MANIFEST_BRANCH"],
+        "manifest_commit": orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"],
+        "manifest_tree": orangefox_metadata["ORANGEFOX_MANIFEST_TREE"],
+        "base_manifest_sha256": orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"],
+        "branch": orangefox_metadata["ORANGEFOX_BRANCH"],
+        "bootable_recovery_repository": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"],
+        "bootable_recovery_commit": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"],
+        "bootable_recovery_tree": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_TREE"],
+        "vendor_recovery_repository": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
+        "vendor_recovery_commit": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"],
+        "vendor_recovery_tree": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_TREE"],
+        "se_omapi_repository": orangefox_metadata["ORANGEFOX_SE_OMAPI_REPOSITORY"],
+        "se_omapi_commit": orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"],
+        "se_omapi_tree": orangefox_metadata["ORANGEFOX_SE_OMAPI_TREE"],
+        "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
+        "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
+        "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
+        "patch_count": int(orangefox_metadata["ORANGEFOX_PATCH_COUNT"]),
+        "projects_manifest_sha256": sha256_path(
+            android_root / "third_party/orangefox/patches/projects.tsv"
+        ),
+        "license": orangefox_metadata["ORANGEFOX_LICENSE"],
+    }
+    for key, value in orangefox_expected.items():
+        if manifest["orangefox"][key] != value:
+            fail(f"release OrangeFox identity differs from tracked {key}")
 
     kernel_expected = {
         "family": kernel_metadata["UML_KERNEL_FAMILY"],
@@ -440,6 +576,12 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT": manifest["jelly"]["base_commit"],
         "ANDROID17_ACCEPTED_JELLY_FINAL_TREE": manifest["jelly"]["final_tree"],
         "ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256": manifest["jelly"]["patch_manifest_sha256"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT": manifest["orangefox"]["manifest_commit"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256": manifest["orangefox"]["base_manifest_sha256"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256": manifest["orangefox"]["projects_manifest_sha256"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_BOOTABLE_RECOVERY_COMMIT": manifest["orangefox"]["bootable_recovery_commit"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_VENDOR_RECOVERY_COMMIT": manifest["orangefox"]["vendor_recovery_commit"],
+        "ANDROID17_ACCEPTED_ORANGEFOX_SE_OMAPI_COMMIT": manifest["orangefox"]["se_omapi_commit"],
         "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE": manifest["kernel"]["final_tree"],
         "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256": manifest["kernel"]["patch_manifest_sha256"],
         "ANDROID17_ACCEPTED_OUTER_REVISION": manifest["outer"]["revision"],
@@ -613,6 +755,15 @@ def verify_disk_boot_payloads(
         arguments.append("--structural")
     arguments.extend(["--offset", str(offset), "--size", str(size), str(disk)])
     run_checked(arguments)
+    run_checked([
+        str(android_root / "tools/verify-orangefox-recovery.py"),
+        "--android-root",
+        str(android_root),
+        "--layout",
+        str(layout),
+        "--disk",
+        str(disk),
+    ])
 
 
 def resolve_zstd(value: Path | None) -> Path:
@@ -683,6 +834,7 @@ def verify_semantics(
         "support/vintf-manifest.xml",
         "support/compatibility-matrix.xml",
         "provenance/aosp-repo-manifest.xml",
+        "provenance/orangefox-repo-manifest.xml",
     ):
         try:
             ET.parse(release_root / relative)

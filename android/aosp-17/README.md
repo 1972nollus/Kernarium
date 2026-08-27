@@ -12,17 +12,19 @@ outside this repository.
 
 ## Producer boundary
 
-`build/prepare-sources.sh` is the only producer command allowed to use the
-network. It pins the AOSP Repo workspace, ACK workspace, and external Jelly
-source. All patching, builds, verification, image assembly, and publication are
-offline.
+`build/prepare-sources.sh` and `build/prepare-orangefox-source.sh` are the only
+producer commands allowed to use the network. The first pins AOSP, ACK, and
+external Jelly; the second materializes the independently pinned OrangeFox
+14.1/TWRP workspace. All patching, builds, verification, image assembly, and
+publication are offline.
 
-The producer has four independent outputs:
+The producer has five independent outputs:
 
 1. a replayed and built ACK 16 KiB kernel;
 2. the `aosp_kernarium_darwin-userdebug` target files;
-3. one static GPT guest disk containing both boot ramdisks; and
-4. a compact rootfs release installed by Apple consumers.
+3. a kernel-less OrangeFox recovery partition;
+4. one static GPT guest disk containing both boot ramdisks; and
+5. a compact rootfs release installed by Apple consumers.
 
 Use the scripts under `build/` in that order. Each script's `--help` is the
 canonical interface for builder paths and optional inputs. Ninja and the
@@ -44,6 +46,14 @@ upstream AOSP projects.
 `overlay/` owns the complete `device/kernarium/darwin` product tree and is
 synchronized as one verified unit. External Jelly has its own pinned source
 and generated series under `third_party/jelly/`.
+
+`third_party/orangefox/` records the official OrangeFox sync identity, the
+fully resolved TWRP Repo manifest, the exact OrangeFox-owned project commits,
+two generated integration topics, and a small independent Kernarium recovery
+device tree. It does not vendor OrangeFox source. Source preparation needs
+roughly 85 GiB, matching the upstream `fox_14.1` guidance. The device tree is
+synced to the same `device/kernarium/darwin` path, but only inside the separate
+OrangeFox workspace.
 
 Never edit generated patch files. Amend clean Git topic branches and run the
 matching regenerator under `tools/`; it updates patch bytes and all related
@@ -105,14 +115,24 @@ provisioning. First-stage init mounts fixed GPT partitions by name and does not
 use logical, slot-select, or module mount flags.
 
 `init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The ACK
-ELF remains outside the disk in the selected runtime artifact. The normal and
-stock-recovery ramdisks are validated in place and are not duplicated as
-standalone release files. Boot mode `auto` follows the standard command in the
-COW-backed `misc` partition; explicit normal/recovery selection is diagnostic.
+ELF remains outside the disk in the selected runtime artifact. `init_boot`
+comes from the AOSP target files; the final recovery partition is the separately
+built and verified OrangeFox image, never the stock target-files copy. Neither
+ramdisk is duplicated as a standalone release file. Boot mode `auto` follows
+the standard command in the COW-backed `misc` partition; explicit
+normal/recovery selection is diagnostic.
 
-`build/assemble-ramdisk.sh` and `build/assemble-image.sh` own assembly and
-verification. The assembler refuses unsafe paths, partition overflow, module
-payloads, or replacement of an existing output.
+OrangeFox is built page-size agnostic with 64 KiB ELF alignment. Its two
+upstream 4 KiB-only helper prebuilts are not shipped: toybox supplies `ps`, and
+MagiskBoot image repacking is intentionally absent because the signed ACK ELF
+is app-owned rather than stored in an Android boot partition. Mount, format,
+backup/restore, file-manager, terminal, ADB, and reboot paths remain available.
+
+`build/build-orangefox.sh`, `build/assemble-ramdisk.sh`, and
+`build/assemble-image.sh` own recovery construction, disk assembly, and
+verification. The assembler requires an explicit verified OrangeFox image and
+refuses unsafe paths, partition overflow, module payloads, or replacement of an
+existing output.
 
 ## Release installation
 

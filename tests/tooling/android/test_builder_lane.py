@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import gzip
 import io
 import json
 import re
@@ -656,6 +657,65 @@ def verify_boot_image_fixtures(verifier: Path) -> None:
                 fail(f"boot-image verifier accepted {label}")
 
 
+def synthetic_orangefox_ramdisk(fstab: bytes, *, alignment: int = 16384) -> bytes:
+    entries = [
+        newc_entry("init", 0o100750, b"init", 1),
+        newc_entry(
+            "prop.default",
+            0o100644,
+            b"ro.product.system.device=darwin\n"
+            b"ro.product.system.model=OrangeFox on Darwin UML\n"
+            b"service.adb.tcp.port=5555\n",
+            2,
+        ),
+        newc_entry(
+            "system/bin/recovery", 0o100755,
+            synthetic_aarch64_elf(alignment), 3,
+        ),
+        newc_entry("system/etc/fox.cfg", 0o100644, b"FOX_CODE_BASE=fixture\n", 4),
+        newc_entry("system/etc/recovery.fstab", 0o100644, fstab, 5),
+    ]
+    for inode, name in enumerate(
+        ("recovery", "backup", "restore", "files", "mount", "wipe"), 6
+    ):
+        entries.append(newc_entry(f"twres/pages/{name}.xml", 0o100644, b"<recovery/>\n", inode))
+    entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
+    return gzip.compress(b"".join(entries), mtime=0)
+
+
+def verify_orangefox_recovery_fixtures(verifier: Path, android_root: Path) -> None:
+    fstab = (
+        android_root
+        / "third_party/orangefox/device/recovery/root/system/etc/recovery.fstab"
+    ).read_bytes()
+    with tempfile.TemporaryDirectory(prefix="android-orangefox-") as temporary:
+        root = Path(temporary)
+        good = root / "recovery.img"
+        good.write_bytes(synthetic_boot_image(synthetic_orangefox_ramdisk(fstab)))
+        subprocess.run(
+            [
+                sys.executable, "-B", str(verifier),
+                "--android-root", str(android_root), "--image", str(good),
+            ],
+            check=True,
+        )
+        bad = root / "recovery-4k.img"
+        bad.write_bytes(
+            synthetic_boot_image(synthetic_orangefox_ramdisk(fstab, alignment=4096))
+        )
+        result = subprocess.run(
+            [
+                sys.executable, "-B", str(verifier),
+                "--android-root", str(android_root), "--image", str(bad),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if result.returncode == 0:
+            fail("OrangeFox verifier accepted a 4 KiB-only recovery ELF")
+
+
 def synthetic_sparse_image() -> bytes:
     block_size = 4096
     raw = b"A" * block_size
@@ -952,9 +1012,12 @@ def main() -> None:
         android_root / "metadata/aosp.env",
         android_root / "metadata/base-manifest.xml",
         android_root / "build/prepare-sources.sh",
+        android_root / "build/prepare-orangefox-source.sh",
         android_root / "build/preflight.sh",
         android_root / "build/apply-aosp-patches.sh",
+        android_root / "build/apply-orangefox-patches.sh",
         android_root / "build/build-aosp.sh",
+        android_root / "build/build-orangefox.sh",
         android_root / "build/assemble-image.sh",
         android_root / "build/assemble-ramdisk.sh",
         android_root / "build/apply-kernel-patches.sh",
@@ -974,9 +1037,25 @@ def main() -> None:
         android_root / "patches/projects/p0003/series/manifest.tsv",
         android_root / "third_party/jelly/metadata.env",
         android_root / "third_party/jelly/series/manifest.tsv",
+        android_root / "third_party/orangefox/metadata.env",
+        android_root / "third_party/orangefox/base-manifest.xml",
+        android_root / "third_party/orangefox/patches/projects.tsv",
+        android_root / "third_party/orangefox/patches/projects/p0001/metadata.env",
+        android_root / "third_party/orangefox/patches/projects/p0001/series/manifest.tsv",
+        android_root / "third_party/orangefox/patches/projects/p0002/metadata.env",
+        android_root / "third_party/orangefox/patches/projects/p0002/series/manifest.tsv",
+        android_root / "third_party/orangefox/device/AndroidProducts.mk",
+        android_root / "third_party/orangefox/device/BoardConfig.mk",
+        android_root / "third_party/orangefox/device/device.mk",
+        android_root / "third_party/orangefox/device/twrp_darwin.mk",
+        android_root / "third_party/orangefox/device/recovery/prepare-kernarium.sh",
+        android_root / "third_party/orangefox/device/recovery/root/system/etc/recovery.fstab",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
         android_root / "tools/verify-jelly-source.py",
+        android_root / "tools/verify-orangefox-source.py",
+        android_root / "tools/verify-orangefox-recovery.py",
+        android_root / "tools/sync-orangefox-device.py",
         android_root / "tools/regenerate-jelly-patches.py",
         android_root / "tools/verify-target-files.py",
         android_root / "tools/verify-initramfs.py",
@@ -1009,6 +1088,16 @@ def main() -> None:
             sys.executable,
             "-B",
             str(android_root / "tools/verify-jelly-source.py"),
+            "--android-root",
+            str(android_root),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(android_root / "tools/verify-orangefox-source.py"),
             "--android-root",
             str(android_root),
         ],
@@ -1065,6 +1154,9 @@ def main() -> None:
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
+    verify_orangefox_recovery_fixtures(
+        android_root / "tools/verify-orangefox-recovery.py", android_root
+    )
     verify_ubd_disk_fixtures(
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",
@@ -1086,7 +1178,9 @@ def main() -> None:
             fail(f"tracked producer contains endpoint or credential state: {script}")
         if "/home/build/" in text:
             fail(f"tracked producer stores a builder-specific path: {script}")
-        if script.name != "prepare-sources.sh" and re.search(
+        if script.name not in {
+            "prepare-sources.sh", "prepare-orangefox-source.sh"
+        } and re.search(
             r"\bgit(?:\s+-[^\s]+|\s+-C\s+[^\s]+)*\s+(?:clone|fetch)\b", text
         ):
             fail(f"producer fetches source outside preparation: {script}")
@@ -1096,6 +1190,7 @@ def main() -> None:
         for path in (
             android_root / "README.md",
             android_root / "metadata/aosp.env",
+            android_root / "third_party/orangefox/metadata.env",
             kernel_root / "README.md",
             kernel_root / "config/android.fragment",
             kernel_root / "patches/metadata.env",
@@ -1106,6 +1201,9 @@ def main() -> None:
             fail(f"tracked Android policy stores operator state: {token}")
 
     prepare = (android_root / "build/prepare-sources.sh").read_text()
+    prepare_orangefox = (
+        android_root / "build/prepare-orangefox-source.sh"
+    ).read_text()
     preflight = (android_root / "build/preflight.sh").read_text()
     if "--aosp-source" not in prepare or "--ack-workspace" not in prepare:
         fail("source preparation does not require explicit local workspaces")
@@ -1142,13 +1240,20 @@ def main() -> None:
         android_root / "tools/regenerate-kernel-patches.py"
     ).read_text()
     apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
+    apply_orangefox = (
+        android_root / "build/apply-orangefox-patches.sh"
+    ).read_text()
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
+    build_orangefox = (android_root / "build/build-orangefox.sh").read_text()
     assemble_image = (android_root / "build/assemble-image.sh").read_text()
     assemble_ramdisk = (android_root / "build/assemble-ramdisk.sh").read_text()
     publish_release = (android_root / "tools/publish-release.py").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     target_files_verifier = (
         android_root / "tools/verify-target-files.py"
+    ).read_text()
+    orangefox_image_verifier = (
+        android_root / "tools/verify-orangefox-recovery.py"
     ).read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     required_kernel_builtins = (
@@ -1410,6 +1515,18 @@ def main() -> None:
         / "overlay/overlay/packages/apps/Settings/res/values/strings.xml"
     ).read_text()
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
+    orangefox_metadata = parse_env(
+        android_root / "third_party/orangefox/metadata.env"
+    )
+    orangefox_device = (
+        android_root / "third_party/orangefox/device/BoardConfig.mk"
+    ).read_text() + (
+        android_root / "third_party/orangefox/device/device.mk"
+    ).read_text()
+    orangefox_prepare = (
+        android_root
+        / "third_party/orangefox/device/recovery/prepare-kernarium.sh"
+    ).read_text()
     jelly_patches = "\n".join(
         path.read_text()
         for path in sorted((android_root / "third_party/jelly/series").glob("*.patch"))
@@ -1626,8 +1743,39 @@ def main() -> None:
     )
     if battery_sysfs not in vendor_genfs_contexts:
         fail("battery sysfs is not labeled for the stock Health HAL")
-    if "OrangeFox" in device_product or "OrangeFox" in assemble_image:
-        fail("custom recovery entered the current stock-recovery implementation")
+    if "OrangeFox" in device_product:
+        fail("OrangeFox recovery configuration leaked into the AOSP product overlay")
+    expected_orangefox = {
+        "ORANGEFOX_SYNC_COMMIT": "14eca5f7ef82c9dacfe353db8b93329383c7293f",
+        "ORANGEFOX_MANIFEST_COMMIT": "49f2d6950edd2dc87c213636a8a680ca5c97e52c",
+        "ORANGEFOX_BOOTABLE_RECOVERY_COMMIT": "9860b87c823039b7950a4dee4e945d587ec0a9b0",
+        "ORANGEFOX_VENDOR_RECOVERY_COMMIT": "af3d99b83adedf88fa9992d9320c5ce9811c6b08",
+        "ORANGEFOX_SE_OMAPI_COMMIT": "9ea6e4a9ecfe04ffb82767d7cbcab3e8dc6295af",
+        "ORANGEFOX_PRODUCT": "twrp_darwin",
+        "ORANGEFOX_RELEASE_CONFIG": "ap2a",
+        "ORANGEFOX_PATCH_COUNT": "2",
+    }
+    for key, expected in expected_orangefox.items():
+        if orangefox_metadata.get(key) != expected:
+            fail(f"OrangeFox metadata differs for {key}")
+    for token in (
+        "BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true",
+        "BOARD_BOOT_HEADER_VERSION := 4",
+        "PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 65536",
+        "TW_INCLUDE_CRYPTO_FBE := true",
+        "TW_INCLUDE_FBE_METADATA_DECRYPT := true",
+        "TW_NO_SCREEN_BLANK := true",
+        "BOARD_RECOVERY_IMAGE_PREPARE",
+    ):
+        if token not in orangefox_device:
+            fail(f"OrangeFox device tree is missing fixed policy: {token}")
+    for token in (
+        '"$root/FFiles/ps"',
+        '"$root/sbin/magiskboot"',
+        'ln -s -- /system/bin/toybox "$root/FFiles/ps"',
+    ):
+        if token not in orangefox_prepare:
+            fail(f"OrangeFox 16 KiB prepare hook is missing policy: {token}")
     for token in (
         "platform/packages/modules/Connectivity",
         "ro.boot.uml_bpf_interpreter",
@@ -1661,12 +1809,53 @@ def main() -> None:
     for token in (
         "verify-target-files.py",
         "verify-initramfs.py",
+        "verify-orangefox-recovery.py",
         "ubd-disk.py",
+        "--recovery-image",
+        '--image "recovery=$RECOVERY_IMAGE"',
         "--blank-partition metadata",
         'TARGET_FILES_DIR=${TARGET_FILES%.zip}',
     ):
         if token not in assemble_image:
             fail(f"Android disk assembler is missing fixed policy: {token}")
+    for token in (
+        "ORANGEFOX_MANIFEST_REPOSITORY",
+        "ORANGEFOX_MANIFEST_COMMIT",
+        "ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY",
+        "ORANGEFOX_VENDOR_RECOVERY_REPOSITORY",
+        "ORANGEFOX_SE_OMAPI_REPOSITORY",
+        "repo sync -c --detach",
+        "resolved OrangeFox Repo manifest differs",
+    ):
+        if token not in prepare_orangefox:
+            fail(f"OrangeFox source preparation is missing policy: {token}")
+    for token in (
+        "verify-orangefox-source.py",
+        "sync-orangefox-device.py",
+        "am --committer-date-is-author-date",
+    ):
+        if token not in apply_orangefox:
+            fail(f"OrangeFox patch replay is missing policy: {token}")
+    for token in (
+        "verify-orangefox-source.py",
+        "verify-orangefox-recovery.py",
+        "verify-kernel-elf.py",
+        "BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE",
+        "TARGET_MAX_PAGE_SIZE_SUPPORTED",
+        "recoveryimage",
+    ):
+        if token not in build_orangefox:
+            fail(f"OrangeFox builder is missing fixed policy: {token}")
+    for token in (
+        "kernel_size != 0",
+        "gzip.GzipFile",
+        "system/bin/recovery",
+        "system/etc/recovery.fstab",
+        "target ELF load alignment is below 16 KiB",
+        "loadable-module payload remains",
+    ):
+        if token not in orangefox_image_verifier:
+            fail(f"OrangeFox recovery verifier is missing policy: {token}")
     for token in (
         "verify-target-files.py",
         "verify-initramfs.py",
@@ -1799,6 +1988,7 @@ def main() -> None:
     for token in (
         "verify-aosp-patches.py",
         "verify-jelly-source.py",
+        "verify-orangefox-source.py",
         "verify-series-policy.py",
         "verify-kernel-elf.py",
         "verify-target-files.py",
@@ -1812,6 +2002,8 @@ def main() -> None:
         "release-manifest.json",
         "android-17-uml-arm64.img.zst",
         "jelly_patch_manifest_sha256",
+        "orangefox_projects_manifest_sha256",
+        "orangefox-repo-manifest.xml",
         '"jelly"',
         "repo",
         "manifest",
