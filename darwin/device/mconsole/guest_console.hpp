@@ -40,10 +40,15 @@ enum class GuestSuspension {
  * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
  * edge. Older kernels fall back to management-console stop/go.
  *
- * The returned mode records which resume command is required. None means no
- * console answered. Resuming is best effort and reports nothing.
+ * The returned mode records which resume command is required. A sent suspend
+ * request that has not replied by the deadline still selects system wake:
+ * timeout cannot prove that the kernel did not already enter suspend. None
+ * means no request reached the console. Resuming is best effort and reports
+ * nothing.
  */
-[[nodiscard]] GuestSuspension suspend_guest(unsigned int settle_ms) noexcept;
+[[nodiscard]] GuestSuspension suspend_guest(
+	unsigned int writeback_settle_ms,
+	unsigned int stop_settle_ms) noexcept;
 void resume_guest(GuestSuspension suspension) noexcept;
 
 /* Removes this run's console path. Adopting it separately covers the

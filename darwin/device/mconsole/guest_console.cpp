@@ -43,6 +43,13 @@ struct Reply final {
 	std::array<char, maximumConsoleData> data;
 };
 
+enum class ExchangeResult {
+	notSent,
+	pending,
+	accepted,
+	rejected,
+};
+
 /* The guest kernel prints this once its filesystem writeback has begun. Its
  * absence means the request reached a console that refused to act on it. */
 constexpr std::string_view writebackAcknowledgement = "Emergency Sync";
@@ -139,7 +146,7 @@ void adoptConsolePath(const std::string &path)
 	}
 }
 
-[[nodiscard]] bool exchange(
+[[nodiscard]] ExchangeResult exchange(
 	int descriptor,
 	const sockaddr_un &address,
 	std::string_view command,
@@ -148,25 +155,55 @@ void adoptConsolePath(const std::string &path)
 	Request request {consoleMagic, consoleVersion,
 		static_cast<std::uint32_t>(command.size()), {}};
 	if (command.size() >= request.data.size())
-		return false;
+		return ExchangeResult::notSent;
 	std::memcpy(request.data.data(), command.data(), command.size());
 	const auto sent = ::sendto(descriptor, &request, sizeof(request), 0,
 		reinterpret_cast<const sockaddr *>(&address), sizeof(address));
 	if (sent != static_cast<ssize_t>(sizeof(request)))
-		return false;
+		return ExchangeResult::notSent;
 	for (;;) {
 		Reply reply {};
 		const auto received = ::recv(descriptor, &reply, sizeof(reply), 0);
 		if (received < static_cast<ssize_t>(sizeof(reply) -
 			    maximumConsoleData))
-			return false;
+			return ExchangeResult::pending;
 		const auto length = std::min(
 			static_cast<std::size_t>(reply.length),
 			maximumConsoleData);
 		response.append(reply.data.data(), length);
 		if (reply.more == 0U)
-			return reply.error == 0U;
+			return reply.error == 0U ? ExchangeResult::accepted :
+				ExchangeResult::rejected;
 	}
+}
+
+[[nodiscard]] bool requestWriteback(const sockaddr_un &address,
+	unsigned int settleMs)
+{
+	Client client;
+	if (!client.usable())
+		return false;
+	const timeval timeout {.tv_sec = 2, .tv_usec = 0};
+	(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
+		&timeout, sizeof(timeout));
+	std::string response;
+	if (exchange(client.descriptor(), address, "sysrq s", response) !=
+	    ExchangeResult::accepted)
+		return false;
+	if (response.find(writebackAcknowledgement) == std::string::npos) {
+		std::fputs(
+			"Guest console refused the filesystem writeback; "
+			"the guest has magic SysRq disabled\n",
+			stderr);
+		return false;
+	}
+	/* The guest reports that the writeback started, not that it finished, so
+	 * give it a bounded chance to reach the block layer before the host flushes
+	 * what it received. */
+	if (settleMs != 0U) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
+	}
+	return true;
 }
 
 } // namespace
@@ -188,36 +225,14 @@ bool request_guest_writeback(unsigned int settleMs) noexcept
 		sockaddr_un address {};
 		if (!fillAddress(address, path))
 			return false;
-		Client client;
-		if (!client.usable())
-			return false;
-		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
-		(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
-			&timeout, sizeof(timeout));
-		std::string response;
-		if (!exchange(client.descriptor(), address, "sysrq s", response))
-			return false;
-		if (response.find(writebackAcknowledgement) == std::string::npos) {
-			std::fputs(
-				"Guest console refused the filesystem writeback; "
-				"the guest has magic SysRq disabled\n",
-				stderr);
-			return false;
-		}
-		/* The guest reports that the writeback started, not that it
-		 * finished, so give it a bounded chance to reach the block layer
-		 * before the host flushes what it received. */
-		if (settleMs != 0U) {
-			std::this_thread::sleep_for(
-				std::chrono::milliseconds(settleMs));
-		}
-		return true;
+		return requestWriteback(address, settleMs);
 	} catch (...) {
 		return false;
 	}
 }
 
-GuestSuspension suspend_guest(unsigned int settleMs) noexcept
+GuestSuspension suspend_guest(unsigned int writebackSettleMs,
+	unsigned int stopSettleMs) noexcept
 {
 	try {
 		std::lock_guard lock(consoleMutex);
@@ -230,7 +245,7 @@ GuestSuspension suspend_guest(unsigned int settleMs) noexcept
 			std::string &response) {
 			Client client;
 			if (!client.usable())
-				return false;
+				return ExchangeResult::notSent;
 			const timeval timeout {.tv_sec = 2, .tv_usec = 0};
 			(void)::setsockopt(client.descriptor(), SOL_SOCKET,
 				SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -242,21 +257,41 @@ GuestSuspension suspend_guest(unsigned int settleMs) noexcept
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		if (command("suspend", response) &&
-		    response.find(suspendAcknowledgement) != std::string::npos)
+		const auto suspendResult = command("suspend", response);
+		if (suspendResult == ExchangeResult::accepted) {
+			if (response.find(suspendAcknowledgement) == std::string::npos) {
+				std::fputs("Guest console returned an unexpected suspend reply\n",
+					stderr);
+			}
 			return GuestSuspension::system;
+		}
+		/* Once the request was sent, a receive timeout is ambiguous: a slow
+		 * guest may already be freezing devices and CPUs before it can reply.
+		 * Queueing legacy stop behind that suspend would make the stop run only
+		 * after wake and freeze the freshly resumed guest. Remember system mode
+		 * so foregrounding sends the matching wake instead. */
+		if (suspendResult == ExchangeResult::pending)
+			return GuestSuspension::system;
+		if (suspendResult == ExchangeResult::notSent)
+			return GuestSuspension::none;
 		response.clear();
-		/* Accepted older kernels have no suspend command. Preserve their
-		 * stop/go behavior so a newer runtime can still quiesce them. */
-		if (!command("stop", response) ||
-		    response.find(stopAcknowledgement) == std::string::npos)
+		/* An explicit rejection identifies an older or suspend-disabled kernel.
+		 * Its stop path does not sync filesystems, so preserve the old writeback
+		 * step only on this compatibility path. A suspend-capable kernel performs
+		 * the sync itself and avoids spending the iOS background budget twice. */
+		(void)requestWriteback(address, writebackSettleMs);
+		const auto stopResult = command("stop", response);
+		if (stopResult == ExchangeResult::notSent ||
+		    stopResult == ExchangeResult::rejected ||
+		    (stopResult == ExchangeResult::accepted &&
+		     response.find(stopAcknowledgement) == std::string::npos))
 			return GuestSuspension::none;
 		/* Block I/O already handed to the host keeps completing after the
 		 * guest stops issuing more. Let it drain before the caller treats
 		 * the disk as settled. */
-		if (settleMs != 0U) {
+		if (stopSettleMs != 0U) {
 			std::this_thread::sleep_for(
-				std::chrono::milliseconds(settleMs));
+				std::chrono::milliseconds(stopSettleMs));
 		}
 		return GuestSuspension::managementStop;
 	} catch (...) {

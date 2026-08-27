@@ -405,9 +405,8 @@ public:
 	{
 		std::lock_guard lock{guest_lifecycle_mutex_};
 		if (guest_suspension_ == ::uml::device::GuestSuspension::none) {
-			(void)::uml::device::request_guest_writeback(
-				guest_writeback_settle_ms);
 			guest_suspension_ = ::uml::device::suspend_guest(
+				guest_writeback_settle_ms,
 				guest_suspend_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
