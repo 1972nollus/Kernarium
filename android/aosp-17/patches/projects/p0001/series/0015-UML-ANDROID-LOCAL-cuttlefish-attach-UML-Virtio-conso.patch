@@ -1,0 +1,49 @@
+From f1119844c25480ecacb2e96a1fa9bab6fd846853 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 05:03:39 +0000
+Subject: [PATCH 15/23] UML-ANDROID-LOCAL: cuttlefish: attach UML Virtio
+ console
+
+Change-Id: I54b0d5795a29486ade9d3d1f0ae098db84a51bf4
+---
+ vsoc_uml_arm64_pgagnostic/BoardConfig.mk                | 3 +++
+ vsoc_uml_arm64_pgagnostic/config/ueventd.rc             | 6 ++++--
+ vsoc_uml_arm64_pgagnostic/sepolicy/vendor/file_contexts | 2 ++
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+ create mode 100644 vsoc_uml_arm64_pgagnostic/sepolicy/vendor/file_contexts
+
+diff --git a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+index c5e9becbf3da462579db06bdc85b80dace79fe99..6384a20912eab22082ad9d896709bddffe6ec625 100644
+--- a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
++++ b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+@@ -19,6 +19,9 @@
+ # HAL changes do not alter any Cuttlefish product.
+ include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
+ 
++BOARD_VENDOR_SEPOLICY_DIRS += \
++    device/google/cuttlefish/vsoc_uml_arm64_pgagnostic/sepolicy/vendor
++
+ # The ACK UML ELF is built and published independently. Android packaging must
+ # neither substitute a Cuttlefish kernel nor stage any loadable module. Every
+ # driver required by the guest is verified built-in by build-kernel.sh.
+diff --git a/vsoc_uml_arm64_pgagnostic/config/ueventd.rc b/vsoc_uml_arm64_pgagnostic/config/ueventd.rc
+index b8f93d489709350a6385b3e43a5d8f8d62fc668b..58d4e8100fb682248750e67a5038e13ca57fcbdf 100644
+--- a/vsoc_uml_arm64_pgagnostic/config/ueventd.rc
++++ b/vsoc_uml_arm64_pgagnostic/config/ueventd.rc
+@@ -1,4 +1,6 @@
+ # The generic Android policy owns input, sound, and DRM nodes. The UML product
+-# adds only its serial console permission; unsupported Cuttlefish HVC, media,
+-# and persistent-memory devices are deliberately absent.
++# adds only its host serial and single-port Virtio console permissions;
++# unsupported Cuttlefish multiport HVC, media, and persistent-memory devices
++# are deliberately absent.
+ /dev/ttyS0 0660 root shell
++/dev/hvc0 0660 root shell
+diff --git a/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/file_contexts b/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/file_contexts
+new file mode 100644
+index 0000000000000000000000000000000000000000..07c548ae9eb5a4a56545cf4e5af3b0e5a64062cf
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/file_contexts
+@@ -0,0 +1,2 @@
++# The UML product exposes one single-port Virtio console as its Android shell.
++/dev/hvc0  u:object_r:serial_device:s0

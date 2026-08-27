@@ -1,0 +1,5031 @@
+From e85639a28781c4ed45d79cf3af40723373842e50 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 11:42:29 +0000
+Subject: [PATCH 1/3] UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
+
+Change-Id: I448b293a9247b348ca9b97a33175629cd45b776c
+---
+ Android.bp                                    |  58 +-
+ src/compiler/glsl/Android.bp                  | 701 ++++++++++++++++
+ src/compiler/glsl/glcpp/Android.bp            | 267 ++++++
+ src/egl/Android.bp                            | 235 ++++++
+ src/egl/drivers/dri2/Android.bp               |  36 +
+ src/egl/generate/Android.bp                   |  43 +
+ src/egl/main/Android.bp                       |  52 ++
+ src/gallium/auxiliary/pipe-loader/Android.bp  |   2 +
+ .../pipe-loader/uml_virgl_target_helpers.c    |  11 +
+ src/gallium/auxiliary/vl/Android.bp           |   1 +
+ src/gallium/drivers/virgl/Android.bp          | 129 +++
+ src/gallium/drivers/virgl/virgl_encode.c      |   4 +-
+ src/gallium/frontends/dri/Android.bp          | 141 ++++
+ src/gallium/targets/Android.bp                |  13 +
+ src/gallium/targets/dri/Android.bp            | 148 ++++
+ src/gallium/winsys/sw/dri/Android.bp          | 106 +++
+ src/gallium/winsys/sw/kms-dri/Android.bp      | 106 +++
+ src/gallium/winsys/virgl/common/Android.bp    | 118 +++
+ src/gallium/winsys/virgl/drm/Android.bp       | 118 +++
+ src/gallium/winsys/virgl/vtest/Android.bp     | 111 +++
+ src/glx/Android.bp                            |  29 +
+ src/mesa/Android.bp                           | 230 ++++++
+ src/mesa/glapi/Android.bp                     |  47 ++
+ src/mesa/glapi/es1api/Android.bp              | 167 ++++
+ src/mesa/glapi/es2api/Android.bp              | 167 ++++
+ src/mesa/glapi/glapi/Android.bp               | 107 +++
+ src/mesa/glapi/glapi/gen/Android.bp           | 781 ++++++++++++++++++
+ src/mesa/glapi/glapi/gen/genCommon.py         |   1 +
+ src/mesa/glapi/glapi/registry/Android.bp      |  29 +
+ src/mesa/glapi/new/Android.bp                 |  28 +
+ src/mesa/glapi/shared-glapi/Android.bp        | 136 +++
+ src/mesa/main/Android.bp                      | 218 +++++
+ src/mesa/math/Android.bp                      |  34 +
+ src/mesa/program/Android.bp                   | 108 +++
+ src/mesa/state_tracker/Android.bp             |  91 ++
+ src/mesa/state_tracker/st_atom_framebuffer.c  |   2 +-
+ src/mesa/vbo/Android.bp                       |  43 +
+ src/util/Android.bp                           |  12 +
+ src/virtio/Android.bp                         |  26 +
+ 39 files changed, 4651 insertions(+), 5 deletions(-)
+ create mode 100644 src/compiler/glsl/glcpp/Android.bp
+ create mode 100644 src/egl/Android.bp
+ create mode 100644 src/egl/drivers/dri2/Android.bp
+ create mode 100644 src/egl/generate/Android.bp
+ create mode 100644 src/egl/main/Android.bp
+ create mode 100644 src/gallium/auxiliary/pipe-loader/uml_virgl_target_helpers.c
+ create mode 100644 src/gallium/drivers/virgl/Android.bp
+ create mode 100644 src/gallium/frontends/dri/Android.bp
+ create mode 100644 src/gallium/targets/Android.bp
+ create mode 100644 src/gallium/targets/dri/Android.bp
+ create mode 100644 src/gallium/winsys/sw/dri/Android.bp
+ create mode 100644 src/gallium/winsys/sw/kms-dri/Android.bp
+ create mode 100644 src/gallium/winsys/virgl/common/Android.bp
+ create mode 100644 src/gallium/winsys/virgl/drm/Android.bp
+ create mode 100644 src/gallium/winsys/virgl/vtest/Android.bp
+ create mode 100644 src/glx/Android.bp
+ create mode 100644 src/mesa/Android.bp
+ create mode 100644 src/mesa/glapi/Android.bp
+ create mode 100644 src/mesa/glapi/es1api/Android.bp
+ create mode 100644 src/mesa/glapi/es2api/Android.bp
+ create mode 100644 src/mesa/glapi/glapi/Android.bp
+ create mode 100644 src/mesa/glapi/glapi/gen/Android.bp
+ create mode 120000 src/mesa/glapi/glapi/gen/genCommon.py
+ create mode 100644 src/mesa/glapi/glapi/registry/Android.bp
+ create mode 100644 src/mesa/glapi/new/Android.bp
+ create mode 100644 src/mesa/glapi/shared-glapi/Android.bp
+ create mode 100644 src/mesa/main/Android.bp
+ create mode 100644 src/mesa/math/Android.bp
+ create mode 100644 src/mesa/program/Android.bp
+ create mode 100644 src/mesa/state_tracker/Android.bp
+ create mode 100644 src/mesa/vbo/Android.bp
+ create mode 100644 src/virtio/Android.bp
+
+diff --git a/Android.bp b/Android.bp
+index 474973ec86e407f5118e5d27069970ede9c517d1..7c2868e1add222daca7a35901fea7e5602550186 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -45,7 +45,7 @@ cc_defaults {
+     vendor: true,
+     ldflags: select(os(), {
+         "android": [
+-            "-Wl,-plugin-opt=-emulated-tls=0",
++            "-Wl,--plugin-opt=-emulated-tls=0",
+         ],
+         default: [],
+     }),
+@@ -247,7 +247,7 @@ cc_defaults {
+     vendor: true,
+     ldflags: select(os(), {
+         "android": [
+-            "-Wl,-plugin-opt=-emulated-tls=0",
++            "-Wl,--plugin-opt=-emulated-tls=0",
+         ],
+         default: [],
+     }),
+@@ -437,6 +437,49 @@ cc_defaults {
+     },
+ }
+ 
++cc_defaults {
++    name: "asan_c_args",
++    vendor: true,
++    cflags: select((arch(), os()), {
++        ("arm64", "android"): [
++            "-DBUILT_WITH_ASAN=0",
++        ],
++        (default, default): [],
++    }),
++}
++
++cc_defaults {
++    name: "aosp_uml_virgl_args",
++    vendor: true,
++    cflags: [
++        "-UAMD_LLVM_AVAILABLE",
++        "-UDRAW_LLVM_AVAILABLE",
++        "-UHAVE_OPENGL",
++        "-DAMD_LLVM_AVAILABLE=0",
++        "-DDRAW_LLVM_AVAILABLE=0",
++        "-DHAVE_DRI",
++        "-DHAVE_DRISW_KMS",
++        "-DHAVE_OPENGL=1",
++        "-DHAVE_SURFACELESS_PLATFORM",
++        "-DHAVE_VIRGL",
++        "-Wno-gnu-pointer-arith",
++    ],
++    cppflags: [
++        "-UAMD_LLVM_AVAILABLE",
++        "-UDRAW_LLVM_AVAILABLE",
++        "-UHAVE_OPENGL",
++        "-DAMD_LLVM_AVAILABLE=0",
++        "-DDRAW_LLVM_AVAILABLE=0",
++        "-DHAVE_DRI",
++        "-DHAVE_DRISW_KMS",
++        "-DHAVE_OPENGL=1",
++        "-DHAVE_SURFACELESS_PLATFORM",
++        "-DHAVE_VIRGL",
++        "-Wno-macro-redefined",
++        "-Wno-missing-prototypes",
++    ],
++}
++
+ cc_defaults {
+     name: "clflushopt_args",
+     vendor: true,
+@@ -461,6 +504,17 @@ cc_defaults {
+     ],
+ }
+ 
++cc_defaults {
++    name: "ld_args_build_id",
++    vendor: true,
++    ldflags: select((arch(), os()), {
++        ("arm64", "android"): [
++            "-Wl,--build-id=sha1",
++        ],
++        (default, default): [],
++    }),
++}
++
+ cc_defaults {
+     name: "ld_args_gc_sections",
+     vendor: true,
+diff --git a/src/compiler/glsl/Android.bp b/src/compiler/glsl/Android.bp
+index 1eb836fdb4705cf20049d3f573e7f3be1f257541..443a631a015633d9307a74e416d153b91a7d563f 100644
+--- a/src/compiler/glsl/Android.bp
++++ b/src/compiler/glsl/Android.bp
+@@ -39,3 +39,704 @@ python_binary_host {
+         "pyyaml",
+     ],
+ }
++
++genrule {
++    name: "astc_glsl.h",
++    out: [
++        "src/compiler/glsl/astc_glsl.h",
++    ],
++    srcs: [
++        "astc_decoder.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location astc_decoder.glsl) $(location " +
++        "src/compiler/glsl/astc_glsl.h) -n astc_source",
++}
++
++genrule {
++    name: "bc1_glsl.h",
++    out: [
++        "src/compiler/glsl/bc1_glsl.h",
++    ],
++    srcs: [
++        "bc1.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location bc1.glsl) $(location " +
++        "src/compiler/glsl/bc1_glsl.h) -n bc1_source",
++}
++
++genrule {
++    name: "bc4_glsl.h",
++    out: [
++        "src/compiler/glsl/bc4_glsl.h",
++    ],
++    srcs: [
++        "bc4.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location bc4.glsl) $(location " +
++        "src/compiler/glsl/bc4_glsl.h) -n bc4_source",
++}
++
++genrule {
++    name: "cross_platform_settings_piece_all.h",
++    out: [
++        "src/compiler/glsl/cross_platform_settings_piece_all.h",
++    ],
++    srcs: [
++        "CrossPlatformSettings_piece_all.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location " +
++        "CrossPlatformSettings_piece_all.glsl) $(location " +
++        "src/compiler/glsl/cross_platform_settings_piece_all.h) -n " +
++        "cross_platform_settings_piece_all_header",
++}
++
++genrule {
++    name: "etc2_rgba_stitch_glsl.h",
++    out: [
++        "src/compiler/glsl/etc2_rgba_stitch_glsl.h",
++    ],
++    srcs: [
++        "etc2_rgba_stitch.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location etc2_rgba_stitch.glsl) $(location " +
++        "src/compiler/glsl/etc2_rgba_stitch_glsl.h) -n etc2_rgba_stitch_source",
++}
++
++genrule {
++    name: "float64_glsl.h",
++    out: [
++        "src/compiler/glsl/float64_glsl.h",
++    ],
++    srcs: [
++        "float64.glsl",
++    ],
++    tools: [
++        "xxd_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location xxd_py_binary) $(location float64.glsl) $(location " +
++        "src/compiler/glsl/float64_glsl.h) -n float64_source",
++}
++
++genrule {
++    name: "glsl_lexer_cpp",
++    out: [
++        "glsl_lexer.cpp",
++    ],
++    srcs: [
++        "glsl_lexer.ll",
++    ],
++    tools: [
++        "flex",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location flex) -o $(location glsl_lexer.cpp) " +
++        "$(location glsl_lexer.ll)",
++}
++
++genrule {
++    name: "glsl_parser_headers",
++    out: [
++        "src/compiler/glsl/glsl_parser.h",
++    ],
++    srcs: [
++        "glsl_parser.yy",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o " +
++        "$(genDir)/src/compiler/glsl/glsl_parser.cpp -p _mesa_glsl_ " +
++        "--defines=$(location src/compiler/glsl/glsl_parser.h) $(location " +
++        "glsl_parser.yy)",
++}
++
++genrule {
++    name: "glsl_parser_impl",
++    out: [
++        "src/compiler/glsl/glsl_parser.cpp",
++    ],
++    srcs: [
++        "glsl_parser.yy",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o $(location " +
++        "src/compiler/glsl/glsl_parser.cpp) -p _mesa_glsl_ " +
++        "--defines=$(genDir)/src/compiler/glsl/glsl_parser.h $(location " +
++        "glsl_parser.yy)",
++}
++
++genrule {
++    name: "ir_expression_operation_constant.h",
++    out: [
++        "src/compiler/glsl/ir_expression_operation_constant.h",
++    ],
++    tools: [
++        "ir_expression_operation_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location ir_expression_operation_py_binary) constant > $(location " +
++        "src/compiler/glsl/ir_expression_operation_constant.h)",
++}
++
++genrule {
++    name: "ir_expression_operation_strings.h",
++    out: [
++        "src/compiler/glsl/ir_expression_operation_strings.h",
++    ],
++    tools: [
++        "ir_expression_operation_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++    ],
++    cmd: "$(location ir_expression_operation_py_binary) strings > $(location " +
++        "src/compiler/glsl/ir_expression_operation_strings.h)",
++}
++
++cc_defaults {
++    name: "glsl_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_compiler_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_compiler_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_standalone_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_standalone_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_util_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glsl_util_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glsl",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glsl_c_flags",
++        "glsl_cpp_flags",
++        "no_override_init_args",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_compiler",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_nir",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "astc_glsl.h",
++        "bc1_glsl.h",
++        "bc4_glsl.h",
++        "builtin_types.h",
++        "cross_platform_settings_piece_all.h",
++        "etc2_rgba_stitch_glsl.h",
++        "float64_glsl.h",
++        "glsl_parser_headers",
++        "ir_expression_operation.h",
++        "ir_expression_operation_constant.h",
++        "ir_expression_operation_strings.h",
++        "nir_builder_opcodes.h",
++        "nir_intrinsics.h",
++        "nir_intrinsics_indices.h",
++        "nir_opcodes.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            ":glsl_lexer_cpp",
++            ":glsl_parser_impl",
++            "ast_array_index.cpp",
++            "ast_expr.cpp",
++            "ast_function.cpp",
++            "ast_to_hir.cpp",
++            "ast_type.cpp",
++            "builtin_functions.cpp",
++            "builtin_types.cpp",
++            "builtin_variables.cpp",
++            "gl_nir_detect_function_recursion.c",
++            "gl_nir_link_atomics.c",
++            "gl_nir_link_functions.c",
++            "gl_nir_link_interface_blocks.c",
++            "gl_nir_link_uniform_blocks.c",
++            "gl_nir_link_uniform_initializers.c",
++            "gl_nir_link_uniforms.c",
++            "gl_nir_link_varyings.c",
++            "gl_nir_link_xfb.c",
++            "gl_nir_linker.c",
++            "gl_nir_lower_atomics.c",
++            "gl_nir_lower_blend_equation_advanced.c",
++            "gl_nir_lower_buffers.c",
++            "gl_nir_lower_discard_flow.c",
++            "gl_nir_lower_images.c",
++            "gl_nir_lower_named_interface_blocks.c",
++            "gl_nir_lower_packed_varyings.c",
++            "gl_nir_lower_samplers.c",
++            "gl_nir_lower_samplers_as_deref.c",
++            "gl_nir_lower_xfb_varying.c",
++            "glsl_parser_extras.cpp",
++            "glsl_symbol_table.cpp",
++            "glsl_to_nir.cpp",
++            "hir_field_selection.cpp",
++            "ir.cpp",
++            "ir_basic_block.cpp",
++            "ir_builder.cpp",
++            "ir_clone.cpp",
++            "ir_constant_expression.cpp",
++            "ir_expression_flattening.cpp",
++            "ir_function.cpp",
++            "ir_function_detect_recursion.cpp",
++            "ir_hierarchical_visitor.cpp",
++            "ir_hv_accept.cpp",
++            "ir_print_visitor.cpp",
++            "ir_rvalue_visitor.cpp",
++            "ir_validate.cpp",
++            "ir_variable_refcount.cpp",
++            "linker_util.cpp",
++            "lower_builtins.cpp",
++            "lower_instructions.cpp",
++            "lower_jumps.cpp",
++            "lower_mat_op_to_vec.cpp",
++            "lower_packing_builtins.cpp",
++            "lower_precision.cpp",
++            "lower_subroutine.cpp",
++            "lower_vec_index_to_cond_assign.cpp",
++            "lower_vector_derefs.cpp",
++            "opt_algebraic.cpp",
++            "opt_dead_builtin_variables.cpp",
++            "opt_dead_code.cpp",
++            "opt_flatten_nested_if_blocks.cpp",
++            "opt_function_inlining.cpp",
++            "opt_if_simplification.cpp",
++            "opt_minmax.cpp",
++            "opt_rebalance_tree.cpp",
++            "opt_tree_grafting.cpp",
++            "propagate_invariance.cpp",
++            "serialize.cpp",
++            "shader_cache.cpp",
++            "string_to_uint_map.cpp",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "glcpp",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glsl_standalone",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glsl_standalone_c_flags",
++        "glsl_standalone_cpp_flags",
++        "no_override_init_args",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_compiler",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_nir",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "builtin_types.h",
++        "ir_expression_operation.h",
++        "nir_builder_opcodes.h",
++        "nir_intrinsics.h",
++        "nir_intrinsics_indices.h",
++        "nir_opcodes.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "standalone.cpp",
++            "standalone_scaffolding.cpp",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "glcpp",
++            "glcpp_standalone",
++            "glsl",
++            "glsl_util",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glsl_util",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glsl_util_c_flags",
++        "glsl_util_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            ":glsl_util_files",
++            ":glsl_util_files_1",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
++
++cc_binary {
++    host_supported: false,
++    name: "glsl_compiler",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    enabled: false,
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glsl_compiler_c_flags",
++        "glsl_compiler_cpp_flags",
++        "no_override_init_args",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "main.cpp",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "glcpp",
++            "glcpp_standalone",
++            "glsl",
++            "glsl_standalone",
++            "glsl_util",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/compiler/glsl/glcpp/Android.bp b/src/compiler/glsl/glcpp/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..8fb867a382bff4feedb33a34bb1d00d3c3675aac
+--- /dev/null
++++ b/src/compiler/glsl/glcpp/Android.bp
+@@ -0,0 +1,267 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "glcpp-lex.c",
++    out: [
++        "glcpp-lex.c",
++    ],
++    srcs: [
++        "glcpp-lex.l",
++    ],
++    tools: [
++        "flex",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location flex) -o $(location glcpp-lex.c) " +
++        "$(location glcpp-lex.l)",
++}
++
++genrule {
++    name: "glcpp-parse.ch_headers",
++    out: [
++        "src/compiler/glsl/glcpp/glcpp-parse.h",
++    ],
++    srcs: [
++        "glcpp-parse.y",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/compiler",
++        "src/compiler/glsl",
++        "src/compiler/glsl/glcpp",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o " +
++        "$(genDir)/src/compiler/glsl/glcpp/glcpp-parse.c -p glcpp_parser_ " +
++        "--defines=$(location src/compiler/glsl/glcpp/glcpp-parse.h) $(location " +
++        "glcpp-parse.y)",
++}
++
++genrule {
++    name: "glcpp-parse.ch_impl",
++    out: [
++        "src/compiler/glsl/glcpp/glcpp-parse.c",
++    ],
++    srcs: [
++        "glcpp-parse.y",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o $(location " +
++        "src/compiler/glsl/glcpp/glcpp-parse.c) -p glcpp_parser_ " +
++        "--defines=$(genDir)/src/compiler/glsl/glcpp/glcpp-parse.h $(location " +
++        "glcpp-parse.y)",
++}
++
++cc_defaults {
++    name: "glcpp_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glcpp_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glcpp_standalone_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glcpp_standalone_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glcpp",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    enabled: true,
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glcpp_c_flags",
++        "glcpp_cpp_flags",
++        "no_override_init_args",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "glcpp-parse.ch_headers",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            ":glcpp-lex.c",
++            ":glcpp-parse.ch_impl",
++            "glcpp.c",
++            "pp.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glcpp_standalone",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glcpp_standalone_c_flags",
++        "glcpp_standalone_cpp_flags",
++        "no_override_init_args",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "pp_standalone_scaffolding.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "glcpp",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/egl/Android.bp b/src/egl/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f937e0a463ca48750e0869581764e9049f02faf
+--- /dev/null
++++ b/src/egl/Android.bp
+@@ -0,0 +1,235 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "egl.def",
++    out: [
++        "egl.def",
++    ],
++    srcs: [
++        ":egl.def_in",
++    ],
++    tools: [
++        "gen_vs_module_defs_py_binary",
++    ],
++    cmd: "$(location gen_vs_module_defs_py_binary) --in_file $(location " +
++        ":egl.def_in) --out_file $(location egl.def) --compiler_abi other " +
++        "--compiler_id clang --cpu_family aarch64",
++}
++
++genrule {
++    name: "g_egldispatchstubs.c",
++    out: [
++        "g_egldispatchstubs.c",
++    ],
++    srcs: [
++        ":egl_other_xml",
++        ":egl_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "gen_egl_dispatch_py_binary",
++    ],
++    cmd: "$(location gen_egl_dispatch_py_binary) source $(location :egl_xml) " +
++        "$(location :egl_other_xml) > $(location g_egldispatchstubs.c)",
++}
++
++genrule {
++    name: "g_egldispatchstubs.h",
++    out: [
++        "src/egl/g_egldispatchstubs.h",
++    ],
++    srcs: [
++        ":egl_other_xml",
++        ":egl_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "gen_egl_dispatch_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/egl",
++    ],
++    cmd: "$(location gen_egl_dispatch_py_binary) header $(location :egl_xml) " +
++        "$(location :egl_other_xml) > $(location src/egl/g_egldispatchstubs.h)",
++}
++
++cc_library_headers {
++    name: "inc_egl",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++            "main",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "EGL_mesa_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-D_EGL_NATIVE_PLATFORM=_EGL_PLATFORM_ANDROID",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "EGL_mesa_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "c_args_for_egl",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DHAVE_MINCORE",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_shared {
++    host_supported: false,
++    name: "libEGL_mesa",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "EGL_mesa_c_flags",
++        "EGL_mesa_cpp_flags",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "asan_c_args",
++        "c_args_for_egl",
++        "ld_args_bsymbolic",
++        "ld_args_gc_sections",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_egl",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_loader",
++            "inc_mesa",
++            "inc_src",
++            "inc_src_egl_drivers_dri2",
++            "inc_src_egl_main",
++            "inc_st_dri",
++            "inc_util",
++            "inc_util_c11",
++            "libnativebase_headers",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "dispatch.h",
++        "git_sha1.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            ":files_egl",
++            ":files_egl_1",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "_mesa_u_gralloc",
++            "blake3",
++            "compiler",
++            "dri",
++            "gallium",
++            "galliumvl",
++            "glapi",
++            "glcpp",
++            "glsl",
++            "loader",
++            "mesa",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "pipe_loader_static",
++            "swdri",
++            "swkmsdri",
++            "virgl",
++            "virglcommon",
++            "virgldrm",
++            "virglvtest",
++            "vtn",
++            "ws_null",
++            "wsw",
++            "xmlconfig",
++        ],
++        default: [],
++    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
++    shared_libs: select(arch(), {
++        "arm64": [
++            "gallium_dri",
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++    target: {
++        android: {
++            relative_install_path: "egl",
++        },
++    },
++}
+diff --git a/src/egl/drivers/dri2/Android.bp b/src/egl/drivers/dri2/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..7740da2712e5028002b00f866974cd62fb33119d
+--- /dev/null
++++ b/src/egl/drivers/dri2/Android.bp
+@@ -0,0 +1,36 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_egl_1",
++    srcs: [
++        "egl_dri2.c",
++        "platform_android.c",
++        "platform_device.c",
++        "platform_surfaceless.c",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_egl_drivers_dri2",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/egl/generate/Android.bp b/src/egl/generate/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a13c49f0485a02961512c4d0f3597819d0fbc9d
+--- /dev/null
++++ b/src/egl/generate/Android.bp
+@@ -0,0 +1,43 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "egl_other_xml",
++    srcs: [
++        "egl_other.xml",
++    ],
++}
++
++filegroup {
++    name: "egl_xml",
++    srcs: [
++        "egl.xml",
++    ],
++}
++
++python_binary_host {
++    name: "gen_egl_dispatch_py_binary",
++    main: "gen_egl_dispatch.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "gen_egl_dispatch.py",
++        "eglFunctionList.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
+diff --git a/src/egl/main/Android.bp b/src/egl/main/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..7d4f5670b9f981c394834e4a49362b682e70f26f
+--- /dev/null
++++ b/src/egl/main/Android.bp
+@@ -0,0 +1,52 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "egl.def_in",
++    srcs: [
++        "egl.def.in",
++    ],
++}
++
++filegroup {
++    name: "files_egl",
++    srcs: [
++        "eglapi.c",
++        "eglarray.c",
++        "eglconfig.c",
++        "eglconfigdebug.c",
++        "eglcontext.c",
++        "eglcurrent.c",
++        "egldevice.c",
++        "egldisplay.c",
++        "eglglobals.c",
++        "eglimage.c",
++        "egllog.c",
++        "eglsurface.c",
++        "eglsync.c",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_egl_main",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/auxiliary/pipe-loader/Android.bp b/src/gallium/auxiliary/pipe-loader/Android.bp
+index 496735f85324e081cc21b5391c60950cdd902d1f..460d83c30fd29dfa74b72b569b6f3487c5a7c2ec 100644
+--- a/src/gallium/auxiliary/pipe-loader/Android.bp
++++ b/src/gallium/auxiliary/pipe-loader/Android.bp
+@@ -41,6 +41,7 @@ cc_library_static {
+     cpp_std: "c++17",
+     host_supported: true,
+     defaults: [
++        "aosp_uml_virgl_args",
+         "aosp_mesa3d_c_link_args",
+         "aosp_mesa3d_c_project_args",
+         "aosp_mesa3d_cpp_link_args",
+@@ -72,6 +73,7 @@ cc_library_static {
+         "pipe_loader.c",
+         "pipe_loader_drm.c",
+         "pipe_loader_sw.c",
++        "uml_virgl_target_helpers.c",
+     ],
+     static_libs: [
+         "blake3",
+diff --git a/src/gallium/auxiliary/pipe-loader/uml_virgl_target_helpers.c b/src/gallium/auxiliary/pipe-loader/uml_virgl_target_helpers.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..cc415b95d425553d5b5434f79443d1abb64cfd6e
+--- /dev/null
++++ b/src/gallium/auxiliary/pipe-loader/uml_virgl_target_helpers.c
+@@ -0,0 +1,11 @@
++/*
++ * Copyright 2026 The linux-um-darwin Authors
++ * SPDX-License-Identifier: MIT
++ *
++ * Keep the target-helper definitions in the same archive as the pipe loader.
++ * Meson normally places these definitions in the DRI target, while Soong also
++ * links the loader into EGL directly.
++ */
++
++#include "target-helpers/drm_helper.h"
++#include "target-helpers/sw_helper.h"
+diff --git a/src/gallium/auxiliary/vl/Android.bp b/src/gallium/auxiliary/vl/Android.bp
+index 3fd1aa8cc37a582258b51539c03384a167acd0a9..5b2b7a3e087f79f46f9b748ce5338906a88db455 100644
+--- a/src/gallium/auxiliary/vl/Android.bp
++++ b/src/gallium/auxiliary/vl/Android.bp
+@@ -94,6 +94,7 @@ filegroup {
+ filegroup {
+     name: "vl_winsys_drm_c_impl",
+     srcs: [
++        "vl_winsys_dri_vgem.c",
+         "vl_winsys_drm.c",
+     ],
+ }
+diff --git a/src/gallium/drivers/virgl/Android.bp b/src/gallium/drivers/virgl/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..8a23ceb6a2842561e5351907dd586fb4847ead80
+--- /dev/null
++++ b/src/gallium/drivers/virgl/Android.bp
+@@ -0,0 +1,129 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "virgl_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "virgl_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "virgl",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "virgl_c_flags",
++        "virgl_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_compiler",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_nir",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++            "inc_virtio",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "builtin_types.h",
++        "ir_expression_operation.h",
++        "nir_builder_opcodes.h",
++        "nir_intrinsics.h",
++        "nir_intrinsics_indices.h",
++        "nir_opcodes.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "virgl_buffer.c",
++            "virgl_context.c",
++            "virgl_encode.c",
++            "virgl_query.c",
++            "virgl_resource.c",
++            "virgl_screen.c",
++            "virgl_staging_mgr.c",
++            "virgl_streamout.c",
++            "virgl_texture.c",
++            "virgl_tgsi.c",
++            "virgl_transfer_queue.c",
++            "virgl_video.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "xmlconfig",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/drivers/virgl/virgl_encode.c b/src/gallium/drivers/virgl/virgl_encode.c
+index 32e5149f9c2ec7ce364778e774ec14aa04611565..353950a78a7fcd2e40ec233aa32a7788ebec358f 100644
+--- a/src/gallium/drivers/virgl/virgl_encode.c
++++ b/src/gallium/drivers/virgl/virgl_encode.c
+@@ -1090,8 +1090,8 @@ static void virgl_encoder_transfer3d_common(struct virgl_screen *vs,
+ 
+ {
+    struct pipe_transfer *transfer = &xfer->base;
+-   unsigned stride;
+-   uintptr_t layer_stride;
++   unsigned stride = 0;
++   uintptr_t layer_stride = 0;
+ 
+    if (encode_stride == virgl_transfer3d_explicit_stride) {
+       stride = transfer->stride;
+diff --git a/src/gallium/frontends/dri/Android.bp b/src/gallium/frontends/dri/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..14de68ab067800e3bd246b0d9b35a8e9df3a375c
+--- /dev/null
++++ b/src/gallium/frontends/dri/Android.bp
+@@ -0,0 +1,141 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_library_headers {
++    name: "inc_src_gallium_targets_dri",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_headers {
++    name: "inc_st_dri",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "dri_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "dri_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "dri",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "dri_c_flags",
++        "dri_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_gallium_drivers",
++            "inc_include",
++            "inc_loader",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "git_sha1.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "dri2.c",
++            "dri_context.c",
++            "dri_drawable.c",
++            "dri_helpers.c",
++            "dri_query_renderer.c",
++            "dri_screen.c",
++            "dri_util.c",
++            "drisw.c",
++            "kopper_stubs.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "loader",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/targets/Android.bp b/src/gallium/targets/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..af5aad140f28074948a896ab7e6836f2770403c8
+--- /dev/null
++++ b/src/gallium/targets/Android.bp
+@@ -0,0 +1,13 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++
++package {
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "gallium_dri_dynamic_list",
++    srcs: ["dri.dyn"],
++    visibility: ["//external/mesa3d/src/gallium/targets/dri:__pkg__"],
++}
+diff --git a/src/gallium/targets/dri/Android.bp b/src/gallium/targets/dri/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ac4e67f2f17f337bd8cbc7588d4891fbef4d241
+--- /dev/null
++++ b/src/gallium/targets/dri/Android.bp
+@@ -0,0 +1,148 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "gallium_dri_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DGALLIUM_VIRGL",
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "gallium_dri_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DGALLIUM_VIRGL",
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_shared {
++    host_supported: false,
++    name: "gallium_dri",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "gallium_dri_c_flags",
++        "gallium_dri_cpp_flags",
++        "ld_args_build_id",
++        "ld_args_gc_sections",
++    ],
++    dynamic_list: "//external/mesa3d/src/gallium/targets:gallium_dri_dynamic_list",
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_gallium_drivers",
++            "inc_gallium_winsys",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_src_gallium_targets_dri",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "dri_target.c",
++        ],
++        default: [],
++    }),
++    static_libs: select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "dri",
++            "gallium",
++            "galliumvl",
++            "glapi",
++            "glcpp",
++            "glsl",
++            "libLLVM16_swiftshader",
++            "loader",
++            "mesa",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "pipe_loader_static",
++            "swdri",
++            "swkmsdri",
++            "virgl",
++            "virglcommon",
++            "virgldrm",
++            "virglvtest",
++            "vtn",
++            "ws_null",
++            "wsw",
++            "xmlconfig",
++        ],
++        default: [],
++    }) + select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++    whole_static_libs: select(arch(), {
++        "arm64": [
++            "dri",
++        ],
++        default: [],
++    }),
++    target: {
++        android: {
++            relative_install_path: "dri",
++        },
++    },
++}
+diff --git a/src/gallium/winsys/sw/dri/Android.bp b/src/gallium/winsys/sw/dri/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..2103fe1fbf42ec2f6cd40b6dbdd160793e350dba
+--- /dev/null
++++ b/src/gallium/winsys/sw/dri/Android.bp
+@@ -0,0 +1,106 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "swdri_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "swdri_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "swdri",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "swdri_c_flags",
++        "swdri_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "dri_sw_winsys.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/winsys/sw/kms-dri/Android.bp b/src/gallium/winsys/sw/kms-dri/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..d7cf3c2320c215c76c93266efa1bc8b052f5c0d1
+--- /dev/null
++++ b/src/gallium/winsys/sw/kms-dri/Android.bp
+@@ -0,0 +1,106 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "swkmsdri_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "swkmsdri_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "swkmsdri",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "swkmsdri_c_flags",
++        "swkmsdri_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "kms_dri_sw_winsys.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/winsys/virgl/common/Android.bp b/src/gallium/winsys/virgl/common/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..cce3ab047a05cd01c3e8f22e1a47e3d757038b5e
+--- /dev/null
++++ b/src/gallium/winsys/virgl/common/Android.bp
+@@ -0,0 +1,118 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_library_headers {
++    name: "inc_src_gallium_winsys_virgl_common",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "virglcommon_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "virglcommon_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "virglcommon",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "virglcommon_c_flags",
++        "virglcommon_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_gallium_drivers",
++            "inc_include",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "virgl_resource_cache.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/winsys/virgl/drm/Android.bp b/src/gallium/winsys/virgl/drm/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..196a690543bded3ff7121f54c728689ef772c6d0
+--- /dev/null
++++ b/src/gallium/winsys/virgl/drm/Android.bp
+@@ -0,0 +1,118 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "virgldrm_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "virgldrm_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "virgldrm",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "virgldrm_c_flags",
++        "virgldrm_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_compiler",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_gallium_drivers",
++            "inc_include",
++            "inc_nir",
++            "inc_src",
++            "inc_src_gallium_winsys_virgl_common",
++            "inc_util",
++            "inc_util_c11",
++            "inc_virtio",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "builtin_types.h",
++        "ir_expression_operation.h",
++        "nir_builder_opcodes.h",
++        "nir_intrinsics.h",
++        "nir_intrinsics_indices.h",
++        "nir_opcodes.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "virgl_drm_winsys.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "virglcommon",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/gallium/winsys/virgl/vtest/Android.bp b/src/gallium/winsys/virgl/vtest/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..0848bdae3414dbcbf095e501a3ca4fe929cd3b9f
+--- /dev/null
++++ b/src/gallium/winsys/virgl/vtest/Android.bp
+@@ -0,0 +1,111 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "virglvtest_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "virglvtest_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "virglvtest",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "virglvtest_c_flags",
++        "virglvtest_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_gallium_drivers",
++            "inc_include",
++            "inc_src",
++            "inc_src_gallium_winsys_virgl_common",
++            "inc_util",
++            "inc_util_c11",
++            "inc_virtio",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "virgl_vtest_socket.c",
++            "virgl_vtest_winsys.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "virglcommon",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/glx/Android.bp b/src/glx/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..689c7e2015b11b22b80373e4865ddea9b115787c
+--- /dev/null
++++ b/src/glx/Android.bp
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "glapi_xml_py_deps_2",
++    srcs: [
++        "libgl-symbols.txt",
++    ],
++}
++
++filegroup {
++    name: "libgl-symbols_txt",
++    srcs: [
++        "libgl-symbols.txt",
++    ],
++}
+diff --git a/src/mesa/Android.bp b/src/mesa/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3413a6bf9cc65f857d7bd7143c5c15e72800102c
+--- /dev/null
++++ b/src/mesa/Android.bp
+@@ -0,0 +1,230 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "format_fallback.c",
++    out: [
++        "format_fallback.c",
++    ],
++    srcs: [
++        ":formats_csv",
++    ],
++    tools: [
++        "format_fallback_py_binary",
++    ],
++    cmd: "$(location format_fallback_py_binary) $(location :formats_csv) " +
++        "$(location format_fallback.c)",
++}
++
++genrule {
++    name: "format_info.h",
++    out: [
++        "src/mesa/format_info.h",
++    ],
++    srcs: [
++        ":formats_csv",
++    ],
++    tools: [
++        "format_info_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++    ],
++    cmd: "$(location format_info_py_binary) $(location :formats_csv) > " +
++        "$(location src/mesa/format_info.h)",
++}
++
++genrule {
++    name: "get_hash.h",
++    out: [
++        "src/mesa/get_hash.h",
++    ],
++    srcs: [
++        ":gl_and_es_API_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "get_hash_generator_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++    ],
++    cmd: "$(location get_hash_generator_py_binary) -f $(location " +
++        ":gl_and_es_API_xml) > $(location src/mesa/get_hash.h)",
++}
++
++cc_library_headers {
++    name: "inc_mesa",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "mesa_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "mesa_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "mesa",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "mesa_c_flags",
++        "mesa_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_compiler",
++            "inc_gallium",
++            "inc_gallium_aux",
++            "inc_include",
++            "inc_mesa",
++            "inc_nir",
++            "inc_src",
++            "inc_src_mesa",
++            "inc_src_mesa_main",
++            "inc_src_mesa_math",
++            "inc_src_mesa_program",
++            "inc_src_mesa_state_tracker",
++            "inc_src_mesa_vbo",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "api_beginend_init.h",
++        "api_exec_decl.h",
++        "api_hw_select_init.h",
++        "api_save.h",
++        "api_save_init.h",
++        "astc_glsl.h",
++        "bc1_glsl.h",
++        "bc4_glsl.h",
++        "builtin_types.h",
++        "cross_platform_settings_piece_all.h",
++        "dispatch.h",
++        "etc2_rgba_stitch_glsl.h",
++        "format_info.h",
++        "get_hash.h",
++        "git_sha1.h",
++        "ir_expression_operation.h",
++        "marshal_generated.h",
++        "nir_builder_opcodes.h",
++        "nir_intrinsics.h",
++        "nir_intrinsics_indices.h",
++        "nir_opcodes.h",
++        "program_parse_tab.ch_headers",
++        "shader_stats.h",
++        "spirv_info_headers",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            ":api_exec_init.c",
++            ":enums.c",
++            ":files_libmesa",
++            ":files_libmesa_1",
++            ":files_libmesa_2",
++            ":files_libmesa_3",
++            ":files_libmesa_4",
++            ":format_fallback.c",
++            ":marshal_generated0.c",
++            ":marshal_generated1.c",
++            ":marshal_generated2.c",
++            ":marshal_generated3.c",
++            ":marshal_generated4.c",
++            ":marshal_generated5.c",
++            ":marshal_generated6.c",
++            ":marshal_generated7.c",
++            ":mesa_lex",
++            ":program_parse_tab.ch_impl",
++            ":unmarshal_table.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "glcpp",
++            "glsl",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "vtn",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/glapi/Android.bp b/src/mesa/glapi/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a06cb1766c64c18346b83c68fda9d0b093b0402e
+--- /dev/null
++++ b/src/mesa/glapi/Android.bp
+@@ -0,0 +1,47 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++python_binary_host {
++    name: "mapi_abi_py_binary",
++    main: "mapi_abi.py",
++    srcs: [
++        "glapi/gen/apiexec.py",
++        "glapi/gen/glX_XML.py",
++        "glapi/gen/glX_proto_common.py",
++        "glapi/gen/gl_XML.py",
++        "glapi/gen/license.py",
++        "glapi/gen/marshal_XML.py",
++        "glapi/gen/static_data.py",
++        "glapi/gen/typeexpr.py",
++        "mapi_abi.py",
++        "new/genCommon.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_glapi",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/glapi/es1api/Android.bp b/src/mesa/glapi/es1api/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a75ae3b37a39a1d796a0402b37ad71b6639e9c6e
+--- /dev/null
++++ b/src/mesa/glapi/es1api/Android.bp
+@@ -0,0 +1,167 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "es1_glapi_mapi_tmp.h",
++    out: [
++        "src/mesa/glapi/es1api/es1_glapi_mapi_tmp.h",
++    ],
++    srcs: [
++        ":gl_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "gen_gldispatch_mapi_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/es1api",
++    ],
++    cmd: "$(location gen_gldispatch_mapi_py_binary) glesv1 $(location :gl_xml) > " +
++        "$(location src/mesa/glapi/es1api/es1_glapi_mapi_tmp.h)",
++}
++
++genrule {
++    name: "gles1.def",
++    out: [
++        "gles1.def",
++    ],
++    srcs: [
++        "gles1.def.in",
++    ],
++    tools: [
++        "gen_vs_module_defs_py_binary",
++    ],
++    cmd: "$(location gen_vs_module_defs_py_binary) --in_file $(location " +
++        "gles1.def.in) --out_file $(location gles1.def) --compiler_abi other " +
++        "--compiler_id clang --cpu_family aarch64",
++}
++
++cc_defaults {
++    name: "GLESv1_CM_mesa_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "GLESv1_CM_mesa_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_shared {
++    host_supported: false,
++    name: "libGLESv1_CM_mesa",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "GLESv1_CM_mesa_c_flags",
++        "GLESv1_CM_mesa_cpp_flags",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "ld_args_gc_sections",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "es1_glapi_mapi_tmp.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "libgles1_public.c",
++        ],
++        default: [],
++    }),
++    static_libs: select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "dri",
++            "gallium",
++            "galliumvl",
++            "glapi",
++            "glcpp",
++            "glsl",
++            "loader",
++            "mesa",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "pipe_loader_static",
++            "swdri",
++            "swkmsdri",
++            "virgl",
++            "virglcommon",
++            "virgldrm",
++            "virglvtest",
++            "vtn",
++            "ws_null",
++            "wsw",
++            "xmlconfig",
++        ],
++        default: [],
++    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
++    shared_libs: select(arch(), {
++        "arm64": [
++            "gallium_dri",
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++    target: {
++        android: {
++            relative_install_path: "egl",
++        },
++    },
++}
+diff --git a/src/mesa/glapi/es2api/Android.bp b/src/mesa/glapi/es2api/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b919228eae83887c99f26b87bc690df6f1c8c0a0
+--- /dev/null
++++ b/src/mesa/glapi/es2api/Android.bp
+@@ -0,0 +1,167 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "es2_glapi_mapi_tmp.h",
++    out: [
++        "src/mesa/glapi/es2api/es2_glapi_mapi_tmp.h",
++    ],
++    srcs: [
++        ":gl_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "gen_gldispatch_mapi_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/es2api",
++    ],
++    cmd: "$(location gen_gldispatch_mapi_py_binary) glesv2 $(location :gl_xml) > " +
++        "$(location src/mesa/glapi/es2api/es2_glapi_mapi_tmp.h)",
++}
++
++genrule {
++    name: "gles2.def",
++    out: [
++        "gles2.def",
++    ],
++    srcs: [
++        "gles2.def.in",
++    ],
++    tools: [
++        "gen_vs_module_defs_py_binary",
++    ],
++    cmd: "$(location gen_vs_module_defs_py_binary) --in_file $(location " +
++        "gles2.def.in) --out_file $(location gles2.def) --compiler_abi other " +
++        "--compiler_id clang --cpu_family aarch64",
++}
++
++cc_defaults {
++    name: "GLESv2_mesa_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "GLESv2_mesa_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_shared {
++    host_supported: false,
++    name: "libGLESv2_mesa",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "GLESv2_mesa_c_flags",
++        "GLESv2_mesa_cpp_flags",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "ld_args_gc_sections",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "es2_glapi_mapi_tmp.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "libgles2_public.c",
++        ],
++        default: [],
++    }),
++    static_libs: select(arch(), {
++        "arm64": [
++            "blake3",
++            "compiler",
++            "dri",
++            "gallium",
++            "galliumvl",
++            "glapi",
++            "glcpp",
++            "glsl",
++            "loader",
++            "mesa",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++            "nir",
++            "pipe_loader_static",
++            "swdri",
++            "swkmsdri",
++            "virgl",
++            "virglcommon",
++            "virgldrm",
++            "virglvtest",
++            "vtn",
++            "ws_null",
++            "wsw",
++            "xmlconfig",
++        ],
++        default: [],
++    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
++    shared_libs: select(arch(), {
++        "arm64": [
++            "gallium_dri",
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++    target: {
++        android: {
++            relative_install_path: "egl",
++        },
++    },
++}
+diff --git a/src/mesa/glapi/glapi/Android.bp b/src/mesa/glapi/glapi/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..71d422df9feab21adaafca519c7209c2d9ffe0e7
+--- /dev/null
++++ b/src/mesa/glapi/glapi/Android.bp
+@@ -0,0 +1,107 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_defaults {
++    name: "glapi_bridge_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glapi_bridge_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glapi_bridge",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glapi_bridge_c_flags",
++        "glapi_bridge_cpp_flags",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_gallium",
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_src_mesa_glapi",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "glapi_mapi_tmp.h",
++        "shader_stats.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "libgl_public.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/glapi/glapi/gen/Android.bp b/src/mesa/glapi/glapi/gen/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b38478c8cab5994794cc6080d36425048e1ad0d
+--- /dev/null
++++ b/src/mesa/glapi/glapi/gen/Android.bp
+@@ -0,0 +1,781 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "gl_and_es_API_xml",
++    srcs: [
++        "gl_and_es_API.xml",
++    ],
++}
++
++filegroup {
++    name: "glapi_xml_py_deps",
++    srcs: [
++        "apiexec.py",
++        "genCommon.py",
++        "glX_XML.py",
++        "glX_proto_common.py",
++        "gl_XML.py",
++        "license.py",
++        "marshal_XML.py",
++        "static_data.py",
++        "typeexpr.py",
++    ],
++}
++
++filegroup {
++    name: "glapi_xml_data_deps",
++    srcs: [
++        "*.dtd",
++        "*.xml",
++    ],
++}
++
++python_binary_host {
++    name: "api_beginend_init_h_py_binary",
++    main: "api_beginend_init_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_beginend_init_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "api_exec_decl_h_py_binary",
++    main: "api_exec_decl_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_exec_decl_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "api_exec_init_py_binary",
++    main: "api_exec_init.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_exec_init.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "api_hw_select_init_h_py_binary",
++    main: "api_hw_select_init_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_hw_select_init_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "api_save_h_py_binary",
++    main: "api_save_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_save_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "api_save_init_h_py_binary",
++    main: "api_save_init_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "api_save_init_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "glX_proto_send_py_binary",
++    main: "glX_proto_send.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "glX_proto_send.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "glX_proto_size_py_binary",
++    main: "glX_proto_size.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "glX_proto_size.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "gl_enums_py_binary",
++    main: "gl_enums.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "gl_enums.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "gl_gentable_py_binary",
++    main: "gl_gentable.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "gl_gentable.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "gl_table_py_binary",
++    main: "gl_table.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "gl_table.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "marshal_generated_c_py_binary",
++    main: "marshal_generated_c.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "marshal_generated_c.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "marshal_generated_h_py_binary",
++    main: "marshal_generated_h.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "marshal_generated_h.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "unmarshal_table_c_py_binary",
++    main: "unmarshal_table_c.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "unmarshal_table_c.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++genrule {
++    name: "api_beginend_init.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/api_beginend_init.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "api_beginend_init_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location api_beginend_init_h_py_binary) -f $(location " +
++        "gl_and_es_API.xml) > $(location " +
++        "src/mesa/glapi/glapi/gen/api_beginend_init.h)",
++}
++
++genrule {
++    name: "api_exec_decl.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/api_exec_decl.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "api_exec_decl_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location api_exec_decl_h_py_binary) -f $(location gl_and_es_API.xml) " +
++        "> $(location src/mesa/glapi/glapi/gen/api_exec_decl.h)",
++}
++
++genrule {
++    name: "api_exec_init.c",
++    out: [
++        "api_exec_init.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "api_exec_init_py_binary",
++    ],
++    cmd: "$(location api_exec_init_py_binary) -f $(location gl_and_es_API.xml) > " +
++        "$(location api_exec_init.c)",
++}
++
++genrule {
++    name: "api_hw_select_init.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/api_hw_select_init.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_API.xml",
++    ],
++    tools: [
++        "api_hw_select_init_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location api_hw_select_init_h_py_binary) -f $(location gl_API.xml) > " +
++        "$(location src/mesa/glapi/glapi/gen/api_hw_select_init.h)",
++}
++
++genrule {
++    name: "api_save.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/api_save.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "api_save_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location api_save_h_py_binary) -f $(location gl_and_es_API.xml) > " +
++        "$(location src/mesa/glapi/glapi/gen/api_save.h)",
++}
++
++genrule {
++    name: "api_save_init.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/api_save_init.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "api_save_init_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location api_save_init_h_py_binary) -f $(location gl_and_es_API.xml) " +
++        "> $(location src/mesa/glapi/glapi/gen/api_save_init.h)",
++}
++
++genrule {
++    name: "dispatch.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/dispatch.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "gl_table_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location gl_table_py_binary) -f $(location gl_and_es_API.xml) -m " +
++        "dispatch > $(location src/mesa/glapi/glapi/gen/dispatch.h)",
++}
++
++genrule {
++    name: "enums.c",
++    out: [
++        "enums.c",
++    ],
++    srcs: [
++        ":gl_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++    ],
++    tools: [
++        "gl_enums_py_binary",
++    ],
++    cmd: "$(location gl_enums_py_binary) -f $(location :gl_xml) > $(location " +
++        "enums.c)",
++}
++
++genrule {
++    name: "glapi_gentable.c",
++    out: [
++        "glapi_gentable.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "gl_gentable_py_binary",
++    ],
++    cmd: "$(location gl_gentable_py_binary) -f $(location gl_and_es_API.xml) > " +
++        "$(location glapi_gentable.c)",
++}
++
++genrule {
++    name: "glapi_mapi_tmp.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/glapi_mapi_tmp.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        ":libgl-symbols_txt",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "mapi_abi_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location mapi_abi_py_binary) --printer glapi --gl_symbols $(location " +
++        ":libgl-symbols_txt) $(location gl_and_es_API.xml) > $(location " +
++        "src/mesa/glapi/glapi/gen/glapi_mapi_tmp.h)",
++}
++
++genrule {
++    name: "indirect.c",
++    out: [
++        "indirect.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        ":libgl-symbols_txt",
++        "gl_API.xml",
++    ],
++    tools: [
++        "glX_proto_send_py_binary",
++    ],
++    cmd: "$(location glX_proto_send_py_binary) -f $(location gl_API.xml) -m " +
++        "proto -s $(location :libgl-symbols_txt) > $(location indirect.c)",
++}
++
++genrule {
++    name: "indirect.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/indirect.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        ":libgl-symbols_txt",
++        "gl_API.xml",
++    ],
++    tools: [
++        "glX_proto_send_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location glX_proto_send_py_binary) -f $(location gl_API.xml) -m " +
++        "init_h -s $(location :libgl-symbols_txt) > $(location " +
++        "src/mesa/glapi/glapi/gen/indirect.h)",
++}
++
++genrule {
++    name: "indirect_init.c",
++    out: [
++        "indirect_init.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        ":libgl-symbols_txt",
++        "gl_API.xml",
++    ],
++    tools: [
++        "glX_proto_send_py_binary",
++    ],
++    cmd: "$(location glX_proto_send_py_binary) -f $(location gl_API.xml) -m " +
++        "init_c -s $(location :libgl-symbols_txt) > $(location indirect_init.c)",
++}
++
++genrule {
++    name: "indirect_size.c",
++    out: [
++        "indirect_size.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_API.xml",
++    ],
++    tools: [
++        "glX_proto_size_py_binary",
++    ],
++    cmd: "$(location glX_proto_size_py_binary) -f $(location gl_API.xml) " +
++        "--only-set -m size_c > $(location indirect_size.c)",
++}
++
++genrule {
++    name: "indirect_size.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/indirect_size.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_API.xml",
++    ],
++    tools: [
++        "glX_proto_size_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location glX_proto_size_py_binary) -f $(location gl_API.xml) " +
++        "--only-set -m size_h --header-tag _INDIRECT_SIZE_H_ > $(location " +
++        "src/mesa/glapi/glapi/gen/indirect_size.h)",
++}
++
++genrule {
++    name: "marshal_generated.h",
++    out: [
++        "src/mesa/glapi/glapi/gen/marshal_generated.h",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location marshal_generated_h_py_binary) $(location " +
++        "gl_and_es_API.xml) 8 > $(location " +
++        "src/mesa/glapi/glapi/gen/marshal_generated.h)",
++}
++
++genrule {
++    name: "marshal_generated0.c",
++    out: [
++        "marshal_generated0.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 0 8 8 > $(location marshal_generated0.c)",
++}
++
++genrule {
++    name: "marshal_generated1.c",
++    out: [
++        "marshal_generated1.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 1 8 8 > $(location marshal_generated1.c)",
++}
++
++genrule {
++    name: "marshal_generated2.c",
++    out: [
++        "marshal_generated2.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 2 8 8 > $(location marshal_generated2.c)",
++}
++
++genrule {
++    name: "marshal_generated3.c",
++    out: [
++        "marshal_generated3.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 3 8 8 > $(location marshal_generated3.c)",
++}
++
++genrule {
++    name: "marshal_generated4.c",
++    out: [
++        "marshal_generated4.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 4 8 8 > $(location marshal_generated4.c)",
++}
++
++genrule {
++    name: "marshal_generated5.c",
++    out: [
++        "marshal_generated5.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 5 8 8 > $(location marshal_generated5.c)",
++}
++
++genrule {
++    name: "marshal_generated6.c",
++    out: [
++        "marshal_generated6.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 6 8 8 > $(location marshal_generated6.c)",
++}
++
++genrule {
++    name: "marshal_generated7.c",
++    out: [
++        "marshal_generated7.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 7 8 8 > $(location marshal_generated7.c)",
++}
++
++genrule {
++    name: "unmarshal_table.c",
++    out: [
++        "unmarshal_table.c",
++    ],
++    srcs: [
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "unmarshal_table_c_py_binary",
++    ],
++    cmd: "$(location unmarshal_table_c_py_binary) $(location gl_and_es_API.xml) " +
++        "8 > $(location unmarshal_table.c)",
++}
+diff --git a/src/mesa/glapi/glapi/gen/genCommon.py b/src/mesa/glapi/glapi/gen/genCommon.py
+new file mode 120000
+index 0000000000000000000000000000000000000000..aec6197984649ae4c91ebccc01877c7ae523dafb
+--- /dev/null
++++ b/src/mesa/glapi/glapi/gen/genCommon.py
+@@ -0,0 +1 @@
++../../new/genCommon.py
+\ No newline at end of file
+diff --git a/src/mesa/glapi/glapi/registry/Android.bp b/src/mesa/glapi/glapi/registry/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..f1bb20529f9cdf608d119546ce871f7546945b53
+--- /dev/null
++++ b/src/mesa/glapi/glapi/registry/Android.bp
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "gl_xml",
++    srcs: [
++        "gl.xml",
++    ],
++}
++
++filegroup {
++    name: "glapi_xml_py_deps_1",
++    srcs: [
++        "gl.xml",
++    ],
++}
+diff --git a/src/mesa/glapi/new/Android.bp b/src/mesa/glapi/new/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a7b91dda48433e7726f36b2bcc46928db6d1600c
+--- /dev/null
++++ b/src/mesa/glapi/new/Android.bp
+@@ -0,0 +1,28 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++python_binary_host {
++    name: "gen_gldispatch_mapi_py_binary",
++    main: "gen_gldispatch_mapi.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "gen_gldispatch_mapi.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
+diff --git a/src/mesa/glapi/shared-glapi/Android.bp b/src/mesa/glapi/shared-glapi/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e731f216acdbfd55434b6a64cda9102d2b3b800
+--- /dev/null
++++ b/src/mesa/glapi/shared-glapi/Android.bp
+@@ -0,0 +1,136 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++genrule {
++    name: "shared_glapi_mapi_tmp.h",
++    out: [
++        "src/mesa/glapi/shared-glapi/shared_glapi_mapi_tmp.h",
++    ],
++    srcs: [
++        ":gl_and_es_API_xml",
++        ":glapi_xml_py_deps",
++        ":glapi_xml_py_deps_1",
++        ":glapi_xml_py_deps_2",
++        ":glapi_xml_data_deps",
++        ":libgl-symbols_txt",
++    ],
++    tools: [
++        "mapi_abi_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/shared-glapi",
++    ],
++    cmd: "$(location mapi_abi_py_binary) --printer shared-glapi --gl_symbols " +
++        "$(location :libgl-symbols_txt) $(location :gl_and_es_API_xml) > " +
++        "$(location src/mesa/glapi/shared-glapi/shared_glapi_mapi_tmp.h)",
++}
++
++cc_defaults {
++    name: "glapi_c_flags",
++    vendor: true,
++    cflags: select(arch(), {
++        "arm64": [
++            "-DMAPI_MODE_SHARED_GLAPI",
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_defaults {
++    name: "glapi_cpp_flags",
++    vendor: true,
++    cppflags: select(arch(), {
++        "arm64": [
++            "-DXXH_FORCE_ALIGN_CHECK=0",
++            "-DXXH_FORCE_MEMORY_ACCESS=0",
++            "-fvisibility=hidden",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_static {
++    host_supported: false,
++    name: "glapi",
++    vendor: true,
++    c_std: "c11",
++    cpp_std: "c++17",
++    defaults: [
++        "aosp_uml_virgl_args",
++        "_trial_msvc",
++        "aosp_mesa3d_c_link_args",
++        "aosp_mesa3d_c_project_args",
++        "aosp_mesa3d_cpp_link_args",
++        "aosp_mesa3d_cpp_project_args",
++        "glapi_c_flags",
++        "glapi_cpp_flags",
++        "ld_args_gc_sections",
++    ],
++    header_libs: select(arch(), {
++        "arm64": [
++            "inc_include",
++            "inc_mesa",
++            "inc_src",
++            "inc_util",
++            "inc_util_c11",
++        ],
++        default: [],
++    }),
++    generated_headers: [
++        "shader_stats.h",
++        "shared_glapi_mapi_tmp.h",
++        "u_format_gen.h",
++    ],
++    srcs: select(arch(), {
++        "arm64": [
++            "core.c",
++        ],
++        default: [],
++    }),
++    static_libs: select((arch(), soong_config_variable("aosp_mesa3d", "perfetto")), {
++        ("arm64", "true"): [
++            "libperfetto_client_experimental",
++        ],
++        (default, default): [],
++    }) + select(arch(), {
++        "arm64": [
++            "blake3",
++            "mesa_util",
++            "mesa_util_c11",
++            "mesa_util_simd",
++        ],
++        default: [],
++    }),
++    shared_libs: select(arch(), {
++        "arm64": [
++            "libcutils",
++            "libdrm",
++            "libhardware",
++            "liblog",
++            "libnativewindow",
++            "libsync",
++            "libz",
++            "libzstd",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/main/Android.bp b/src/mesa/main/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f7d79882b0edde32820bbb64187d8d68746602f
+--- /dev/null
++++ b/src/mesa/main/Android.bp
+@@ -0,0 +1,218 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_libmesa",
++    srcs: [
++        "accum.c",
++        "api_arrayelt.c",
++        "arbprogram.c",
++        "arrayobj.c",
++        "atifragshader.c",
++        "attrib.c",
++        "barrier.c",
++        "bbox.c",
++        "blend.c",
++        "blit.c",
++        "bufferobj.c",
++        "buffers.c",
++        "clear.c",
++        "clip.c",
++        "compute.c",
++        "condrender.c",
++        "conservativeraster.c",
++        "context.c",
++        "copyimage.c",
++        "debug.c",
++        "debug_output.c",
++        "depth.c",
++        "dlist.c",
++        "draw.c",
++        "draw_validate.c",
++        "drawpix.c",
++        "drawtex.c",
++        "enable.c",
++        "errors.c",
++        "es1_conversion.c",
++        "eval.c",
++        "extensions.c",
++        "extensions_table.c",
++        "externalobjects.c",
++        "fbobject.c",
++        "feedback.c",
++        "ff_fragment_shader.c",
++        "ffvertex_prog.c",
++        "fog.c",
++        "format_utils.c",
++        "formatquery.c",
++        "formats.c",
++        "framebuffer.c",
++        "genmipmap.c",
++        "get.c",
++        "getstring.c",
++        "glformats.c",
++        "glspirv.c",
++        "glthread.c",
++        "glthread_bufferobj.c",
++        "glthread_draw.c",
++        "glthread_draw_unroll.c",
++        "glthread_get.c",
++        "glthread_list.c",
++        "glthread_pixels.c",
++        "glthread_shaderobj.c",
++        "glthread_varray.c",
++        "hash.c",
++        "hint.c",
++        "image.c",
++        "light.c",
++        "lines.c",
++        "matrix.c",
++        "mesh_shader.c",
++        "mipmap.c",
++        "multisample.c",
++        "objectlabel.c",
++        "pack.c",
++        "pbo.c",
++        "performance_monitor.c",
++        "performance_query.c",
++        "pipelineobj.c",
++        "pixel.c",
++        "pixelstore.c",
++        "pixeltransfer.c",
++        "points.c",
++        "polygon.c",
++        "program_binary.c",
++        "program_resource.c",
++        "querymatrix.c",
++        "queryobj.c",
++        "rastpos.c",
++        "readpix.c",
++        "renderbuffer.c",
++        "robustness.c",
++        "samplerobj.c",
++        "scissor.c",
++        "shader_query.cpp",
++        "shaderapi.c",
++        "shaderimage.c",
++        "shaderobj.c",
++        "shared.c",
++        "spirv_capabilities.c",
++        "spirv_extensions.c",
++        "state.c",
++        "stencil.c",
++        "syncobj.c",
++        "texcompress.c",
++        "texcompress_bptc.c",
++        "texcompress_cpal.c",
++        "texcompress_etc.c",
++        "texcompress_fxt1.c",
++        "texcompress_rgtc.c",
++        "texcompress_s3tc.c",
++        "texenv.c",
++        "texgen.c",
++        "texgetimage.c",
++        "teximage.c",
++        "texobj.c",
++        "texparam.c",
++        "texstate.c",
++        "texstorage.c",
++        "texstore.c",
++        "texturebindless.c",
++        "textureview.c",
++        "transformfeedback.c",
++        "uniform_query.cpp",
++        "uniforms.c",
++        "varray.c",
++        "version.c",
++        "viewport.c",
++    ],
++}
++
++filegroup {
++    name: "formats_csv",
++    srcs: [
++        "formats.csv",
++    ],
++}
++
++filegroup {
++    name: "glsl_util_files",
++    srcs: [
++        "extensions_table.c",
++    ],
++}
++
++python_binary_host {
++    name: "format_fallback_py_binary",
++    main: "format_fallback.py",
++    srcs: [
++        "format_fallback.py",
++        "format_parser.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "format_info_py_binary",
++    main: "format_info.py",
++    srcs: [
++        "format_info.py",
++        "format_parser.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++python_binary_host {
++    name: "get_hash_generator_py_binary",
++    main: "get_hash_generator.py",
++    srcs: [
++        ":glapi_xml_py_deps",
++        "get_hash_generator.py",
++        "get_hash_params.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_mesa",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_main",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/math/Android.bp b/src/mesa/math/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebf05968016d39d76b781895c8a44c47c0d2a485
+--- /dev/null
++++ b/src/mesa/math/Android.bp
+@@ -0,0 +1,34 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_libmesa_1",
++    srcs: [
++        "m_eval.c",
++        "m_matrix.c",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_math",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/program/Android.bp b/src/mesa/program/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..dc8eb54bb4563142121335251590c8374686986a
+--- /dev/null
++++ b/src/mesa/program/Android.bp
+@@ -0,0 +1,108 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_libmesa_2",
++    srcs: [
++        "arbprogparse.c",
++        "prog_cache.c",
++        "prog_instruction.c",
++        "prog_parameter.c",
++        "prog_parameter_layout.c",
++        "prog_print.c",
++        "prog_statevars.c",
++        "prog_to_nir.c",
++        "program.c",
++        "program_parse_extra.c",
++        "symbol_table.c",
++    ],
++}
++
++filegroup {
++    name: "glsl_util_files_1",
++    srcs: [
++        "dummy_errors.c",
++        "prog_parameter.c",
++        "symbol_table.c",
++    ],
++}
++
++genrule {
++    name: "mesa_lex",
++    out: [
++        "lex.yy.c",
++    ],
++    srcs: [
++        "program_lexer.l",
++    ],
++    tools: [
++        "flex",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location flex) -o $(location lex.yy.c) $(location " +
++        "program_lexer.l)",
++}
++
++genrule {
++    name: "program_parse_tab.ch_headers",
++    out: [
++        "src/mesa/program/program_parse.tab.h",
++    ],
++    srcs: [
++        "program_parse.y",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/program",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o " +
++        "$(genDir)/src/mesa/program/program_parse.tab.c --defines=$(location " +
++        "src/mesa/program/program_parse.tab.h) $(location program_parse.y)",
++}
++
++genrule {
++    name: "program_parse_tab.ch_impl",
++    out: [
++        "src/mesa/program/program_parse.tab.c",
++    ],
++    srcs: [
++        "program_parse.y",
++    ],
++    tools: [
++        "bison",
++        "m4",
++    ],
++    cmd: "M4=$(location m4) $(location bison) -Wno-deprecated -o $(location " +
++        "src/mesa/program/program_parse.tab.c) " +
++        "--defines=$(genDir)/src/mesa/program/program_parse.tab.h $(location " +
++        "program_parse.y)",
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_program",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/state_tracker/Android.bp b/src/mesa/state_tracker/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..8d2e1b7a57ff8ccf91ceacc0d7a8317d93e0e14a
+--- /dev/null
++++ b/src/mesa/state_tracker/Android.bp
+@@ -0,0 +1,91 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_libmesa_3",
++    srcs: [
++        "st_atifs_to_nir.c",
++        "st_atom_array.cpp",
++        "st_atom_atomicbuf.c",
++        "st_atom_blend.c",
++        "st_atom_clip.c",
++        "st_atom_constbuf.c",
++        "st_atom_depth.c",
++        "st_atom_framebuffer.c",
++        "st_atom_image.c",
++        "st_atom_msaa.c",
++        "st_atom_pixeltransfer.c",
++        "st_atom_rasterizer.c",
++        "st_atom_sampler.c",
++        "st_atom_scissor.c",
++        "st_atom_shader.c",
++        "st_atom_stipple.c",
++        "st_atom_storagebuf.c",
++        "st_atom_tess.c",
++        "st_atom_texture.c",
++        "st_atom_viewport.c",
++        "st_cb_bitmap.c",
++        "st_cb_clear.c",
++        "st_cb_copyimage.c",
++        "st_cb_drawpixels.c",
++        "st_cb_drawtex.c",
++        "st_cb_eglimage.c",
++        "st_cb_feedback.c",
++        "st_cb_flush.c",
++        "st_cb_rasterpos.c",
++        "st_cb_readpixels.c",
++        "st_cb_texture.c",
++        "st_context.c",
++        "st_copytex.c",
++        "st_debug.c",
++        "st_draw.c",
++        "st_draw_feedback.c",
++        "st_draw_hw_select.c",
++        "st_extensions.c",
++        "st_format.c",
++        "st_gen_mipmap.c",
++        "st_glsl_to_nir.cpp",
++        "st_interop.c",
++        "st_manager.c",
++        "st_nir_builtins.c",
++        "st_nir_lower_alpha_test.c",
++        "st_nir_lower_builtin.c",
++        "st_nir_lower_drawpixels.c",
++        "st_nir_lower_fog.c",
++        "st_nir_lower_point_size_mov.c",
++        "st_nir_lower_position_invariant.c",
++        "st_nir_lower_tex_src_plane.c",
++        "st_pbo.c",
++        "st_pbo_compute.c",
++        "st_program.c",
++        "st_sampler_view.c",
++        "st_scissor.c",
++        "st_shader_cache.c",
++        "st_texcompress_compute.c",
++        "st_texture.c",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_state_tracker",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/mesa/state_tracker/st_atom_framebuffer.c b/src/mesa/state_tracker/st_atom_framebuffer.c
+index 08ed3d2b454f028deac4535a93e20892f2a2cf9a..cc5ad3d3cb70448a589f3f76a8c2967848cb6ebc 100644
+--- a/src/mesa/state_tracker/st_atom_framebuffer.c
++++ b/src/mesa/state_tracker/st_atom_framebuffer.c
+@@ -200,7 +200,7 @@ st_update_framebuffer_state( struct st_context *st )
+       memset(&framebuffer.zsbuf, 0, sizeof(framebuffer.zsbuf));
+    }
+ 
+-   framebuffer.viewmask = BITFIELD_MASK(num_multiview_layer);
++   framebuffer.viewmask = (uint8_t)BITFIELD_MASK(num_multiview_layer);
+ 
+ #ifndef NDEBUG
+    /* Make sure the resource binding flags were set properly */
+diff --git a/src/mesa/vbo/Android.bp b/src/mesa/vbo/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..283f7dffb7bfee231fbbdec72ce7e2eb9432fad8
+--- /dev/null
++++ b/src/mesa/vbo/Android.bp
+@@ -0,0 +1,43 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++filegroup {
++    name: "files_libmesa_4",
++    srcs: [
++        "vbo_context.c",
++        "vbo_exec.c",
++        "vbo_exec_api.c",
++        "vbo_exec_draw.c",
++        "vbo_exec_eval.c",
++        "vbo_minmax_index.c",
++        "vbo_noop.c",
++        "vbo_save.c",
++        "vbo_save_api.c",
++        "vbo_save_draw.c",
++        "vbo_save_loopback.c",
++    ],
++}
++
++cc_library_headers {
++    name: "inc_src_mesa_vbo",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}
+diff --git a/src/util/Android.bp b/src/util/Android.bp
+index 524b1664610de04c07737fc9c1c6e7a7ba32f7cb..b5eff13763d359096e8b8fc96aad52172a3b7933 100644
+--- a/src/util/Android.bp
++++ b/src/util/Android.bp
+@@ -57,6 +57,18 @@ python_binary_host {
+     ],
+ }
+ 
++python_binary_host {
++    name: "xxd_py_binary",
++    main: "xxd.py",
++    srcs: [
++        "xxd.py",
++    ],
++    libs: [
++        "mako",
++        "pyyaml",
++    ],
++}
++
+ genrule {
+     name: "driconf_static.h",
+     out: [
+diff --git a/src/virtio/Android.bp b/src/virtio/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..232e80b6f04681eb06722f0406a31f3276caa6e6
+--- /dev/null
++++ b/src/virtio/Android.bp
+@@ -0,0 +1,26 @@
++/*
++ * Copyright (C) 2025-2026 The Magma GPU Project
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Generated via:
++ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ *
++ * Submit patches, do not hand-edit.
++ *
++ */
++
++package {
++    // See: http://go/android-license-faq
++    default_applicable_licenses: ["external_mesa3d_license"],
++}
++
++cc_library_headers {
++    name: "inc_virtio",
++    vendor: true,
++    export_include_dirs: select(arch(), {
++        "arm64": [
++            ".",
++        ],
++        default: [],
++    }),
++}

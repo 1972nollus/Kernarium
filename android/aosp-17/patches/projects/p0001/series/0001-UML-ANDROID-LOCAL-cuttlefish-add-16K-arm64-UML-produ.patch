@@ -1,0 +1,118 @@
+From 56e083d2d5aa51b5f71136285055da91b6875033 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 15:41:45 +0000
+Subject: [PATCH 01/23] UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML
+ product
+
+Change-Id: Id01b1ed2a1e5b451187d0116ff4292f08c59d615
+---
+ AndroidProducts.mk                          |  2 +
+ vsoc_uml_arm64_pgagnostic/BoardConfig.mk    | 25 +++++++++++
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 46 +++++++++++++++++++++
+ 3 files changed, 73 insertions(+)
+ create mode 100644 vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+ create mode 100644 vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+
+diff --git a/AndroidProducts.mk b/AndroidProducts.mk
+index eb4ffcd0dd2fc42a7caa1a5c0b43669025471f7d..a2a1242a936e26d3338d749caeae7e39101a0ba6 100644
+--- a/AndroidProducts.mk
++++ b/AndroidProducts.mk
+@@ -20,6 +20,7 @@ PRODUCT_MAKEFILES := \
+ 	aosp_cf_arm64_phone:$(LOCAL_DIR)/vsoc_arm64/phone/aosp_cf.mk \
+ 	aosp_cf_arm64_phone_vendor:$(LOCAL_DIR)/vsoc_arm64/phone/aosp_cf_vendor.mk \
+ 	aosp_cf_arm64_phone_pgagnostic:$(LOCAL_DIR)/vsoc_arm64_pgagnostic/phone/aosp_cf.mk \
++	aosp_uml_arm64_pgagnostic:$(LOCAL_DIR)/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk \
+ 	aosp_cf_arm64_phone_fullmte:$(LOCAL_DIR)/vsoc_arm64_only/phone/aosp_cf_fullmte.mk \
+ 	aosp_cf_arm64_phone_hwasan:$(LOCAL_DIR)/vsoc_arm64/phone/aosp_cf_hwasan.mk \
+ 	aosp_cf_arm64_only_phone:$(LOCAL_DIR)/vsoc_arm64_only/phone/aosp_cf.mk \
+@@ -56,6 +57,7 @@ PRODUCT_MAKEFILES := \
+ COMMON_LUNCH_CHOICES := \
+ 	aosp_cf_arm64_auto-trunk_staging-userdebug \
+ 	aosp_cf_arm64_phone-trunk_staging-userdebug \
++	aosp_uml_arm64_pgagnostic-trunk_staging-userdebug \
+ 	aosp_cf_riscv64_phone-trunk_staging-userdebug \
+ 	aosp_cf_x86_64_only_phone_hsum-trunk_staging-userdebug \
+ 	aosp_cf_x86_64_desktop-trunk_staging-userdebug \
+diff --git a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+new file mode 100644
+index 0000000000000000000000000000000000000000..fd927b27b7a0d376d8e8ed7912a48d53d495a0c3
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+@@ -0,0 +1,25 @@
++#
++# Copyright 2026 The Android Open Source Project
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#      http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++#
++
++# Start with Cuttlefish's 64-bit-only page-agnostic board contract. The UML
++# product owns a distinct device directory so later UBD, ramdisk, VINTF, and
++# HAL changes do not alter any Cuttlefish product.
++include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
++
++# This product has one fixed 16 KiB kernel rather than Cuttlefish's optional
++# alternate developer kernel image.
++BOARD_KERNEL_PATH_16K :=
++BOARD_KERNEL_MODULES_16K :=
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+new file mode 100644
+index 0000000000000000000000000000000000000000..95e554c511efd66f959c9337f007e19bbdb8793a
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -0,0 +1,46 @@
++#
++# Copyright 2026 The Android Open Source Project
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#      http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++#
++
++# Use the maintained AOSP page-agnostic arm64 product as the initial Android
++# userspace composition. UML-specific storage, init, VINTF, and HAL ownership
++# is added in this device directory without changing Cuttlefish products.
++$(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
++
++PRODUCT_NAME := aosp_uml_arm64_pgagnostic
++PRODUCT_DEVICE := vsoc_uml_arm64_pgagnostic
++PRODUCT_BRAND := Android
++PRODUCT_MANUFACTURER := Kernarium
++PRODUCT_MODEL := Android 17 on Darwin UML
++
++# The guest is arm64-only and page-size agnostic in userspace, but the only
++# kernel and runtime product that may consume it uses 16 KiB pages.
++PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 16384
++PRODUCT_NO_BIONIC_PAGE_SIZE_MACRO := true
++PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
++TARGET_BOOTS_16K := true
++PRODUCT_16K_DEVELOPER_OPTION := false
++
++# ACK 6.18 supplies memfd-backed ashmem compatibility for legacy clients and
++# the Android 17 memfd SELinux class for new clients. Prefer that path from the
++# first product build.
++PRODUCT_PRODUCT_PROPERTIES += sys.use_memfd=true
++
++PRODUCT_VENDOR_PROPERTIES += \
++    ro.soc.manufacturer=$(PRODUCT_MANUFACTURER) \
++    ro.soc.model=$(PRODUCT_DEVICE)
++
++# Keep Android.mk ignored exactly as in the source page-agnostic product.
++PRODUCT_IGNORE_ALL_ANDROIDMK := true

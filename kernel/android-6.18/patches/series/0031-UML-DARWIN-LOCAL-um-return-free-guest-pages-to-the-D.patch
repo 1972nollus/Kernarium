@@ -1,0 +1,212 @@
+From 0d4e4adb1e66b1f40913ad7cd74ab6c3d94bc06f Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 23 Aug 2026 09:00:48 +0000
+Subject: [PATCH 31/36] UML-DARWIN-LOCAL: um: return free guest pages to the
+ Darwin host
+
+mem= is a ceiling, not a reservation. setup_physmem() backs physical memory
+with a sparse unlinked temp file mapped MAP_SHARED, so host pages appear on
+first touch and a guest configured for more than it uses costs only what it
+touched. Nothing ever gave those pages back, though, so a guest that peaked
+once stayed expensive for the rest of its life. That is the wrong shape for a
+phone, where the host may have 2 GiB in total and raising mem= is not an
+option.
+
+Register a free-page reporting driver. The buddy allocator already knows which
+pages are free; punch the reported range out of the backing file with
+F_PUNCHHOLE and the resident host pages are dropped at once. A measured probe
+on APFS took a fully touched 1 GiB MAP_SHARED mapping from 1025 MiB resident
+to 513 MiB by punching half of it, with the punched range reading back as zero
+and re-materializing on the next write - so a reported page needs no fault-in
+handshake before the guest can use it again.
+
+phys_mapping() already returns the file offset for a physical address, and for
+the physical-memory file that offset is the physical address itself, so the
+driver needs no new address arithmetic. It only punches ranges that belong to
+that file, leaving iomem regions alone.
+
+The minimum order is 5 rather than the pageblock_order default. A 16 KiB
+profile makes a pageblock 32 MiB and a busy guest rarely has a whole one free,
+while 512 KiB still amortizes one host call across 32 pages.
+page_reporting.page_reporting_order= overrides it.
+
+A host that refuses to release the range disables reporting once instead of
+failing a cycle every two seconds for the rest of the boot: losing the
+optimization must not cost the guest anything else.
+
+Change-Id: Ib1467f28b83163f678ccf6c68ffb20ac91457e62
+---
+ arch/um/include/shared/os.h |  3 ++
+ arch/um/kernel/physmem.c    | 91 +++++++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/mem.c     | 30 ++++++++++++
+ 3 files changed, 124 insertions(+)
+
+diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
+index 316574f493669db8b8ce78197ca7606814ffd11e..b54cab5d1499bc56128a0186d6f64ee33c995fc6 100644
+--- a/arch/um/include/shared/os.h
++++ b/arch/um/include/shared/os.h
+@@ -193,6 +193,9 @@ extern void get_host_cpu_features(
+ 
+ /* mem.c */
+ extern int create_mem_file(unsigned long long len);
++extern int os_discard_file_range(int fd,
++				 unsigned long long offset,
++				 unsigned long long length);
+ 
+ /* tlb.c */
+ extern void report_enomem(void);
+diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
+index af02b5f9911d343b3089f40aea3d6d595b47f7f4..20d326d8f8764bbabedbe60891efa78ff7593811 100644
+--- a/arch/um/kernel/physmem.c
++++ b/arch/um/kernel/physmem.c
+@@ -6,7 +6,9 @@
+ #include <linux/module.h>
+ #include <linux/memblock.h>
+ #include <linux/mm.h>
++#include <linux/page_reporting.h>
+ #include <linux/pfn.h>
++#include <linux/scatterlist.h>
+ #include <asm/page.h>
+ #include <asm/sections.h>
+ #include <as-layout.h>
+@@ -97,6 +99,95 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
+ 	max_low_pfn = min_low_pfn + (map_size >> PAGE_SHIFT);
+ }
+ 
++#ifdef CONFIG_PAGE_REPORTING
++/*
++ * Free-page reporting for the Darwin host.
++ *
++ * mem= is a ceiling, not a reservation: the physical-memory file is sparse and
++ * host pages appear on first touch. Nothing ever gave them back, though, so a
++ * guest that once peaked stayed expensive for the rest of its life. That is
++ * the wrong shape for a phone, where the host may have 2 GiB in total.
++ *
++ * The buddy allocator already knows which pages are free. Report them and
++ * punch the matching range out of the backing file, which drops the resident
++ * host pages at once. The range keeps reading as zero and re-materializes on
++ * the next write, so a reported page needs no fault-in handshake to be usable
++ * again.
++ *
++ * The minimum order is deliberately well below pageblock_order. A 16 KiB
++ * profile makes a pageblock 32 MiB, and a busy guest rarely has a whole one
++ * free; 512 KiB still amortizes one host call over 32 pages. Override it with
++ * page_reporting.page_reporting_order= when a workload wants otherwise.
++ */
++#define UML_PAGE_REPORTING_ORDER 5
++
++static bool physmem_discard_failed;
++
++static int uml_report_free_pages(struct page_reporting_dev_info *prdev,
++				 struct scatterlist *sgl, unsigned int nents)
++{
++	struct scatterlist *sg;
++	unsigned int index;
++
++	if (physmem_discard_failed)
++		return 0;
++	for_each_sg(sgl, sg, nents, index) {
++		unsigned long long offset;
++		unsigned long phys;
++		int fd, err;
++
++		phys = page_to_pfn(sg_page(sg)) << PAGE_SHIFT;
++		fd = phys_mapping(phys, &offset);
++		/* Only the physical-memory file is ours to punch. */
++		if (fd != physmem_fd)
++			continue;
++		/*
++		 * A range that is not page aligned did not come from the free
++		 * lists, and punching the wrong offset would discard live
++		 * guest memory. Refuse rather than trust it.
++		 */
++		if (!IS_ALIGNED(offset, PAGE_SIZE) ||
++		    !IS_ALIGNED(sg->length, PAGE_SIZE)) {
++			physmem_discard_failed = true;
++			pr_warn("Darwin free-page reporting disabled: misaligned range offset=%llx length=%x\n",
++				offset, sg->length);
++			return 0;
++		}
++		err = os_discard_file_range(fd, offset, sg->length);
++		if (err) {
++			/*
++			 * Stop trying rather than failing a reporting cycle
++			 * every two seconds for the rest of the boot. Losing
++			 * the optimization must not cost the guest anything
++			 * else.
++			 */
++			physmem_discard_failed = true;
++			pr_warn("Darwin free-page reporting disabled: host refused to release %x bytes at %llx (%d)\n",
++				sg->length, offset, err);
++			return 0;
++		}
++	}
++	return 0;
++}
++
++static struct page_reporting_dev_info uml_page_reporting = {
++	.report = uml_report_free_pages,
++	.order = UML_PAGE_REPORTING_ORDER,
++};
++
++static int __init uml_page_reporting_init(void)
++{
++	int err = page_reporting_register(&uml_page_reporting);
++
++	if (err)
++		pr_warn("Darwin free-page reporting unavailable (%d)\n", err);
++	else
++		pr_info("Darwin free-page reporting returns free guest memory to the host\n");
++	return 0;
++}
++late_initcall(uml_page_reporting_init);
++#endif /* CONFIG_PAGE_REPORTING */
++
+ int phys_mapping(unsigned long phys, unsigned long long *offset_out)
+ {
+ 	int fd = -1;
+diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
+index 968c0de1b7ac9079e5379fd796fb81cf360a226a..07b6a31d8bc7b440f2ae9350c0fc79419bf0a974 100644
+--- a/arch/um/os-Darwin/mem.c
++++ b/arch/um/os-Darwin/mem.c
+@@ -6,6 +6,7 @@
+ #include <string.h>
+ #include <unistd.h>
+ #include <os.h>
++#include "bridge.h"
+ 
+ int create_mem_file(unsigned long long length)
+ {
+@@ -39,3 +40,32 @@ int create_mem_file(unsigned long long length)
+ 	}
+ 	return fd;
+ }
++
++/*
++ * Return a range of the physical-memory file to the host. The file is sparse
++ * and mapped MAP_SHARED, so punching a hole drops the resident pages
++ * immediately; the range keeps reading as zero and re-materializes on the next
++ * write, which is exactly the contract a freed guest page needs.
++ */
++int os_discard_file_range(int fd, unsigned long long offset,
++			  unsigned long long length)
++{
++	fpunchhole_t hole;
++
++	if (length == 0)
++		return 0;
++	memset(&hole, 0, sizeof(hole));
++	hole.fp_offset = (off_t)offset;
++	hole.fp_length = (off_t)length;
++	/*
++	 * Through the fixed-arity bridge rather than fcntl() directly. fcntl()
++	 * is variadic, and Apple's arm64 ABI passes variadic arguments on the
++	 * stack while this translation unit passes them in registers, so a
++	 * direct call hands libc a garbage third argument - observed as EINVAL
++	 * and EFAULT from the same code on consecutive builds. Every other
++	 * fcntl() in os-Darwin that has a real argument goes the same way.
++	 */
++	if (darwin_uml_fcntl(fd, F_PUNCHHOLE, (long)&hole) < 0)
++		return -errno;
++	return 0;
++}

@@ -122,7 +122,6 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 REQUIRED_PREOPT_APKS = (
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
-    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
@@ -256,6 +255,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"{virtual_ab_property}",
                 )
                 archive.writestr(
+                    "PRODUCT/etc/build.prop",
+                    "aaudio.mmap_policy=1\n"
+                    "aaudio.mmap_exclusive_policy=1\n",
+                )
+                archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
                 )
                 archive.writestr(
@@ -279,6 +283,50 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n    mount_all --late\n"
                     "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
+                )
+                archive.writestr(
+                    "VENDOR/etc/audio_effects_config.xml",
+                    '<audio_effects_conf version="2.0"/>\n',
+                )
+                archive.writestr(
+                    "VENDOR/etc/audio_policy_configuration.xml",
+                    '<?xml version="1.0"?><audioPolicyConfiguration '
+                    'xmlns:xi="http://www.w3.org/2001/XInclude">'
+                    '<xi:include href="primary_audio_policy_configuration.xml"/>'
+                    '<xi:include href="r_submix_audio_policy_configuration.xml"/>'
+                    '<xi:include href="audio_policy_volumes.xml"/>'
+                    '<xi:include href="default_volume_tables.xml"/>'
+                    "</audioPolicyConfiguration>",
+                )
+                archive.writestr(
+                    "VENDOR/etc/primary_audio_policy_configuration.xml",
+                    '<module name="primary" halVersion="3.0">'
+                    '<attachedDevices><item>Speaker</item></attachedDevices>'
+                    '<defaultOutputDevice>Speaker</defaultOutputDevice>'
+                    '<mixPorts><mixPort name="primary output" role="source" '
+                    'flags="AUDIO_OUTPUT_FLAG_PRIMARY"><profile name="" '
+                    'format="AUDIO_FORMAT_PCM_16_BIT" samplingRates="48000" '
+                    'channelMasks="AUDIO_CHANNEL_OUT_STEREO"/></mixPort></mixPorts>'
+                    '<devicePorts><devicePort tagName="Speaker" '
+                    'type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"/></devicePorts>'
+                    '<routes><route type="mix" sink="Speaker" '
+                    'sources="primary output"/></routes></module>',
+                )
+                archive.writestr(
+                    "VENDOR/etc/audio_policy_volumes.xml",
+                    "<volumes/>\n",
+                )
+                archive.writestr(
+                    "VENDOR/etc/default_volume_tables.xml",
+                    "<volumes/>\n",
+                )
+                archive.writestr(
+                    "VENDOR/etc/r_submix_audio_policy_configuration.xml",
+                    '<module name="r_submix" halVersion="3.0"/>\n',
+                )
+                archive.writestr(
+                    "VENDOR/bin/hw/android.hardware.health-service.example",
+                    b"health",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_sepolicy.cil",
@@ -317,7 +365,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f'<permissions><feature name="{advertised_feature}"/></permissions>',
                 )
                 archive.writestr(
+                    "VENDOR/etc/permissions/bluetooth_excluded_hardware.xml",
+                    '<permissions><unavailable-feature '
+                    'name="android.hardware.bluetooth"/></permissions>',
+                )
+                archive.writestr(
                     "RECOVERY/RAMDISK/system/bin/recovery", b"recovery"
+                )
+                archive.writestr(
+                    "RECOVERY/RAMDISK/system/bin/hw/"
+                    "android.hardware.health-service.example_recovery",
+                    b"health-recovery",
                 )
                 archive.writestr(
                     "VENDOR/etc/vintf/compatibility_matrix.xml",
@@ -377,7 +435,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "VENDOR/apex/com.android.hardware.contexthub.apex", b"apex"
                     )
                 if unsupported_hal:
-                    archive.writestr("VENDOR/apex/com.google.cf.bt.apex", b"apex")
+                    archive.writestr("VENDOR/apex/com.google.cf.light.apex", b"apex")
                 if system_other:
                     archive.writestr(
                         "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
@@ -976,8 +1034,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "cd3295d540a93f6d8d5849f2bf0496931229f4dc",
-        "UML_KERNEL_PATCH_COUNT": "35",
+        "UML_KERNEL_FINAL_TREE": "6efe7cdb6a8fa83b8229e8cc27f376b67d6606c0",
+        "UML_KERNEL_PATCH_COUNT": "36",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -1093,6 +1151,9 @@ def main() -> None:
         android_root / "tools/verify-target-files.py"
     ).read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
+    required_kernel_builtins = (
+        android_root / "support/verification/required-kernel-builtins.txt"
+    ).read_text()
     rcu_spin_patch = (
         kernel_root
         / "patches/series/0024-UML-DARWIN-LOCAL-service-timers-from-kernel-spin-che.patch"
@@ -1117,6 +1178,10 @@ def main() -> None:
         kernel_root
         / "patches/series/0034-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
     ).read_text()
+    battery_patch = (
+        kernel_root
+        / "patches/series/0036-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
+    ).read_text()
     build_make_patch = "\n".join(
         path.read_text()
         for path in sorted(
@@ -1135,6 +1200,18 @@ def main() -> None:
     virtualization_patch = next(
         (android_root / "patches/projects/p0008/series").glob("*.patch")
     ).read_text()
+    settings_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0009/series").glob("*.patch")
+        )
+    )
+    launcher_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0010/series").glob("*.patch")
+        )
+    )
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
     for token in (
@@ -1275,11 +1352,16 @@ def main() -> None:
     for token in (
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
-        "PRODUCT_PACKAGES := $(filter-out $(PRODUCT_PACKAGES_EXCLUDE)",
+        "$(eval _pif_modules := $(filter-out "
+        "$(call get-product-var,$(1),PRODUCT_PACKAGES_EXCLUDE)",
         "PRODUCT_COPY_FILES := $(filter-out $(PRODUCT_COPY_FILES_EXCLUDE)",
     ):
         if token not in build_make_patch:
             fail(f"AOSP build route is missing inherited-payload exclusion: {token}")
+    if build_make_patch.count(
+        "$(call get-product-var,$(1),PRODUCT_PACKAGES_EXCLUDE)"
+    ) != 2:
+        fail("AOSP build route does not exclude packages before and after dependencies")
     for token in (
         'payload_fs_type: "ext4"',
         '-    payload_fs_type: "erofs"',
@@ -1319,6 +1401,14 @@ def main() -> None:
     framework_defaults = (
         android_root / "overlay/overlay/frameworks/base/core/res/res/values/config.xml"
     ).read_text()
+    settings_config = (
+        android_root
+        / "overlay/overlay/packages/apps/Settings/res/values/config.xml"
+    ).read_text()
+    settings_strings = (
+        android_root
+        / "overlay/overlay/packages/apps/Settings/res/values/strings.xml"
+    ).read_text()
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
     jelly_patches = "\n".join(
         path.read_text()
@@ -1326,6 +1416,9 @@ def main() -> None:
     )
     core_hardware = (
         android_root / "overlay/config/kernarium_core_hardware.xml"
+    ).read_text()
+    vendor_genfs_contexts = (
+        android_root / "overlay/sepolicy/vendor/genfs_contexts"
     ).read_text()
     for token in (
         "PRODUCT_NAME := aosp_kernarium_darwin",
@@ -1338,10 +1431,12 @@ def main() -> None:
         "BOARD_HAVE_BLUETOOTH := false",
         "TARGET_NO_TELEPHONY := true",
         "PRODUCT_BUILD_RECOVERY_IMAGE := true",
+        "android.hardware.health-service.example",
+        "android.hardware.health-service.example_recovery",
         "com.android.hardware.contexthub",
-        "com.android.hardware.wifi",
-        "com.google.cf.wifi",
-        "com.google.cf.wpa_supplicant",
+        "hardware/interfaces/audio/aidl/default/audio_effects.mk",
+        "aaudio.mmap_policy=1",
+        "aaudio.mmap_exclusive_policy=1",
     ):
         if token not in device_product:
             fail(f"device overlay product is missing fixed policy: {token}")
@@ -1359,8 +1454,135 @@ def main() -> None:
     removed_packages = device_product.split(
         "KERNARIUM_REMOVED_PACKAGES :=", 1
     )[1].split("PRODUCT_PACKAGES_EXCLUDE", 1)[0]
-    if "QuickSearchBox" in removed_packages:
-        fail("device overlay removes Launcher3's home-screen search provider")
+    if "QuickSearchBox" not in removed_packages:
+        fail("device overlay retains Launcher3's unwanted home-screen search provider")
+    for removed in (
+        "com.android.hardware.wifi",
+        "com.google.cf.bt",
+        "com.google.cf.wifi",
+        "com.google.cf.wpa_supplicant",
+        "CuttlefishTetheringOverlay",
+        "CuttlefishWifiOverlay",
+        "wificond",
+        "wificond_compat_symlink_module",
+    ):
+        if removed not in removed_packages:
+            fail(f"device overlay retains unsupported radio package: {removed}")
+    added_packages = device_product.split("PRODUCT_PACKAGES +=", 1)[1].split(
+        "# Replace the handheld feature declaration", 1
+    )[0]
+    for removed in (
+        "com.android.hardware.wifi",
+        "com.google.cf.bt",
+        "com.google.cf.wifi",
+        "com.google.cf.wpa_supplicant",
+    ):
+        if removed in added_packages:
+            fail(f"device overlay explicitly restores radio package: {removed}")
+    if (android_root / "overlay/apps/SystemUpdater").exists():
+        fail("device overlay replaces the stock System Update Settings route")
+    for token in (
+        "platform/packages/apps/Settings",
+        "packages/apps/Settings",
+        "platform/packages/apps/Launcher3",
+        "packages/apps/Launcher3",
+    ):
+        if token not in (android_root / "patches/projects.tsv").read_text():
+            fail(f"AOSP app patch route is missing identity: {token}")
+    for token in (
+        '-            android:key="bluetooth_development_settings"',
+        '-            android:key="wifi_display_certification"',
+        '-            android:key="media_output"',
+        "-        controllers.add(new WifiVerboseLoggingPreferenceController(context));",
+    ):
+        if token not in settings_patch:
+            fail(f"Settings topic does not remove radio-only control: {token}")
+    for token in (
+        '+        android:title="@string/ethernet"',
+        "+    private boolean useEthernetSettings() {",
+        "+        if (hasWifiManager()) {",
+        "+            mWifiCategory.getPreferenceCategory().setVisible(false);",
+        "+            mWifiEntryPreferenceCategory.setVisible(false);",
+        "+            findPreference(PREF_KEY_WIFI_EXT_CATEGORY).setVisible(false);",
+        "+        return (Flags.ethernetSettings() || !hasWifiManager) &&",
+    ):
+        if token not in settings_patch:
+            fail(f"Settings topic is missing Ethernet-only routing policy: {token}")
+    for path in (
+        "overlay/overlay/packages/apps/Settings/res/xml/connected_devices.xml",
+        "overlay/overlay/packages/apps/Settings/res/xml/connected_devices_advanced.xml",
+    ):
+        if (android_root / path).exists():
+            fail(f"device overlay needlessly replaces stock Settings XML: {path}")
+    for path in (
+        "res/xml/connected_devices.xml",
+        "res/xml/connected_devices_advanced.xml",
+        "src/com/android/settings/connecteddevice/ConnectedDeviceDashboardFragment.java",
+    ):
+        if f"diff --git a/{path}" in settings_patch:
+            fail(f"Settings topic sweeps preferences instead of gating its route: {path}")
+    if "diff --git a/AndroidManifest.xml" not in settings_patch:
+        fail("Settings topic does not gate unavailable radio activities")
+    if "diff --git a/src/com/android/settings/core/gateway/SettingsGateway.java" in settings_patch:
+        fail("Settings topic needlessly changes the stock fragment gateway")
+    expected_activity_gates = {
+        '+            android:enabled="false"': 8,
+        '+                  android:enabled="false"': 2,
+    }
+    for token, count in expected_activity_gates.items():
+        if settings_patch.count(token) != count:
+            fail(f"Settings topic has the wrong radio activity gate count: {token}")
+    if 'android:enabled="@bool/config_show_' in settings_patch:
+        fail("Settings manifest gates incorrectly depend on runtime resource overlays")
+    for token in (
+        '<bool name="config_show_system_update_settings">false</bool>',
+        '<bool name="config_show_top_level_connected_devices">false</bool>',
+        '<bool name="config_show_wifi_settings">false</bool>',
+        '<bool name="config_show_wifi_hotspot_settings">false</bool>',
+        '<bool name="config_show_wifi_ip_address">false</bool>',
+        '<bool name="config_show_wifi_mac_address">false</bool>',
+    ):
+        if token not in settings_config:
+            fail(f"Settings resource overlay retains Wi-Fi surface: {token}")
+    for token in (
+        '-        android:key="tether_settings"',
+        '-        android:key="airplane_mode_on"',
+        '-        android:key="mobile_network_list"',
+        '-        android:key="calls_and_sms"',
+        '-        android:key="adaptive_connectivity"',
+        '-        android:key="cellular_security_network_internet"',
+    ):
+        if token not in settings_patch:
+            fail(f"Settings topic retains unavailable Network route: {token}")
+    for token in (
+        "-        use(NetworkProviderCallsSmsController.class).init(this);",
+        "-            use(AirplaneModePreferenceController.class).setFragment(this);",
+        "-                        Settings.ConnectedDeviceDashboardActivity.class.getName()),",
+        "-                !UserManager.isDeviceInDemoMode(this) /* enabled */",
+    ):
+        if token not in settings_patch:
+            fail(f"Settings topic leaves an omitted Network controller attached: {token}")
+    for token in (
+        "-        return NetworkDashboardScreen.KEY;",
+        "+        return null;",
+    ):
+        if token not in settings_patch:
+            fail(f"Settings topic retains incompatible Network metadata binding: {token}")
+    for token in (
+        '<string name="network_dashboard_summary_mobile">VPN, private DNS</string>',
+        '<string name="network_dashboard_summary_no_mobile">VPN, private DNS</string>',
+    ):
+        if token not in settings_strings:
+            fail(f"Network summary still advertises unavailable radios: {token}")
+    for token in (
+        '+    cmd: " $(location launcher-build-config-tool) '
+        '-d QSB_ON_FIRST_SCREEN > $(out)",',
+        "+        if (!BuildConfig.QSB_ON_FIRST_SCREEN) {",
+        "+                visibility = View.GONE",
+        "+        if (cueBarAceMigration() && mControllers != null",
+    ):
+        if token not in launcher_patch:
+            fail(f"Launcher3 topic retains the first-screen search surface: {token}")
     for token in (
         '<bool name="def_lockscreen_disabled">true</bool>',
         '<integer name="def_screen_off_timeout">2147483647</integer>',
@@ -1369,8 +1591,12 @@ def main() -> None:
     ):
         if token not in settings_defaults:
             fail(f"SettingsProvider overlay is missing emulator default: {token}")
-    if "org.lineageos.jelly" not in framework_defaults:
-        fail("framework overlay does not select Jelly as the default browser")
+    for token in (
+        '<bool name="config_disableLockscreenByDefault">true</bool>',
+        "org.lineageos.jelly",
+    ):
+        if token not in framework_defaults:
+            fail(f"framework overlay is missing emulator default: {token}")
     expected_jelly = {
         "JELLY_UPSTREAM_REPOSITORY": (
             "https://github.com/LineageOS/android_packages_apps_Jelly"
@@ -1394,6 +1620,12 @@ def main() -> None:
         fail("Jelly topic does not disable WebView geolocation by default")
     if "android.hardware.microphone" in core_hardware:
         fail("device overlay advertises unsupported audio capture hardware")
+    battery_sysfs = (
+        "genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/"
+        "virtio4/power_supply u:object_r:sysfs_batteryinfo:s0"
+    )
+    if battery_sysfs not in vendor_genfs_contexts:
+        fail("battery sysfs is not labeled for the stock Health HAL")
     if "OrangeFox" in device_product or "OrangeFox" in assemble_image:
         fail("custom recovery entered the current stock-recovery implementation")
     for token in (
@@ -1428,6 +1660,7 @@ def main() -> None:
             fail(f"Cuttlefish patch route is missing userdata quota policy: {token}")
     for token in (
         "verify-target-files.py",
+        "verify-initramfs.py",
         "ubd-disk.py",
         "--blank-partition metadata",
         'TARGET_FILES_DIR=${TARGET_FILES%.zip}',
@@ -1537,6 +1770,7 @@ def main() -> None:
         "policycap memfd_class",
         "VENDOR/etc/vintf/manifest.xml",
         "VENDOR/etc/vintf/compatibility_matrix.xml",
+        "VENDOR/etc/audio_effects_config.xml",
         "VENDOR/apex/com.android.hardware.boot.apex",
         "VENDOR/apex/com.android.hardware.neuralnetworks.apex",
         "VENDOR/apex/com.android.hardware.threadnetwork.apex",
@@ -1546,6 +1780,8 @@ def main() -> None:
         "VENDOR/apex/com.google.cf.oemlock.apex",
         "VENDOR/apex/com.google.cf.wifi.apex",
         "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
+        "VENDOR/etc/permissions/android.hardware.wifi.xml",
+        "VENDOR/overlay/CuttlefishWifiOverlay.apk",
         "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
         "RECOVERY/RAMDISK/odm_dlkm",
         "RECOVERY/RAMDISK/vendor_dlkm/etc",
@@ -1626,6 +1862,18 @@ def main() -> None:
         for token in command_line.split()
     ):
         fail("Android UML must not select or advertise a Vulkan implementation")
+    if "androidboot.hw_timeout_multiplier=5" not in command_line.split():
+        fail("Android hardware timeout multiplier is not calibrated to five")
+    for token in (
+        "config KERNARIUM_VIRTIO_BATTERY",
+        "VIRTIO_ID_KERNARIUM_BATTERY",
+        "65535",
+        "devm_power_supply_register",
+        "POWER_SUPPLY_PROP_CAPACITY",
+        "KERNARIUM_BATTERY_STATUS_FULL",
+    ):
+        if token not in battery_patch:
+            fail(f"ACK battery topic is missing fixed transport policy: {token}")
     for token in (
         "CONFIG_MODULES=n",
         "CONFIG_[A-Za-z0-9_]+=m$",
@@ -1648,9 +1896,17 @@ def main() -> None:
         "CONFIG_CRYPTO_HCTR2=y",
         "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y",
         "CONFIG_DM_DEFAULT_KEY=y",
+        "CONFIG_KERNARIUM_VIRTIO_BATTERY=y",
+        "CONFIG_POWER_SUPPLY=y",
     ):
         if symbol not in kernel_config:
             fail(f"Android kernel fragment does not build in {symbol}")
+    for symbol in (
+        "CONFIG_KERNARIUM_VIRTIO_BATTERY",
+        "CONFIG_POWER_SUPPLY",
+    ):
+        if symbol not in required_kernel_builtins:
+            fail(f"Android kernel verifier does not require {symbol}")
 
     print("Android 17 builder lane ownership passed")
 

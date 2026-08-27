@@ -540,6 +540,15 @@ CONFIG_SSL_CHAN="fd:0,fd:1"
 # logind grants session access to DRM and input devices through tmpfs ACLs.
 CONFIG_TMPFS_POSIX_ACL=y
 
+# --- Host battery -----------------------------------------------------------
+# The Apple launcher provides a local experimental Virtio device carrying the
+# host battery percentage and charging state. The built-in power-supply driver
+# exposes it through the standard sysfs ABI consumed by Android's Health HAL.
+CONFIG_POWER_SUPPLY=y
+# No voltage, current, or temperature sensors exist behind this transport.
+# CONFIG_POWER_SUPPLY_HWMON is not set
+CONFIG_KERNARIUM_VIRTIO_BATTERY=y
+
 # --- Tracing and diagnostics ------------------------------------------------
 CONFIG_MAGIC_SYSRQ=y
 CONFIG_FTRACE=y

@@ -320,15 +320,17 @@ done
 	fail "TRUSTY_SYSTEM_VM must be disabled for the UML guest"
 PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
 for package in \
+	android.hardware.health-service.example \
+	android.hardware.health-service.example_recovery \
 	com.android.hardware.gatekeeper.nonsecure \
 	com.android.hardware.keymint.rust_nonsecure \
 	Jelly \
 	LatinIME \
-	QuickSearchBox \
 	ThemePicker; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"
 done
+PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
 	BluetoothMidiService \
@@ -338,17 +340,35 @@ for package in \
 	DeskClock \
 	Dialer \
 	Gallery2 \
+	QuickSearchBox \
 	TeleService \
 	Telecom \
 	TelephonyProvider \
-	com.android.hardware.contexthub \
+	android.hardware.health-service.cuttlefish_recovery \
 	com.android.hardware.wifi \
+	com.android.hardware.contexthub \
+	com.google.cf.bt \
+	com.google.cf.health \
 	com.google.cf.wifi \
 	com.google.cf.wpa_supplicant \
-	messaging; do
-	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
-		fail "unneeded built-in application remains present: $package"
+	CuttlefishTetheringOverlay \
+	CuttlefishWifiOverlay \
+	messaging \
+	wificond \
+	wificond_compat_symlink_module; do
+	[[ "$PRODUCT_PACKAGES_EXCLUDE" == *" $package "* ]] ||
+		fail "unneeded product package is not excluded: $package"
 done
+
+PRODUCT_PRODUCT_PROPERTIES=" $(get_build_var PRODUCT_PRODUCT_PROPERTIES) "
+for property in \
+	aaudio.mmap_policy=1 \
+	aaudio.mmap_exclusive_policy=1; do
+	[[ "$PRODUCT_PRODUCT_PROPERTIES" == *" $property "* ]] ||
+		fail "required UML audio property is absent: $property"
+done
+[[ "$(get_build_var LOCAL_USE_VENDOR_AUDIO_CONFIGURATION)" == true ]] ||
+	fail "the UML product must own its minimal primary audio policy"
 for package in \
 	com.android.hardware.gatekeeper.cf_remote \
 	com.android.hardware.keymint.rust_cf_guest_trusty_nonsecure \
@@ -376,7 +396,6 @@ for package in \
 	com.android.hardware.neuralnetworks \
 	com.android.hardware.threadnetwork \
 	com.android.hardware.uwb \
-	com.google.cf.bt \
 	com.google.cf.light \
 	com.google.cf.oemlock \
 	cuttlefish_overlay_uwb \

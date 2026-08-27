@@ -1,0 +1,164 @@
+From 419355d96091601eb26f76327a8352f01f8ccb21 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 16:40:01 +0000
+Subject: [PATCH 09/23] UML-ANDROID-LOCAL: cuttlefish: use fixed UBD partitions
+
+Change-Id: Ic71cc097cabab1a08ae97bc8c4ff9be68d525ba4
+---
+ shared/desktop/common.mk                    |  2 ++
+ shared/device.mk                            | 12 +++++--
+ vsoc_uml_arm64_pgagnostic/BoardConfig.mk    | 38 +++++++++++++++++++++
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 16 +++++++++
+ 4 files changed, 66 insertions(+), 2 deletions(-)
+
+diff --git a/shared/desktop/common.mk b/shared/desktop/common.mk
+index 4649cff34e2e1f0a5346503de9d27c62230be6b4..8cb4085e2eb1d07c9641358a7af013f1d209bec1 100644
+--- a/shared/desktop/common.mk
++++ b/shared/desktop/common.mk
+@@ -32,11 +32,13 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/core_minimal.mk)
+ $(call inherit-product-if-exists, frameworks/base/data/sounds/AllAudio.mk)
+ 
+ # Dynamic partitions support
++ifneq ($(UML_ANDROID_STATIC_STORAGE),true)
+ PRODUCT_USE_DYNAMIC_PARTITIONS := true
+ 
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/virtual_ab_ota/android_t_baseline.mk)
+ # Compression for virtual AB partitions
+ PRODUCT_VIRTUAL_AB_COMPRESSION_METHOD := lz4
++endif
+ 
+ # init_dev_config service to initialize device configuration and APEX
+ # selection properties
+diff --git a/shared/device.mk b/shared/device.mk
+index 8b984765b40370dc72c2a4ed5b65eebff1ea4abc..cb914f0b3d1813a208c1266b19fcbaa980ca3e9d 100644
+--- a/shared/device.mk
++++ b/shared/device.mk
+@@ -53,6 +53,7 @@ endif
+ PRODUCT_SYSTEM_EXT_PROPERTIES += bluetooth.hci.timeout_milliseconds=5000
+ 
+ # Enable Virtual A/B
++ifneq ($(UML_ANDROID_STATIC_STORAGE),true)
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/virtual_ab_ota/vabc_features.mk)
+ PRODUCT_VIRTUAL_AB_COMPRESSION_METHOD := lz4
+ PRODUCT_VIRTUAL_AB_COW_VERSION := 3
+@@ -62,6 +63,7 @@ PRODUCT_VENDOR_PROPERTIES += ro.virtual_ab.compression.threads=true
+ PRODUCT_VENDOR_PROPERTIES += ro.virtual_ab.batch_writes=true
+ # Opt in for ublk based OTA for testing
+ PRODUCT_VENDOR_PROPERTIES += ro.virtual_ab.ublk.enabled=true
++endif
+ 
+ # Enable Scoped Storage related
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
+@@ -122,6 +124,7 @@ PRODUCT_VENDOR_PROPERTIES += \
+ PRODUCT_VENDOR_PROPERTIES += ro.control_privapp_permissions?=enforce
+ 
+ # Copy preopted files from system_b on first boot
++ifneq ($(UML_ANDROID_STATIC_STORAGE),true)
+ PRODUCT_VENDOR_PROPERTIES += ro.cp_system_other_odex=1
+ 
+ AB_OTA_POSTINSTALL_CONFIG += \
+@@ -138,8 +141,11 @@ AB_OTA_POSTINSTALL_CONFIG += \
+ 
+ # Userdata Checkpointing OTA GC
+ PRODUCT_PACKAGES += \
+-    checkpoint_gc \
+-    vkms_controller \
++    checkpoint_gc
++endif
++
++PRODUCT_PACKAGES += \
++    vkms_controller
+ 
+ # DRM service opt-in
+ PRODUCT_VENDOR_PROPERTIES += drm.service.enabled=true
+@@ -541,8 +547,10 @@ PRODUCT_COPY_FILES += \
+     device/google/cuttlefish/shared/config/cgroups.json:$(TARGET_COPY_OUT_RECOVERY)/root/vendor/etc/cgroups.json \
+     device/google/cuttlefish/shared/config/ueventd.rc:$(TARGET_COPY_OUT_RECOVERY)/root/ueventd.cutf_cvm.rc \
+ 
++ifneq ($(UML_ANDROID_STATIC_STORAGE),true)
+ PRODUCT_PACKAGES += \
+     update_engine_sideload
++endif
+ 
+ endif
+ 
+diff --git a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+index 5ccd57e07fa097c99fc850d67fb33d463dcc3882..c5e9becbf3da462579db06bdc85b80dace79fe99 100644
+--- a/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
++++ b/vsoc_uml_arm64_pgagnostic/BoardConfig.mk
+@@ -81,3 +81,41 @@ BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_PARTITION_LIST := \
+     $(filter-out vendor_dlkm odm_dlkm,$(BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_PARTITION_LIST))
+ AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
+     vbmeta_vendor_dlkm vbmeta_system_dlkm,$(AB_OTA_PARTITIONS))
++
++# The Darwin UML runtime maps one preassembled GPT disk through UBD. These
++# capacities match the checked external partition-layout contract; kernel and
++# ramdisk artifacts are published separately and are not disk partitions.
++BOARD_SYSTEMIMAGE_PARTITION_SIZE := 4294967296
++BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 1073741824
++BOARD_PRODUCTIMAGE_PARTITION_SIZE := 2147483648
++BOARD_VENDORIMAGE_PARTITION_SIZE := 1610612736
++BOARD_ODMIMAGE_PARTITION_SIZE := 268435456
++BOARD_METADATAIMAGE_PARTITION_SIZE := 67108864
++BOARD_USERDATAIMAGE_PARTITION_SIZE := 6442450944
++
++# There is no super partition, update slot, or bootloader in the UML runtime.
++BOARD_SUPER_PARTITION_SIZE :=
++BOARD_SUPER_PARTITION_GROUPS :=
++BOARD_GOOGLE_SYSTEM_DYNAMIC_PARTITIONS_PARTITION_LIST :=
++BOARD_GOOGLE_SYSTEM_DYNAMIC_PARTITIONS_SIZE :=
++BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_PARTITION_LIST :=
++BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_SIZE :=
++BOARD_BUILD_SUPER_IMAGE_BY_DEFAULT := false
++BOARD_SUPER_IMAGE_IN_UPDATE_PACKAGE := false
++AB_OTA_UPDATER := false
++AB_OTA_PARTITIONS :=
++BOARD_PARTIAL_OTA_UPDATE_PARTITIONS_LIST :=
++BOARD_BOOTLOADER_IN_UPDATE_PACKAGE := false
++TARGET_SKIP_OTA_PACKAGE := true
++
++# Initial bring-up does not claim production verified boot. The imported
++# release is authenticated as a whole by the outer release contract instead.
++BOARD_AVB_ENABLE := false
++BOARD_AVB_VBMETA_SYSTEM :=
++BOARD_AVB_VBMETA_CUSTOM_PARTITIONS :=
++BOARD_AVB_VBMETA_VENDOR_DLKM :=
++BOARD_AVB_VBMETA_SYSTEM_DLKM :=
++BOARD_AVB_BOOT_KEY_PATH :=
++BOARD_AVB_BOOT_ALGORITHM :=
++BOARD_AVB_INIT_BOOT_KEY_PATH :=
++BOARD_AVB_INIT_BOOT_ALGORITHM :=
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 480734de859c975368f5247792fbeaafd7e8baf8..39fe7f8b6e34349ff1681e766669066f50a0574d 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -23,6 +23,7 @@ TRUSTY_SYSTEM_VM := disabled
+ UML_ANDROID_SECURITY_HALS := nonsecure
+ # The ACK UML kernel has CONFIG_MODULES=n; select the module-free init path.
+ UML_ANDROID_BUILTIN_KERNEL := true
++UML_ANDROID_STATIC_STORAGE := true
+ $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+ 
+ PRODUCT_NAME := aosp_uml_arm64_pgagnostic
+@@ -45,6 +46,21 @@ PRODUCT_BUILD_VENDOR_DLKM_IMAGE := false
+ PRODUCT_BUILD_ODM_DLKM_IMAGE := false
+ PRODUCT_BUILD_SYSTEM_DLKM_IMAGE := false
+ 
++# Produce independent filesystem images for the fixed UBD GPT layout. Dynamic
++# super, Virtual A/B snapshots, and OTA payloads have no runtime consumer.
++PRODUCT_USE_DYNAMIC_PARTITIONS := false
++PRODUCT_USE_DYNAMIC_PARTITION_SIZE := false
++PRODUCT_BUILD_SUPER_PARTITION := false
++PRODUCT_BUILD_SUPER_EMPTY_IMAGE := false
++PRODUCT_VIRTUAL_AB_OTA := false
++PRODUCT_VIRTUAL_AB_COMPRESSION := false
++PRODUCT_VIRTUAL_AB_COMPRESSION_METHOD :=
++PRODUCT_VIRTUAL_AB_COMPRESSION_FACTOR :=
++# AOSP core assigns a default COW format even when Virtual A/B is disabled;
++# PRODUCT_VIRTUAL_AB_OTA is the authoritative switch for this static product.
++PRODUCT_OTA_FORCE_NON_AB_PACKAGE := false
++AB_OTA_POSTINSTALL_CONFIG :=
++
+ # ACK 6.18 supplies memfd-backed ashmem compatibility for legacy clients and
+ # the Android 17 memfd SELinux class for new clients. Prefer that path from the
+ # first product build.

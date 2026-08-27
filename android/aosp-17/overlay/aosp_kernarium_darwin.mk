@@ -16,7 +16,7 @@
 
 # Select the UML-safe branches in the inherited Cuttlefish product before it
 # is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC, sensor,
-# Bluetooth, GNSS, biometric, secure-element, or camera transport.
+# Bluetooth, Wi-Fi, GNSS, biometric, secure-element, or camera transport.
 TRUSTY_SYSTEM_VM := disabled
 UML_ANDROID_SECURITY_HALS := nonsecure
 UML_ANDROID_BUILTIN_KERNEL := true
@@ -33,6 +33,12 @@ LOCAL_ENABLE_SENSORS := false
 LOCAL_ENABLE_NFC := false
 LOCAL_ENABLE_FRP := false
 LOCAL_GNSS_PRODUCT_PACKAGE :=
+# Select the inherited HIDL primary HAL explicitly so Cuttlefish does not also
+# append its MMAP-capable product-property defaults.
+LOCAL_AUDIO_PRODUCT_PACKAGE := \
+    android.hardware.audio.parameter_parser.example_service \
+    com.android.hardware.audio
+LOCAL_USE_VENDOR_AUDIO_CONFIGURATION := true
 TARGET_DISABLE_BIOMETRICS_FACE := true
 TARGET_NO_TELEPHONY := true
 TARGET_USES_CF_RILD := false
@@ -40,6 +46,7 @@ TARGET_DEDICATED_RECOVERY := true
 TARGET_NO_RECOVERY := false
 
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+$(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
 
 PRODUCT_NAME := aosp_kernarium_darwin
 PRODUCT_DEVICE := darwin
@@ -84,7 +91,12 @@ PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
     device/kernarium/darwin/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/ueventd.rc \
     device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \
-    device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.uml
+    device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.uml \
+    device/kernarium/darwin/config/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
+    device/kernarium/darwin/config/primary_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/primary_audio_policy_configuration.xml \
+    frameworks/av/services/audiopolicy/config/audio_policy_volumes.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_volumes.xml \
+    frameworks/av/services/audiopolicy/config/default_volume_tables.xml:$(TARGET_COPY_OUT_VENDOR)/etc/default_volume_tables.xml \
+    frameworks/av/services/audiopolicy/config/r_submix_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/r_submix_audio_policy_configuration.xml
 
 # Remove obsolete first-party applications and packages backed by hardware
 # that the Darwin UML machine does not expose. Providers and framework APIs
@@ -95,6 +107,8 @@ KERNARIUM_REMOVED_PACKAGES := \
     BookmarkProvider \
     Browser2 \
     CFSatelliteService \
+    CuttlefishTetheringOverlay \
+    CuttlefishWifiOverlay \
     Calendar \
     CallLogBackup \
     Camera2 \
@@ -116,6 +130,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     MusicFX \
     ONS \
     PhotoTable \
+    QuickSearchBox \
     SatelliteClient \
     SimAppDialog \
     Stk \
@@ -137,16 +152,23 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.wifi \
     com.google.emulated.camera.provider.hal \
     com.google.emulated.camera.provider.hal.v4l2 \
+    com.google.cf.health \
+    com.google.cf.bt \
     com.google.cf.wifi \
     com.google.cf.wpa_supplicant \
     cuttlefish_telephony_satellite_configs \
+    android.hardware.health-service.cuttlefish_recovery \
     messaging \
-    sample_camera_extensions.xml
+    sample_camera_extensions.xml \
+    wificond \
+    wificond_compat_symlink_module
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # Jelly supplies the browser; ThemePicker remains part of the user-facing
 # baseline, and LatinIME must remain visible even when a host keyboard exists.
 PRODUCT_PACKAGES += \
+    android.hardware.health-service.example \
+    android.hardware.health-service.example_recovery \
     Jelly \
     LatinIME \
     ThemePicker
@@ -178,9 +200,14 @@ PRODUCT_COPY_FILES += \
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
+# The Virtio sound transport has no MMAP or exclusive hardware path.
 PRODUCT_PRODUCT_PROPERTIES += \
     sys.use_memfd=true \
+    aaudio.mmap_policy=1 \
+    aaudio.mmap_exclusive_policy=1 \
     audio.timecheck.timeout_duration_ms=300000 \
     audio.timecheck.second_chance_duration_ms=200000
+PRODUCT_SYSTEM_EXT_PROPERTIES += \
+    ro.audio.ihaladaptervendorextension_enabled=true
 
 PRODUCT_IGNORE_ALL_ANDROIDMK := true

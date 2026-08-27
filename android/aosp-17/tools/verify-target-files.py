@@ -66,12 +66,21 @@ REQUIRED_ENTRIES = {
     "META/ramdisk_node_list",
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
-    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
+    "PRODUCT/etc/build.prop",
+    "RECOVERY/RAMDISK/system/bin/hw/android.hardware.health-service.example_recovery",
     "RECOVERY/RAMDISK/system/bin/recovery",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+    "VENDOR/bin/hw/android.hardware.health-service.example",
+    "VENDOR/etc/audio_effects_config.xml",
+    "VENDOR/etc/audio_policy_configuration.xml",
+    "VENDOR/etc/audio_policy_volumes.xml",
+    "VENDOR/etc/default_volume_tables.xml",
     "VENDOR/etc/fstab.uml",
     "VENDOR/etc/init/init.kernarium.rc",
+    "VENDOR/etc/permissions/bluetooth_excluded_hardware.xml",
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
+    "VENDOR/etc/primary_audio_policy_configuration.xml",
+    "VENDOR/etc/r_submix_audio_policy_configuration.xml",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
@@ -83,7 +92,6 @@ REQUIRED_ENTRIES = {
 REQUIRED_PREOPT_APKS = {
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
-    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
@@ -162,9 +170,11 @@ FORBIDDEN_STATIC_ENTRIES = {
     "IMAGES/vbmeta_system.img",
     "IMAGES/vbmeta_vendor.img",
     "META/ab_partitions.txt",
+    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "PRODUCT/overlay/cuttlefish_overlay_uwb.apk",
     "SYSTEM_EXT/etc/permissions/privapp-permissions-com.android.threadnetwork.demoapp.xml",
     "SYSTEM_EXT/priv-app/ThreadNetworkDemoApp/ThreadNetworkDemoApp.apk",
+    "SYSTEM/bin/wificond",
     "VENDOR/apex/com.android.hardware.boot.apex",
     "VENDOR/apex/com.android.hardware.contexthub.apex",
     "VENDOR/apex/com.android.hardware.neuralnetworks.apex",
@@ -172,6 +182,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.android.hardware.uwb.apex",
     "VENDOR/apex/com.android.hardware.wifi.apex",
     "VENDOR/apex/com.google.cf.bt.apex",
+    "VENDOR/apex/com.google.cf.health.apex",
     "VENDOR/apex/com.google.cf.light.apex",
     "VENDOR/apex/com.google.cf.nfc.apex",
     "VENDOR/apex/com.google.cf.oemlock.apex",
@@ -182,10 +193,13 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/seriallogging.rc",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
+    "VENDOR/etc/permissions/android.hardware.wifi.xml",
     "VENDOR/etc/recovery-resource.dat",
     "VENDOR/etc/sensors/hals.conf",
     "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
+    "VENDOR/overlay/CuttlefishTetheringOverlay.apk",
+    "VENDOR/overlay/CuttlefishWifiOverlay.apk",
     "VENDOR/overlay/cuttlefish_overlay_uwb_gsi.apk",
     "VENDOR/bin/install-recovery.sh",
     "VENDOR/etc/recovery.img",
@@ -204,6 +218,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "DeskClock",
     "Dialer",
     "Gallery2",
+    "QuickSearchBox",
     "TeleService",
     "Telecom",
     "TelephonyProvider",
@@ -244,9 +259,9 @@ FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.usb.accessory",
     "android.hardware.usb.host",
     "android.hardware.uwb",
-    "android.hardware.wifi",
     "android.hardware.wifi.direct",
     "android.hardware.wifi.passpoint",
+    "android.hardware.wifi",
 }
 UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
@@ -530,6 +545,91 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"non-arm64 ABI in {info.filename}: {value}")
 
 
+def check_audio_policy(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    main_name = "VENDOR/etc/audio_policy_configuration.xml"
+    primary_name = "VENDOR/etc/primary_audio_policy_configuration.xml"
+    try:
+        main_root = ET.fromstring(read_small(archive, infos[main_name]))
+        primary_payload = read_small(archive, infos[primary_name])
+        primary_root = ET.fromstring(primary_payload)
+    except ET.ParseError as error:
+        fail(f"cannot parse UML audio policy: {error}")
+
+    includes = {
+        element.attrib["href"]
+        for element in main_root.iter()
+        if "href" in element.attrib
+    }
+    expected_includes = {
+        "audio_policy_volumes.xml",
+        "default_volume_tables.xml",
+        "primary_audio_policy_configuration.xml",
+        "r_submix_audio_policy_configuration.xml",
+    }
+    if includes != expected_includes:
+        fail("UML audio policy does not select only primary PCM and remote submix")
+
+    def elements(name: str) -> list[ET.Element]:
+        return [
+            element
+            for element in primary_root.iter()
+            if element.tag.rsplit("}", 1)[-1] == name
+        ]
+
+    mix_ports = elements("mixPort")
+    profiles = elements("profile")
+    device_ports = elements("devicePort")
+    routes = elements("route")
+    if len(mix_ports) != 1 or mix_ports[0].attrib != {
+        "name": "primary output",
+        "role": "source",
+        "flags": "AUDIO_OUTPUT_FLAG_PRIMARY",
+    }:
+        fail("UML primary audio policy must expose one ordinary mixer output")
+    if len(profiles) != 1 or profiles[0].attrib != {
+        "name": "",
+        "format": "AUDIO_FORMAT_PCM_16_BIT",
+        "samplingRates": "48000",
+        "channelMasks": "AUDIO_CHANNEL_OUT_STEREO",
+    }:
+        fail("UML primary audio profile must match the 48 kHz stereo Virtio device")
+    if len(device_ports) != 1 or device_ports[0].attrib != {
+        "tagName": "Speaker",
+        "type": "AUDIO_DEVICE_OUT_SPEAKER",
+        "role": "sink",
+    }:
+        fail("UML primary audio policy must expose only its speaker")
+    if len(routes) != 1 or routes[0].attrib != {
+        "type": "mix",
+        "sink": "Speaker",
+        "sources": "primary output",
+    }:
+        fail("UML primary audio route does not connect its mixer to the speaker")
+
+    for forbidden in (
+        b"AUDIO_DEVICE_IN_",
+        b"AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD",
+        b"AUDIO_OUTPUT_FLAG_DIRECT",
+        b"AUDIO_OUTPUT_FLAG_MMAP_NOIRQ",
+    ):
+        if forbidden in primary_payload:
+            fail(f"unsupported primary audio path remains enabled: {forbidden.decode()}")
+
+    product_properties = read_small(
+        archive, infos["PRODUCT/etc/build.prop"]
+    ).decode("utf-8", errors="strict").splitlines()
+    for property_name in ("aaudio.mmap_policy", "aaudio.mmap_exclusive_policy"):
+        values = [
+            line.partition("=")[2].strip()
+            for line in product_properties
+            if line.partition("=")[0] == property_name
+        ]
+        if values != ["1"]:
+            fail(f"{property_name} must disable unsupported AAudio MMAP streams")
+
+
 def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | None:
     if info.file_size < 64:
         return None
@@ -766,6 +866,7 @@ def main() -> None:
             fail("target files do not contain an APEX payload")
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
+        check_audio_policy(archive, infos)
         check_virgl_stack(archive, infos)
         check_boot_policy(archive, infos)
         check_kernel_policy(

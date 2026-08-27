@@ -1,0 +1,23 @@
+From c582c09c081212470b43a375c4ffab213328183c Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 14:45:03 +0000
+Subject: [PATCH 17/36] UML-DARWIN-LOCAL: trace: guard PM sleep exports for UML
+
+Change-Id: I9b504df86aabeba5b0f03fb22e22fb42759c3c19
+---
+ kernel/trace/power-traces.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/trace/power-traces.c b/kernel/trace/power-traces.c
+index 0abaceea790e7139bbdd869643ff7328e97d4e62..73a00b74aa2c159a709155f014ac9ca031370e4b 100644
+--- a/kernel/trace/power-traces.c
++++ b/kernel/trace/power-traces.c
+@@ -17,6 +17,7 @@
+ EXPORT_TRACEPOINT_SYMBOL_GPL(suspend_resume);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(cpu_idle);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(cpu_frequency);
++#ifdef CONFIG_PM_SLEEP
+ EXPORT_TRACEPOINT_SYMBOL_GPL(device_pm_callback_start);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(device_pm_callback_end);
+-
++#endif

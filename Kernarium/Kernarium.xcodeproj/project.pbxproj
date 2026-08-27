@@ -55,10 +55,10 @@
 		8AF5E8DE302C966400B19616 /* KernariumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF5E8E8302C966400B19616 /* KernariumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000011 /* KernariumRuntime_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntime_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntime_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
-		A10000000000000000000015 /* KernariumRuntimeAndroid_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntimeAndroid_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntimeAndroid_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000012 /* EGL.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = EGL.xcframework; path = "../.build/kernarium-xcframeworks/EGL.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000013 /* GLESv2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GLESv2.xcframework; path = "../.build/kernarium-xcframeworks/GLESv2.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000014 /* KernariumRuntime_6_18_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntime_6_18_4K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntime_6_18_4K.xcframework"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000015 /* KernariumRuntimeAndroid_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntimeAndroid_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntimeAndroid_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */

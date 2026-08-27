@@ -9,6 +9,7 @@ LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 DISK_TOOL="$ANDROID_ROOT/tools/ubd-disk.py"
 BOOT_IMAGE_TOOL="$ANDROID_ROOT/tools/boot-image.py"
+INITRAMFS_VERIFIER="$ANDROID_ROOT/tools/verify-initramfs.py"
 
 TARGET_FILES=
 KERNEL_ELF=
@@ -112,6 +113,7 @@ absolute_path "output disk" "$OUTPUT"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -x "$DISK_TOOL" ]] || fail "UBD disk tool is missing"
 [[ -x "$BOOT_IMAGE_TOOL" ]] || fail "boot-image verifier is missing"
+[[ -x "$INITRAMFS_VERIFIER" ]] || fail "initramfs verifier is missing"
 [[ -f "$LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 [[ -f "$TARGET_FILES" && ! -L "$TARGET_FILES" ]] ||
 	fail "target-files archive must be a regular non-symlink file"
@@ -134,6 +136,7 @@ RECOVERY_IMAGE="$IMAGES_DIR/recovery.img"
 
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
 	--kernel-elf "$KERNEL_ELF"
+"$INITRAMFS_VERIFIER" "$RAMDISK"
 WORK_DIR=$(mktemp -d)
 INIT_BOOT_IMAGE="$WORK_DIR/init_boot.img"
 "$MKBOOTIMG" --header_version 4 --ramdisk "$RAMDISK" --output "$INIT_BOOT_IMAGE"

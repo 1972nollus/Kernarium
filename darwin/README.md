@@ -96,9 +96,9 @@ remains private and is regenerated during materialization.
 ## Devices
 
 The generic vhost-user transport supports independent Virtio-GPU,
-Virtio-input, Virtio-Sound, and Virtio-console services. Deferred used-ring
-publication lets a device retain a descriptor until asynchronous host work is
-complete.
+Virtio-input, Virtio-Sound, Virtio-console, and Kernarium battery services.
+Deferred used-ring publication lets a device retain a descriptor until
+asynchronous host work is complete.
 
 The common Apple graphics stack uses virglrenderer and ANGLE/EGL on Metal.
 macOS provides native AppKit and VNC display consumers; iOS provides UIKit
@@ -109,6 +109,8 @@ Kernarium attaches:
 
 - an absolute touchscreen and evdev keyboard;
 - one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
+- an Android-only Virtio battery reflecting the Apple host's percentage and
+  charging state, with a 100-percent fully-charged fallback;
 - SLiRP networking from the verified iOS prefix;
 - a Virtio-GPU Metal framebuffer; and
 - the existing `ttyS0` stream mirrored to a terminal view.

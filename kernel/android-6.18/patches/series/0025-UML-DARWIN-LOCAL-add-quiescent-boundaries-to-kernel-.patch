@@ -1,0 +1,89 @@
+From c94c621d487223e21a51d5b6170ab45ead6e5f21 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 06:05:22 +0000
+Subject: [PATCH 25/36] UML-DARWIN-LOCAL: add quiescent boundaries to kernel
+ loops
+
+Change-Id: I01687563d5b0258fc18c4317c11cbb7c84f1a328
+---
+ arch/um/kernel/skas/uaccess.c | 30 +++++++++++++++++++++++++++++-
+ arch/um/kernel/tlb.c          |  7 +++++++
+ 2 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
+index ff1ebe3c16d1ac223407b65674803aabbad67ebf..5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c 100644
+--- a/arch/um/kernel/skas/uaccess.c
++++ b/arch/um/kernel/skas/uaccess.c
+@@ -176,6 +176,24 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+ #endif
+ }
+ 
++#ifdef UML_HOST_DARWIN
++static void darwin_uaccess_checkpoint(bool may_resched)
++{
++	if (!may_resched)
++		return;
++
++	/*
++	 * The fault-enabled half of a futex access can retry this path while a
++	 * sibling changes the same mm.  Native preemption normally bounds that
++	 * kernel loop.  Darwin's cooperative PREEMPT_NONE carriers instead need
++	 * an explicit safe point after all mmap and page-table locks have gone.
++	 * Besides scheduling when requested, cond_resched() reports an urgent RCU
++	 * quiescent state even when no task switch is required.
++	 */
++	cond_resched();
++}
++#endif
++
+ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
+ {
+@@ -184,10 +202,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	unsigned long user_addr = addr;
+ #endif
+ 	int n = -1;
++#ifdef UML_HOST_DARWIN
++	bool may_resched = !faulthandler_disabled();
++#endif
+ 
+ 	page = maybe_map(addr, is_write);
+-	if (page == NULL)
++	if (!page) {
++#ifdef UML_HOST_DARWIN
++		darwin_uaccess_checkpoint(may_resched);
++#endif
+ 		return -1;
++	}
+ 
+ #ifdef CONFIG_64BIT
+ #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
+@@ -228,6 +253,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 		set_page_dirty_lock(page);
+ out_put:
+ 	put_page(page);
++#ifdef UML_HOST_DARWIN
++	darwin_uaccess_checkpoint(may_resched);
++#endif
+ 	return n;
+ }
+ 
+diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
+index ad0d6ab60e10e9b1118532b0cff0cea991ff35ee..3fa16a78a4d1517417195d5209a45940a1689738 100644
+--- a/arch/um/kernel/tlb.c
++++ b/arch/um/kernel/tlb.c
+@@ -745,7 +745,14 @@ void flush_tlb_mm(struct mm_struct *mm)
+ 	for_each_vma(vmi, vma) {
+ 		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
+ #ifdef UML_HOST_DARWIN
++		/*
++		 * The host invalidation may quiesce every sibling executor.  Once it
++		 * returns, no page-table lock or thread-local mapping batch is live,
++		 * so this is the safe boundary for PREEMPT_NONE scheduling and an
++		 * urgent RCU quiescent state during a large VMA walk.
++		 */
+ 		darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);
++		cond_resched();
+ #endif
+ 	}
+ }

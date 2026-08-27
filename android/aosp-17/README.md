@@ -57,11 +57,35 @@ removes Cuttlefish virtual hardware and services that have no Darwin UML
 implementation while preserving Android framework APIs required by ordinary
 applications.
 
-The image provides Settings, Launcher/search, Files, Package Installer,
-WebView, LatinIME, ThemePicker, and the patched Jelly browser. Unsupported
-Bluetooth, Wi-Fi, telephony, GNSS, NFC, UWB, Thread, camera, biometric, sensor,
-vibrator, secure-element, USB, and Trusty hardware is not advertised. Ethernet
-uses the real Virtio-net/SLiRP path.
+The image provides Settings, Launcher, Files, Package Installer, WebView,
+LatinIME, ThemePicker, and the patched Jelly browser. QuickSearchBox and its
+home-screen search surface are deliberately omitted. Bluetooth and Wi-Fi
+device implementations and feature declarations are also omitted. The Network
+dashboard exposes the stock Ethernet interface editor alongside Data Saver,
+VPN, and Private DNS. On this radio-free product, the editor enables AOSP's
+full Ethernet path and hides its inapplicable Wi-Fi groups. The radio-only
+Connected devices entry is hidden, as is System update because the synced AOSP
+tree has no activity implementing that intent. The modular framework API
+containers remain part of base AOSP so ordinary applications can still resolve
+the Android SDK classes; excluding them also removes required system-server
+dexpreopt inputs. Telephony,
+GNSS, NFC, UWB, Thread, camera, biometric, sensor, vibrator, secure-element,
+USB, and Trusty hardware is not advertised. Ethernet uses the real
+Virtio-net/SLiRP path.
+
+The vendor audio policy exposes only the implemented 48 kHz stereo primary
+playback path, supplies the AOSP software effects configuration, and disables
+AAudio MMAP and exclusive modes. Settings omits its Bluetooth media-output
+switcher so the remaining volume and vibration controls do not instantiate a
+radio-backed media manager. A dedicated Virtio
+battery device reports the Apple host's percentage and charging state through
+the generic Android Health service; hosts without readable battery data report
+an always-present battery at 100 percent and fully charged.
+
+Both the framework and SettingsProvider defaults disable the non-secure
+keyguard, set the screen-off timeout to the maximum supported value, and keep
+the display awake while the host supplies virtual AC power. LatinIME remains
+eligible even while a host keyboard is attached.
 
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
 time artifacts for ordinary applications, no `system_other` image, and no

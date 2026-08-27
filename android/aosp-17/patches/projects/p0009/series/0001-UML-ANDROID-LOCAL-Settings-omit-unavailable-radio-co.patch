@@ -1,0 +1,72 @@
+From 3bc292722491628f8a24ca2cbc6232255e8ff89f Mon Sep 17 00:00:00 2001
+From: Kernarium Android Builder <android-build@kernarium.local>
+Date: Wed, 26 Aug 2026 06:15:50 +0000
+Subject: [PATCH 1/4] UML-ANDROID-LOCAL: Settings omit unavailable radio
+ controls
+
+Change-Id: I43b21f59b4f30e3efa49f7fb0caae4d0e5344583
+---
+ res/xml/development_settings.xml              | 25 -------------------
+ .../DevelopmentSettingsDashboardFragment.java |  6 -----
+ 2 files changed, 31 deletions(-)
+
+diff --git a/res/xml/development_settings.xml b/res/xml/development_settings.xml
+index 076ea4d6acd198c4c2db85aab82bf063184095bb..6f8e8e56d4e966144e9730db998e77509081a1a2 100644
+--- a/res/xml/development_settings.xml
++++ b/res/xml/development_settings.xml
+@@ -302,31 +302,6 @@
+         android:title="@string/debug_networking_category"
+         android:order="400">
+ 
+-        <Preference
+-            android:key="bluetooth_development_settings"
+-            android:title="@string/bluetooth"
+-            android:fragment="com.android.settings.development.bluetooth.BluetoothDevelopmentSettingsFragment" />
+-
+-        <SwitchPreferenceCompat
+-            android:key="wifi_display_certification"
+-            android:title="@string/wifi_display_certification"
+-            android:summary="@string/wifi_display_certification_summary" />
+-
+-        <SwitchPreferenceCompat
+-            android:key="wifi_verbose_logging"
+-            android:title="@string/wifi_verbose_logging"
+-            android:summary="@string/wifi_verbose_logging_summary" />
+-
+-        <SwitchPreferenceCompat
+-            android:key="wifi_scan_throttling"
+-            android:title="@string/wifi_scan_throttling"
+-            android:summary="@string/wifi_scan_throttling_summary" />
+-
+-        <SwitchPreferenceCompat
+-            android:key="wifi_non_persistent_mac_randomization"
+-            android:title="@string/wifi_non_persistent_mac_randomization"
+-            android:summary="@string/wifi_non_persistent_mac_randomization_summary" />
+-
+         <SwitchPreferenceCompat
+             android:key="mobile_data_always_on"
+             android:title="@string/mobile_data_always_on"
+diff --git a/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java b/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
+index f7ebc6c01d7902360241687224c7641db550b19c..205c9400852e0d8df71a59418fc7919fb2481ac8 100644
+--- a/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
++++ b/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
+@@ -518,8 +518,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
+         controllers.add(new LocalBackupPasswordPreferenceController(context));
+         controllers.add(new StayAwakePreferenceController(context, lifecycle));
+         controllers.add(new HdcpCheckingPreferenceController(context));
+-        controllers.add(new DefaultLaunchPreferenceController(context,
+-                "bluetooth_development_settings"));
+         controllers.add(new OemUnlockPreferenceController(context, activity, fragment));
+         controllers.add(new Enable16kPagesPreferenceController(context, fragment));
+         controllers.add(new PictureColorModePreferenceController(context, lifecycle));
+@@ -550,10 +548,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
+         controllers.add(new LogdSizePreferenceController(context));
+         controllers.add(new LogPersistPreferenceController(context, fragment, lifecycle));
+         controllers.add(new CameraLaserSensorPreferenceController(context));
+-        controllers.add(new WifiDisplayCertificationPreferenceController(context));
+-        controllers.add(new WifiVerboseLoggingPreferenceController(context));
+-        controllers.add(new WifiScanThrottlingPreferenceController(context));
+-        controllers.add(new WifiNonPersistentMacRandomizationPreferenceController(context));
+         controllers.add(new MobileDataAlwaysOnPreferenceController(context));
+         controllers.add(new TetheringHardwareAccelPreferenceController(context));
+         controllers.add(new NfcSnoopLogPreferenceController(context, fragment));

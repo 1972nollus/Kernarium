@@ -32,6 +32,7 @@ function(uml_add_macos_embedded_kernel_app TARGET_NAME MAIN_SOURCE ARTIFACT_TARG
     target_link_libraries("${TARGET_NAME}" PRIVATE
         UML::Emulator
         UML::AudioDevice
+        UML::BatteryDevice
         UML::ConsoleDevice
         UML::GpuDevice
         UML::JitProfileConfiguration)

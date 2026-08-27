@@ -147,6 +147,7 @@ target_include_directories(KernariumRuntime
         ${PROJECT_SOURCE_DIR}/darwin/api/include
         ${PROJECT_SOURCE_DIR}/darwin/device
         ${PROJECT_SOURCE_DIR}/darwin/device/audio
+        ${PROJECT_SOURCE_DIR}/darwin/device/battery
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/input/virtio
         ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
@@ -155,6 +156,7 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::AndroidBoot
     UML::GuestPageConfiguration
     UML::AudioDevice
+    UML::BatteryDevice
     UML::GpuDevice
     UML::VirtioInput
     UML::NetworkProvider

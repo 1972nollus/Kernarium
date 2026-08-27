@@ -1,0 +1,112 @@
+From 609e0ed1dff780da3efd95568595470a2a5974a2 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 12:23:51 +0000
+Subject: [PATCH 4/4] UML-ANDROID-LOCAL: Settings gate unavailable radio routes
+
+Change-Id: I1b04578b246fe24dde2dda2756a4baf8165b23e6
+---
+ AndroidManifest.xml                            | 10 ++++++++++
+ src/com/android/settings/SettingsActivity.java |  6 ------
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadccb6e5164 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -367,6 +367,7 @@
+             android:name=".Settings$ConnectedDeviceDashboardActivity"
+             android:label="@string/connected_devices_dashboard_title"
+             android:exported="true"
++            android:enabled="false"
+             android:icon="@drawable/ic_homepage_connected_device">
+             <intent-filter android:priority="1">
+                 <action android:name="android.settings.BLUETOOTH_SETTINGS" />
+@@ -463,6 +464,7 @@
+             android:label="@string/wifi_settings"
+             android:icon="@drawable/ic_homepage_network"
+             android:exported="true"
++            android:enabled="false"
+             android:configChanges="orientation|keyboardHidden|screenSize">
+             <intent-filter android:priority="1">
+                 <action android:name="android.settings.WIFI_SETTINGS"/>
+@@ -609,6 +611,7 @@
+             android:label="@string/wifi_configure_settings_preference_title"
+             android:icon="@drawable/ic_settings_wireless"
+             android:exported="true"
++            android:enabled="false"
+             android:configChanges="orientation|keyboardHidden|screenSize">
+             <intent-filter android:priority="1">
+                 <action android:name="android.settings.WIFI_IP_SETTINGS" />
+@@ -633,6 +636,7 @@
+             android:label="@string/wifi_saved_access_points_label"
+             android:icon="@drawable/ic_settings_wireless"
+             android:exported="true"
++            android:enabled="false"
+             android:configChanges="orientation|keyboardHidden|screenSize">
+             <intent-filter android:priority="1">
+                 <action android:name="android.settings.WIFI_SAVED_NETWORK_SETTINGS" />
+@@ -647,6 +651,7 @@
+         </activity>
+ 
+         <activity android:name=".Settings$WifiInfoActivity"
++            android:enabled="false"
+             android:exported="true">
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN"/>
+@@ -5434,6 +5439,7 @@
+ 
+         <activity android:name="Settings$AdvancedConnectedDeviceActivity"
+                   android:exported="true"
++                  android:enabled="false"
+                   android:label="@string/connected_device_connections_title">
+             <intent-filter android:priority="1">
+                 <action android:name="com.android.settings.ADVANCED_CONNECTED_DEVICE_SETTINGS" />
+@@ -5465,6 +5471,7 @@
+         <activity android:name="Settings$BluetoothDeviceDetailActivity"
+                   android:label="@string/device_details_title"
+                   android:exported="true"
++                  android:enabled="false"
+                   android:permission="android.permission.BLUETOOTH_CONNECT">
+             <intent-filter android:priority="1">
+                 <action android:name="com.android.settings.BLUETOOTH_DEVICE_DETAIL_SETTINGS" />
+@@ -5482,6 +5489,7 @@
+             android:name=".Settings$PreviouslyConnectedDeviceActivity"
+             android:label="@string/connected_device_saved_title"
+             android:exported="true"
++            android:enabled="false"
+             android:permission="android.permission.BLUETOOTH_CONNECT"
+             android:icon="@drawable/ic_homepage_connected_device">
+             <intent-filter android:priority="1">
+@@ -5952,6 +5960,7 @@
+         <activity android:name="Settings$BluetoothDashboardActivity"
+             android:label="@string/bluetooth_settings_title"
+             android:permission="android.permission.BLUETOOTH_CONNECT"
++            android:enabled="false"
+             android:exported="true">
+             <intent-filter>
+                 <action android:name="android.settings.BLUETOOTH_DASHBOARD_SETTINGS" />
+@@ -5964,6 +5973,7 @@
+         <activity
+             android:name="com.android.settings.connecteddevice.audiosharing.AudioSharingActivity"
+             android:label="@string/audio_sharing_title"
++            android:enabled="false"
+             android:exported="true">
+             <intent-filter>
+                 <action android:name="com.android.settings.BLUETOOTH_AUDIO_SHARING_SETTINGS" />
+diff --git a/src/com/android/settings/SettingsActivity.java b/src/com/android/settings/SettingsActivity.java
+index a369a9b67e1017184c49fe11b63780e6855dacb3..a6ea148b3db4effbd47db6478577be4b06b1608a 100644
+--- a/src/com/android/settings/SettingsActivity.java
++++ b/src/com/android/settings/SettingsActivity.java
+@@ -778,12 +778,6 @@ public class SettingsActivity extends SettingsBaseActivity
+                 Utils.isBandwidthControlEnabled() /* enabled */,
+                 isAdmin) || somethingChanged;
+ 
+-        somethingChanged = setTileEnabled(changedList,
+-                new ComponentName(packageName,
+-                        Settings.ConnectedDeviceDashboardActivity.class.getName()),
+-                !UserManager.isDeviceInDemoMode(this) /* enabled */,
+-                isAdmin) || somethingChanged;
+-
+         somethingChanged = setTileEnabled(changedList, new ComponentName(packageName,
+                         Settings.PowerUsageSummaryActivity.class.getName()),
+                 mBatteryPresent, isAdmin) || somethingChanged;

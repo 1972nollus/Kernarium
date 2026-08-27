@@ -138,6 +138,11 @@ Simulator launch and bundle assembly are owned by
 `Kernarium/scripts/make-guest-bundle.py`. Use each script's `--help` rather than
 copying a long invocation into documentation.
 
+For an opt-in Simulator diagnostic, pass one SLiRP forwarding specification as
+`SIMCTL_CHILD_KERNARIUM_HOST_FORWARD` when launching the app. For example,
+`tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
+launches leave the variable unset and publish no host port.
+
 When copying a `.kern` bundle to a device, target the complete
 `Documents/<name>.kern` destination. Never copy into or replace the Documents
 directory itself, because doing so can flatten the bundle or destroy unrelated

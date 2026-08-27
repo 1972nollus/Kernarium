@@ -1,0 +1,24 @@
+From cef1a10301b637aedfd9078cf63e91534b3337bd Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 08:21:46 +0000
+Subject: [PATCH 1/3] UML-ANDROID-LOCAL: Launcher omit first-screen search
+ surface
+
+Change-Id: I9eb5cd22ddf7011a62f0180db0acde641ac74cce
+---
+ Android.bp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Android.bp b/Android.bp
+index 46d199d1cac93405df1cdb70928b1f82c46212d2..98bbe04e9412c91d9ca2a6eb6d79a4a643cec655 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -179,7 +179,7 @@ genrule {
+     tools: [
+         "launcher-build-config-tool",
+     ],
+-    cmd: " $(location launcher-build-config-tool) > $(out)",
++    cmd: " $(location launcher-build-config-tool) -d QSB_ON_FIRST_SCREEN > $(out)",
+     out: ["BuildConfig.java"],
+ }
+ 

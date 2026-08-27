@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
 #include "audio/protocol.hpp"
+#include "battery/in_process_service.hpp"
+#include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
@@ -241,6 +243,7 @@ struct HostGpuOptions {
 struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
+	bool battery {};
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
@@ -288,6 +291,8 @@ PreparedArguments prepare_host_arguments(
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
 			prepared.audio = true;
+		} else if (argument == "--battery") {
+			prepared.battery = true;
 		} else if (argument.starts_with("--virtio-console-socket=")) {
 			if (!prepared.console_socket.empty())
 				throw std::invalid_argument(
@@ -536,6 +541,29 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
+	if (prepared.battery && !informational(argc, argv)) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::battery::protocol::deviceId)) {
+			std::fputs("--battery cannot be combined with an explicit "
+				   "Virtio battery transport argument\n",
+				   stderr);
+			return 1;
+		}
+		try {
+			battery_service =
+				std::make_unique<uml::battery::InProcessBatteryService>();
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				battery_service->takeConnectionName() + ":" +
+				std::to_string(uml::battery::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio battery: %s\n",
+				error.what());
+			return 1;
+		}
+	}
 	std::unique_ptr<uml::console::InProcessConsoleService> console_service;
 	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
 	    !informational(argc, argv)) {
@@ -594,6 +622,8 @@ int uml::app::runEmbeddedKernel(
 #endif
 	if (audio_service)
 		audio_service->stop();
+	if (battery_service)
+		battery_service->stop();
 	if (console_service)
 		console_service->stop();
 	if (gpu_service)

@@ -1,0 +1,59 @@
+From 6f355385a00bfcb44f8b657a4baf3aef48b02ac7 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 16:42:04 +0000
+Subject: [PATCH 35/36] UML-DARWIN-LOCAL: use anonymous memory for Android
+ physical RAM
+
+Change-Id: Id6e632e5323520c802a0217bb5a8ea773925955b
+---
+ arch/um/os-Darwin/mem.c | 29 ++++++-----------------------
+ 1 file changed, 6 insertions(+), 23 deletions(-)
+
+diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
+index 07b6a31d8bc7b440f2ae9350c0fc79419bf0a974..9d21f0a1a45407b6c9b24f9b58b38bafbc4cc5fe 100644
+--- a/arch/um/os-Darwin/mem.c
++++ b/arch/um/os-Darwin/mem.c
+@@ -2,37 +2,20 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
+-#include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <os.h>
+ #include "bridge.h"
+ 
++#define UML_ANONYMOUS_PHYSICAL_MEMORY_PATH "uml:anonymous-physical-memory"
++
+ int create_mem_file(unsigned long long length)
+ {
+-	const char *tmpdir = getenv("TMPDIR");
+-	char *name;
+-	size_t length_needed;
+-	int fd;
+-
+-	if (tmpdir == NULL || tmpdir[0] == '\0')
+-		tmpdir = "/tmp";
+-	length_needed = strlen(tmpdir) + sizeof("/uml-phys-XXXXXX");
+-	name = malloc(length_needed);
+-	if (name == NULL)
+-		return -ENOMEM;
++	int fd = darwin_uml_open(UML_ANONYMOUS_PHYSICAL_MEMORY_PATH,
++				 O_RDWR, 0600);
+ 
+-	memcpy(name, tmpdir, strlen(tmpdir));
+-	memcpy(name + strlen(tmpdir), "/uml-phys-XXXXXX",
+-	       sizeof("/uml-phys-XXXXXX"));
+-	fd = mkstemp(name);
+-	if (fd < 0) {
+-		fd = -errno;
+-		free(name);
+-		return fd;
+-	}
+-	unlink(name);
+-	free(name);
++	if (fd < 0)
++		return -errno;
+ 	if (ftruncate(fd, (off_t)length) < 0) {
+ 		int error = -errno;
+ 		close(fd);

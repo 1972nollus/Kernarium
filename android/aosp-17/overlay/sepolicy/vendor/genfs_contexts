@@ -1,2 +1,3 @@
 # Label the complete Virtio-GPU sysfs device used by Mesa enumeration.
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.0 u:object_r:sysfs_gpu:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply u:object_r:sysfs_batteryinfo:s0

@@ -1,0 +1,40 @@
+From 3aad016911a89214ee576e99bbda92ba65842e09 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 17:14:25 +0000
+Subject: [PATCH 03/23] UML-ANDROID-LOCAL: cuttlefish: use nonsecure security
+ HALs
+
+Change-Id: I908c1d6646aa6e7b3cdb2927489fd42ac667961f
+---
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 75fb2c97a4aabc4a6b09583814aa52386e688a20..5bce5b80f4c5efe2ad2df6bea7df4806ecfc0381 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -17,6 +17,9 @@
+ # Use the maintained AOSP page-agnostic arm64 product as the initial Android
+ # userspace composition. UML-specific storage, init, VINTF, and HAL ownership
+ # is added in this device directory without changing Cuttlefish products.
++# The emulator has no protected-VM transport. Set this before inheritance so
++# Cuttlefish does not add the Trusty security VM and its nested kernel build.
++TRUSTY_SYSTEM_VM := disabled
+ $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+ 
+ PRODUCT_NAME := aosp_uml_arm64_pgagnostic
+@@ -39,6 +42,14 @@ PRODUCT_BUILD_VENDOR_DLKM_IMAGE := false
+ PRODUCT_BUILD_ODM_DLKM_IMAGE := false
+ PRODUCT_BUILD_SYSTEM_DLKM_IMAGE := false
+ 
++# Retain only the explicitly nonsecure software security HALs for bring-up.
++# Remote and guest-Trusty variants require host services this emulator does not
++# implement and must not enter the build or published feature contract.
++PRODUCT_PACKAGES := $(filter-out \
++    com.android.hardware.gatekeeper.cf_remote \
++    com.android.hardware.keymint.rust_cf_guest_trusty_nonsecure \
++    com.android.hardware.keymint.rust_cf_remote,$(PRODUCT_PACKAGES))
++
+ # ACK 6.18 supplies memfd-backed ashmem compatibility for legacy clients and
+ # the Android 17 memfd SELinux class for new clients. Prefer that path from the
+ # first product build.

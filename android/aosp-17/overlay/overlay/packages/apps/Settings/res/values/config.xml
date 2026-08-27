@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <bool name="config_show_system_update_settings">false</bool>
+    <bool name="config_show_top_level_connected_devices">false</bool>
+    <bool name="config_show_wifi_settings">false</bool>
+    <bool name="config_show_wifi_hotspot_settings">false</bool>
+    <bool name="config_show_wifi_hotspot_speed">false</bool>
+    <bool name="config_show_wifi_ip_address">false</bool>
+    <bool name="config_show_wifi_mac_address">false</bool>
+    <bool name="config_show_wifi_display_enable_menu">false</bool>
+</resources>

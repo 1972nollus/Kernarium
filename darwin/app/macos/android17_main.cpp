@@ -74,6 +74,7 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	bool has_gpu = false;
 	bool has_gpu_display = false;
 	bool has_audio = false;
+	bool has_battery = false;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument =
 			argv[index] == nullptr ? std::string_view{} : argv[index];
@@ -109,6 +110,7 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		has_gpu |= argument == "--gpu";
 		has_gpu_display |= argument.starts_with("--gpu-display=");
 		has_audio |= argument == "--audio";
+		has_battery |= argument == "--battery";
 		options.forwarded.emplace_back(argument);
 	}
 	if (options.release.empty())
@@ -126,6 +128,8 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		options.forwarded.emplace_back("--gpu-display=native");
 	if (!has_audio)
 		options.forwarded.emplace_back("--audio");
+	if (!has_battery)
+		options.forwarded.emplace_back("--battery");
 	return options;
 }
 

@@ -605,6 +605,7 @@ embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_seri
 virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional
 virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	conditional
 virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional
+virtio-battery-protocol	tests/unit/battery/virtio_battery_tests.cpp	unit	conditional
 platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained
 android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained
 device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained

@@ -1,0 +1,55 @@
+From d0d71db9f010ffd1b6ded3dbaea967296a5f562d Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 19:51:26 +0000
+Subject: [PATCH 22/23] UML-ANDROID-LOCAL: cuttlefish relax audio TimeCheck
+ deadlines
+
+audioserver aborted itself during boot:
+
+  Abort message: TimeCheck timeout for IAudioFlinger::registerClient
+  #01 __futex_pi_lock_ex  #02 PIMutexTimedLock
+  #05 ThreadBase::sendConfigEvent_l
+
+and took system_server and SystemUI down with it, because they wait on
+IAudioFlinger.
+
+mediautils TimeCheck already treats this product as relaxed timing, since
+isRelaxedTimingDevice matches ro.product.system.name starting with aosp_, and
+that grants 6000 ms plus a 4000 ms second chance. The abort landed at about
+10.6 s, so the built-in relaxation was already in force and was still too
+short. CONFIG_FUTEX_PI and CONFIG_RT_MUTEXES are both built in, so the wait is
+slow rather than unsupported.
+
+getDurationMs reads audio.timecheck.timeout_duration_ms and
+audio.timecheck.second_chance_duration_ms on top of whichever base it picked,
+so these are the intended overrides. Scale them by the same factor this product
+already applies to androidboot.hw_timeout_multiplier.
+
+Change-Id: I853c55880de1e42bfc719884f6311e6854c526eb
+---
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 4162ab8a90ea90718aa2cb540da9f7d85be0fabf..80d44c13ba6dae78cc051a8255cdd404a4bf7a9e 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -97,5 +97,18 @@ AB_OTA_POSTINSTALL_CONFIG :=
+ # first product build.
+ PRODUCT_PRODUCT_PROPERTIES += sys.use_memfd=true
+ 
++# audioserver aborts itself through mediautils TimeCheck when a call outlives
++# its deadline. AOSP already recognises this product as relaxed-timing, because
++# ro.product.system.name starts with aosp_, and grants 6000 ms plus a 4000 ms
++# second chance. Translated execution under a software MMU still overruns that:
++# IAudioFlinger::registerClient aborted after about 10.6 s while waiting on a
++# priority-inheritance mutex, which then took system_server and SystemUI with
++# it. CONFIG_FUTEX_PI and CONFIG_RT_MUTEXES are both built in, so the wait is
++# slow rather than unsupported. Scale the documented overrides by the same
++# factor this product already applies to androidboot.hw_timeout_multiplier.
++PRODUCT_PRODUCT_PROPERTIES += \
++    audio.timecheck.timeout_duration_ms=300000 \
++    audio.timecheck.second_chance_duration_ms=200000
++
+ # Keep Android.mk ignored exactly as in the source page-agnostic product.
+ PRODUCT_IGNORE_ALL_ANDROIDMK := true

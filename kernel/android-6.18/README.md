@@ -31,7 +31,9 @@ The local series provides the durable Android-specific behavior:
 - virtually mapped 128 KiB task stacks and the common RAM-scaled auxiliary
   address window;
 - correct COW-backed UBD request advancement;
-- validated initramfs ranges inside the static GPT; and
+- validated initramfs ranges inside the static GPT;
+- a Kernarium Virtio battery power-supply driver for host percentage and
+  charging-state passthrough; and
 - anonymous host VM for Android physical memory, with page reporting disabled
   when no file extent exists.
 

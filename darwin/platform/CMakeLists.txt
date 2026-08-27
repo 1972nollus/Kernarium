@@ -5,6 +5,25 @@ add_library(UML::PlatformContract ALIAS uml_platform_contract)
 uml_declare_architecture_target(uml_platform_contract platform)
 target_compile_features(uml_platform_contract INTERFACE cxx_std_20)
 
+add_library(uml_host_battery STATIC apple/host_battery.mm)
+add_library(UML::HostBattery ALIAS uml_host_battery)
+uml_declare_architecture_target(uml_host_battery platform)
+target_include_directories(uml_host_battery PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_host_battery PUBLIC cxx_std_20)
+set_target_properties(uml_host_battery PROPERTIES OBJCXX_STANDARD 20)
+target_compile_options(uml_host_battery PRIVATE
+    -Wall -Wextra -Werror
+    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+target_link_libraries(uml_host_battery PRIVATE
+    UML::PlatformContract
+    "-framework Foundation")
+if(UML_TARGET_MACOS)
+    target_link_libraries(uml_host_battery PRIVATE "-framework IOKit")
+else()
+    target_link_libraries(uml_host_battery PRIVATE "-framework UIKit")
+endif()
+
 add_library(uml_run_routing OBJECT run_routing.cpp)
 add_library(UML::RunRouting ALIAS uml_run_routing)
 uml_declare_architecture_target(uml_run_routing platform)

@@ -6,6 +6,8 @@
 
 #include "audio/in_process_service.hpp"
 #include "audio/protocol.hpp"
+#include "battery/in_process_service.hpp"
+#include "battery/protocol.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -55,6 +57,7 @@ int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
 int uml_slirp_net_irq_fd(void*);
 int uml_slirp_net_read(void*, void*, std::size_t);
 int uml_slirp_net_write(void*, const void*, std::size_t);
+int uml_slirp_net_add_forward(void*, const char*);
 void uml_slirp_net_stop(void*);
 void* uml_slirp_net_create(void) noexcept;
 void uml_slirp_net_destroy(void*) noexcept;
@@ -130,6 +133,17 @@ public:
     {
         if (context_ == nullptr)
             throw std::bad_alloc {};
+        const char* forwarding = std::getenv("KERNARIUM_HOST_FORWARD");
+        if (forwarding != nullptr && forwarding[0] != '\0') {
+            const int error = uml_slirp_net_add_forward(context_, forwarding);
+            if (error != 0) {
+                uml_slirp_net_destroy(context_);
+                context_ = nullptr;
+                throw std::runtime_error(
+                    "invalid Kernarium host-forward specification: " +
+                    std::to_string(error));
+            }
+        }
     }
 
     ~AppNetwork()
@@ -1020,6 +1034,9 @@ int runtimeRun(
         uml::input::virtio::InProcessInputService keyboard(
             uml::input::virtio::DeviceKind::keyboard, width, height);
         uml::audio::InProcessAudioService audioService;
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        uml::battery::InProcessBatteryService batteryService;
+#endif
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
         std::vector<std::string> arguments {
@@ -1128,6 +1145,9 @@ int runtimeRun(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
             std::to_string(uml::audio::protocol::deviceId));
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
+        arguments.emplace_back(
+            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
+            std::to_string(uml::battery::protocol::deviceId));
         /* The instance disk is the copy-on-write layer over the immutable
          * bundle GPT. The initrd range is read from that same backing image,
          * so every guest write lands in the bundle and survives the next
