@@ -25,8 +25,9 @@ TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
 TARGET_RECOVERY_FSTAB := device/kernarium/darwin/recovery/root/system/etc/recovery.fstab
 
 TW_THEME := portrait_hdpi
-# This emulator deliberately ships no Keymaster/KeyMint HAL and keeps userdata
-# unencrypted. Keep the unused recovery crypto stack out of the image as well.
+# The emulator keeps userdata unencrypted, and early recovery cannot depend on
+# the normal system's software KeyMint service. Keep the unused recovery crypto
+# stack out of this image.
 TW_NO_SCREEN_BLANK := true
 TW_NO_SCREEN_TIMEOUT := true
 TW_MAX_BRIGHTNESS := 255
