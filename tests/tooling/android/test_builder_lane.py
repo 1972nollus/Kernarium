@@ -1791,6 +1791,7 @@ def main() -> None:
         "TW_INCLUDE_CRYPTO_FBE := true",
         "TW_INCLUDE_FBE_METADATA_DECRYPT := true",
         "TW_NO_SCREEN_BLANK := true",
+        "TW_NO_SCREEN_TIMEOUT := true",
         "BOARD_RECOVERY_IMAGE_PREPARE",
     ):
         if token not in orangefox_device:
