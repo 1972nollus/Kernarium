@@ -116,8 +116,8 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check
 /dev/block/by-name/misc /misc emmc defaults defaults
 """
 REQUIRED_PREOPT_APKS = (
@@ -1841,7 +1841,7 @@ def main() -> None:
         "ifeq ($(UML_ANDROID_DISABLE_PROJECT_QUOTAS),true)",
         "external_storage.casefold.enabled=1",
         "external_storage.sdcardfs.enabled=0",
-        "latemount,wait,check,formattable,keydirectory=",
+        "latemount,wait,check,formattable",
         "BOARD_HAVE_BLUETOOTH := false",
         "CF_VENDOR_NO_UWB := true",
         "CF_VENDOR_NO_THREADNETWORK := true",

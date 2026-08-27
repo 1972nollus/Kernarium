@@ -7,7 +7,7 @@
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic wait,check,formattable
 /dev/block/by-name/init_boot /init_boot emmc defaults defaults
 /dev/block/by-name/misc /misc emmc defaults defaults
 /dev/block/by-name/recovery /recovery emmc defaults defaults
