@@ -33,6 +33,10 @@ TW_NO_SCREEN_BLANK := true
 TW_NO_SCREEN_TIMEOUT := true
 TW_MAX_BRIGHTNESS := 255
 TW_NO_HAPTICS := true
+# The Darwin emulator has no USB gadget controller. OrangeFox's default MTP
+# startup otherwise tears down the working TCP adbd transport before its
+# FunctionFS open fails.
+TW_EXCLUDE_MTP := true
 TW_EXCLUDE_DEFAULT_USB_INIT := true
 TW_EXCLUDE_APEX := true
 TW_INCLUDE_NTFS_3G :=

@@ -343,6 +343,8 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
             fail(f"OrangeFox recovery Ethernet setup omits {token.decode()}")
     if b"FOX_CODE_BASE=" not in entries["system/etc/fox.cfg"].payload:
         fail("OrangeFox build identity is missing")
+    if "system/lib64/libtwrpmtp-ffs.so" in entries:
+        fail("OrangeFox retains unsupported USB MTP support")
 
     try:
         cgroups = json.loads(entries["system/etc/cgroups.json"].payload)
