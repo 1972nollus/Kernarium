@@ -102,6 +102,54 @@ time artifacts for ordinary applications, no `system_other` image, and no
 loadable modules or DLKM partitions. Applications inside updatable APEXes
 remain subject to the pinned platform's own ART policy.
 
+## Payload reduction plan
+
+Payload reduction is done through product configuration and regenerated AOSP
+patches, never by deleting files from a completed image. The next reduced
+release is split into independently buildable and bootable slices:
+
+1. Remove the optional AuthSecret and reboot-escrow HAL APEXes, their VINTF and
+   feature declarations, and the Cuttlefish `ro.rebootescrow.device` property.
+   AuthSecret only passes a primary-user secret to vendor hardware, which this
+   machine does not have. Reboot escrow exists to unlock encrypted userdata
+   across an OTA reboot, while this product has neither encrypted userdata nor
+   an OTA path. The current payload cost is about 1 MiB and two permanent
+   processes.
+2. Remove AVF, CompOS, the non-secure AuthGraph and Secretkeeper HALs, and the
+   virtualization feature declaration. Remove DeviceLock and its financing
+   controller, and remove the Cuttlefish remote Identity Credential HAL and
+   its hardware feature declaration because there is no host secure-hardware
+   proxy. Credential Manager remains. These containers and their dexpreopt
+   outputs currently occupy about 117 MiB.
+3. Remove the extra VNDK 31--34 APEXes. The fixed vendor image is built with
+   the current platform and third-party applications cannot link private
+   vendor VNDKs; the four compatibility APEXes currently occupy about 97 MiB.
+4. Remove fixed-layout-inapplicable OTA and DSU programs, the dynamic-system
+   installer, and Cuttlefish host-monitoring helpers. Also remove placeholder
+   HAL APEXes for the unused Ranchu composer, netlink interceptor, USB,
+   consumer IR, confirmation UI, thermal, tether offload, input processor, and
+   conditional-access hardware. Keep the active DRM composer, power and
+   memtrack integration, ClearKey DRM, and dumpstate diagnostics. This slice
+   currently accounts for roughly 30 MiB.
+
+The approximately 245 MiB expanded-payload estimate is a planning value; the
+accepted release records the measured partition and compressed-release change.
+Bluetooth, Wi-Fi, NFC, UWB, telephony, and tethering modular framework
+containers are not part of this removal. Their hardware implementations and
+feature declarations remain absent, but their framework jars preserve Android
+SDK class loading for ordinary applications. WebView, fonts, ART and dexpreopt
+outputs, media codecs, SwiftShader, Mesa/virgl, Health Connect, Credential
+Manager, AdServices, OnDevicePersonalization, and the software
+KeyMint/gatekeeper/RKPD stack also remain.
+
+Qualification starts with a fresh COW and verifies direct unencrypted ext4
+userdata, absence of `/metadata/vold/metadata_encryption`, a truthful feature
+inventory, VINTF and SELinux health, PIN/password changes, Android Keystore key
+persistence across reboot, package installation, WebView, audio, networking,
+and GLES. A previously accepted encrypted bundle must also boot unchanged with
+the newly accepted app and ACK kernel. Only then are image size, resident
+processes, and cold and warm boot time compared and the release accepted.
+
 ## Static disk and boot contract
 
 `support/image/partition-layout.json` owns a fixed 16 GiB GPT with separate

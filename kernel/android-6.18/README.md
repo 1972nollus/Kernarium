@@ -15,10 +15,13 @@ The line has one 16 KiB ARM64 configuration in
 [`config/android.fragment`](config/android.fragment). It is built-in-only:
 `CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 4 KiB variant.
 
-The configuration includes the Android Binder, SELinux/audit, cgroups, storage
-and metadata-encryption stack, DMA-BUF heaps, networking, BPF interpreter,
-Virtio devices, and Darwin UML scheduling support required by the product.
-The native arm64 eBPF JIT is not exposed because its execution contracts do not
+The configuration includes the Android Binder, SELinux/audit, cgroups, storage,
+DMA-BUF heaps, networking, BPF interpreter, Virtio devices, and Darwin UML
+scheduling support required by the product. The current rootfs uses unencrypted
+ext4 userdata, but the fscrypt, inline-encryption fallback, HCTR2, and
+dm-default-key stack remains built in so older accepted rootfs and persistent
+COW bundles continue to boot with a newer kernel in the same `6.18` line. The
+native arm64 eBPF JIT is not exposed because its execution contracts do not
 match UML; the AOSP product uses the generic BPF interpreter.
 
 The local series provides the durable Android-specific behavior:
