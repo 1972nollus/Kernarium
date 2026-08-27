@@ -350,7 +350,8 @@ def validate(
     relax = function(smp, "darwin_cpu_relax")
     require_pattern(
         relax,
-        r"pending_ipis\s*\[\s*cpu\s*\].*um_get_signals\s*\(\s*\).*"
+        r"if\s*\(\s*!\s*um_get_signals\s*\(\s*\)\s*\)\s*return\s*;.*"
+        r"pending_ipis\s*\[\s*cpu\s*\].*"
         r"darwin_ipi_poll\s*\(\s*\)",
         "an IRQ-enabled cross-CPU spin wait cannot service pending fixed-carrier work",
     )
