@@ -132,8 +132,11 @@ guards or the common termination cleanup.
 
 The platform layer tracks every writable host descriptor opened for the guest.
 `uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those host descriptors. `uml_emulator_quiesce()` also
-freezes the guest; `uml_emulator_resume()` thaws it.
+console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
+full Linux system suspend and waits until devices, secondary CPUs, interrupts,
+and timekeeping have reached the platform sleep boundary before flushing the
+host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
+suspend command falls back to the legacy stop/go pair.
 
 Every run receives a unique UML identity and management-console path. Guests
 that need writeback requests boot with magic SysRq enabled. If the physical iOS

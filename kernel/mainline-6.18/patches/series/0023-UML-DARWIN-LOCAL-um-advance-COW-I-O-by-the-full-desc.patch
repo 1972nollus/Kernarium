@@ -1,7 +1,7 @@
 From e1aaa0f449d2b81841555cf356749ad153a79006 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 04:36:14 +0000
-Subject: [PATCH 23/23] UML-DARWIN-LOCAL: um: advance COW I/O by the full
+Subject: [PATCH 23/24] UML-DARWIN-LOCAL: um: advance COW I/O by the full
  descriptor
 
 Change-Id: I8d7371166860d0db7dfc0958cda0957b5c6e7236

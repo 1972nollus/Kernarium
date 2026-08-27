@@ -85,6 +85,12 @@ retry, TLB-walk, and `cond_resched()` boundaries. The Darwin network receive
 path uses NAPI, the display-mapped absolute pointer is a direct touchscreen,
 and UBD advances mixed COW requests by each complete descriptor.
 
+Lifecycle quiesce uses full Linux system suspend. The management console
+acknowledges only after the suspend entry boundary and remains the explicit
+wake source, so monotonic guest uptime excludes time while an Apple host has
+frozen the application. Multi-vCPU suspend parks secondary carriers through
+CPU hotplug and restores them before guest tasks resume.
+
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
 policy are built in. Hostfs is disabled. Deliberately unsupported kernel

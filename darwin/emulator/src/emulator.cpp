@@ -401,6 +401,27 @@ public:
 		runtime_.request_stop();
 	}
 
+	[[nodiscard]] int quiesce() noexcept
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		if (guest_suspension_ == ::uml::device::GuestSuspension::none) {
+			(void)::uml::device::request_guest_writeback(
+				guest_writeback_settle_ms);
+			guest_suspension_ = ::uml::device::suspend_guest(
+				guest_suspend_settle_ms);
+		}
+		const auto result = ::uml::runtime::sync_guest_files();
+		return static_cast<int>(result.failed);
+	}
+
+	void resume() noexcept
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		const auto suspension = std::exchange(guest_suspension_,
+			::uml::device::GuestSuspension::none);
+		::uml::device::resume_guest(suspension);
+	}
+
 	[[nodiscard]] ::uml::runtime::ExecutionEngine
 	execution_engine() const noexcept
 	{
@@ -443,6 +464,9 @@ private:
 	uml::network::Provider network_;
 	uml::network::ProviderContext network_context_;
 	bool user_network_{};
+	std::mutex guest_lifecycle_mutex_;
+	::uml::device::GuestSuspension guest_suspension_ {
+		::uml::device::GuestSuspension::none};
 };
 
 } // namespace uml::emulator
@@ -545,19 +569,11 @@ extern "C" int uml_emulator_quiesce(uml_emulator *emulator)
 {
 	if (emulator == nullptr)
 		return -UML_EMULATOR_INVALID_ARGUMENT;
-	/* Order matters. Writing back first means the freeze captures a guest
-	 * that has nothing outstanding; freezing before the host flush means
-	 * nothing dirties the disk again between the two. */
-	(void)::uml::device::request_guest_writeback(
-		::uml::emulator::guest_writeback_settle_ms);
-	(void)::uml::device::suspend_guest(
-		::uml::emulator::guest_suspend_settle_ms);
-	const auto result = ::uml::runtime::sync_guest_files();
-	return static_cast<int>(result.failed);
+	return emulator->implementation.quiesce();
 }
 
 extern "C" void uml_emulator_resume(uml_emulator *emulator)
 {
 	if (emulator != nullptr)
-		::uml::device::resume_guest();
+		emulator->implementation.resume();
 }

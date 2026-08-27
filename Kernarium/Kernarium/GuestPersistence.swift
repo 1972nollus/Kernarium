@@ -32,9 +32,9 @@ final class GuestPersistence {
         /// process, and freezing the guest for it would stall a user who is
         /// about to come straight back.
         case flush
-        /// Write back and freeze. Backgrounding is the point after which iOS
-        /// may never schedule this process again, and a guest left running
-        /// would dirty what was just written back.
+        /// Write back and enter full system suspend. Backgrounding is the
+        /// point after which iOS may never schedule this process again, and a
+        /// guest left running would dirty what was just written back.
         case quiesce
     }
 

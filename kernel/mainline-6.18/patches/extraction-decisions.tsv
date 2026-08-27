@@ -6,6 +6,9 @@ arch/um/drivers/chan_user.c	uml-devices	keep-kernel	outer host owns Darwin file 
 arch/um/drivers/chan_user.h	uml-devices	keep-kernel	outer host owns Darwin file services	carry-locally	The declaration is consumed by the in-kernel channel implementation.
 arch/um/drivers/cow_user.c	uml-devices	keep-kernel	outer host owns backing-file syscalls	carry-locally	Copy-on-write block semantics and metadata validation remain a Linux device concern.
 arch/um/drivers/darwin_net_kern.c	uml-devices	keep-kernel	outer host owns SLiRP packets and readiness	carry-locally	The kernel endpoint is a small standard net_device adapter; SLiRP state and policy are already outside Linux.
+arch/um/drivers/mconsole.h	uml-devices	keep-kernel	outer host owns management-console requests	carry-locally	The declarations bind kernel-owned management commands to the UML console dispatcher.
+arch/um/drivers/mconsole_kern.c	uml-devices	keep-kernel	outer host owns management-console requests	carry-locally	Linux PM ordering, CPU hotplug, device suspension, and wake-source semantics must remain inside the guest kernel.
+arch/um/drivers/mconsole_user.c	uml-devices	keep-kernel	outer host owns management-console requests	carry-locally	The command table selects kernel interrupt or process context and therefore remains part of the UML kernel console.
 arch/um/drivers/rtc_kern.c	uml-devices	keep-kernel	outer host owns clock primitives	carry-locally	Linux RTC registration and interrupt semantics must remain in the guest kernel.
 arch/um/drivers/rtc_user.c	uml-devices	keep-kernel	outer host owns Darwin timing calls	carry-locally	This is the UML host-boundary half of the standard RTC driver, not a replaceable application service.
 arch/um/drivers/ssl.c	uml-devices	keep-kernel	outer host owns channel file descriptors	carry-locally	Linux serial-line registration and its configured port ceiling remain standard UML device policy.

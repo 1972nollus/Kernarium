@@ -59,9 +59,9 @@ typedef void (*kernarium_runtime_request_stop_function)(void);
 /* Flushes the guest's writable host files. Safe to call from any thread while
  * a guest runs, and reports the number of files that could not be flushed. */
 typedef int (*kernarium_runtime_sync_function)(void);
-/* Leaves the guest safely abandonable: writes its filesystems back, freezes it
- * so nothing can be dirtied again, then flushes the host's own files. Pair it
- * with resume. */
+/* Leaves the guest safely abandonable: writes its filesystems back, enters
+ * full system suspend, then flushes the host's own files. Pair it with
+ * resume. */
 typedef int (*kernarium_runtime_quiesce_function)(void);
 typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(

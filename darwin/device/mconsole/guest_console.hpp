@@ -5,6 +5,12 @@
 
 namespace uml::device {
 
+enum class GuestSuspension {
+	none,
+	managementStop,
+	system,
+};
+
 /*
  * UML's own management console is the only channel that reaches the guest
  * kernel while it runs, and the only way to make it write back pages it has
@@ -30,16 +36,15 @@ namespace uml::device {
 [[nodiscard]] bool request_guest_writeback(unsigned int settle_ms) noexcept;
 
 /*
- * Freezes the guest where it stands, so that nothing it holds can be dirtied
- * again, and thaws it. A frozen guest issues no new writes, which is what
- * makes a written-back disk stay written back while an application waits to be
- * either resumed or reclaimed.
+ * Enters Linux system suspend, so devices, secondary CPUs, interrupts, and
+ * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
+ * edge. Older kernels fall back to management-console stop/go.
  *
- * Suspending returns false when no console answered. Resuming is best effort
- * and reports nothing: a guest that was never frozen has nothing to thaw.
+ * The returned mode records which resume command is required. None means no
+ * console answered. Resuming is best effort and reports nothing.
  */
-[[nodiscard]] bool suspend_guest(unsigned int settle_ms) noexcept;
-void resume_guest() noexcept;
+[[nodiscard]] GuestSuspension suspend_guest(unsigned int settle_ms) noexcept;
+void resume_guest(GuestSuspension suspension) noexcept;
 
 /* Removes this run's console path. Adopting it separately covers the
  * terminating-signal paths that never unwind. */

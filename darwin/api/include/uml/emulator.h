@@ -105,16 +105,16 @@ void uml_emulator_request_stop(struct uml_emulator *emulator);
  * outside this boundary: only the guest kernel can write that back. */
 int uml_emulator_sync(struct uml_emulator *emulator);
 /* Puts the guest somewhere it can be abandoned. It writes the guest's
- * filesystems back, freezes it so nothing can be dirtied again, and then
- * flushes what the host received. A frozen guest issues no further writes, so
- * a host that never runs this process again leaves the disk as it was left.
+ * filesystems back, enters full system suspend, and then flushes what the host
+ * received. A suspended guest issues no further writes and its monotonic time
+ * does not advance, so a host that never runs this process again leaves the
+ * disk as it was left.
  * Reports the number of host files that could not be flushed, 0 when all of
  * them were, and the negated error constant for API failures. Pair it with
  * uml_emulator_resume; a guest with no management console is only flushed,
  * exactly as uml_emulator_sync would. */
 int uml_emulator_quiesce(struct uml_emulator *emulator);
-/* Lets a quiesced guest run again. Harmless on a guest that is already
- * running. */
+/* Wakes a quiesced guest. Harmless on a guest that is already running. */
 void uml_emulator_resume(struct uml_emulator *emulator);
 
 #ifdef __cplusplus

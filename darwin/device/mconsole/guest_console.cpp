@@ -5,6 +5,7 @@
 #include "sockets/socket_paths.hpp"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -45,10 +46,13 @@ struct Reply final {
 /* The guest kernel prints this once its filesystem writeback has begun. Its
  * absence means the request reached a console that refused to act on it. */
 constexpr std::string_view writebackAcknowledgement = "Emergency Sync";
+constexpr std::string_view suspendAcknowledgement = "suspended";
+constexpr std::string_view stopAcknowledgement = "stopped";
 
 std::mutex consoleMutex;
 bool consoleAdopted;
 std::unique_ptr<SocketPath> consoleGuard;
+std::atomic_uint64_t nextClientId;
 
 /* arch/um/os-Darwin/umid.c composes the path this way. */
 [[nodiscard]] std::string consolePath()
@@ -76,7 +80,9 @@ class Client final {
 public:
 	Client()
 	{
-		path_ = "/tmp/uml-mc-" + std::to_string(::getpid());
+		path_ = "/tmp/uml-mc-" + std::to_string(::getpid()) + "-" +
+			std::to_string(nextClientId.fetch_add(
+				1U, std::memory_order_relaxed));
 		(void)::unlink(path_.c_str());
 		descriptor_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
 		if (descriptor_ < 0)
@@ -211,7 +217,7 @@ bool request_guest_writeback(unsigned int settleMs) noexcept
 	}
 }
 
-bool suspend_guest(unsigned int settleMs) noexcept
+GuestSuspension suspend_guest(unsigned int settleMs) noexcept
 {
 	try {
 		std::lock_guard lock(consoleMutex);
@@ -219,19 +225,32 @@ bool suspend_guest(unsigned int settleMs) noexcept
 		adoptConsolePath(path);
 		sockaddr_un address {};
 		if (!fillAddress(address, path))
-			return false;
-		Client client;
-		if (!client.usable())
-			return false;
-		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
-		(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
-			&timeout, sizeof(timeout));
+			return GuestSuspension::none;
+		const auto command = [&address](std::string_view request,
+			std::string &response) {
+			Client client;
+			if (!client.usable())
+				return false;
+			const timeval timeout {.tv_sec = 2, .tv_usec = 0};
+			(void)::setsockopt(client.descriptor(), SOL_SOCKET,
+				SO_RCVTIMEO, &timeout, sizeof(timeout));
+			return exchange(client.descriptor(), address, request,
+				response);
+		};
 		std::string response;
-		/* The guest answers this one and then stops servicing anything
-		 * else until it is told to go, so the reply is the confirmation
-		 * that it is frozen rather than merely asked to freeze. */
-		if (!exchange(client.descriptor(), address, "stop", response))
-			return false;
+		/* A suspend-capable guest replies only after devices, secondary
+		 * CPUs, interrupts, and timekeeping have reached the platform sleep
+		 * boundary. The separate wake request remains queued on the console
+		 * descriptor until the kernel has resumed it. */
+		if (command("suspend", response) &&
+		    response.find(suspendAcknowledgement) != std::string::npos)
+			return GuestSuspension::system;
+		response.clear();
+		/* Accepted older kernels have no suspend command. Preserve their
+		 * stop/go behavior so a newer runtime can still quiesce them. */
+		if (!command("stop", response) ||
+		    response.find(stopAcknowledgement) == std::string::npos)
+			return GuestSuspension::none;
 		/* Block I/O already handed to the host keeps completing after the
 		 * guest stops issuing more. Let it drain before the caller treats
 		 * the disk as settled. */
@@ -239,14 +258,16 @@ bool suspend_guest(unsigned int settleMs) noexcept
 			std::this_thread::sleep_for(
 				std::chrono::milliseconds(settleMs));
 		}
-		return true;
+		return GuestSuspension::managementStop;
 	} catch (...) {
-		return false;
+		return GuestSuspension::none;
 	}
 }
 
-void resume_guest() noexcept
+void resume_guest(GuestSuspension suspension) noexcept
 {
+	if (suspension == GuestSuspension::none)
+		return;
 	try {
 		std::lock_guard lock(consoleMutex);
 		sockaddr_un address {};
@@ -259,7 +280,9 @@ void resume_guest() noexcept
 		(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
 			&timeout, sizeof(timeout));
 		std::string response;
-		(void)exchange(client.descriptor(), address, "go", response);
+		const auto command = suspension == GuestSuspension::system ?
+			"wake" : "go";
+		(void)exchange(client.descriptor(), address, command, response);
 	} catch (...) {
 	}
 }

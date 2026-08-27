@@ -152,9 +152,11 @@ both size and density by `nativeScale`. Android's logical density is derived
 from the same launch value.
 
 Writable host files are tracked by the platform layer. Emulator sync asks the
-guest to write back through the management console and then flushes host files;
-quiesce also freezes the guest, and resume thaws it. Guests receive unique run
-identities so management-console paths do not collide.
+guest to write back through the management console and then flushes host files.
+Quiesce enters full Linux system suspend and waits for the platform sleep
+boundary before flushing host files; resume sends the console wake edge.
+Accepted kernels without system suspend retain a stop/go fallback. Guests
+receive unique run identities so management-console paths do not collide.
 
 ## Tests and structural audit
 
