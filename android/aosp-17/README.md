@@ -165,7 +165,9 @@ MagiskBoot image repacking is intentionally absent because the signed ACK ELF
 is app-owned rather than stored in an Android boot partition. Mount, format,
 backup/restore, file-manager, terminal, ADB, and reboot paths remain available.
 Its BGRA minui path writes the BGRX byte order required by Virtio-GPU's fixed
-XRGB legacy dumb-buffer resources.
+XRGB legacy dumb-buffer resources. The virtual-DRM topic also labels NanoSVG
+and generated RGBA resources as BGRA so pixelflinger converts their channels
+instead of leaving image and shaped-control colors transposed.
 Recovery screen blanking, its separate idle lock timeout, haptics, and USB-only
 device paths are disabled for the virtual hardware. The pinned recovery cgroup
 and task-profile maps keep OrangeFox 14.1's logd/logcat path functional.

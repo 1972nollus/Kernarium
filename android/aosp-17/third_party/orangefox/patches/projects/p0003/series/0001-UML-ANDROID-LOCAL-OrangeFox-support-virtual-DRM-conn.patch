@@ -1,11 +1,13 @@
-From 316db3f4d7c2286a8edf20e797f23c498ef3b420 Mon Sep 17 00:00:00 2001
+From 6549a4ae04f55b177a43148e89932bdc616890f5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 06:04:08 +0000
-Subject: [PATCH] UML-ANDROID-LOCAL: OrangeFox support virtual DRM connectors
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: OrangeFox support virtual DRM
+ connectors
 
 ---
  minuitwrp/graphics_drm.cpp | 51 ++++++++++++++++++++++++++++++++++++--
- 1 file changed, 49 insertions(+), 2 deletions(-)
+ minuitwrp/resources.cpp    |  5 +++-
+ 2 files changed, 53 insertions(+), 3 deletions(-)
 
 diff --git a/minuitwrp/graphics_drm.cpp b/minuitwrp/graphics_drm.cpp
 index 0cc80f5cb0c00368556174c35dac0dbfe54ec6f9..ae7770cfdc624ec3d6bc931ab54f0ff200434956 100644
@@ -97,3 +99,19 @@ index 0cc80f5cb0c00368556174c35dac0dbfe54ec6f9..ae7770cfdc624ec3d6bc931ab54f0ff2
      current_buffer = 1 - current_buffer;
      return draw_buf;
  }
+diff --git a/minuitwrp/resources.cpp b/minuitwrp/resources.cpp
+index 2db6536d138f8fcc7561be6f6fad44efc778420e..927a7372e8c0b33ae217976a1b0ddf505ad90b51 100644
+--- a/minuitwrp/resources.cpp
++++ b/minuitwrp/resources.cpp
+@@ -457,7 +457,10 @@ int res_get_pixel_format(void) {
+ #if defined(RECOVERY_ABGR)
+     return GGL_PIXEL_FORMAT_RGBA_8888;
+ #elif defined(RECOVERY_BGRA)
+-    return GGL_PIXEL_FORMAT_RGBA_8888;
++    // NanoSVG and generated GUI resources contain RGBA bytes. Describe their
++    // actual layout so pixelflinger converts them to the BGRA framebuffer;
++    // labelling them RGBA leaves red and blue transposed on display.
++    return GGL_PIXEL_FORMAT_BGRA_8888;
+ #elif defined(RECOVERY_RGBA)
+     return GGL_PIXEL_FORMAT_BGRA_8888;
+ #elif defined(RECOVERY_RGBX)

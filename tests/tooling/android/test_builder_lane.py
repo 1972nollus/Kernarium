@@ -1598,6 +1598,12 @@ def main() -> None:
         android_root
         / "third_party/orangefox/device/recovery/prepare-kernarium.sh"
     ).read_text()
+    orangefox_recovery_patch = next(
+        (
+            android_root
+            / "third_party/orangefox/patches/projects/p0003/series"
+        ).glob("*.patch")
+    ).read_text()
     jelly_patches = "\n".join(
         path.read_text()
         for path in sorted((android_root / "third_party/jelly/series").glob("*.patch"))
@@ -1853,6 +1859,12 @@ def main() -> None:
             fail(f"OrangeFox device tree is missing fixed policy: {token}")
     if "TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888" in orangefox_device:
         fail("OrangeFox writes RGBX bytes into Virtio-GPU's XRGB dumb buffer")
+    for token in (
+        "diff --git a/minuitwrp/resources.cpp b/minuitwrp/resources.cpp",
+        "+    return GGL_PIXEL_FORMAT_BGRA_8888;",
+    ):
+        if token not in orangefox_recovery_patch:
+            fail("OrangeFox virtual-DRM topic does not convert RGBA GUI resources")
     for token in (
         "TW_INCLUDE_CRYPTO := true",
         "TW_INCLUDE_CRYPTO_FBE := true",

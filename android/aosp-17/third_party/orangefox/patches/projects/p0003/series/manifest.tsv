@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Ordered generated OrangeFox bootable/recovery topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-OrangeFox-support-virtual-DRM-conn.patch	a0e10dceea47f5a59fabef159e80db71c97aad64	39f28aaa122e094d54c967801630ab6b423c13252a519eee08fb3855c279ec83	UML-ANDROID-LOCAL: OrangeFox support virtual DRM connectors
+1	0001-UML-ANDROID-LOCAL-OrangeFox-support-virtual-DRM-conn.patch	ba4a146318a89812661d0efad40cac4378fbc20a	c5266343f7e5290fc0a7564edb140db243e73798545cf9e3ed00e20c3b88ddd6	UML-ANDROID-LOCAL: OrangeFox support virtual DRM connectors
