@@ -263,11 +263,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "PRODUCT/etc/build.prop",
                     "aaudio.mmap_policy=1\n"
                     "aaudio.mmap_exclusive_policy=1\n"
-                    "ro.config.vc_call_vol_default=5\n"
+                    "ro.config.vc_call_vol_steps=15\n"
+                    "ro.config.vc_call_vol_default=15\n"
                     f"ro.config.media_vol_default="
                     f"{'5' if wrong_audio_defaults else '15'}\n"
                     "ro.config.alarm_vol_default=7\n"
                     "ro.config.system_vol_default=7\n"
+                    "ro.config.assistant_vol_default=15\n"
                     f"ro.product.product.model="
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
@@ -1675,10 +1677,12 @@ def main() -> None:
         "hardware/interfaces/audio/aidl/default/audio_effects.mk",
         "aaudio.mmap_policy=1",
         "aaudio.mmap_exclusive_policy=1",
-        "ro.config.vc_call_vol_default=5",
+        "ro.config.vc_call_vol_steps=15",
+        "ro.config.vc_call_vol_default=15",
         "ro.config.media_vol_default=15",
         "ro.config.alarm_vol_default=7",
         "ro.config.system_vol_default=7",
+        "ro.config.assistant_vol_default=15",
     ):
         if token not in device_product:
             fail(f"device overlay product is missing fixed policy: {token}")

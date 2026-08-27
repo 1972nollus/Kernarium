@@ -674,10 +674,12 @@ def check_audio_policy(
     expected_properties = {
         "aaudio.mmap_policy": "1",
         "aaudio.mmap_exclusive_policy": "1",
-        "ro.config.vc_call_vol_default": "5",
+        "ro.config.vc_call_vol_steps": "15",
+        "ro.config.vc_call_vol_default": "15",
         "ro.config.media_vol_default": "15",
         "ro.config.alarm_vol_default": "7",
         "ro.config.system_vol_default": "7",
+        "ro.config.assistant_vol_default": "15",
         "ro.product.product.model": "Darwin UML",
     }
     for property_name, expected in expected_properties.items():

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	0ee1d6d3ff8866fcc5540381afd9e2d43aee06f92287b799c53c143bca6f8a06	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
+1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	a74177786b42619c2dc7f8fdd0b4c8be95fd408eb02752a75ee83d3cb774e23e	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
+2	0002-UML-ANDROID-LOCAL-audio-make-assistant-default-confi.patch	7f895c9222f43b36b91a719b0ab69b73ee086144	89dca05be8625d51b1828cf37082ea7636075de453b6319a3f71a9009633935c	UML-ANDROID-LOCAL: audio: make assistant default configurable
