@@ -21,11 +21,11 @@
 namespace {
 
 constexpr std::uint64_t sectorSize = 512;
-constexpr std::uint64_t diskSize = 17'179'869'184ULL;
-constexpr std::uint64_t initBootOffset = 15'905'849'344ULL;
+constexpr std::uint64_t diskSize = 8'589'934'592ULL;
+constexpr std::uint64_t initBootOffset = 1'963'982'848ULL;
 constexpr std::uint64_t initBootSize = 8'388'608ULL;
-constexpr std::uint64_t miscOffset = 15'914'237'952ULL;
-constexpr std::uint64_t recoveryOffset = 15'918'432'256ULL;
+constexpr std::uint64_t miscOffset = 1'972'371'456ULL;
+constexpr std::uint64_t recoveryOffset = 1'976'565'760ULL;
 constexpr std::uint64_t recoverySize = 268'435'456ULL;
 constexpr std::uint64_t normalRamdiskSize = 8192;
 constexpr std::uint64_t recoveryRamdiskSize = 12288;
@@ -37,16 +37,16 @@ struct Partition {
 };
 
 constexpr std::array partitions {
-	Partition{"system", 1'048'576ULL, 4'294'967'296ULL},
-	Partition{"system_ext", 4'296'015'872ULL, 1'073'741'824ULL},
-	Partition{"product", 5'369'757'696ULL, 2'147'483'648ULL},
-	Partition{"vendor", 7'517'241'344ULL, 1'610'612'736ULL},
-	Partition{"odm", 9'127'854'080ULL, 268'435'456ULL},
-	Partition{"metadata", 9'396'289'536ULL, 67'108'864ULL},
-	Partition{"userdata", 9'463'398'400ULL, 6'442'450'944ULL},
+	Partition{"system", 1'048'576ULL, 1'073'741'824ULL},
+	Partition{"system_ext", 1'074'790'400ULL, 268'435'456ULL},
+	Partition{"product", 1'343'225'856ULL, 268'435'456ULL},
+	Partition{"vendor", 1'611'661'312ULL, 268'435'456ULL},
+	Partition{"odm", 1'880'096'768ULL, 16'777'216ULL},
+	Partition{"metadata", 1'896'873'984ULL, 67'108'864ULL},
 	Partition{"init_boot", initBootOffset, initBootSize},
 	Partition{"misc", miscOffset, 4'194'304ULL},
 	Partition{"recovery", recoveryOffset, recoverySize},
+	Partition{"userdata", 2'245'001'216ULL, 6'343'884'800ULL},
 };
 
 void require(bool condition)

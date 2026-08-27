@@ -146,7 +146,7 @@ Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
 Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
 serial terminal view. Android additionally receives the Apple host's battery
 percentage and charging state through a dedicated Virtio device, falling back
-to 100 percent and fully charged when the host has no readable battery. Point
+to 100 percent and charging when the host has no readable battery. Point
 mode maps safe-area points to guest pixels at 160 DPI; Retina mode multiplies
 both size and density by `nativeScale`. Android's logical density is derived
 from the same launch value.

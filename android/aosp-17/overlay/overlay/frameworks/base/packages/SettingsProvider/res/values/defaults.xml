@@ -5,4 +5,9 @@
     <integer name="def_screen_off_timeout">2147483647</integer>
     <bool name="def_show_ime_with_hard_keyboard">true</bool>
     <bool name="def_stay_on_while_plugged_in">true</bool>
+    <integer name="def_power_sounds_enabled">0</integer>
+    <integer name="def_lockscreen_sounds_enabled">0</integer>
+    <bool name="def_dtmf_tones_enabled">false</bool>
+    <bool name="def_sound_effects_enabled">false</bool>
+    <bool name="def_charging_sounds_enabled">false</bool>
 </resources>

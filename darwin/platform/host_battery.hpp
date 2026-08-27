@@ -16,7 +16,7 @@ enum class HostBatteryStatus : std::uint8_t {
 
 struct HostBatteryState final {
     std::uint8_t percentage {100};
-    HostBatteryStatus status {HostBatteryStatus::full};
+    HostBatteryStatus status {HostBatteryStatus::charging};
     bool present {true};
     bool externalPower {true};
 };

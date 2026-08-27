@@ -204,6 +204,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           removed_payload: bool = False,
                           missing_required_preopt: bool = False,
                           half_preopt_pair: bool = False,
+                          wrong_audio_defaults: bool = False,
+                          wrong_product_model: bool = False,
                           virgl_alignment: int = 16384,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
@@ -260,7 +262,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "PRODUCT/etc/build.prop",
                     "aaudio.mmap_policy=1\n"
-                    "aaudio.mmap_exclusive_policy=1\n",
+                    "aaudio.mmap_exclusive_policy=1\n"
+                    "ro.config.vc_call_vol_default=5\n"
+                    f"ro.config.media_vol_default="
+                    f"{'5' if wrong_audio_defaults else '15'}\n"
+                    "ro.config.alarm_vol_default=7\n"
+                    "ro.config.system_vol_default=7\n"
+                    f"ro.product.product.model="
+                    f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
@@ -514,6 +523,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("removed-payload", {"removed_payload": True}),
             ("missing-preopt", {"missing_required_preopt": True}),
             ("half-preopt-pair", {"half_preopt_pair": True}),
+            ("audio-defaults", {"wrong_audio_defaults": True}),
+            ("product-model", {"wrong_product_model": True}),
             ("virgl-alignment", {"virgl_alignment": 4096}),
         ):
             fixture = root / f"bad-{label}.zip"
@@ -831,10 +842,10 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
         "vendor",
         "odm",
         "metadata",
-        "userdata",
         "init_boot",
         "misc",
         "recovery",
+        "userdata",
     ]:
         fail("production UBD layout has the wrong fixed partition order")
     if "super" in names or any("dlkm" in name for name in names):
@@ -1150,6 +1161,38 @@ def main() -> None:
     for path in required:
         if not path.is_file():
             fail(f"required owner is missing: {path.relative_to(root)}")
+
+    partition_layout = json.loads(
+        (android_root / "support/image/partition-layout.json").read_text()
+    )
+    expected_partition_layout = [
+        ("system", 1_048_576, 1_073_741_824),
+        ("system_ext", 1_074_790_400, 268_435_456),
+        ("product", 1_343_225_856, 268_435_456),
+        ("vendor", 1_611_661_312, 268_435_456),
+        ("odm", 1_880_096_768, 16_777_216),
+        ("metadata", 1_896_873_984, 67_108_864),
+        ("init_boot", 1_963_982_848, 8_388_608),
+        ("misc", 1_972_371_456, 4_194_304),
+        ("recovery", 1_976_565_760, 268_435_456),
+        ("userdata", 2_245_001_216, 6_343_884_800),
+    ]
+    actual_partition_layout = [
+        (entry["name"], entry["start_bytes"], entry["size_bytes"])
+        for entry in partition_layout["partitions"]
+    ]
+    if partition_layout["disk_size_bytes"] != 8 * 1024**3:
+        fail("Android fixed disk is not exactly 8 GiB")
+    if actual_partition_layout != expected_partition_layout:
+        fail("Android fixed partition capacities or order differ")
+    userdata = partition_layout["partitions"][-1]
+    if (
+        userdata["name"] != "userdata"
+        or userdata["start_bytes"] + userdata["size_bytes"]
+        != partition_layout["disk_size_bytes"]
+        - partition_layout["alignment_bytes"]
+    ):
+        fail("userdata is not the final aligned partition before the backup GPT")
 
     subprocess.run(
         [
@@ -1616,6 +1659,7 @@ def main() -> None:
     ).read_text()
     for token in (
         "PRODUCT_NAME := aosp_kernarium_darwin",
+        "PRODUCT_MODEL := Darwin UML",
         "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4",
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
@@ -1631,6 +1675,10 @@ def main() -> None:
         "hardware/interfaces/audio/aidl/default/audio_effects.mk",
         "aaudio.mmap_policy=1",
         "aaudio.mmap_exclusive_policy=1",
+        "ro.config.vc_call_vol_default=5",
+        "ro.config.media_vol_default=15",
+        "ro.config.alarm_vol_default=7",
+        "ro.config.system_vol_default=7",
     ):
         if token not in device_product:
             fail(f"device overlay product is missing fixed policy: {token}")
@@ -1793,11 +1841,18 @@ def main() -> None:
         '<integer name="def_screen_off_timeout">2147483647</integer>',
         '<bool name="def_show_ime_with_hard_keyboard">true</bool>',
         '<bool name="def_stay_on_while_plugged_in">true</bool>',
+        '<integer name="def_power_sounds_enabled">0</integer>',
+        '<integer name="def_lockscreen_sounds_enabled">0</integer>',
+        '<bool name="def_dtmf_tones_enabled">false</bool>',
+        '<bool name="def_sound_effects_enabled">false</bool>',
+        '<bool name="def_charging_sounds_enabled">false</bool>',
     ):
         if token not in settings_defaults:
             fail(f"SettingsProvider overlay is missing emulator default: {token}")
     for token in (
         '<bool name="config_disableLockscreenByDefault">true</bool>',
+        '<integer name="config_audio_notif_vol_default">7</integer>',
+        '<integer name="config_audio_ring_vol_default">7</integer>',
         "org.lineageos.jelly",
     ):
         if token not in framework_defaults:

@@ -56,7 +56,7 @@ PRODUCT_NAME := aosp_kernarium_darwin
 PRODUCT_DEVICE := darwin
 PRODUCT_BRAND := Android
 PRODUCT_MANUFACTURER := Kernarium
-PRODUCT_MODEL := Android 17 on Darwin UML
+PRODUCT_MODEL := Darwin UML
 
 # The desktop Cuttlefish base chooses EROFS APEX payloads. Keep every APEX on
 # the uncompressed ext4 path so this guest never depends on EROFS at runtime.
@@ -237,11 +237,17 @@ PRODUCT_COPY_FILES += \
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
-# The Virtio sound transport has no MMAP or exclusive hardware path.
+# The Virtio sound transport has no MMAP or exclusive hardware path. These
+# read-only defaults seed a fresh Settings database; persisted user volume
+# choices continue to take precedence after first boot.
 PRODUCT_PRODUCT_PROPERTIES += \
     sys.use_memfd=true \
     aaudio.mmap_policy=1 \
     aaudio.mmap_exclusive_policy=1 \
+    ro.config.vc_call_vol_default=5 \
+    ro.config.media_vol_default=15 \
+    ro.config.alarm_vol_default=7 \
+    ro.config.system_vol_default=7 \
     audio.timecheck.timeout_duration_ms=300000 \
     audio.timecheck.second_chance_duration_ms=200000
 PRODUCT_SYSTEM_EXT_PROPERTIES += \

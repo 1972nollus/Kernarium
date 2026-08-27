@@ -110,7 +110,7 @@ Kernarium attaches:
 - an absolute touchscreen and evdev keyboard;
 - one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
 - an Android-only Virtio battery reflecting the Apple host's percentage and
-  charging state, with a 100-percent fully-charged fallback;
+  charging state, with a 100-percent charging fallback;
 - SLiRP networking from the verified iOS prefix;
 - a Virtio-GPU Metal framebuffer; and
 - the existing `ttyS0` stream mirrored to a terminal view.

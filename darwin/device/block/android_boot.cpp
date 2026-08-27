@@ -24,7 +24,7 @@ namespace uml::android {
 namespace {
 
 constexpr std::uint64_t sectorSize = 512;
-constexpr std::uint64_t diskSize = 17'179'869'184ULL;
+constexpr std::uint64_t diskSize = 8'589'934'592ULL;
 constexpr std::uint64_t bootImagePageSize = 4096;
 constexpr std::size_t bootImageHeaderSize = 1584;
 constexpr std::size_t cowHeaderSize = 4128;
@@ -40,17 +40,21 @@ struct ExpectedPartition {
 };
 
 constexpr std::array expectedPartitions {
-	ExpectedPartition{"system", 1'048'576ULL, 4'294'967'296ULL},
-	ExpectedPartition{"system_ext", 4'296'015'872ULL, 1'073'741'824ULL},
-	ExpectedPartition{"product", 5'369'757'696ULL, 2'147'483'648ULL},
-	ExpectedPartition{"vendor", 7'517'241'344ULL, 1'610'612'736ULL},
-	ExpectedPartition{"odm", 9'127'854'080ULL, 268'435'456ULL},
-	ExpectedPartition{"metadata", 9'396'289'536ULL, 67'108'864ULL},
-	ExpectedPartition{"userdata", 9'463'398'400ULL, 6'442'450'944ULL},
-	ExpectedPartition{"init_boot", 15'905'849'344ULL, 8'388'608ULL},
-	ExpectedPartition{"misc", 15'914'237'952ULL, 4'194'304ULL},
-	ExpectedPartition{"recovery", 15'918'432'256ULL, 268'435'456ULL},
+	ExpectedPartition{"system", 1'048'576ULL, 1'073'741'824ULL},
+	ExpectedPartition{"system_ext", 1'074'790'400ULL, 268'435'456ULL},
+	ExpectedPartition{"product", 1'343'225'856ULL, 268'435'456ULL},
+	ExpectedPartition{"vendor", 1'611'661'312ULL, 268'435'456ULL},
+	ExpectedPartition{"odm", 1'880'096'768ULL, 16'777'216ULL},
+	ExpectedPartition{"metadata", 1'896'873'984ULL, 67'108'864ULL},
+	ExpectedPartition{"init_boot", 1'963'982'848ULL, 8'388'608ULL},
+	ExpectedPartition{"misc", 1'972'371'456ULL, 4'194'304ULL},
+	ExpectedPartition{"recovery", 1'976'565'760ULL, 268'435'456ULL},
+	ExpectedPartition{"userdata", 2'245'001'216ULL, 6'343'884'800ULL},
 };
+
+constexpr std::size_t initBootPartition = 6;
+constexpr std::size_t miscPartition = 7;
+constexpr std::size_t recoveryPartition = 8;
 
 class File final {
 public:
@@ -306,7 +310,7 @@ bool recoveryRequested(const std::filesystem::path &instance, const File &base)
 		throw std::invalid_argument("Android instance is not a regular file");
 	const CowReader cow(instance, base);
 	std::array<std::byte, 2048> bootloaderMessage {};
-	cow.read(expectedPartitions[8].offset, bootloaderMessage);
+	cow.read(expectedPartitions[miscPartition].offset, bootloaderMessage);
 	const auto commandEnd = std::find(
 		bootloaderMessage.begin(), bootloaderMessage.begin() + 32, std::byte{});
 	if (commandEnd == bootloaderMessage.begin() + 32)
@@ -328,8 +332,8 @@ BootSelection selectBoot(const std::filesystem::path &baseDisk,
 		throw std::invalid_argument("unknown Android boot mode");
 	const File disk(baseDisk);
 	validateGpt(disk);
-	const auto normal = bootRamdisk(disk, expectedPartitions[7]);
-	const auto recovery = bootRamdisk(disk, expectedPartitions[9]);
+	const auto normal = bootRamdisk(disk, expectedPartitions[initBootPartition]);
+	const auto recovery = bootRamdisk(disk, expectedPartitions[recoveryPartition]);
 	const auto selected = requestedMode == BootMode::automatic
 		? (recoveryRequested(instance, disk) ? BootMode::recovery : BootMode::normal)
 		: requestedMode;

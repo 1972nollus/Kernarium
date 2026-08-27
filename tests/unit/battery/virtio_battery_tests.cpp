@@ -103,7 +103,7 @@ void preservesTheBatterylessHostFallback()
         protocol::statusQueue, 2, bytes(request), sizeof(protocol::State));
     const auto state = load<protocol::State>(result.response);
     require(state.percentage == 100);
-    require(state.status == protocol::ChargeStatus::full);
+    require(state.status == protocol::ChargeStatus::charging);
     require(state.present == 1);
     require(state.externalPower == 1);
 }

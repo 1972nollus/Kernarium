@@ -90,12 +90,15 @@ switcher so the remaining volume and vibration controls do not instantiate a
 radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through
 the generic Android Health service; hosts without readable battery data report
-an always-present battery at 100 percent and fully charged.
+an always-present battery at 100 percent and charging.
 
 Both the framework and SettingsProvider defaults disable the non-secure
 keyguard, set the screen-off timeout to the maximum supported value, and keep
 the display awake while the host supplies virtual AC power. LatinIME remains
-eligible even while a host keyboard is attached.
+eligible even while a host keyboard is attached. Fresh settings databases seed
+every user-facing audio stream at its maximum and disable UI, lock, dial-pad,
+charging, and power sounds; subsequent volume and sound settings remain owned
+by the user.
 
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
 time artifacts for ordinary applications, no `system_other` image, and no
@@ -139,10 +142,12 @@ processes, and cold and warm boot time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a fixed 16 GiB GPT with separate
-Android payload, metadata, userdata, `init_boot`, `misc`, and recovery
-partitions. There is no `super`, dynamic partition, Virtual A/B, AVB, OTA slot,
-or DLKM partition.
+`support/image/partition-layout.json` owns a fixed 8 GiB GPT with separate
+Android payload, metadata, `init_boot`, `misc`, recovery, and userdata
+partitions. Userdata is the final partition and extends to the last aligned
+MiB before the backup GPT, so a larger disk can grow it without relocating
+another partition. There is no `super`, dynamic partition, Virtual A/B, AVB,
+OTA slot, or DLKM partition.
 
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem writable through the host COW; this
