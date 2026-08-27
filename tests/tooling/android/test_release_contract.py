@@ -75,6 +75,7 @@ def main() -> None:
 
     aosp = parse_env(android_root / "metadata/aosp.env")
     jelly = parse_env(android_root / "third_party/jelly/metadata.env")
+    orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
     abi = parse_env(root / "kernel/common/abi/identity.env")
@@ -138,6 +139,53 @@ def main() -> None:
             ),
             "destination": jelly["JELLY_DESTINATION"],
             "license": jelly["JELLY_LICENSE"],
+        },
+        "orangefox": {
+            "sync_repository": orangefox["ORANGEFOX_SYNC_REPOSITORY"],
+            "sync_branch": orangefox["ORANGEFOX_SYNC_BRANCH"],
+            "sync_commit": orangefox["ORANGEFOX_SYNC_COMMIT"],
+            "sync_tree": orangefox["ORANGEFOX_SYNC_TREE"],
+            "sync_script_sha256": orangefox["ORANGEFOX_SYNC_SCRIPT_SHA256"],
+            "manifest_repository": orangefox["ORANGEFOX_MANIFEST_REPOSITORY"],
+            "manifest_branch": orangefox["ORANGEFOX_MANIFEST_BRANCH"],
+            "manifest_commit": orangefox["ORANGEFOX_MANIFEST_COMMIT"],
+            "manifest_tree": orangefox["ORANGEFOX_MANIFEST_TREE"],
+            "base_manifest_sha256": orangefox["ORANGEFOX_BASE_MANIFEST_SHA256"],
+            "branch": orangefox["ORANGEFOX_BRANCH"],
+            "bootable_recovery_repository": orangefox[
+                "ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"
+            ],
+            "bootable_recovery_commit": orangefox[
+                "ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"
+            ],
+            "bootable_recovery_tree": orangefox[
+                "ORANGEFOX_BOOTABLE_RECOVERY_TREE"
+            ],
+            "vendor_recovery_repository": orangefox[
+                "ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"
+            ],
+            "vendor_recovery_commit": orangefox[
+                "ORANGEFOX_VENDOR_RECOVERY_COMMIT"
+            ],
+            "vendor_recovery_tree": orangefox[
+                "ORANGEFOX_VENDOR_RECOVERY_TREE"
+            ],
+            "se_omapi_repository": orangefox["ORANGEFOX_SE_OMAPI_REPOSITORY"],
+            "se_omapi_commit": orangefox["ORANGEFOX_SE_OMAPI_COMMIT"],
+            "se_omapi_tree": orangefox["ORANGEFOX_SE_OMAPI_TREE"],
+            "device_destination": orangefox[
+                "ORANGEFOX_DEVICE_OVERLAY_DESTINATION"
+            ],
+            "product": orangefox["ORANGEFOX_PRODUCT"],
+            "release_config": orangefox["ORANGEFOX_RELEASE_CONFIG"],
+            "patch_count": int(orangefox["ORANGEFOX_PATCH_COUNT"]),
+            "projects_manifest_sha256": sha256_path(
+                android_root / "third_party/orangefox/patches/projects.tsv"
+            ),
+            "routes": read_routes(
+                android_root / "third_party/orangefox/patches/projects.tsv"
+            ),
+            "license": orangefox["ORANGEFOX_LICENSE"],
         },
         "kernel": {
             "family": kernel["UML_KERNEL_FAMILY"],
@@ -205,6 +253,12 @@ def main() -> None:
                 f"ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT='{manifest['jelly']['base_commit']}'",
                 f"ANDROID17_ACCEPTED_JELLY_FINAL_TREE='{manifest['jelly']['final_tree']}'",
                 f"ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256='{manifest['jelly']['patch_manifest_sha256']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT='{manifest['orangefox']['manifest_commit']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256='{manifest['orangefox']['base_manifest_sha256']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256='{manifest['orangefox']['projects_manifest_sha256']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_BOOTABLE_RECOVERY_COMMIT='{manifest['orangefox']['bootable_recovery_commit']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_VENDOR_RECOVERY_COMMIT='{manifest['orangefox']['vendor_recovery_commit']}'",
+                f"ANDROID17_ACCEPTED_ORANGEFOX_SE_OMAPI_COMMIT='{manifest['orangefox']['se_omapi_commit']}'",
                 f"ANDROID17_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
                 f"ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
