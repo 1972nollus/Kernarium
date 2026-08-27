@@ -128,7 +128,8 @@ MagiskBoot image repacking is intentionally absent because the signed ACK ELF
 is app-owned rather than stored in an Android boot partition. Mount, format,
 backup/restore, file-manager, terminal, ADB, and reboot paths remain available.
 Recovery screen blanking, its separate idle lock timeout, haptics, and USB-only
-device paths are disabled for the virtual hardware.
+device paths are disabled for the virtual hardware. The pinned recovery cgroup
+and task-profile maps keep OrangeFox 14.1's logd/logcat path functional.
 
 `build/build-orangefox.sh`, `build/assemble-ramdisk.sh`, and
 `build/assemble-image.sh` own recovery construction, disk assembly, and

@@ -36,8 +36,10 @@ REQUIRED_PATHS = {
     "init",
     "prop.default",
     "system/bin/recovery",
+    "system/etc/cgroups.json",
     "system/etc/fox.cfg",
     "system/etc/recovery.fstab",
+    "system/etc/task_profiles.json",
     "twres/pages/recovery.xml",
     "twres/pages/backup.xml",
     "twres/pages/restore.xml",
@@ -331,6 +333,24 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
             fail(f"OrangeFox properties omit {token.decode()}")
     if b"FOX_CODE_BASE=" not in entries["system/etc/fox.cfg"].payload:
         fail("OrangeFox build identity is missing")
+
+    try:
+        cgroups = json.loads(entries["system/etc/cgroups.json"].payload)
+        task_profiles = json.loads(entries["system/etc/task_profiles.json"].payload)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        fail(f"OrangeFox process-group configuration is invalid: {error}")
+    controllers = {
+        item.get("Controller")
+        for item in cgroups.get("Cgroups", [])
+        if isinstance(item, dict)
+    } if isinstance(cgroups, dict) else set()
+    profiles = {
+        item.get("Name")
+        for item in task_profiles.get("Profiles", [])
+        if isinstance(item, dict)
+    } if isinstance(task_profiles, dict) else set()
+    if "cpuset" not in controllers or "ServiceCapacityLow" not in profiles:
+        fail("OrangeFox process-group configuration cannot start recovery logd")
 
     elf_count = 0
     needed_by: dict[str, set[str]] = {}

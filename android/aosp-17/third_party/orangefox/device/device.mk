@@ -45,6 +45,13 @@ TARGET_USES_LOGD := true
 TARGET_USES_MKE2FS := true
 RECOVERY_SDCARD_ON_DATA := true
 
+# OrangeFox 14.1's logd service requests ServiceCapacityLow during recovery.
+# Supply the pinned platform process-group maps instead of relying on a
+# device-specific ROM copy; without task_profiles.json logcat never starts.
+PRODUCT_COPY_FILES += \
+    system/core/libprocessgroup/profiles/cgroups.recovery.json:$(TARGET_COPY_OUT_RECOVERY)/root/system/etc/cgroups.json \
+    system/core/libprocessgroup/profiles/task_profiles.json:$(TARGET_COPY_OUT_RECOVERY)/root/system/etc/task_profiles.json
+
 PRODUCT_SYSTEM_DEFAULT_PROPERTIES += \
     ro.adb.secure=0 \
     ro.debuggable=1 \

@@ -682,6 +682,14 @@ def synthetic_orangefox_ramdisk(
         ]),
         newc_entry("system/etc/fox.cfg", 0o100644, b"FOX_CODE_BASE=fixture\n", 4),
         newc_entry("system/etc/recovery.fstab", 0o100644, fstab, 5),
+        newc_entry(
+            "system/etc/cgroups.json", 0o100644,
+            b'{"Cgroups":[{"Controller":"cpuset"}]}\n', 13,
+        ),
+        newc_entry(
+            "system/etc/task_profiles.json", 0o100644,
+            b'{"Profiles":[{"Name":"ServiceCapacityLow"}]}\n', 14,
+        ),
     ]
     for inode, name in enumerate(
         ("recovery", "backup", "restore", "files", "mount", "wipe"), 6
