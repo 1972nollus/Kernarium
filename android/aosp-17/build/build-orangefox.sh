@@ -153,7 +153,7 @@ lunch "${ORANGEFOX_PRODUCT}-${ORANGEFOX_RELEASE_CONFIG}-eng"
 	fail "OrangeFox boot header is not version 4"
 [[ "$(get_build_var BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE)" == true ]] ||
 	fail "OrangeFox recovery would embed the ACK kernel"
-[[ "$(get_build_var BOARD_RECOVERYIMAGE_PARTITION_SIZE)" == 268435456 ]] ||
+[[ "$(get_build_var BOARD_RECOVERYIMAGE_PARTITION_SIZE)" == 33554432 ]] ||
 	fail "OrangeFox partition size differs from the fixed GPT"
 [[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == 65536 ]] ||
 	fail "OrangeFox userspace is not page-size agnostic through 64 KiB"

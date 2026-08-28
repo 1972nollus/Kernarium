@@ -52,16 +52,19 @@ struct EmulatorConfiguration: Equatable {
     static let vCPUEnvironmentKey = "KERNARIUM_VCPU_COUNT"
     static let guestMemoryEnvironmentKey = "KERNARIUM_GUEST_MEMORY_MIB"
     static let overlaySizeEnvironmentKey = "KERNARIUM_OVERLAY_SIZE_GIB"
+    static let androidDiskSizeEnvironmentKey = "KERNARIUM_ANDROID_DISK_SIZE_GIB"
     static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
+    static let androidDiskSizeRangeGiB = 4...64
 #if targetEnvironment(simulator)
     static let defaultGuestMemoryMiB = 4096
 #else
     static let defaultGuestMemoryMiB = 2048
 #endif
     static let defaultOverlaySizeGiB = 8
+    static let defaultAndroidDiskSizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB
     static let defaultRetinaMode = false
     static let defaultAndroidBootMode = AndroidBootMode.automatic
@@ -69,6 +72,7 @@ struct EmulatorConfiguration: Equatable {
     let vCPUCount: Int
     let guestMemoryMiB: Int
     let overlaySizeGiB: Int
+    let androidDiskSizeGiB: Int
     let rootfsFilename: String
     let kernelPageSize: KernelPageSize
     let retinaMode: Bool
@@ -106,6 +110,11 @@ struct EmulatorConfiguration: Equatable {
         ) == nil
             ? defaultOverlaySizeGiB
             : defaults.integer(forKey: Key.overlaySizeGiB)
+        let storedAndroidDiskSizeGiB = defaults.object(
+            forKey: Key.androidDiskSizeGiB
+        ) == nil
+            ? defaultAndroidDiskSizeGiB
+            : defaults.integer(forKey: Key.androidDiskSizeGiB)
         let storedRootfsFilename = defaults.string(
             forKey: Key.rootfsFilename
         ) ?? RootfsImage.defaultFilename
@@ -143,6 +152,10 @@ struct EmulatorConfiguration: Equatable {
         }
         let environmentOverlaySizeGiB = environmentInteger(
             environment[overlaySizeEnvironmentKey], in: overlaySizeRangeGiB
+        )
+        let environmentAndroidDiskSizeGiB = environmentInteger(
+            environment[androidDiskSizeEnvironmentKey],
+            in: androidDiskSizeRangeGiB
         )
         let environmentRetinaMode = environment[retinaEnvironmentKey].flatMap {
             value in
@@ -187,6 +200,13 @@ struct EmulatorConfiguration: Equatable {
                 max(storedOverlaySizeGiB, overlaySizeRangeGiB.lowerBound),
                 overlaySizeRangeGiB.upperBound
             ),
+            androidDiskSizeGiB: environmentAndroidDiskSizeGiB ?? min(
+                max(
+                    storedAndroidDiskSizeGiB,
+                    androidDiskSizeRangeGiB.lowerBound
+                ),
+                androidDiskSizeRangeGiB.upperBound
+            ),
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredKernelPageSize ?? requestedKernelPageSize,
             retinaMode: environmentRetinaMode ?? storedRetinaMode,
@@ -198,6 +218,7 @@ struct EmulatorConfiguration: Equatable {
         defaults.set(vCPUCount, forKey: Key.vCPUCount)
         defaults.set(guestMemoryMiB, forKey: Key.guestMemoryMiB)
         defaults.set(overlaySizeGiB, forKey: Key.overlaySizeGiB)
+        defaults.set(androidDiskSizeGiB, forKey: Key.androidDiskSizeGiB)
         defaults.set(
             RootfsImage.validatedFilename(rootfsFilename) ??
                 RootfsImage.defaultFilename,
@@ -234,6 +255,7 @@ struct EmulatorConfiguration: Equatable {
         static let vCPUCount = "emulator.vCPUCount"
         static let guestMemoryMiB = "emulator.guestMemoryMiB"
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
+        static let androidDiskSizeGiB = "emulator.androidDiskSizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
         static let kernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"

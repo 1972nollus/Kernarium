@@ -8,6 +8,7 @@ on fs
     chmod 622 /dev/kmsg
 
 on late-fs
+    exec - root root -- /system/bin/resize2fs /dev/block/by-name/userdata
     mount_all --late
     write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
 

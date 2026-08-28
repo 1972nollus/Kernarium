@@ -33,6 +33,9 @@ DEFAULT_ADB_PORT = 5555
 GUEST_ADB_PORT = 5555
 DEFAULT_DISPLAY_WIDTH = 720
 DEFAULT_DISPLAY_HEIGHT = 1280
+MINIMUM_DISK_SIZE_GIB = 4
+MAXIMUM_DISK_SIZE_GIB = 64
+DEFAULT_DISK_SIZE_GIB = 8
 
 
 class LauncherError(RuntimeError):
@@ -59,6 +62,16 @@ def port_number(value: str) -> int:
     parsed = positive_integer(value)
     if parsed > 65535:
         raise argparse.ArgumentTypeError("must be at most 65535")
+    return parsed
+
+
+def disk_capacity(value: str) -> int:
+    parsed = positive_integer(value)
+    if not MINIMUM_DISK_SIZE_GIB <= parsed <= MAXIMUM_DISK_SIZE_GIB:
+        raise argparse.ArgumentTypeError(
+            f"must be between {MINIMUM_DISK_SIZE_GIB} and "
+            f"{MAXIMUM_DISK_SIZE_GIB} GiB"
+        )
     return parsed
 
 
@@ -102,6 +115,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument("--memory", default="8G")
+    parser.add_argument(
+        "--disk-size-gib",
+        type=disk_capacity,
+        default=DEFAULT_DISK_SIZE_GIB,
+        help="expanded Android disk capacity in GiB (default: 8)",
+    )
     parser.add_argument(
         "--width",
         type=positive_integer,
@@ -214,6 +233,38 @@ def instance_path(requested: Path | None, release: Path) -> Path:
     return candidate.resolve(strict=False)
 
 
+def instance_base_path(instance: Path) -> Path:
+    return instance.with_suffix(".base.img")
+
+
+def prepare_instance_base(release: Path, instance: Path, base: Path) -> None:
+    source = release / "guest/android-17-uml-arm64.img"
+    if base.exists():
+        if base.is_symlink() or not base.is_file() or not os.access(base, os.W_OK):
+            raise LauncherError(f"Android instance base is unsafe: {base}")
+        return
+    if instance.exists():
+        raise LauncherError(
+            f"Android instance has no matching mutable base: {instance}"
+        )
+    base.parent.mkdir(parents=True, exist_ok=True)
+    temporary = base.with_name(base.name + ".tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise LauncherError(f"stale Android base staging path: {temporary}")
+    cloned = subprocess.run(
+        ["cp", "-c", str(source), str(temporary)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if cloned.returncode != 0:
+        if temporary.exists():
+            temporary.unlink()
+        shutil.copyfile(source, temporary)
+    temporary.chmod(temporary.stat().st_mode | 0o200)
+    temporary.replace(base)
+
+
 def resolve_executable(value: str | Path, *, sdk_fallback: bool = False) -> Path:
     text = os.fspath(value)
     expanded = Path(text).expanduser()
@@ -245,11 +296,16 @@ def emulator_command(
     release: Path,
     instance: Path,
     emulator: Path,
+    base: Path | None = None,
 ) -> list[str]:
+    if base is None:
+        base = instance_base_path(instance)
     return [
         str(emulator),
         f"--android-release={release}",
         f"--android-instance={instance}",
+        f"--android-base-disk={base}",
+        f"--android-disk-size-gib={options.disk_size_gib}",
         f"--android-boot-mode={options.boot_mode}",
         f"--net-forward=tcp:127.0.0.1:{options.adb_port}-{GUEST_ADB_PORT}",
         "--gpu",
@@ -360,11 +416,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         release = release_path(options.release)
         instance = instance_path(options.instance, release)
+        base = instance_base_path(instance)
         adb = resolve_executable(options.adb, sdk_fallback=True)
         commands: list[list[str]] = []
         if options.build:
             commands = build_commands(resolve_executable("cmake"))
-        guest_command = emulator_command(options, release, instance, options.emulator)
+        guest_command = emulator_command(
+            options, release, instance, options.emulator, base
+        )
         serial = f"127.0.0.1:{options.adb_port}"
         if options.dry_run:
             for command in commands:
@@ -378,12 +437,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
         for command in commands:
             subprocess.run(command, cwd=REPO_ROOT, check=True)
         emulator = resolve_executable(options.emulator)
-        guest_command = emulator_command(options, release, instance, emulator)
+        prepare_instance_base(release, instance, base)
+        guest_command = emulator_command(options, release, instance, emulator, base)
         instance.parent.mkdir(parents=True, exist_ok=True)
         ensure_loopback_port_available(options.adb_port)
         disconnect_adb(adb, serial)
         print(f"Booting accepted Android release {release.name}.", file=sys.stderr)
         print(f"Persistent instance: {instance}", file=sys.stderr)
+        print(
+            f"Mutable base: {base} ({options.disk_size_gib} GiB)",
+            file=sys.stderr,
+        )
         print("Native Metal display; press Ctrl-C to stop the guest.", file=sys.stderr)
         guest = subprocess.Popen(guest_command, start_new_session=True)
         install_shutdown_handlers()

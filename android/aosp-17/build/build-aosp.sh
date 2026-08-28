@@ -335,6 +335,7 @@ for package in \
 	com.android.wifi \
 	Jelly \
 	LatinIME \
+	resize2fs \
 	ThemePicker; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"

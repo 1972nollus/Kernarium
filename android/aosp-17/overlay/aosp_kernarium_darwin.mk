@@ -210,12 +210,14 @@ KERNARIUM_REMOVED_PACKAGES := \
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # Jelly supplies the browser; ThemePicker remains part of the user-facing
-# baseline, and LatinIME must remain visible even when a host keyboard exists.
+# baseline, LatinIME must remain visible even when a host keyboard exists, and
+# resize2fs grows the compact userdata seed before its first mount.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
     Jelly \
     LatinIME \
+    resize2fs \
     ThemePicker
 
 # Replace the handheld feature declaration and remove optional feature files

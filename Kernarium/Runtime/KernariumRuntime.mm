@@ -1066,6 +1066,8 @@ int runtimeRun(
         validateUbdPath(baseDisk, "Android base disk");
         validateUbdPath(instance, "Android instance");
         prepareAndroidInstance(instance);
+        uml::android::prepareDisk(
+            baseDisk, instance, boot->android_disk_size_gib);
         const auto androidBoot = uml::android::selectBoot(
             baseDisk,
             instance,
@@ -1461,7 +1463,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v4(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v5(void)
 {
     return &runtimeApi;
 }

@@ -21,12 +21,13 @@
 namespace {
 
 constexpr std::uint64_t sectorSize = 512;
-constexpr std::uint64_t diskSize = 8'589'934'592ULL;
-constexpr std::uint64_t initBootOffset = 1'963'982'848ULL;
+constexpr std::uint64_t seedDiskSize = 2'079'326'208ULL;
+constexpr std::uint64_t expandedDiskSize = 8'589'934'592ULL;
+constexpr std::uint64_t initBootOffset = 1'901'068'288ULL;
 constexpr std::uint64_t initBootSize = 8'388'608ULL;
-constexpr std::uint64_t miscOffset = 1'972'371'456ULL;
-constexpr std::uint64_t recoveryOffset = 1'976'565'760ULL;
-constexpr std::uint64_t recoverySize = 268'435'456ULL;
+constexpr std::uint64_t miscOffset = 1'909'456'896ULL;
+constexpr std::uint64_t recoveryOffset = 1'910'505'472ULL;
+constexpr std::uint64_t recoverySize = 33'554'432ULL;
 constexpr std::uint64_t normalRamdiskSize = 8192;
 constexpr std::uint64_t recoveryRamdiskSize = 12288;
 
@@ -41,12 +42,12 @@ constexpr std::array partitions {
 	Partition{"system_ext", 1'074'790'400ULL, 268'435'456ULL},
 	Partition{"product", 1'343'225'856ULL, 268'435'456ULL},
 	Partition{"vendor", 1'611'661'312ULL, 268'435'456ULL},
-	Partition{"odm", 1'880'096'768ULL, 16'777'216ULL},
-	Partition{"metadata", 1'896'873'984ULL, 67'108'864ULL},
+	Partition{"odm", 1'880'096'768ULL, 4'194'304ULL},
+	Partition{"metadata", 1'884'291'072ULL, 16'777'216ULL},
 	Partition{"init_boot", initBootOffset, initBootSize},
-	Partition{"misc", miscOffset, 4'194'304ULL},
+	Partition{"misc", miscOffset, 1'048'576ULL},
 	Partition{"recovery", recoveryOffset, recoverySize},
-	Partition{"userdata", 2'245'001'216ULL, 6'343'884'800ULL},
+	Partition{"userdata", 1'944'059'904ULL, 134'217'728ULL},
 };
 
 void require(bool condition)
@@ -156,7 +157,7 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 	if (descriptor < 0)
 		throw std::system_error(errno, std::generic_category(), "open base disk");
 	try {
-		if (ftruncate(descriptor, static_cast<off_t>(diskSize)) != 0)
+		if (ftruncate(descriptor, static_cast<off_t>(seedDiskSize)) != 0)
 			throw std::system_error(errno, std::generic_category(), "ftruncate");
 		std::vector<std::byte> entries(128U * 128U);
 		for (std::size_t index = 0; index < partitions.size(); ++index) {
@@ -179,9 +180,9 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 		little32(header, 8, 0x00010000U);
 		little32(header, 12, 92U);
 		little64(header, 24, 1U);
-		little64(header, 32, diskSize / sectorSize - 1U);
+		little64(header, 32, seedDiskSize / sectorSize - 1U);
 		little64(header, 40, 34U);
-		little64(header, 48, diskSize / sectorSize - 34U);
+		little64(header, 48, seedDiskSize / sectorSize - 34U);
 		header[56] = std::byte{1};
 		little64(header, 72, 2U);
 		little32(header, 80, 128U);
@@ -190,6 +191,15 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 		little32(header, 16, crc32(std::span{header}.first(92)));
 		writeAll(descriptor, sectorSize, header);
 		writeAll(descriptor, 2U * sectorSize, entries);
+		auto backupHeader = header;
+		little64(backupHeader, 24, seedDiskSize / sectorSize - 1U);
+		little64(backupHeader, 32, 1U);
+		little64(backupHeader, 72, seedDiskSize / sectorSize - 33U);
+		little32(backupHeader, 16, 0U);
+		little32(backupHeader, 16,
+			 crc32(std::span{backupHeader}.first(92)));
+		writeAll(descriptor, seedDiskSize - 33U * sectorSize, entries);
+		writeAll(descriptor, seedDiskSize - sectorSize, backupHeader);
 		writeBootImage(descriptor, initBootOffset, normalRamdiskSize);
 		writeBootImage(descriptor, recoveryOffset, recoveryRamdiskSize);
 	} catch (...) {
@@ -204,7 +214,7 @@ std::filesystem::path makeRecoveryCow(const std::filesystem::path &directory)
 {
 	constexpr std::uint64_t headerSize = 4128;
 	constexpr std::uint64_t alignment = 16384;
-	constexpr std::uint64_t sectors = diskSize / sectorSize;
+	constexpr std::uint64_t sectors = expandedDiskSize / sectorSize;
 	constexpr std::uint64_t bitmapSize = sectors / 8U;
 	constexpr std::uint64_t bitmapOffset = alignment;
 	constexpr std::uint64_t dataOffset = bitmapOffset + bitmapSize;
@@ -213,12 +223,13 @@ std::filesystem::path makeRecoveryCow(const std::filesystem::path &directory)
 	if (descriptor < 0)
 		throw std::system_error(errno, std::generic_category(), "open COW");
 	try {
-		if (ftruncate(descriptor, static_cast<off_t>(dataOffset + diskSize)) != 0)
+		if (ftruncate(descriptor,
+			      static_cast<off_t>(dataOffset + expandedDiskSize)) != 0)
 			throw std::system_error(errno, std::generic_category(), "ftruncate COW");
 		std::array<std::byte, headerSize> header {};
 		big32(header, 0, 0x4f4f4f4dU);
 		big32(header, 4, 3U);
-		big64(header, 12, diskSize);
+		big64(header, 12, expandedDiskSize);
 		big32(header, 20, 512U);
 		big32(header, 24, alignment);
 		header[32] = static_cast<std::byte>('/');
@@ -246,6 +257,8 @@ int main()
 	try {
 		const auto base = makeBaseDisk(directory);
 		const auto missingCow = directory / "missing.cow";
+		uml::android::prepareDisk(base, missingCow, 8);
+		require(std::filesystem::file_size(base) == expandedDiskSize);
 		const auto automatic =
 			uml::android::selectBoot(base, missingCow,
 						 uml::android::BootMode::automatic);
@@ -261,6 +274,8 @@ int main()
 		require(explicitRecovery.ramdisk.size == recoveryRamdiskSize);
 
 		const auto cow = makeRecoveryCow(directory);
+		uml::android::prepareDisk(base, cow, 8);
+		requireThrows([&] { uml::android::prepareDisk(base, cow, 16); });
 		const auto requestedRecovery =
 			uml::android::selectBoot(base, cow,
 						 uml::android::BootMode::automatic);

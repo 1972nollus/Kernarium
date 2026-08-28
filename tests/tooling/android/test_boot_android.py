@@ -47,6 +47,8 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
         self.assertIn("--android-boot-mode=normal", command)
+        self.assertIn("--android-disk-size-gib=8", command)
+        self.assertIn("--android-base-disk=/tmp/instance.base.img", command)
         self.assertFalse(options.build)
         self.assertTrue(boot_android.parse_arguments(["--build"]).build)
 
@@ -107,6 +109,8 @@ class BootAndroidTests(unittest.TestCase):
             ["--height", "0"],
             ["--adb-port", "65536"],
             ["--memory", "8 G"],
+            ["--disk-size-gib", "3"],
+            ["--disk-size-gib", "65"],
         ):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(SystemExit):
@@ -117,6 +121,16 @@ class BootAndroidTests(unittest.TestCase):
         instance = boot_android.instance_path(None, release)
         self.assertEqual(instance.name, "release-2.cow")
         self.assertEqual(instance.parent, boot_android.INSTANCES_ROOT)
+
+    def test_instance_base_is_capacity_specific_mutable_clone(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases")
+            instance = root / "guest.cow"
+            base = boot_android.instance_base_path(instance)
+            boot_android.prepare_instance_base(release, instance, base)
+            self.assertEqual(base.read_bytes(), b"image")
+            self.assertEqual(base.name, "guest.base.img")
 
     def test_build_commands_use_the_checked_in_preset(self) -> None:
         self.assertEqual(
@@ -158,6 +172,7 @@ class BootAndroidTests(unittest.TestCase):
                 mock.patch.object(
                     boot_android.subprocess, "Popen", return_value=guest
                 ) as popen,
+                mock.patch.object(boot_android, "prepare_instance_base"),
                 mock.patch.object(boot_android, "ensure_loopback_port_available"),
                 mock.patch.object(boot_android, "wait_for_adb"),
                 mock.patch.object(boot_android, "install_shutdown_handlers"),

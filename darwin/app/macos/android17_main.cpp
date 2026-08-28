@@ -4,6 +4,7 @@
 #include "block/android_boot.hpp"
 
 #include <cerrno>
+#include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,13 +24,18 @@ constexpr std::string_view android_default_guest_memory{"mem=4G"};
 constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view instance_option{"--android-instance="};
+constexpr std::string_view base_disk_option{"--android-base-disk="};
+constexpr std::string_view disk_size_option{"--android-disk-size-gib="};
 constexpr std::string_view boot_mode_option{"--android-boot-mode="};
 
 struct AndroidOptions {
 	std::filesystem::path release;
 	std::filesystem::path instance;
+	std::filesystem::path base_disk;
+	std::uint32_t disk_size_gib = uml::android::defaultDiskSizeGiB;
 	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
 	bool boot_mode_set = false;
+	bool disk_size_set = false;
 	std::vector<std::string> forwarded;
 };
 
@@ -42,6 +48,19 @@ uml::android::BootMode parse_boot_mode(std::string_view value)
 	if (value == "recovery")
 		return uml::android::BootMode::recovery;
 	throw std::invalid_argument("Android boot mode must be auto, normal, or recovery");
+}
+
+std::uint32_t parse_disk_size(std::string_view value)
+{
+	std::uint32_t result = 0;
+	const auto [end, error] =
+		std::from_chars(value.data(), value.data() + value.size(), result);
+	if (error != std::errc{} || end != value.data() + value.size() ||
+	    result < uml::android::minimumDiskSizeGiB ||
+	    result > uml::android::maximumDiskSizeGiB)
+		throw std::invalid_argument(
+			"Android disk capacity must be 4 through 64 GiB");
+	return result;
 }
 
 bool has_argument(int argc, char *const argv[], std::string_view argument)
@@ -98,6 +117,25 @@ AndroidOptions parse_options(int argc, char *const argv[])
 					"--android-instance requires a path");
 			continue;
 		}
+		if (argument.starts_with(base_disk_option)) {
+			if (!options.base_disk.empty())
+				throw std::invalid_argument(
+					"--android-base-disk may be specified only once");
+			options.base_disk = argument.substr(base_disk_option.size());
+			if (options.base_disk.empty())
+				throw std::invalid_argument(
+					"--android-base-disk requires a path");
+			continue;
+		}
+		if (argument.starts_with(disk_size_option)) {
+			if (options.disk_size_set)
+				throw std::invalid_argument(
+					"--android-disk-size-gib may be specified only once");
+			options.disk_size_gib = parse_disk_size(
+				argument.substr(disk_size_option.size()));
+			options.disk_size_set = true;
+			continue;
+		}
 		if (argument.starts_with(boot_mode_option)) {
 			if (options.boot_mode_set)
 				throw std::invalid_argument(
@@ -117,6 +155,14 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		options.release = environment_value("UML_ANDROID17_RELEASE");
 	if (options.instance.empty())
 		options.instance = environment_value("UML_ANDROID17_INSTANCE");
+	if (options.base_disk.empty())
+		options.base_disk = environment_value("UML_ANDROID17_BASE_DISK");
+	if (!options.disk_size_set) {
+		const auto environment_size =
+			environment_value("UML_ANDROID17_DISK_SIZE_GIB");
+		if (!environment_size.empty())
+			options.disk_size_gib = parse_disk_size(environment_size);
+	}
 	if (!options.boot_mode_set) {
 		const auto environment_mode = environment_value("UML_ANDROID17_BOOT_MODE");
 		if (!environment_mode.empty())
@@ -131,6 +177,18 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	if (!has_battery)
 		options.forwarded.emplace_back("--battery");
 	return options;
+}
+
+std::filesystem::path validated_base_disk(
+	const std::filesystem::path &candidate)
+{
+	if (!candidate.is_absolute())
+		throw std::invalid_argument("--android-base-disk must be absolute");
+	struct stat details {};
+	if (lstat(candidate.c_str(), &details) != 0 ||
+	    !S_ISREG(details.st_mode))
+		throw std::invalid_argument("Android base disk is unsafe");
+	return candidate;
 }
 
 std::size_t checked_regular_file_size(const std::filesystem::path &path)
@@ -255,10 +313,13 @@ void print_usage()
 		"Android 17 options:\n"
 			"  --android-release=/absolute/release\n"
 			"  --android-instance=/absolute/writable-instance.cow\n"
+			"  --android-base-disk=/absolute/writable-base.img\n"
+			"  --android-disk-size-gib=4..64\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
-			"UML_ANDROID17_INSTANCE, and UML_ANDROID17_BOOT_MODE.\n",
+			"UML_ANDROID17_INSTANCE, UML_ANDROID17_BASE_DISK, "
+			"UML_ANDROID17_DISK_SIZE_GIB, and UML_ANDROID17_BOOT_MODE.\n",
 		stderr);
 }
 
@@ -276,10 +337,14 @@ int main(int argc, char *argv[], char *envp[])
 				throw std::invalid_argument(
 					"Android launch requires release and instance paths");
 			const auto release = validated_release_root(options.release);
-			const auto base_disk =
-				release / "guest/android-17-uml-arm64.img";
+			const auto base_disk = validated_base_disk(
+				options.base_disk.empty()
+					? release / "guest/android-17-uml-arm64.img"
+					: options.base_disk);
 			const auto instance =
 				validated_instance(options.instance, base_disk);
+			uml::android::prepareDisk(
+				base_disk, instance, options.disk_size_gib);
 			const auto boot = uml::android::selectBoot(
 				base_disk, instance, options.boot_mode);
 			options.forwarded.emplace_back("ubd0=" + instance.string() +

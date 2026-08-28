@@ -138,6 +138,7 @@ struct KernariumTests {
         #expect(configuration.vCPUCount == 6)
         #expect(configuration.guestMemoryMiB == 4096)
         #expect(configuration.overlaySizeGiB == 8)
+        #expect(configuration.androidDiskSizeGiB == 8)
         #expect(configuration.rootfsFilename == "rootfs.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
@@ -153,6 +154,7 @@ struct KernariumTests {
             vCPUCount: 4,
             guestMemoryMiB: 2048,
             overlaySizeGiB: 16,
+            androidDiskSizeGiB: 32,
             rootfsFilename: "phosh.erofs",
             kernelPageSize: .fourKiB,
             retinaMode: true,
@@ -166,6 +168,7 @@ struct KernariumTests {
                 vCPUCount: 4,
                 guestMemoryMiB: 2048,
                 overlaySizeGiB: 16,
+                androidDiskSizeGiB: 32,
                 rootfsFilename: "phosh.erofs",
                 kernelPageSize: .fourKiB,
                 retinaMode: true,
@@ -176,6 +179,7 @@ struct KernariumTests {
         defaults.set(99, forKey: "emulator.vCPUCount")
         defaults.set(1000, forKey: "emulator.guestMemoryMiB")
         defaults.set(0, forKey: "emulator.overlaySizeGiB")
+        defaults.set(128, forKey: "emulator.androidDiskSizeGiB")
         defaults.set("../phosh.erofs", forKey: "emulator.rootfsFilename")
         defaults.set(8192, forKey: "emulator.kernelPageSize")
         let normalized = EmulatorConfiguration.load(
@@ -185,6 +189,7 @@ struct KernariumTests {
         #expect(normalized.vCPUCount == 6)
         #expect(normalized.guestMemoryMiB == 1024)
         #expect(normalized.overlaySizeGiB == 1)
+        #expect(normalized.androidDiskSizeGiB == 64)
         #expect(normalized.rootfsFilename == "rootfs.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)

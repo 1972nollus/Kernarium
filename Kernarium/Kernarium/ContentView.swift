@@ -570,13 +570,19 @@ enum ThermalStateReport {
 private struct PreparedBoot: Sendable {
     private let paths: [String?]
     let androidBootMode: AndroidBootMode
+    let androidDiskSizeGiB: UInt32
 
     init(rootfs: URL, overlay: URL) {
         paths = [rootfs.path, overlay.path, nil, nil, nil, nil]
         androidBootMode = .automatic
+        androidDiskSizeGiB = 0
     }
 
-    init(bundle: GuestBundle, androidBootMode: AndroidBootMode) {
+    init(
+        bundle: GuestBundle,
+        androidBootMode: AndroidBootMode,
+        androidDiskSizeGiB: Int
+    ) {
         paths = [
             nil,
             nil,
@@ -586,6 +592,7 @@ private struct PreparedBoot: Sendable {
             bundle.commandLine.path,
         ]
         self.androidBootMode = androidBootMode
+        self.androidDiskSizeGiB = UInt32(androidDiskSizeGiB)
     }
 
     func withCPaths<Result>(
@@ -628,6 +635,7 @@ private func runGuest(
         request.guest_memory_mib = guestMemoryMiB
         request.guest_processor_count = vCPUCount
         request.android_boot_mode = boot.androidBootMode.rawValue
+        request.android_disk_size_gib = boot.androidDiskSizeGiB
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_manifest_path = paths[2]
@@ -791,7 +799,8 @@ private final class EmulatorLauncher {
         }
         return PreparedBoot(
             bundle: bundle,
-            androidBootMode: configuration.androidBootMode
+            androidBootMode: configuration.androidBootMode,
+            androidDiskSizeGiB: configuration.androidDiskSizeGiB
         )
     }
 

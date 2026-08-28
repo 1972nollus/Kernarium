@@ -312,7 +312,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on fs\n    mount_all --early\n"
-                    "on late-fs\n    mount_all --late\n"
+                    "on late-fs\n"
+                    "    exec - root root -- /system/bin/resize2fs "
+                    "/dev/block/by-name/userdata\n"
+                    "    mount_all --late\n"
                     "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
                 )
                 archive.writestr(
@@ -1172,21 +1175,21 @@ def main() -> None:
         ("system_ext", 1_074_790_400, 268_435_456),
         ("product", 1_343_225_856, 268_435_456),
         ("vendor", 1_611_661_312, 268_435_456),
-        ("odm", 1_880_096_768, 16_777_216),
-        ("metadata", 1_896_873_984, 67_108_864),
-        ("init_boot", 1_963_982_848, 8_388_608),
-        ("misc", 1_972_371_456, 4_194_304),
-        ("recovery", 1_976_565_760, 268_435_456),
-        ("userdata", 2_245_001_216, 6_343_884_800),
+        ("odm", 1_880_096_768, 4_194_304),
+        ("metadata", 1_884_291_072, 16_777_216),
+        ("init_boot", 1_901_068_288, 8_388_608),
+        ("misc", 1_909_456_896, 1_048_576),
+        ("recovery", 1_910_505_472, 33_554_432),
+        ("userdata", 1_944_059_904, 134_217_728),
     ]
     actual_partition_layout = [
         (entry["name"], entry["start_bytes"], entry["size_bytes"])
         for entry in partition_layout["partitions"]
     ]
-    if partition_layout["disk_size_bytes"] != 8 * 1024**3:
-        fail("Android fixed disk is not exactly 8 GiB")
+    if partition_layout["disk_size_bytes"] != 1_983 * 1024**2:
+        fail("Android seed disk is not exactly 1,983 MiB")
     if actual_partition_layout != expected_partition_layout:
-        fail("Android fixed partition capacities or order differ")
+        fail("Android seed partition capacities or order differ")
     userdata = partition_layout["partitions"][-1]
     if (
         userdata["name"] != "userdata"
@@ -2102,6 +2105,7 @@ def main() -> None:
         "BOARD_BOOT_HEADER_VERSION",
         "Jelly",
         "LatinIME",
+        "resize2fs",
         "QuickSearchBox",
         "ThemePicker",
         "BOARD_USES_SYSTEM_OTHER_ODEX",

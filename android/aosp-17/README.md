@@ -132,22 +132,25 @@ framework containers are retained for the same SDK/API reason. WebView, fonts,
 ART and dexpreopt outputs, media codecs, SwiftShader, Mesa/virgl, Health
 Connect, AdServices, and OnDevicePersonalization also remain.
 
-Qualification starts with a fresh COW and verifies direct unencrypted ext4
-userdata, absence of `/metadata/vold/metadata_encryption`, a truthful feature
+Qualification starts with a fresh base expanded to 8 GiB and verifies direct
+unencrypted ext4 userdata, absence of `/metadata/vold/metadata_encryption`, a truthful feature
 inventory, VINTF and SELinux health, PIN/password changes, Android Keystore key
 persistence across reboot, package installation, WebView, audio, networking,
-and GLES. A previously accepted encrypted bundle must also boot unchanged with
-the newly accepted app and ACK kernel. Only then are image size, resident
-processes, and cold and warm boot time compared and the release accepted.
+and GLES. Only then are image size, resident processes, and cold and warm boot
+time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a fixed 8 GiB GPT with separate
-Android payload, metadata, `init_boot`, `misc`, recovery, and userdata
-partitions. Userdata is the final partition and extends to the last aligned
-MiB before the backup GPT, so a larger disk can grow it without relocating
-another partition. There is no `super`, dynamic partition, Virtual A/B, AVB,
-OTA slot, or DLKM partition.
+`support/image/partition-layout.json` owns a compact 1,983 MiB seed GPT with
+separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
+128 MiB userdata filesystem. Userdata is the final partition. Before its first
+boot, the Apple launcher expands the bundle- or instance-local base to the
+selected whole-GiB capacity from 4 through 64 GiB, relocates the backup GPT,
+and extends the userdata partition to the last aligned MiB. Android then runs
+the platform `resize2fs` synchronously before mounting `/data`; later boots are
+idempotent. A capacity is bound once the COW exists and changing it requires a
+fresh instance. There is no `super`, dynamic partition, Virtual A/B, AVB, OTA
+slot, or DLKM partition.
 
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem writable through the host COW; this
@@ -210,8 +213,8 @@ image assembly, publication, or transport.
 The release manifest may retain the ACK build that qualified its target files,
 but that value is historical provenance. Apple runtime selection uses an
 independent compatible ACK artifact and performs no rootfs, kernel commit, or
-emulator release comparison at launch. Existing `.kern` bundles and COWs remain
-bootable across app and kernel updates within the `6.18` line.
+emulator release comparison at launch. An instance's expanded base and COW
+remain paired across app and compatible kernel updates within the `6.18` line.
 
 ## Apple consumers and guest bundles
 
@@ -222,8 +225,9 @@ does not alter the normal Linux executable or search for `rootfs.erofs`.
 
 [`../../scripts/boot_android.py`](../../scripts/boot_android.py) is the ordinary
 macOS launcher. It selects the accepted installed release, keeps a release-
-specific persistent COW, exposes guest ADB only on host loopback, waits for the
-transport, and disconnects it when the guest stops. The default session uses
+specific mutable base and persistent COW, exposes guest ADB only on host
+loopback, waits for the transport, and disconnects it when the guest stops.
+The default session expands that base to 8 GiB and uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "sector_size": 512,
   "alignment_bytes": 1048576,
-  "disk_size_bytes": 8589934592,
+  "disk_size_bytes": 2079326208,
   "partition_entry_count": 128,
   "disk_guid": "0f88cc4a-aeba-55c8-a739-7a73979c280f",
   "partitions": [
@@ -45,7 +45,7 @@
     {
       "name": "odm",
       "start_bytes": 1880096768,
-      "size_bytes": 16777216,
+      "size_bytes": 4194304,
       "image": "odm.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "03ae4fa4-e900-55e8-9e6c-0f333b805171",
@@ -53,8 +53,8 @@
     },
     {
       "name": "metadata",
-      "start_bytes": 1896873984,
-      "size_bytes": 67108864,
+      "start_bytes": 1884291072,
+      "size_bytes": 16777216,
       "image": "metadata.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "936c6b70-34c2-5de7-94cf-ea7180856311",
@@ -62,7 +62,7 @@
     },
     {
       "name": "init_boot",
-      "start_bytes": 1963982848,
+      "start_bytes": 1901068288,
       "size_bytes": 8388608,
       "image": "init_boot.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -71,8 +71,8 @@
     },
     {
       "name": "misc",
-      "start_bytes": 1972371456,
-      "size_bytes": 4194304,
+      "start_bytes": 1909456896,
+      "size_bytes": 1048576,
       "image": "misc.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "0c75e9c7-83e5-5561-b210-8392111fdb97",
@@ -80,8 +80,8 @@
     },
     {
       "name": "recovery",
-      "start_bytes": 1976565760,
-      "size_bytes": 268435456,
+      "start_bytes": 1910505472,
+      "size_bytes": 33554432,
       "image": "recovery.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "63b8ab73-87d1-5eb2-9fee-e1c4fd574d36",
@@ -89,8 +89,8 @@
     },
     {
       "name": "userdata",
-      "start_bytes": 2245001216,
-      "size_bytes": 6343884800,
+      "start_bytes": 1944059904,
+      "size_bytes": 134217728,
       "image": "userdata.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "523abb36-1f98-5d08-92d0-31c3c8a47304",

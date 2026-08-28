@@ -7,6 +7,10 @@
 
 namespace uml::android {
 
+inline constexpr std::uint32_t minimumDiskSizeGiB = 4;
+inline constexpr std::uint32_t maximumDiskSizeGiB = 64;
+inline constexpr std::uint32_t defaultDiskSizeGiB = 8;
+
 enum class BootMode : std::uint32_t {
 	automatic = 0,
 	normal = 1,
@@ -22,6 +26,10 @@ struct BootSelection {
 	BootMode mode;
 	FileRange ramdisk;
 };
+
+void prepareDisk(const std::filesystem::path &baseDisk,
+		 const std::filesystem::path &instance,
+		 std::uint32_t requestedSizeGiB);
 
 BootSelection selectBoot(const std::filesystem::path &baseDisk,
 			 const std::filesystem::path &instance,

@@ -7,6 +7,7 @@ struct EmulatorSettingsView: View {
     @State private var vCPUCount: Int
     @State private var guestMemoryMiB: Int
     @State private var overlaySizeGiB: Int
+    @State private var androidDiskSizeGiB: Int
     @State private var rootfsFilename: String
     @State private var kernelPageSize: KernelPageSize
     @State private var retinaMode: Bool
@@ -68,6 +69,9 @@ struct EmulatorSettingsView: View {
         _vCPUCount = State(initialValue: configuration.vCPUCount)
         _guestMemoryMiB = State(initialValue: configuration.guestMemoryMiB)
         _overlaySizeGiB = State(initialValue: configuration.overlaySizeGiB)
+        _androidDiskSizeGiB = State(
+            initialValue: configuration.androidDiskSizeGiB
+        )
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
         _kernelPageSize = State(initialValue: configuration.kernelPageSize)
         _retinaMode = State(initialValue: configuration.retinaMode)
@@ -121,6 +125,13 @@ struct EmulatorSettingsView: View {
                     .accessibilityIdentifier("rootfsPicker")
 
                     if androidBundleSelected {
+                        Stepper(
+                            "Android disk: \(androidDiskSizeGiB) GiB",
+                            value: $androidDiskSizeGiB,
+                            in: EmulatorConfiguration.androidDiskSizeRangeGiB
+                        )
+                        .accessibilityIdentifier("androidDiskSizeStepper")
+
                         Picker("Android boot", selection: $androidBootMode) {
                             ForEach(AndroidBootMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
@@ -170,6 +181,7 @@ struct EmulatorSettingsView: View {
             vCPUCount: vCPUCount,
             guestMemoryMiB: guestMemoryMiB,
             overlaySizeGiB: overlaySizeGiB,
+            androidDiskSizeGiB: androidDiskSizeGiB,
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredPageSize ?? kernelPageSize,
             retinaMode: retinaMode,

@@ -336,6 +336,7 @@ READ_ONLY_FILESYSTEMS = {
 }
 UML_INIT_REQUIRED = (
     "mount_all --early",
+    "exec - root root -- /system/bin/resize2fs /dev/block/by-name/userdata",
     "mount_all --late",
     "ro.hardware.audio.primary",
 )
