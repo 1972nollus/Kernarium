@@ -113,11 +113,11 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,formattable,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,first_stage_mount
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,formattable
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check
 /dev/block/by-name/misc /misc emmc defaults defaults
 """
 REQUIRED_PREOPT_APKS = (
@@ -1236,8 +1236,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "be1cfe5f3d3c85e74ea4cd128608a8ab189f423a",
-        "UML_KERNEL_PATCH_COUNT": "37",
+        "UML_KERNEL_FINAL_TREE": "b5b694e44190763ad98aafa8ec97442c17d4e112",
+        "UML_KERNEL_PATCH_COUNT": "38",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",

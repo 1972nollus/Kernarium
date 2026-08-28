@@ -155,6 +155,9 @@ emulator does not expose a hardware-backed KeyMint service and the guest bundle
 is already protected by the host application sandbox. The product does not
 enable filesystem quota provisioning. First-stage init mounts fixed GPT
 partitions by name and does not use logical, slot-select, or module mount flags.
+Writable metadata and userdata use continuous ext4 discard so deleted guest
+extents are promptly returned to the sparse host COW through UBD's batched
+discard path.
 
 `init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The ACK
 ELF remains outside the disk in the selected runtime artifact. `init_boot`
