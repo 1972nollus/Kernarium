@@ -90,7 +90,9 @@ switcher so the remaining volume and vibration controls do not instantiate a
 radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through
 the generic Android Health service; hosts without readable battery data report
-an always-present battery at 100 percent and charging.
+an always-present battery at 100 percent and charging. The vendor policy labels
+both the standalone macOS and Kernarium iOS Virtio enumeration paths so the
+stock Health service can read the battery on every Apple product.
 
 Both the framework and SettingsProvider defaults disable the non-secure
 keyguard, set the screen-off timeout to the maximum supported value, and keep
@@ -105,7 +107,8 @@ product starts adbd on TCP port 5555 and retains the stock authorization prompt
 for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
 property can disable that check for host-side diagnostics: iOS fixes it to one,
 while the standalone macOS product fixes it to zero. Bundle command lines may
-not override this host security choice.
+not override this host security choice. Fresh notification state shows silent
+notification icons in the status bar; later changes remain owned by the user.
 
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
 time artifacts for ordinary applications, no `system_other` image, and no

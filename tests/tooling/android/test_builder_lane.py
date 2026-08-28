@@ -1914,6 +1914,8 @@ def main() -> None:
     ):
         if token not in frameworks_patch:
             fail(f"framework defaults topic is missing developer policy: {token}")
+    if "DEFAULT_HIDE_SILENT_STATUS_BAR_ICONS = false" not in frameworks_patch:
+        fail("framework defaults topic still hides silent status icons by default")
     for token in (
         '"ro.boot.kernarium.adb_auth"',
         "true",
@@ -1952,12 +1954,17 @@ def main() -> None:
         fail("Jelly topic does not disable WebView geolocation by default")
     if "android.hardware.microphone" in core_hardware:
         fail("device overlay advertises unsupported audio capture hardware")
-    battery_sysfs = (
-        "genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/"
-        "virtio2/power_supply u:object_r:sysfs_batteryinfo:s0"
-    )
-    if battery_sysfs not in vendor_genfs_contexts:
-        fail("battery sysfs is not labeled for the stock Health HAL")
+    for index in (2, 4):
+        battery_sysfs = (
+            "genfscon sysfs /devices/virtio-uml-cmdline/"
+            f"virtio-uml.{index}/virtio{index}/power_supply "
+            "u:object_r:sysfs_batteryinfo:s0"
+        )
+        if battery_sysfs not in vendor_genfs_contexts:
+            fail(
+                "battery sysfs is not labeled for the stock Health HAL "
+                f"at virtio{index}"
+            )
     if "OrangeFox" in device_product:
         fail("OrangeFox recovery configuration leaked into the AOSP product overlay")
     expected_orangefox = {
