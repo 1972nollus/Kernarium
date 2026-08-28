@@ -51,11 +51,18 @@ TARGET_USES_LOGD := true
 TARGET_USES_MKE2FS := true
 RECOVERY_SDCARD_ON_DATA := true
 
+PRODUCT_PACKAGES += \
+    blockdev \
+    e2fsck \
+    resize2fs \
+    tune2fs
+
 # OrangeFox 14.1's logd service requests ServiceCapacityLow during recovery.
 # Supply the pinned platform process-group maps instead of relying on a
 # device-specific ROM copy; without task_profiles.json logcat never starts.
 PRODUCT_COPY_FILES += \
     $(DEVICE_PATH)/recovery/root/init.recovery.cutf_cvm.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.cutf_cvm.rc \
+    $(DEVICE_PATH)/recovery/grow-userdata.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/kernarium-grow-userdata \
     system/core/libprocessgroup/profiles/cgroups.recovery.json:$(TARGET_COPY_OUT_RECOVERY)/root/system/etc/cgroups.json \
     system/core/libprocessgroup/profiles/task_profiles.json:$(TARGET_COPY_OUT_RECOVERY)/root/system/etc/task_profiles.json
 

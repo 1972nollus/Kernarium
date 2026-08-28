@@ -144,13 +144,18 @@ time compared and the release accepted.
 `support/image/partition-layout.json` owns a compact 1,983 MiB seed GPT with
 separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
 128 MiB userdata filesystem. Userdata is the final partition. Before its first
-boot, the Apple launcher expands the bundle- or instance-local base to the
-selected whole-GiB capacity from 4 through 64 GiB, relocates the backup GPT,
-and extends the userdata partition to the last aligned MiB. Android then runs
-the platform `resize2fs` synchronously before mounting `/data`; later boots are
-idempotent. A capacity is bound once the COW exists and changing it requires a
-fresh instance. There is no `super`, dynamic partition, Virtual A/B, AVB, OTA
-slot, or DLKM partition.
+boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
+file to the selected whole-GiB capacity from 4 through 64 GiB and uses the
+statically linked GPT fdisk core to relocate the backup GPT and extend
+userdata. The standalone macOS wrapper performs the same transactional
+host-side operation with the system `truncate` utility and Homebrew `sgdisk`.
+Runtime launch has no disk-capacity parameter and rejects a GPT that does not
+match the file. Normal Android and OrangeFox compare the ext4 and partition
+extents before mount and run `e2fsck` plus `resize2fs` only when the host has
+already enlarged the partition. They never rewrite or refresh a live partition
+table. Later boots are idempotent. A capacity is bound once the COW exists and
+changing it requires a fresh instance. There is no `super`,
+dynamic partition, Virtual A/B, AVB, OTA slot, or DLKM partition.
 
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem writable through the host COW; this

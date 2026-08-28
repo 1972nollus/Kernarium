@@ -80,7 +80,12 @@ REQUIRED_ENTRIES = {
     "PRODUCT/etc/build.prop",
     "RECOVERY/RAMDISK/system/bin/hw/android.hardware.health-service.example_recovery",
     "RECOVERY/RAMDISK/system/bin/recovery",
+    "SYSTEM/bin/blockdev",
+    "SYSTEM/bin/e2fsck",
+    "SYSTEM/bin/resize2fs",
+    "SYSTEM/bin/tune2fs",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+    "VENDOR/bin/kernarium-grow-userdata",
     "VENDOR/bin/hw/android.hardware.health-service.example",
     "VENDOR/etc/audio_effects_config.xml",
     "VENDOR/etc/audio_policy_configuration.xml",
@@ -245,6 +250,7 @@ FORBIDDEN_EXECUTABLE_FILENAMES = {
     "gsi_tool",
     "gsid",
     "pmgd",
+    "sgdisk",
     "snapshotctl",
     "snapuserd",
     "socket_vsock_proxy",
@@ -336,9 +342,17 @@ READ_ONLY_FILESYSTEMS = {
 }
 UML_INIT_REQUIRED = (
     "mount_all --early",
-    "exec - root root -- /system/bin/resize2fs /dev/block/by-name/userdata",
+    "exec u:r:su:s0 root root -- /system/bin/sh "
+    "/vendor/bin/kernarium-grow-userdata",
     "mount_all --late",
     "ro.hardware.audio.primary",
+)
+UML_GROW_USERDATA_REQUIRED = (
+    "blockdev --getsz \"$partition\"",
+    "tune2fs -l",
+    "filesystem_sectors=$((filesystem_blocks * filesystem_block_sectors))",
+    "e2fsck -pf",
+    "resize2fs",
 )
 UML_INIT_FORBIDDEN = (
     "metrics_helper",
@@ -473,6 +487,13 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     for token in UML_INIT_FORBIDDEN:
         if token in init_payload:
             fail(f"UML init policy retains unsupported Cuttlefish action: {token}")
+
+    grow_payload = read_small(
+        archive, infos["VENDOR/bin/kernarium-grow-userdata"]
+    ).decode("utf-8", errors="strict")
+    for token in UML_GROW_USERDATA_REQUIRED:
+        if token not in grow_payload:
+            fail(f"userdata growth script is missing required action: {token}")
 
     ueventd_payload = read_small(
         archive, infos["VENDOR/ueventd.rc"]

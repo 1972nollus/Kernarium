@@ -28,6 +28,8 @@ constexpr std::uint64_t mebibyte = 1'048'576ULL;
 constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
 constexpr std::uint64_t seedDiskSize = 1'983ULL * mebibyte;
 constexpr std::uint64_t backupGptReservation = mebibyte;
+constexpr std::uint64_t minimumDiskSizeGiB = 4;
+constexpr std::uint64_t maximumDiskSizeGiB = 64;
 constexpr std::uint64_t bootImagePageSize = 4096;
 constexpr std::size_t bootImageHeaderSize = 1584;
 constexpr std::size_t cowHeaderSize = 4128;
@@ -129,22 +131,6 @@ std::uint64_t little64(const std::byte *input)
 		(static_cast<std::uint64_t>(little32(input + 4)) << 32U);
 }
 
-void storeLittle32(std::span<std::byte> output, std::size_t offset,
-		   std::uint32_t value)
-{
-	for (unsigned int index = 0; index < 4; ++index)
-		output[offset + index] =
-			static_cast<std::byte>(value >> (index * 8U));
-}
-
-void storeLittle64(std::span<std::byte> output, std::size_t offset,
-		   std::uint64_t value)
-{
-	for (unsigned int index = 0; index < 8; ++index)
-		output[offset + index] =
-			static_cast<std::byte>(value >> (index * 8U));
-}
-
 std::uint32_t big32(const std::byte *input)
 {
 	return (std::to_integer<std::uint32_t>(input[0]) << 24U) |
@@ -239,15 +225,19 @@ void validateGptHeader(std::array<std::byte, sectorSize> header,
 		throw std::invalid_argument("Android base disk GPT header CRC differs");
 }
 
-std::vector<std::byte> validateGpt(const File &disk)
+void validateGpt(const File &disk)
 {
 	if (!supportedDiskSize(disk.size()))
 		throw std::invalid_argument("Android base disk has the wrong size");
-	const auto lastLba = disk.size() / sectorSize - 1U;
-	const auto lastUsableLba = disk.size() / sectorSize - 34U;
+	const auto physicalLastLba = disk.size() / sectorSize - 1U;
 	std::array<std::byte, sectorSize> header {};
 	disk.read(sectorSize, header);
-	validateGptHeader(header, 1U, lastLba, 2U, lastUsableLba);
+	const auto declaredLastLba = little64(header.data() + 32);
+	if (declaredLastLba != physicalLastLba)
+		throw std::invalid_argument(
+			"Android base disk GPT capacity differs from its file");
+	const auto lastUsableLba = declaredLastLba - 33U;
+	validateGptHeader(header, 1U, declaredLastLba, 2U, lastUsableLba);
 
 	std::vector<std::byte> entries(128U * 128U);
 	disk.read(2U * sectorSize, entries);
@@ -263,46 +253,19 @@ std::vector<std::byte> validateGpt(const File &disk)
 			throw std::invalid_argument("Android base disk has extra partitions");
 
 	std::array<std::byte, sectorSize> backupHeader {};
-	disk.read(lastLba * sectorSize, backupHeader);
-	validateGptHeader(backupHeader, lastLba, 1U, lastLba - 32U,
+	disk.read(declaredLastLba * sectorSize, backupHeader);
+	validateGptHeader(backupHeader, declaredLastLba, 1U,
+			  declaredLastLba - 32U,
 			  lastUsableLba);
 	if (!std::equal(header.begin() + 56, header.begin() + 72,
 			backupHeader.begin() + 56) ||
 	    little32(backupHeader.data() + 88) != little32(header.data() + 88))
 		throw std::invalid_argument("Android base disk GPT copies differ");
 	std::vector<std::byte> backupEntries(entries.size());
-	disk.read((lastLba - 32U) * sectorSize, backupEntries);
+	disk.read((declaredLastLba - 32U) * sectorSize, backupEntries);
 	if (backupEntries != entries ||
 	    crc32(backupEntries) != little32(backupHeader.data() + 88))
 		throw std::invalid_argument("Android base disk backup GPT entries differ");
-	return entries;
-}
-
-void writeAll(int descriptor, std::uint64_t offset,
-	      std::span<const std::byte> payload)
-{
-	if (offset > static_cast<std::uint64_t>(
-			     std::numeric_limits<off_t>::max()))
-		throw std::invalid_argument("Android disk write offset overflows");
-	std::size_t completed = 0;
-	while (completed < payload.size()) {
-		const auto count = pwrite(descriptor, payload.data() + completed,
-				  payload.size() - completed,
-				  static_cast<off_t>(offset + completed));
-		if (count < 0 && errno == EINTR)
-			continue;
-		if (count <= 0)
-			throw std::system_error(count < 0 ? errno : EIO,
-						std::generic_category(),
-						"cannot write Android base disk");
-		completed += static_cast<std::size_t>(count);
-	}
-}
-
-void updateHeaderCrc(std::array<std::byte, sectorSize> &header)
-{
-	storeLittle32(header, 16, 0U);
-	storeLittle32(header, 16, crc32(std::span{header}.first(92)));
 }
 
 FileRange bootRamdisk(const File &disk, const ExpectedPartition &partition)
@@ -413,86 +376,6 @@ bool recoveryRequested(const std::filesystem::path &instance, const File &base)
 
 } // namespace
 
-void prepareDisk(const std::filesystem::path &baseDisk,
-		 const std::filesystem::path &instance,
-		 std::uint32_t requestedSizeGiB)
-{
-	if (requestedSizeGiB < minimumDiskSizeGiB ||
-	    requestedSizeGiB > maximumDiskSizeGiB)
-		throw std::invalid_argument("Android disk capacity must be 4 through 64 GiB");
-	const auto requestedSize =
-		static_cast<std::uint64_t>(requestedSizeGiB) * gibibyte;
-
-	struct stat instanceDetails {};
-	const bool instanceExists = lstat(instance.c_str(), &instanceDetails) == 0;
-	if (instanceExists && !S_ISREG(instanceDetails.st_mode))
-		throw std::invalid_argument("Android instance is not a regular file");
-	if (!instanceExists && errno != ENOENT)
-		throw std::system_error(errno, std::generic_category(),
-					"cannot inspect Android instance");
-
-	const File source(baseDisk);
-	auto entries = validateGpt(source);
-	if (source.size() == requestedSize)
-		return;
-	if (instanceExists)
-		throw std::invalid_argument(
-			"Android disk capacity cannot change after first boot");
-	if (source.size() > requestedSize)
-		throw std::invalid_argument("Android base disk cannot be shrunk");
-
-	std::array<std::byte, sectorSize> protectiveMbr {};
-	std::array<std::byte, sectorSize> primaryHeader {};
-	source.read(0, protectiveMbr);
-	source.read(sectorSize, primaryHeader);
-	const auto targetLastLba = requestedSize / sectorSize - 1U;
-	const auto targetLastUsableLba = requestedSize / sectorSize - 34U;
-	auto userdata = std::span{entries}.subspan(userdataPartition * 128U, 128U);
-	storeLittle64(userdata, 40,
-		      (requestedSize - backupGptReservation) / sectorSize - 1U);
-	const auto entriesCrc = crc32(entries);
-	storeLittle32(primaryHeader, 88, entriesCrc);
-	storeLittle64(primaryHeader, 32, targetLastLba);
-	storeLittle64(primaryHeader, 48, targetLastUsableLba);
-	updateHeaderCrc(primaryHeader);
-	auto backupHeader = primaryHeader;
-	storeLittle64(backupHeader, 24, targetLastLba);
-	storeLittle64(backupHeader, 32, 1U);
-	storeLittle64(backupHeader, 72, targetLastLba - 32U);
-	updateHeaderCrc(backupHeader);
-	storeLittle32(protectiveMbr, 458,
-		      static_cast<std::uint32_t>(targetLastLba));
-
-	const int descriptor = open(baseDisk.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW);
-	if (descriptor < 0)
-		throw std::system_error(errno, std::generic_category(),
-					"cannot resize " + baseDisk.string());
-	try {
-		if (ftruncate(descriptor, static_cast<off_t>(requestedSize)) != 0)
-			throw std::system_error(errno, std::generic_category(),
-						"cannot extend Android base disk");
-		writeAll(descriptor, (targetLastLba - 32U) * sectorSize, entries);
-		writeAll(descriptor, targetLastLba * sectorSize, backupHeader);
-		if (fsync(descriptor) != 0)
-			throw std::system_error(errno, std::generic_category(),
-						"cannot sync Android backup GPT");
-		writeAll(descriptor, 0, protectiveMbr);
-		writeAll(descriptor, 2U * sectorSize, entries);
-		writeAll(descriptor, sectorSize, primaryHeader);
-		if (fsync(descriptor) != 0)
-			throw std::system_error(errno, std::generic_category(),
-						"cannot sync Android primary GPT");
-	} catch (...) {
-		(void)close(descriptor);
-		throw;
-	}
-	if (close(descriptor) != 0)
-		throw std::system_error(errno, std::generic_category(),
-					"cannot close Android base disk");
-	const File resized(baseDisk);
-	(void)validateGpt(resized);
-}
-
 BootSelection selectBoot(const std::filesystem::path &baseDisk,
 			 const std::filesystem::path &instance,
 			 BootMode requestedMode)
@@ -501,7 +384,7 @@ BootSelection selectBoot(const std::filesystem::path &baseDisk,
 	    requestedMode != BootMode::normal && requestedMode != BootMode::recovery)
 		throw std::invalid_argument("unknown Android boot mode");
 	const File disk(baseDisk);
-	(void)validateGpt(disk);
+	validateGpt(disk);
 	const auto normal = bootRamdisk(disk, seedPartitions[initBootPartition]);
 	const auto recovery = bootRamdisk(disk, seedPartitions[recoveryPartition]);
 	const auto selected = requestedMode == BootMode::automatic

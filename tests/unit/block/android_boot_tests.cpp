@@ -21,6 +21,7 @@
 namespace {
 
 constexpr std::uint64_t sectorSize = 512;
+constexpr std::uint64_t backupGptReservation = 1'048'576ULL;
 constexpr std::uint64_t seedDiskSize = 2'079'326'208ULL;
 constexpr std::uint64_t expandedDiskSize = 8'589'934'592ULL;
 constexpr std::uint64_t initBootOffset = 1'901'068'288ULL;
@@ -150,14 +151,15 @@ std::filesystem::path scratchDirectory()
 	return path;
 }
 
-std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
+std::filesystem::path makeBaseDisk(const std::filesystem::path &directory,
+				   std::uint64_t diskSize)
 {
 	const auto path = directory / "android.img";
 	const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (descriptor < 0)
 		throw std::system_error(errno, std::generic_category(), "open base disk");
 	try {
-		if (ftruncate(descriptor, static_cast<off_t>(seedDiskSize)) != 0)
+		if (ftruncate(descriptor, static_cast<off_t>(diskSize)) != 0)
 			throw std::system_error(errno, std::generic_category(), "ftruncate");
 		std::vector<std::byte> entries(128U * 128U);
 		for (std::size_t index = 0; index < partitions.size(); ++index) {
@@ -165,9 +167,11 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 			entry[0] = std::byte{1};
 			entry[16] = static_cast<std::byte>(index + 1U);
 			little64(entry, 32, partitions[index].offset / sectorSize);
+			const auto size = index + 1U == partitions.size()
+				? diskSize - partitions[index].offset - backupGptReservation
+				: partitions[index].size;
 			little64(entry, 40,
-				 (partitions[index].offset + partitions[index].size) /
-					 sectorSize - 1U);
+				 (partitions[index].offset + size) / sectorSize - 1U);
 			const std::string name {partitions[index].name};
 			for (std::size_t character = 0; character < name.size(); ++character)
 				entry[56 + character * 2U] =
@@ -180,9 +184,9 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 		little32(header, 8, 0x00010000U);
 		little32(header, 12, 92U);
 		little64(header, 24, 1U);
-		little64(header, 32, seedDiskSize / sectorSize - 1U);
+		little64(header, 32, diskSize / sectorSize - 1U);
 		little64(header, 40, 34U);
-		little64(header, 48, seedDiskSize / sectorSize - 34U);
+		little64(header, 48, diskSize / sectorSize - 34U);
 		header[56] = std::byte{1};
 		little64(header, 72, 2U);
 		little32(header, 80, 128U);
@@ -192,14 +196,14 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory)
 		writeAll(descriptor, sectorSize, header);
 		writeAll(descriptor, 2U * sectorSize, entries);
 		auto backupHeader = header;
-		little64(backupHeader, 24, seedDiskSize / sectorSize - 1U);
+		little64(backupHeader, 24, diskSize / sectorSize - 1U);
 		little64(backupHeader, 32, 1U);
-		little64(backupHeader, 72, seedDiskSize / sectorSize - 33U);
+		little64(backupHeader, 72, diskSize / sectorSize - 33U);
 		little32(backupHeader, 16, 0U);
 		little32(backupHeader, 16,
 			 crc32(std::span{backupHeader}.first(92)));
-		writeAll(descriptor, seedDiskSize - 33U * sectorSize, entries);
-		writeAll(descriptor, seedDiskSize - sectorSize, backupHeader);
+		writeAll(descriptor, diskSize - 33U * sectorSize, entries);
+		writeAll(descriptor, diskSize - sectorSize, backupHeader);
 		writeBootImage(descriptor, initBootOffset, normalRamdiskSize);
 		writeBootImage(descriptor, recoveryOffset, recoveryRamdiskSize);
 	} catch (...) {
@@ -255,9 +259,16 @@ int main()
 {
 	const auto directory = scratchDirectory();
 	try {
-		const auto base = makeBaseDisk(directory);
 		const auto missingCow = directory / "missing.cow";
-		uml::android::prepareDisk(base, missingCow, 8);
+		const auto stale = makeBaseDisk(directory, seedDiskSize);
+		std::filesystem::resize_file(stale, expandedDiskSize);
+		requireThrows([&] {
+			(void)uml::android::selectBoot(
+				stale, missingCow, uml::android::BootMode::normal);
+		});
+		require(std::filesystem::remove(stale));
+
+		const auto base = makeBaseDisk(directory, expandedDiskSize);
 		require(std::filesystem::file_size(base) == expandedDiskSize);
 		const auto automatic =
 			uml::android::selectBoot(base, missingCow,
@@ -274,8 +285,6 @@ int main()
 		require(explicitRecovery.ramdisk.size == recoveryRamdiskSize);
 
 		const auto cow = makeRecoveryCow(directory);
-		uml::android::prepareDisk(base, cow, 8);
-		requireThrows([&] { uml::android::prepareDisk(base, cow, 16); });
 		const auto requestedRecovery =
 			uml::android::selectBoot(base, cow,
 						 uml::android::BootMode::automatic);

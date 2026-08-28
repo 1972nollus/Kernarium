@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 5U
+#define KERNARIUM_RUNTIME_API_VERSION 6U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -33,9 +33,8 @@ enum {
 
 /* A boot request. Linux guests supply rootfs_path and overlay_path; Android
  * guests supply a base disk, command line, persistent instance disk, and
- * desired boot mode and disk capacity. android_manifest_path is retained for
- * the stable boot-request layout and is ignored. The kernel is carried by the
- * runtime. */
+ * desired boot mode. android_manifest_path is retained for the stable
+ * boot-request layout and is ignored. The kernel is carried by the runtime. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -44,7 +43,6 @@ typedef struct kernarium_runtime_boot {
     uint32_t guest_memory_mib;
     uint32_t guest_processor_count;
     uint32_t android_boot_mode;
-    uint32_t android_disk_size_gib;
     const char* rootfs_path;
     const char* overlay_path;
     const char* android_manifest_path;
@@ -115,7 +113,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v5(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v6(void);
 
 #ifdef __cplusplus
 }

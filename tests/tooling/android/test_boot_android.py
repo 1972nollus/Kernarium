@@ -47,7 +47,7 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
         self.assertIn("--android-boot-mode=normal", command)
-        self.assertIn("--android-disk-size-gib=8", command)
+        self.assertFalse(any("android-disk-size" in value for value in command))
         self.assertIn("--android-base-disk=/tmp/instance.base.img", command)
         self.assertFalse(options.build)
         self.assertTrue(boot_android.parse_arguments(["--build"]).build)
@@ -122,15 +122,78 @@ class BootAndroidTests(unittest.TestCase):
         self.assertEqual(instance.name, "release-2.cow")
         self.assertEqual(instance.parent, boot_android.INSTANCES_ROOT)
 
-    def test_instance_base_is_capacity_specific_mutable_clone(self) -> None:
+    def test_instance_base_is_resized_with_homebrew_sgdisk(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
             release = self.installed_release(root / "releases")
             instance = root / "guest.cow"
             base = boot_android.instance_base_path(instance)
+            sgdisk = root / "sgdisk"
+            sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
+            sgdisk.chmod(0o755)
             boot_android.prepare_instance_base(release, instance, base)
             self.assertEqual(base.read_bytes(), b"image")
             self.assertEqual(base.name, "guest.base.img")
+            completed = boot_android.subprocess.CompletedProcess(
+                [], 0, "The operation has completed successfully.\n", ""
+            )
+            with (
+                mock.patch.object(
+                    boot_android,
+                    "gpt_layout_matches",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    boot_android,
+                    "run_sgdisk",
+                    return_value=completed,
+                ) as run_sgdisk,
+            ):
+                self.assertTrue(
+                    boot_android.resize_instance_base(
+                        base, instance, 4, sgdisk=sgdisk
+                    )
+                )
+                self.assertFalse(
+                    boot_android.resize_instance_base(
+                        base, instance, 4, sgdisk=sgdisk
+                    )
+                )
+            self.assertEqual(base.stat().st_size, 4 * 1024**3)
+            mutation = run_sgdisk.call_args.args
+            self.assertEqual(mutation[0], sgdisk)
+            self.assertIn("--move-second-header", mutation)
+            self.assertIn("--delete=10", mutation)
+            self.assertIn(
+                "--new=10:3796992:8386559",
+                mutation,
+            )
+
+    def test_existing_instance_locks_disk_capacity(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            base = root / "base.img"
+            instance = root / "instance.cow"
+            base.write_bytes(b"seed")
+            instance.write_bytes(b"cow")
+            sgdisk = root / "sgdisk"
+            sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
+            sgdisk.chmod(0o755)
+            with (
+                mock.patch.object(
+                    boot_android, "gpt_layout_matches", return_value=False
+                ),
+                self.assertRaises(boot_android.LauncherError),
+            ):
+                boot_android.resize_instance_base(
+                    base, instance, 8, sgdisk=sgdisk
+                )
+
+    def test_homebrew_sgdisk_requires_an_executable_candidate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            unavailable = Path(temporary) / "sgdisk"
+            with self.assertRaises(boot_android.LauncherError):
+                boot_android.homebrew_sgdisk((unavailable,))
 
     def test_build_commands_use_the_checked_in_preset(self) -> None:
         self.assertEqual(
@@ -173,6 +236,7 @@ class BootAndroidTests(unittest.TestCase):
                     boot_android.subprocess, "Popen", return_value=guest
                 ) as popen,
                 mock.patch.object(boot_android, "prepare_instance_base"),
+                mock.patch.object(boot_android, "resize_instance_base"),
                 mock.patch.object(boot_android, "ensure_loopback_port_available"),
                 mock.patch.object(boot_android, "wait_for_adb"),
                 mock.patch.object(boot_android, "install_shutdown_handlers"),

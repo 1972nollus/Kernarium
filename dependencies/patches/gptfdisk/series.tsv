@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+order	patch	stable_patch_id	sha256	subject
+1	0001-Add-file-only-GPT-core-library-for-iOS.patch	cf5816889cfa83d31f1ed0f0afe35efb77937ea2	964060bc5369d1993852a3e5f18d20f04fb17db22d7478d525d4ae4a7ab63ee6	Add file-only GPT core library for iOS

@@ -276,6 +276,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
                 )
+                for tool in ("blockdev", "e2fsck", "resize2fs", "tune2fs"):
+                    archive.writestr(
+                        f"SYSTEM/bin/{tool}",
+                        synthetic_aarch64_elf(alignment),
+                    )
+                archive.writestr(
+                    "VENDOR/bin/kernarium-grow-userdata",
+                    "partition=/dev/block/by-name/userdata\n"
+                    "partition_sectors=$(/system/bin/blockdev --getsz "
+                    "\"$partition\")\n"
+                    "filesystem_blocks=$(/system/bin/tune2fs -l "
+                    "\"$partition\")\n"
+                    "filesystem_block_size=4096\n"
+                    "filesystem_block_sectors=$((filesystem_block_size / 512))\n"
+                    "filesystem_sectors=$((filesystem_blocks * "
+                    "filesystem_block_sectors))\n"
+                    "/system/bin/e2fsck -pf \"$partition\"\n"
+                    "exec /system/bin/resize2fs \"$partition\"\n",
+                )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
                     synthetic_apex(
@@ -313,8 +332,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
-                    "    exec - root root -- /system/bin/resize2fs "
-                    "/dev/block/by-name/userdata\n"
+                    "    exec u:r:su:s0 root root -- /system/bin/sh "
+                    "/vendor/bin/kernarium-grow-userdata\n"
                     "    mount_all --late\n"
                     "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
                 )
@@ -717,9 +736,29 @@ def synthetic_orangefox_ramdisk(
             0o100644,
             b"service recovery_ethernet /system/bin/ifconfig eth0 10.0.2.15 "
             b"netmask 255.255.255.0 up\n"
-            b"    seclabel u:r:su:s0\n",
+            b"    seclabel u:r:su:s0\n"
+            b"on early-fs\n"
+            b"    exec u:r:su:s0 root root -- /system/bin/sh "
+            b"/system/bin/kernarium-grow-userdata\n",
             15,
         ),
+        newc_entry("system/bin/blockdev", 0o100755, b"tool", 16),
+        newc_entry("system/bin/e2fsck", 0o100755, b"tool", 17),
+        newc_entry(
+            "system/bin/kernarium-grow-userdata",
+            0o100644,
+            b"partition=/dev/block/by-name/userdata\n"
+            b"partition_sectors=$(/system/bin/blockdev --getsz \"$partition\")\n"
+            b"filesystem_blocks=$(/system/bin/tune2fs -l \"$partition\")\n"
+            b"filesystem_block_size=4096\n"
+            b"filesystem_block_sectors=$((filesystem_block_size / 512))\n"
+            b"filesystem_sectors=$((filesystem_blocks * filesystem_block_sectors))\n"
+            b"/system/bin/e2fsck -pf \"$partition\"\n"
+            b"exec /system/bin/resize2fs \"$partition\"\n",
+            18,
+        ),
+        newc_entry("system/bin/resize2fs", 0o100755, b"tool", 19),
+        newc_entry("system/bin/tune2fs", 0o100755, b"tool", 20),
         newc_entry(
             "system/bin/recovery", 0o100755,
             synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
@@ -1133,6 +1172,8 @@ def main() -> None:
         android_root / "third_party/orangefox/device/device.mk",
         android_root / "third_party/orangefox/device/twrp_darwin.mk",
         android_root / "third_party/orangefox/device/recovery/prepare-kernarium.sh",
+        android_root / "third_party/orangefox/device/recovery/grow-userdata.sh",
+        android_root / "third_party/orangefox/device/recovery/root/init.recovery.cutf_cvm.rc",
         android_root / "third_party/orangefox/device/recovery/root/system/etc/recovery.fstab",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
@@ -1150,6 +1191,8 @@ def main() -> None:
         android_root / "overlay/BoardConfig.mk",
         android_root / "overlay/aosp_kernarium_darwin.mk",
         android_root / "overlay/config/Android.bp",
+        android_root / "overlay/config/grow-userdata.sh",
+        android_root / "overlay/config/init.vendor.rc",
         android_root / "overlay/config/recovery.fstab",
         android_root / "overlay/config/kernarium_core_hardware.xml",
         android_root / "overlay/overlay/frameworks/base/core/res/res/values/config.xml",
@@ -1669,8 +1712,12 @@ def main() -> None:
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
         "Jelly",
+        "blockdev",
+        "e2fsck",
         "LatinIME",
+        "resize2fs",
         "ThemePicker",
+        "tune2fs",
         "BOARD_HAVE_BLUETOOTH := false",
         "TARGET_NO_TELEPHONY := true",
         "PRODUCT_BUILD_RECOVERY_IMAGE := true",
@@ -1715,6 +1762,7 @@ def main() -> None:
         "com.google.cf.identity",
         "gsid",
         "pmg_daemon",
+        "sgdisk",
         "snapuserd_ramdisk",
         "update_engine",
         "com.android.hardware.wifi",
@@ -2104,8 +2152,10 @@ def main() -> None:
         "BOARD_INIT_BOOT_HEADER_VERSION",
         "BOARD_BOOT_HEADER_VERSION",
         "Jelly",
+        "e2fsck",
         "LatinIME",
         "resize2fs",
+        "tune2fs",
         "QuickSearchBox",
         "ThemePicker",
         "BOARD_USES_SYSTEM_OTHER_ODEX",

@@ -353,7 +353,7 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v5" in runtime_source
+        "kernarium_runtime_get_api_v6" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
@@ -385,7 +385,7 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v5")',
+        'dlsym(handle, "kernarium_runtime_get_api_v6")',
         "selectedPageSize == guestPageSize",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",
@@ -589,7 +589,6 @@ def main() -> int:
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'base_disk_option{"--android-base-disk="}',
-        'disk_size_option{"--android-disk-size-gib="}',
         'boot_mode_option{"--android-boot-mode="}',
         '"ubd0=" + instance.string()',
         '"initrd=" + base_disk.string()',
@@ -605,6 +604,9 @@ def main() -> int:
         "UML_ANDROID17_BASE_DISK_SIZE",
         "release-owned kernel argument cannot be overridden",
         "Android instance belongs to another rootfs release",
+        "--android-disk-size-gib",
+        "UML_ANDROID17_DISK_SIZE_GIB",
+        "prepareDisk(",
     ):
         require(
             forbidden not in android_main,

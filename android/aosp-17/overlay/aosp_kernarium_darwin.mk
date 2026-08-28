@@ -196,6 +196,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     messaging \
     pmg_daemon \
     sample_camera_extensions.xml \
+    sgdisk \
     snapshotctl \
     snapuserd \
     snapuserd_ramdisk \
@@ -211,14 +212,21 @@ PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # Jelly supplies the browser; ThemePicker remains part of the user-facing
 # baseline, LatinIME must remain visible even when a host keyboard exists, and
-# resize2fs grows the compact userdata seed before its first mount.
+# the ext4 tools grow the compact userdata filesystem after the host expands
+# its partition and before the first /data mount.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
+    blockdev \
+    e2fsck \
     Jelly \
     LatinIME \
     resize2fs \
-    ThemePicker
+    ThemePicker \
+    tune2fs
+
+PRODUCT_COPY_FILES += \
+    device/kernarium/darwin/config/grow-userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/kernarium-grow-userdata
 
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.

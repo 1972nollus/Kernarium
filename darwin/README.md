@@ -143,6 +143,15 @@ that need writeback requests boot with magic SysRq enabled. If the physical iOS
 sandbox cannot bind the console, host-file flushing still runs but guest
 writeback/freeze is unavailable.
 
+Guest disk capacity is an application concern rather than a runtime option.
+Kernarium transactionally grows raw Android images and their final userdata
+GPT entry through Swift `DiskUtil` and the statically linked GPT fdisk core.
+The standalone macOS Android wrapper performs the same host-side operation
+with the system `truncate` utility and Homebrew `sgdisk`. Android only compares
+the ext4 and partition extents, then runs `e2fsck` and `resize2fs` before
+mounting `/data` when growth is needed. The runtime validates that the GPT
+matches the file and boots it without rewriting either.
+
 Kernarium flushes when losing focus, quiesces before backgrounding or
 termination, and resumes on foregrounding. A `.kern` bundle owns its persistent
 COW; launch and app updates must not recreate or flatten an existing bundle.

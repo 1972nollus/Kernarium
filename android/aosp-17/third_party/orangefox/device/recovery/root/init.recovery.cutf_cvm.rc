@@ -22,5 +22,10 @@ service recovery_ethernet /system/bin/ifconfig eth0 10.0.2.15 netmask 255.255.25
     oneshot
     seclabel u:r:su:s0
 
+# The host grows the raw image and GPT. Recovery owns the same first-boot ext4
+# expansion as normal Android so recovery-first bundles see full userdata.
+on early-fs
+    exec u:r:su:s0 root root -- /system/bin/sh /system/bin/kernarium-grow-userdata
+
 on boot
     start recovery_ethernet

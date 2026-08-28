@@ -35,7 +35,12 @@ PAGE_SIZE = 16384
 REQUIRED_PATHS = {
     "init",
     "prop.default",
+    "system/bin/blockdev",
+    "system/bin/e2fsck",
+    "system/bin/kernarium-grow-userdata",
     "system/bin/recovery",
+    "system/bin/resize2fs",
+    "system/bin/tune2fs",
     "system/etc/cgroups.json",
     "system/etc/fox.cfg",
     "system/etc/recovery.fstab",
@@ -338,9 +343,21 @@ def verify_entries(entries: dict[str, Entry], expected_fstab: bytes) -> int:
         b"/system/bin/ifconfig eth0 10.0.2.15",
         b"netmask 255.255.255.0 up",
         b"seclabel u:r:su:s0",
+        b"exec u:r:su:s0 root root -- /system/bin/sh "
+        b"/system/bin/kernarium-grow-userdata",
     ):
         if token not in recovery_hardware_init.payload:
-            fail(f"OrangeFox recovery Ethernet setup omits {token.decode()}")
+            fail(f"OrangeFox recovery hardware setup omits {token.decode()}")
+    grow_userdata = entries["system/bin/kernarium-grow-userdata"].payload
+    for token in (
+        b"blockdev --getsz \"$partition\"",
+        b"tune2fs -l",
+        b"filesystem_sectors=$((filesystem_blocks * filesystem_block_sectors))",
+        b"e2fsck -pf",
+        b"resize2fs",
+    ):
+        if token not in grow_userdata:
+            fail(f"OrangeFox userdata expansion omits {token.decode()}")
     if b"FOX_CODE_BASE=" not in entries["system/etc/fox.cfg"].payload:
         fail("OrangeFox build identity is missing")
     if "system/lib64/libtwrpmtp-ffs.so" in entries:

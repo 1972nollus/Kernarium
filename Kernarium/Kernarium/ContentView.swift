@@ -570,18 +570,15 @@ enum ThermalStateReport {
 private struct PreparedBoot: Sendable {
     private let paths: [String?]
     let androidBootMode: AndroidBootMode
-    let androidDiskSizeGiB: UInt32
 
     init(rootfs: URL, overlay: URL) {
         paths = [rootfs.path, overlay.path, nil, nil, nil, nil]
         androidBootMode = .automatic
-        androidDiskSizeGiB = 0
     }
 
     init(
         bundle: GuestBundle,
-        androidBootMode: AndroidBootMode,
-        androidDiskSizeGiB: Int
+        androidBootMode: AndroidBootMode
     ) {
         paths = [
             nil,
@@ -592,7 +589,6 @@ private struct PreparedBoot: Sendable {
             bundle.commandLine.path,
         ]
         self.androidBootMode = androidBootMode
-        self.androidDiskSizeGiB = UInt32(androidDiskSizeGiB)
     }
 
     func withCPaths<Result>(
@@ -635,7 +631,6 @@ private func runGuest(
         request.guest_memory_mib = guestMemoryMiB
         request.guest_processor_count = vCPUCount
         request.android_boot_mode = boot.androidBootMode.rawValue
-        request.android_disk_size_gib = boot.androidDiskSizeGiB
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_manifest_path = paths[2]
@@ -797,10 +792,23 @@ private final class EmulatorLauncher {
             print("Kernarium: \(bundle.name) is not writable")
             return nil
         }
+        do {
+            let resized = try bundle.prepareDiskCapacity(
+                configuration.androidDiskSizeGiB
+            )
+            if resized {
+                print(
+                    "Kernarium: expanded \(bundle.baseDisk.lastPathComponent) " +
+                        "to \(configuration.androidDiskSizeGiB) GiB"
+                )
+            }
+        } catch {
+            print("Kernarium: cannot resize Android disk: \(error)")
+            return nil
+        }
         return PreparedBoot(
             bundle: bundle,
-            androidBootMode: configuration.androidBootMode,
-            androidDiskSizeGiB: configuration.androidDiskSizeGiB
+            androidBootMode: configuration.androidBootMode
         )
     }
 

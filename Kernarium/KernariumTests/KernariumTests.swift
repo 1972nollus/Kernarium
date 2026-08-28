@@ -4,6 +4,20 @@ import UIKit
 @testable import Kernarium
 
 struct KernariumTests {
+    private struct StubDiskCapacityManager: DiskCapacityManaging {
+        let size: UInt64
+
+        func androidImageIsPrepared(at _: URL, forGiB _: Int) throws -> Bool {
+            true
+        }
+
+        func imageSize(at _: URL) throws -> UInt64 { size }
+
+        func resizeAndroidImage(at _: URL, toGiB _: Int) throws -> Bool {
+            true
+        }
+    }
+
     @Test
     func thermalStateReportHasStableMachineReadableFields() {
         #expect(ThermalStateReport.name(for: .nominal) == "nominal")
@@ -73,6 +87,29 @@ struct KernariumTests {
     }
 
     @Test
+    func diskUtilExpandsRawImageWithoutChangingItsPrefix() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: directory) }
+        let image = directory.appendingPathComponent("disk.img")
+        let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
+        try original.write(to: image)
+
+        let diskUtil = DiskUtil()
+        #expect(try diskUtil.resizeImage(at: image, toGiB: 1))
+        #expect(try diskUtil.imageSize(at: image) == DiskUtil.bytesPerGiB)
+        #expect(try !diskUtil.resizeImage(at: image, toGiB: 1))
+        let reader = try FileHandle(forReadingFrom: image)
+        let prefix = try reader.read(upToCount: original.count)
+        try reader.close()
+        #expect(prefix == original)
+    }
+
+    @Test
     func bundleInstanceResetIsNarrowAndIdempotent() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
@@ -102,6 +139,46 @@ struct KernariumTests {
         #expect(manager.fileExists(atPath: baseDisk.path))
         #expect(manager.fileExists(atPath: sibling.path))
         #expect(try !bundle.removeInstanceIfPresent(fileManager: manager))
+    }
+
+    @Test
+    func bundleInstanceLocksPreparedDiskCapacity() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        let guestDirectory = directory.appendingPathComponent("guest")
+        try manager.createDirectory(
+            at: guestDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+        let baseDisk = guestDirectory.appendingPathComponent("base.img")
+        let instance = directory.appendingPathComponent("userdata.cow")
+        #expect(manager.createFile(atPath: baseDisk.path, contents: Data([1])))
+        let bundle = GuestBundle(
+            url: directory,
+            flavor: .android,
+            baseDisk: baseDisk
+        )
+
+        let diskUtil = StubDiskCapacityManager(size: DiskUtil.bytesPerGiB)
+        #expect(
+            try bundle.prepareDiskCapacity(
+                1,
+                diskUtil: diskUtil,
+                fileManager: manager
+            )
+        )
+        #expect(manager.createFile(atPath: instance.path, contents: Data([2])))
+        #expect(throws: GuestBundle.StorageError.self) {
+            try bundle.prepareDiskCapacity(
+                2,
+                diskUtil: diskUtil,
+                fileManager: manager
+            )
+        }
     }
 
     @Test

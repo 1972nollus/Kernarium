@@ -21,7 +21,9 @@ The dependency products are:
   `.build/dependencies/macos-arm64`;
 - `apple-gpu`: common ANGLE/Metal, libepoxy, and virglrenderer inputs for
   macOS, Simulator, and device; and
-- `ios-network`: the iOS GLib/libslirp network closure.
+- `ios-network`: the iOS GLib/libslirp network closure; and
+- `ios-storage`: the patch-managed GPT fdisk core as one static arm64
+  XCFramework with iOS device and Simulator slices.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat `EGL.framework` and `GLESv2.framework` payloads. All Apple platforms use
@@ -50,6 +52,10 @@ dependencies/build-apple-gpu.sh --platform ios
 dependencies/prepare.sh --product ios-network
 dependencies/build-ios-network.sh
 dependencies/build-ios-network.sh --platform ios
+
+dependencies/prepare.sh --product ios-storage
+dependencies/build-ios-storage.sh
+dependencies/build-ios-storage.sh --verify-only
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -60,6 +66,11 @@ Review the diagnostic and move the old path aside before rebuilding. Prefix
 verification checks manifest/series identity, architecture, Apple platform and
 deployment target, expected static payloads, framework install names, and the
 absence of undeclared or legacy providers.
+
+The iOS storage build exports only the two file-oriented C entry points used by
+Kernarium. Its archive excludes every GPT fdisk command-line front end and
+`popt`. The standalone macOS Android launcher invokes an installed Homebrew
+`sgdisk` executable instead; it does not link or discover a Homebrew library.
 
 ## Patch maintenance
 

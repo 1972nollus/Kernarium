@@ -1,0 +1,4 @@
+module KernariumGPTFDisk {
+  header "KernariumGPTFDisk.h"
+  export *
+}

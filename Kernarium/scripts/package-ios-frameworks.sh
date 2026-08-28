@@ -51,6 +51,7 @@ SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-andr
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64/Frameworks"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
+STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/KernariumGPTFDisk.xcframework"
 
 # Packaging is an independent trust boundary: revalidate the complete source,
 # contract, provenance, binary-platform, and provider-negative policy before
@@ -59,6 +60,7 @@ DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
 	--platform ios-simulator --verify-only
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
 	--platform ios --verify-only
+"$ROOT_DIR/dependencies/build-ios-storage.sh"
 
 for framework in \
 	"$SIMULATOR_RUNTIME_4K" \
@@ -70,7 +72,8 @@ for framework in \
 	"$SIMULATOR_GPU/EGL.framework" \
 	"$DEVICE_GPU/EGL.framework" \
 	"$SIMULATOR_GPU/GLESv2.framework" \
-	"$DEVICE_GPU/GLESv2.framework"; do
+	"$DEVICE_GPU/GLESv2.framework" \
+	"$STORAGE"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
 
@@ -110,6 +113,8 @@ create_xcframework EGL \
 	"$SIMULATOR_GPU/EGL.framework" "$DEVICE_GPU/EGL.framework"
 create_xcframework GLESv2 \
 	"$SIMULATOR_GPU/GLESv2.framework" "$DEVICE_GPU/GLESv2.framework"
+"$CMAKE" -E copy_directory "$STORAGE" \
+	"$STAGE/KernariumGPTFDisk.xcframework"
 
 for platform in ios-arm64 ios-arm64-simulator; do
 	for framework in "$RUNTIME_4K" "$RUNTIME_16K" \
@@ -117,6 +122,11 @@ for platform in ios-arm64 ios-arm64-simulator; do
 		binary="$STAGE/$framework.xcframework/$platform/$framework.framework/$framework"
 		[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
 	done
+done
+
+for platform in ios-arm64 ios-arm64-simulator; do
+	binary="$STAGE/KernariumGPTFDisk.xcframework/$platform/libKernariumGPTFDisk.a"
+	[ -f "$binary" ] || fail "missing packaged GPT fdisk core: $binary"
 done
 
 if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then

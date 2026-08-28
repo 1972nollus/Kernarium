@@ -57,8 +57,8 @@ def base_disk(release: Path) -> Path:
 
 def copy(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # A clone shares the compact seed's blocks until the bundle-local copy is
-    # expanded at first boot.
+    # A clone shares the compact seed's blocks until DiskUtil expands the
+    # bundle-local copy immediately before first boot.
     cloned = subprocess.run(
         ["cp", "-c", str(source), str(destination)],
         capture_output=True,

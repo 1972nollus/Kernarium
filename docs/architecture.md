@@ -122,7 +122,14 @@ COW. Android bundles provide a kernel command line and one GPT image; a release
 manifest may accompany them as provenance. The kernel comes from the selected
 runtime framework. Launch does not compare kernel, runtime, or rootfs release
 identities; missing or malformed inputs fail at their ordinary file or image
-boundary.
+boundary. The app's `DiskUtil` owns raw-file capacity before launch and
+dispatches any format-specific partition-table update. Android GPT growth uses
+the verified static GPT fdisk core linked into the app; the standalone macOS
+launcher uses Homebrew `sgdisk`. Runtime frameworks receive no capacity policy
+and reject a GPT whose declared extent differs from its file. The guest only
+grows a filesystem after observing that its containing partition is larger.
+This keeps the same host-capacity workflow available to later Linux image
+formats without putting disk policy back into a kernel runtime.
 
 ## Devices and graphics
 

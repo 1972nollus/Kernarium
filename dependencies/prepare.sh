@@ -28,7 +28,7 @@ usage()
 Usage: dependencies/prepare.sh [options]
 
 Options:
-  --product NAME  macos (default), ios-network, apple-gpu, or all
+  --product NAME  macos (default), ios-network, ios-storage, apple-gpu, or all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching

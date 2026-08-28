@@ -29,6 +29,17 @@ INSTANCES_ROOT = REPO_ROOT / ".build/android/instances"
 DEFAULT_EMULATOR = (
     REPO_ROOT / ".build/presets/macos-android17/bin/uml-darwin-android17"
 )
+SYSTEM_TRUNCATE = Path("/usr/bin/truncate")
+HOMEBREW_SGDISK_CANDIDATES = (
+    Path("/opt/homebrew/bin/sgdisk"),
+    Path("/usr/local/bin/sgdisk"),
+)
+USERDATA_PARTITION_NUMBER = 10
+USERDATA_FIRST_LBA = 3_796_992
+USERDATA_TYPE_GUID = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+USERDATA_UNIQUE_GUID = "523ABB36-1F98-5D08-92D0-31C3C8A47304"
+GPT_TRAILING_FREE_BYTES = 1024**2
+GPT_LOGICAL_BLOCK_BYTES = 512
 DEFAULT_ADB_PORT = 5555
 GUEST_ADB_PORT = 5555
 DEFAULT_DISPLAY_WIDTH = 720
@@ -251,18 +262,141 @@ def prepare_instance_base(release: Path, instance: Path, base: Path) -> None:
     temporary = base.with_name(base.name + ".tmp")
     if temporary.exists() or temporary.is_symlink():
         raise LauncherError(f"stale Android base staging path: {temporary}")
+    clone_file(source, temporary)
+    temporary.chmod(temporary.stat().st_mode | 0o200)
+    temporary.replace(base)
+
+
+def clone_file(source: Path, destination: Path) -> None:
     cloned = subprocess.run(
-        ["cp", "-c", str(source), str(temporary)],
+        ["cp", "-c", str(source), str(destination)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
     if cloned.returncode != 0:
+        if destination.exists():
+            destination.unlink()
+        shutil.copyfile(source, destination)
+
+
+def homebrew_sgdisk(
+    candidates: Sequence[Path] = HOMEBREW_SGDISK_CANDIDATES,
+) -> Path:
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate.resolve()
+    raise LauncherError(
+        "Homebrew GPT fdisk is unavailable; install it with "
+        "`brew install gptfdisk`"
+    )
+
+
+def run_sgdisk(
+    sgdisk: Path, *arguments: str | Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(sgdisk), *(str(argument) for argument in arguments)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+
+def gpt_layout_matches(sgdisk: Path, image: Path, capacity_bytes: int) -> bool:
+    info = run_sgdisk(sgdisk, "--info=10", image)
+    if info.returncode != 0:
+        return False
+    expected_disk_lbas = capacity_bytes // GPT_LOGICAL_BLOCK_BYTES
+    expected_last_lba = (
+        expected_disk_lbas
+        - GPT_TRAILING_FREE_BYTES // GPT_LOGICAL_BLOCK_BYTES
+        - 1
+    )
+    required = (
+        f"Partition GUID code: {USERDATA_TYPE_GUID}",
+        f"Partition unique GUID: {USERDATA_UNIQUE_GUID}",
+        f"First sector: {USERDATA_FIRST_LBA} ",
+        f"Last sector: {expected_last_lba} ",
+        "Partition name: 'userdata'",
+    )
+    if any(value not in info.stdout for value in required):
+        return False
+    verified = run_sgdisk(sgdisk, "--verify", image)
+    return verified.returncode == 0 and "No problems found." in verified.stdout
+
+
+def resize_instance_base(
+    base: Path,
+    instance: Path,
+    capacity_gib: int,
+    *,
+    truncate: Path = SYSTEM_TRUNCATE,
+    sgdisk: Path | None = None,
+) -> bool:
+    requested = capacity_gib * 1024**3
+    current = base.stat().st_size
+    selected_sgdisk = homebrew_sgdisk() if sgdisk is None else sgdisk
+    if not selected_sgdisk.is_file() or not os.access(selected_sgdisk, os.X_OK):
+        raise LauncherError(f"Homebrew sgdisk is unavailable: {selected_sgdisk}")
+    if current == requested and gpt_layout_matches(
+        selected_sgdisk, base, requested
+    ):
+        return False
+    if instance.exists():
+        raise LauncherError(
+            "Android disk capacity cannot change after the instance was created"
+        )
+    if current > requested:
+        raise LauncherError(
+            f"Android base disk cannot shrink from {current} to {requested} bytes"
+        )
+    if not truncate.is_file() or not os.access(truncate, os.X_OK):
+        raise LauncherError(f"macOS truncate utility is unavailable: {truncate}")
+    temporary = base.with_name(base.name + ".resize.tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise LauncherError(f"stale Android disk resize path: {temporary}")
+    try:
+        clone_file(base, temporary)
+        subprocess.run(
+            [str(truncate), "-s", str(requested), str(temporary)],
+            check=True,
+        )
+        actual = temporary.stat().st_size
+        if actual != requested:
+            raise LauncherError(
+                "Android base disk resize produced "
+                f"{actual}, expected {requested} bytes"
+            )
+        disk_lbas = requested // GPT_LOGICAL_BLOCK_BYTES
+        userdata_last_lba = (
+            disk_lbas
+            - GPT_TRAILING_FREE_BYTES // GPT_LOGICAL_BLOCK_BYTES
+            - 1
+        )
+        mutation = run_sgdisk(
+            selected_sgdisk,
+            "--move-second-header",
+            f"--delete={USERDATA_PARTITION_NUMBER}",
+            f"--new={USERDATA_PARTITION_NUMBER}:{USERDATA_FIRST_LBA}:"
+            f"{userdata_last_lba}",
+            f"--typecode={USERDATA_PARTITION_NUMBER}:8300",
+            f"--partition-guid={USERDATA_PARTITION_NUMBER}:"
+            f"{USERDATA_UNIQUE_GUID}",
+            f"--change-name={USERDATA_PARTITION_NUMBER}:userdata",
+            temporary,
+        )
+        if mutation.returncode != 0:
+            detail = mutation.stderr.strip() or mutation.stdout.strip()
+            raise LauncherError(f"Homebrew sgdisk could not resize GPT: {detail}")
+        if not gpt_layout_matches(selected_sgdisk, temporary, requested):
+            raise LauncherError("Homebrew sgdisk produced an invalid Android GPT")
+        temporary.replace(base)
+    finally:
         if temporary.exists():
             temporary.unlink()
-        shutil.copyfile(source, temporary)
-    temporary.chmod(temporary.stat().st_mode | 0o200)
-    temporary.replace(base)
+    return True
 
 
 def resolve_executable(value: str | Path, *, sdk_fallback: bool = False) -> Path:
@@ -305,7 +439,6 @@ def emulator_command(
         f"--android-release={release}",
         f"--android-instance={instance}",
         f"--android-base-disk={base}",
-        f"--android-disk-size-gib={options.disk_size_gib}",
         f"--android-boot-mode={options.boot_mode}",
         f"--net-forward=tcp:127.0.0.1:{options.adb_port}-{GUEST_ADB_PORT}",
         "--gpu",
@@ -438,6 +571,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             subprocess.run(command, cwd=REPO_ROOT, check=True)
         emulator = resolve_executable(options.emulator)
         prepare_instance_base(release, instance, base)
+        resize_instance_base(base, instance, options.disk_size_gib)
         guest_command = emulator_command(options, release, instance, emulator, base)
         instance.parent.mkdir(parents=True, exist_ok=True)
         ensure_loopback_port_available(options.adb_port)

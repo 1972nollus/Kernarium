@@ -30,6 +30,18 @@ struct GuestBundle: Equatable {
     let flavor: GuestFlavor
     let baseDisk: URL
 
+    enum StorageError: Error, LocalizedError {
+        case capacityLocked
+
+        var errorDescription: String? {
+            switch self {
+            case .capacityLocked:
+                "Android disk capacity cannot change after the instance " +
+                    "was created"
+            }
+        }
+    }
+
     var name: String { url.lastPathComponent }
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
     var instance: URL { url.appendingPathComponent(Android.instance) }
@@ -46,6 +58,35 @@ struct GuestBundle: Equatable {
         }
         try fileManager.removeItem(at: instance)
         return true
+    }
+
+    /// The host grows the raw bundle image and its userdata GPT entry. Android
+    /// grows ext4 during boot only after observing the larger partition. Once
+    /// UBD has created a COW, its recorded base extent locks the capacity until
+    /// the instance is explicitly removed.
+    @discardableResult
+    func prepareDiskCapacity(
+        _ capacityGiB: Int,
+        diskUtil: any DiskCapacityManaging = DiskUtil(),
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        let requested = try DiskUtil.byteCount(forGiB: capacityGiB)
+        let current = try diskUtil.imageSize(at: baseDisk)
+        if fileManager.fileExists(atPath: instance.path) {
+            guard current == requested,
+                  try diskUtil.androidImageIsPrepared(
+                    at: baseDisk,
+                    forGiB: capacityGiB
+                  )
+            else {
+                throw StorageError.capacityLocked
+            }
+            return false
+        }
+        return try diskUtil.resizeAndroidImage(
+            at: baseDisk,
+            toGiB: capacityGiB
+        )
     }
 
     /// Android guests boot the ACK kernel that only the 16 KiB runtime carries.
