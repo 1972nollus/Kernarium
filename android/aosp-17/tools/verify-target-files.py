@@ -78,14 +78,12 @@ REQUIRED_ENTRIES = {
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "PRODUCT/etc/build.prop",
+    "SYSTEM/build.prop",
     "RECOVERY/RAMDISK/system/bin/hw/android.hardware.health-service.example_recovery",
     "RECOVERY/RAMDISK/system/bin/recovery",
-    "SYSTEM/bin/blockdev",
     "SYSTEM/bin/e2fsck",
     "SYSTEM/bin/resize2fs",
-    "SYSTEM/bin/tune2fs",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
-    "VENDOR/bin/kernarium-grow-userdata",
     "VENDOR/bin/hw/android.hardware.health-service.example",
     "VENDOR/etc/audio_effects_config.xml",
     "VENDOR/etc/audio_policy_configuration.xml",
@@ -342,17 +340,11 @@ READ_ONLY_FILESYSTEMS = {
 }
 UML_INIT_REQUIRED = (
     "mount_all --early",
-    "exec u:r:su:s0 root root -- /system/bin/sh "
-    "/vendor/bin/kernarium-grow-userdata",
+    "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
     "mount_all --late",
     "ro.hardware.audio.primary",
-)
-UML_GROW_USERDATA_REQUIRED = (
-    "blockdev --getsz \"$partition\"",
-    "tune2fs -l",
-    "filesystem_sectors=$((filesystem_blocks * filesystem_block_sectors))",
-    "e2fsck -pf",
-    "resize2fs",
+    "setprop service.adb.tcp.port 5555",
+    "start adbd",
 )
 UML_INIT_FORBIDDEN = (
     "metrics_helper",
@@ -461,6 +453,24 @@ def check_apex_payload_filesystem(
 
 
 def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    system_properties = read_small(
+        archive, infos["SYSTEM/build.prop"]
+    ).decode("utf-8", errors="strict").splitlines()
+    system_property_map = {
+        line.partition("=")[0]: line.partition("=")[2].strip()
+        for line in system_properties
+        if line.partition("=")[1]
+    }
+    for property_name, expected in {
+        "ro.build.type": "user",
+        "ro.debuggable": "0",
+    }.items():
+        if system_property_map.get(property_name) != expected:
+            fail(
+                f"unexpected user-build property {property_name}: "
+                f"{system_property_map.get(property_name)!r}"
+            )
+
     for entry in UML_FSTAB_ENTRIES:
         if read_small(archive, infos[entry]) != UML_FSTAB:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
@@ -487,13 +497,6 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     for token in UML_INIT_FORBIDDEN:
         if token in init_payload:
             fail(f"UML init policy retains unsupported Cuttlefish action: {token}")
-
-    grow_payload = read_small(
-        archive, infos["VENDOR/bin/kernarium-grow-userdata"]
-    ).decode("utf-8", errors="strict")
-    for token in UML_GROW_USERDATA_REQUIRED:
-        if token not in grow_payload:
-            fail(f"userdata growth script is missing required action: {token}")
 
     ueventd_payload = read_small(
         archive, infos["VENDOR/ueventd.rc"]
@@ -703,6 +706,7 @@ def check_audio_policy(
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
         "ro.product.product.model": "Darwin UML",
+        "persist.sys.usb.config": "adb",
     }
     for property_name, expected in expected_properties.items():
         values = [

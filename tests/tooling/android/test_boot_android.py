@@ -25,7 +25,9 @@ class BootAndroidTests(unittest.TestCase):
         release = root / name
         (release / "boot").mkdir(parents=True)
         (release / "guest").mkdir()
-        (release / "release-manifest.json").write_text("{}\n", encoding="utf-8")
+        (release / "release-manifest.json").write_text(
+            '{"release_id":"' + name + '"}\n', encoding="utf-8"
+        )
         (release / "boot/kernel-command-line.txt").write_text(
             "console=ttyS0\n", encoding="utf-8"
         )
@@ -37,7 +39,7 @@ class BootAndroidTests(unittest.TestCase):
         command = boot_android.emulator_command(
             options,
             Path("/tmp/release"),
-            Path("/tmp/instance.cow"),
+            Path("/tmp/android.img"),
             Path("/tmp/uml-darwin-android17"),
         )
         self.assertIn("--gpu-display=native", command)
@@ -47,8 +49,9 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
         self.assertIn("--android-boot-mode=normal", command)
-        self.assertFalse(any("android-disk-size" in value for value in command))
-        self.assertIn("--android-base-disk=/tmp/instance.base.img", command)
+        self.assertIn("--android-disk=/tmp/android.img", command)
+        self.assertFalse(any("android-instance" in value for value in command))
+        self.assertFalse(any("android-base-disk" in value for value in command))
         self.assertFalse(options.build)
         self.assertTrue(boot_android.parse_arguments(["--build"]).build)
 
@@ -109,31 +112,24 @@ class BootAndroidTests(unittest.TestCase):
             ["--height", "0"],
             ["--adb-port", "65536"],
             ["--memory", "8 G"],
-            ["--disk-size-gib", "3"],
-            ["--disk-size-gib", "65"],
         ):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(SystemExit):
                     boot_android.parse_arguments(arguments)
 
-    def test_release_specific_default_instance_preserves_other_guests(self) -> None:
-        release = Path("/tmp/android/releases/release-2")
-        instance = boot_android.instance_path(None, release)
-        self.assertEqual(instance.name, "release-2.cow")
-        self.assertEqual(instance.parent, boot_android.INSTANCES_ROOT)
+    def test_default_disk_is_the_stable_persistent_image(self) -> None:
+        disk = boot_android.disk_path(None)
+        self.assertEqual(disk.name, "android-17.img")
+        self.assertEqual(disk.parent, boot_android.INSTANCES_ROOT)
 
-    def test_instance_base_is_resized_with_homebrew_sgdisk(self) -> None:
+    def test_disk_is_resized_with_homebrew_sgdisk(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
-            release = self.installed_release(root / "releases")
-            instance = root / "guest.cow"
-            base = boot_android.instance_base_path(instance)
+            disk = root / "android.img"
+            disk.write_bytes(b"image")
             sgdisk = root / "sgdisk"
             sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
             sgdisk.chmod(0o755)
-            boot_android.prepare_instance_base(release, instance, base)
-            self.assertEqual(base.read_bytes(), b"image")
-            self.assertEqual(base.name, "guest.base.img")
             completed = boot_android.subprocess.CompletedProcess(
                 [], 0, "The operation has completed successfully.\n", ""
             )
@@ -150,16 +146,12 @@ class BootAndroidTests(unittest.TestCase):
                 ) as run_sgdisk,
             ):
                 self.assertTrue(
-                    boot_android.resize_instance_base(
-                        base, instance, 4, sgdisk=sgdisk
-                    )
+                    boot_android.resize_android_disk(disk, 4, sgdisk=sgdisk)
                 )
                 self.assertFalse(
-                    boot_android.resize_instance_base(
-                        base, instance, 4, sgdisk=sgdisk
-                    )
+                    boot_android.resize_android_disk(disk, 4, sgdisk=sgdisk)
                 )
-            self.assertEqual(base.stat().st_size, 4 * 1024**3)
+            self.assertEqual(disk.stat().st_size, 4 * 1024**3)
             mutation = run_sgdisk.call_args.args
             self.assertEqual(mutation[0], sgdisk)
             self.assertIn("--move-second-header", mutation)
@@ -169,24 +161,43 @@ class BootAndroidTests(unittest.TestCase):
                 mutation,
             )
 
-    def test_existing_instance_locks_disk_capacity(self) -> None:
+    def test_new_release_recreates_the_persistent_disk(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
-            base = root / "base.img"
-            instance = root / "instance.cow"
-            base.write_bytes(b"seed")
-            instance.write_bytes(b"cow")
+            release = self.installed_release(root / "releases", "release-2")
+            disk = root / "android.img"
+            disk.write_bytes(b"old")
+            boot_android.disk_release_path(disk).write_text(
+                "release-1\n", encoding="utf-8"
+            )
             sgdisk = root / "sgdisk"
             sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
             sgdisk.chmod(0o755)
-            with (
-                mock.patch.object(
-                    boot_android, "gpt_layout_matches", return_value=False
-                ),
-                self.assertRaises(boot_android.LauncherError),
+            def resize(image: Path, _capacity: int, **_kwargs: object) -> bool:
+                with image.open("r+b") as handle:
+                    handle.truncate(boot_android.DEFAULT_DISK_SIZE_GIB * 1024**3)
+                return True
+
+            with mock.patch.object(
+                boot_android, "resize_android_disk", side_effect=resize
             ):
-                boot_android.resize_instance_base(
-                    base, instance, 8, sgdisk=sgdisk
+                self.assertTrue(
+                    boot_android.prepare_persistent_disk(
+                        release, disk, sgdisk=sgdisk
+                    )
+                )
+            self.assertEqual(
+                boot_android.disk_release_path(disk).read_text(encoding="utf-8"),
+                "release-2\n",
+            )
+            self.assertEqual(disk.stat().st_size, 8 * 1024**3)
+            with mock.patch.object(
+                boot_android, "gpt_layout_matches", return_value=True
+            ):
+                self.assertFalse(
+                    boot_android.prepare_persistent_disk(
+                        release, disk, sgdisk=sgdisk
+                    )
                 )
 
     def test_homebrew_sgdisk_requires_an_executable_candidate(self) -> None:
@@ -229,14 +240,15 @@ class BootAndroidTests(unittest.TestCase):
             for executable in (emulator, adb):
                 executable.write_text("#!/bin/sh\n", encoding="utf-8")
                 executable.chmod(0o755)
-            instance = root / "instance.cow"
+            disk = root / "android.img"
             guest = Guest()
             with (
                 mock.patch.object(
                     boot_android.subprocess, "Popen", return_value=guest
                 ) as popen,
-                mock.patch.object(boot_android, "prepare_instance_base"),
-                mock.patch.object(boot_android, "resize_instance_base"),
+                mock.patch.object(
+                    boot_android, "prepare_persistent_disk", return_value=False
+                ),
                 mock.patch.object(boot_android, "ensure_loopback_port_available"),
                 mock.patch.object(boot_android, "wait_for_adb"),
                 mock.patch.object(boot_android, "install_shutdown_handlers"),
@@ -246,8 +258,8 @@ class BootAndroidTests(unittest.TestCase):
                     [
                         "--release",
                         str(release),
-                        "--instance",
-                        str(instance),
+                        "--disk",
+                        str(disk),
                         "--emulator",
                         str(emulator),
                         "--adb",

@@ -572,7 +572,7 @@ private struct PreparedBoot: Sendable {
     let androidBootMode: AndroidBootMode
 
     init(rootfs: URL, overlay: URL) {
-        paths = [rootfs.path, overlay.path, nil, nil, nil, nil]
+        paths = [rootfs.path, overlay.path, nil, nil]
         androidBootMode = .automatic
     }
 
@@ -583,9 +583,7 @@ private struct PreparedBoot: Sendable {
         paths = [
             nil,
             nil,
-            nil,
-            bundle.baseDisk.path,
-            bundle.instance.path,
+            bundle.disk.path,
             bundle.commandLine.path,
         ]
         self.androidBootMode = androidBootMode
@@ -633,10 +631,8 @@ private func runGuest(
         request.android_boot_mode = boot.androidBootMode.rawValue
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
-        request.android_manifest_path = paths[2]
-        request.android_base_disk_path = paths[3]
-        request.android_instance_path = paths[4]
-        request.android_command_line_path = paths[5]
+        request.android_disk_path = paths[2]
+        request.android_command_line_path = paths[3]
         return withUnsafePointer(to: &request) { pointer in
             kernarium_runtime_loader_run(view, pointer)
         }
@@ -680,27 +676,6 @@ private final class EmulatorLauncher {
         guard let selection = RootfsImage.selection(named: rootfsFilename) else {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
-        }
-        if ProcessInfo.processInfo.environment[
-            "KERNARIUM_RESET_ANDROID_INSTANCE"
-        ] == "1" {
-            guard case let .bundle(bundle) = selection else {
-                print("Kernarium: instance reset requires an Android bundle")
-                return
-            }
-            do {
-                let removed = try bundle.removeInstanceIfPresent()
-                print(
-                    "Kernarium: Android instance reset bundle=\(bundle.name) " +
-                        "removed=\(removed ? 1 : 0)"
-                )
-            } catch {
-                print(
-                    "Kernarium: cannot reset Android instance " +
-                        "for \(bundle.name): \(error)"
-                )
-                return
-            }
         }
         // A bundle that pins a page profile overrides whatever was stored; the
         // configuration already resolved that, and this keeps a hand-edited
@@ -784,9 +759,8 @@ private final class EmulatorLauncher {
         }
     }
 
-    /// A bundle keeps its writable disk beside its payload, so guest state
-    /// survives the app being closed and reopened. UBD creates the disk on
-    /// first boot; every later boot reopens the same one.
+    /// A bundle keeps its directly writable disk beside its payload, so guest
+    /// state survives the app being closed and reopened.
     private func prepareBundleBoot(bundle: GuestBundle) -> PreparedBoot? {
         guard FileManager.default.isWritableFile(atPath: bundle.url.path) else {
             print("Kernarium: \(bundle.name) is not writable")
@@ -798,7 +772,7 @@ private final class EmulatorLauncher {
             )
             if resized {
                 print(
-                    "Kernarium: expanded \(bundle.baseDisk.lastPathComponent) " +
+                    "Kernarium: expanded \(bundle.disk.lastPathComponent) " +
                         "to \(configuration.androidDiskSizeGiB) GiB"
                 )
             }

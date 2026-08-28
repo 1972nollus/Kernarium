@@ -2,8 +2,6 @@ import Foundation
 import KernariumGPTFDisk
 
 protocol DiskCapacityManaging {
-    func imageSize(at image: URL) throws -> UInt64
-    func androidImageIsPrepared(at image: URL, forGiB capacity: Int) throws -> Bool
     func resizeAndroidImage(at image: URL, toGiB capacity: Int) throws -> Bool
 }
 
@@ -102,7 +100,7 @@ final class DiskUtil: DiskCapacityManaging {
     }
 
     /// Expands a regular image sparsely. Shrinking is deliberately rejected
-    /// because it can discard guest data and invalidate an existing COW.
+    /// because it can discard guest data.
     @discardableResult
     func resizeImage(at image: URL, toGiB capacity: Int) throws -> Bool {
         let requested = try Self.byteCount(forGiB: capacity)

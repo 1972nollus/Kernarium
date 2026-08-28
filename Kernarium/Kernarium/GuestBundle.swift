@@ -20,71 +20,25 @@ struct GuestBundle: Equatable {
         static let commandLine = "boot/kernel-command-line.txt"
         static let guestDirectory = "guest"
         static let diskExtension = "img"
-        /// UBD creates this copy-on-write layer over the immutable base image
-        /// on first boot and every later boot reopens it, so guest state
-        /// accumulates inside the bundle it belongs to.
-        static let instance = "userdata.cow"
     }
 
     let url: URL
     let flavor: GuestFlavor
-    let baseDisk: URL
-
-    enum StorageError: Error, LocalizedError {
-        case capacityLocked
-
-        var errorDescription: String? {
-            switch self {
-            case .capacityLocked:
-                "Android disk capacity cannot change after the instance " +
-                    "was created"
-            }
-        }
-    }
+    let disk: URL
 
     var name: String { url.lastPathComponent }
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
-    var instance: URL { url.appendingPathComponent(Android.instance) }
 
-    /// Removes only this bundle's writable instance. This is intentionally a
-    /// narrow primitive: callers cannot replace the bundle directory or touch
-    /// a sibling while preparing a fresh-boot diagnostic.
-    @discardableResult
-    func removeInstanceIfPresent(
-        fileManager: FileManager = .default
-    ) throws -> Bool {
-        guard fileManager.fileExists(atPath: instance.path) else {
-            return false
-        }
-        try fileManager.removeItem(at: instance)
-        return true
-    }
-
-    /// The host grows the raw bundle image and its userdata GPT entry. Android
-    /// grows ext4 during boot only after observing the larger partition. Once
-    /// UBD has created a COW, its recorded base extent locks the capacity until
-    /// the instance is explicitly removed.
+    /// The host grows the bundle-local raw image and its userdata GPT entry.
+    /// Android grows ext4 during boot only after observing the larger
+    /// partition. The same image is opened directly on every later boot.
     @discardableResult
     func prepareDiskCapacity(
         _ capacityGiB: Int,
-        diskUtil: any DiskCapacityManaging = DiskUtil(),
-        fileManager: FileManager = .default
+        diskUtil: any DiskCapacityManaging = DiskUtil()
     ) throws -> Bool {
-        let requested = try DiskUtil.byteCount(forGiB: capacityGiB)
-        let current = try diskUtil.imageSize(at: baseDisk)
-        if fileManager.fileExists(atPath: instance.path) {
-            guard current == requested,
-                  try diskUtil.androidImageIsPrepared(
-                    at: baseDisk,
-                    forGiB: capacityGiB
-                  )
-            else {
-                throw StorageError.capacityLocked
-            }
-            return false
-        }
         return try diskUtil.resizeAndroidImage(
-            at: baseDisk,
+            at: disk,
             toGiB: capacityGiB
         )
     }
@@ -110,16 +64,16 @@ struct GuestBundle: Equatable {
         else {
             return nil
         }
-        guard let baseDisk = androidBaseDisk(in: url, fileManager: fileManager)
+        guard let disk = androidDisk(in: url, fileManager: fileManager)
         else {
             return nil
         }
-        return GuestBundle(url: url, flavor: .android, baseDisk: baseDisk)
+        return GuestBundle(url: url, flavor: .android, disk: disk)
     }
 
-    /// The base image is discovered rather than named by a release. Exactly one
+    /// The disk image is discovered rather than named by a release. Exactly one
     /// candidate keeps the launch input unambiguous.
-    private static func androidBaseDisk(
+    private static func androidDisk(
         in url: URL,
         fileManager: FileManager
     ) -> URL? {

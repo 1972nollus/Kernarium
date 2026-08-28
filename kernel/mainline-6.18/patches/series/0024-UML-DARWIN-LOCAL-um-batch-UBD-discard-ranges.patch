@@ -1,0 +1,37 @@
+From ee22fd8f5fdd8f4be4c191f057a2518129de7649 Mon Sep 17 00:00:00 2001
+From: linux-um-darwin kernel patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Fri, 28 Aug 2026 00:47:49 +0900
+Subject: [PATCH 24/24] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+
+---
+ arch/um/drivers/ubd_kern.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
+index 6d235135a..167af025a 100644
+--- a/arch/um/drivers/ubd_kern.c
++++ b/arch/um/drivers/ubd_kern.c
+@@ -45,8 +45,11 @@
+ #include <os.h>
+ #include "cow.h"
+ 
+-/* Max request size is determined by sector mask - 32K */
++/* Max data request size is determined by the sector mask - 32K. */
+ #define UBD_MAX_REQUEST (8 * sizeof(long))
++/* Direct images can batch one large host hole punch per discard request. */
++#define UBD_MAX_DIRECT_DISCARD_SECTORS \
++	(128U * 1024U * 1024U >> SECTOR_SHIFT)
+ 
+ struct io_desc {
+ 	char *buffer;
+@@ -859,7 +862,8 @@ static int ubd_add(int n, char **error_out)
+ 	if (ubd_dev->cow.file)
+ 		lim.max_hw_sectors = 8 * sizeof(long);
+ 	if (!ubd_dev->no_trim) {
+-		lim.max_hw_discard_sectors = UBD_MAX_REQUEST;
++		lim.max_hw_discard_sectors = ubd_dev->cow.file
++			? UBD_MAX_REQUEST : UBD_MAX_DIRECT_DISCARD_SECTORS;
+ 		lim.max_write_zeroes_sectors = UBD_MAX_REQUEST;
+ 	}
+ 

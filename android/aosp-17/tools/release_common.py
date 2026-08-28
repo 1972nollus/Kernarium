@@ -903,7 +903,7 @@ def verify_release(
         # identity as immutable historical provenance, but do not compare it to
         # the current host/kernel bridge. The independently accepted ACK
         # artifact owns that compatibility check now, allowing an old rootfs
-        # bundle and COW to survive a kernel-only application update.
+        # bundle's writable disk to survive a kernel-only application update.
     verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
     if semantic:
         verify_semantics(

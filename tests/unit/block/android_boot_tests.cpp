@@ -82,22 +82,6 @@ void little64(std::span<std::byte> output, std::size_t offset,
 		output[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
 
-void big32(std::span<std::byte> output, std::size_t offset,
-	   std::uint32_t value)
-{
-	for (unsigned int index = 0; index < 4; ++index)
-		output[offset + index] =
-			static_cast<std::byte>(value >> ((3U - index) * 8U));
-}
-
-void big64(std::span<std::byte> output, std::size_t offset,
-	   std::uint64_t value)
-{
-	for (unsigned int index = 0; index < 8; ++index)
-		output[offset + index] =
-			static_cast<std::byte>(value >> ((7U - index) * 8U));
-}
-
 std::uint32_t crc32(std::span<const std::byte> input)
 {
 	std::uint32_t value = ~std::uint32_t{0};
@@ -151,13 +135,13 @@ std::filesystem::path scratchDirectory()
 	return path;
 }
 
-std::filesystem::path makeBaseDisk(const std::filesystem::path &directory,
-				   std::uint64_t diskSize)
+std::filesystem::path makeDisk(const std::filesystem::path &directory,
+			       std::uint64_t diskSize)
 {
 	const auto path = directory / "android.img";
 	const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (descriptor < 0)
-		throw std::system_error(errno, std::generic_category(), "open base disk");
+		throw std::system_error(errno, std::generic_category(), "open disk");
 	try {
 		if (ftruncate(descriptor, static_cast<off_t>(diskSize)) != 0)
 			throw std::system_error(errno, std::generic_category(), "ftruncate");
@@ -214,43 +198,20 @@ std::filesystem::path makeBaseDisk(const std::filesystem::path &directory,
 	return path;
 }
 
-std::filesystem::path makeRecoveryCow(const std::filesystem::path &directory)
+void requestRecovery(const std::filesystem::path &disk)
 {
-	constexpr std::uint64_t headerSize = 4128;
-	constexpr std::uint64_t alignment = 16384;
-	constexpr std::uint64_t sectors = expandedDiskSize / sectorSize;
-	constexpr std::uint64_t bitmapSize = sectors / 8U;
-	constexpr std::uint64_t bitmapOffset = alignment;
-	constexpr std::uint64_t dataOffset = bitmapOffset + bitmapSize;
-	const auto path = directory / "userdata.cow";
-	const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+	const int descriptor = open(disk.c_str(), O_RDWR);
 	if (descriptor < 0)
-		throw std::system_error(errno, std::generic_category(), "open COW");
+		throw std::system_error(errno, std::generic_category(), "open disk");
 	try {
-		if (ftruncate(descriptor,
-			      static_cast<off_t>(dataOffset + expandedDiskSize)) != 0)
-			throw std::system_error(errno, std::generic_category(), "ftruncate COW");
-		std::array<std::byte, headerSize> header {};
-		big32(header, 0, 0x4f4f4f4dU);
-		big32(header, 4, 3U);
-		big64(header, 12, expandedDiskSize);
-		big32(header, 20, 512U);
-		big32(header, 24, alignment);
-		header[32] = static_cast<std::byte>('/');
-		writeAll(descriptor, 0, header);
-		const auto sector = miscOffset / sectorSize;
-		std::array<std::byte, 1> bitmap {
-			static_cast<std::byte>(1U << (sector % 8U))};
-		writeAll(descriptor, bitmapOffset + sector / 8U, bitmap);
 		const std::string command = "boot-recovery";
-		writeAll(descriptor, dataOffset + miscOffset,
+		writeAll(descriptor, miscOffset,
 			 std::as_bytes(std::span{command.data(), command.size() + 1U}));
 	} catch (...) {
 		(void)close(descriptor);
 		throw;
 	}
 	require(close(descriptor) == 0);
-	return path;
 }
 
 } // namespace
@@ -259,45 +220,41 @@ int main()
 {
 	const auto directory = scratchDirectory();
 	try {
-		const auto missingCow = directory / "missing.cow";
-		const auto stale = makeBaseDisk(directory, seedDiskSize);
+		const auto stale = makeDisk(directory, seedDiskSize);
 		std::filesystem::resize_file(stale, expandedDiskSize);
 		requireThrows([&] {
 			(void)uml::android::selectBoot(
-				stale, missingCow, uml::android::BootMode::normal);
+				stale, uml::android::BootMode::normal);
 		});
 		require(std::filesystem::remove(stale));
 
-		const auto base = makeBaseDisk(directory, expandedDiskSize);
-		require(std::filesystem::file_size(base) == expandedDiskSize);
+		const auto disk = makeDisk(directory, expandedDiskSize);
+		require(std::filesystem::file_size(disk) == expandedDiskSize);
 		const auto automatic =
-			uml::android::selectBoot(base, missingCow,
-						 uml::android::BootMode::automatic);
+			uml::android::selectBoot(disk, uml::android::BootMode::automatic);
 		require(automatic.mode == uml::android::BootMode::normal);
 		require(automatic.ramdisk.offset == initBootOffset + 4096U);
 		require(automatic.ramdisk.size == normalRamdiskSize);
 
 		const auto explicitRecovery =
-			uml::android::selectBoot(base, missingCow,
-						 uml::android::BootMode::recovery);
+			uml::android::selectBoot(disk, uml::android::BootMode::recovery);
 		require(explicitRecovery.mode == uml::android::BootMode::recovery);
 		require(explicitRecovery.ramdisk.offset == recoveryOffset + 4096U);
 		require(explicitRecovery.ramdisk.size == recoveryRamdiskSize);
 
-		const auto cow = makeRecoveryCow(directory);
+		requestRecovery(disk);
 		const auto requestedRecovery =
-			uml::android::selectBoot(base, cow,
-						 uml::android::BootMode::automatic);
+			uml::android::selectBoot(disk, uml::android::BootMode::automatic);
 		require(requestedRecovery.mode == uml::android::BootMode::recovery);
 
-		const int descriptor = open(base.c_str(), O_RDWR);
+		const int descriptor = open(disk.c_str(), O_RDWR);
 		require(descriptor >= 0);
 		std::array<std::byte, 1> corrupt {std::byte{0xff}};
 		writeAll(descriptor, sectorSize + 20U, corrupt);
 		require(close(descriptor) == 0);
 		requireThrows([&] {
 			(void)uml::android::selectBoot(
-				base, missingCow, uml::android::BootMode::normal);
+				disk, uml::android::BootMode::normal);
 		});
 	} catch (...) {
 		std::filesystem::remove_all(directory);

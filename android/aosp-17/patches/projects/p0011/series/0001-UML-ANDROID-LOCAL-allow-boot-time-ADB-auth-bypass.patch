@@ -1,0 +1,29 @@
+From 08698d61188ff923a8081303a0ffea9dc11f24bb Mon Sep 17 00:00:00 2001
+From: linux-um-darwin Android patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Fri, 28 Aug 2026 08:28:48 +0000
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: allow boot-time ADB auth bypass
+
+Change-Id: Iab83264efd4639d8cca0fe175dbd7e4d94646799
+---
+ daemon/main.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/daemon/main.cpp b/daemon/main.cpp
+index 3d3f3024aaf4237c028465d2f2c17ba1bec40ad3..0cf3301d9b6ece6bd670fa52e72529a090a5a5b2 100644
+--- a/daemon/main.cpp
++++ b/daemon/main.cpp
+@@ -235,6 +235,13 @@ int adbd_main() {
+     }
+ #endif
+ 
++    // Kernarium exposes one immutable per-boot policy for ADB authorization.
++    // Authorization is enabled when the property is absent, overriding the
++    // Cuttlefish user-build default; only an explicit false value permits
++    // unattended host testing.
++    auth_required = android::base::GetBoolProperty(
++            "ro.boot.kernarium.adb_auth", true);
++
+     // Our external storage path may be different than apps, since
+     // we aren't able to bind mount after dropping root.
+     const char* adb_external_storage = getenv("ADB_EXTERNAL_STORAGE");

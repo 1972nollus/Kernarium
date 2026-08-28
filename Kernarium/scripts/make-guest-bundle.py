@@ -3,9 +3,9 @@
 """Assemble a Kernarium guest bundle from an installed Android release.
 
 A bundle is a directory the application can boot on its own: the release
-payload plus, once it has booted, the writable disk the guest accumulates. The
-kernel is not part of it: the application carries an independently accepted
-ACK artifact in its signed runtime framework.
+payload including the directly writable disk the guest accumulates. The kernel
+is not part of it: the application carries an independently accepted ACK
+artifact in its signed runtime framework.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ BUNDLE_SUFFIX = ".kern"
 MANIFEST = "release-manifest.json"
 COMMAND_LINE = "boot/kernel-command-line.txt"
 GUEST_DIRECTORY = "guest"
-INSTANCE = "userdata.cow"
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTANCE = ROOT / "android/aosp-17/metadata/accepted-release.env"
 
@@ -41,7 +40,7 @@ def accepted_directory_name() -> str:
     return match.group(1)
 
 
-def base_disk(release: Path) -> Path:
+def release_disk(release: Path) -> Path:
     disks = sorted(
         entry
         for entry in (release / GUEST_DIRECTORY).glob("*.img")
@@ -49,7 +48,7 @@ def base_disk(release: Path) -> Path:
     )
     if len(disks) != 1:
         fail(
-            f"expected exactly one base image under {release / GUEST_DIRECTORY}, "
+            f"expected exactly one disk image under {release / GUEST_DIRECTORY}, "
             f"found {len(disks)}"
         )
     return disks[0]
@@ -93,7 +92,7 @@ def main() -> int:
         shutil.rmtree(output)
 
     manifest = json.loads((release / MANIFEST).read_text(encoding="utf-8"))
-    disk = base_disk(release)
+    disk = release_disk(release)
     print(
         f"assembling {output.name} from {manifest['product_family']} "
         f"{manifest['release_id']}"
@@ -101,11 +100,12 @@ def main() -> int:
     output.mkdir(parents=True)
     copy(release / MANIFEST, output / MANIFEST)
     copy(release / COMMAND_LINE, output / COMMAND_LINE)
-    copy(disk, output / GUEST_DIRECTORY / disk.name)
+    bundle_disk = output / GUEST_DIRECTORY / disk.name
+    copy(disk, bundle_disk)
+    bundle_disk.chmod(bundle_disk.stat().st_mode | 0o200)
     print(
         f"guest bundle ready: {output}\n"
-        f"  the application creates {INSTANCE} inside it on first boot and "
-        f"reopens it on every later boot"
+        "  the application opens the bundle-local GPT directly on every boot"
     )
     return 0
 

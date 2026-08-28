@@ -1,7 +1,7 @@
 From 0f05af4ce7ff55087d9a6c6028fa535dc96c7e59 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 19:06:43 +0000
-Subject: [PATCH 2/2] UML-ANDROID-LOCAL: audio: make assistant default
+Subject: [PATCH 2/3] UML-ANDROID-LOCAL: audio: make assistant default
  configurable
 
 Change-Id: Ia50096864213c37b8275913ea3017d0bcb73d5db

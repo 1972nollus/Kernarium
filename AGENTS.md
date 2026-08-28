@@ -186,8 +186,8 @@ Update documentation in the same change whenever its current contract changes.
   local iOS Simulators. Resolve releases and bundles from their manifests;
   resolve build outputs from their recorded invocation and canonical output
   root; and delete only explicit Android paths. Preserve the current accepted
-  release and its active bundle/COW, Android source and patch-producer checkouts,
-  accepted kernel inputs, dependency prefixes, non-Android guests, and
+  release and its active writable bundle, Android source and patch-producer
+  checkouts, accepted kernel inputs, dependency prefixes, non-Android guests, and
   unrelated Simulator Documents siblings.
 - Do not delete or overwrite a rootfs, dependency prefix, replay checkout, or
   another developer's artifacts without explicit authorization.

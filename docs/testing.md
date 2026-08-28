@@ -94,7 +94,7 @@ directly; authentication happens only when provisioning a replacement. Shared
 runs map it with `ubd0c=` and boot `root=/dev/ubda rootfstype=erofs`. Never use
 the root device as writable scratch space.
 
-Writable guest state belongs in a disposable or per-instance COW/OverlayFS
+Writable guest state belongs in a disposable OverlayFS
 layer. Rootfs updates replace the complete authenticated image through
 `tools/rootfs/provision.py`; there is no in-place maintenance workflow.
 

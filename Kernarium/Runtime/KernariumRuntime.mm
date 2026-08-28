@@ -942,6 +942,8 @@ void appendKernelCommandLine(
 {
     constexpr std::string_view densityPrefix {
         "androidboot.lcd_density="};
+    constexpr std::string_view adbAuthorizationPrefix {
+        "androidboot.kernarium.adb_auth="};
     const auto payload = readRegularFile(path);
     const std::string text(payload.begin(), payload.end());
     std::size_t cursor = 0;
@@ -962,6 +964,10 @@ void appendKernelCommandLine(
                 throw std::invalid_argument(
                     "the bundle kernel command line fixes the display density");
             }
+            if (argument.starts_with(adbAuthorizationPrefix)) {
+                throw std::invalid_argument(
+                    "the bundle kernel command line fixes ADB authorization");
+            }
             arguments.emplace_back(argument);
             ++appended;
         }
@@ -975,27 +981,18 @@ void appendKernelCommandLine(
      * already scaled dotsPerInch by nativeScale when Retina mode is active. */
     arguments.emplace_back(
         std::string {densityPrefix} + std::to_string(dotsPerInch));
+    /* androidboot properties become immutable ro.boot properties. iOS always
+     * keeps the stock authorization prompt for a previously unseen ADB host. */
+    arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
 }
 
-/* The instance disk is the guest's only persistent state. It lives beside the
- * payload it belongs to, so a bundle carries its own history and cannot be
- * paired with another release's disk. */
-void prepareAndroidInstance(const std::filesystem::path& instance)
+void prepareAndroidDisk(const std::filesystem::path& disk)
 {
     struct stat details {};
-    if (lstat(instance.c_str(), &details) == 0) {
-        if (!S_ISREG(details.st_mode))
-            throw std::invalid_argument("the instance disk is not a file");
-        if (::access(instance.c_str(), R_OK | W_OK) != 0)
-            throw std::invalid_argument("the instance disk is not writable");
-        return;
-    }
-    if (errno != ENOENT)
-        throw std::runtime_error("cannot inspect the instance disk");
-    /* UBD creates the copy-on-write disk itself on first boot; the bundle only
-     * has to be a writable directory when it does. */
-    if (::access(instance.parent_path().c_str(), W_OK) != 0)
-        throw std::invalid_argument("the bundle directory is not writable");
+    if (lstat(disk.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
+        throw std::invalid_argument("the Android disk is not a regular file");
+    if (::access(disk.c_str(), R_OK | W_OK) != 0)
+        throw std::invalid_argument("the Android disk is not writable");
 }
 #endif
 
@@ -1055,20 +1052,16 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        if (boot->android_base_disk_path == nullptr ||
-            boot->android_instance_path == nullptr ||
+        if (boot->android_disk_path == nullptr ||
             boot->android_command_line_path == nullptr) {
             std::fputs("Kernarium: incomplete Android bundle\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
-        const std::filesystem::path baseDisk {boot->android_base_disk_path};
-        const std::filesystem::path instance {boot->android_instance_path};
-        validateUbdPath(baseDisk, "Android base disk");
-        validateUbdPath(instance, "Android instance");
-        prepareAndroidInstance(instance);
+        const std::filesystem::path androidDisk {boot->android_disk_path};
+        validateUbdPath(androidDisk, "Android disk");
+        prepareAndroidDisk(androidDisk);
         const auto androidBoot = uml::android::selectBoot(
-            baseDisk,
-            instance,
+            androidDisk,
             static_cast<uml::android::BootMode>(boot->android_boot_mode));
         const bool derivativeRootfs = false;
 #else
@@ -1248,13 +1241,10 @@ int runtimeRun(
         arguments.emplace_back(
             "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
             std::to_string(uml::battery::protocol::deviceId));
-        /* The instance disk is the copy-on-write layer over the immutable
-         * bundle GPT. The initrd range is read from that same backing image,
-         * so every guest write lands in the bundle and survives the next
-         * launch without a standalone ramdisk. */
-        arguments.emplace_back(
-            "ubd0=" + instance.string() + "," + baseDisk.string());
-        arguments.emplace_back("initrd=" + baseDisk.string());
+        /* The bundle GPT is the directly writable persistent disk. Its selected
+         * ramdisk is exposed from the same file without a standalone image. */
+        arguments.emplace_back("ubd0=" + androidDisk.string());
+        arguments.emplace_back("initrd=" + androidDisk.string());
         arguments.emplace_back(
             "initrd_offset=" + std::to_string(androidBoot.ramdisk.offset));
         arguments.emplace_back(
@@ -1461,7 +1451,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v6(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v7(void)
 {
     return &runtimeApi;
 }

@@ -30,8 +30,8 @@ runtime for the process lifetime.
 
 The Android macOS composition is a separate product. Its build consumes a
 compatible ACK kernel artifact; launch accepts a rootfs directory and
-per-instance COW without comparing rootfs release identity, and it does not
-search for the Linux desktop image.
+one directly writable GPT image without comparing rootfs release identity, and
+it does not search for the Linux desktop image.
 
 ## Runtime and scheduling
 
@@ -147,14 +147,14 @@ Guest disk capacity is an application concern rather than a runtime option.
 Kernarium transactionally grows raw Android images and their final userdata
 GPT entry through Swift `DiskUtil` and the statically linked GPT fdisk core.
 The standalone macOS Android wrapper performs the same host-side operation
-with the system `truncate` utility and Homebrew `sgdisk`. Android only compares
-the ext4 and partition extents, then runs `e2fsck` and `resize2fs` before
-mounting `/data` when growth is needed. The runtime validates that the GPT
-matches the file and boots it without rewriting either.
+with the system `truncate` utility and Homebrew `sgdisk`. Android invokes the
+idempotent ext4 `resize2fs` tool before mounting `/data`; OrangeFox performs an
+explicit extent comparison before `e2fsck` and `resize2fs`. The runtime
+validates that the GPT matches the file and boots it without rewriting either.
 
 Kernarium flushes when losing focus, quiesces before backgrounding or
-termination, and resumes on foregrounding. A `.kern` bundle owns its persistent
-COW; launch and app updates must not recreate or flatten an existing bundle.
+termination, and resumes on foregrounding. A `.kern` bundle owns its persistent,
+directly writable image; launch must reopen that same image.
 
 ## API and validation
 

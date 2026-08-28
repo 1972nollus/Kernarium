@@ -333,13 +333,11 @@ for package in \
 	com.android.uwb \
 	com.android.virt \
 	com.android.wifi \
-	blockdev \
 	e2fsck \
 	Jelly \
 	LatinIME \
 	resize2fs \
-	ThemePicker \
-	tune2fs; do
+	ThemePicker; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"
 done

@@ -4,13 +4,13 @@ arch/arm64/Makefile.um	0009,0015	The arm64 port establishes its address constant
 arch/arm64/um/asm/mman.h	0009,0015	The arm64 port owns mmap policy while topic 0015 rejects guest mappings that cross the shared sparse native hole.
 arch/arm64/um/asm/processor.h	0009,0016	The arm64 port owns its relax primitive while the fixed-carrier topic adds a safe cooperative IPI boundary.
 arch/arm64/um/signal.c	0009,0015	The arm64 signal port owns its restorer while topic 0015 moves the trampoline with the selected guest task ceiling.
-arch/um/Kconfig	0001,0024	The shared architecture topic establishes Darwin-capable UML configuration while topic 0024 advertises suspend after adding the SMP CPU-hotplug implementation used by the generic PM core.
+arch/um/Kconfig	0001,0023	The shared architecture topic establishes Darwin-capable UML configuration while topic 0023 advertises suspend after adding the SMP CPU-hotplug implementation used by the generic PM core.
 arch/um/drivers/darwin_net_kern.c	0010,0021	The device topic introduces Darwin networking while topic 0021 moves receive processing onto budgeted NAPI polling.
-arch/um/drivers/ubd_kern.c	0010,0023,0025	The device topic adapts UBD host I/O, topic 0023 advances mixed COW requests by the complete descriptor length, and topic 0025 batches discard ranges independently of the data-request sector mask.
+arch/um/drivers/ubd_kern.c	0010,0024	The device topic adapts UBD host I/O, while topic 0024 lets direct images batch discard ranges without changing upstream COW handling.
 arch/um/drivers/virtio_uml.c	0010,0014	Darwin vhost-user transport support remains in topic 0010 while the generic 64-bit DMA-mask correction stays independently droppable as topic 0014.
 arch/um/drivers/vnc_input.c	0010,0020	The device topic owns Darwin input while topic 0020 exposes the display-mapped pointer as a direct touchscreen.
 arch/um/include/asm/processor-generic.h	0001,0015	The shared task-layout contract remains in topic 0001 while topic 0015 selects the scalable Darwin guest unmapped base.
-arch/um/include/shared/kern_util.h	0001,0019,0024	The shared contract owns kernel-side host helpers, topic 0019 adds cooperative progress checkpoints, and topic 0024 adds the suspend-entry acknowledgement hook.
+arch/um/include/shared/kern_util.h	0001,0019,0023	The shared contract owns kernel-side host helpers, topic 0019 adds cooperative progress checkpoints, and topic 0023 adds the suspend-entry acknowledgement hook.
 arch/um/include/shared/os.h	0001,0018,0022	The shared host contract remains in topic 0001, topic 0018 adds local IPI raise, and topic 0022 adds physical-range reclamation.
 arch/um/kernel/process.c	0004,0016	The execution core owns Linux task entry while topic 0016 adapts activation to fixed Darwin vCPU carriers.
 arch/um/kernel/skas/process.c	0002,0016	The MMU bootstrap owns CPU0 setup while topic 0016 installs the Darwin signal stack on its carrier.
@@ -19,7 +19,7 @@ arch/um/kernel/smp.c	0003,0018	The SMP core owns IPI dispatch while topic 0018 a
 arch/um/kernel/time.c	0003,0019	The timer core owns Darwin delivery while topic 0019 exposes safe cooperative progress checkpoints.
 arch/um/kernel/tlb.c	0002,0019	The MMU topic owns Darwin invalidation while topic 0019 adds a quiescent progress boundary after it completes.
 arch/um/kernel/trap.c	0002,0015	The MMU core owns guest fault dispatch while topic 0015 rejects faults that intersect the shared sparse native hole.
-arch/um/kernel/um_arch.c	0004,0015,0024	The execution core owns task-size setup, topic 0015 selects and sizes the common Apple address window, and topic 0024 acknowledges host-controlled suspend at the platform entry boundary.
+arch/um/kernel/um_arch.c	0004,0015,0023	The execution core owns task-size setup, topic 0015 selects and sizes the common Apple address window, and topic 0023 acknowledges host-controlled suspend at the platform entry boundary.
 arch/um/os-Darwin/internal.h	0007,0016	The Darwin host topic owns private services while topic 0016 replaces per-task scheduler hooks and adds carrier stop handling.
 arch/um/os-Darwin/main.c	0007,0016	The Darwin host topic owns entry while topic 0016 keeps last-ditch stop handling on fixed carriers.
 arch/um/os-Darwin/mem.c	0007,0022	The Darwin host topic owns physical-memory setup while topic 0022 selects anonymous backing and range reclamation.

@@ -19,8 +19,8 @@ The configuration includes the Android Binder, SELinux/audit, cgroups, storage,
 DMA-BUF heaps, networking, BPF interpreter, Virtio devices, and Darwin UML
 scheduling support required by the product. The current rootfs uses unencrypted
 ext4 userdata, but the fscrypt, inline-encryption fallback, HCTR2, and
-dm-default-key stack remains built in so older accepted rootfs and persistent
-COW bundles continue to boot with a newer kernel in the same `6.18` line. The
+dm-default-key stack remains built in for ordinary Android application and
+framework compatibility. The
 native arm64 eBPF JIT is not exposed because its execution contracts do not
 match UML; the AOSP product uses the generic BPF interpreter.
 
@@ -33,8 +33,8 @@ The local series provides the durable Android-specific behavior:
 - free-page reporting for file-backed guest RAM where supported;
 - virtually mapped 128 KiB task stacks and the common RAM-scaled auxiliary
   address window;
-- correct COW-backed UBD request advancement and 128 MiB batched discard,
-  including persistent bitmap updates after reclaiming host COW extents;
+- 128 MiB batched discard for directly attached UBD images without modifying
+  the upstream UML COW implementation;
 - validated initramfs ranges inside the static GPT;
 - a Kernarium Virtio battery power-supply driver for host percentage and
   charging-state passthrough;
@@ -65,7 +65,7 @@ local bundle below `.build/kernel/artifacts`.
 
 Kernel publication is independent of AOSP/rootfs publication. Advancing the
 accepted ACK artifact must not rebuild or rename the rootfs release, recreate a
-`.kern` bundle, or invalidate its persistent COW. Apple consumers validate the
+`.kern` bundle, or invalidate its persistent disk. Apple consumers validate the
 bridge ABI, 16 KiB page profile, Android family, and `6.18` series at build
 time; patch releases and commit identities are provenance, not runtime gates.
 

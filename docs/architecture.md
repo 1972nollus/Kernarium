@@ -115,17 +115,19 @@ identities, and producer provenance do not become runtime compatibility keys.
 release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
-reads the supplied GPT through a per-instance COW and has no 4 KiB variant.
+opens one directly writable supplied GPT and has no 4 KiB variant.
 
-A Kernarium `.kern` bundle contains one guest's rootfs payload and persistent
-COW. Android bundles provide a kernel command line and one GPT image; a release
+A Kernarium `.kern` bundle contains one guest's persistent rootfs payload.
+Android bundles provide a kernel command line and one directly writable GPT
+image; a release
 manifest may accompany them as provenance. The kernel comes from the selected
 runtime framework. Launch does not compare kernel, runtime, or rootfs release
 identities; missing or malformed inputs fail at their ordinary file or image
 boundary. The app's `DiskUtil` owns raw-file capacity before launch and
 dispatches any format-specific partition-table update. Android GPT growth uses
 the verified static GPT fdisk core linked into the app; the standalone macOS
-launcher uses Homebrew `sgdisk`. Runtime frameworks receive no capacity policy
+launcher copies a changed release to its persistent 8 GiB disk and uses
+Homebrew `sgdisk`. Runtime frameworks receive no capacity policy
 and reject a GPT whose declared extent differs from its file. The guest only
 grows a filesystem after observing that its containing partition is larger.
 This keeps the same host-capacity workflow available to later Linux image

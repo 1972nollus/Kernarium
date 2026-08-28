@@ -257,6 +257,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.product.cpu.abi=arm64-v8a\n"
                     "ro.product.cpu.abilist=arm64-v8a\n"
                     f"ro.product.cpu.abilist32={abilist32}\n"
+                    "ro.build.type=user\n"
+                    "ro.debuggable=0\n"
                     f"{virtual_ab_property}",
                 )
                 archive.writestr(
@@ -270,31 +272,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.alarm_vol_default=7\n"
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
+                    "persist.sys.usb.config=adb\n"
                     f"ro.product.product.model="
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
                 )
-                for tool in ("blockdev", "e2fsck", "resize2fs", "tune2fs"):
+                for tool in ("e2fsck", "resize2fs"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
                     )
-                archive.writestr(
-                    "VENDOR/bin/kernarium-grow-userdata",
-                    "partition=/dev/block/by-name/userdata\n"
-                    "partition_sectors=$(/system/bin/blockdev --getsz "
-                    "\"$partition\")\n"
-                    "filesystem_blocks=$(/system/bin/tune2fs -l "
-                    "\"$partition\")\n"
-                    "filesystem_block_size=4096\n"
-                    "filesystem_block_sectors=$((filesystem_block_size / 512))\n"
-                    "filesystem_sectors=$((filesystem_blocks * "
-                    "filesystem_block_sectors))\n"
-                    "/system/bin/e2fsck -pf \"$partition\"\n"
-                    "exec /system/bin/resize2fs \"$partition\"\n",
-                )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
                     synthetic_apex(
@@ -332,10 +321,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
-                    "    exec u:r:su:s0 root root -- /system/bin/sh "
-                    "/vendor/bin/kernarium-grow-userdata\n"
+                    "    exec -- /system/bin/resize2fs "
+                    "/dev/block/by-name/userdata\n"
                     "    mount_all --late\n"
-                    "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
+                    "on boot\n"
+                    "    setprop ro.hardware.audio.primary goldfish\n"
+                    "    setprop service.adb.tcp.port 5555\n"
+                    "    start adbd\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/audio_effects_config.xml",
@@ -1191,7 +1183,6 @@ def main() -> None:
         android_root / "overlay/BoardConfig.mk",
         android_root / "overlay/aosp_kernarium_darwin.mk",
         android_root / "overlay/config/Android.bp",
-        android_root / "overlay/config/grow-userdata.sh",
         android_root / "overlay/config/init.vendor.rc",
         android_root / "overlay/config/recovery.fstab",
         android_root / "overlay/config/kernarium_core_hardware.xml",
@@ -1276,14 +1267,15 @@ def main() -> None:
         "ANDROID17_PRODUCT": "aosp_kernarium_darwin",
         "ANDROID17_PAGE_SIZE": "16384",
         "ANDROID17_RELEASE_CONFIG": "aosp_current",
+        "ANDROID17_BUILD_VARIANT": "user",
     }
     expected_ack = {
         "UML_KERNEL_FAMILY": "android-6.18",
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "b5b694e44190763ad98aafa8ec97442c17d4e112",
-        "UML_KERNEL_PATCH_COUNT": "38",
+        "UML_KERNEL_FINAL_TREE": "8f74db26483f74b45240e956193d6ba022ab2960",
+        "UML_KERNEL_PATCH_COUNT": "37",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -1434,17 +1426,17 @@ def main() -> None:
         kernel_root
         / "patches/series/0027-UML-DARWIN-LOCAL-poll-timers-before-cond_resched.patch"
     ).read_text()
-    ubd_cow_offset_patch = (
+    ubd_direct_discard_patch = (
         kernel_root
-        / "patches/series/0033-UML-DARWIN-LOCAL-um-advance-COW-I-O-by-the-full-desc.patch"
+        / "patches/series/0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch"
     ).read_text()
     initrd_range_patch = (
         kernel_root
-        / "patches/series/0034-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
+        / "patches/series/0033-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
     ).read_text()
     battery_patch = (
         kernel_root
-        / "patches/series/0036-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
+        / "patches/series/0035-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
     ).read_text()
     build_make_patch = "\n".join(
         path.read_text()
@@ -1477,6 +1469,18 @@ def main() -> None:
         path.read_text()
         for path in sorted(
             (android_root / "patches/projects/p0010/series").glob("*.patch")
+        )
+    )
+    frameworks_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0007/series").glob("*.patch")
+        )
+    )
+    adb_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0011/series").glob("*.patch")
         )
     )
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
@@ -1570,16 +1574,15 @@ def main() -> None:
         re.DOTALL,
     ) is None:
         fail("ACK cond_resched boundary no longer polls the timer before rescheduling")
-    if re.search(
-        r"^\+\s*req->offset \+= desc->length;$",
-        ubd_cow_offset_patch,
-        re.MULTILINE,
-    ) is None:
-        fail("ACK UBD COW topic does not advance by the complete descriptor")
-    if re.search(
-        r"^\+\s*req->offset \+= len;$", ubd_cow_offset_patch, re.MULTILINE
-    ) is not None:
-        fail("ACK UBD COW topic advances by only the final backing/COW run")
+    if "UBD_MAX_DIRECT_DISCARD_SECTORS" not in ubd_direct_discard_patch:
+        fail("ACK direct-image discard topic is missing its large request limit")
+    for forbidden in (
+        "cow_bitmap",
+        "cow_bitmap_offset",
+        "req->offset += desc->length",
+    ):
+        if forbidden in ubd_direct_discard_patch:
+            fail(f"ACK discard topic adds COW behavior: {forbidden}")
     for token in (
         '__uml_setup("initrd_offset=", uml_initrd_offset_setup',
         '__uml_setup("initrd_size=", uml_initrd_size_setup',
@@ -1641,7 +1644,7 @@ def main() -> None:
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
     if (
-        "aosp_kernarium_darwin-aosp_current-userdebug" not in android_products
+        "aosp_kernarium_darwin-aosp_current-user" not in android_products
         or "trunk_staging" in android_products
     ):
         fail("Android product registration does not select aosp_current")
@@ -1712,12 +1715,10 @@ def main() -> None:
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
         "Jelly",
-        "blockdev",
         "e2fsck",
         "LatinIME",
         "resize2fs",
         "ThemePicker",
-        "tune2fs",
         "BOARD_HAVE_BLUETOOTH := false",
         "TARGET_NO_TELEPHONY := true",
         "PRODUCT_BUILD_RECOVERY_IMAGE := true",
@@ -1733,6 +1734,7 @@ def main() -> None:
         "ro.config.alarm_vol_default=7",
         "ro.config.system_vol_default=7",
         "ro.config.assistant_vol_default=15",
+        "persist.sys.usb.config=adb",
     ):
         if token not in device_product:
             fail(f"device overlay product is missing fixed policy: {token}")
@@ -1901,9 +1903,24 @@ def main() -> None:
         '<bool name="def_dtmf_tones_enabled">false</bool>',
         '<bool name="def_sound_effects_enabled">false</bool>',
         '<bool name="def_charging_sounds_enabled">false</bool>',
+        '<bool name="def_development_settings_enabled">true</bool>',
     ):
         if token not in settings_defaults:
             fail(f"SettingsProvider overlay is missing emulator default: {token}")
+    for token in (
+        "def_development_settings_enabled",
+        "Settings.Global.DEVELOPMENT_SETTINGS_ENABLED",
+        "loadBooleanSetting(stmt,",
+    ):
+        if token not in frameworks_patch:
+            fail(f"framework defaults topic is missing developer policy: {token}")
+    for token in (
+        '"ro.boot.kernarium.adb_auth"',
+        "true",
+        "auth_required = android::base::GetBoolProperty",
+    ):
+        if token not in adb_patch:
+            fail(f"adbd topic is missing boot authorization policy: {token}")
     for token in (
         '<bool name="config_disableLockscreenByDefault">true</bool>',
         '<integer name="config_audio_notif_vol_default">7</integer>',
@@ -2155,7 +2172,6 @@ def main() -> None:
         "e2fsck",
         "LatinIME",
         "resize2fs",
-        "tune2fs",
         "QuickSearchBox",
         "ThemePicker",
         "BOARD_USES_SYSTEM_OTHER_ODEX",

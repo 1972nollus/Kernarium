@@ -8,6 +8,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shlex
@@ -44,8 +45,6 @@ DEFAULT_ADB_PORT = 5555
 GUEST_ADB_PORT = 5555
 DEFAULT_DISPLAY_WIDTH = 720
 DEFAULT_DISPLAY_HEIGHT = 1280
-MINIMUM_DISK_SIZE_GIB = 4
-MAXIMUM_DISK_SIZE_GIB = 64
 DEFAULT_DISK_SIZE_GIB = 8
 
 
@@ -76,16 +75,6 @@ def port_number(value: str) -> int:
     return parsed
 
 
-def disk_capacity(value: str) -> int:
-    parsed = positive_integer(value)
-    if not MINIMUM_DISK_SIZE_GIB <= parsed <= MAXIMUM_DISK_SIZE_GIB:
-        raise argparse.ArgumentTypeError(
-            f"must be between {MINIMUM_DISK_SIZE_GIB} and "
-            f"{MAXIMUM_DISK_SIZE_GIB} GiB"
-        )
-    return parsed
-
-
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -99,10 +88,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="installed Android release (default: accepted release)",
     )
     parser.add_argument(
-        "--instance",
+        "--disk",
         type=Path,
         help=(
-            "persistent writable COW (default: a release-specific file below "
+            "persistent writable GPT image (default: android-17.img below "
             ".build/android/instances)"
         ),
     )
@@ -126,12 +115,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument("--memory", default="8G")
-    parser.add_argument(
-        "--disk-size-gib",
-        type=disk_capacity,
-        default=DEFAULT_DISK_SIZE_GIB,
-        help="expanded Android disk capacity in GiB (default: 8)",
-    )
     parser.add_argument(
         "--width",
         type=positive_integer,
@@ -233,38 +216,28 @@ def release_path(
     return release
 
 
-def instance_path(requested: Path | None, release: Path) -> Path:
-    candidate = (
-        INSTANCES_ROOT / f"{release.name}.cow"
-        if requested is None
-        else requested.expanduser()
-    )
+def disk_path(requested: Path | None) -> Path:
+    candidate = INSTANCES_ROOT / "android-17.img" if requested is None else requested.expanduser()
     if not candidate.is_absolute():
         candidate = Path.cwd() / candidate
     return candidate.resolve(strict=False)
 
 
-def instance_base_path(instance: Path) -> Path:
-    return instance.with_suffix(".base.img")
+def disk_release_path(disk: Path) -> Path:
+    return disk.with_name(disk.name + ".release-id")
 
 
-def prepare_instance_base(release: Path, instance: Path, base: Path) -> None:
-    source = release / "guest/android-17-uml-arm64.img"
-    if base.exists():
-        if base.is_symlink() or not base.is_file() or not os.access(base, os.W_OK):
-            raise LauncherError(f"Android instance base is unsafe: {base}")
-        return
-    if instance.exists():
-        raise LauncherError(
-            f"Android instance has no matching mutable base: {instance}"
+def release_id(release: Path) -> str:
+    try:
+        manifest = json.loads(
+            (release / "release-manifest.json").read_text(encoding="utf-8")
         )
-    base.parent.mkdir(parents=True, exist_ok=True)
-    temporary = base.with_name(base.name + ".tmp")
-    if temporary.exists() or temporary.is_symlink():
-        raise LauncherError(f"stale Android base staging path: {temporary}")
-    clone_file(source, temporary)
-    temporary.chmod(temporary.stat().st_mode | 0o200)
-    temporary.replace(base)
+        value = manifest["release_id"]
+    except (OSError, json.JSONDecodeError, KeyError) as error:
+        raise LauncherError(f"cannot read Android release identity: {error}") from error
+    if not isinstance(value, str) or not value or "\n" in value:
+        raise LauncherError("Android release has an invalid release_id")
+    return value
 
 
 def clone_file(source: Path, destination: Path) -> None:
@@ -327,38 +300,33 @@ def gpt_layout_matches(sgdisk: Path, image: Path, capacity_bytes: int) -> bool:
     return verified.returncode == 0 and "No problems found." in verified.stdout
 
 
-def resize_instance_base(
-    base: Path,
-    instance: Path,
+def resize_android_disk(
+    disk: Path,
     capacity_gib: int,
     *,
     truncate: Path = SYSTEM_TRUNCATE,
     sgdisk: Path | None = None,
 ) -> bool:
     requested = capacity_gib * 1024**3
-    current = base.stat().st_size
+    current = disk.stat().st_size
     selected_sgdisk = homebrew_sgdisk() if sgdisk is None else sgdisk
     if not selected_sgdisk.is_file() or not os.access(selected_sgdisk, os.X_OK):
         raise LauncherError(f"Homebrew sgdisk is unavailable: {selected_sgdisk}")
     if current == requested and gpt_layout_matches(
-        selected_sgdisk, base, requested
+        selected_sgdisk, disk, requested
     ):
         return False
-    if instance.exists():
-        raise LauncherError(
-            "Android disk capacity cannot change after the instance was created"
-        )
     if current > requested:
         raise LauncherError(
-            f"Android base disk cannot shrink from {current} to {requested} bytes"
+            f"Android disk cannot shrink from {current} to {requested} bytes"
         )
     if not truncate.is_file() or not os.access(truncate, os.X_OK):
         raise LauncherError(f"macOS truncate utility is unavailable: {truncate}")
-    temporary = base.with_name(base.name + ".resize.tmp")
+    temporary = disk.with_name(disk.name + ".resize.tmp")
     if temporary.exists() or temporary.is_symlink():
         raise LauncherError(f"stale Android disk resize path: {temporary}")
     try:
-        clone_file(base, temporary)
+        clone_file(disk, temporary)
         subprocess.run(
             [str(truncate), "-s", str(requested), str(temporary)],
             check=True,
@@ -366,7 +334,7 @@ def resize_instance_base(
         actual = temporary.stat().st_size
         if actual != requested:
             raise LauncherError(
-                "Android base disk resize produced "
+                "Android disk resize produced "
                 f"{actual}, expected {requested} bytes"
             )
         disk_lbas = requested // GPT_LOGICAL_BLOCK_BYTES
@@ -392,10 +360,69 @@ def resize_instance_base(
             raise LauncherError(f"Homebrew sgdisk could not resize GPT: {detail}")
         if not gpt_layout_matches(selected_sgdisk, temporary, requested):
             raise LauncherError("Homebrew sgdisk produced an invalid Android GPT")
-        temporary.replace(base)
+        temporary.replace(disk)
     finally:
         if temporary.exists():
             temporary.unlink()
+    return True
+
+
+def prepare_persistent_disk(
+    release: Path,
+    disk: Path,
+    *,
+    truncate: Path = SYSTEM_TRUNCATE,
+    sgdisk: Path | None = None,
+) -> bool:
+    source = release / "guest/android-17-uml-arm64.img"
+    identity = release_id(release)
+    identity_path = disk_release_path(disk)
+    if disk.exists():
+        if disk.is_symlink() or not disk.is_file() or not os.access(disk, os.W_OK):
+            raise LauncherError(f"Android disk is unsafe: {disk}")
+        try:
+            recorded = identity_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            recorded = ""
+        except OSError as error:
+            raise LauncherError(
+                f"cannot read Android disk release identity {identity_path}: {error}"
+            ) from error
+        if recorded == identity:
+            selected_sgdisk = homebrew_sgdisk() if sgdisk is None else sgdisk
+            expected = DEFAULT_DISK_SIZE_GIB * 1024**3
+            if disk.stat().st_size != expected or not gpt_layout_matches(
+                selected_sgdisk, disk, expected
+            ):
+                raise LauncherError(
+                    "persistent Android disk no longer has the expected 8 GiB GPT"
+                )
+            return False
+
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    temporary = disk.with_name(disk.name + ".prepare.tmp")
+    identity_temporary = identity_path.with_name(identity_path.name + ".tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise LauncherError(f"stale Android disk staging path: {temporary}")
+    if identity_temporary.exists() or identity_temporary.is_symlink():
+        raise LauncherError(
+            f"stale Android disk identity staging path: {identity_temporary}"
+        )
+    try:
+        clone_file(source, temporary)
+        temporary.chmod(temporary.stat().st_mode | 0o200)
+        resize_android_disk(
+            temporary,
+            DEFAULT_DISK_SIZE_GIB,
+            truncate=truncate,
+            sgdisk=sgdisk,
+        )
+        identity_temporary.write_text(identity + "\n", encoding="utf-8")
+        temporary.replace(disk)
+        identity_temporary.replace(identity_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+        identity_temporary.unlink(missing_ok=True)
     return True
 
 
@@ -428,17 +455,13 @@ def build_commands(cmake: Path) -> list[list[str]]:
 def emulator_command(
     options: argparse.Namespace,
     release: Path,
-    instance: Path,
+    disk: Path,
     emulator: Path,
-    base: Path | None = None,
 ) -> list[str]:
-    if base is None:
-        base = instance_base_path(instance)
     return [
         str(emulator),
         f"--android-release={release}",
-        f"--android-instance={instance}",
-        f"--android-base-disk={base}",
+        f"--android-disk={disk}",
         f"--android-boot-mode={options.boot_mode}",
         f"--net-forward=tcp:127.0.0.1:{options.adb_port}-{GUEST_ADB_PORT}",
         "--gpu",
@@ -548,15 +571,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     try:
         release = release_path(options.release)
-        instance = instance_path(options.instance, release)
-        base = instance_base_path(instance)
+        disk = disk_path(options.disk)
         adb = resolve_executable(options.adb, sdk_fallback=True)
         commands: list[list[str]] = []
         if options.build:
             commands = build_commands(resolve_executable("cmake"))
-        guest_command = emulator_command(
-            options, release, instance, options.emulator, base
-        )
+        guest_command = emulator_command(options, release, disk, options.emulator)
         serial = f"127.0.0.1:{options.adb_port}"
         if options.dry_run:
             for command in commands:
@@ -570,18 +590,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         for command in commands:
             subprocess.run(command, cwd=REPO_ROOT, check=True)
         emulator = resolve_executable(options.emulator)
-        prepare_instance_base(release, instance, base)
-        resize_instance_base(base, instance, options.disk_size_gib)
-        guest_command = emulator_command(options, release, instance, emulator, base)
-        instance.parent.mkdir(parents=True, exist_ok=True)
+        recreated = prepare_persistent_disk(release, disk)
+        guest_command = emulator_command(options, release, disk, emulator)
         ensure_loopback_port_available(options.adb_port)
         disconnect_adb(adb, serial)
         print(f"Booting accepted Android release {release.name}.", file=sys.stderr)
-        print(f"Persistent instance: {instance}", file=sys.stderr)
-        print(
-            f"Mutable base: {base} ({options.disk_size_gib} GiB)",
-            file=sys.stderr,
-        )
+        action = "Re-created" if recreated else "Reusing"
+        print(f"{action} persistent 8 GiB disk: {disk}", file=sys.stderr)
         print("Native Metal display; press Ctrl-C to stop the guest.", file=sys.stderr)
         guest = subprocess.Popen(guest_command, start_new_session=True)
         install_shutdown_handlers()

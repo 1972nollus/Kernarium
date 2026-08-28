@@ -1,7 +1,7 @@
-From 40ba841c87e6228bbc5c58540d7c8807b0c32aa5 Mon Sep 17 00:00:00 2001
+From b51e19b992eb71c0abf1392c88b651bb0a8b6b65 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 12:50:57 +0000
-Subject: [PATCH 34/38] UML-DARWIN-LOCAL: um: load an initrd from a host-file
+Subject: [PATCH 33/37] UML-DARWIN-LOCAL: um: load an initrd from a host-file
  range
 
 Let partition-backed Android ramdisks stay inside the immutable GPT image while UML reads only the selected boot-image payload.

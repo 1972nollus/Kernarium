@@ -353,14 +353,24 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v6" in runtime_source
+        "kernarium_runtime_get_api_v7" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
+    for contract in (
+        "boot->android_disk_path",
+        'std::string {adbAuthorizationPrefix} + "1"',
+        '"ubd0=" + androidDisk.string()',
+        '"initrd=" + androidDisk.string()',
+    ):
+        require(contract in runtime_source, f"iOS Android runtime lacks {contract}")
     for forbidden in (
         "boot->android_manifest_path",
+        "boot->android_base_disk_path",
+        "boot->android_instance_path",
         "uml_android_rootfs_manifest_start",
         "KERNARIUM_ANDROID_BASE_DISK_SIZE",
+        "userdata.cow",
     ):
         require(
             forbidden not in runtime_source,
@@ -385,7 +395,7 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v6")',
+        'dlsym(handle, "kernarium_runtime_get_api_v7")',
         "selectedPageSize == guestPageSize",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",
@@ -587,11 +597,12 @@ def main() -> int:
         'android_default_guest_cpus{"ncpus=10"}',
         ".touchscreen_input = true",
         'release_option{"--android-release="}',
-        'instance_option{"--android-instance="}',
-        'base_disk_option{"--android-base-disk="}',
+        'disk_option{"--android-disk="}',
         'boot_mode_option{"--android-boot-mode="}',
-        '"ubd0=" + instance.string()',
-        '"initrd=" + base_disk.string()',
+        '"ubd0=" + disk.string()',
+        '"initrd=" + disk.string()',
+        '"androidboot.kernarium.adb_auth="',
+        'std::string{adb_authorization_prefix} + "0"',
         '"initrd_offset=" + std::to_string(boot.ramdisk.offset)',
         '"initrd_size=" + std::to_string(boot.ramdisk.size)',
         '"root=/dev/ram0"',
@@ -605,6 +616,11 @@ def main() -> int:
         "release-owned kernel argument cannot be overridden",
         "Android instance belongs to another rootfs release",
         "--android-disk-size-gib",
+        "--android-instance",
+        "--android-base-disk",
+        "UML_ANDROID17_INSTANCE",
+        "UML_ANDROID17_BASE_DISK",
+        'instance.string() + ","',
         "UML_ANDROID17_DISK_SIZE_GIB",
         "prepareDisk(",
     ):

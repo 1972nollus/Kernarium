@@ -10,4 +10,5 @@
     <bool name="def_dtmf_tones_enabled">false</bool>
     <bool name="def_sound_effects_enabled">false</bool>
     <bool name="def_charging_sounds_enabled">false</bool>
+    <bool name="def_development_settings_enabled">true</bool>
 </resources>

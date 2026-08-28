@@ -21,18 +21,20 @@ namespace {
 constexpr std::string_view android_default_guest_memory{"mem=4G"};
 constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
-constexpr std::string_view instance_option{"--android-instance="};
-constexpr std::string_view base_disk_option{"--android-base-disk="};
+constexpr std::string_view disk_option{"--android-disk="};
 constexpr std::string_view boot_mode_option{"--android-boot-mode="};
+constexpr std::string_view adb_authorization_prefix{
+	"androidboot.kernarium.adb_auth="};
 
 struct AndroidOptions {
 	std::filesystem::path release;
-	std::filesystem::path instance;
-	std::filesystem::path base_disk;
+	std::filesystem::path disk;
 	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
 	bool boot_mode_set = false;
 	std::vector<std::string> forwarded;
 };
+
+void validate_ubd_path(const std::filesystem::path &path, const char *label);
 
 uml::android::BootMode parse_boot_mode(std::string_view value)
 {
@@ -79,6 +81,9 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument =
 			argv[index] == nullptr ? std::string_view{} : argv[index];
+		if (argument.starts_with(adb_authorization_prefix))
+			throw std::invalid_argument(
+				"macOS fixes Android ADB authorization at boot");
 		if (argument.starts_with(release_option)) {
 			if (!options.release.empty())
 				throw std::invalid_argument(
@@ -89,24 +94,14 @@ AndroidOptions parse_options(int argc, char *const argv[])
 					"--android-release requires a path");
 			continue;
 		}
-		if (argument.starts_with(instance_option)) {
-			if (!options.instance.empty())
+		if (argument.starts_with(disk_option)) {
+			if (!options.disk.empty())
 				throw std::invalid_argument(
-					"--android-instance may be specified only once");
-			options.instance = argument.substr(instance_option.size());
-			if (options.instance.empty())
+					"--android-disk may be specified only once");
+			options.disk = argument.substr(disk_option.size());
+			if (options.disk.empty())
 				throw std::invalid_argument(
-					"--android-instance requires a path");
-			continue;
-		}
-		if (argument.starts_with(base_disk_option)) {
-			if (!options.base_disk.empty())
-				throw std::invalid_argument(
-					"--android-base-disk may be specified only once");
-			options.base_disk = argument.substr(base_disk_option.size());
-			if (options.base_disk.empty())
-				throw std::invalid_argument(
-					"--android-base-disk requires a path");
+					"--android-disk requires a path");
 			continue;
 		}
 		if (argument.starts_with(boot_mode_option)) {
@@ -126,10 +121,8 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	}
 	if (options.release.empty())
 		options.release = environment_value("UML_ANDROID17_RELEASE");
-	if (options.instance.empty())
-		options.instance = environment_value("UML_ANDROID17_INSTANCE");
-	if (options.base_disk.empty())
-		options.base_disk = environment_value("UML_ANDROID17_BASE_DISK");
+	if (options.disk.empty())
+		options.disk = environment_value("UML_ANDROID17_DISK");
 	if (!options.boot_mode_set) {
 		const auto environment_mode = environment_value("UML_ANDROID17_BOOT_MODE");
 		if (!environment_mode.empty())
@@ -146,15 +139,16 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	return options;
 }
 
-std::filesystem::path validated_base_disk(
+std::filesystem::path validated_disk(
 	const std::filesystem::path &candidate)
 {
 	if (!candidate.is_absolute())
-		throw std::invalid_argument("--android-base-disk must be absolute");
+		throw std::invalid_argument("--android-disk must be absolute");
 	struct stat details {};
 	if (lstat(candidate.c_str(), &details) != 0 ||
-	    !S_ISREG(details.st_mode))
-		throw std::invalid_argument("Android base disk is unsafe");
+	    !S_ISREG(details.st_mode) || access(candidate.c_str(), R_OK | W_OK) != 0)
+		throw std::invalid_argument("Android disk is unsafe or not writable");
+	validate_ubd_path(candidate, "Android disk");
 	return candidate;
 }
 
@@ -209,37 +203,6 @@ void validate_ubd_path(const std::filesystem::path &path, const char *label)
 			" path contains a UBD delimiter");
 }
 
-std::filesystem::path validated_instance(
-	const std::filesystem::path &candidate,
-	const std::filesystem::path &base_disk)
-{
-	if (!candidate.is_absolute())
-		throw std::invalid_argument("--android-instance must be absolute");
-	std::error_code error;
-	auto parent = std::filesystem::canonical(candidate.parent_path(), error);
-	if (error || access(parent.c_str(), W_OK) != 0)
-		throw std::invalid_argument(
-			"Android instance parent is missing or not writable");
-	auto instance = parent / candidate.filename();
-	validate_ubd_path(instance, "Android instance");
-	validate_ubd_path(base_disk, "Android base disk");
-	struct stat base_details {};
-	if (stat(base_disk.c_str(), &base_details) != 0 ||
-	    !S_ISREG(base_details.st_mode))
-		throw std::invalid_argument("Android base disk is unsafe");
-	struct stat instance_details {};
-	if (lstat(instance.c_str(), &instance_details) == 0) {
-		if (!S_ISREG(instance_details.st_mode) ||
-		    (instance_details.st_dev == base_details.st_dev &&
-		     instance_details.st_ino == base_details.st_ino))
-			throw std::invalid_argument("Android instance disk is unsafe");
-	} else if (errno != ENOENT) {
-		throw std::system_error(errno, std::generic_category(),
-					"cannot inspect Android instance disk");
-	}
-	return instance;
-}
-
 void append_kernel_command_line(
 	std::vector<std::string> &arguments, const std::filesystem::path &path)
 {
@@ -257,7 +220,12 @@ void append_kernel_command_line(
 		       text[cursor] != '\n' && text[cursor] != '\t')
 			++cursor;
 		if (cursor != begin) {
-			arguments.emplace_back(text.substr(begin, cursor - begin));
+			const std::string_view argument{text.data() + begin,
+							cursor - begin};
+			if (argument.starts_with(adb_authorization_prefix))
+				throw std::invalid_argument(
+					"release kernel command line fixes ADB authorization");
+			arguments.emplace_back(argument);
 			++appended;
 		}
 	}
@@ -279,12 +247,11 @@ void print_usage()
 	std::fputs(
 		"Android 17 options:\n"
 			"  --android-release=/absolute/release\n"
-			"  --android-instance=/absolute/writable-instance.cow\n"
-			"  --android-base-disk=/absolute/writable-base.img\n"
+			"  --android-disk=/absolute/writable-disk.img\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
-			"UML_ANDROID17_INSTANCE, UML_ANDROID17_BASE_DISK, "
+			"UML_ANDROID17_DISK, "
 			"and UML_ANDROID17_BOOT_MODE.\n",
 		stderr);
 }
@@ -299,21 +266,15 @@ int main(int argc, char *argv[], char *envp[])
 			print_usage();
 		auto options = parse_options(argc, argv);
 		if (!information_only) {
-			if (options.release.empty() || options.instance.empty())
+			if (options.release.empty() || options.disk.empty())
 				throw std::invalid_argument(
-					"Android launch requires release and instance paths");
+					"Android launch requires release and disk paths");
 			const auto release = validated_release_root(options.release);
-			const auto base_disk = validated_base_disk(
-				options.base_disk.empty()
-					? release / "guest/android-17-uml-arm64.img"
-					: options.base_disk);
-			const auto instance =
-				validated_instance(options.instance, base_disk);
+			const auto disk = validated_disk(options.disk);
 			const auto boot = uml::android::selectBoot(
-				base_disk, instance, options.boot_mode);
-			options.forwarded.emplace_back("ubd0=" + instance.string() +
-						       "," + base_disk.string());
-			options.forwarded.emplace_back("initrd=" + base_disk.string());
+				disk, options.boot_mode);
+			options.forwarded.emplace_back("ubd0=" + disk.string());
+			options.forwarded.emplace_back("initrd=" + disk.string());
 			options.forwarded.emplace_back(
 				"initrd_offset=" + std::to_string(boot.ramdisk.offset));
 			options.forwarded.emplace_back(
@@ -323,13 +284,15 @@ int main(int argc, char *argv[], char *envp[])
 			append_kernel_command_line(
 				options.forwarded,
 				release / "boot/kernel-command-line.txt");
+			options.forwarded.emplace_back(
+				std::string{adb_authorization_prefix} + "0");
 			std::fprintf(
 				stderr,
-					"Android rootfs %s, %s boot, writable instance %s\n",
+					"Android rootfs %s, %s boot, writable disk %s\n",
 					release.c_str(),
 					boot.mode == uml::android::BootMode::recovery
 						? "recovery" : "normal",
-					instance.c_str());
+					disk.c_str());
 		}
 		auto pointers = argument_pointers(options.forwarded);
 		return uml::app::runEmbeddedKernel(

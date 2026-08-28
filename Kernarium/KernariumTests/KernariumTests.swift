@@ -5,14 +5,6 @@ import UIKit
 
 struct KernariumTests {
     private struct StubDiskCapacityManager: DiskCapacityManaging {
-        let size: UInt64
-
-        func androidImageIsPrepared(at _: URL, forGiB _: Int) throws -> Bool {
-            true
-        }
-
-        func imageSize(at _: URL) throws -> UInt64 { size }
-
         func resizeAndroidImage(at _: URL, toGiB _: Int) throws -> Bool {
             true
         }
@@ -110,7 +102,7 @@ struct KernariumTests {
     }
 
     @Test
-    func bundleInstanceResetIsNarrowAndIdempotent() throws {
+    func bundlePreparesItsDirectlyWritableDisk() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
@@ -122,63 +114,21 @@ struct KernariumTests {
             withIntermediateDirectories: true
         )
         defer { try? manager.removeItem(at: directory) }
-        let baseDisk = guestDirectory.appendingPathComponent("base.img")
-        let instance = directory.appendingPathComponent("userdata.cow")
-        let sibling = directory.appendingPathComponent("release-manifest.json")
-        #expect(manager.createFile(atPath: baseDisk.path, contents: Data()))
-        #expect(manager.createFile(atPath: instance.path, contents: Data([1])))
-        #expect(manager.createFile(atPath: sibling.path, contents: Data([2])))
-
+        let disk = guestDirectory.appendingPathComponent("disk.img")
+        #expect(manager.createFile(atPath: disk.path, contents: Data([1])))
         let bundle = GuestBundle(
             url: directory,
             flavor: .android,
-            baseDisk: baseDisk
-        )
-        #expect(try bundle.removeInstanceIfPresent(fileManager: manager))
-        #expect(!manager.fileExists(atPath: instance.path))
-        #expect(manager.fileExists(atPath: baseDisk.path))
-        #expect(manager.fileExists(atPath: sibling.path))
-        #expect(try !bundle.removeInstanceIfPresent(fileManager: manager))
-    }
-
-    @Test
-    func bundleInstanceLocksPreparedDiskCapacity() throws {
-        let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        let guestDirectory = directory.appendingPathComponent("guest")
-        try manager.createDirectory(
-            at: guestDirectory,
-            withIntermediateDirectories: true
-        )
-        defer { try? manager.removeItem(at: directory) }
-        let baseDisk = guestDirectory.appendingPathComponent("base.img")
-        let instance = directory.appendingPathComponent("userdata.cow")
-        #expect(manager.createFile(atPath: baseDisk.path, contents: Data([1])))
-        let bundle = GuestBundle(
-            url: directory,
-            flavor: .android,
-            baseDisk: baseDisk
+            disk: disk
         )
 
-        let diskUtil = StubDiskCapacityManager(size: DiskUtil.bytesPerGiB)
+        let diskUtil = StubDiskCapacityManager()
         #expect(
             try bundle.prepareDiskCapacity(
                 1,
-                diskUtil: diskUtil,
-                fileManager: manager
+                diskUtil: diskUtil
             )
         )
-        #expect(manager.createFile(atPath: instance.path, contents: Data([2])))
-        #expect(throws: GuestBundle.StorageError.self) {
-            try bundle.prepareDiskCapacity(
-                2,
-                diskUtil: diskUtil,
-                fileManager: manager
-            )
-        }
     }
 
     @Test
@@ -193,12 +143,12 @@ struct KernariumTests {
             withIntermediateDirectories: true
         )
         defer { try? manager.removeItem(at: directory) }
-        let baseDisk = guestDirectory.appendingPathComponent("legacy.img")
-        #expect(manager.createFile(atPath: baseDisk.path, contents: Data()))
+        let disk = guestDirectory.appendingPathComponent("legacy.img")
+        #expect(manager.createFile(atPath: disk.path, contents: Data()))
 
         let bundle = GuestBundle.load(at: directory, fileManager: manager)
 
-        #expect(bundle?.baseDisk == baseDisk)
+        #expect(bundle?.disk == disk)
         #expect(bundle?.flavor == .android)
     }
 

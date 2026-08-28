@@ -23,8 +23,7 @@ struct BootSelection {
 	FileRange ramdisk;
 };
 
-BootSelection selectBoot(const std::filesystem::path &baseDisk,
-			 const std::filesystem::path &instance,
+BootSelection selectBoot(const std::filesystem::path &disk,
 			 BootMode requestedMode);
 
 } // namespace uml::android

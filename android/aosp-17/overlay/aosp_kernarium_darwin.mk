@@ -212,21 +212,16 @@ PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # Jelly supplies the browser; ThemePicker remains part of the user-facing
 # baseline, LatinIME must remain visible even when a host keyboard exists, and
-# the ext4 tools grow the compact userdata filesystem after the host expands
-# its partition and before the first /data mount.
+# resize2fs grows the compact userdata filesystem after the host expands its
+# partition and before the first /data mount.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
-    blockdev \
     e2fsck \
     Jelly \
     LatinIME \
     resize2fs \
-    ThemePicker \
-    tune2fs
-
-PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/grow-userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/kernarium-grow-userdata
+    ThemePicker
 
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.
@@ -254,6 +249,16 @@ PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
+
+# ADB is available over the inherited TCP port even though this machine has no
+# USB controller. A user build retains the stock shell privilege boundary;
+# Apple hosts select authorization through the immutable
+# ro.boot.kernarium.adb_auth property on each boot. That boot policy overrides
+# Cuttlefish's user-build ro.adb.secure default inside adbd.
+PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
+    persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
+PRODUCT_PRODUCT_PROPERTIES += \
+    persist.sys.usb.config=adb
 
 # The Virtio sound transport has no MMAP or exclusive hardware path. These
 # read-only defaults seed a fresh Settings database; persisted user volume
