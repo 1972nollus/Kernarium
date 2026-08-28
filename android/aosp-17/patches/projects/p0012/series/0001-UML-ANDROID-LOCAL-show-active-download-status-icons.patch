@@ -1,0 +1,26 @@
+From 7014299d57bdad98cdda0048cf811f344671e965 Mon Sep 17 00:00:00 2001
+From: linux-um-darwin Android patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Fri, 28 Aug 2026 13:40:36 +0000
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: show active download status icons
+
+Use low importance for DownloadProvider progress notifications. They remain silent, while SystemUI no longer classifies them as minimized and therefore renders their icons in the status bar.
+
+Change-Id: I4bcfa73dbf59a0a5e7554428448f05fbf8b7243d
+---
+ src/com/android/providers/downloads/DownloadNotifier.java | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/com/android/providers/downloads/DownloadNotifier.java b/src/com/android/providers/downloads/DownloadNotifier.java
+index 1e4dd0ac26f407c9531951d6a8b9a22efe8c0153..36c893b793731f742a22b9339737c5d1f3eeaf97 100644
+--- a/src/com/android/providers/downloads/DownloadNotifier.java
++++ b/src/com/android/providers/downloads/DownloadNotifier.java
+@@ -104,7 +104,7 @@ public class DownloadNotifier {
+         // Ensure that all our channels are ready to use
+         NotificationChannel activeNotifChannel = new NotificationChannel(CHANNEL_ACTIVE,
+                 context.getText(R.string.download_running),
+-                NotificationManager.IMPORTANCE_MIN);
++                NotificationManager.IMPORTANCE_LOW);
+         activeNotifChannel.setBlockable(true);
+         mNotifManager.createNotificationChannel(activeNotifChannel);
+ 

@@ -108,7 +108,9 @@ for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
 property can disable that check for host-side diagnostics: iOS fixes it to one,
 while the standalone macOS product fixes it to zero. Bundle command lines may
 not override this host security choice. Fresh notification state shows silent
-notification icons in the status bar; later changes remain owned by the user.
+notification icons in the status bar. Active DownloadProvider transfers use a
+silent low-importance channel so their progress icon remains visible there;
+later notification changes remain owned by the user.
 
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
 time artifacts for ordinary applications, no `system_other` image, and no
