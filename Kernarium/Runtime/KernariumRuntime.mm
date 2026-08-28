@@ -440,11 +440,67 @@ poweroff -f
 exit "$benchmark_rc"
 )krn";
 
+constexpr std::string_view discardBenchmarkBootstrap = R"krn(set -eu
+discard_fail()
+{
+    echo "KERNARIUM_DISCARD_ERROR: $*" >&2
+    sync
+    poweroff -f
+}
+[ -b /dev/ubdb ] || discard_fail "overlay block device is unavailable"
+mount -t proc proc /proc || discard_fail "proc mount failed"
+mount -t sysfs sysfs /sys || discard_fail "sysfs mount failed"
+[ -x /usr/sbin/blkdiscard ] || discard_fail "blkdiscard is unavailable"
+case "$KERNARIUM_DISCARD_MODE" in
+batched-128m)
+    expected_max=134217728
+    ;;
+fragmented-32k)
+    expected_max=32768
+    echo "$expected_max" > /sys/block/ubdb/queue/discard_max_bytes ||
+        discard_fail "discard limit update failed"
+    ;;
+*)
+    discard_fail "invalid benchmark mode"
+    ;;
+esac
+actual_max=$(cat /sys/block/ubdb/queue/discard_max_bytes)
+[ "$actual_max" = "$expected_max" ] ||
+    discard_fail "unexpected discard limit $actual_max"
+echo "KERNARIUM_DISCARD_READY:$KERNARIUM_DISCARD_MODE:$actual_max"
+run=1
+while [ "$run" -le 7 ]; do
+    dd if=/dev/zero of=/dev/ubdb bs=1M count=512 conv=fsync status=none ||
+        discard_fail "payload write failed"
+    set -- $(cat /sys/block/ubdb/stat)
+    requests_before=${12}
+    sectors_before=${14}
+    ticks_before=${15}
+    started=$(date +%s%N)
+    /usr/sbin/blkdiscard -o 0 -l 536870912 /dev/ubdb ||
+        discard_fail "discard failed"
+    sync
+    finished=$(date +%s%N)
+    set -- $(cat /sys/block/ubdb/stat)
+    requests=$((${12} - requests_before))
+    sectors=$((${14} - sectors_before))
+    ticks=$((${15} - ticks_before))
+    elapsed=$((finished - started))
+    echo "KERNARIUM_DISCARD_SAMPLE:$KERNARIUM_DISCARD_MODE:$run:"\
+"$elapsed:$requests:$sectors:$ticks"
+    run=$((run + 1))
+done
+echo "KERNARIUM_DISCARD_END:0"
+sync
+poweroff -f
+)krn";
+
 enum class ConsoleBootMode {
     desktop,
     aquarium,
     cts,
     geekbench,
+    discardBenchmark,
     /* Android brings up its own init from the selected GPT ramdisk range. The
      * relay carries its console in both directions and injects nothing. */
     android,
@@ -513,6 +569,7 @@ public:
     explicit ConsoleBridge(
         ConsoleBootMode bootMode,
         std::string geekbenchWorkloads,
+        std::string discardBenchmarkMode,
         const kernarium::cts::Campaign* ctsCampaign,
         bool derivativeRootfs)
     {
@@ -547,6 +604,7 @@ public:
                 this,
                 bootMode,
                 geekbenchWorkloads = std::move(geekbenchWorkloads),
+                discardBenchmarkMode = std::move(discardBenchmarkMode),
                 ctsCampaign,
                 derivativeRootfs] {
                 constexpr std::string_view shellReady =
@@ -585,7 +643,16 @@ public:
                                 observed.erase(0, observed.size() - 1024U);
                             if (observed.find(shellReady) != std::string::npos) {
                                 std::string bootstrap;
-                                if (bootMode == ConsoleBootMode::geekbench) {
+                                if (bootMode ==
+                                    ConsoleBootMode::discardBenchmark) {
+                                    bootstrap =
+                                        "KERNARIUM_DISCARD_MODE=";
+                                    bootstrap.append(discardBenchmarkMode);
+                                    bootstrap.push_back('\n');
+                                    bootstrap.append(
+                                        discardBenchmarkBootstrap);
+                                } else if (
+                                    bootMode == ConsoleBootMode::geekbench) {
                                     if (!geekbenchWorkloads.empty()) {
                                         bootstrap =
                                             "KERNARIUM_GEEKBENCH_WORKLOADS=";
@@ -621,6 +688,9 @@ public:
                                         "Kernarium: %s bootstrap delivered\n",
                                         bootMode == ConsoleBootMode::geekbench
                                             ? "Geekbench"
+                                            : bootMode ==
+                                                    ConsoleBootMode::discardBenchmark
+                                            ? "discard benchmark"
                                             : bootMode == ConsoleBootMode::cts
                                             ? "CTS"
                                             : bootMode == ConsoleBootMode::aquarium
@@ -1055,8 +1125,13 @@ int runtimeRun(
         const ConsoleBootMode bootMode = ConsoleBootMode::android;
         const kernarium::cts::Campaign* ctsCampaign = nullptr;
         const std::string geekbenchWorkloads;
+        const std::string discardBenchmarkMode;
         ConsoleBridge consoleBridge {
-            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs};
+            bootMode,
+            geekbenchWorkloads,
+            discardBenchmarkMode,
+            ctsCampaign,
+            derivativeRootfs};
         /* Android tags heap pointers, so the guest must run with the top byte
          * ignored exactly as it does on the macOS Android product. */
         arguments.emplace_back("--guest-top-byte-ignore");
@@ -1069,6 +1144,13 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
+        const char* discardBenchmarkEnvironment =
+            std::getenv("KERNARIUM_DISCARD_BENCHMARK");
+        const std::string discardBenchmarkMode =
+            discardBenchmarkEnvironment == nullptr
+            ? std::string {}
+            : std::string {discardBenchmarkEnvironment};
+        const bool discardBenchmark = !discardBenchmarkMode.empty();
         const char* ctsCampaignEnvironment =
             std::getenv("KERNARIUM_CTS_CAMPAIGN");
         const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
@@ -1087,14 +1169,22 @@ int runtimeRun(
                 "Kernarium: unknown CTS campaign identifier\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
+        if (discardBenchmark &&
+            discardBenchmarkMode != "batched-128m" &&
+            discardBenchmarkMode != "fragmented-32k") {
+            std::fputs(
+                "Kernarium: invalid discard benchmark mode\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
         const unsigned int specialModeCount =
             static_cast<unsigned int>(aquarium) +
             static_cast<unsigned int>(geekbench) +
+            static_cast<unsigned int>(discardBenchmark) +
             static_cast<unsigned int>(ctsRequested);
         if (specialModeCount > 1U) {
             std::fputs(
-                "Kernarium: Aquarium, CTS, and Geekbench modes are mutually "
-                "exclusive\n",
+                "Kernarium: Aquarium, CTS, Geekbench, and discard benchmark "
+                "modes are mutually exclusive\n",
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
@@ -1108,11 +1198,16 @@ int runtimeRun(
         }
         const ConsoleBootMode bootMode = geekbench
             ? ConsoleBootMode::geekbench
+            : discardBenchmark ? ConsoleBootMode::discardBenchmark
             : ctsRequested ? ConsoleBootMode::cts
             : aquarium ? ConsoleBootMode::aquarium
             : ConsoleBootMode::desktop;
         ConsoleBridge consoleBridge {
-            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs};
+            bootMode,
+            geekbenchWorkloads,
+            discardBenchmarkMode,
+            ctsCampaign,
+            derivativeRootfs};
         if (aquarium)
             std::fputs(
                 "Kernarium: WebGL Aquarium verification requested\n",
@@ -1125,6 +1220,11 @@ int runtimeRun(
         }
         if (geekbench)
             std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
+        if (discardBenchmark)
+            std::fprintf(
+                stderr,
+                "Kernarium: UBD discard benchmark requested: %s\n",
+                discardBenchmarkMode.c_str());
         arguments.emplace_back("init=/bin/sh");
         arguments.emplace_back("console=tty0");
         arguments.emplace_back("console=ttyS0");

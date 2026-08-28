@@ -28,6 +28,17 @@ Profile readers under this directory summarize aggregate stacks, group them by
 workload, and compare two diagnostic captures. They do not decide acceptance
 without a matched benchmark or focused mechanism control.
 
+The physical-iPad UBD discard control compares the shipped 128 MiB request
+limit with a 32 KiB soft limit on the same 512 MiB raw range. It installs an
+already-built Kernarium app, reuses an existing named rootfs file in the app
+container, recreates the disposable overlay for each mode, and requires exact
+discard request and sector counts:
+
+```sh
+python3 tests/perf/run_ios_device_discard_bench.py \
+  --device DEVICE-IDENTIFIER
+```
+
 ## Focused assembly probes
 
 [`probes.tsv`](probes.tsv) is the complete inventory of freestanding A64 probe

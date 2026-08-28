@@ -30,6 +30,7 @@ RUNNERS = (
     "run_guest_exec_bench.py",
     "run_guest_link_bench.py",
 )
+MOBILE_RUNNERS = ("run_ios_device_discard_bench.py",)
 
 
 def verify_engine_forwarding(runner: str) -> None:
@@ -227,14 +228,37 @@ def verify_kernarium_geekbench_contract() -> None:
     if "systemd" in bootstrap:
         raise RuntimeError("Kernarium Geekbench bootstrap must not start systemd")
 
+    discard_declaration = "constexpr std::string_view discardBenchmarkBootstrap"
+    discard_start = source.index(discard_declaration)
+    discard_end = source.index(")krn\";", discard_start)
+    discard_bootstrap = source[discard_start:discard_end]
+    for token in (
+        "KERNARIUM_DISCARD_READY:",
+        "KERNARIUM_DISCARD_SAMPLE:",
+        "KERNARIUM_DISCARD_END:0",
+        "discard_max_bytes",
+        "/usr/sbin/blkdiscard -o 0 -l 536870912 /dev/ubdb",
+        "poweroff -f",
+    ):
+        if token not in discard_bootstrap:
+            raise RuntimeError(
+                f"Kernarium discard bootstrap is missing {token!r}"
+            )
+
     run_source = source[source.index("int runtimeRun(") :]
     required_run_contract = (
         'environmentEnabled("KERNARIUM_GEEKBENCH")',
         'std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS")',
         "validGeekbenchWorkloads(geekbenchWorkloads)",
         "ConsoleBootMode::geekbench",
+        'std::getenv("KERNARIUM_DISCARD_BENCHMARK")',
+        "ConsoleBootMode::discardBenchmark",
         "ConsoleBridge consoleBridge {\n"
-        "            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs}",
+        "            bootMode,\n"
+        "            geekbenchWorkloads,\n"
+        "            discardBenchmarkMode,\n"
+        "            ctsCampaign,\n"
+        "            derivativeRootfs}",
         "if (!geekbench)",
         'arguments.emplace_back("systemd.unit=graphical.target")',
         ".run = runtimeRun",
@@ -527,7 +551,22 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-    print(f"benchmark CLI/import smoke passed ({len(RUNNERS)} runners)")
+    for runner in MOBILE_RUNNERS:
+        result = subprocess.run(
+            (sys.executable, str(ROOT / runner), "--help"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or "usage:" not in result.stdout:
+            print(
+                f"{runner}: CLI/import smoke failed\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+                file=sys.stderr,
+            )
+            return 1
+    count = len(RUNNERS) + len(MOBILE_RUNNERS)
+    print(f"benchmark CLI/import smoke passed ({count} runners)")
     return 0
 
 
