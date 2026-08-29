@@ -24,6 +24,12 @@ framework compatibility. The
 native arm64 eBPF JIT is not exposed because its execution contracts do not
 match UML; the AOSP product uses the generic BPF interpreter.
 
+Android's Ethernet IpClient acquires the SLiRP lease, default route, and DNS
+configuration after init starts, so the kernel does not perform IP
+autoconfiguration. Recovery independently assigns its fixed local endpoint for
+the host-forwarded ADB contract; external recovery routing is not a product
+requirement. This Android product has no 4 KiB profile.
+
 The local series provides the durable Android-specific behavior:
 
 - cooperative timer, reschedule, IPI, irq-work, and RCU progress on persistent

@@ -99,6 +99,10 @@ policy are built in. Hostfs is disabled. Deliberately unsupported kernel
 features are reflected in the LTP disabled manifest rather than enabled solely
 for test count.
 
+Kernel IP autoconfiguration is disabled. Writable guest images start their own
+DHCP client and DNS resolver after init begins; launchers do not need kernel
+`ip=` configuration for those images.
+
 The framebuffer console uses standard VT/fbcon on Virtio-GPU. Host logs use
 `ttyS0`; four serial lines and the standard Virtio-console driver are built in.
 The legacy UML stdio console, DRM log client, legacy BSD PTYs, and loadable

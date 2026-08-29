@@ -615,6 +615,7 @@ json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	to
 ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained
 rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained
 rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained
+rootfs-starter-image-contract	tests/tooling/rootfs/test_starter_images.py	tooling	retained
 gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
 vk-gl-cts-campaign-safety	tests/tooling/gpu/test_run_vk_gl_cts.py	tooling	retained
 vk-gl-cts-matrix-orchestrator-safety	tests/tooling/gpu/test_run_vk_gl_cts_matrix.py	tooling	retained

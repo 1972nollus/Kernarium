@@ -303,11 +303,10 @@ CONFIG_IPV6_ROUTER_PREF=y
 CONFIG_SYN_COOKIES=y
 CONFIG_NETDEVICES=y
 CONFIG_TUN=y
-# The built-in Darwin SLiRP transport supplies DHCP before guest userspace is
-# available.  Kernel IP autoconfiguration therefore also works with minimal
-# roots and with init systems whose userspace network service is disabled.
-CONFIG_IP_PNP=y
-CONFIG_IP_PNP_DHCP=y
+# Android's Ethernet IpClient owns DHCP, routes, and DNS after init starts.
+# Recovery configures only its fixed local host-forward endpoint in userspace.
+# CONFIG_IP_PNP is not set
+# CONFIG_IP_PNP_DHCP is not set
 # Software-only peer interfaces back network namespaces without modeling
 # physical host hardware.
 CONFIG_VETH=y

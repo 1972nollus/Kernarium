@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+PATH=/bin:/sbin
+export PATH
+
+emergency()
+{
+	echo "UML_RESIZE_INITRAMFS_ERROR:$*"
+	echo "Dropping to the initramfs shell."
+	exec sh
+}
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
+mount -t proc proc /proc || emergency "cannot mount proc"
+mount -t sysfs sysfs /sys || emergency "cannot mount sysfs"
+
+root_device=/dev/ubda1
+attempt=0
+while [ ! -b "$root_device" ]; do
+	attempt=$((attempt + 1))
+	[ "$attempt" -le 100 ] || emergency "$root_device did not appear"
+	sleep 0.1
+done
+
+partition_count=0
+for candidate in /sys/block/ubda/ubda*; do
+	[ -f "$candidate/partition" ] || continue
+	partition_count=$((partition_count + 1))
+done
+
+if [ "$partition_count" -ne 1 ]; then
+	echo "UML_RESIZE_INITRAMFS_SKIP:partition-count=$partition_count"
+else
+	filesystem_probe=$(blkid "$root_device" 2>/dev/null || :)
+	case "$filesystem_probe" in
+	*TYPE=\"ext4\"*)
+		echo "UML_RESIZE_INITRAMFS_GROW_OFFLINE:$root_device"
+		if resize2fs "$root_device"; then
+			echo "UML_RESIZE_INITRAMFS_GROWN:$root_device"
+			sync
+		else
+			echo "UML_RESIZE_INITRAMFS_WARN:resize2fs-failed:$root_device"
+		fi
+		;;
+	*)
+		echo "UML_RESIZE_INITRAMFS_SKIP:not-ext4:$root_device"
+		;;
+	esac
+fi
+
+echo "UML_RESIZE_INITRAMFS_MOUNT:$root_device"
+mount -o rw,noatime "$root_device" /newroot || \
+	emergency "cannot mount $root_device"
+
+for filesystem in dev proc sys; do
+	mount -o move "/$filesystem" "/newroot/$filesystem" || \
+		emergency "cannot move /$filesystem"
+done
+
+echo "UML_RESIZE_INITRAMFS_SWITCH_ROOT"
+exec switch_root /newroot /sbin/init

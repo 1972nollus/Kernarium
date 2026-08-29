@@ -249,11 +249,11 @@ CONFIG_IPV6=y
 CONFIG_SYN_COOKIES=y
 CONFIG_NETDEVICES=y
 CONFIG_TUN=y
-# The built-in Darwin SLiRP transport supplies DHCP before guest userspace is
-# available.  Kernel IP autoconfiguration therefore also works with minimal
-# roots and with init systems whose userspace network service is disabled.
-CONFIG_IP_PNP=y
-CONFIG_IP_PNP_DHCP=y
+# Guest init systems own DHCP and DNS setup.  Keep the kernel from assigning
+# addresses before userspace starts, including when a legacy launcher retains
+# an otherwise inert ip=dhcp command-line argument.
+# CONFIG_IP_PNP is not set
+# CONFIG_IP_PNP_DHCP is not set
 # Software-only peer interfaces back network namespaces without modeling
 # physical host hardware.
 CONFIG_VETH=y

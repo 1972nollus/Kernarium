@@ -107,6 +107,16 @@ The systemd smoke uses local source-built container content with no registry or
 network dependency. Docker and containerd state are mounted separately from
 the writable root overlay.
 
+`tools/rootfs/starter` separately owns the writable raw-GPT starter disks used
+with the macOS emulator. Their common memory-backed initramfs grows ext4 only
+after a host tool has enlarged the disk and its sole partition. Growth happens
+before the real root is mounted, is skipped for non-ext4 or multi-partition
+disks, and is non-fatal. Each image owns its `hvc0` getty, DHCP/DNS service,
+accounts, and optional Plasma session. See the
+[producer README](../tools/rootfs/starter/README.md) for its single build and
+grow entry points; these images do not replace the unified immutable product
+rootfs.
+
 ## Apple builds and Kernarium
 
 Build the general Apple libraries with:
