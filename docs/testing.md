@@ -121,6 +121,12 @@ accounts, and optional Plasma session. See the
 grow entry points; these images do not replace the unified immutable product
 rootfs.
 
+`tools/rootfs/x86_64-smoke` owns the separate, pure x86-64 EROFS image used to
+qualify the 4 KiB mainline gadget boundary while the guest kernel remains
+arm64. Build it on an x86-64 Linux host and run the bounded
+`tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check; it is not a
+replacement for the accepted general-purpose rootfs.
+
 ## Apple builds and Kernarium
 
 Build the general Apple libraries with:
