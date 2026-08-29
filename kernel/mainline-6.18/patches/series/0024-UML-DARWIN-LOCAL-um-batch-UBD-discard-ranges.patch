@@ -1,15 +1,15 @@
-From 6e8fe684bb6bc094b31977278aad2fa76693bcd8 Mon Sep 17 00:00:00 2001
+From 4b02e9c25ca3bd60aa25a606aa55755e15a03f4b Mon Sep 17 00:00:00 2001
 From: linux-um-darwin kernel patch maintainer
  <noreply@linux-um-darwin.invalid>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
-Subject: [PATCH 24/24] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+Subject: [PATCH 24/25] UML-DARWIN-LOCAL: um: batch UBD discard ranges
 
 ---
- arch/um/drivers/ubd_kern.c | 20 ++++++++++++++++++--
- 1 file changed, 18 insertions(+), 2 deletions(-)
+ arch/um/drivers/ubd_kern.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
-index 6d235135a..5f824f425 100644
+index 6d235135a..167af025a 100644
 --- a/arch/um/drivers/ubd_kern.c
 +++ b/arch/um/drivers/ubd_kern.c
 @@ -45,8 +45,11 @@
@@ -25,15 +25,7 @@ index 6d235135a..5f824f425 100644
  
  struct io_desc {
  	char *buffer;
-@@ -58,6 +61,7 @@ struct io_desc {
- 
- struct io_thread_req {
- 	struct request *req;
-+	bool direct;
- #ifdef UML_HOST_DARWIN
- 	struct work_struct work;
- #endif
-@@ -859,7 +863,8 @@ static int ubd_add(int n, char **error_out)
+@@ -859,7 +862,8 @@ static int ubd_add(int n, char **error_out)
  	if (ubd_dev->cow.file)
  		lim.max_hw_sectors = 8 * sizeof(long);
  	if (!ubd_dev->no_trim) {
@@ -43,28 +35,3 @@ index 6d235135a..5f824f425 100644
  		lim.max_write_zeroes_sectors = UBD_MAX_REQUEST;
  	}
  
-@@ -1267,6 +1272,7 @@ static struct io_thread_req *ubd_alloc_req(struct ubd *dev, struct request *req,
- 		return NULL;
- 
- 	io_req->req = req;
-+	io_req->direct = !dev->cow.file;
- 	if (dev->cow.file)
- 		io_req->fds[0] = dev->cow.fd;
- 	else
-@@ -1530,6 +1536,16 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
- 		return;
- 	}
- 
-+	/* A direct discard has no COW sector mask and is one host operation. */
-+	if (req_op(req->req) == REQ_OP_DISCARD && req->direct) {
-+		n = os_falloc_punch(req->fds[0], req->offset, desc->length);
-+		if (n)
-+			req->error = map_error(-n);
-+		else
-+			req->error = BLK_STS_OK;
-+		return;
-+	}
-+
- 	nsectors = desc->length / req->sectorsize;
- 	start = 0;
- 	do {

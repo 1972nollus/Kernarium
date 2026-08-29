@@ -487,6 +487,10 @@ target_sources(uml_cpu_gadget_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>
     $<TARGET_OBJECTS:uml_arm64_dispatch>)
+if(TARGET uml_x86_64_gadgets)
+    target_sources(uml_cpu_gadget_component INTERFACE
+        $<TARGET_OBJECTS:uml_x86_64_gadgets>)
+endif()
 
 add_library(uml_cpu_jit_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_jit_component cpu native)
@@ -520,6 +524,10 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+if(TARGET uml_x86_64_gadgets)
+    target_sources(uml_cpu_engine_objects INTERFACE
+        $<TARGET_OBJECTS:uml_x86_64_gadgets>)
+endif()
 
 add_library(uml_cpu_engine_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_engine_component cpu mixed)

@@ -221,6 +221,31 @@ private:
 			"faulting load retired or advanced RIP");
 }
 
+[[nodiscard]] bool retire_valid_prefix_before_decode_fault()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x2a, 0x00, 0x00, 0x00,
+		0x0f, 0x0b,
+	});
+	CpuState cpu{};
+	const auto prefix = gadgets::build(memory, 0);
+	if (!expect(prefix.status == gadgets::BuildStatus::built,
+		"valid prefix before UD2 did not build"))
+		return false;
+	const auto prefix_result = gadgets::execute(
+		prefix.program, cpu, memory, 64);
+	if (!expect(prefix_result.event == uml::cpu::EngineEvent::continued &&
+		prefix_result.retired_instructions == 1 && cpu.rip == 5 &&
+		cpu.gpr(Register::rax) == 42,
+		"valid prefix before UD2 did not retire first"))
+		return false;
+	const auto illegal = gadgets::build(memory, cpu.rip);
+	return expect(illegal.status == gadgets::BuildStatus::illegal_instruction,
+		"UD2 boundary was not reported after the valid prefix");
+}
+
 } // namespace
 
 int main()
@@ -229,6 +254,7 @@ int main()
 		execute_scalar_control_flow() &&
 		execute_segment_memory() &&
 		execute_call_and_return() &&
-		preserve_precise_memory_fault();
+		preserve_precise_memory_fault() &&
+		retire_valid_prefix_before_decode_fault();
 	return passed ? 0 : 1;
 }

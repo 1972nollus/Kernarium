@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory/static_guest_memory.hpp"
 #include "cpu/engine_factory.hpp"
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#include "cpu/x86_64/gadgets/program.hpp"
+#endif
 #include "platform/apple/host_features.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
@@ -31,8 +34,18 @@
 namespace uml::emulator {
 
 namespace arm64 = ::uml::cpu::arm64;
+namespace x86_64 = ::uml::cpu::x86_64;
 using ::uml::memory::StaticGuestMemory;
 namespace {
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+constexpr std::int32_t x86_64_guest_isa = 2;
+constexpr std::uint64_t x86_64_rt_sigreturn = 15;
+constexpr std::size_t x86_64_register_count = 16;
+constexpr std::size_t x86_64_rflags_slot = 16;
+constexpr std::size_t x86_64_fs_base_slot = 17;
+constexpr std::size_t x86_64_gs_base_slot = 18;
+#endif
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
 constexpr std::uint32_t pstate_nzcv = 0xf000'0000U;
@@ -287,6 +300,149 @@ void save_cpu(arm64::CpuState &cpu,
 	}
 }
 
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+void load_x86_cpu(x86_64::CpuState &cpu,
+	const darwin_uml_guest_registers &registers) noexcept
+{
+	std::copy_n(std::begin(registers.x), x86_64_register_count,
+		cpu.registers.begin());
+	cpu.rip = registers.pc;
+	cpu.rflags = registers.x[x86_64_rflags_slot] |
+		x86_64::rflags_reserved;
+	cpu.fs_base = registers.x[x86_64_fs_base_slot];
+	cpu.gs_base = registers.x[x86_64_gs_base_slot];
+	cpu.deferred_flags = {};
+}
+
+void save_x86_cpu(x86_64::CpuState &cpu,
+	darwin_uml_guest_registers &registers) noexcept
+{
+	x86_64::materialize_flags(cpu);
+	std::copy(cpu.registers.begin(), cpu.registers.end(),
+		std::begin(registers.x));
+	registers.pc = cpu.rip;
+	registers.x[x86_64_rflags_slot] = cpu.rflags;
+	registers.x[x86_64_fs_base_slot] = cpu.fs_base;
+	registers.x[x86_64_gs_base_slot] = cpu.gs_base;
+}
+
+[[nodiscard]] uml::cpu::ExecutionResult run_x86_gadgets(
+	x86_64::CpuState &cpu, StaticGuestMemory &memory,
+	unsigned long generation, const uml::cpu::InterruptToken &interrupt) noexcept
+{
+	memory.set_generation(generation);
+	uml::cpu::ExecutionResult result{};
+	result.reason = uml::cpu::ExitReason::fatal;
+	while (result.retired_instructions < dispatch_budget) {
+		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
+			cpu.gpr(x86_64::Register::rax) =
+				x86_64_rt_sigreturn;
+			result.reason = uml::cpu::ExitReason::system_call;
+			return result;
+		}
+		const auto built = x86_64::gadgets::build(memory, cpu.rip);
+		switch (built.status) {
+		case x86_64::gadgets::BuildStatus::fetch_fault:
+			result.reason = uml::cpu::ExitReason::memory_fault;
+			result.fault = {
+				built.fault_address, uml::memory::MemoryAccess::execute};
+			return result;
+		case x86_64::gadgets::BuildStatus::illegal_instruction:
+			result.reason = uml::cpu::ExitReason::illegal_instruction;
+			return result;
+		case x86_64::gadgets::BuildStatus::allocation_failure:
+			return result;
+		case x86_64::gadgets::BuildStatus::built:
+			break;
+		}
+		const auto available = dispatch_budget - result.retired_instructions;
+		const auto executed = x86_64::gadgets::execute(
+			built.program, cpu, memory, available, interrupt);
+		result.retired_instructions += executed.retired_instructions;
+		result.fault = executed.fault;
+		if (executed.instruction_budget_exhausted) {
+			result.reason = uml::cpu::ExitReason::instruction_budget;
+			return result;
+		}
+		switch (executed.event) {
+		case uml::cpu::EngineEvent::continued:
+			continue;
+		case uml::cpu::EngineEvent::system_call:
+			result.reason = uml::cpu::ExitReason::system_call;
+			return result;
+		case uml::cpu::EngineEvent::memory_fault:
+			result.reason = uml::cpu::ExitReason::memory_fault;
+			return result;
+		case uml::cpu::EngineEvent::interrupt:
+			result.reason = uml::cpu::ExitReason::interrupt;
+			return result;
+		case uml::cpu::EngineEvent::illegal_instruction:
+			result.reason = uml::cpu::ExitReason::illegal_instruction;
+			return result;
+		case uml::cpu::EngineEvent::breakpoint:
+			result.reason = uml::cpu::ExitReason::breakpoint;
+			return result;
+		case uml::cpu::EngineEvent::fatal:
+		case uml::cpu::EngineEvent::gcs_fault:
+		case uml::cpu::EngineEvent::floating_point_trap:
+		case uml::cpu::EngineEvent::pc_alignment:
+			return result;
+		}
+	}
+	result.reason = uml::cpu::ExitReason::instruction_budget;
+	return result;
+}
+
+template<uml::cpu::EngineKind Kind>
+int run_x86_guest(darwin_uml_guest_registers &registers,
+	unsigned long generation, ::uml::runtime::Context &context,
+	::uml::runtime::ThreadExecutionState &runtime) noexcept
+{
+	(void)Kind;
+	auto &cpu = runtime.x86_cpu;
+	load_x86_cpu(cpu, registers);
+	const auto &registered_interrupt = runtime.interrupt;
+	const auto result = run_x86_gadgets(cpu, runtime.memory, generation, {
+		.sequence = registered_interrupt.sequence,
+		.snapshot = registered_interrupt.snapshot,
+		.stop = context.stop_token(),
+	});
+	save_x86_cpu(cpu, registers);
+	int event = DARWIN_UML_EVENT_FATAL;
+	switch (result.reason) {
+	case uml::cpu::ExitReason::system_call:
+		event = DARWIN_UML_EVENT_SYSCALL;
+		break;
+	case uml::cpu::ExitReason::memory_fault:
+		registers.fault.error_code = result.fault.access ==
+			uml::memory::MemoryAccess::write ? DARWIN_UML_FAULT_WRITE :
+			result.fault.access == uml::memory::MemoryAccess::execute ?
+				DARWIN_UML_FAULT_EXECUTE : 0;
+		registers.fault.address = result.fault.address;
+		registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
+		event = DARWIN_UML_EVENT_FAULT;
+		break;
+	case uml::cpu::ExitReason::interrupt:
+	case uml::cpu::ExitReason::instruction_budget:
+		event = context.stop_requested() ?
+			DARWIN_UML_EVENT_STOP : DARWIN_UML_EVENT_INTERRUPT;
+		break;
+	case uml::cpu::ExitReason::illegal_instruction:
+		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
+		break;
+	case uml::cpu::ExitReason::breakpoint:
+		event = DARWIN_UML_EVENT_BREAKPOINT;
+		break;
+	case uml::cpu::ExitReason::gcs_fault:
+	case uml::cpu::ExitReason::floating_point_trap:
+	case uml::cpu::ExitReason::pc_alignment:
+	case uml::cpu::ExitReason::fatal:
+		break;
+	}
+	return event;
+}
+#endif
+
 void save_floating_point_trap(
 	darwin_uml_guest_registers &registers, std::uint64_t address,
 	std::uint32_t syndrome) noexcept
@@ -418,6 +574,18 @@ int run_common_guest(
 	if (register_pointer == nullptr || fp_pointer == nullptr || tls == nullptr ||
 		fp_size < sizeof(darwin_uml_guest_fp_registers))
 		return DARWIN_UML_EVENT_FATAL;
+	auto &mutable_registers =
+		*static_cast<darwin_uml_guest_registers *>(register_pointer);
+	auto *context = ::uml::runtime::current_context();
+	if (context == nullptr)
+		return DARWIN_UML_EVENT_FATAL;
+	auto runtime = context->thread_execution_state();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	if (mutable_registers.padding == x86_64_guest_isa) {
+		return run_x86_guest<Kind>(mutable_registers, generation,
+			*context, *runtime);
+	}
+#endif
 	if constexpr (Kind == uml::cpu::EngineKind::jit) {
 		if (!uml::cpu::cpu_engine_available(uml::cpu::EngineKind::jit))
 			return DARWIN_UML_EVENT_FATAL;
@@ -431,13 +599,7 @@ int run_common_guest(
 		mutable_registers.pc += sizeof(std::uint32_t);
 		return DARWIN_UML_EVENT_SYSCALL;
 	}
-	auto &mutable_registers =
-		*static_cast<darwin_uml_guest_registers *>(register_pointer);
 	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
-	auto *context = ::uml::runtime::current_context();
-	if (context == nullptr)
-		return DARWIN_UML_EVENT_FATAL;
-	auto runtime = context->thread_execution_state();
 	auto &cpu = runtime->cpu;
 	auto &memory = runtime->memory;
 	load_cpu(cpu, mutable_registers, fp, *tls, context->top_byte_ignore());

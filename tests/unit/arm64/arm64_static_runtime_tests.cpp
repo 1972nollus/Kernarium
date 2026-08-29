@@ -63,7 +63,20 @@ public:
 		for (std::size_t index = 0; index < encoded.size(); ++index)
 			encoded[index] = static_cast<std::byte>(instruction >> (index * 8));
 		require(pwrite(fd_, encoded.data(), encoded.size(),
-			offset) == static_cast<ssize_t>(encoded.size()));
+				offset) == static_cast<ssize_t>(encoded.size()));
+	}
+
+	void put64(std::size_t offset, std::uint64_t value)
+	{
+		require(pwrite(fd_, &value, sizeof(value), offset) ==
+			static_cast<ssize_t>(sizeof(value)));
+	}
+
+	template<std::size_t Size>
+	void put_bytes(std::size_t offset, const std::array<std::byte, Size> &bytes)
+	{
+		require(pwrite(fd_, bytes.data(), bytes.size(), offset) ==
+			static_cast<ssize_t>(bytes.size()));
 	}
 
 private:
@@ -105,6 +118,80 @@ static void uml_static_entry_bridge()
 	require(value == 12);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+static void uml_static_x86_64_entry_bridge()
+{
+	constexpr unsigned long generation = 131;
+	constexpr std::uint64_t base = 0x1'8000;
+	constexpr std::array program{
+		std::byte{0xb8}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00},
+		std::byte{0x00},                         // mov eax, 1
+		std::byte{0xbf}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00},
+		std::byte{0x00},                         // mov edi, 1
+		std::byte{0x48}, std::byte{0x8d}, std::byte{0x35}, std::byte{0x07},
+		std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, // lea rsi, [rip+7]
+		std::byte{0xba}, std::byte{0x05}, std::byte{0x00}, std::byte{0x00},
+		std::byte{0x00},                         // mov edx, 5
+		std::byte{0x0f}, std::byte{0x05},         // syscall
+		std::byte{'x'}, std::byte{'8'}, std::byte{'6'}, std::byte{'!'},
+		std::byte{'\n'},
+	};
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put_bytes(0, program);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
+
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.padding = 2;
+	registers.pc = base;
+	registers.x[16] = 2;
+	unsigned long tls = 0;
+	const int event = darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.x[0] == 1); // rax
+	require(registers.x[7] == 1); // rdi
+	require(registers.x[6] == base + 24); // rsi
+	require(registers.x[2] == 5); // rdx
+	require(registers.pc == base + 24);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+static void uml_static_x86_64_signal_return_bridge()
+{
+	constexpr unsigned long generation = 132;
+	constexpr std::uint64_t base = 0x1'c000;
+	constexpr std::uint64_t stack = base + 0x800;
+	constexpr std::array program{std::byte{0xc3}}; // ret
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put_bytes(0, program);
+	backing.put64(stack - base, DARWIN_UML_SIGRETURN_TRAMPOLINE);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+		1, 1) == 0);
+
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.padding = 2;
+	registers.pc = base;
+	registers.x[16] = 2;
+	registers.x[4] = stack; // rsp
+	unsigned long tls = 0;
+	const int event = darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.x[0] == 15);
+	require(registers.x[4] == stack + sizeof(std::uint64_t));
+	require(registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+#endif
 
 static void uml_static_descriptor_reuse_invalidation()
 {
@@ -659,6 +746,10 @@ static void uml_static_walker_turnstile_blocks_host_thread()
 int main()
 {
 	uml_static_entry_bridge();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	uml_static_x86_64_entry_bridge();
+	uml_static_x86_64_signal_return_bridge();
+#endif
 	uml_static_descriptor_reuse_invalidation();
 	uml_static_host_interrupt_sequence();
 	uml_static_signal_return_bridge();

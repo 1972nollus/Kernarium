@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/engine.hpp"
+#include "cpu/x86_64/cpu_state.hpp"
 #include "memory/static_guest_memory.hpp"
 
 #include <cstddef>
@@ -73,6 +74,7 @@ private:
 
 struct ThreadExecutionState final {
 	::uml::cpu::arm64::CpuState cpu{};
+	::uml::cpu::x86_64::CpuState x86_cpu{};
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;
 	GuestInterruptSequence interrupt;

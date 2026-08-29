@@ -17,6 +17,10 @@
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_runtime_context>)
+    if(TARGET uml_x86_64_gadgets)
+        list(APPEND UML_STATIC_RUNTIME_TEST_BASE_OBJECTS
+            $<TARGET_OBJECTS:uml_x86_64_gadgets>)
+    endif()
     set(UML_STATIC_RUNTIME_TEST_OBJECTS
         ${UML_STATIC_RUNTIME_TEST_BASE_OBJECTS}
         $<TARGET_OBJECTS:uml_arm64_jit_executor>)
@@ -328,6 +332,8 @@
     target_include_directories(uml_arm64_static_runtime_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_link_libraries(uml_arm64_static_runtime_tests PRIVATE
+        UML::MemorySharedBacking)
     target_compile_options(uml_arm64_static_runtime_tests PRIVATE
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-static-runtime COMMAND uml_arm64_static_runtime_tests

@@ -444,10 +444,18 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		std::size_t bytes{};
 		for (std::size_t index = 0; index < maximum_instructions; ++index) {
 			const auto decoded = decode(memory, current);
-			if (decoded.status == DecodeStatus::fetch_fault)
-				return {BuildStatus::fetch_fault, {}, decoded.fault_address};
-			if (decoded.status != DecodeStatus::decoded)
+			if (decoded.status != DecodeStatus::decoded) {
+				/* Preserve the side effects and retirement order of the valid
+				 * prefix. Dispatch will decode the faulting instruction again
+				 * after that prefix has executed.
+				 */
+				if (!stream.empty())
+					break;
+				if (decoded.status == DecodeStatus::fetch_fault)
+					return {BuildStatus::fetch_fault, {},
+						decoded.fault_address};
 				return {BuildStatus::illegal_instruction, {}, current};
+			}
 			const auto entry = entry_for(decoded.instruction.operation);
 			if (entry == nullptr)
 				return {BuildStatus::illegal_instruction, {}, current};

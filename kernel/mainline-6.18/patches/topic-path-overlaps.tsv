@@ -1,17 +1,24 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 path	topic_orders	rationale
+arch/arm64/um/Makefile	0009,0025	The arm64 port owns its object manifest while topic 0025 adds the x86-64 syscall adapter.
 arch/arm64/Makefile.um	0009,0015	The arm64 port establishes its address constants while topic 0015 selects and sizes the common scalable Darwin native-address profile.
+arch/arm64/um/asm/elf.h	0009,0025	The arm64 port owns ELF policy while topic 0025 admits x86-64 ELF images only on the 4 KiB Darwin profile.
 arch/arm64/um/asm/mman.h	0009,0015	The arm64 port owns mmap policy while topic 0015 rejects guest mappings that cross the shared sparse native hole.
-arch/arm64/um/asm/processor.h	0009,0016	The arm64 port owns its relax primitive while the fixed-carrier topic adds a safe cooperative IPI boundary.
-arch/arm64/um/signal.c	0009,0015	The arm64 signal port owns its restorer while topic 0015 moves the trampoline with the selected guest task ceiling.
+arch/arm64/um/asm/processor.h	0009,0016,0025	The arm64 port owns task accessors, the fixed-carrier topic adds a safe cooperative IPI boundary, and topic 0025 selects the active ISA stack pointer.
+arch/arm64/um/asm/ptrace.h	0009,0025	The arm64 port owns ptrace accessors while topic 0025 selects syscall results from the active guest ISA.
+arch/arm64/um/asm/syscall.h	0009,0025	The arm64 port owns syscall metadata while topic 0025 reports the active guest audit architecture and x86-64 adapters.
+arch/arm64/um/shared/sysdep/ptrace.h	0009,0025	The arm64 port owns saved task registers while topic 0025 overlays x86-64 state on ABI-stable slots and adds ISA-aware syscall accessors.
+arch/arm64/um/signal.c	0009,0015,0025	The arm64 signal port owns its restorer, topic 0015 moves the trampoline with the selected task ceiling, and topic 0025 adds x86-64 signal frames.
 arch/um/Kconfig	0001,0023	The shared architecture topic establishes Darwin-capable UML configuration while topic 0023 advertises suspend after adding the SMP CPU-hotplug implementation used by the generic PM core.
 arch/um/drivers/darwin_net_kern.c	0010,0021	The device topic introduces Darwin networking while topic 0021 moves receive processing onto budgeted NAPI polling.
 arch/um/drivers/ubd_kern.c	0010,0024	The device topic adapts UBD host I/O, while topic 0024 lets direct images batch discard ranges without changing upstream COW handling.
 arch/um/drivers/virtio_uml.c	0010,0014	Darwin vhost-user transport support remains in topic 0010 while the generic 64-bit DMA-mask correction stays independently droppable as topic 0014.
 arch/um/drivers/vnc_input.c	0010,0020	The device topic owns Darwin input while topic 0020 exposes the display-mapped pointer as a direct touchscreen.
 arch/um/include/asm/processor-generic.h	0001,0015	The shared task-layout contract remains in topic 0001 while topic 0015 selects the scalable Darwin guest unmapped base.
+arch/um/include/asm/syscall-generic.h	0001,0025	The shared architecture topic owns syscall argument helpers while topic 0025 permits ISA-selected writable argument slots.
 arch/um/include/shared/kern_util.h	0001,0019,0023	The shared contract owns kernel-side host helpers, topic 0019 adds cooperative progress checkpoints, and topic 0023 adds the suspend-entry acknowledgement hook.
 arch/um/include/shared/os.h	0001,0018,0022	The shared host contract remains in topic 0001, topic 0018 adds local IPI raise, and topic 0022 adds physical-range reclamation.
+arch/um/kernel/exec.c	0004,0025	The execution core owns exec task reset while topic 0025 initializes the selected guest ISA state.
 arch/um/kernel/process.c	0004,0016	The execution core owns Linux task entry while topic 0016 adapts activation to fixed Darwin vCPU carriers.
 arch/um/kernel/skas/process.c	0002,0016	The MMU bootstrap owns CPU0 setup while topic 0016 installs the Darwin signal stack on its carrier.
 arch/um/kernel/skas/uaccess.c	0002,0019	The MMU topic owns synchronized user access while topic 0019 adds safe cooperative progress boundaries.
@@ -24,7 +31,7 @@ arch/um/os-Darwin/internal.h	0007,0016	The Darwin host topic owns private servic
 arch/um/os-Darwin/main.c	0007,0016	The Darwin host topic owns entry while topic 0016 keeps last-ditch stop handling on fixed carriers.
 arch/um/os-Darwin/mem.c	0007,0022	The Darwin host topic owns physical-memory setup while topic 0022 selects anonymous backing and range reclamation.
 arch/um/os-Darwin/signal.c	0007,0016	The Darwin host topic owns logical IRQ state while topic 0016 pins it to fixed vCPU carriers.
-arch/um/os-Darwin/skas/process.c	0007,0015,0016	The Darwin host topic owns fault dispatch, topic 0015 validates sparse guest ranges, and topic 0016 supplies fixed-carrier scheduling and stop boundaries.
+arch/um/os-Darwin/skas/process.c	0007,0015,0016,0025	The Darwin host topic owns fault dispatch, topic 0015 validates sparse guest ranges, topic 0016 supplies fixed carriers, and topic 0025 transports ISA-selected task state.
 arch/um/os-Darwin/smp.c	0007,0016,0018,0019	The Darwin host topic owns SMP transport, topic 0016 supplies fixed carriers, topic 0018 raises irq work locally, and topic 0019 adds cooperative progress service.
 arch/um/os-Darwin/time.c	0007,0016	The Darwin host topic owns idle waits while topic 0016 adds the fixed-carrier stop descriptor.
 arch/um/os-Darwin/uml_darwin_abi.h	0008,0015,0016	The Darwin bridge owns ABI declarations, topic 0015 carries the signal-restorer address, and topic 0016 adds the active-stop event.

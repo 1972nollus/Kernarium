@@ -90,6 +90,14 @@ precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines.
 
+The 4 KiB mainline product may run x86-64 tasks under the arm64 UML kernel.
+The kernel tags each task's userspace ISA and translates its syscall ABI; the
+host routes x86-64 instruction execution through immutable, data-only gadget
+streams. The bootstrap backend covers integer control flow, memory access,
+FS/GS-base TLS, and the signal-return boundary. Floating-point, vector, atomic,
+and broader instruction and syscall coverage remain unsupported. The 16 KiB
+mainline and Android products accept arm64 userspace only.
+
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
 guest identity and relocatable code only; executor-owned link state is rebuilt

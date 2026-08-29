@@ -1,0 +1,810 @@
+From ec91883793bc9a62e8a4ae4e87541b382230e1ea Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 01:55:46 +0900
+Subject: [PATCH 25/25] arm64: run x86-64 userspace through Darwin gadgets
+
+Keep the UML kernel and kernel-mode execution arm64 while allowing the
+4 KiB Darwin profile to load EM_X86_64 tasks. Tag those tasks in existing
+bridge padding and overlay their integer and TLS state on otherwise-unused
+arm64 register slots. Route them to data-only gadgets, translate supported
+syscall and TLS operations, and construct the matching signal frame.
+
+Leave the shared host/kernel ABI, the 16 KiB profile, Android, and
+non-Darwin builds unchanged. This first boundary deliberately exposes no
+floating-point or vector state and accepts only syscalls with compatible
+argument layouts.
+---
+ arch/arm64/um/Makefile                |   3 +-
+ arch/arm64/um/asm/elf.h               |  27 +++-
+ arch/arm64/um/asm/processor.h         |   2 +-
+ arch/arm64/um/asm/ptrace.h            |   4 +-
+ arch/arm64/um/asm/syscall.h           |   7 +-
+ arch/arm64/um/shared/sysdep/ptrace.h  | 122 ++++++++++++++--
+ arch/arm64/um/signal.c                | 191 +++++++++++++++++++++++++
+ arch/arm64/um/x86_64_syscalls.c       | 196 ++++++++++++++++++++++++++
+ arch/um/include/asm/syscall-generic.h |   2 +-
+ arch/um/kernel/exec.c                 |   1 +
+ arch/um/kernel/skas/syscall.c         |  10 +-
+ arch/um/os-Darwin/skas/process.c      |   6 +-
+ 12 files changed, 541 insertions(+), 30 deletions(-)
+ create mode 100644 arch/arm64/um/x86_64_syscalls.c
+
+diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
+index b3bbae6cd..1fc66e6d4 100644
+--- a/arch/arm64/um/Makefile
++++ b/arch/arm64/um/Makefile
+@@ -1,7 +1,8 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
+ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
+-	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
++	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
++	x86_64_syscalls.o
+ 
+ $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
+ targets += user-offsets.s
+diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
+index 42959d6df..ae26c342b 100644
+--- a/arch/arm64/um/asm/elf.h
++++ b/arch/arm64/um/asm/elf.h
+@@ -23,7 +23,8 @@
+ #define ELF_CLASS ELFCLASS64
+ #define ELF_DATA ELFDATA2LSB
+ #define ELF_ARCH EM_AARCH64
+-#define ELF_PLATFORM "aarch64"
++#define ELF_PLATFORM (UPT_IS_X86_64(&current_pt_regs()->regs) ? \
++	"x86_64" : "aarch64")
+ /*
+  * Obtain the virtual CPU profile after the host CLI has selected an execution
+  * engine.  The backend deliberately reports only extensions implemented by
+@@ -33,8 +34,10 @@
+ #ifdef UML_HOST_DARWIN
+ extern unsigned long darwin_uml_guest_hwcap(void);
+ extern unsigned long darwin_uml_guest_hwcap2(void);
+-#define ELF_HWCAP darwin_uml_guest_hwcap()
+-#define ELF_HWCAP2 darwin_uml_guest_hwcap2()
++#define ELF_HWCAP (UPT_IS_X86_64(&current_pt_regs()->regs) ? 0UL : \
++	darwin_uml_guest_hwcap())
++#define ELF_HWCAP2 (UPT_IS_X86_64(&current_pt_regs()->regs) ? 0UL : \
++	darwin_uml_guest_hwcap2())
+ #else
+ #define ELF_HWCAP (HWCAP_FP | HWCAP_ASIMD)
+ #define ELF_HWCAP2 0
+@@ -43,14 +46,28 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
+ #define ELF_ET_DYN_BASE (TASK_SIZE * 2 / 3)
+ #define STACK_RND_MASK (0x3ffff >> (PAGE_SHIFT - 12))
+ 
+-#define elf_check_arch(header) ((header)->e_machine == EM_AARCH64)
++static inline int elf_check_arch(const struct elf64_hdr *header)
++{
++#if defined(CONFIG_PAGE_SIZE_16KB) || !defined(UML_HOST_DARWIN)
++	return header->e_machine == EM_AARCH64;
++#else
++	return header->e_machine == EM_AARCH64 ||
++		header->e_machine == EM_X86_64;
++#endif
++}
+ 
+ #define ELF_PLAT_INIT(regs, load_address) do { \
+-	PT_REGS_X((regs), 0) = 0; \
++	if (UPT_IS_X86_64(&(regs)->regs)) \
++		UPT_X86_64(&(regs)->regs, UML_X86_64_RDX) = 0; \
++	else \
++		PT_REGS_X((regs), 0) = 0; \
+ } while (0)
+ 
+ #define SET_PERSONALITY(executable) do { \
+ 	current->personality &= ~READ_IMPLIES_EXEC; \
++	current_pt_regs()->regs.padding = \
++		(executable).e_machine == EM_X86_64 ? \
++		UML_GUEST_ISA_X86_64 : UML_GUEST_ISA_ARM64; \
+ } while (0)
+ 
+ typedef unsigned long elf_greg_t;
+diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
+index c113d51b8..dc97c26e2 100644
+--- a/arch/arm64/um/asm/processor.h
++++ b/arch/arm64/um/asm/processor.h
+@@ -32,7 +32,7 @@ static inline void arch_copy_thread(struct arch_thread *from,
+ 
+ /* Seccomp exposes KSTK_EIP as si_call_addr, so use the guest user PC. */
+ #define KSTK_EIP(task) UPT_IP(&(task)->thread.regs.regs)
+-#define KSTK_ESP(task) KSTK_REG(task, HOST_SP)
++#define KSTK_ESP(task) UPT_SP(&(task)->thread.regs.regs)
+ #define KSTK_EBP(task) KSTK_REG(task, HOST_FP)
+ 
+ #define ARCH_IS_STACKGROW(address) \
+diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
+index dd7a005f3..b34556b3b 100644
+--- a/arch/arm64/um/asm/ptrace.h
++++ b/arch/arm64/um/asm/ptrace.h
+@@ -16,8 +16,8 @@ enum {
+ #define PT_REGS_FP(state) UPT_FP(&(state)->regs)
+ #define PT_REGS_LR(state) UPT_LR(&(state)->regs)
+ #define PT_REGS_PSTATE(state) UPT_PSTATE(&(state)->regs)
+-#define PT_REGS_ORIG_SYSCALL(state) PT_REGS_X(state, 8)
+-#define PT_REGS_SYSCALL_RET(state) PT_REGS_X(state, 0)
++#define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
++#define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
+ 
+ #define PT_FIX_EXEC_STACK(sp) do { } while (0)
+ #define PT_REGS_SET_SYSCALL_RETURN(state, result) \
+diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
+index 9dfdeb2cc..8a48dbfa5 100644
+--- a/arch/arm64/um/asm/syscall.h
++++ b/arch/arm64/um/asm/syscall.h
+@@ -12,7 +12,12 @@ extern const sys_call_ptr_t sys_call_table[];
+ 
+ static inline int syscall_get_arch(struct task_struct *task)
+ {
+-	return AUDIT_ARCH_AARCH64;
++	return UPT_IS_X86_64(&task->thread.regs.regs) ?
++		AUDIT_ARCH_X86_64 : AUDIT_ARCH_AARCH64;
+ }
+ 
++int uml_x86_64_syscall_number(int syscall);
++long uml_x86_64_arch_prctl(struct uml_pt_regs *regs);
++long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result);
++
+ #endif
+diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
+index f77c6e818..e95b9254f 100644
+--- a/arch/arm64/um/shared/sysdep/ptrace.h
++++ b/arch/arm64/um/shared/sysdep/ptrace.h
+@@ -22,15 +22,30 @@
+ #define UPT_IP(regs) REGS_IP((regs)->gp)
+ #define UPT_PSTATE(regs) REGS_PSTATE((regs)->gp)
+ 
+-#define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
+-#define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
+-#define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
+-#define UPT_SYSCALL_ARG4(regs) UPT_X((regs), 3)
+-#define UPT_SYSCALL_ARG5(regs) UPT_X((regs), 4)
+-#define UPT_SYSCALL_ARG6(regs) UPT_X((regs), 5)
+-/* x0 is both the first argument and the return-value register. */
+-#define UPT_SYSCALL_ROLLBACK(regs) \
+-	(UPT_X((regs), 0) = (regs)->orig_x0)
++enum uml_guest_isa {
++	UML_GUEST_ISA_ARM64 = 1,
++	UML_GUEST_ISA_X86_64 = 2,
++};
++
++enum uml_x86_64_register {
++	UML_X86_64_RAX,
++	UML_X86_64_RCX,
++	UML_X86_64_RDX,
++	UML_X86_64_RBX,
++	UML_X86_64_RSP,
++	UML_X86_64_RBP,
++	UML_X86_64_RSI,
++	UML_X86_64_RDI,
++	UML_X86_64_R8,
++	UML_X86_64_R9,
++	UML_X86_64_R10,
++	UML_X86_64_R11,
++	UML_X86_64_R12,
++	UML_X86_64_R13,
++	UML_X86_64_R14,
++	UML_X86_64_R15,
++	UML_X86_64_REGISTER_COUNT,
++};
+ 
+ struct uml_pt_regs {
+ 	unsigned long gp[MAX_REG_NR];
+@@ -55,17 +70,94 @@ struct uml_pt_regs {
+ 	unsigned long fp[];
+ };
+ 
++static inline int upt_is_x86_64(const struct uml_pt_regs *regs)
++{
++	return regs->padding == UML_GUEST_ISA_X86_64;
++}
++
++#define UPT_IS_X86_64(regs) upt_is_x86_64(regs)
++#define UPT_X86_64(regs, n) UPT_X((regs), (n))
++#define UPT_X86_64_RIP(regs) UPT_IP(regs)
++#define UPT_X86_64_RFLAGS(regs) UPT_X((regs), 16)
++#define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
++#define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
++
++static inline unsigned long *upt_sp(struct uml_pt_regs *regs)
++{
++	return upt_is_x86_64(regs) ?
++		&UPT_X86_64(regs, UML_X86_64_RSP) : &regs->gp[HOST_SP];
++}
++
++#undef UPT_SP
++#define UPT_SP(regs) (*upt_sp(regs))
++
++static inline unsigned long *upt_syscall_return(struct uml_pt_regs *regs)
++{
++	return upt_is_x86_64(regs) ?
++		&UPT_X86_64(regs, UML_X86_64_RAX) : &regs->gp[HOST_X0];
++}
++
++#define UPT_SYSCALL_RETURN(regs) (*upt_syscall_return(regs))
++
++static inline unsigned long
++upt_syscall_arch_nr(const struct uml_pt_regs *regs)
++{
++	return upt_is_x86_64(regs) ?
++		UPT_X86_64(regs, UML_X86_64_RAX) : regs->gp[HOST_X8];
++}
++
++#define UPT_SYSCALL_ARCH_NR(regs) upt_syscall_arch_nr(regs)
++
++static inline unsigned long *
++upt_syscall_argument(struct uml_pt_regs *regs, unsigned int argument)
++{
++	static const unsigned char x86_registers[] = {
++		UML_X86_64_RDI, UML_X86_64_RSI, UML_X86_64_RDX,
++		UML_X86_64_R10, UML_X86_64_R8, UML_X86_64_R9,
++	};
++
++	if (upt_is_x86_64(regs))
++		return &UPT_X86_64(regs, x86_registers[argument]);
++	return argument == 0 ? &regs->orig_x0 : &regs->gp[HOST_X0 + argument];
++}
++
++#define UPT_SYSCALL_ARG1(regs) (*upt_syscall_argument((regs), 0))
++#define UPT_SYSCALL_ARG2(regs) (*upt_syscall_argument((regs), 1))
++#define UPT_SYSCALL_ARG3(regs) (*upt_syscall_argument((regs), 2))
++#define UPT_SYSCALL_ARG4(regs) (*upt_syscall_argument((regs), 3))
++#define UPT_SYSCALL_ARG5(regs) (*upt_syscall_argument((regs), 4))
++#define UPT_SYSCALL_ARG6(regs) (*upt_syscall_argument((regs), 5))
++
++static inline void upt_save_original_syscall(struct uml_pt_regs *regs)
++{
++	regs->orig_x0 = upt_is_x86_64(regs) ?
++		UPT_X86_64(regs, UML_X86_64_RAX) : regs->gp[HOST_X0];
++}
++
++#define UPT_SAVE_ORIGINAL_SYSCALL(regs) upt_save_original_syscall(regs)
++
++static inline void upt_syscall_rollback(struct uml_pt_regs *regs)
++{
++	if (upt_is_x86_64(regs))
++		UPT_X86_64(regs, UML_X86_64_RAX) = regs->orig_x0;
++	else
++		regs->gp[HOST_X0] = regs->orig_x0;
++}
++
++#define UPT_SYSCALL_ROLLBACK(regs) upt_syscall_rollback(regs)
++
+ #define EMPTY_UML_PT_REGS { }
+ #define UPT_SYSCALL_NR(regs) ((regs)->syscall)
+ #define UPT_FAULTINFO(regs) (&(regs)->faultinfo)
+ #define UPT_IS_USER(regs) ((regs)->is_user)
+ #define UPT_RESTART_SYSCALL(regs) do { \
+-	/* AArch64 returns syscall results in x0, which is also argument 1. \
+-	 * Restore it before re-executing SVC; unlike x86, rewinding the PC \
+-	 * alone would retry with -ERESTART* as the first argument. \
+-	 */ \
+-	UPT_X((regs), 0) = (regs)->orig_x0; \
+-	UPT_IP(regs) -= 4; \
++	if (UPT_IS_X86_64(regs)) { \
++		UPT_X86_64((regs), UML_X86_64_RAX) = (regs)->orig_x0; \
++		UPT_IP(regs) -= 2; \
++	} else { \
++		UPT_X((regs), 0) = (regs)->orig_x0; \
++		UPT_IP(regs) -= 4; \
++	} \
+ } while (0)
+ 
+ extern unsigned long host_fp_size;
+diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
+index 5df9d3a0e..36f53526f 100644
+--- a/arch/arm64/um/signal.c
++++ b/arch/arm64/um/signal.c
+@@ -17,6 +17,60 @@ struct uml_arm64_rt_sigframe {
+ 	struct ucontext uc;
+ };
+ 
++/* Keep this layout independent from the host architecture headers.  It is the
++ * Linux x86-64 userspace sigcontext/ucontext ABI, with no advertised FP state
++ * until the x86 backend grows vector registers.
++ */
++struct uml_x86_64_sigcontext {
++	unsigned long r8;
++	unsigned long r9;
++	unsigned long r10;
++	unsigned long r11;
++	unsigned long r12;
++	unsigned long r13;
++	unsigned long r14;
++	unsigned long r15;
++	unsigned long di;
++	unsigned long si;
++	unsigned long bp;
++	unsigned long bx;
++	unsigned long dx;
++	unsigned long ax;
++	unsigned long cx;
++	unsigned long sp;
++	unsigned long ip;
++	unsigned long flags;
++	unsigned short cs;
++	unsigned short gs;
++	unsigned short fs;
++	unsigned short ss;
++	unsigned long err;
++	unsigned long trapno;
++	unsigned long oldmask;
++	unsigned long cr2;
++	unsigned long fpstate;
++	unsigned long reserved1[8];
++};
++
++struct uml_x86_64_ucontext {
++	unsigned long uc_flags;
++	unsigned long uc_link;
++	stack_t uc_stack;
++	struct uml_x86_64_sigcontext uc_mcontext;
++	sigset_t uc_sigmask;
++};
++
++struct uml_x86_64_rt_sigframe {
++	unsigned long pretcode;
++	struct uml_x86_64_ucontext uc;
++	struct siginfo info;
++};
++
++#define UML_X86_64_USER_CS 0x33
++#define UML_X86_64_USER_SS 0x2b
++#define UML_X86_64_UC_SIGCONTEXT_SS 0x2
++#define UML_X86_64_UC_STRICT_RESTORE_SS 0x4
++
+ #ifdef UML_HOST_DARWIN
+ /* The final guest page is deliberately above STACK_TOP and never mapped.
+  * Returning there lets the Darwin Mach exception bridge synthesize the
+@@ -98,6 +152,122 @@ static int restore_mcontext(struct pt_regs *regs,
+ 	return error;
+ }
+ 
++static int
++save_x86_64_mcontext(struct uml_x86_64_sigcontext __user *context,
++		     struct pt_regs *regs, unsigned long oldmask)
++{
++	struct uml_x86_64_sigcontext state = { };
++	struct uml_pt_regs *guest = &regs->regs;
++
++	state.r8 = UPT_X86_64(guest, UML_X86_64_R8);
++	state.r9 = UPT_X86_64(guest, UML_X86_64_R9);
++	state.r10 = UPT_X86_64(guest, UML_X86_64_R10);
++	state.r11 = UPT_X86_64(guest, UML_X86_64_R11);
++	state.r12 = UPT_X86_64(guest, UML_X86_64_R12);
++	state.r13 = UPT_X86_64(guest, UML_X86_64_R13);
++	state.r14 = UPT_X86_64(guest, UML_X86_64_R14);
++	state.r15 = UPT_X86_64(guest, UML_X86_64_R15);
++	state.di = UPT_X86_64(guest, UML_X86_64_RDI);
++	state.si = UPT_X86_64(guest, UML_X86_64_RSI);
++	state.bp = UPT_X86_64(guest, UML_X86_64_RBP);
++	state.bx = UPT_X86_64(guest, UML_X86_64_RBX);
++	state.dx = UPT_X86_64(guest, UML_X86_64_RDX);
++	state.ax = UPT_X86_64(guest, UML_X86_64_RAX);
++	state.cx = UPT_X86_64(guest, UML_X86_64_RCX);
++	state.sp = UPT_X86_64(guest, UML_X86_64_RSP);
++	state.ip = UPT_X86_64_RIP(guest);
++	state.flags = UPT_X86_64_RFLAGS(guest);
++	state.cs = UML_X86_64_USER_CS;
++	state.ss = UML_X86_64_USER_SS;
++	state.err = guest->faultinfo.error_code;
++	state.trapno = guest->faultinfo.trap_no;
++	state.oldmask = oldmask;
++	state.cr2 = guest->faultinfo.cr2;
++	return copy_to_user(context, &state, sizeof(state));
++}
++
++static int
++restore_x86_64_mcontext(struct pt_regs *regs,
++			struct uml_x86_64_sigcontext __user *context)
++{
++	struct uml_x86_64_sigcontext state;
++	struct uml_pt_regs *guest = &regs->regs;
++
++	if (copy_from_user(&state, context, sizeof(state)))
++		return 1;
++	UPT_X86_64(guest, UML_X86_64_R8) = state.r8;
++	UPT_X86_64(guest, UML_X86_64_R9) = state.r9;
++	UPT_X86_64(guest, UML_X86_64_R10) = state.r10;
++	UPT_X86_64(guest, UML_X86_64_R11) = state.r11;
++	UPT_X86_64(guest, UML_X86_64_R12) = state.r12;
++	UPT_X86_64(guest, UML_X86_64_R13) = state.r13;
++	UPT_X86_64(guest, UML_X86_64_R14) = state.r14;
++	UPT_X86_64(guest, UML_X86_64_R15) = state.r15;
++	UPT_X86_64(guest, UML_X86_64_RDI) = state.di;
++	UPT_X86_64(guest, UML_X86_64_RSI) = state.si;
++	UPT_X86_64(guest, UML_X86_64_RBP) = state.bp;
++	UPT_X86_64(guest, UML_X86_64_RBX) = state.bx;
++	UPT_X86_64(guest, UML_X86_64_RDX) = state.dx;
++	UPT_X86_64(guest, UML_X86_64_RAX) = state.ax;
++	UPT_X86_64(guest, UML_X86_64_RCX) = state.cx;
++	UPT_X86_64(guest, UML_X86_64_RSP) = state.sp;
++	UPT_X86_64_RIP(guest) = state.ip;
++	UPT_X86_64_RFLAGS(guest) = state.flags | 2;
++	PT_REGS_SYSCALL_NR(regs) = -1;
++	return 0;
++}
++
++static int setup_x86_64_signal_stack(unsigned long stack_top,
++				     struct ksignal *ksig,
++				     struct pt_regs *regs, sigset_t *mask)
++{
++	struct uml_x86_64_rt_sigframe __user *frame;
++	unsigned long restorer;
++	int error = 0;
++
++	frame = (void __user *)(stack_top - sizeof(*frame));
++	frame = (void __user *)round_down((unsigned long)frame, 16);
++	frame = (void __user *)((unsigned long)frame - 128 - 8);
++	if (!access_ok(frame, sizeof(*frame)))
++		return 1;
++
++	if (ksig->ka.sa.sa_flags & SA_RESTORER)
++		restorer = (unsigned long)ksig->ka.sa.sa_restorer;
++#ifdef UML_HOST_DARWIN
++	else
++		restorer = UML_DARWIN_SIGRETURN_TRAMPOLINE;
++#else
++	else
++		return 1;
++#endif
++
++	error |= put_user(restorer, &frame->pretcode);
++	error |= put_user(UML_X86_64_UC_SIGCONTEXT_SS |
++			  UML_X86_64_UC_STRICT_RESTORE_SS,
++			  &frame->uc.uc_flags);
++	error |= put_user(0, &frame->uc.uc_link);
++	error |= __save_altstack(&frame->uc.uc_stack,
++		UPT_X86_64(&regs->regs, UML_X86_64_RSP));
++	error |= __copy_to_user(&frame->uc.uc_sigmask, mask, sizeof(*mask));
++	error |= save_x86_64_mcontext(&frame->uc.uc_mcontext, regs,
++		mask->sig[0]);
++	if (ksig->ka.sa.sa_flags & SA_SIGINFO)
++		error |= copy_siginfo_to_user(&frame->info, &ksig->info);
++	if (error)
++		return error;
++
++	UPT_X86_64(&regs->regs, UML_X86_64_RDI) = ksig->sig;
++	UPT_X86_64(&regs->regs, UML_X86_64_RSI) =
++		(unsigned long)&frame->info;
++	UPT_X86_64(&regs->regs, UML_X86_64_RDX) =
++		(unsigned long)&frame->uc;
++	UPT_X86_64(&regs->regs, UML_X86_64_RAX) = 0;
++	UPT_X86_64(&regs->regs, UML_X86_64_RSP) = (unsigned long)frame;
++	UPT_X86_64_RIP(&regs->regs) =
++		(unsigned long)ksig->ka.sa.sa_handler;
++	return 0;
++}
++
+ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+ 			  struct pt_regs *regs, sigset_t *mask)
+ {
+@@ -105,6 +275,9 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+ 	unsigned long restorer;
+ 	int error = 0;
+ 
++	if (UPT_IS_X86_64(&regs->regs))
++		return setup_x86_64_signal_stack(stack_top, ksig, regs, mask);
++
+ 	frame = (void __user *)round_down(stack_top - sizeof(*frame), 16);
+ 	if (!access_ok(frame, sizeof(*frame)))
+ 		return 1;
+@@ -144,6 +317,24 @@ SYSCALL_DEFINE0(rt_sigreturn)
+ 	struct uml_arm64_rt_sigframe __user *frame;
+ 	sigset_t set;
+ 
++	if (UPT_IS_X86_64(&regs->regs)) {
++		struct uml_x86_64_rt_sigframe __user *x86_frame;
++		unsigned long sp = UPT_X86_64(&regs->regs, UML_X86_64_RSP);
++
++		x86_frame = (void __user *)(sp - sizeof(unsigned long));
++		if (!access_ok(x86_frame, sizeof(*x86_frame)))
++			goto bad_frame;
++		if (copy_from_user(&set, &x86_frame->uc.uc_sigmask,
++				   sizeof(set)))
++			goto bad_frame;
++		set_current_blocked(&set);
++		if (restore_x86_64_mcontext(regs, &x86_frame->uc.uc_mcontext))
++			goto bad_frame;
++		if (restore_altstack(&x86_frame->uc.uc_stack))
++			goto bad_frame;
++		return PT_REGS_SYSCALL_RET(regs);
++	}
++
+ 	if (PT_REGS_SP(regs) & 15)
+ 		goto bad_frame;
+ 	frame = (void __user *)PT_REGS_SP(regs);
+diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
+new file mode 100644
+index 000000000..3369e3b6f
+--- /dev/null
++++ b/arch/arm64/um/x86_64_syscalls.c
+@@ -0,0 +1,196 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/errno.h>
++#include <linux/uaccess.h>
++#include <linux/utsname.h>
++#include <asm/ptrace.h>
++#include <asm/syscall.h>
++#include <asm/unistd.h>
++
++/* x86-64 and asm-generic assign different numbers to the same six-argument
++ * syscall ABI. Keep the translation explicit; calls with architecture-specific
++ * structures or argument order stay rejected until they have a real adapter.
++ */
++int uml_x86_64_syscall_number(int syscall)
++{
++	switch (syscall) {
++	case 0: return __NR_read;
++	case 1: return __NR_write;
++	case 3: return __NR_close;
++	case 8: return __NR_lseek;
++	case 9: return __NR_mmap;
++	case 10: return __NR_mprotect;
++	case 11: return __NR_munmap;
++	case 12: return __NR_brk;
++	case 13: return __NR_rt_sigaction;
++	case 14: return __NR_rt_sigprocmask;
++	case 15: return __NR_rt_sigreturn;
++	case 16: return __NR_ioctl;
++	case 17: return __NR_pread64;
++	case 18: return __NR_pwrite64;
++	case 19: return __NR_readv;
++	case 20: return __NR_writev;
++	case 24: return __NR_sched_yield;
++	case 25: return __NR_mremap;
++	case 26: return __NR_msync;
++	case 27: return __NR_mincore;
++	case 28: return __NR_madvise;
++	case 32: return __NR_dup;
++	case 35: return __NR_nanosleep;
++	case 36: return __NR_getitimer;
++	case 38: return __NR_setitimer;
++	case 39: return __NR_getpid;
++	case 40: return __NR_sendfile;
++	case 41: return __NR_socket;
++	case 42: return __NR_connect;
++	case 43: return __NR_accept;
++	case 44: return __NR_sendto;
++	case 45: return __NR_recvfrom;
++	case 46: return __NR_sendmsg;
++	case 47: return __NR_recvmsg;
++	case 48: return __NR_shutdown;
++	case 49: return __NR_bind;
++	case 50: return __NR_listen;
++	case 51: return __NR_getsockname;
++	case 52: return __NR_getpeername;
++	case 53: return __NR_socketpair;
++	case 54: return __NR_setsockopt;
++	case 55: return __NR_getsockopt;
++	case 60: return __NR_exit;
++	case 61: return __NR_wait4;
++	case 62: return __NR_kill;
++	case 63: return __NR_uname;
++	case 72: return __NR_fcntl;
++	case 73: return __NR_flock;
++	case 74: return __NR_fsync;
++	case 75: return __NR_fdatasync;
++	case 79: return __NR_getcwd;
++	case 80: return __NR_chdir;
++	case 81: return __NR_fchdir;
++	case 95: return __NR_umask;
++	case 96: return __NR_gettimeofday;
++	case 98: return __NR_getrusage;
++	case 99: return __NR_sysinfo;
++	case 100: return __NR_times;
++	case 102: return __NR_getuid;
++	case 104: return __NR_getgid;
++	case 107: return __NR_geteuid;
++	case 108: return __NR_getegid;
++	case 109: return __NR_setpgid;
++	case 110: return __NR_getppid;
++	case 112: return __NR_setsid;
++	case 121: return __NR_getpgid;
++	case 124: return __NR_getsid;
++	case 125: return __NR_capget;
++	case 126: return __NR_capset;
++	case 127: return __NR_rt_sigpending;
++	case 128: return __NR_rt_sigtimedwait;
++	case 130: return __NR_rt_sigsuspend;
++	case 131: return __NR_sigaltstack;
++	case 140: return __NR_getpriority;
++	case 141: return __NR_setpriority;
++	case 157: return __NR_prctl;
++	case 160: return __NR_setrlimit;
++	case 161: return __NR_chroot;
++	case 162: return __NR_sync;
++	case 165: return __NR_mount;
++	case 166: return __NR_umount2;
++	case 169: return __NR_reboot;
++	case 186: return __NR_gettid;
++	case 200: return __NR_tkill;
++	case 202: return __NR_futex;
++	case 203: return __NR_sched_setaffinity;
++	case 204: return __NR_sched_getaffinity;
++	case 217: return __NR_getdents64;
++	case 218: return __NR_set_tid_address;
++	case 221: return __NR_fadvise64;
++	case 228: return __NR_clock_gettime;
++	case 229: return __NR_clock_getres;
++	case 230: return __NR_clock_nanosleep;
++	case 231: return __NR_exit_group;
++	case 233: return __NR_epoll_ctl;
++	case 234: return __NR_tgkill;
++	case 257: return __NR_openat;
++	case 258: return __NR_mkdirat;
++	case 259: return __NR_mknodat;
++	case 260: return __NR_fchownat;
++	case 263: return __NR_unlinkat;
++	case 264: return __NR_renameat;
++	case 265: return __NR_linkat;
++	case 266: return __NR_symlinkat;
++	case 267: return __NR_readlinkat;
++	case 268: return __NR_fchmodat;
++	case 269: return __NR_faccessat;
++	case 270: return __NR_pselect6;
++	case 271: return __NR_ppoll;
++	case 275: return __NR_splice;
++	case 276: return __NR_tee;
++	case 278: return __NR_vmsplice;
++	case 280: return __NR_utimensat;
++	case 281: return __NR_epoll_pwait;
++	case 285: return __NR_fallocate;
++	case 288: return __NR_accept4;
++	case 289: return __NR_signalfd4;
++	case 290: return __NR_eventfd2;
++	case 291: return __NR_epoll_create1;
++	case 292: return __NR_dup3;
++	case 293: return __NR_pipe2;
++	case 294: return __NR_inotify_init1;
++	case 295: return __NR_preadv;
++	case 296: return __NR_pwritev;
++	case 299: return __NR_recvmmsg;
++	case 302: return __NR_prlimit64;
++	case 307: return __NR_sendmmsg;
++	case 318: return __NR_getrandom;
++	case 319: return __NR_memfd_create;
++	case 322: return __NR_execveat;
++	case 332: return __NR_statx;
++	case 334: return __NR_rseq;
++	case 435: return __NR_clone3;
++	case 437: return __NR_openat2;
++	case 438: return __NR_pidfd_getfd;
++	case 439: return __NR_faccessat2;
++	case 441: return __NR_epoll_pwait2;
++	default: return -1;
++	}
++}
++
++#define UML_ARCH_SET_GS 0x1001
++#define UML_ARCH_SET_FS 0x1002
++#define UML_ARCH_GET_FS 0x1003
++#define UML_ARCH_GET_GS 0x1004
++
++long uml_x86_64_arch_prctl(struct uml_pt_regs *regs)
++{
++	unsigned long operation = UPT_SYSCALL_ARG1(regs);
++	unsigned long address = UPT_SYSCALL_ARG2(regs);
++
++	switch (operation) {
++	case UML_ARCH_SET_FS:
++		UPT_X86_64_FS_BASE(regs) = address;
++		return 0;
++	case UML_ARCH_SET_GS:
++		UPT_X86_64_GS_BASE(regs) = address;
++		return 0;
++	case UML_ARCH_GET_FS:
++		return put_user(UPT_X86_64_FS_BASE(regs),
++			(unsigned long __user *)address) ? -EFAULT : 0;
++	case UML_ARCH_GET_GS:
++		return put_user(UPT_X86_64_GS_BASE(regs),
++			(unsigned long __user *)address) ? -EFAULT : 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result)
++{
++	static const char machine[] = "x86_64";
++	struct new_utsname __user *name;
++
++	if (result)
++		return result;
++	name = (struct new_utsname __user *)UPT_SYSCALL_ARG1(regs);
++	return copy_to_user(name->machine, machine, sizeof(machine)) ?
++		-EFAULT : 0;
++}
+diff --git a/arch/um/include/asm/syscall-generic.h b/arch/um/include/asm/syscall-generic.h
+index 215668ff8..0c0aae139 100644
+--- a/arch/um/include/asm/syscall-generic.h
++++ b/arch/um/include/asm/syscall-generic.h
+@@ -61,7 +61,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
+ 					 struct pt_regs *regs,
+ 					 unsigned long *args)
+ {
+-	const struct uml_pt_regs *r = &regs->regs;
++	struct uml_pt_regs *r = &regs->regs;
+ 
+ 	*args++ = UPT_SYSCALL_ARG1(r);
+ 	*args++ = UPT_SYSCALL_ARG2(r);
+diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
+index d0f443c19..51d13799a 100644
+--- a/arch/um/kernel/exec.c
++++ b/arch/um/kernel/exec.c
+@@ -34,6 +34,7 @@ void flush_thread(void)
+ 	current_pt_regs()->regs.svcr = 0;
+ 	memset(current_pt_regs()->regs.pointer_auth_keys, 0,
+ 	       sizeof(current_pt_regs()->regs.pointer_auth_keys));
++	current_pt_regs()->regs.padding = UML_GUEST_ISA_ARM64;
+ #endif
+ }
+ 
+diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
+index ba7494f9b..0077e11c9 100644
+--- a/arch/um/kernel/skas/syscall.c
++++ b/arch/um/kernel/skas/syscall.c
+@@ -20,7 +20,7 @@ void handle_syscall(struct uml_pt_regs *r)
+ 	int syscall;
+ 
+ 	/* Initialize the syscall number and default return value. */
+-	UPT_SYSCALL_NR(r) = PT_SYSCALL_NR(r->gp);
++	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
+ 	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 
+ 	if (syscall_trace_enter(regs))
+@@ -31,6 +31,12 @@ void handle_syscall(struct uml_pt_regs *r)
+ 		goto out;
+ 
+ 	syscall = UPT_SYSCALL_NR(r);
++	if (UPT_IS_X86_64(r) && syscall == 158) {
++		PT_REGS_SET_SYSCALL_RETURN(regs, uml_x86_64_arch_prctl(r));
++		goto out;
++	}
++	if (UPT_IS_X86_64(r))
++		syscall = uml_x86_64_syscall_number(syscall);
+ 
+ 	/*
+ 	 * If no time passes, then sched_yield may not actually yield, causing
+@@ -51,6 +57,8 @@ void handle_syscall(struct uml_pt_regs *r)
+ 						 UPT_SYSCALL_ARG4(&regs->regs),
+ 						 UPT_SYSCALL_ARG5(&regs->regs),
+ 						 UPT_SYSCALL_ARG6(&regs->regs));
++		if (UPT_IS_X86_64(r) && UPT_SYSCALL_NR(r) == 63)
++			ret = uml_x86_64_fixup_uname(r, ret);
+ 
+ 		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
+ 
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index fe8e7d48e..321664d26 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -314,7 +314,7 @@ static int syscall_snapshots_address_space(struct uml_pt_regs *registers)
+ 	 * child's COW page tables.  Read the current trap's x8 directly rather
+ 	 * than the previous syscall retained in the bookkeeping field.
+ 	 */
+-	switch (UPT_X(registers, 8)) {
++	switch (UPT_SYSCALL_ARCH_NR(registers)) {
+ 	case __NR_clone:
+ 		/* CLONE_VM (including the usual CLONE_VFORK exec path) shares
+ 		 * the current mm and does not construct COW page tables.  Flushing
+@@ -532,7 +532,7 @@ void userspace(struct uml_pt_regs *registers)
+ 		case DARWIN_UML_EVENT_SYSCALL:
+ 			if (profiling)
+ 				profile_start = os_nsecs();
+-			registers->orig_x0 = UPT_X(registers, 0);
++			UPT_SAVE_ORIGINAL_SYSCALL(registers);
+ #ifndef CONFIG_PAGE_SIZE_16KB
+ 			snapshots_mm = syscall_snapshots_address_space(registers);
+ 			if (snapshots_mm && darwin_uml_vm_flush_active() < 0)
+@@ -543,7 +543,7 @@ void userspace(struct uml_pt_regs *registers)
+ 				os_warn("Darwin static syscall cpu=%d pid=%d nr=%ld ret=%#lx\n",
+ 					uml_curr_cpu(), get_current_pid(),
+ 					(long)UPT_SYSCALL_NR(registers),
+-					UPT_X(registers, 0));
++					UPT_SYSCALL_RETURN(registers));
+ 			if (profiling) {
+ 				profile_add(&profile_syscall_ns,
+ 					    os_nsecs() - profile_start);
