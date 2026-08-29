@@ -28,7 +28,10 @@ The dependency products are:
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices; and
 - `ios-compression`: the pinned, decode-only zstd library as one static arm64
-  `LibZstd.xcframework` with iOS device and Simulator slices.
+  `LibZstd.xcframework` with iOS device and Simulator slices; and
+- `x86-conformance`: the test-only FEX source and instruction corpus plus its
+  pinned NASM producer tool, used to qualify x86-64 gadget semantics. Neither
+  is linked into a product.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat `EGL.framework` and `GLESv2.framework` payloads. All Apple platforms use
@@ -65,6 +68,8 @@ dependencies/build-ios-storage.sh --verify-only
 dependencies/prepare.sh --product ios-compression
 dependencies/build-ios-zstd.sh
 dependencies/build-ios-zstd.sh --verify-only
+
+dependencies/prepare.sh --product x86-conformance
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for

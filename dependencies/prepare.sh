@@ -29,7 +29,7 @@ Usage: dependencies/prepare.sh [options]
 
 Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
-                  apple-gpu, or all
+                  apple-gpu, x86-conformance, or all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching
