@@ -295,7 +295,10 @@ EmulatorOptions prepare_emulator_options(
 	if (!has_prefix(prepared.arguments, "umid="))
 		prepared.arguments.emplace_back(
 			"umid=" + ::uml::device::guest_management_console_umid());
-	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
+	// Automatic kernel DHCP is a convenience of the unified rootfs path.
+	// Rootfs-less, disk-composed guests own their network configuration.
+	if (default_user_network && !rootfs.empty() &&
+	    !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
 	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
 	prepared.guest_memory_bytes =

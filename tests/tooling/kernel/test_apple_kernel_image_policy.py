@@ -304,6 +304,7 @@ def main() -> int:
         'page_size = 16384',
         'if name.endswith(".ko")',
         "dedicated x86_64 Linux builder",
+        "verify_kernel_config(staging, android_root, enforce_tracked_policy=True)",
     ):
         require(
             contract in android_kernel_publisher,

@@ -83,6 +83,14 @@ void test_defaults_and_engine_selection()
 	require(contains(defaults, "console=tty0") &&
 		contains(defaults, "console=ttyS0"),
 		"framebuffer and host serial console defaults were not added");
+
+	const char *disk_composed[]{"ubd0=/tmp/guest.img", "root=/dev/ram0"};
+	const auto disk_options = uml::emulator::prepare_emulator_options(
+		2, disk_composed, {}, true);
+	require(disk_options.valid,
+		"rootfs-less disk-composed guest options were rejected");
+	require(!contains(disk_options, "ip=dhcp"),
+		"rootfs-less guest inherited kernel DHCP configuration");
 }
 
 void test_explicit_defaults_are_preserved()

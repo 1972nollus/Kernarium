@@ -60,7 +60,9 @@ def main() -> None:
     outer_root = android_root.parents[1]
     line_root = outer_root / "kernel/android-6.18"
     common_root = outer_root / "kernel/common"
+    sys.path.insert(0, str(android_root / "tools"))
     sys.path.insert(0, str(common_root / "artifacts"))
+    from release_common import verify_kernel_config  # noqa: PLC0415
     from kernel_artifact import (  # noqa: PLC0415
         PAYLOAD_SPECS,
         RELEASE_ID_RE,
@@ -144,6 +146,7 @@ def main() -> None:
                 "format": file_format,
                 "size": destination_path.stat().st_size,
             })
+        verify_kernel_config(staging, android_root, enforce_tracked_policy=True)
         manifest = {
             "schema_version": 1,
             "release_id": args.release_id,
