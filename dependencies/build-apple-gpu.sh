@@ -262,6 +262,7 @@ APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
 	env -i PATH="$PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 		"$XCODEBUILD" archive -quiet \
 		-archivePath "$ANGLE_ARCHIVE" \
+		-derivedDataPath "$BUILDS/ANGLE-DerivedData" \
 		-scheme ANGLE \
 		-sdk "$SDK_NAME" \
 		-arch arm64 \
