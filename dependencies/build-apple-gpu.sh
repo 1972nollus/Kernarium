@@ -30,7 +30,7 @@ usage()
 		"  --platform NAME      macos (default), ios-simulator, or ios" \
 		"  --source-root PATH   Verified dependency source trees" \
 		"  --prefix PATH        Output prefix" \
-		"  --work-root PATH     Temporary build parent" \
+		"  --work-root PATH     Build parent and shared ANGLE DerivedData" \
 		"  --jobs NUMBER        Parallel build jobs (default: 8)" \
 		"  --verify-only        Verify an existing prefix" \
 		"  -h, --help           Show this help" \
@@ -131,7 +131,7 @@ PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
 	fail "platform contract is unavailable: $PLATFORM_CONTRACT"
 [ -n "$PREFIX" ] || PREFIX=$DEFAULT_PREFIX
 [ -n "$WORK_ROOT" ] ||
-	WORK_ROOT="$ROOT_DIR/.build/dependency-build/apple-gpu/$PLATFORM"
+	WORK_ROOT="$ROOT_DIR/.build/dependency-build/apple-gpu"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
 mkdir -p -- "$PREFIX_PARENT"
@@ -188,6 +188,7 @@ find_tool RSYNC rsync
 find_tool PKG_CONFIG pkg-config
 find_tool XCODEBUILD xcodebuild
 find_tool XCRUN xcrun
+find_tool SHLOCK shlock
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
 find_tool PYTHON python3
@@ -203,10 +204,16 @@ STRIP=$($XCRUN --sdk "$SDK_NAME" --find strip)
 
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+ANGLE_DERIVED_DATA="$WORK_ROOT/ANGLE-DerivedData"
+ANGLE_DERIVED_DATA_LOCK="$WORK_ROOT/.ANGLE-DerivedData.lock"
+ANGLE_DERIVED_DATA_LOCK_HELD=0
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$PREFIX_PARENT/.apple-gpu-prefix.XXXXXX")
 cleanup()
 {
+	if [ "$ANGLE_DERIVED_DATA_LOCK_HELD" -eq 1 ]; then
+		rm -f -- "$ANGLE_DERIVED_DATA_LOCK"
+	fi
 	if [ -n "${TEMP_ROOT:-}" ] && [ -d "$TEMP_ROOT" ]; then
 		rm -rf -- "$TEMP_ROOT"
 	fi
@@ -257,12 +264,18 @@ $RSYNC -a --exclude .git --exclude utm_build \
 	"$VIRGL_SOURCE/" "$SOURCES/virglrenderer/"
 
 APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
+# macOS, Simulator, and device archives share this cache across invocations.
+# Serialize only Xcode so later Meson work may still overlap safely.
+if ! "$SHLOCK" -f "$ANGLE_DERIVED_DATA_LOCK" -p "$$"; then
+	fail "ANGLE DerivedData is in use by another dependency build"
+fi
+ANGLE_DERIVED_DATA_LOCK_HELD=1
 (
 	cd "$ANGLE_ROOT"
 	env -i PATH="$PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 		"$XCODEBUILD" archive -quiet \
 		-archivePath "$ANGLE_ARCHIVE" \
-		-derivedDataPath "$BUILDS/ANGLE-DerivedData" \
+		-derivedDataPath "$ANGLE_DERIVED_DATA" \
 		-scheme ANGLE \
 		-sdk "$SDK_NAME" \
 		-arch arm64 \
@@ -276,6 +289,8 @@ APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
 		GCC_TREAT_WARNINGS_AS_ERRORS=NO \
 		OTHER_CPLUSPLUSFLAGS='$(inherited) -Wno-error=unnecessary-virtual-specifier'
 )
+rm -f -- "$ANGLE_DERIVED_DATA_LOCK"
+ANGLE_DERIVED_DATA_LOCK_HELD=0
 [ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" ] ||
 	fail "ANGLE archive did not produce libEGL.dylib"
 [ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" ] ||
