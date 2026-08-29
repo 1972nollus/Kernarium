@@ -121,7 +121,7 @@ _contract_expect(gl_provider angle-metal)
 _contract_expect(graphics_api ANGLE-EGL-GLES)
 _contract_expect(presentation_api Metal)
 _contract_expect(renderer_features
-    "gles,native-share-texture,render-server-thread")
+    "gles,native-share-texture,render-server-thread,video-h264-decode")
 _contract_expect(components utm-webkit,utm-libepoxy,utm-virglrenderer)
 _contract_expect(source_manifest dependencies/manifest.tsv)
 

@@ -1,7 +1,7 @@
-From a32f188e10ac0117b5be035b08bb3a55acba491f Mon Sep 17 00:00:00 2001
+From b562625e78286382a491b8f5752a251ae2e698c0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 03:01:50 +0900
-Subject: [PATCH 2/3] vrend: map GLES separate transform feedback buffers
+Subject: [PATCH 2/4] vrend: map GLES separate transform feedback buffers
 
 ---
  src/vrend/vrend_renderer.c | 75 +++++++++++++++++++++++++++-----------

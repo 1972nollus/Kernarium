@@ -199,6 +199,7 @@ VirglRenderer::VirglRenderer()
         // Simulator, and device alike.
         constexpr int rendererFlags =
             VIRGL_RENDERER_USE_GLES |
+            VIRGL_RENDERER_USE_VIDEO |
             VIRGL_RENDERER_NATIVE_SHARE_TEXTURE;
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);

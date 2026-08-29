@@ -422,7 +422,8 @@ configure_plasma_user()
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
 		plasma-desktop konsole chromium sudo fonts-dejavu-core \
-		libgl1-mesa-dri xdg-desktop-portal-kde
+		libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg \
+		xdg-desktop-portal-kde
 	as_root chroot "$root" useradd -m -s /bin/bash debian
 	as_root chroot "$root" passwd -d debian
 	debian_uid=$(as_root chroot "$root" id -u debian)

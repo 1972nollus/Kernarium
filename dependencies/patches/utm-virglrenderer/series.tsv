@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	946f8bf96a4d04f3f21d9539487dd5d3bd118518cd165b95ff28be1a370159e1	vrend: support GLES 3.0 MSAA on iOS Metal
-2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	a7d4f3c291e98254426514b53062b105cf4656ff96467250744bc47ea3f6d3be	vrend: map GLES separate transform feedback buffers
-3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	bc83634c5d8a21801a0206547dedf921e9a82ca44c7ea04c960deea8ebde4f61	vrend: stop advertising emulated GLES Z32_UNORM
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	ae3d2ea8825df5cbca4fca2a1135f4b9bf5581a3823ef3d08fe018c3b0a232cc	vrend: support GLES 3.0 MSAA on iOS Metal
+2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	9ac722b7b2b213056984988c75907b6a7a7d6cf8e7e23109b315d23967b284a2	vrend: map GLES separate transform feedback buffers
+3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	2bc1aa3c93d26baaf651388b2a16388d7927f4cc76fcf69f0fb85298f514bf6b	vrend: stop advertising emulated GLES Z32_UNORM
+4	0004-vrend-add-VideoToolbox-H.264-decode-backend.patch	bbb63bcdd6bac8b28cfa88c37d8dea1083fa7803	ec639e74506e1a75238e72a6b12d285acba83f32d4d1a1b1babbe53bce96ccf3	vrend: add VideoToolbox H.264 decode backend

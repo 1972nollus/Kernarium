@@ -16,11 +16,17 @@ add_library(uml_gpu_renderer STATIC
     host_gl_provider.cpp
     virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
+target_compile_definitions(uml_gpu_renderer PRIVATE
+    VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
 target_link_libraries(uml_gpu_renderer PRIVATE
+    "-framework CoreFoundation"
+    "-framework CoreMedia"
+    "-framework CoreVideo"
     "-framework Foundation"
     "-framework Metal"
-    "-framework QuartzCore")
+    "-framework QuartzCore"
+    "-framework VideoToolbox")
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
 set(_uml_gpu_display_sources
