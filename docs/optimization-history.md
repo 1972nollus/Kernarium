@@ -184,6 +184,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | --- | --- |
 | Matched cold/warm platform timing | Early Android startup was not the bottleneck; first-boot ART and package verification dominated. Exact one-off timing tables were not retained. |
 | macOS vCPU sweep at 4 GiB | Measured. Eight uniform vCPUs were the boot-time sweet spot on the M1 Ultra host: near-best typical cold boot with much tighter cold-run spread, the best warm median, and no benefit from increasing to ten. |
+| Physical-iPad vCPU sweep at 1792 MiB | Measured. Four uniform vCPUs were the viable boot-time sweet spot on the 4 GiB A15 iPad: cold/warm medians were about 79.9/44.0 seconds versus 87.5/47.9 seconds with two. Six vCPUs was not viable at this RAM allocation; iPadOS terminated all four cold attempts under memory pressure before boot completion. |
 | Build-time ART placement | Accepted. Ordinary application artifacts are installed beside their APKs instead of being routed to an unbuilt `system_other` image. APEX-contained apps remain a separate platform boundary. |
 | ext4 Android payloads and APEXes | Accepted for the Android release; it removed EROFS-specific execution issues without changing Linux desktop rootfs policy. |
 | Anonymous host VM for Android RAM | Accepted. It removed file-pager churn from cold boot while preserving ordinary file-backed disk behavior. |
