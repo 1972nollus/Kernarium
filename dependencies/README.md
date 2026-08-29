@@ -23,10 +23,12 @@ The dependency products are:
 - `macos`: non-graphics static host libraries at
   `.build/dependencies/macos-arm64`;
 - `apple-gpu`: common ANGLE/Metal, libepoxy, and virglrenderer inputs for
-  macOS, Simulator, and device; and
-- `ios-network`: the iOS GLib/libslirp network closure; and
+  macOS, Simulator, and device;
+- `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
-  XCFramework with iOS device and Simulator slices.
+  `GPTFDisk.xcframework` with iOS device and Simulator slices; and
+- `ios-compression`: the pinned, decode-only zstd library as one static arm64
+  `LibZstd.xcframework` with iOS device and Simulator slices.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat `EGL.framework` and `GLESv2.framework` payloads. All Apple platforms use
@@ -59,6 +61,10 @@ dependencies/build-ios-network.sh --platform ios
 dependencies/prepare.sh --product ios-storage
 dependencies/build-ios-storage.sh
 dependencies/build-ios-storage.sh --verify-only
+
+dependencies/prepare.sh --product ios-compression
+dependencies/build-ios-zstd.sh
+dependencies/build-ios-zstd.sh --verify-only
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -70,10 +76,18 @@ verification checks manifest/series identity, architecture, Apple platform and
 deployment target, expected static payloads, framework install names, and the
 absence of undeclared or legacy providers.
 
+Product-specific prefixes compare only the manifest rows consumed by that
+product. Adding an unrelated dependency does not invalidate an accepted
+prefix, while any change to one of its own rows still requires a rebuild.
+
 The iOS storage build exports only the two file-oriented C entry points used by
 Kernarium. Its archive excludes every GPT fdisk command-line front end and
 `popt`. The standalone macOS Android launcher invokes an installed Homebrew
 `sgdisk` executable instead; it does not link or discover a Homebrew library.
+The zstd build contains the streaming decompressor but excludes compression,
+dictionary-builder, legacy-frame, deprecated, and command-line code. Both
+libraries use static framework slices so their Clang module maps remain
+separate when Xcode processes the XCFrameworks.
 
 ## Patch maintenance
 

@@ -147,8 +147,8 @@ build_slice()
 	sdk_name=$2
 	target=$3
 	build_dir="$TEMP_ROOT/build-$platform"
-	headers="$TEMP_ROOT/headers-$platform"
-	library="$build_dir/libKernariumGPTFDisk.a"
+	library="$build_dir/libGPTFDisk.a"
+	framework="$TEMP_ROOT/framework-$platform/GPTFDisk.framework"
 	sdk_root=$($XCRUN --sdk "$sdk_name" --show-sdk-path)
 	cxx=$($XCRUN --sdk "$sdk_name" --find clang++)
 	ar=$($XCRUN --sdk "$sdk_name" --find ar)
@@ -160,10 +160,14 @@ build_slice()
 		CPPFLAGS=-DKERNARIUM_GPTFDISK_FILE_ONLY=1 \
 		CXXFLAGS="-target $target -isysroot $sdk_root -O2 -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -std=c++17 -Wall -Wextra -Werror" \
 		-j "$JOBS"
-	mkdir -p -- "$headers"
-	cp "$SOURCE/kernarium_gptfdisk.h" "$headers/KernariumGPTFDisk.h"
+	mkdir -p -- "$framework/Headers" "$framework/Modules"
+	cp "$library" "$framework/GPTFDisk"
+	cp "$SOURCE/kernarium_gptfdisk.h" "$framework/Headers/GPTFDisk.h"
 	cp "$ROOT_DIR/dependencies/gptfdisk/module.modulemap" \
-		"$headers/module.modulemap"
+		"$framework/Modules/module.modulemap"
+	"$CMAKE" -DFRAMEWORK_NAME=GPTFDisk \
+		-DOUTPUT="$framework/Info.plist" \
+		-P "$ROOT_DIR/dependencies/cmake/ConfigureStaticFrameworkPlist.cmake"
 }
 
 build_slice ios iphoneos "arm64-apple-ios$DEPLOYMENT_TARGET"
@@ -171,11 +175,9 @@ build_slice ios-simulator iphonesimulator \
 	"arm64-apple-ios$DEPLOYMENT_TARGET-simulator"
 
 "$XCODEBUILD" -create-xcframework \
-	-library "$TEMP_ROOT/build-ios/libKernariumGPTFDisk.a" \
-	-headers "$TEMP_ROOT/headers-ios" \
-	-library "$TEMP_ROOT/build-ios-simulator/libKernariumGPTFDisk.a" \
-	-headers "$TEMP_ROOT/headers-ios-simulator" \
-	-output "$STAGE/KernariumGPTFDisk.xcframework"
+	-framework "$TEMP_ROOT/framework-ios/GPTFDisk.framework" \
+	-framework "$TEMP_ROOT/framework-ios-simulator/GPTFDisk.framework" \
+	-output "$STAGE/GPTFDisk.xcframework"
 
 PROVENANCE="$STAGE/share/uml-dependencies"
 mkdir -p -- "$PROVENANCE/patches/gptfdisk"

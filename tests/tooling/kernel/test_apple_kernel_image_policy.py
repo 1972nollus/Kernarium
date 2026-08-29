@@ -328,7 +328,8 @@ def main() -> int:
         "UML_ARTIFACT_FAMILY",
         "UML_KERNEL_PAGE_SIZE",
         'KERNARIUM_KERNEL_RELEASE_SERIES "6.18"',
-        "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
+        "KRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
+        "KRuntime_ACK_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
         'OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"',
         "verify-signed-kernel-carrier.py",
         "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
@@ -398,6 +399,7 @@ def main() -> int:
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
         'dlsym(handle, "kernarium_runtime_get_api_v7")',
         "selectedPageSize == guestPageSize",
+        "releaseFirst >= '0' && releaseFirst <= '9'",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",
     ):
@@ -425,9 +427,9 @@ def main() -> int:
     )
     verify_carrier_tool(arguments.carrier_verifier)
 
-    runtime_4k = "KernariumRuntime_6_18_4K"
-    runtime_16k = "KernariumRuntime_6_18_16K"
-    runtime_android = "KernariumRuntimeAndroid_6_18_16K"
+    runtime_4k = "KRuntime_6_18_4K"
+    runtime_16k = "KRuntime_6_18_16K"
+    runtime_android = "KRuntime_ACK_6_18_16K"
     package_script = read(arguments.package_script)
     for contract in (
         "kernarium-runtime-ios-device-4k",
@@ -437,6 +439,9 @@ def main() -> int:
         'create_xcframework "$RUNTIME_4K"',
         'create_xcframework "$RUNTIME_16K"',
         'create_xcframework "$RUNTIME_ANDROID_16K"',
+        'build-ios-zstd.sh',
+        'GPTFDisk.xcframework',
+        'LibZstd.xcframework',
     ):
         require(contract in package_script, f"runtime packaging lacks {contract}")
 
@@ -447,9 +452,19 @@ def main() -> int:
             f"Xcode does not embed {runtime}",
         )
     require(
-        "KernariumRuntime.xcframework" not in xcode_project,
-        "Xcode retains the directly linked unversioned runtime",
+        "KernariumRuntime" not in xcode_project
+        and "KernariumGPTFDisk" not in xcode_project,
+        "Xcode retains an obsolete framework name",
     )
+    for dependency in ("GPTFDisk", "LibZstd"):
+        require(
+            f"{dependency}.xcframework in Frameworks" in xcode_project,
+            f"Xcode does not link {dependency}",
+        )
+        require(
+            f"{dependency}.xcframework in Embed Frameworks" not in xcode_project,
+            f"Xcode embeds static dependency {dependency}",
+        )
     for contract in (
         'repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";',
         f"version = {SWIFTTERM_VERSION};",
@@ -507,7 +522,7 @@ def main() -> int:
         "/* Begin PBXFrameworksBuildPhase section */", 1
     )[1].split("/* End PBXFrameworksBuildPhase section */", 1)[0]
     require(
-        "KernariumRuntime_" not in frameworks_phase,
+        "KRuntime_" not in frameworks_phase,
         "a selectable runtime is linked for process launch instead of only embedded",
     )
 

@@ -132,9 +132,11 @@ scripts/build-xcframework.sh
 Kernarium has separate runtime presets for device and Simulator, 16 KiB and
 4 KiB Linux, and 16 KiB Android. `Kernarium/scripts/package-ios-frameworks.sh`
 packages all selected runtime and graphics slices plus the static GPT fdisk
-core XCFramework for Xcode. `dependencies/build-ios-storage.sh --verify-only`
-checks both arm64 Apple slices, their provenance and deployment targets, the C
-API, and the absence of CLI front ends. Apple builds
+and decode-only zstd XCFrameworks for Xcode.
+`dependencies/build-ios-storage.sh --verify-only` and
+`dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
+their provenance and deployment targets, required APIs, and the absence of
+unused command-line providers. Apple builds
 validate the kernel bridge ABI, page profile, product family, and `6.18` series
 before embedding an artifact; they do not bind to its patch release or source
 commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles

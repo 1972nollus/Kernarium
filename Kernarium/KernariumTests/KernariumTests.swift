@@ -1,9 +1,32 @@
+import Darwin
 import Foundation
 import Testing
 import UIKit
 @testable import Kernarium
 
 struct KernariumTests {
+    private static let zstdFixture = Data([
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0xf4, 0x00,
+        0x00, 0xb0, 0x4b, 0x45, 0x52, 0x4e, 0x41, 0x52,
+        0x49, 0x55, 0x4d, 0x2d, 0x5a, 0x53, 0x54, 0x44,
+        0x2d, 0x42, 0x45, 0x47, 0x49, 0x4e, 0x0a, 0x00,
+        0x01, 0x00, 0xce, 0xff, 0x73, 0xd0, 0x04, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x75, 0x00, 0x00, 0x20, 0x45,
+        0x4e, 0x44, 0x0a, 0x02, 0x00, 0x18, 0x00, 0x80,
+        0x74, 0xf0, 0x01, 0x20, 0xe7, 0x79, 0xb9, 0xf0,
+    ])
+    private static let zstdPrefix = Data("KERNARIUM-ZSTD-BEGIN\n".utf8)
+    private static let zstdSuffix = Data("KERNARIUM-ZSTD-END\n".utf8)
+    private static let zstdOutputSize = 2 * 1024 * 1024 +
+        zstdPrefix.count + zstdSuffix.count
+
     private struct StubDiskCapacityManager: DiskCapacityManaging {
         func resizeAndroidImage(at _: URL, toGiB _: Int) throws -> Bool {
             true
@@ -58,7 +81,10 @@ struct KernariumTests {
             UUID().uuidString,
             isDirectory: true
         )
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
         defer { try? manager.removeItem(at: directory) }
 
         let first = try OverlayDisk.recreate(sizeGiB: 3, in: directory)
@@ -85,7 +111,10 @@ struct KernariumTests {
             UUID().uuidString,
             isDirectory: true
         )
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
         defer { try? manager.removeItem(at: directory) }
         let image = directory.appendingPathComponent("disk.img")
         let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
@@ -388,6 +417,101 @@ struct KernariumTests {
                 "pmos-sxmo.erofs",
                 "rootfs-gl-gles.ext4",
                 "rootfs.erofs",
+            ]
+        )
+    }
+
+    @Test
+    func zstdUtilReportsProgressAndCreatesSparseOutput() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("disk.img.zst")
+        let destination = directory.appendingPathComponent("disk.img")
+        try Self.zstdFixture.write(to: source)
+        var reports: [ZstdUtil.DecompressionProgress] = []
+
+        try ZstdUtil.decompress(
+            from: source,
+            to: destination,
+            sparse: true
+        ) { reports.append($0) }
+
+        let attributes = try manager.attributesOfItem(atPath: destination.path)
+        #expect((attributes[.size] as? NSNumber)?.intValue == Self.zstdOutputSize)
+        let handle = try FileHandle(forReadingFrom: destination)
+        var status = stat()
+        let statResult = Darwin.fstat(handle.fileDescriptor, &status)
+        #expect(statResult == 0)
+        #expect(
+            (reports.last?.sparseBytesSkipped ?? 0) >
+                UInt64(Self.zstdOutputSize - 256 * 1024)
+        )
+        #expect(Int(status.st_blocks) * 512 < Self.zstdOutputSize / 2)
+
+        let prefix = try handle.read(upToCount: Self.zstdPrefix.count)
+        try handle.seek(
+            toOffset: UInt64(Self.zstdOutputSize - Self.zstdSuffix.count)
+        )
+        let suffix = try handle.read(upToCount: Self.zstdSuffix.count)
+        try handle.close()
+        #expect(prefix == Self.zstdPrefix)
+        #expect(suffix == Self.zstdSuffix)
+        #expect(reports.first?.compressedBytesConsumed == 0)
+        #expect(
+            reports.last?.compressedBytesConsumed ==
+                UInt64(Self.zstdFixture.count)
+        )
+        #expect(
+            reports.last?.compressedBytesTotal ==
+                UInt64(Self.zstdFixture.count)
+        )
+        #expect(
+            reports.last?.decompressedBytesWritten ==
+                UInt64(Self.zstdOutputSize)
+        )
+        #expect(reports.last?.fractionCompleted == 1)
+    }
+
+    @Test
+    func zstdUtilLeavesExistingDestinationUntouchedOnFailure() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("invalid.zst")
+        let destination = directory.appendingPathComponent("existing.img")
+        let original = Data("existing destination".utf8)
+        try Data([0x00, 0x01, 0x02, 0x03]).write(to: source)
+        try original.write(to: destination)
+
+        var failed = false
+        do {
+            try ZstdUtil.decompress(from: source, to: destination)
+        } catch {
+            failed = true
+        }
+        #expect(failed)
+        #expect(try Data(contentsOf: destination) == original)
+        #expect(
+            try manager.contentsOfDirectory(atPath: directory.path).sorted() == [
+                "existing.img",
+                "invalid.zst",
             ]
         )
     }
