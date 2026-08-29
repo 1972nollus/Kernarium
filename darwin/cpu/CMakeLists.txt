@@ -10,6 +10,25 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::JitProfileConfiguration)
 target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
+# x86-64 guests are translated to immutable streams of precompiled host
+# gadgets. The bootstrap backend is present only in the 4 KiB product because
+# ordinary x86-64 Linux userspace requires that page profile.
+if(NOT UML_GUEST_16K_PAGES)
+    add_library(uml_x86_64_gadgets OBJECT
+        x86_64/cpu_state.cpp
+        x86_64/decoder.cpp
+        x86_64/gadgets/program.cpp)
+    uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
+    target_link_libraries(uml_x86_64_gadgets PRIVATE UML::CpuContract)
+    target_include_directories(uml_x86_64_gadgets PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin)
+    target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
+    target_compile_options(uml_x86_64_gadgets PRIVATE
+        -Wall -Wextra -Werror)
+    set_target_properties(uml_x86_64_gadgets PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 add_library(uml_arm64_dispatch OBJECT
     arm64/dispatcher.cpp
     arm64/instructions/control_flow.cpp

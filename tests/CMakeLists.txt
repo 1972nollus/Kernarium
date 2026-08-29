@@ -143,7 +143,8 @@ set(_uml_required_conditional_tests)
 if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
     list(APPEND _uml_required_conditional_tests
         native-4k-shadow-mmu
-        emulator-native-4k-admission)
+        emulator-native-4k-admission
+        x86-64-gadget-bootstrap)
 endif()
 if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES)
     list(APPEND _uml_required_conditional_tests
