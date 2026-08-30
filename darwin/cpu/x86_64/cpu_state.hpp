@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace uml::cpu::x86_64 {
@@ -42,6 +43,8 @@ struct DeferredFlags final {
 
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
+	std::array<std::array<std::byte, 32>, 16> vectors{};
+	std::array<std::uint64_t, 8> mmx{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	std::uint64_t fs_base{};

@@ -12,6 +12,8 @@ enum class OperandWidth : std::uint8_t {
 	word = 2,
 	dword = 4,
 	qword = 8,
+	xmm = 16,
+	ymm = 32,
 };
 
 enum class Segment : std::uint8_t {
@@ -23,6 +25,8 @@ enum class Segment : std::uint8_t {
 enum class OperandKind : std::uint8_t {
 	none,
 	reg,
+	vector_reg,
+	mmx_reg,
 	memory,
 	immediate,
 };
@@ -142,6 +146,14 @@ enum class Operation : std::uint8_t {
 	cache_zero,
 	memory_fence,
 	cache_flush,
+	vector_move,
+	vector_move_scalar,
+	vector_zero,
+	vector_alu,
+	vector_lane_move,
+	vector_convert,
+	vector_gpr_move,
+	vector_integer,
 	system_call,
 	breakpoint,
 };
@@ -173,7 +185,13 @@ struct Instruction final {
 	Condition condition{Condition::equal};
 	std::uint8_t length{};
 	std::uint8_t repeat{};
+	std::uint8_t vector_opcode{};
+	std::uint8_t vector_map{};
+	std::uint8_t vector_prefix{};
+	std::uint8_t vector_control{};
+	std::uint8_t vector_group{};
 	bool locked{};
+	bool vex{};
 
 	[[nodiscard]] bool terminal() const noexcept;
 };

@@ -377,7 +377,6 @@ void print_result(std::string_view status, std::size_t retired,
 		Register::rsi, Register::rdi, Register::rbp, Register::rsp,
 		Register::r8, Register::r9, Register::r10, Register::r11,
 		Register::r12, Register::r13, Register::r14, Register::r15};
-	bool unsupported{};
 	for (const auto &expectation : configuration.registers) {
 		const auto index = std::countr_zero(expectation.key);
 		if (index == 0) {
@@ -396,6 +395,20 @@ void print_result(std::string_view status, std::size_t retired,
 				detail = register_name(register_index);
 				return false;
 			}
+		} else if (index >= 17 && index <= 32) {
+			const auto vector_index = index - 17;
+			for (std::size_t lane = 0;
+				lane < expectation.values.size(); ++lane) {
+				std::uint64_t actual{};
+				std::memcpy(&actual,
+					cpu.vectors[vector_index].data() + lane * sizeof(actual),
+					sizeof(actual));
+				if (actual != expectation.values[lane]) {
+					status = "result_mismatch";
+					detail = "XMM" + std::to_string(vector_index);
+					return false;
+				}
+			}
 		} else if (index == 33 || index == 34) {
 			const auto actual = index == 33 ? cpu.gs_base : cpu.fs_base;
 			if (expectation.values.size() != 1 ||
@@ -404,19 +417,19 @@ void print_result(std::string_view status, std::size_t retired,
 				detail = index == 33 ? "GS" : "FS";
 				return false;
 			}
-		} else if ((index >= 17 && index <= 32) ||
-			(index >= 35 && index <= 42)) {
-			unsupported = true;
+		} else if (index >= 35 && index <= 42) {
+			const auto mmx_index = index - 35;
+			if (expectation.values.size() != 1 ||
+				cpu.mmx[mmx_index] != expectation.values.front()) {
+				status = "result_mismatch";
+				detail = "MM" + std::to_string(mmx_index);
+				return false;
+			}
 		} else {
 			status = "malformed_input";
 			detail = "unknown register key";
 			return false;
 		}
-	}
-	if (unsupported) {
-		status = "unsupported_expectation";
-		detail = "XMM or x87/MMX state";
-		return false;
 	}
 	status = "passed";
 	detail = "reached HLT with expected state";

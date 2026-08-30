@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <utility>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -23,7 +26,7 @@ namespace {
 [[nodiscard]] constexpr std::uint64_t width_mask(
 	OperandWidth width) noexcept
 {
-	return width == OperandWidth::qword ? ~std::uint64_t{0} :
+	return width_bytes(width) >= 8 ? ~std::uint64_t{0} :
 		(std::uint64_t{1} << (width_bytes(width) * 8U)) - 1U;
 }
 
@@ -146,6 +149,9 @@ void write_register(CpuState &cpu, const Operand &operand,
 		break;
 	case OperandWidth::qword:
 		destination = value;
+		break;
+	case OperandWidth::xmm:
+	case OperandWidth::ymm:
 		break;
 	}
 }
@@ -272,6 +278,12 @@ struct OperandRead final {
 	::uml::cpu::FaultInfo fault{};
 };
 
+struct VectorRead final {
+	bool succeeded{};
+	std::array<std::byte, 32> value{};
+	::uml::cpu::FaultInfo fault{};
+};
+
 [[nodiscard]] OperandRead read_operand(const Gadget &gadget,
 	const CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
 	const Operand &operand) noexcept
@@ -279,6 +291,9 @@ struct OperandRead final {
 	switch (operand.kind) {
 	case OperandKind::reg:
 		return {true, read_register(cpu, operand), {}};
+	case OperandKind::vector_reg:
+	case OperandKind::mmx_reg:
+		break;
 	case OperandKind::immediate:
 		return {true, operand.immediate, {}};
 	case OperandKind::memory: {
@@ -313,6 +328,73 @@ struct OperandRead final {
 				width_bytes(operand.width)};
 		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
 			memory_fault(memory, address, ::uml::memory::MemoryAccess::write)};
+	}
+	return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+}
+
+[[nodiscard]] VectorRead read_vector_operand(const Gadget &gadget,
+	const CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
+	const Operand &operand) noexcept
+{
+	VectorRead result{};
+	const auto size = static_cast<std::size_t>(width_bytes(operand.width));
+	if (operand.kind == OperandKind::vector_reg) {
+		std::copy_n(cpu.vectors[operand.reg.index].begin(), size,
+			result.value.begin());
+		result.succeeded = true;
+		return result;
+	}
+	if (operand.kind == OperandKind::mmx_reg) {
+		std::memcpy(result.value.data(), &cpu.mmx[operand.reg.index],
+			sizeof(std::uint64_t));
+		result.succeeded = true;
+		return result;
+	}
+	if (operand.kind == OperandKind::memory) {
+		const auto address = effective_address(
+			gadget, cpu, operand.memory, true);
+		if (!read_memory_bytes(memory, address,
+			std::span{result.value}.first(size))) {
+			result.fault = memory_fault(memory, address,
+				::uml::memory::MemoryAccess::read);
+			return result;
+		}
+		result.succeeded = true;
+	}
+	return result;
+}
+
+[[nodiscard]] StepResult write_vector_operand(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
+	const Operand &operand, std::span<const std::byte> value,
+	bool zero_upper) noexcept
+{
+	const auto size = static_cast<std::size_t>(width_bytes(operand.width));
+	if (operand.kind == OperandKind::vector_reg) {
+		std::copy_n(value.begin(), size,
+			cpu.vectors[operand.reg.index].begin());
+		if (zero_upper && size < cpu.vectors[operand.reg.index].size())
+			std::fill(cpu.vectors[operand.reg.index].begin() +
+				static_cast<std::ptrdiff_t>(size),
+				cpu.vectors[operand.reg.index].end(), std::byte{});
+		return {};
+	}
+	if (operand.kind == OperandKind::mmx_reg) {
+		std::memcpy(&cpu.mmx[operand.reg.index], value.data(),
+			sizeof(std::uint64_t));
+		return {};
+	}
+	if (operand.kind == OperandKind::memory) {
+		const auto address = effective_address(
+			gadget, cpu, operand.memory, true);
+		if (!write_memory_bytes(memory, address, value.first(size)))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::write)};
+		return {StepAction::continue_program,
+			::uml::cpu::EngineEvent::continued, {}, address,
+			static_cast<std::uint8_t>(size)};
 	}
 	return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
 }
@@ -356,6 +438,847 @@ void advance(const Gadget &gadget, CpuState &cpu) noexcept
 		source.value;
 	const auto written = write_operand(gadget, cpu, memory,
 		gadget.instruction.destination, value);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_move(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto source = read_vector_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			source.fault};
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		gadget.instruction.destination, source.value,
+		gadget.instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_move_scalar(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto source = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!source.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			source.fault};
+	const auto scalar_size = static_cast<std::size_t>(
+		width_bytes(instruction.source.width));
+	if (instruction.destination.kind == OperandKind::memory) {
+		const auto written = write_vector_operand(gadget, cpu, memory,
+			instruction.destination,
+			std::span<const std::byte>{source.value}.first(scalar_size), false);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+
+	auto result = cpu.vectors[instruction.destination.reg.index];
+	std::copy_n(source.value.begin(), scalar_size, result.begin());
+	if (instruction.vex) {
+		if (instruction.auxiliary.kind == OperandKind::vector_reg) {
+			const auto &merge = cpu.vectors[instruction.auxiliary.reg.index];
+			std::copy(merge.begin() +
+				static_cast<std::ptrdiff_t>(scalar_size),
+				merge.begin() + 16, result.begin() +
+				static_cast<std::ptrdiff_t>(scalar_size));
+		} else {
+			std::fill(result.begin() +
+				static_cast<std::ptrdiff_t>(scalar_size),
+				result.begin() + 16, std::byte{});
+		}
+		std::fill(result.begin() + 16, result.end(), std::byte{});
+	} else if (instruction.source.kind == OperandKind::memory) {
+		std::fill(result.begin() +
+			static_cast<std::ptrdiff_t>(scalar_size),
+			result.begin() + 16, std::byte{});
+	}
+	cpu.vectors[instruction.destination.reg.index] = result;
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult vector_zero(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	const bool all = gadget.instruction.auxiliary.immediate != 0;
+	for (auto &vector : cpu.vectors) {
+		auto begin = all ? vector.begin() : vector.begin() + 16;
+		std::fill(begin, vector.end(), std::byte{});
+	}
+	advance(gadget, cpu);
+	return {};
+}
+
+template<typename Value>
+[[nodiscard]] Value vector_element(
+	const std::array<std::byte, 32> &vector, std::size_t offset) noexcept
+{
+	Value value{};
+	std::memcpy(&value, vector.data() + offset, sizeof(value));
+	return value;
+}
+
+template<typename Value>
+void set_vector_element(std::array<std::byte, 32> &vector,
+	std::size_t offset, Value value) noexcept
+{
+	std::memcpy(vector.data() + offset, &value, sizeof(value));
+}
+
+template<typename Float>
+[[nodiscard]] bool vector_compare(
+	Float left, Float right, std::uint8_t control) noexcept
+{
+	const bool unordered = std::isnan(left) || std::isnan(right);
+	const bool ordered = !unordered;
+	switch (control & 0x1fU) {
+	case 0:
+	case 8:
+	case 16:
+	case 24: return ordered && left == right;
+	case 1:
+	case 17: return ordered && left < right;
+	case 2:
+	case 18: return ordered && left <= right;
+	case 3:
+	case 19: return unordered;
+	case 4:
+	case 20: return unordered || left != right;
+	case 5:
+	case 21: return unordered || left >= right;
+	case 6:
+	case 22: return unordered || left > right;
+	case 7:
+	case 23: return ordered;
+	case 9:
+	case 25: return unordered || left < right;
+	case 10:
+	case 26: return unordered || left <= right;
+	case 11:
+	case 27: return false;
+	case 12:
+	case 28: return ordered && left != right;
+	case 13:
+	case 29: return ordered && left >= right;
+	case 14:
+	case 30: return ordered && left > right;
+	case 15:
+	case 31: return true;
+	}
+	return false;
+}
+
+template<typename Float>
+void vector_float_alu(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::uint8_t opcode,
+	std::uint8_t control, std::size_t lane_count) noexcept
+{
+	for (std::size_t lane = 0; lane < lane_count; ++lane) {
+		const auto offset = lane * sizeof(Float);
+		const auto first = vector_element<Float>(left, offset);
+		const auto second = vector_element<Float>(right, offset);
+		Float value{};
+		switch (opcode) {
+		case 0x51: value = std::sqrt(second); break;
+		case 0x52: value = Float{1} / std::sqrt(second); break;
+		case 0x53: value = Float{1} / second; break;
+		case 0x58: value = first + second; break;
+		case 0x59: value = first * second; break;
+		case 0x5c: value = first - second; break;
+		case 0x5d:
+			value = !std::isnan(first) && first < second ? first : second;
+			break;
+		case 0x5e: value = first / second; break;
+		case 0x5f:
+			value = !std::isnan(first) && first > second ? first : second;
+			break;
+		case 0xc2: {
+			using Integer = std::conditional_t<sizeof(Float) == 4,
+				std::uint32_t, std::uint64_t>;
+			const Integer mask = vector_compare(first, second, control) ?
+				~Integer{0} : Integer{0};
+			set_vector_element(result, offset, mask);
+			continue;
+		}
+		default:
+			continue;
+		}
+		set_vector_element(result, offset, value);
+	}
+}
+
+[[nodiscard]] StepResult vector_alu(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!left.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			left.fault};
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+	auto result = left.value;
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.destination.width));
+	const bool scalar = instruction.vector_prefix >= 2;
+	if (instruction.vector_opcode >= 0x54 &&
+		instruction.vector_opcode <= 0x57) {
+		for (std::size_t offset = 0; offset < size; offset += 8) {
+			const auto first = vector_element<std::uint64_t>(left.value, offset);
+			const auto second = vector_element<std::uint64_t>(right.value, offset);
+			std::uint64_t value{};
+			switch (instruction.vector_opcode) {
+			case 0x54: value = first & second; break;
+			case 0x55: value = ~first & second; break;
+			case 0x56: value = first | second; break;
+			case 0x57: value = first ^ second; break;
+			default: break;
+			}
+			set_vector_element(result, offset, value);
+		}
+	} else if (instruction.vector_prefix == 1 ||
+		instruction.vector_prefix == 3) {
+		vector_float_alu<double>(result, left.value, right.value,
+			instruction.vector_opcode, instruction.vector_control,
+			scalar ? 1U : size / sizeof(double));
+	} else {
+		vector_float_alu<float>(result, left.value, right.value,
+			instruction.vector_opcode, instruction.vector_control,
+			scalar ? 1U : size / sizeof(float));
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_lane_move(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode == 0x13 ||
+		instruction.vector_opcode == 0x17) {
+		const auto source = read_vector_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!source.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, source.fault};
+		auto value = source.value;
+		if (instruction.vector_opcode == 0x17)
+			std::copy_n(source.value.begin() + 8, 8, value.begin());
+		const auto written = write_vector_operand(gadget, cpu, memory,
+			instruction.destination, value, false);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+
+	const auto incoming = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!incoming.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			incoming.fault};
+	const bool duplicate = (instruction.vector_opcode == 0x12 &&
+		(instruction.vector_prefix == 2 ||
+			instruction.vector_prefix == 3)) ||
+		(instruction.vector_opcode == 0x16 &&
+			instruction.vector_prefix == 2);
+	std::array<std::byte, 32> result{};
+	if (duplicate) {
+		const auto size = static_cast<std::size_t>(
+			width_bytes(instruction.destination.width));
+		if (instruction.vector_prefix == 3) {
+			for (std::size_t lane = 0; lane < size / 8; ++lane)
+				std::copy_n(incoming.value.begin() +
+					static_cast<std::ptrdiff_t>((lane / 2) * 16),
+					8, result.begin() +
+					static_cast<std::ptrdiff_t>(lane * 8));
+		} else {
+			for (std::size_t lane = 0; lane < size / 4; ++lane) {
+				const auto source_lane = (lane / 2) * 2 +
+					(instruction.vector_opcode == 0x16 ? 1U : 0U);
+				std::copy_n(incoming.value.begin() +
+					static_cast<std::ptrdiff_t>(source_lane * 4),
+					4, result.begin() +
+					static_cast<std::ptrdiff_t>(lane * 4));
+			}
+		}
+	} else {
+		const auto merge = read_vector_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!merge.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, merge.fault};
+		result = merge.value;
+		if (instruction.vector_opcode == 0x12) {
+			const auto offset = instruction.auxiliary.kind ==
+				OperandKind::vector_reg ? 8U : 0U;
+			std::copy_n(incoming.value.begin() + offset, 8, result.begin());
+		} else {
+			std::copy_n(incoming.value.begin(), 8, result.begin() + 8);
+		}
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+template<typename Float>
+[[nodiscard]] std::int32_t convert_to_i32(
+	Float value, std::uint32_t mxcsr, bool truncate) noexcept
+{
+	long double rounded{};
+	if (truncate) {
+		rounded = std::trunc(static_cast<long double>(value));
+	} else {
+		switch ((mxcsr >> 13U) & 3U) {
+		case 0: rounded = std::nearbyint(static_cast<long double>(value)); break;
+		case 1: rounded = std::floor(static_cast<long double>(value)); break;
+		case 2: rounded = std::ceil(static_cast<long double>(value)); break;
+		case 3: rounded = std::trunc(static_cast<long double>(value)); break;
+		default: rounded = value; break;
+		}
+	}
+	if (!std::isfinite(value) ||
+		rounded < std::numeric_limits<std::int32_t>::min() ||
+		rounded > std::numeric_limits<std::int32_t>::max())
+		return std::numeric_limits<std::int32_t>::min();
+	return static_cast<std::int32_t>(rounded);
+}
+
+[[nodiscard]] StepResult vector_convert(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto input = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!input.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			input.fault};
+	std::array<std::byte, 32> result{};
+	const bool scalar = instruction.vector_opcode == 0x5a &&
+		instruction.vector_prefix >= 2;
+	if (scalar) {
+		const auto merge = read_vector_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!merge.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, merge.fault};
+		result = merge.value;
+	}
+	const auto destination_size = static_cast<std::size_t>(
+		width_bytes(instruction.destination.width));
+	const auto source_size = static_cast<std::size_t>(
+		width_bytes(instruction.auxiliary.width));
+	if (instruction.vector_opcode == 0x5a) {
+		if (instruction.vector_prefix == 0) {
+			for (std::size_t lane = 0;
+				lane < destination_size / sizeof(double); ++lane) {
+				const auto value = vector_element<float>(
+					input.value, lane * sizeof(float));
+				set_vector_element(result, lane * sizeof(double),
+					static_cast<double>(value));
+			}
+		} else if (instruction.vector_prefix == 1) {
+			for (std::size_t lane = 0;
+				lane < source_size / sizeof(double); ++lane) {
+				const auto value = vector_element<double>(
+					input.value, lane * sizeof(double));
+				set_vector_element(result, lane * sizeof(float),
+					static_cast<float>(value));
+			}
+		} else if (instruction.vector_prefix == 2) {
+			set_vector_element(result, 0,
+				static_cast<double>(vector_element<float>(input.value, 0)));
+		} else {
+			set_vector_element(result, 0,
+				static_cast<float>(vector_element<double>(input.value, 0)));
+		}
+	} else if (instruction.vector_opcode == 0x5b) {
+		for (std::size_t lane = 0;
+			lane < destination_size / sizeof(std::uint32_t); ++lane) {
+			const auto offset = lane * sizeof(std::uint32_t);
+			if (instruction.vector_prefix == 0) {
+				const auto value = vector_element<std::int32_t>(
+					input.value, offset);
+				set_vector_element(result, offset, static_cast<float>(value));
+			} else {
+				const auto value = vector_element<float>(input.value, offset);
+				set_vector_element(result, offset, convert_to_i32(
+					value, cpu.mxcsr, instruction.vector_prefix == 2));
+			}
+		}
+	} else if (instruction.vector_prefix == 2) {
+		for (std::size_t lane = 0;
+			lane < destination_size / sizeof(double); ++lane) {
+			const auto value = vector_element<std::int32_t>(
+				input.value, lane * sizeof(std::int32_t));
+			set_vector_element(result, lane * sizeof(double),
+				static_cast<double>(value));
+		}
+	} else {
+		for (std::size_t lane = 0;
+			lane < source_size / sizeof(double); ++lane) {
+			const auto value = vector_element<double>(
+				input.value, lane * sizeof(double));
+			set_vector_element(result, lane * sizeof(std::int32_t),
+				convert_to_i32(value, cpu.mxcsr,
+					instruction.vector_prefix == 1));
+		}
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_gpr_move(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode == 0x7e &&
+		instruction.vector_prefix == 2) {
+		const auto source = read_vector_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!source.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, source.fault};
+		std::array<std::byte, 32> value{};
+		std::copy_n(source.value.begin(), 8, value.begin());
+		const auto written = write_vector_operand(gadget, cpu, memory,
+			instruction.destination, value, instruction.vex);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+	if (instruction.vector_opcode == 0x6e) {
+		const auto source = read_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!source.succeeded)
+			return read_failure(source);
+		std::array<std::byte, 32> value{};
+		std::memcpy(value.data(), &source.value,
+			width_bytes(instruction.source.width));
+		const auto written = write_vector_operand(gadget, cpu, memory,
+			instruction.destination, value, instruction.vex);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+	const auto source = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!source.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			source.fault};
+	std::uint64_t value{};
+	std::memcpy(&value, source.value.data(),
+		width_bytes(instruction.destination.width));
+	const auto written = write_operand(gadget, cpu, memory,
+		instruction.destination, value);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+template<typename Value, typename Function>
+void vector_binary_elements(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size,
+	Function function) noexcept
+{
+	for (std::size_t offset = 0; offset < size; offset += sizeof(Value))
+		set_vector_element(result, offset, function(
+			vector_element<Value>(left, offset),
+			vector_element<Value>(right, offset)));
+}
+
+template<typename Output, typename Input>
+[[nodiscard]] constexpr Output saturate_signed(Input value) noexcept
+{
+	const auto minimum = static_cast<Input>(
+		std::numeric_limits<Output>::min());
+	const auto maximum = static_cast<Input>(
+		std::numeric_limits<Output>::max());
+	return static_cast<Output>(std::clamp(value, minimum, maximum));
+}
+
+template<typename Output, typename Input>
+[[nodiscard]] constexpr Output saturate_unsigned(Input value) noexcept
+{
+	const auto maximum = static_cast<Input>(
+		std::numeric_limits<Output>::max());
+	return static_cast<Output>(std::clamp<Input>(value, 0, maximum));
+}
+
+template<typename Input, typename Output>
+void vector_pack(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size,
+	bool unsigned_output) noexcept
+{
+	const auto lane_size = size == 8 ? 8U : 16U;
+	const auto input_count = lane_size / sizeof(Input);
+	for (std::size_t lane = 0; lane < size; lane += lane_size) {
+		for (std::size_t index = 0; index < input_count; ++index) {
+			const auto first = vector_element<Input>(
+				left, lane + index * sizeof(Input));
+			const auto second = vector_element<Input>(
+				right, lane + index * sizeof(Input));
+			const auto first_output = unsigned_output ?
+				static_cast<Output>(saturate_unsigned<
+					std::make_unsigned_t<Output>>(first)) :
+				saturate_signed<Output>(first);
+			const auto second_output = unsigned_output ?
+				static_cast<Output>(saturate_unsigned<
+					std::make_unsigned_t<Output>>(second)) :
+				saturate_signed<Output>(second);
+			set_vector_element(result,
+				lane + index * sizeof(Output), first_output);
+			set_vector_element(result,
+				lane + (input_count + index) * sizeof(Output), second_output);
+		}
+	}
+}
+
+template<typename Value>
+void vector_unpack(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size,
+	bool high) noexcept
+{
+	const auto lane_size = size == 8 ? 8U : 16U;
+	const auto half_count = lane_size / sizeof(Value) / 2U;
+	for (std::size_t lane = 0; lane < size; lane += lane_size) {
+		const auto source = high ? half_count : 0U;
+		for (std::size_t index = 0; index < half_count; ++index) {
+			const auto output = lane + index * sizeof(Value) * 2U;
+			set_vector_element(result, output,
+				vector_element<Value>(left,
+					lane + (source + index) * sizeof(Value)));
+			set_vector_element(result, output + sizeof(Value),
+				vector_element<Value>(right,
+					lane + (source + index) * sizeof(Value)));
+		}
+	}
+}
+
+template<typename Value>
+void vector_logical_shift(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left, std::size_t size,
+	std::uint64_t count, bool left_shift) noexcept
+{
+	constexpr auto bits = sizeof(Value) * 8U;
+	for (std::size_t offset = 0; offset < size; offset += sizeof(Value)) {
+		const auto value = vector_element<Value>(left, offset);
+		const auto shifted = count >= bits ? Value{0} :
+			static_cast<Value>(left_shift ? value << count : value >> count);
+		set_vector_element(result, offset, shifted);
+	}
+}
+
+template<typename Value>
+void vector_arithmetic_shift_right(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left, std::size_t size,
+	std::uint64_t count) noexcept
+{
+	constexpr auto bits = sizeof(Value) * 8U;
+	for (std::size_t offset = 0; offset < size; offset += sizeof(Value)) {
+		const auto value = vector_element<Value>(left, offset);
+		const auto shifted = count >= bits ?
+			(value < 0 ? Value{-1} : Value{0}) :
+			static_cast<Value>(value >> count);
+		set_vector_element(result, offset, shifted);
+	}
+}
+
+[[nodiscard]] StepResult vector_integer(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!left.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			left.fault};
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+	auto result = left.value;
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.destination.width));
+	const auto opcode = instruction.vector_opcode;
+	switch (opcode) {
+	case 0x60: vector_unpack<std::uint8_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x61: vector_unpack<std::uint16_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x62: vector_unpack<std::uint32_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x63: vector_pack<std::int16_t, std::int8_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x64: vector_binary_elements<std::int8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::int8_t>(a > b ? -1 : 0); }); break;
+	case 0x65: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::int16_t>(a > b ? -1 : 0); }); break;
+	case 0x66: vector_binary_elements<std::int32_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return a > b ? -1 : 0; }); break;
+	case 0x67: vector_pack<std::int16_t, std::int8_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x68: vector_unpack<std::uint8_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x69: vector_unpack<std::uint16_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x6a: vector_unpack<std::uint32_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x6b: vector_pack<std::int32_t, std::int16_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x6c: vector_unpack<std::uint64_t>(result,
+		left.value, right.value, size, false); break;
+	case 0x6d: vector_unpack<std::uint64_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x70: {
+		result = right.value;
+		const auto lane_size = size == 8 ? 8U : 16U;
+		const auto word_base = instruction.vector_prefix == 2 ? 4U : 0U;
+		const auto word_limit = instruction.vector_prefix == 2 ? 8U : 4U;
+		const auto word_shuffle = instruction.vector_prefix == 2 ||
+			instruction.vector_prefix == 3 || size == 8;
+		for (std::size_t lane = 0; lane < size; lane += lane_size) {
+			if (word_shuffle) {
+				for (std::size_t index = word_base;
+					index < word_limit; ++index) {
+					const auto selected = (instruction.vector_control >>
+						((index - word_base) * 2U)) & 3U;
+					set_vector_element(result, lane + index * 2U,
+						vector_element<std::uint16_t>(right.value,
+							lane + (word_base + selected) * 2U));
+				}
+			} else {
+				for (std::size_t index = 0; index < 4; ++index) {
+					const auto selected = (instruction.vector_control >>
+						(index * 2U)) & 3U;
+					set_vector_element(result, lane + index * 4U,
+						vector_element<std::uint32_t>(right.value,
+							lane + selected * 4U));
+				}
+			}
+		}
+		break;
+	}
+	case 0x71:
+	case 0x72:
+	case 0x73: {
+		const auto count = static_cast<std::uint64_t>(
+			instruction.vector_control);
+		if (instruction.vector_group == 3 ||
+			instruction.vector_group == 7) {
+			result.fill(std::byte{});
+			const auto shift = std::min<std::size_t>(count, 16);
+			for (std::size_t lane = 0; lane < size; lane += 16) {
+				for (std::size_t index = 0; index < 16 - shift; ++index) {
+					const auto source_index = instruction.vector_group == 3 ?
+						index + shift : index;
+					const auto destination_index = instruction.vector_group == 3 ?
+						index : index + shift;
+					result[lane + destination_index] =
+						left.value[lane + source_index];
+				}
+			}
+		} else if (instruction.vector_group == 4) {
+			if (opcode == 0x71)
+				vector_arithmetic_shift_right<std::int16_t>(
+					result, left.value, size, count);
+			else
+				vector_arithmetic_shift_right<std::int32_t>(
+					result, left.value, size, count);
+		} else {
+			const bool left_shift = instruction.vector_group == 6;
+			if (opcode == 0x71)
+				vector_logical_shift<std::uint16_t>(
+					result, left.value, size, count, left_shift);
+			else if (opcode == 0x72)
+				vector_logical_shift<std::uint32_t>(
+					result, left.value, size, count, left_shift);
+			else
+				vector_logical_shift<std::uint64_t>(
+					result, left.value, size, count, left_shift);
+		}
+		break;
+	}
+	case 0x74: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>(a == b ? 0xffU : 0U); }); break;
+	case 0x75: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(a == b ? 0xffffU : 0U); }); break;
+	case 0x76: vector_binary_elements<std::uint32_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return a == b ? 0xffff'ffffU : 0U; }); break;
+	case 0xd1: vector_logical_shift<std::uint16_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), false); break;
+	case 0xd2: vector_logical_shift<std::uint32_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), false); break;
+	case 0xd3: vector_logical_shift<std::uint64_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), false); break;
+	case 0xd4: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a + b; }); break;
+	case 0xd5: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(a * b); }); break;
+	case 0xd8: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>(a < b ? 0 : a - b); }); break;
+	case 0xd9: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(a < b ? 0 : a - b); }); break;
+	case 0xda: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return std::min(a, b); }); break;
+	case 0xdb: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a & b; }); break;
+	case 0xdc: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>(std::min<unsigned>(a + b, 0xffU)); }); break;
+	case 0xdd: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(std::min<unsigned>(a + b, 0xffffU)); }); break;
+	case 0xde: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return std::max(a, b); }); break;
+	case 0xdf: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return ~a & b; }); break;
+	case 0xe0: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>((unsigned{a} + b + 1U) >> 1U); }); break;
+	case 0xe1: vector_arithmetic_shift_right<std::int16_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0)); break;
+	case 0xe2: vector_arithmetic_shift_right<std::int32_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0)); break;
+	case 0xe3: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>((unsigned{a} + b + 1U) >> 1U); }); break;
+	case 0xe4: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(
+				(static_cast<std::uint32_t>(a) * b) >> 16U); }); break;
+	case 0xe5: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::int16_t>(
+				(static_cast<std::int32_t>(a) * b) >> 16U); }); break;
+	case 0xe8: vector_binary_elements<std::int8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return saturate_signed<std::int8_t>(int{a} - int{b}); }); break;
+	case 0xe9: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return saturate_signed<std::int16_t>(int{a} - int{b}); }); break;
+	case 0xea: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return std::min(a, b); }); break;
+	case 0xeb: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a | b; }); break;
+	case 0xec: vector_binary_elements<std::int8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return saturate_signed<std::int8_t>(int{a} + int{b}); }); break;
+	case 0xed: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return saturate_signed<std::int16_t>(int{a} + int{b}); }); break;
+	case 0xee: vector_binary_elements<std::int16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return std::max(a, b); }); break;
+	case 0xef: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a ^ b; }); break;
+	case 0xf1: vector_logical_shift<std::uint16_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), true); break;
+	case 0xf2: vector_logical_shift<std::uint32_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), true); break;
+	case 0xf3: vector_logical_shift<std::uint64_t>(result,
+		left.value, size, vector_element<std::uint64_t>(right.value, 0), true); break;
+	case 0xf4:
+		for (std::size_t offset = 0; offset < size; offset += 8) {
+			const auto a = vector_element<std::uint32_t>(left.value, offset);
+			const auto b = vector_element<std::uint32_t>(right.value, offset);
+			set_vector_element(result, offset,
+				static_cast<std::uint64_t>(a) * b);
+		}
+		break;
+	case 0xf5:
+		for (std::size_t offset = 0; offset < size; offset += 4) {
+			const auto a0 = vector_element<std::int16_t>(left.value, offset);
+			const auto a1 = vector_element<std::int16_t>(left.value, offset + 2);
+			const auto b0 = vector_element<std::int16_t>(right.value, offset);
+			const auto b1 = vector_element<std::int16_t>(right.value, offset + 2);
+			const auto sum = static_cast<std::uint32_t>(
+				static_cast<std::int64_t>(a0) * b0 +
+				static_cast<std::int64_t>(a1) * b1);
+			set_vector_element(result, offset, sum);
+		}
+		break;
+	case 0xf6:
+		result.fill(std::byte{});
+		for (std::size_t group = 0; group < size; group += 8) {
+			std::uint64_t sum{};
+			for (std::size_t index = 0; index < 8; ++index) {
+				const auto a = std::to_integer<unsigned>(left.value[group + index]);
+				const auto b = std::to_integer<unsigned>(right.value[group + index]);
+				sum += a > b ? a - b : b - a;
+			}
+			set_vector_element(result, group, sum);
+		}
+		break;
+	case 0xf8: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>(a - b); }); break;
+	case 0xf9: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(a - b); }); break;
+	case 0xfa: vector_binary_elements<std::uint32_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a - b; }); break;
+	case 0xfb: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a - b; }); break;
+	case 0xfc: vector_binary_elements<std::uint8_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint8_t>(a + b); }); break;
+	case 0xfd: vector_binary_elements<std::uint16_t>(result,
+		left.value, right.value, size, [](auto a, auto b) {
+			return static_cast<std::uint16_t>(a + b); }); break;
+	case 0xfe: vector_binary_elements<std::uint32_t>(result,
+		left.value, right.value, size, [](auto a, auto b) { return a + b; }); break;
+	default:
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
 	if (written.action == StepAction::exit)
 		return written;
 	advance(gadget, cpu);
@@ -1963,6 +2886,14 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::cache_zero: return cache_zero;
 	case Operation::memory_fence: return memory_fence;
 	case Operation::cache_flush: return cache_flush;
+	case Operation::vector_move: return vector_move;
+	case Operation::vector_move_scalar: return vector_move_scalar;
+	case Operation::vector_zero: return vector_zero;
+	case Operation::vector_alu: return vector_alu;
+	case Operation::vector_lane_move: return vector_lane_move;
+	case Operation::vector_convert: return vector_convert;
+	case Operation::vector_gpr_move: return vector_gpr_move;
+	case Operation::vector_integer: return vector_integer;
 	case Operation::system_call: return system_call;
 	case Operation::breakpoint: return breakpoint;
 	}

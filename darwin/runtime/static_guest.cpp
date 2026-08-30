@@ -41,6 +41,7 @@ namespace {
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 constexpr std::int32_t x86_64_guest_isa = 2;
 constexpr std::uint64_t x86_64_rt_sigreturn = 15;
+constexpr std::uint32_t x86_64_fp_marker = 0x5838'3634U;
 constexpr std::size_t x86_64_register_count = 16;
 constexpr std::size_t x86_64_rflags_slot = 16;
 constexpr std::size_t x86_64_fs_base_slot = 17;
@@ -302,7 +303,8 @@ void save_cpu(arm64::CpuState &cpu,
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 void load_x86_cpu(x86_64::CpuState &cpu,
-	const darwin_uml_guest_registers &registers) noexcept
+	const darwin_uml_guest_registers &registers,
+	const darwin_uml_guest_fp_registers &fp) noexcept
 {
 	std::copy_n(std::begin(registers.x), x86_64_register_count,
 		cpu.registers.begin());
@@ -312,10 +314,20 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 	cpu.fs_base = registers.x[x86_64_fs_base_slot];
 	cpu.gs_base = registers.x[x86_64_gs_base_slot];
 	cpu.deferred_flags = {};
+	if (fp.reserved[1] == x86_64_fp_marker) {
+		static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
+		std::memcpy(cpu.vectors.data(), fp.vectors, sizeof(fp.vectors));
+		cpu.mxcsr = fp.fpsr;
+	} else {
+		cpu.vectors = {};
+		cpu.mmx = {};
+		cpu.mxcsr = 0x1f80;
+	}
 }
 
 void save_x86_cpu(x86_64::CpuState &cpu,
-	darwin_uml_guest_registers &registers) noexcept
+	darwin_uml_guest_registers &registers,
+	darwin_uml_guest_fp_registers &fp) noexcept
 {
 	x86_64::materialize_flags(cpu);
 	std::copy(cpu.registers.begin(), cpu.registers.end(),
@@ -324,6 +336,10 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	registers.x[x86_64_rflags_slot] = cpu.rflags;
 	registers.x[x86_64_fs_base_slot] = cpu.fs_base;
 	registers.x[x86_64_gs_base_slot] = cpu.gs_base;
+	static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
+	std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
+	fp.fpsr = cpu.mxcsr;
+	fp.reserved[1] = x86_64_fp_marker;
 }
 
 [[nodiscard]] uml::cpu::ExecutionResult run_x86_gadgets(
@@ -395,19 +411,20 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 
 template<uml::cpu::EngineKind Kind>
 int run_x86_guest(darwin_uml_guest_registers &registers,
+	darwin_uml_guest_fp_registers &fp,
 	unsigned long generation, ::uml::runtime::Context &context,
 	::uml::runtime::ThreadExecutionState &runtime) noexcept
 {
 	(void)Kind;
 	auto &cpu = runtime.x86_cpu;
-	load_x86_cpu(cpu, registers);
+	load_x86_cpu(cpu, registers, fp);
 	const auto &registered_interrupt = runtime.interrupt;
 	const auto result = run_x86_gadgets(cpu, runtime.memory, generation, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
 	});
-	save_x86_cpu(cpu, registers);
+	save_x86_cpu(cpu, registers, fp);
 	int event = DARWIN_UML_EVENT_FATAL;
 	switch (result.reason) {
 	case uml::cpu::ExitReason::system_call:
@@ -576,13 +593,14 @@ int run_common_guest(
 		return DARWIN_UML_EVENT_FATAL;
 	auto &mutable_registers =
 		*static_cast<darwin_uml_guest_registers *>(register_pointer);
+	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
 	auto *context = ::uml::runtime::current_context();
 	if (context == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
 	auto runtime = context->thread_execution_state();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	if (mutable_registers.padding == x86_64_guest_isa) {
-		return run_x86_guest<Kind>(mutable_registers, generation,
+		return run_x86_guest<Kind>(mutable_registers, fp, generation,
 			*context, *runtime);
 	}
 #endif
@@ -599,7 +617,6 @@ int run_common_guest(
 		mutable_registers.pc += sizeof(std::uint32_t);
 		return DARWIN_UML_EVENT_SYSCALL;
 	}
-	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
 	auto &cpu = runtime->cpu;
 	auto &memory = runtime->memory;
 	load_cpu(cpu, mutable_registers, fp, *tls, context->top_byte_ignore());
