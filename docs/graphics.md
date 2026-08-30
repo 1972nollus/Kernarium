@@ -16,7 +16,9 @@ libepoxy/virglrenderer family.
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
-display, not as a second graphics backend.
+display, not as a second graphics backend. With no connected VNC client,
+scanout flushes retire without a synchronous GPU-to-CPU readback; the first
+frame after a zero-client interval refreshes the complete active scanout.
 
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,

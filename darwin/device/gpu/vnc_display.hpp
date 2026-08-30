@@ -68,12 +68,19 @@ public:
         std::uint32_t width,
         std::uint32_t height) override;
     void fillSelfTestPattern() override;
+    [[nodiscard]] PresentOutcome presentMetal(
+        const MetalScanout& scanout) noexcept override;
+    [[nodiscard]] bool needsFullCpuFallback() const noexcept override;
 
 private:
     void eventLoop();
+    [[nodiscard]] bool clientConnected() noexcept;
+    void clientDisconnected() noexcept;
     void handleKey(bool down, std::uint32_t keySymbol) noexcept;
     void handlePointer(int buttonMask, int x, int y) noexcept;
     void reportInputFailure() noexcept;
+    [[nodiscard]] std::uint32_t connectionEpoch() const noexcept;
+    void recordFullFrame(std::uint32_t connectionEpoch) noexcept;
 
     uml::input::vnc::VncInputSink inputSink_;
     ScanoutFramebuffer framebuffer_;
@@ -82,6 +89,12 @@ private:
     rfbScreenInfoPtr screen_ {};
     uml::input::vnc::PointerMode pointerMode_;
     uml::input::vnc::DirectTouchContact touchContact_;
+    /* The upper half is a reconnect epoch and the lower half is the live
+     * client count. Publishing them together prevents the GPU thread from
+     * observing a first client without also observing its full-frame demand. */
+    std::atomic<std::uint64_t> clientState_ {};
+    std::atomic<std::uint32_t> fullFrameEpoch_ {};
+    std::atomic<std::uint64_t> cpuFallbackExtent_ {};
     std::atomic_bool running_ {true};
     std::atomic_bool inputFailureReported_ {};
     std::thread eventThread_;
