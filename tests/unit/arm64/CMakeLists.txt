@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+if(UML_BUILD_UNIT_TESTS)
+    # ARM64 white-box tests compose the MMU OBJECT carriers directly. Carry
+    # the shared-backing archive that MappedBacking references so those raw
+    # compositions retain the production memory component's link contract.
+    link_libraries(UML::MemorySharedBacking)
+endif()
+
 if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_mmu_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_mmu_tests.cpp
@@ -15,6 +22,10 @@ if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
     target_compile_options(uml_native_mmu_tests PRIVATE
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
+    # The test reserves the fixed Darwin native bridge window. Running after
+    # several concurrent VM-heavy tests can make that host reservation fail
+    # transiently even though an isolated retry succeeds.
+    set_tests_properties(native-4k-shadow-mmu PROPERTIES RUN_SERIAL TRUE)
 
 	add_executable(uml_native_4k_admission_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_4k_admission_tests.cpp)

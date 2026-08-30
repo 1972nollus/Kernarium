@@ -9,6 +9,8 @@ target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
+    UML::MemorySharedBacking)
 target_compile_features(uml_memory_domain_lifetime_tests PRIVATE cxx_std_20)
 target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
