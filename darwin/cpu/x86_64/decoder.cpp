@@ -2027,6 +2027,53 @@ private:
 		return true;
 	}
 
+	[[nodiscard]] bool decode_3dnow(Instruction &instruction)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		instruction.operation = Operation::vector_3dnow;
+		instruction.destination = mmx_register_operand((modrm >> 3U) & 7U);
+		instruction.source = instruction.destination;
+		if (!mmx_rm_operand(modrm, instruction.auxiliary))
+			return false;
+		std::uint8_t suffix{};
+		if (!read(suffix))
+			return false;
+		switch (suffix) {
+		case 0x0c:
+		case 0x0d:
+		case 0x1c:
+		case 0x1d:
+		case 0x86:
+		case 0x87:
+		case 0x8a:
+		case 0x8e:
+		case 0x90:
+		case 0x94:
+		case 0x96:
+		case 0x97:
+		case 0x9a:
+		case 0x9e:
+		case 0xa0:
+		case 0xa4:
+		case 0xa6:
+		case 0xa7:
+		case 0xaa:
+		case 0xae:
+		case 0xb0:
+		case 0xb4:
+		case 0xb6:
+		case 0xb7:
+		case 0xbb:
+		case 0xbf:
+			instruction.vector_opcode = suffix;
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	[[nodiscard]] bool decode_vex(
 		std::uint8_t first, Instruction &instruction)
 	{
@@ -2228,6 +2275,8 @@ private:
 			return true;
 		}
 		switch (opcode) {
+		case 0x0f:
+			return decode_3dnow(instruction);
 		case 0x0e:
 		case 0x77:
 			instruction.operation = Operation::nop;

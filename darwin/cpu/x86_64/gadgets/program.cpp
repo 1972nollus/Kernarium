@@ -848,6 +848,133 @@ void vector_float_alu(std::array<std::byte, 32> &result,
 	return written;
 }
 
+[[nodiscard]] StepResult vector_3dnow(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!left.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			left.fault};
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+
+	std::array<std::byte, 32> result{};
+	const auto opcode = instruction.vector_opcode;
+	if (opcode == 0x0c) {
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			const auto value = vector_element<std::int16_t>(
+				right.value, lane * sizeof(std::uint32_t));
+			set_vector_element(result, lane * sizeof(float),
+				static_cast<float>(value));
+		}
+	} else if (opcode == 0x0d) {
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			const auto value = vector_element<std::int32_t>(
+				right.value, lane * sizeof(std::int32_t));
+			set_vector_element(result, lane * sizeof(float),
+				static_cast<float>(value));
+		}
+	} else if (opcode == 0x1c || opcode == 0x1d) {
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			const auto value = std::trunc(vector_element<float>(
+				right.value, lane * sizeof(float)));
+			std::int32_t converted{};
+			if (!std::isfinite(value) || value < -0x1p31F || value >= 0x1p31F)
+				converted = std::numeric_limits<std::int32_t>::min();
+			else
+				converted = static_cast<std::int32_t>(value);
+			if (opcode == 0x1c)
+				converted = static_cast<std::int16_t>(converted);
+			set_vector_element(result, lane * sizeof(std::int32_t), converted);
+		}
+	} else if (opcode == 0x86 || opcode == 0x87) {
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			const auto input = vector_element<float>(
+				right.value, lane * sizeof(float));
+			const auto value = opcode == 0x86 ? 1.0F / input :
+				std::copysign(1.0F / std::sqrt(std::fabs(input)), input);
+			set_vector_element(result, lane * sizeof(float), value);
+		}
+	} else if (opcode == 0x96 || opcode == 0x97) {
+		const auto input = vector_element<float>(right.value, 0);
+		const auto value = opcode == 0x96 ? 1.0F / input :
+			std::copysign(1.0F / std::sqrt(std::fabs(input)), input);
+		set_vector_element(result, 0, value);
+		set_vector_element(result, sizeof(float), value);
+	} else if (opcode == 0xa6 || opcode == 0xa7 || opcode == 0xb6) {
+		result = right.value;
+	} else if (opcode == 0xbb) {
+		set_vector_element(result, 0,
+			vector_element<std::uint32_t>(right.value, sizeof(std::uint32_t)));
+		set_vector_element(result, sizeof(std::uint32_t),
+			vector_element<std::uint32_t>(right.value, 0));
+	} else if (opcode == 0xbf) {
+		for (std::size_t lane = 0; lane < 8; ++lane) {
+			const auto first = vector_element<std::uint8_t>(left.value, lane);
+			const auto second = vector_element<std::uint8_t>(right.value, lane);
+			set_vector_element(result, lane, static_cast<std::uint8_t>(
+				(static_cast<unsigned>(first) + second + 1U) >> 1U));
+		}
+	} else if (opcode == 0xb7) {
+		for (std::size_t lane = 0; lane < 4; ++lane) {
+			const auto first = vector_element<std::int16_t>(
+				left.value, lane * sizeof(std::int16_t));
+			const auto second = vector_element<std::int16_t>(
+				right.value, lane * sizeof(std::int16_t));
+			const auto product = static_cast<std::int32_t>(first) * second;
+			set_vector_element(result, lane * sizeof(std::int16_t),
+				static_cast<std::int16_t>((product + 0x8000) >> 16U));
+		}
+	} else if (opcode == 0x8a || opcode == 0x8e || opcode == 0xae) {
+		const auto left_low = vector_element<float>(left.value, 0);
+		const auto left_high = vector_element<float>(left.value, sizeof(float));
+		const auto right_low = vector_element<float>(right.value, 0);
+		const auto right_high = vector_element<float>(right.value, sizeof(float));
+		set_vector_element(result, 0, opcode == 0xae ?
+			left_low + left_high : left_low - left_high);
+		set_vector_element(result, sizeof(float), opcode == 0x8a ?
+			right_low - right_high : right_low + right_high);
+	} else {
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			const auto offset = lane * sizeof(float);
+			const auto first = vector_element<float>(left.value, offset);
+			const auto second = vector_element<float>(right.value, offset);
+			if (opcode == 0x90 || opcode == 0xa0 || opcode == 0xb0) {
+				const bool matched = opcode == 0x90 ? first >= second :
+					opcode == 0xa0 ? first > second : first == second;
+				set_vector_element(result, offset, matched ?
+					~std::uint32_t{0} : std::uint32_t{0});
+				continue;
+			}
+			float value{};
+			switch (opcode) {
+			case 0x94: value = !std::isnan(first) && first < second ?
+				first : second; break;
+			case 0x9a: value = first - second; break;
+			case 0x9e: value = first + second; break;
+			case 0xa4: value = !std::isnan(first) && first > second ?
+				first : second; break;
+			case 0xaa: value = second - first; break;
+			case 0xb4: value = first * second; break;
+			default: break;
+			}
+			set_vector_element(result, offset, value);
+		}
+	}
+
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, false);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
 template<typename Float>
 [[nodiscard]] std::int32_t convert_to_i32(
 	Float value, std::uint32_t mxcsr, bool truncate) noexcept
@@ -5294,6 +5421,7 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::vector_convert: return vector_convert;
 	case Operation::vector_gpr_move: return vector_gpr_move;
 	case Operation::vector_integer: return vector_integer;
+	case Operation::vector_3dnow: return vector_3dnow;
 	case Operation::vector_integer_map2: return vector_integer_map2;
 	case Operation::vector_integer_map3: return vector_integer_map3;
 	case Operation::vector_fma: return vector_fma;

@@ -162,6 +162,7 @@ enum class Operation : std::uint8_t {
 	vector_convert,
 	vector_gpr_move,
 	vector_integer,
+	vector_3dnow,
 	vector_integer_map2,
 	vector_integer_map3,
 	vector_fma,
