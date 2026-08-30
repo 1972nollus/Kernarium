@@ -154,6 +154,8 @@ enum class Operation : std::uint8_t {
 	vector_convert,
 	vector_gpr_move,
 	vector_integer,
+	vector_to_gpr,
+	vector_insert,
 	system_call,
 	breakpoint,
 };

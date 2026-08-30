@@ -636,7 +636,100 @@ void vector_float_alu(std::array<std::byte, 32> &result,
 	const auto size = static_cast<std::size_t>(
 		width_bytes(instruction.destination.width));
 	const bool scalar = instruction.vector_prefix >= 2;
-	if (instruction.vector_opcode >= 0x54 &&
+	if (instruction.vector_opcode == 0x14 ||
+		instruction.vector_opcode == 0x15) {
+		const auto element_size = instruction.vector_prefix == 1 ? 8U : 4U;
+		for (std::size_t lane = 0; lane < size; lane += 16) {
+			const auto half = 8U / element_size;
+			const auto base = instruction.vector_opcode == 0x15 ? half : 0U;
+			for (std::size_t index = 0; index < half; ++index) {
+				std::copy_n(left.value.begin() +
+					static_cast<std::ptrdiff_t>(lane +
+						(base + index) * element_size),
+					element_size, result.begin() +
+					static_cast<std::ptrdiff_t>(lane +
+						index * element_size * 2U));
+				std::copy_n(right.value.begin() +
+					static_cast<std::ptrdiff_t>(lane +
+						(base + index) * element_size),
+					element_size, result.begin() +
+					static_cast<std::ptrdiff_t>(lane +
+						(index * 2U + 1U) * element_size));
+			}
+		}
+	} else if (instruction.vector_opcode == 0xc6) {
+		const auto element_size = instruction.vector_prefix == 1 ? 8U : 4U;
+		for (std::size_t lane = 0; lane < size; lane += 16) {
+			if (element_size == 4) {
+				for (std::size_t index = 0; index < 2; ++index) {
+					const auto first_index =
+						(instruction.vector_control >> (index * 2U)) & 3U;
+					const auto second_index =
+						(instruction.vector_control >> ((index + 2U) * 2U)) & 3U;
+					set_vector_element(result, lane + index * 4U,
+						vector_element<std::uint32_t>(left.value,
+							lane + first_index * 4U));
+					set_vector_element(result, lane + (index + 2U) * 4U,
+						vector_element<std::uint32_t>(right.value,
+							lane + second_index * 4U));
+				}
+			} else {
+				const auto control = instruction.vector_control >>
+					((lane / 16U) * 2U);
+				set_vector_element(result, lane,
+					vector_element<std::uint64_t>(left.value,
+						lane + (control & 1U) * 8U));
+				set_vector_element(result, lane + 8,
+					vector_element<std::uint64_t>(right.value,
+						lane + ((control >> 1U) & 1U) * 8U));
+			}
+		}
+	} else if (instruction.vector_opcode == 0x7c ||
+		instruction.vector_opcode == 0x7d) {
+		const bool subtract = instruction.vector_opcode == 0x7d;
+		for (std::size_t lane = 0; lane < size; lane += 16) {
+			if (instruction.vector_prefix == 1) {
+				const auto a0 = vector_element<double>(left.value, lane);
+				const auto a1 = vector_element<double>(left.value, lane + 8);
+				const auto b0 = vector_element<double>(right.value, lane);
+				const auto b1 = vector_element<double>(right.value, lane + 8);
+				set_vector_element(result, lane, subtract ? a0 - a1 : a0 + a1);
+				set_vector_element(result, lane + 8,
+					subtract ? b0 - b1 : b0 + b1);
+			} else {
+				for (std::size_t pair = 0; pair < 2; ++pair) {
+					const auto a0 = vector_element<float>(left.value,
+						lane + pair * 8U);
+					const auto a1 = vector_element<float>(left.value,
+						lane + pair * 8U + 4U);
+					const auto b0 = vector_element<float>(right.value,
+						lane + pair * 8U);
+					const auto b1 = vector_element<float>(right.value,
+						lane + pair * 8U + 4U);
+					set_vector_element(result, lane + pair * 4U,
+						subtract ? a0 - a1 : a0 + a1);
+					set_vector_element(result, lane + (pair + 2U) * 4U,
+						subtract ? b0 - b1 : b0 + b1);
+				}
+			}
+		}
+	} else if (instruction.vector_opcode == 0xd0) {
+		if (instruction.vector_prefix == 1) {
+			for (std::size_t offset = 0; offset < size; offset += 8) {
+				const auto a = vector_element<double>(left.value, offset);
+				const auto b = vector_element<double>(right.value, offset);
+				set_vector_element(result, offset,
+					((offset / 8U) & 1U) == 0 ? a - b : a + b);
+			}
+		} else {
+			for (std::size_t offset = 0; offset < size; offset += 4) {
+				const auto a = vector_element<float>(left.value, offset);
+				const auto b = vector_element<float>(right.value, offset);
+				set_vector_element(result, offset,
+					((offset / 4U) & 1U) == 0 ? a - b : a + b);
+			}
+		}
+	} else if (instruction.vector_opcode >= 0x54 &&
 		instruction.vector_opcode <= 0x57) {
 		for (std::size_t offset = 0; offset < size; offset += 8) {
 			const auto first = vector_element<std::uint64_t>(left.value, offset);
@@ -1279,6 +1372,65 @@ void vector_arithmetic_shift_right(std::array<std::byte, 32> &result,
 	}
 	const auto written = write_vector_operand(gadget, cpu, memory,
 		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_to_gpr(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto source = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!source.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			source.fault};
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.source.width));
+	std::uint64_t value{};
+	if (instruction.vector_opcode == 0x50) {
+		const auto element_size = instruction.vector_prefix == 1 ? 8U : 4U;
+		for (std::size_t lane = 0; lane < size / element_size; ++lane) {
+			const auto byte = source.value[(lane + 1U) * element_size - 1U];
+			value |= static_cast<std::uint64_t>(
+				(std::to_integer<unsigned>(byte) >> 7U) & 1U) << lane;
+		}
+	} else if (instruction.vector_opcode == 0xd7) {
+		for (std::size_t index = 0; index < size; ++index)
+			value |= static_cast<std::uint64_t>(
+				(std::to_integer<unsigned>(source.value[index]) >> 7U) & 1U) <<
+				index;
+	} else {
+		const auto index = instruction.vector_control % (size / 2U);
+		value = vector_element<std::uint16_t>(source.value, index * 2U);
+	}
+	write_register(cpu, instruction.destination, value);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult vector_insert(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto merge = read_vector_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!merge.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			merge.fault};
+	const auto input = read_operand(
+		gadget, cpu, memory, gadget.instruction.auxiliary);
+	if (!input.succeeded)
+		return read_failure(input);
+	auto result = merge.value;
+	const auto size = static_cast<std::size_t>(
+		width_bytes(gadget.instruction.destination.width));
+	const auto index = gadget.instruction.vector_control % (size / 2U);
+	set_vector_element(result, index * 2U,
+		static_cast<std::uint16_t>(input.value));
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		gadget.instruction.destination, result, gadget.instruction.vex);
 	if (written.action == StepAction::exit)
 		return written;
 	advance(gadget, cpu);
@@ -2894,6 +3046,8 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::vector_convert: return vector_convert;
 	case Operation::vector_gpr_move: return vector_gpr_move;
 	case Operation::vector_integer: return vector_integer;
+	case Operation::vector_to_gpr: return vector_to_gpr;
+	case Operation::vector_insert: return vector_insert;
 	case Operation::system_call: return system_call;
 	case Operation::breakpoint: return breakpoint;
 	}

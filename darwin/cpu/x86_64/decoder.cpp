@@ -905,12 +905,21 @@ private:
 		std::uint8_t opcode)
 	{
 		const auto prefix = mandatory_prefix();
+		const bool packed_misc = opcode == 0x14 || opcode == 0x15 ||
+			opcode == 0x7c || opcode == 0x7d || opcode == 0xc6 ||
+			opcode == 0xd0;
+		if ((opcode == 0x14 || opcode == 0x15 || opcode == 0xc6) &&
+			prefix > 1)
+			return false;
+		if ((opcode == 0x7c || opcode == 0x7d || opcode == 0xd0) &&
+			prefix != 1 && prefix != 3)
+			return false;
 		if (opcode >= 0x54 && opcode <= 0x57 && prefix > 1)
 			return false;
 		if ((opcode == 0x52 || opcode == 0x53) &&
 			prefix != 0 && prefix != 2)
 			return false;
-		const bool scalar = prefix == 2 || prefix == 3;
+		const bool scalar = !packed_misc && (prefix == 2 || prefix == 3);
 		const auto vector_width = scalar ? OperandWidth::xmm :
 			(prefixes_.vex && prefixes_.vex_long ?
 				OperandWidth::ymm : OperandWidth::xmm);
@@ -933,7 +942,7 @@ private:
 		instruction.vector_opcode = opcode;
 		instruction.vector_map = 1;
 		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
-		if (opcode == 0xc2) {
+		if (opcode == 0xc2 || opcode == 0xc6) {
 			std::uint64_t control{};
 			if (!read_unsigned(1, control))
 				return false;
@@ -1190,6 +1199,73 @@ private:
 		return true;
 	}
 
+	[[nodiscard]] bool decode_vector_to_gpr(Instruction &instruction,
+		std::uint8_t opcode)
+	{
+		const auto prefix = mandatory_prefix();
+		if (opcode == 0x50 && prefix > 1)
+			return false;
+		if ((opcode == 0xc5 || opcode == 0xd7) &&
+			(prefix > 1 || (prefixes_.vex && prefix != 1)))
+			return false;
+		std::uint8_t modrm{};
+		if (!read(modrm) || (modrm >> 6U) != 3)
+			return false;
+		const bool mmx = opcode != 0x50 && !prefixes_.vex && prefix == 0;
+		const auto width = mmx ? OperandWidth::qword :
+			(prefixes_.vex && prefixes_.vex_long ?
+				OperandWidth::ymm : OperandWidth::xmm);
+		instruction.operation = Operation::vector_to_gpr;
+		instruction.destination = reg_field(modrm, OperandWidth::dword);
+		instruction.source = mmx ? mmx_register_operand(modrm & 7U) :
+			vector_register_operand(static_cast<std::uint8_t>(
+				(modrm & 7U) |
+				((prefixes_.rex & 1U) != 0 ? 8U : 0U)), width);
+		instruction.vex = prefixes_.vex;
+		instruction.vector_opcode = opcode;
+		instruction.vector_map = 1;
+		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+		if (opcode == 0xc5) {
+			std::uint64_t control{};
+			if (!read_unsigned(1, control))
+				return false;
+			instruction.vector_control = static_cast<std::uint8_t>(control);
+		}
+		return true;
+	}
+
+	[[nodiscard]] bool decode_vector_insert(Instruction &instruction)
+	{
+		const auto prefix = mandatory_prefix();
+		if (prefix > 1 || (prefixes_.vex && prefix != 1))
+			return false;
+		const bool mmx = !prefixes_.vex && prefix == 0;
+		const auto width = mmx ? OperandWidth::qword : OperandWidth::xmm;
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		Operand input{};
+		if (!rm_operand(modrm, OperandWidth::word, input))
+			return false;
+		const auto destination = mmx ?
+			mmx_register_operand((modrm >> 3U) & 7U) :
+			vector_reg_field(modrm, width);
+		instruction.operation = Operation::vector_insert;
+		instruction.destination = destination;
+		instruction.source = prefixes_.vex ?
+			vector_register_operand(prefixes_.vex_vvvv, width) : destination;
+		instruction.auxiliary = input;
+		instruction.vex = prefixes_.vex;
+		instruction.vector_opcode = 0xc4;
+		instruction.vector_map = 1;
+		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+		std::uint64_t control{};
+		if (!read_unsigned(1, control))
+			return false;
+		instruction.vector_control = static_cast<std::uint8_t>(control);
+		return true;
+	}
+
 	[[nodiscard]] bool decode_vex(
 		std::uint8_t first, Instruction &instruction)
 	{
@@ -1271,7 +1347,19 @@ private:
 		case 0x5e:
 		case 0x5f:
 		case 0xc2:
+		case 0x14:
+		case 0x15:
+		case 0x7c:
+		case 0x7d:
+		case 0xc6:
+		case 0xd0:
 			return decode_vector_alu(instruction, opcode);
+		case 0x50:
+		case 0xc5:
+		case 0xd7:
+			return decode_vector_to_gpr(instruction, opcode);
+		case 0xc4:
+			return decode_vector_insert(instruction);
 		case 0x5a:
 		case 0x5b:
 		case 0xe6:
@@ -1302,7 +1390,9 @@ private:
 			return decode_vector_lane_move(instruction, opcode);
 		if (opcode == 0x51 || opcode == 0x52 || opcode == 0x53 ||
 			(opcode >= 0x54 && opcode <= 0x59) ||
-			(opcode >= 0x5c && opcode <= 0x5f) || opcode == 0xc2)
+			(opcode >= 0x5c && opcode <= 0x5f) || opcode == 0xc2 ||
+			opcode == 0x14 || opcode == 0x15 || opcode == 0x7c ||
+			opcode == 0x7d || opcode == 0xc6 || opcode == 0xd0)
 			return decode_vector_alu(instruction, opcode);
 		if (opcode == 0x5a || opcode == 0x5b || opcode == 0xe6)
 			return decode_vector_convert(instruction, opcode);
@@ -1310,6 +1400,10 @@ private:
 			return decode_vector_integer(instruction, opcode);
 		if (opcode >= 0x71 && opcode <= 0x73)
 			return decode_vector_shift_immediate(instruction, opcode);
+		if (opcode == 0x50 || opcode == 0xc5 || opcode == 0xd7)
+			return decode_vector_to_gpr(instruction, opcode);
+		if (opcode == 0xc4)
+			return decode_vector_insert(instruction);
 		if (opcode >= 0x80 && opcode <= 0x8f) {
 			instruction.condition = static_cast<Condition>(opcode & 0xfU);
 			return decode_relative(instruction,
