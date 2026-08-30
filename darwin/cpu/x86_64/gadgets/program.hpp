@@ -40,6 +40,11 @@ struct Gadget final {
 	Instruction instruction{};
 };
 
+[[nodiscard]] StepResult execute_x87(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept;
+[[nodiscard]] StepResult execute_extended_state(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept;
+
 class Program final {
 public:
 	Program() = default;

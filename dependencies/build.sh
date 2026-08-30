@@ -24,7 +24,8 @@ proxy-libintl|0.5
 glib|2.88.3
 gvdb|2b42fc7
 libslirp|4.9.3
-libvncserver|0.9.15'
+libvncserver|0.9.15
+fex|FEX-2608'
 
 fail()
 {
@@ -474,6 +475,11 @@ cmake_setup "$SOURCES/libvncserver" "$BUILDS/libvncserver" \
 	-DWITH_TIGHTVNC_FILETRANSFER=OFF -DWITH_WEBSOCKETS=OFF \
 	-DWITH_SASL=OFF -DWITH_XCB=OFF -DWITH_QT=OFF
 cmake_build_install "$BUILDS/libvncserver"
+
+printf '%s\n' "building Berkeley SoftFloat 3e and 128-bit Cephes from FEX FEX-2608"
+cmake_setup "$ROOT_DIR/dependencies/softfloat" "$BUILDS/softfloat" \
+	-DUML_FEX_SOURCE_DIR="$SOURCES/fex"
+cmake_build_install "$BUILDS/softfloat"
 
 # The emulator imports exact archives and headers rather than upstream CMake
 # packages.  Remove unused exports because they can serialize build-only paths

@@ -64,13 +64,13 @@ The profiles are:
 - 4 KiB pages from `config/page-4k.fragment` (compatibility).
 
 The 4 KiB Darwin profile accepts `EM_X86_64` userspace while retaining the
-arm64 kernel. Per-task register state selects the host's x86-64 gadget backend,
-and the kernel translates the supported x86-64 syscall ABI and signal frame.
-The task state overlays existing arm64 bridge slots, so the common ABI and the
-Android kernel series remain unchanged.
-The 16 KiB profile continues to accept `EM_AARCH64` only. Initial x86-64
-support is a smoke-qualified integer/TLS/signal subset, not yet a general
-distribution userspace contract.
+arm64 kernel. Per-task register state selects the macOS host's x86-64 gadget
+backend, and the kernel translates the supported x86-64 syscall ABI and signal
+frame. The task state overlays existing arm64 bridge slots, so the common ABI
+and the Android kernel series remain unchanged. Host instruction execution is
+qualified against the pinned FEX handwritten x86-64 corpus; distribution and
+complete Linux syscall compatibility require separate guest qualification.
+The 16 KiB profile continues to accept `EM_AARCH64` only.
 
 Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only

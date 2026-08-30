@@ -112,6 +112,9 @@ lib/glib-2.0/include/glibconfig.h
 include/slirp/libslirp.h
 include/rfb/rfb.h
 include/rfb/rfbclient.h
+include/SoftFloat-3e/softfloat.h
+include/SoftFloat-3e/softfloat_types.h
+include/cephes_128bit.h
 lib/libz.a
 lib/libpcre2-8.a
 lib/libffi.a
@@ -121,7 +124,9 @@ lib/libintl.a
 lib/libglib-2.0.a
 lib/libslirp.a
 lib/libvncserver.a
-lib/libvncclient.a'
+lib/libvncclient.a
+lib/libsoftfloat_3e.a
+lib/libcephes_128bit.a'
 printf '%s\n' "$required_files" | while IFS= read -r relative; do
 	[ -z "$relative" ] && continue
 	[ -f "$PREFIX/$relative" ] || fail "required prefix file is missing: $relative"
@@ -153,6 +158,7 @@ while IFS= read -r archive; do
 	case "$(basename "$archive")" in
 	libz.a|libpcre2-8.a|libffi.a|libcharset.a|libiconv.a|libintl.a|\
 	libglib-2.0.a|libslirp.a|libvncserver.a|libvncclient.a|\
+	libsoftfloat_3e.a|libcephes_128bit.a|\
 	libgio-2.0.a|libgirepository-2.0.a|\
 	libgmodule-2.0.a|libgobject-2.0.a|libgthread-2.0.a|libpcre2-posix.a)
 		;;

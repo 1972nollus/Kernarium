@@ -31,7 +31,7 @@ def fex_identity() -> tuple[str, str]:
             continue
         fields = row.split("\t")
         if len(fields) == 7 and fields[0] == "fex":
-            if fields[2] != "x86-conformance":
+            if "x86-conformance" not in fields[2].split(","):
                 fail("the FEX dependency is not scoped to x86-conformance")
             return fields[1], fields[4]
     fail("the dependency manifest has no FEX x86-conformance input")

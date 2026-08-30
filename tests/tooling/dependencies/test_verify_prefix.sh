@@ -60,6 +60,7 @@ SERIES="$PATCH_DIRECTORY/series.tsv"
 BASE_PREFIX="$TEST_ROOT/prefix"
 FAILURE_NUMBER=0
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
+	"$BASE_PREFIX/include/SoftFloat-3e" \
 	"$BASE_PREFIX/include/slirp" \
 	"$BASE_PREFIX/include/epoxy" \
 	"$BASE_PREFIX/include/rfb" \
@@ -103,7 +104,10 @@ include/glib-2.0/glib.h
 lib/glib-2.0/include/glibconfig.h
 include/slirp/libslirp.h
 include/rfb/rfb.h
-include/rfb/rfbclient.h'
+include/rfb/rfbclient.h
+include/SoftFloat-3e/softfloat.h
+include/SoftFloat-3e/softfloat_types.h
+include/cephes_128bit.h'
 printf '%s\n' "$required_headers" | while IFS= read -r relative; do
 	printf '%s\n' fixture >"$BASE_PREFIX/$relative"
 done
@@ -124,7 +128,9 @@ libintl.a
 libglib-2.0.a
 libslirp.a
 libvncserver.a
-libvncclient.a'
+libvncclient.a
+libsoftfloat_3e.a
+libcephes_128bit.a'
 printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 	cp "$TEST_ROOT/fixture-arm64.a" "$BASE_PREFIX/lib/$archive"
 done

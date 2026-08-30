@@ -140,7 +140,7 @@ string(JOIN "," _uml_enabled_test_suites_csv ${_uml_enabled_test_suites})
 # the active conditional registrations explicitly, so it still rejects an
 # accidental omission from the configuration where the test applies.
 set(_uml_required_conditional_tests)
-if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
+if(UML_BUILD_UNIT_TESTS AND UML_BUILD_X86_64_GUEST)
     list(APPEND _uml_required_conditional_tests
         native-4k-shadow-mmu
         emulator-native-4k-admission

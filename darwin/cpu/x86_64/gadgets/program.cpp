@@ -405,6 +405,25 @@ void advance(const Gadget &gadget, CpuState &cpu) noexcept
 	cpu.rip = gadget.address + gadget.instruction.length;
 }
 
+[[nodiscard]] constexpr bool uses_mmx(const Instruction &instruction) noexcept
+{
+	return instruction.destination.kind == OperandKind::mmx_reg ||
+		instruction.source.kind == OperandKind::mmx_reg ||
+		instruction.auxiliary.kind == OperandKind::mmx_reg;
+}
+
+void synchronize_mmx_state(CpuState &cpu,
+	const Instruction &instruction) noexcept
+{
+	cpu.x87_top = 0;
+	cpu.x87_tag = 0;
+	if (instruction.destination.kind == OperandKind::mmx_reg) {
+		const auto index = instruction.destination.reg.index;
+		cpu.x87[index].significand = cpu.mmx[index];
+		cpu.x87[index].sign_exponent = 0xffffU;
+	}
+}
+
 [[nodiscard]] StepResult read_failure(const OperandRead &read) noexcept
 {
 	return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
@@ -534,6 +553,55 @@ void set_vector_element(std::array<std::byte, 32> &vector,
 	std::size_t offset, Value value) noexcept
 {
 	std::memcpy(vector.data() + offset, &value, sizeof(value));
+}
+
+[[nodiscard]] StepResult vector_bitfield(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto source = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!source.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			source.fault};
+	if (instruction.destination.kind != OperandKind::vector_reg)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+
+	const bool extracting = instruction.vector_prefix == 1;
+	std::uint8_t raw_length{};
+	std::uint8_t raw_index{};
+	if (instruction.vector_opcode == 0x78) {
+		raw_length = instruction.vector_control;
+		raw_index = instruction.vector_group;
+	} else {
+		const auto control_offset = extracting ? 0U : 8U;
+		raw_length = std::to_integer<std::uint8_t>(
+			source.value[control_offset]);
+		raw_index = std::to_integer<std::uint8_t>(
+			source.value[control_offset + 1U]);
+	}
+	const auto length_field = static_cast<unsigned>(raw_length & 0x3fU);
+	const auto length = length_field == 0 ? 64U : length_field;
+	const auto index = static_cast<unsigned>(raw_index & 0x3fU);
+	const auto mask = length == 64 ? ~std::uint64_t{0} :
+		(std::uint64_t{1} << length) - 1U;
+	const auto destination_index = instruction.destination.reg.index;
+	auto result = cpu.vectors[destination_index];
+	const auto destination = vector_element<std::uint64_t>(result, 0);
+	std::uint64_t value{};
+	if (extracting) {
+		value = (destination >> index) & mask;
+	} else {
+		const auto input = vector_element<std::uint64_t>(source.value, 0);
+		const auto shifted_mask = mask << index;
+		value = (destination & ~shifted_mask) |
+			((input << index) & shifted_mask);
+	}
+	set_vector_element(result, 0, value);
+	std::fill(result.begin() + 8, result.begin() + 16, std::byte{});
+	cpu.vectors[destination_index] = result;
+	advance(gadget, cpu);
+	return {};
 }
 
 template<typename Float>
@@ -5030,6 +5098,50 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 		::uml::cpu::EngineEvent::continued, {}};
 }
 
+[[nodiscard]] StepResult far_control_transfer(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	constexpr std::size_t cs_index = 1;
+	const auto &instruction = gadget.instruction;
+	const auto width = instruction.source.width;
+	const auto size = static_cast<std::size_t>(width_bytes(width));
+	const auto pointer_address = effective_address(
+		gadget, cpu, instruction.source.memory, true);
+	std::uint64_t target{};
+	std::uint64_t selector{};
+	if (!read_memory(memory, pointer_address, width, target))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, pointer_address,
+				::uml::memory::MemoryAccess::read)};
+	if (!read_memory(memory, pointer_address + size,
+		OperandWidth::word, selector))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, pointer_address + size,
+				::uml::memory::MemoryAccess::read)};
+	target &= width_mask(width);
+
+	if (instruction.operation == Operation::far_call) {
+		std::array<std::byte, 16> frame{};
+		const auto return_address =
+			(gadget.address + gadget.instruction.length) & width_mask(width);
+		const auto current_selector = static_cast<std::uint64_t>(
+			cpu.segment_selectors[cs_index]);
+		std::memcpy(frame.data(), &return_address, size);
+		std::memcpy(frame.data() + size, &current_selector, size);
+		const auto stack_address = cpu.gpr(Register::rsp) - size * 2U;
+		if (!write_memory_bytes(memory, stack_address,
+			std::span{frame}.first(size * 2U)))
+			return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, stack_address,
+					::uml::memory::MemoryAccess::write)};
+		cpu.gpr(Register::rsp) = stack_address;
+	}
+	cpu.segment_selectors[cs_index] = static_cast<std::uint16_t>(selector);
+	cpu.rip = target;
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}};
+}
+
 [[nodiscard]] StepResult ret(const Gadget &gadget, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory) noexcept
 {
@@ -5045,6 +5157,85 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	cpu.rip = target;
 	return {StepAction::return_to_dispatch,
 		::uml::cpu::EngineEvent::continued, {}};
+}
+
+[[nodiscard]] StepResult far_ret(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	constexpr std::size_t cs_index = 1;
+	const auto width = gadget.instruction.destination.width;
+	const auto size = static_cast<std::uint64_t>(width_bytes(width));
+	const auto stack_address = cpu.gpr(Register::rsp);
+	std::uint64_t target{};
+	std::uint64_t selector{};
+	if (!read_memory(memory, stack_address, width, target))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, stack_address,
+				::uml::memory::MemoryAccess::read)};
+	if (!read_memory(memory, stack_address + size, width, selector))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, stack_address + size,
+				::uml::memory::MemoryAccess::read)};
+	const auto adjustment = gadget.instruction.source.kind ==
+		OperandKind::immediate ? gadget.instruction.source.immediate : 0;
+	cpu.gpr(Register::rsp) = stack_address + size * 2U + adjustment;
+	cpu.segment_selectors[cs_index] = static_cast<std::uint16_t>(selector);
+	cpu.rip = target & width_mask(width);
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}};
+}
+
+[[nodiscard]] StepResult interrupt_ret(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	constexpr std::size_t cs_index = 1;
+	constexpr std::size_t ss_index = 2;
+	const auto width = gadget.instruction.destination.width;
+	const auto size = static_cast<std::uint64_t>(width_bytes(width));
+	const auto stack_address = cpu.gpr(Register::rsp);
+	std::array<std::uint64_t, 5> frame{};
+	for (std::size_t index = 0; index < frame.size(); ++index) {
+		const auto address = stack_address + index * size;
+		if (!read_memory(memory, address, width, frame[index]))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::read)};
+	}
+	cpu.rip = frame[0] & width_mask(width);
+	cpu.segment_selectors[cs_index] = static_cast<std::uint16_t>(frame[1]);
+	cpu.rflags = (frame[2] & width_mask(width)) | rflags_reserved;
+	cpu.gpr(Register::rsp) = frame[3] & width_mask(width);
+	cpu.segment_selectors[ss_index] = static_cast<std::uint16_t>(frame[4]);
+	cpu.deferred_flags.operation = DeferredFlagOperation::none;
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}};
+}
+
+[[nodiscard]] StepResult xlat(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &operand = gadget.instruction.source.memory;
+	auto address = operand.address_32 ?
+		static_cast<std::uint64_t>(
+			static_cast<std::uint32_t>(cpu.gpr(Register::rbx)) +
+			static_cast<std::uint8_t>(cpu.gpr(Register::rax))) :
+		cpu.gpr(Register::rbx) +
+			static_cast<std::uint8_t>(cpu.gpr(Register::rax));
+	if (operand.address_32)
+		address = static_cast<std::uint32_t>(address);
+	if (operand.segment == Segment::fs)
+		address += cpu.fs_base;
+	else if (operand.segment == Segment::gs)
+		address += cpu.gs_base;
+	std::uint64_t value{};
+	if (!read_memory(memory, address, OperandWidth::byte, value))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::read)};
+	cpu.gpr(Register::rax) =
+		(cpu.gpr(Register::rax) & ~std::uint64_t{0xff}) | value;
+	advance(gadget, cpu);
+	return {};
 }
 
 [[nodiscard]] StepResult cpuid(const Gadget &gadget, CpuState &cpu,
@@ -5288,8 +5479,11 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 {
 	materialize_flags(cpu);
 	const auto next = gadget.address + gadget.instruction.length;
-	cpu.gpr(Register::rcx) = next;
-	cpu.gpr(Register::r11) = cpu.rflags;
+	cpu.system_call_32bit = gadget.instruction.vector_opcode == 0xcd;
+	if (!cpu.system_call_32bit) {
+		cpu.gpr(Register::rcx) = next;
+		cpu.gpr(Register::r11) = cpu.rflags;
+	}
 	cpu.rip = next;
 	return {StepAction::exit, ::uml::cpu::EngineEvent::system_call, {}};
 }
@@ -5397,7 +5591,13 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::loop: return loop;
 	case Operation::call: return call;
 	case Operation::call_indirect: return call_indirect;
+	case Operation::far_call:
+	case Operation::far_jump:
+		return far_control_transfer;
 	case Operation::ret: return ret;
+	case Operation::far_ret: return far_ret;
+	case Operation::interrupt_ret: return interrupt_ret;
+	case Operation::xlat: return xlat;
 	case Operation::cpuid: return cpuid;
 	case Operation::read_extended_control: return read_extended_control;
 	case Operation::read_timestamp: return read_timestamp;
@@ -5435,6 +5635,9 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::vector_scalar_convert: return vector_scalar_convert;
 	case Operation::vector_compare_flags: return vector_compare_flags;
 	case Operation::vector_mask_store: return vector_mask_store;
+	case Operation::vector_bitfield: return vector_bitfield;
+	case Operation::x87: return execute_x87;
+	case Operation::extended_state: return execute_extended_state;
 	case Operation::mxcsr: return mxcsr;
 	case Operation::system_call: return system_call;
 	case Operation::breakpoint: return breakpoint;
@@ -5513,6 +5716,8 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 			return result;
 		}
 		const auto step = gadget.entry(gadget, cpu, memory);
+		if (step.action != StepAction::exit && uses_mmx(gadget.instruction))
+			synchronize_mmx_state(cpu, gadget.instruction);
 		if (step.action == StepAction::exit) {
 			result.event = step.event;
 			result.fault = step.fault;

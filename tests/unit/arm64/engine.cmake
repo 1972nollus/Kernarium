@@ -20,6 +20,10 @@
     if(TARGET uml_x86_64_gadgets)
         list(APPEND UML_STATIC_RUNTIME_TEST_BASE_OBJECTS
             $<TARGET_OBJECTS:uml_x86_64_gadgets>)
+        # Static-runtime test binaries compose production OBJECT carriers
+        # directly, so carry the x87 archives that would otherwise propagate
+        # through the production component target.
+        link_libraries(UML::ThirdPartyCephes128)
     endif()
     set(UML_STATIC_RUNTIME_TEST_OBJECTS
         ${UML_STATIC_RUNTIME_TEST_BASE_OBJECTS}

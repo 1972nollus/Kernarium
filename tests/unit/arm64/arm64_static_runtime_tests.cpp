@@ -119,7 +119,7 @@ static void uml_static_entry_bridge()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 static void uml_static_x86_64_entry_bridge()
 {
 	constexpr unsigned long generation = 131;
@@ -189,6 +189,58 @@ static void uml_static_x86_64_signal_return_bridge()
 	require(registers.x[0] == 15);
 	require(registers.x[4] == stack + sizeof(std::uint64_t));
 	require(registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+static void uml_static_x86_64_x87_task_state()
+{
+	constexpr unsigned long generation = 133;
+	constexpr std::uint64_t base = 0x2'0000;
+	constexpr std::uint64_t result_address = base + 0x200;
+	constexpr std::array first_task{
+		std::byte{0xd9}, std::byte{0xe8},             // fld1
+		std::byte{0x0f}, std::byte{0x05},             // syscall
+		std::byte{0xdd}, std::byte{0x1d},             // fstp qword [rip+0x1f6]
+		std::byte{0xf6}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00},
+		std::byte{0x0f}, std::byte{0x05},             // syscall
+	};
+	constexpr std::array second_task{
+		std::byte{0xdb}, std::byte{0xe3},             // fninit
+		std::byte{0x0f}, std::byte{0x05},             // syscall
+	};
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put_bytes(0, first_task);
+	backing.put_bytes(0x100, second_task);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+		1, 1) == 0);
+
+	darwin_uml_guest_registers first_registers{};
+	darwin_uml_guest_fp_registers first_fp{};
+	first_registers.padding = 2;
+	first_registers.pc = base;
+	first_registers.x[16] = 2;
+	darwin_uml_guest_registers second_registers{};
+	darwin_uml_guest_fp_registers second_fp{};
+	second_registers.padding = 2;
+	second_registers.pc = base + 0x100;
+	second_registers.x[16] = 2;
+	unsigned long tls = 0;
+	require(darwin_uml_static_enter_guest(&first_registers, &first_fp,
+		sizeof(first_fp), generation, &tls) == DARWIN_UML_EVENT_SYSCALL);
+	require(first_registers.pc == base + 4);
+	require(darwin_uml_static_enter_guest(&second_registers, &second_fp,
+		sizeof(second_fp), generation, &tls) == DARWIN_UML_EVENT_SYSCALL);
+	require(darwin_uml_static_enter_guest(&first_registers, &first_fp,
+		sizeof(first_fp), generation, &tls) == DARWIN_UML_EVENT_SYSCALL);
+	void *stored = nullptr;
+	require(darwin_uml_static_vm_translate(generation, result_address,
+		DARWIN_UML_STATIC_READ, &stored) == DARWIN_UML_STATIC_TRANSLATED);
+	std::uint64_t value{};
+	std::memcpy(&value, stored, sizeof(value));
+	require(value == 0x3ff0'0000'0000'0000ULL);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 #endif
@@ -746,9 +798,10 @@ static void uml_static_walker_turnstile_blocks_host_thread()
 int main()
 {
 	uml_static_entry_bridge();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 	uml_static_x86_64_entry_bridge();
 	uml_static_x86_64_signal_return_bridge();
+	uml_static_x86_64_x87_task_state();
 #endif
 	uml_static_descriptor_reuse_invalidation();
 	uml_static_host_interrupt_sequence();

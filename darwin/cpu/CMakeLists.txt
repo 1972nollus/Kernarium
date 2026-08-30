@@ -11,15 +11,19 @@ target_link_libraries(uml_cpu_contract INTERFACE
 target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
 # x86-64 guests are translated to immutable streams of precompiled host
-# gadgets. The bootstrap backend is present only in the 4 KiB product because
-# ordinary x86-64 Linux userspace requires that page profile.
-if(NOT UML_GUEST_16K_PAGES)
+# gadgets. The backend is a 4 KiB macOS product because ordinary x86-64 Linux
+# userspace requires that page profile and its exact math dependencies are in
+# the verified desktop prefix.
+if(UML_BUILD_X86_64_GUEST)
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
         x86_64/decoder.cpp
-        x86_64/gadgets/program.cpp)
+        x86_64/gadgets/program.cpp
+        x86_64/gadgets/x87.cpp)
     uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
-    target_link_libraries(uml_x86_64_gadgets PRIVATE UML::CpuContract)
+    target_link_libraries(uml_x86_64_gadgets
+        PUBLIC UML::ThirdPartyCephes128
+        PRIVATE UML::CpuContract)
     target_include_directories(uml_x86_64_gadgets PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
@@ -488,6 +492,8 @@ target_sources(uml_cpu_gadget_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>
     $<TARGET_OBJECTS:uml_arm64_dispatch>)
 if(TARGET uml_x86_64_gadgets)
+    target_link_libraries(uml_cpu_gadget_component INTERFACE
+        UML::ThirdPartyCephes128)
     target_sources(uml_cpu_gadget_component INTERFACE
         $<TARGET_OBJECTS:uml_x86_64_gadgets>)
 endif()
@@ -525,6 +531,8 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)
+    target_link_libraries(uml_cpu_engine_objects INTERFACE
+        UML::ThirdPartyCephes128)
     target_sources(uml_cpu_engine_objects INTERFACE
         $<TARGET_OBJECTS:uml_x86_64_gadgets>)
 endif()

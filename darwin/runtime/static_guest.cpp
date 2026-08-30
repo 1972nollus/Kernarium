@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory/static_guest_memory.hpp"
 #include "cpu/engine_factory.hpp"
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 #include "cpu/x86_64/gadgets/program.hpp"
 #endif
 #include "platform/apple/host_features.hpp"
@@ -38,7 +38,7 @@ namespace x86_64 = ::uml::cpu::x86_64;
 using ::uml::memory::StaticGuestMemory;
 namespace {
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 constexpr std::int32_t x86_64_guest_isa = 2;
 constexpr std::uint64_t x86_64_rt_sigreturn = 15;
 constexpr std::uint32_t x86_64_fp_marker = 0x5838'3634U;
@@ -46,6 +46,9 @@ constexpr std::size_t x86_64_register_count = 16;
 constexpr std::size_t x86_64_rflags_slot = 16;
 constexpr std::size_t x86_64_fs_base_slot = 17;
 constexpr std::size_t x86_64_gs_base_slot = 18;
+constexpr std::size_t x86_64_x87_significand_slot = 19;
+constexpr std::size_t x86_64_x87_exponent_slot = 27;
+constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
 #endif
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
@@ -301,7 +304,7 @@ void save_cpu(arm64::CpuState &cpu,
 	}
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 void load_x86_cpu(x86_64::CpuState &cpu,
 	const darwin_uml_guest_registers &registers,
 	const darwin_uml_guest_fp_registers &fp) noexcept
@@ -318,10 +321,38 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 		std::memcpy(cpu.vectors.data(), fp.vectors, sizeof(fp.vectors));
 		cpu.mxcsr = fp.fpsr;
+		cpu.x87_control = static_cast<std::uint16_t>(fp.fpcr);
+		cpu.x87_status = static_cast<std::uint16_t>(fp.fpcr >> 16U);
+		cpu.x87_tag = static_cast<std::uint16_t>(fp.reserved[0]);
+		cpu.x87_top = static_cast<std::uint8_t>(fp.reserved[0] >> 16U);
+		for (std::size_t index = 0; index < cpu.x87.size(); ++index) {
+			cpu.x87[index].significand =
+				registers.x[x86_64_x87_significand_slot + index];
+			const auto packed = registers.x[
+				x86_64_x87_exponent_slot + index / 4U];
+			cpu.x87[index].sign_exponent = static_cast<std::uint16_t>(
+				packed >> ((index % 4U) * 16U));
+			cpu.mmx[index] = cpu.x87[index].significand;
+		}
+		for (std::size_t index = 0; index < 4; ++index)
+			cpu.segment_selectors[index] = static_cast<std::uint16_t>(
+				registers.fpmr >> (index * 16U));
+		for (std::size_t index = 4; index < 6; ++index)
+			cpu.segment_selectors[index] = static_cast<std::uint16_t>(
+				registers.svcr >> ((index - 4U) * 16U));
+		cpu.system_call_32bit =
+			(registers.svcr & x86_64_compatibility_syscall) != 0;
 	} else {
 		cpu.vectors = {};
 		cpu.mmx = {};
+		cpu.x87 = {};
 		cpu.mxcsr = 0x1f80;
+		cpu.x87_control = 0x037f;
+		cpu.x87_status = 0;
+		cpu.x87_tag = 0xffff;
+		cpu.x87_top = 0;
+		cpu.segment_selectors = {0, 0x33, 0x2b, 0, 0, 0};
+		cpu.system_call_32bit = false;
 	}
 }
 
@@ -336,9 +367,31 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	registers.x[x86_64_rflags_slot] = cpu.rflags;
 	registers.x[x86_64_fs_base_slot] = cpu.fs_base;
 	registers.x[x86_64_gs_base_slot] = cpu.gs_base;
+	for (std::size_t index = 0; index < cpu.x87.size(); ++index)
+		registers.x[x86_64_x87_significand_slot + index] =
+			cpu.x87[index].significand;
+	for (std::size_t group = 0; group < 2; ++group) {
+		std::uint64_t packed{};
+		for (std::size_t index = 0; index < 4; ++index)
+			packed |= static_cast<std::uint64_t>(
+				cpu.x87[group * 4U + index].sign_exponent) <<
+				(index * 16U);
+		registers.x[x86_64_x87_exponent_slot + group] = packed;
+	}
+	registers.fpmr = 0;
+	for (std::size_t index = 0; index < 4; ++index)
+		registers.fpmr |= static_cast<std::uint64_t>(
+			cpu.segment_selectors[index]) << (index * 16U);
+	registers.svcr = static_cast<std::uint64_t>(cpu.segment_selectors[4]) |
+		(static_cast<std::uint64_t>(cpu.segment_selectors[5]) << 16U) |
+		(cpu.system_call_32bit ? x86_64_compatibility_syscall : 0U);
 	static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 	std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
 	fp.fpsr = cpu.mxcsr;
+	fp.fpcr = static_cast<std::uint32_t>(cpu.x87_control) |
+		(static_cast<std::uint32_t>(cpu.x87_status) << 16U);
+	fp.reserved[0] = static_cast<std::uint32_t>(cpu.x87_tag) |
+		(static_cast<std::uint32_t>(cpu.x87_top) << 16U);
 	fp.reserved[1] = x86_64_fp_marker;
 }
 
@@ -598,7 +651,7 @@ int run_common_guest(
 	if (context == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
 	auto runtime = context->thread_execution_state();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if DARWIN_UML_X86_64_GUEST
 	if (mutable_registers.padding == x86_64_guest_isa) {
 		return run_x86_guest<Kind>(mutable_registers, fp, generation,
 			*context, *runtime);

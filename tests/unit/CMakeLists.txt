@@ -26,7 +26,7 @@ target_compile_options(uml_test_allocation_failure PRIVATE
 # manifest per test domain.
 add_custom_target(unit-test-binaries)
 add_subdirectory(arm64)
-if(NOT UML_GUEST_16K_PAGES)
+if(TARGET uml_x86_64_gadgets)
     add_subdirectory(x86_64)
 endif()
 add_subdirectory(memory)

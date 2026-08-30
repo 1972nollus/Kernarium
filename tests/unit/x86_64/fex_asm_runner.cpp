@@ -192,6 +192,7 @@ struct Configuration final {
 	std::vector<Region> memory_regions;
 	std::vector<RegisterExpectation> registers;
 	std::vector<MemoryData> memory_data;
+	bool x87_reduced_precision{};
 };
 
 [[nodiscard]] bool range_valid(std::span<const std::byte> bytes,
@@ -241,12 +242,16 @@ struct Configuration final {
 	std::uint32_t register_count{};
 	std::uint32_t memory_offset{};
 	std::uint32_t memory_count{};
+	std::uint32_t environment_offset{};
+	std::uint32_t environment_count{};
 	if (!read_u32(bytes, 36, mode) || !read_u32(bytes, 44, region_offset) ||
 		!read_u32(bytes, 48, region_count) ||
 		!read_u32(bytes, 52, register_offset) ||
 		!read_u32(bytes, 56, register_count) ||
 		!read_u32(bytes, 60, memory_offset) ||
-		!read_u32(bytes, 64, memory_count)) {
+		!read_u32(bytes, 64, memory_count) ||
+		!read_u32(bytes, 68, environment_offset) ||
+		!read_u32(bytes, 72, environment_count)) {
 		error = "configuration header fields are truncated";
 		return false;
 	}
@@ -310,6 +315,34 @@ struct Configuration final {
 			bytes.begin() + static_cast<std::ptrdiff_t>(cursor + 12 + size));
 		configuration.memory_data.push_back(std::move(data));
 		cursor += 12 + size;
+	}
+
+	cursor = static_cast<std::size_t>(environment_offset);
+	for (std::uint32_t index = 0; index < environment_count; ++index) {
+		if (cursor >= bytes.size()) {
+			error = "environment data is truncated";
+			return false;
+		}
+		const auto begin = bytes.begin() + static_cast<std::ptrdiff_t>(cursor);
+		const auto key_end = std::find(begin, bytes.end(), std::byte{});
+		if (key_end == bytes.end()) {
+			error = "truncated environment key";
+			return false;
+		}
+		const auto value_begin = key_end + 1;
+		const auto value_end = std::find(value_begin, bytes.end(), std::byte{});
+		if (value_end == bytes.end()) {
+			error = "truncated environment value";
+			return false;
+		}
+		const std::string key(reinterpret_cast<const char *>(
+			bytes.data() + cursor),
+			static_cast<std::size_t>(key_end - begin));
+		const std::string value(reinterpret_cast<const char *>(&*value_begin),
+			static_cast<std::size_t>(value_end - value_begin));
+		if (key == "FEX_X87REDUCEDPRECISION")
+			configuration.x87_reduced_precision = value != "0";
+		cursor = static_cast<std::size_t>(value_end - bytes.begin()) + 1U;
 	}
 	return true;
 }
@@ -419,8 +452,16 @@ void print_result(std::string_view status, std::size_t retired,
 			}
 		} else if (index >= 35 && index <= 42) {
 			const auto mmx_index = index - 35;
-			if (expectation.values.size() != 1 ||
-				cpu.mmx[mmx_index] != expectation.values.front()) {
+			bool matched = false;
+			if (expectation.values.size() == 1) {
+				matched = cpu.mmx[mmx_index] == expectation.values.front();
+			} else if (expectation.values.size() == 2) {
+				matched = cpu.x87[mmx_index].significand ==
+					expectation.values[0] &&
+					cpu.x87[mmx_index].sign_exponent ==
+					static_cast<std::uint16_t>(expectation.values[1]);
+			}
+			if (!matched) {
 				status = "result_mismatch";
 				detail = "MM" + std::to_string(mmx_index);
 				return false;
@@ -509,6 +550,7 @@ int main(int argc, char **argv)
 	uml::cpu::x86_64::CpuState cpu{};
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
+	cpu.x87_reduced_precision = configuration.x87_reduced_precision;
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);
@@ -549,6 +591,19 @@ int main(int argc, char **argv)
 			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&
 			cpu.gpr(uml::cpu::x86_64::Register::rdi) == 0) {
 			cpu.gpr(uml::cpu::x86_64::Register::rax) = 1;
+			continue;
+		}
+		/* FEX's compatibility-ABI regression invokes 32-bit
+		 * clock_gettime(2) through INT 80h. The test observes only the
+		 * successful return; Linux ABI emulation remains outside the CPU.
+		 */
+		if (result.event == uml::cpu::EngineEvent::system_call &&
+			cpu.system_call_32bit &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 265U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
 			continue;
 		}
 		if (result.event != uml::cpu::EngineEvent::continued) {

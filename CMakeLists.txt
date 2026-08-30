@@ -144,6 +144,11 @@ else()
     set(UML_GUEST_PAGE_SIZE 4096)
     set(UML_GUEST_PAGE_SHIFT 12)
 endif()
+if(UML_TARGET_MACOS AND NOT UML_GUEST_16K_PAGES)
+    set(UML_BUILD_X86_64_GUEST ON)
+else()
+    set(UML_BUILD_X86_64_GUEST OFF)
+endif()
 # Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
 # one sparse software guest-address contract. Device and Simulator top-pack the
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
@@ -180,6 +185,7 @@ add_library(uml_guest_page_configuration INTERFACE)
 add_library(UML::GuestPageConfiguration ALIAS
     uml_guest_page_configuration)
 target_compile_definitions(uml_guest_page_configuration INTERFACE
+    DARWIN_UML_X86_64_GUEST=$<BOOL:${UML_BUILD_X86_64_GUEST}>
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
     DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT}
     DARWIN_UML_GUEST_ADDRESS_LIMIT=${UML_GUEST_ADDRESS_LIMIT}
@@ -201,7 +207,8 @@ if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
     enable_testing()
 endif()
 
-if(UML_TARGET_MACOS AND (UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER))
+if(UML_TARGET_MACOS AND (UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER OR
+   UML_BUILD_X86_64_GUEST))
     add_subdirectory(dependencies)
 endif()
 

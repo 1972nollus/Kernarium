@@ -548,6 +548,17 @@ private:
 				Operation::call_indirect : Operation::jump_indirect;
 			instruction.source = operand;
 			return true;
+		case 3:
+		case 5: {
+			const auto pointer_width = ordinary_width(prefixes_);
+			if (!rm_operand(modrm, pointer_width, operand) ||
+				operand.kind != OperandKind::memory)
+				return false;
+			instruction.operation = group == 3 ?
+				Operation::far_call : Operation::far_jump;
+			instruction.source = operand;
+			return true;
+		}
 		case 6:
 			if (!rm_operand(modrm, stack_width(prefixes_), operand))
 				return false;
@@ -842,6 +853,18 @@ private:
 				return false;
 			instruction.operation = Operation::mxcsr;
 			instruction.vector_group = group;
+			return true;
+		}
+		if ((group == 0 || group == 1 || group == 4 || group == 5) &&
+			(modrm >> 6U) != 3 && prefixes_.repeat == 0 &&
+			!prefixes_.operand_size) {
+			if (!rm_operand(modrm, OperandWidth::byte,
+				instruction.destination))
+				return false;
+			instruction.operation = Operation::extended_state;
+			instruction.vector_group = group;
+			instruction.vector_prefix = static_cast<std::uint8_t>(
+				(prefixes_.rex & 8U) != 0);
 			return true;
 		}
 		if ((group == 6 || group == 7) && (modrm >> 6U) != 3) {
@@ -2027,6 +2050,42 @@ private:
 		return true;
 	}
 
+	[[nodiscard]] bool decode_vector_bitfield(Instruction &instruction,
+		std::uint8_t opcode)
+	{
+		const auto prefix = mandatory_prefix();
+		if ((prefix != 1 && prefix != 3) || prefixes_.vex)
+			return false;
+		std::uint8_t modrm{};
+		if (!read(modrm) || (modrm >> 6U) != 3)
+			return false;
+		instruction.operation = Operation::vector_bitfield;
+		instruction.vector_opcode = opcode;
+		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+		if (opcode == 0x78 && prefix == 1) {
+			if (((modrm >> 3U) & 7U) != 0 ||
+				!vector_rm_operand(modrm, OperandWidth::xmm,
+					instruction.destination))
+				return false;
+			instruction.source = instruction.destination;
+		} else {
+			instruction.destination = vector_reg_field(
+				modrm, OperandWidth::xmm);
+			if (!vector_rm_operand(modrm, OperandWidth::xmm,
+				instruction.source))
+				return false;
+		}
+		if (opcode == 0x78) {
+			std::uint64_t length{};
+			std::uint64_t index{};
+			if (!read_unsigned(1, length) || !read_unsigned(1, index))
+				return false;
+			instruction.vector_control = static_cast<std::uint8_t>(length);
+			instruction.vector_group = static_cast<std::uint8_t>(index);
+		}
+		return true;
+	}
+
 	[[nodiscard]] bool decode_3dnow(Instruction &instruction)
 	{
 		std::uint8_t modrm{};
@@ -2072,6 +2131,22 @@ private:
 		default:
 			return false;
 		}
+	}
+
+	[[nodiscard]] bool decode_x87(
+		Instruction &instruction, std::uint8_t opcode)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		instruction.operation = Operation::x87;
+		instruction.vector_opcode = opcode;
+		instruction.vector_control = modrm;
+		instruction.vector_prefix = prefixes_.operand_size ? 1U : 0U;
+		if ((modrm >> 6U) != 3 &&
+			!rm_operand(modrm, OperandWidth::byte, instruction.source))
+			return false;
+		return true;
 	}
 
 	[[nodiscard]] bool decode_vex(
@@ -2246,6 +2321,8 @@ private:
 			return decode_vector_to_gpr(instruction, opcode);
 		if (opcode == 0xc4)
 			return decode_vector_insert(instruction);
+		if (opcode == 0x78 || opcode == 0x79)
+			return decode_vector_bitfield(instruction, opcode);
 		if (opcode >= 0x80 && opcode <= 0x8f) {
 			instruction.condition = static_cast<Condition>(opcode & 0xfU);
 			return decode_relative(instruction,
@@ -2279,28 +2356,40 @@ private:
 			return decode_3dnow(instruction);
 		case 0x0e:
 		case 0x77:
-			instruction.operation = Operation::nop;
+			instruction.operation = Operation::x87;
+			instruction.vector_opcode = opcode;
 			return true;
 		case 0x01:
 			return decode_0f01(instruction);
 		case 0x05:
 			instruction.operation = Operation::system_call;
 			return true;
-		case 0x1e: {
-			std::uint8_t suffix{};
-			if (!read(suffix))
+		case 0x0d:
+		case 0x18: {
+			std::uint8_t modrm{};
+			if (!read(modrm))
 				return false;
-			if (prefixes_.repeat != 0xf3 || suffix != 0xfa)
+			Operand ignored{};
+			if (!rm_operand(modrm, OperandWidth::byte, ignored))
 				return false;
 			instruction.operation = Operation::nop;
 			return true;
 		}
-		case 0x18: {
+		case 0x19:
+		case 0x1a:
+		case 0x1b:
+		case 0x1c:
+		case 0x1d:
+		case 0x1e: {
 			std::uint8_t modrm{};
-			if (!read(modrm) || (modrm >> 6U) == 3)
+			if (!read(modrm))
 				return false;
+			if (opcode == 0x1e && prefixes_.repeat == 0xf3 && modrm == 0xfa) {
+				instruction.operation = Operation::nop;
+				return true;
+			}
 			Operand ignored{};
-			if (!rm_operand(modrm, OperandWidth::byte, ignored))
+			if (!rm_operand(modrm, ordinary_width(prefixes_), ignored))
 				return false;
 			instruction.operation = Operation::nop;
 			return true;
@@ -2647,6 +2736,9 @@ private:
 		case 0x9f:
 			instruction.operation = Operation::lahf;
 			return true;
+		case 0x9b:
+			instruction.operation = Operation::nop;
+			return true;
 		case 0xa0:
 		case 0xa1:
 		case 0xa2:
@@ -2688,6 +2780,20 @@ private:
 		}
 		case 0xc3:
 			instruction.operation = Operation::ret;
+			return true;
+		case 0xca: {
+			std::uint64_t adjustment{};
+			if (!read_unsigned(2, adjustment))
+				return false;
+			instruction.operation = Operation::far_ret;
+			instruction.destination.width = ordinary_width(prefixes_);
+			instruction.source = immediate_operand(
+				adjustment, OperandWidth::word);
+			return true;
+		}
+		case 0xcb:
+			instruction.operation = Operation::far_ret;
+			instruction.destination.width = ordinary_width(prefixes_);
 			return true;
 		case 0xc4:
 		case 0xc5:
@@ -2732,6 +2838,35 @@ private:
 		case 0xcc:
 			instruction.operation = Operation::breakpoint;
 			return true;
+		case 0xcd: {
+			std::uint64_t vector{};
+			if (!read_unsigned(1, vector) || vector != 0x80)
+				return false;
+			instruction.operation = Operation::system_call;
+			instruction.vector_opcode = opcode;
+			return true;
+		}
+		case 0xcf:
+			instruction.operation = Operation::interrupt_ret;
+			instruction.destination.width = ordinary_width(prefixes_);
+			return true;
+		case 0xd7:
+			instruction.operation = Operation::xlat;
+			instruction.source.kind = OperandKind::memory;
+			instruction.source.width = OperandWidth::byte;
+			instruction.source.memory.base = 3;
+			instruction.source.memory.segment = prefixes_.segment;
+			instruction.source.memory.address_32 = prefixes_.address_size;
+			return true;
+		case 0xd8:
+		case 0xd9:
+		case 0xda:
+		case 0xdb:
+		case 0xdc:
+		case 0xdd:
+		case 0xde:
+		case 0xdf:
+			return decode_x87(instruction, opcode);
 		case 0xe8: return decode_relative(instruction, Operation::call, 4);
 		case 0xe9: return decode_relative(instruction, Operation::jump, 4);
 		case 0xeb: return decode_relative(instruction, Operation::jump, 1);
@@ -2799,7 +2934,11 @@ bool Instruction::terminal() const noexcept
 	case Operation::loop:
 	case Operation::call:
 	case Operation::call_indirect:
+	case Operation::far_call:
+	case Operation::far_jump:
 	case Operation::ret:
+	case Operation::far_ret:
+	case Operation::interrupt_ret:
 	case Operation::system_call:
 	case Operation::breakpoint:
 		return true;

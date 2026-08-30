@@ -41,16 +41,28 @@ struct DeferredFlags final {
 	std::uint8_t width{};
 };
 
+struct X87Register final {
+	std::uint64_t significand{};
+	std::uint16_t sign_exponent{};
+};
+
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
 	std::array<std::array<std::byte, 32>, 16> vectors{};
 	std::array<std::uint64_t, 8> mmx{};
+	std::array<X87Register, 8> x87{};
 	std::array<std::uint16_t, 6> segment_selectors{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	std::uint64_t fs_base{};
 	std::uint64_t gs_base{};
 	std::uint32_t mxcsr{0x1f80};
+	std::uint16_t x87_control{0x037f};
+	std::uint16_t x87_status{};
+	std::uint16_t x87_tag{0xffff};
+	std::uint8_t x87_top{};
+	bool x87_reduced_precision{};
+	bool system_call_32bit{};
 	DeferredFlags deferred_flags{};
 
 	[[nodiscard]] std::uint64_t &gpr(Register reg) noexcept

@@ -225,7 +225,10 @@ raw binaries with the pinned NASM producer and
 repository. Run every binary through the test-only gadgets adapter with
 `tools/fex-tests/run-asm-corpus.py`. Generic upstream-disabled cases remain
 explicit exclusions, while FEX backend- and host-specific exclusions do not
-apply to gadgets.
+apply to gadgets. Acceptance requires every applicable materialized case to
+pass with no decoder or semantic failures; the JSON report records the pinned
+source identity, applicable count, upstream-disabled cases, and per-test
+result.
 
 ## Performance and external campaigns
 

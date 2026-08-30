@@ -107,4 +107,19 @@ function(uml_define_third_party_targets prefix)
         INCLUDES "${_include}"
         LINKS UML::ThirdPartyZlib Threads::Threads)
     add_library(UML::ThirdPartyVncClient ALIAS uml_third_party_vnc_client)
+
+    _uml_import_static_dependency(softfloat "${_lib}/libsoftfloat_3e.a"
+        INCLUDES "${_include}"
+        DEFINITIONS
+            FEXCORE_PRESERVE_ALL_ATTR=
+            FEXCORE_HAS_PRESERVE_ALL_ATTR=0
+            SOFTFLOAT_FAST_INT64=1)
+    add_library(UML::ThirdPartySoftFloat ALIAS uml_third_party_softfloat)
+
+    _uml_import_static_dependency(cephes_128bit
+        "${_lib}/libcephes_128bit.a"
+        INCLUDES "${_include}"
+        LINKS UML::ThirdPartySoftFloat)
+    add_library(UML::ThirdPartyCephes128 ALIAS
+        uml_third_party_cephes_128bit)
 endfunction()

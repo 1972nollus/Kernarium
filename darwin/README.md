@@ -82,12 +82,15 @@ Engine selection is explicit. The interpreter is the reference oracle,
 gadgets execute non-executable data streams of precompiled entries, and the JIT
 publishes native code only through `cpu/arm64/jit/jit_arena.cpp`.
 
-The 4 KiB mainline runtime also recognizes kernel-tagged x86-64 task frames.
-Those frames always use the x86-64 gadget backend while the UML kernel and its
-kernel-mode execution remain arm64. This initial backend supports the integer,
-TLS, syscall, and signal instructions required by the x86-64 smoke rootfs; it
-does not yet expose floating-point, vector, atomic, or general distribution
-userspace coverage. Other page profiles reject x86-64 task frames.
+The macOS 4 KiB mainline runtime also recognizes kernel-tagged x86-64 task
+frames. Those frames always use the x86-64 gadget backend while the UML kernel
+and its kernel-mode execution remain arm64. Integer, vector, x87/MMX, TLS,
+atomic, and extended-state execution is qualified against the pinned FEX
+handwritten x86-64 corpus. Register, YMM, MMX, and x87 state is serialized in
+the task-owned bridge frame so carrier scheduling cannot mix task state.
+Passing that instruction corpus does not by itself establish general
+distribution or complete Linux syscall compatibility. Other host products and
+page profiles retain arm64 userspace execution.
 
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs
