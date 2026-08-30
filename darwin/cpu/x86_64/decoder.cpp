@@ -1365,6 +1365,189 @@ private:
 		return true;
 	}
 
+	[[nodiscard]] static bool packed_map2_binary_opcode(
+		std::uint8_t opcode) noexcept
+	{
+		return opcode <= 0x0b || opcode == 0x10 || opcode == 0x14 ||
+			opcode == 0x15 || opcode == 0x28 || opcode == 0x29 ||
+			opcode == 0x2b || (opcode >= 0x37 && opcode <= 0x40);
+	}
+
+	[[nodiscard]] static bool packed_map2_extend_opcode(
+		std::uint8_t opcode) noexcept
+	{
+		return (opcode >= 0x20 && opcode <= 0x25) ||
+			(opcode >= 0x30 && opcode <= 0x35);
+	}
+
+	[[nodiscard]] bool decode_vector_map2(Instruction &instruction,
+		std::uint8_t opcode)
+	{
+		const auto prefix = mandatory_prefix();
+		if (!prefixes_.vex && (opcode == 0xf0 || opcode == 0xf1)) {
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			if (prefixes_.repeat == 0xf2) {
+				const auto destination_width = (prefixes_.rex & 8U) != 0 ?
+					OperandWidth::qword : OperandWidth::dword;
+				const auto source_width = opcode == 0xf0 ?
+					OperandWidth::byte : ((prefixes_.rex & 8U) != 0 ?
+						OperandWidth::qword : (prefixes_.operand_size ?
+							OperandWidth::word : OperandWidth::dword));
+				instruction.operation = Operation::crc32;
+				instruction.destination = reg_field(modrm, destination_width);
+				return rm_operand(modrm, source_width, instruction.source);
+			}
+			if (prefixes_.repeat != 0)
+				return false;
+			const auto width = ordinary_width(prefixes_);
+			Operand memory{};
+			if ((modrm >> 6U) == 3 || !rm_operand(modrm, width, memory))
+				return false;
+			instruction.operation = Operation::move_byte_swap;
+			const auto reg = reg_field(modrm, width);
+			instruction.destination = opcode == 0xf0 ? reg : memory;
+			instruction.source = opcode == 0xf0 ? memory : reg;
+			return true;
+		}
+		if (!prefixes_.vex && opcode == 0xf6) {
+			const bool adox = prefixes_.repeat == 0xf3;
+			if (!adox && (prefixes_.repeat != 0 || !prefixes_.operand_size))
+				return false;
+			const auto width = (prefixes_.rex & 8U) != 0 ?
+				OperandWidth::qword : OperandWidth::dword;
+			std::uint8_t modrm{};
+			if (!read(modrm) || !rm_operand(
+				modrm, width, instruction.source))
+				return false;
+			instruction.operation = Operation::adx;
+			instruction.destination = reg_field(modrm, width);
+			instruction.vector_control = adox ? 1U : 0U;
+			return true;
+		}
+		if (opcode >= 0xdb && opcode <= 0xdf) {
+			if (prefix != 1 || (opcode == 0xdb &&
+				prefixes_.vex && prefixes_.vex_long))
+				return false;
+			const auto width = prefixes_.vex && prefixes_.vex_long ?
+				OperandWidth::ymm : OperandWidth::xmm;
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			instruction.operation = Operation::vector_aes;
+			instruction.destination = vector_reg_field(modrm, width);
+			instruction.source = opcode == 0xdb ? Operand{} :
+				(prefixes_.vex ? vector_register_operand(
+					prefixes_.vex_vvvv, width) : instruction.destination);
+			if (!vector_rm_operand(modrm, width,
+				instruction.auxiliary))
+				return false;
+			instruction.vex = prefixes_.vex;
+			instruction.vector_opcode = opcode;
+			instruction.vector_map = 2;
+			instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+			return true;
+		}
+		if (opcode >= 0xc8 && opcode <= 0xcd) {
+			if (prefixes_.vex || prefix != 0)
+				return false;
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			instruction.operation = Operation::vector_sha;
+			instruction.destination = vector_reg_field(
+				modrm, OperandWidth::xmm);
+			instruction.source = instruction.destination;
+			if (!vector_rm_operand(modrm, OperandWidth::xmm,
+				instruction.auxiliary))
+				return false;
+			instruction.vector_opcode = opcode;
+			instruction.vector_map = 2;
+			return true;
+		}
+		const bool mmx_opcode = opcode <= 0x0b ||
+			(opcode >= 0x1c && opcode <= 0x1e);
+		const bool mmx = !prefixes_.vex && prefix == 0 && mmx_opcode;
+		if (prefixes_.vex && prefix != 1)
+			return false;
+		if (!prefixes_.vex && prefix != 1 && !mmx)
+			return false;
+		const auto width = mmx ? OperandWidth::qword :
+			(prefixes_.vex && prefixes_.vex_long ?
+				OperandWidth::ymm : OperandWidth::xmm);
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		instruction.vex = prefixes_.vex;
+		instruction.vector_opcode = opcode;
+		instruction.vector_map = 2;
+		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+
+		if (opcode == 0x2a) {
+			if (mmx || (modrm >> 6U) == 3 ||
+				!rm_operand(modrm, width, instruction.source))
+				return false;
+			instruction.operation = Operation::vector_move;
+			instruction.destination = vector_reg_field(modrm, width);
+			return true;
+		}
+		if (opcode == 0x17) {
+			if (mmx)
+				return false;
+			instruction.operation = Operation::vector_test;
+			instruction.source = vector_reg_field(modrm, width);
+			return vector_rm_operand(modrm, width,
+				instruction.auxiliary);
+		}
+
+		const bool unary = (opcode >= 0x1c && opcode <= 0x1e) ||
+			packed_map2_extend_opcode(opcode) || opcode == 0x41;
+		if (unary) {
+			if (opcode == 0x41 && (mmx || width != OperandWidth::xmm))
+				return false;
+			instruction.operation = Operation::vector_integer_map2;
+			instruction.destination = mmx ?
+				mmx_register_operand((modrm >> 3U) & 7U) :
+				vector_reg_field(modrm, width);
+			OperandWidth source_width = width;
+			if (packed_map2_extend_opcode(opcode)) {
+				const auto output_size = static_cast<unsigned>(width);
+				constexpr std::array<unsigned, 6> divisors{
+					2, 4, 8, 2, 4, 2};
+				const auto divisor = divisors[opcode & 7U];
+				source_width = static_cast<OperandWidth>(output_size / divisor);
+			}
+			if (mmx)
+				return mmx_rm_operand(modrm, instruction.auxiliary);
+			return vector_rm_operand(modrm, source_width,
+				instruction.auxiliary);
+		}
+
+		if (!packed_map2_binary_opcode(opcode))
+			return false;
+		if ((opcode == 0x10 || opcode == 0x14 || opcode == 0x15) &&
+			prefixes_.vex)
+			return false;
+		Operand rm{};
+		Operand reg{};
+		if (mmx) {
+			if (!mmx_rm_operand(modrm, rm))
+				return false;
+			reg = mmx_register_operand((modrm >> 3U) & 7U);
+		} else {
+			if (!vector_rm_operand(modrm, width, rm))
+				return false;
+			reg = vector_reg_field(modrm, width);
+		}
+		instruction.operation = Operation::vector_integer_map2;
+		instruction.destination = reg;
+		instruction.source = prefixes_.vex ?
+			vector_register_operand(prefixes_.vex_vvvv, width) : reg;
+		instruction.auxiliary = rm;
+		return true;
+	}
+
 	[[nodiscard]] bool decode_vector_shift_immediate(
 		Instruction &instruction, std::uint8_t opcode)
 	{
@@ -1516,7 +1699,11 @@ private:
 		instruction.vex = true;
 		instruction.repeat = prefixes_.repeat;
 		std::uint8_t opcode{};
-		if (!read(opcode) || map != 1)
+		if (!read(opcode))
+			return false;
+		if (map == 2)
+			return decode_vector_map2(instruction, opcode);
+		if (map != 1)
 			return false;
 		switch (opcode) {
 		case 0x10:
@@ -1709,6 +1896,11 @@ private:
 		case 0x31:
 			instruction.operation = Operation::read_timestamp;
 			return true;
+		case 0x38: {
+			std::uint8_t map_opcode{};
+			return read(map_opcode) &&
+				decode_vector_map2(instruction, map_opcode);
+		}
 		case 0xa2:
 			instruction.operation = Operation::cpuid;
 			return true;

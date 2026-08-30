@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <span>
 #include <type_traits>
@@ -543,9 +544,9 @@ template<typename Float>
 	const bool ordered = !unordered;
 	switch (control & 0x1fU) {
 	case 0:
+	case 16: return ordered && left == right;
 	case 8:
-	case 16:
-	case 24: return ordered && left == right;
+	case 24: return unordered || left == right;
 	case 1:
 	case 17: return ordered && left < right;
 	case 2:
@@ -1320,6 +1321,593 @@ void vector_arithmetic_shift_right(std::array<std::byte, 32> &result,
 			static_cast<Value>(value >> count);
 		set_vector_element(result, offset, shifted);
 	}
+}
+
+template<typename Value>
+void vector_horizontal(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size,
+	bool subtract, bool saturated) noexcept
+{
+	using Unsigned = std::make_unsigned_t<Value>;
+	const auto lane_size = size == 8 ? 8U : 16U;
+	const auto count = lane_size / sizeof(Value);
+	const auto half = count / 2U;
+	for (std::size_t lane = 0; lane < size; lane += lane_size) {
+		for (std::size_t source_index = 0; source_index < 2; ++source_index) {
+			const auto &source = source_index == 0 ? left : right;
+			for (std::size_t index = 0; index < half; ++index) {
+				const auto first = vector_element<Value>(source,
+					lane + index * 2U * sizeof(Value));
+				const auto second = vector_element<Value>(source,
+					lane + (index * 2U + 1U) * sizeof(Value));
+				Value value{};
+				if (saturated) {
+					const auto wide = subtract ?
+						static_cast<std::int64_t>(first) - second :
+						static_cast<std::int64_t>(first) + second;
+					value = saturate_signed<Value>(wide);
+				} else {
+					const auto first_unsigned = static_cast<Unsigned>(first);
+					const auto second_unsigned = static_cast<Unsigned>(second);
+					value = static_cast<Value>(subtract ?
+						first_unsigned - second_unsigned :
+						first_unsigned + second_unsigned);
+				}
+				set_vector_element(result,
+					lane + (source_index * half + index) * sizeof(Value),
+					value);
+			}
+		}
+	}
+}
+
+template<typename Value>
+void vector_sign(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size) noexcept
+{
+	using Unsigned = std::make_unsigned_t<Value>;
+	for (std::size_t offset = 0; offset < size; offset += sizeof(Value)) {
+		const auto value = vector_element<Value>(left, offset);
+		const auto sign = vector_element<Value>(right, offset);
+		const auto output = sign == 0 ? Value{0} :
+			(sign < 0 ? static_cast<Value>(Unsigned{0} -
+				static_cast<Unsigned>(value)) : value);
+		set_vector_element(result, offset, output);
+	}
+}
+
+template<typename Value>
+void vector_absolute(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &input, std::size_t size) noexcept
+{
+	using Unsigned = std::make_unsigned_t<Value>;
+	for (std::size_t offset = 0; offset < size; offset += sizeof(Value)) {
+		const auto value = vector_element<Value>(input, offset);
+		const auto output = value < 0 ? Unsigned{0} -
+			static_cast<Unsigned>(value) : static_cast<Unsigned>(value);
+		set_vector_element(result, offset, output);
+	}
+}
+
+template<typename Output, typename Input>
+void vector_extend(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &input, std::size_t size) noexcept
+{
+	for (std::size_t index = 0; index < size / sizeof(Output); ++index) {
+		const auto value = vector_element<Input>(
+			input, index * sizeof(Input));
+		set_vector_element(result, index * sizeof(Output),
+			static_cast<Output>(value));
+	}
+}
+
+template<typename Value, typename Compare>
+void vector_minmax(std::array<std::byte, 32> &result,
+	const std::array<std::byte, 32> &left,
+	const std::array<std::byte, 32> &right, std::size_t size,
+	Compare compare) noexcept
+{
+	vector_binary_elements<Value>(result, left, right, size,
+		[compare](Value first, Value second) {
+			return compare(first, second) ? first : second;
+	});
+}
+
+[[nodiscard]] constexpr std::uint8_t aes_multiply(
+	std::uint8_t left, std::uint8_t right) noexcept
+{
+	std::uint8_t result{};
+	for (unsigned bit = 0; bit < 8; ++bit) {
+		if ((right & 1U) != 0)
+			result ^= left;
+		const bool high = (left & 0x80U) != 0;
+		left = static_cast<std::uint8_t>(left << 1U);
+		if (high)
+			left ^= 0x1bU;
+		right = static_cast<std::uint8_t>(right >> 1U);
+	}
+	return result;
+}
+
+[[nodiscard]] constexpr std::uint8_t aes_rotate(
+	std::uint8_t value, unsigned count) noexcept
+{
+	return static_cast<std::uint8_t>((value << count) |
+		(value >> (8U - count)));
+}
+
+[[nodiscard]] constexpr std::uint8_t aes_sbox(std::uint8_t value) noexcept
+{
+	std::uint8_t inverse = value == 0 ? 0 : 1;
+	if (value != 0) {
+		std::uint8_t base = value;
+		unsigned exponent = 254;
+		while (exponent != 0) {
+			if ((exponent & 1U) != 0)
+				inverse = aes_multiply(inverse, base);
+			base = aes_multiply(base, base);
+			exponent >>= 1U;
+		}
+	}
+	return static_cast<std::uint8_t>(inverse ^ aes_rotate(inverse, 1) ^
+		aes_rotate(inverse, 2) ^ aes_rotate(inverse, 3) ^
+		aes_rotate(inverse, 4) ^ 0x63U);
+}
+
+[[nodiscard]] constexpr std::uint8_t aes_inverse_sbox(
+	std::uint8_t value) noexcept
+{
+	for (unsigned candidate = 0; candidate < 256; ++candidate) {
+		if (aes_sbox(static_cast<std::uint8_t>(candidate)) == value)
+			return static_cast<std::uint8_t>(candidate);
+	}
+	return 0;
+}
+
+void aes_mix_columns(std::array<std::byte, 16> &state,
+	bool inverse) noexcept
+{
+	for (std::size_t column = 0; column < 4; ++column) {
+		std::array<std::uint8_t, 4> input{};
+		for (std::size_t row = 0; row < 4; ++row)
+			input[row] = std::to_integer<std::uint8_t>(
+				state[column * 4U + row]);
+		std::array<std::uint8_t, 4> output{};
+		if (inverse) {
+			output[0] = aes_multiply(input[0], 14) ^
+				aes_multiply(input[1], 11) ^
+				aes_multiply(input[2], 13) ^ aes_multiply(input[3], 9);
+			output[1] = aes_multiply(input[0], 9) ^
+				aes_multiply(input[1], 14) ^
+				aes_multiply(input[2], 11) ^ aes_multiply(input[3], 13);
+			output[2] = aes_multiply(input[0], 13) ^
+				aes_multiply(input[1], 9) ^
+				aes_multiply(input[2], 14) ^ aes_multiply(input[3], 11);
+			output[3] = aes_multiply(input[0], 11) ^
+				aes_multiply(input[1], 13) ^
+				aes_multiply(input[2], 9) ^ aes_multiply(input[3], 14);
+		} else {
+			output[0] = aes_multiply(input[0], 2) ^
+				aes_multiply(input[1], 3) ^ input[2] ^ input[3];
+			output[1] = input[0] ^ aes_multiply(input[1], 2) ^
+				aes_multiply(input[2], 3) ^ input[3];
+			output[2] = input[0] ^ input[1] ^
+				aes_multiply(input[2], 2) ^ aes_multiply(input[3], 3);
+			output[3] = aes_multiply(input[0], 3) ^ input[1] ^
+				input[2] ^ aes_multiply(input[3], 2);
+		}
+		for (std::size_t row = 0; row < 4; ++row)
+			state[column * 4U + row] = static_cast<std::byte>(output[row]);
+	}
+}
+
+[[nodiscard]] StepResult vector_aes(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	VectorRead state{true, {}, {}};
+	if (instruction.source.kind != OperandKind::none) {
+		state = read_vector_operand(gadget, cpu, memory, instruction.source);
+		if (!state.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, state.fault};
+	}
+	const auto key = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!key.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			key.fault};
+	std::array<std::byte, 32> result{};
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.destination.width));
+	for (std::size_t lane = 0; lane < size; lane += 16) {
+		std::array<std::byte, 16> block{};
+		if (instruction.vector_opcode == 0xdb) {
+			std::copy_n(key.value.begin() +
+				static_cast<std::ptrdiff_t>(lane), 16, block.begin());
+			aes_mix_columns(block, true);
+		} else {
+			const bool decrypt = instruction.vector_opcode >= 0xde;
+			for (std::size_t column = 0; column < 4; ++column) {
+				for (std::size_t row = 0; row < 4; ++row) {
+					const auto source_column = decrypt ?
+						(column + 4U - row) & 3U :
+						(column + row) & 3U;
+					const auto value = std::to_integer<std::uint8_t>(
+						state.value[lane + source_column * 4U + row]);
+					block[column * 4U + row] = static_cast<std::byte>(
+						decrypt ? aes_inverse_sbox(value) : aes_sbox(value));
+				}
+			}
+			const bool last = instruction.vector_opcode == 0xdd ||
+				instruction.vector_opcode == 0xdf;
+			if (!last)
+				aes_mix_columns(block, decrypt);
+			for (std::size_t index = 0; index < 16; ++index)
+				block[index] ^= key.value[lane + index];
+		}
+		std::copy(block.begin(), block.end(), result.begin() +
+			static_cast<std::ptrdiff_t>(lane));
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] constexpr std::uint32_t sha256_sigma0(
+	std::uint32_t value) noexcept
+{
+	return std::rotr(value, 7) ^ std::rotr(value, 18) ^ (value >> 3U);
+}
+
+[[nodiscard]] constexpr std::uint32_t sha256_sigma1(
+	std::uint32_t value) noexcept
+{
+	return std::rotr(value, 17) ^ std::rotr(value, 19) ^ (value >> 10U);
+}
+
+[[nodiscard]] constexpr std::uint32_t sha256_sum0(
+	std::uint32_t value) noexcept
+{
+	return std::rotr(value, 2) ^ std::rotr(value, 13) ^
+		std::rotr(value, 22);
+}
+
+[[nodiscard]] constexpr std::uint32_t sha256_sum1(
+	std::uint32_t value) noexcept
+{
+	return std::rotr(value, 6) ^ std::rotr(value, 11) ^
+		std::rotr(value, 25);
+}
+
+[[nodiscard]] StepResult vector_sha(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto first = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!first.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			first.fault};
+	const auto second = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!second.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			second.fault};
+	std::array<std::uint32_t, 4> left{};
+	std::array<std::uint32_t, 4> right{};
+	std::array<std::uint32_t, 4> output{};
+	for (std::size_t index = 0; index < 4; ++index) {
+		left[index] = vector_element<std::uint32_t>(
+			first.value, index * sizeof(std::uint32_t));
+		right[index] = vector_element<std::uint32_t>(
+			second.value, index * sizeof(std::uint32_t));
+	}
+	switch (instruction.vector_opcode) {
+	case 0xc8:
+		output = right;
+		output[3] += std::rotl(left[3], 30);
+		break;
+	case 0xc9:
+		output[3] = left[1] ^ left[3];
+		output[2] = left[0] ^ left[2];
+		output[1] = right[3] ^ left[1];
+		output[0] = right[2] ^ left[0];
+		break;
+	case 0xca:
+		output[3] = std::rotl(left[3] ^ right[2], 1);
+		output[2] = std::rotl(left[2] ^ right[1], 1);
+		output[1] = std::rotl(left[1] ^ right[0], 1);
+		output[0] = std::rotl(left[0] ^ output[3], 1);
+		break;
+	case 0xcb: {
+		auto a = right[3];
+		auto b = right[2];
+		auto c = left[3];
+		auto d = left[2];
+		auto e = right[1];
+		auto f = right[0];
+		auto g = left[1];
+		auto h = left[0];
+		for (std::size_t round = 0; round < 2; ++round) {
+			const auto choose = (e & f) ^ (~e & g);
+			const auto majority = (a & b) ^ (a & c) ^ (b & c);
+			const auto temporary = choose + sha256_sum1(e) +
+				vector_element<std::uint32_t>(cpu.vectors[0],
+					round * sizeof(std::uint32_t)) + h;
+			const auto next_a = temporary + majority + sha256_sum0(a);
+			const auto next_e = temporary + d;
+			h = g;
+			g = f;
+			f = e;
+			e = next_e;
+			d = c;
+			c = b;
+			b = a;
+			a = next_a;
+		}
+		output[3] = a;
+		output[2] = b;
+		output[1] = e;
+		output[0] = f;
+		break;
+	}
+	case 0xcc:
+		output[3] = left[3] + sha256_sigma0(right[0]);
+		output[2] = left[2] + sha256_sigma0(left[3]);
+		output[1] = left[1] + sha256_sigma0(left[2]);
+		output[0] = left[0] + sha256_sigma0(left[1]);
+		break;
+	case 0xcd:
+		output[0] = left[0] + sha256_sigma1(right[2]);
+		output[1] = left[1] + sha256_sigma1(right[3]);
+		output[2] = left[2] + sha256_sigma1(output[0]);
+		output[3] = left[3] + sha256_sigma1(output[1]);
+		break;
+	default:
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+	}
+	std::array<std::byte, 32> result{};
+	for (std::size_t index = 0; index < 4; ++index)
+		set_vector_element(result, index * sizeof(std::uint32_t),
+			output[index]);
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, false);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_integer_map2(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	VectorRead left{true, {}, {}};
+	if (instruction.source.kind != OperandKind::none) {
+		left = read_vector_operand(gadget, cpu, memory, instruction.source);
+		if (!left.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, left.fault};
+	}
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+	std::array<std::byte, 32> result{};
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.destination.width));
+	const auto opcode = instruction.vector_opcode;
+	switch (opcode) {
+	case 0x00: {
+		const auto lane_size = size == 8 ? 8U : 16U;
+		for (std::size_t lane = 0; lane < size; lane += lane_size) {
+			for (std::size_t index = 0; index < lane_size; ++index) {
+				const auto selector = std::to_integer<std::uint8_t>(
+					right.value[lane + index]);
+				result[lane + index] = (selector & 0x80U) != 0 ?
+					std::byte{} : left.value[lane +
+						(selector & static_cast<std::uint8_t>(lane_size - 1U))];
+			}
+		}
+		break;
+	}
+	case 0x01: vector_horizontal<std::int16_t>(result,
+		left.value, right.value, size, false, false); break;
+	case 0x02: vector_horizontal<std::int32_t>(result,
+		left.value, right.value, size, false, false); break;
+	case 0x03: vector_horizontal<std::int16_t>(result,
+		left.value, right.value, size, false, true); break;
+	case 0x04:
+		for (std::size_t offset = 0; offset < size; offset += 2) {
+			const auto first =
+				static_cast<std::int32_t>(vector_element<std::uint8_t>(
+					left.value, offset)) *
+				vector_element<std::int8_t>(right.value, offset);
+			const auto second =
+				static_cast<std::int32_t>(vector_element<std::uint8_t>(
+					left.value, offset + 1)) *
+				vector_element<std::int8_t>(right.value, offset + 1);
+			set_vector_element(result, offset,
+				saturate_signed<std::int16_t>(first + second));
+		}
+		break;
+	case 0x05: vector_horizontal<std::int16_t>(result,
+		left.value, right.value, size, true, false); break;
+	case 0x06: vector_horizontal<std::int32_t>(result,
+		left.value, right.value, size, true, false); break;
+	case 0x07: vector_horizontal<std::int16_t>(result,
+		left.value, right.value, size, true, true); break;
+	case 0x08: vector_sign<std::int8_t>(result,
+		left.value, right.value, size); break;
+	case 0x09: vector_sign<std::int16_t>(result,
+		left.value, right.value, size); break;
+	case 0x0a: vector_sign<std::int32_t>(result,
+		left.value, right.value, size); break;
+	case 0x0b:
+		for (std::size_t offset = 0; offset < size; offset += 2) {
+			const auto product =
+				static_cast<std::int32_t>(vector_element<std::int16_t>(
+					left.value, offset)) *
+				vector_element<std::int16_t>(right.value, offset);
+			set_vector_element(result, offset,
+				static_cast<std::int16_t>((product + 0x4000) >> 15));
+		}
+		break;
+	case 0x10:
+	case 0x14:
+	case 0x15: {
+		const auto &mask = cpu.vectors[0];
+		const auto element_size = opcode == 0x10 ? 1U :
+			(opcode == 0x14 ? 4U : 8U);
+		for (std::size_t offset = 0; offset < size; offset += element_size) {
+			const auto selected = (std::to_integer<std::uint8_t>(
+				mask[offset + element_size - 1U]) & 0x80U) != 0;
+			std::copy_n((selected ? right.value : left.value).begin() +
+				static_cast<std::ptrdiff_t>(offset), element_size,
+				result.begin() + static_cast<std::ptrdiff_t>(offset));
+		}
+		break;
+	}
+	case 0x1c: vector_absolute<std::int8_t>(result, right.value, size); break;
+	case 0x1d: vector_absolute<std::int16_t>(result, right.value, size); break;
+	case 0x1e: vector_absolute<std::int32_t>(result, right.value, size); break;
+	case 0x20: vector_extend<std::int16_t, std::int8_t>(
+		result, right.value, size); break;
+	case 0x21: vector_extend<std::int32_t, std::int8_t>(
+		result, right.value, size); break;
+	case 0x22: vector_extend<std::int64_t, std::int8_t>(
+		result, right.value, size); break;
+	case 0x23: vector_extend<std::int32_t, std::int16_t>(
+		result, right.value, size); break;
+	case 0x24: vector_extend<std::int64_t, std::int16_t>(
+		result, right.value, size); break;
+	case 0x25: vector_extend<std::int64_t, std::int32_t>(
+		result, right.value, size); break;
+	case 0x28:
+		for (std::size_t lane = 0; lane < size; lane += 16) {
+			for (std::size_t index = 0; index < 2; ++index) {
+				const auto offset = lane + index * 8U;
+				const auto first = vector_element<std::int32_t>(
+					left.value, offset);
+				const auto second = vector_element<std::int32_t>(
+					right.value, offset);
+				set_vector_element(result, offset,
+					static_cast<std::int64_t>(first) * second);
+			}
+		}
+		break;
+	case 0x29: vector_binary_elements<std::uint64_t>(result,
+		left.value, right.value, size, [](auto first, auto second) {
+			return first == second ? ~std::uint64_t{0} : 0; }); break;
+	case 0x2b: vector_pack<std::int32_t, std::int16_t>(result,
+		left.value, right.value, size, true); break;
+	case 0x30: vector_extend<std::uint16_t, std::uint8_t>(
+		result, right.value, size); break;
+	case 0x31: vector_extend<std::uint32_t, std::uint8_t>(
+		result, right.value, size); break;
+	case 0x32: vector_extend<std::uint64_t, std::uint8_t>(
+		result, right.value, size); break;
+	case 0x33: vector_extend<std::uint32_t, std::uint16_t>(
+		result, right.value, size); break;
+	case 0x34: vector_extend<std::uint64_t, std::uint16_t>(
+		result, right.value, size); break;
+	case 0x35: vector_extend<std::uint64_t, std::uint32_t>(
+		result, right.value, size); break;
+	case 0x37: vector_binary_elements<std::int64_t>(result,
+		left.value, right.value, size, [](auto first, auto second) {
+			return first > second ? std::int64_t{-1} : 0; }); break;
+	case 0x38: vector_minmax<std::int8_t>(result,
+		left.value, right.value, size, std::less<>{}); break;
+	case 0x39: vector_minmax<std::int32_t>(result,
+		left.value, right.value, size, std::less<>{}); break;
+	case 0x3a: vector_minmax<std::uint16_t>(result,
+		left.value, right.value, size, std::less<>{}); break;
+	case 0x3b: vector_minmax<std::uint32_t>(result,
+		left.value, right.value, size, std::less<>{}); break;
+	case 0x3c: vector_minmax<std::int8_t>(result,
+		left.value, right.value, size, std::greater<>{}); break;
+	case 0x3d: vector_minmax<std::int32_t>(result,
+		left.value, right.value, size, std::greater<>{}); break;
+	case 0x3e: vector_minmax<std::uint16_t>(result,
+		left.value, right.value, size, std::greater<>{}); break;
+	case 0x3f: vector_minmax<std::uint32_t>(result,
+		left.value, right.value, size, std::greater<>{}); break;
+	case 0x40:
+		vector_binary_elements<std::uint32_t>(result,
+			left.value, right.value, size, [](auto first, auto second) {
+				return static_cast<std::uint32_t>(
+					static_cast<std::uint64_t>(first) * second); });
+		break;
+	case 0x41: {
+		auto minimum = std::numeric_limits<std::uint16_t>::max();
+		std::uint16_t minimum_index{};
+		for (std::uint16_t index = 0; index < 8; ++index) {
+			const auto value = vector_element<std::uint16_t>(
+				right.value, index * sizeof(std::uint16_t));
+			if (value < minimum) {
+				minimum = value;
+				minimum_index = index;
+			}
+		}
+		set_vector_element(result, 0, minimum);
+		set_vector_element(result, 2, minimum_index);
+		break;
+	}
+	default:
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, instruction.vex);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_test(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!left.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			left.fault};
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.source.width));
+	bool intersection_zero = true;
+	bool outside_zero = true;
+	for (std::size_t index = 0; index < size; ++index) {
+		const auto first = std::to_integer<std::uint8_t>(left.value[index]);
+		const auto second = std::to_integer<std::uint8_t>(right.value[index]);
+		intersection_zero = intersection_zero && (first & second) == 0;
+		outside_zero = outside_zero &&
+			(static_cast<std::uint8_t>(~first) & second) == 0;
+	}
+	materialize_flags(cpu);
+	constexpr auto affected = rflags_carry | rflags_parity |
+		rflags_auxiliary | rflags_zero | rflags_sign | rflags_overflow;
+	cpu.rflags &= ~affected;
+	if (intersection_zero)
+		cpu.rflags |= rflags_zero;
+	if (outside_zero)
+		cpu.rflags |= rflags_carry;
+	cpu.rflags |= rflags_reserved;
+	cpu.deferred_flags.operation = DeferredFlagOperation::none;
+	advance(gadget, cpu);
+	return {};
 }
 
 [[nodiscard]] StepResult vector_integer(const Gadget &gadget, CpuState &cpu,
@@ -2434,6 +3022,81 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	return written;
 }
 
+[[nodiscard]] constexpr std::uint64_t reverse_bytes(
+	std::uint64_t value, OperandWidth width) noexcept
+{
+	if (width == OperandWidth::word)
+		return static_cast<std::uint16_t>(
+			__builtin_bswap16(static_cast<std::uint16_t>(value)));
+	if (width == OperandWidth::dword)
+		return static_cast<std::uint32_t>(
+			__builtin_bswap32(static_cast<std::uint32_t>(value)));
+	return __builtin_bswap64(value);
+}
+
+[[nodiscard]] StepResult move_byte_swap(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	const auto written = write_operand(gadget, cpu, memory,
+		gadget.instruction.destination,
+		reverse_bytes(source.value, gadget.instruction.source.width));
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult crc32(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	auto crc = static_cast<std::uint32_t>(
+		read_register(cpu, gadget.instruction.destination));
+	for (unsigned byte = 0;
+		byte < width_bytes(gadget.instruction.source.width); ++byte) {
+		crc ^= static_cast<std::uint8_t>(source.value >> (byte * 8U));
+		for (unsigned bit = 0; bit < 8; ++bit)
+			crc = (crc >> 1U) ^ ((crc & 1U) != 0 ? 0x82f63b78U : 0U);
+	}
+	write_register(cpu, gadget.instruction.destination, crc);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult adx(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	materialize_flags(cpu);
+	const auto flag = gadget.instruction.vector_control != 0 ?
+		rflags_overflow : rflags_carry;
+	const auto carry = (cpu.rflags & flag) != 0 ? 1U : 0U;
+	const auto destination = read_register(cpu, gadget.instruction.destination);
+	const auto mask = width_mask(gadget.instruction.destination.width);
+	const auto full = static_cast<unsigned __int128>(destination) +
+		source.value + carry;
+	write_register(cpu, gadget.instruction.destination,
+		static_cast<std::uint64_t>(full) & mask);
+	if (full > mask)
+		cpu.rflags |= flag;
+	else
+		cpu.rflags &= ~flag;
+	cpu.rflags |= rflags_reserved;
+	cpu.deferred_flags.operation = DeferredFlagOperation::none;
+	advance(gadget, cpu);
+	return {};
+}
+
 [[nodiscard]] bool condition_holds(CpuState &cpu,
 	Condition condition) noexcept
 {
@@ -3307,6 +3970,9 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::compare_exchange: return compare_exchange;
 	case Operation::compare_exchange_pair: return compare_exchange_pair;
 	case Operation::exchange_add: return exchange_add;
+	case Operation::move_byte_swap: return move_byte_swap;
+	case Operation::crc32: return crc32;
+	case Operation::adx: return adx;
 	case Operation::set_condition: return set_condition;
 	case Operation::conditional_move: return conditional_move;
 	case Operation::byte_swap: return byte_swap;
@@ -3366,6 +4032,10 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::vector_convert: return vector_convert;
 	case Operation::vector_gpr_move: return vector_gpr_move;
 	case Operation::vector_integer: return vector_integer;
+	case Operation::vector_integer_map2: return vector_integer_map2;
+	case Operation::vector_test: return vector_test;
+	case Operation::vector_aes: return vector_aes;
+	case Operation::vector_sha: return vector_sha;
 	case Operation::vector_to_gpr: return vector_to_gpr;
 	case Operation::vector_insert: return vector_insert;
 	case Operation::vector_scalar_convert: return vector_scalar_convert;
