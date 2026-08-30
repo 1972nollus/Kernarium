@@ -45,6 +45,7 @@ struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
 	std::array<std::array<std::byte, 32>, 16> vectors{};
 	std::array<std::uint64_t, 8> mmx{};
+	std::array<std::uint16_t, 6> segment_selectors{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	std::uint64_t fs_base{};

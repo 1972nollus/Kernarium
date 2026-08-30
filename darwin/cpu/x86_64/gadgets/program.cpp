@@ -582,12 +582,19 @@ template<typename Float>
 void vector_float_alu(std::array<std::byte, 32> &result,
 	const std::array<std::byte, 32> &left,
 	const std::array<std::byte, 32> &right, std::uint8_t opcode,
-	std::uint8_t control, std::size_t lane_count) noexcept
+	std::uint8_t control, std::size_t lane_count,
+	std::uint32_t mxcsr) noexcept
 {
 	for (std::size_t lane = 0; lane < lane_count; ++lane) {
 		const auto offset = lane * sizeof(Float);
-		const auto first = vector_element<Float>(left, offset);
-		const auto second = vector_element<Float>(right, offset);
+		auto first = vector_element<Float>(left, offset);
+		auto second = vector_element<Float>(right, offset);
+		if ((mxcsr & (1U << 6U)) != 0) {
+			if (std::fpclassify(first) == FP_SUBNORMAL)
+				first = std::copysign(Float{0}, first);
+			if (std::fpclassify(second) == FP_SUBNORMAL)
+				second = std::copysign(Float{0}, second);
+		}
 		Float value{};
 		switch (opcode) {
 		case 0x51: value = std::sqrt(second); break;
@@ -614,6 +621,9 @@ void vector_float_alu(std::array<std::byte, 32> &result,
 		default:
 			continue;
 		}
+		if ((mxcsr & (1U << 15U)) != 0 &&
+			std::fpclassify(value) == FP_SUBNORMAL)
+			value = std::copysign(Float{0}, value);
 		set_vector_element(result, offset, value);
 	}
 }
@@ -748,11 +758,11 @@ void vector_float_alu(std::array<std::byte, 32> &result,
 		instruction.vector_prefix == 3) {
 		vector_float_alu<double>(result, left.value, right.value,
 			instruction.vector_opcode, instruction.vector_control,
-			scalar ? 1U : size / sizeof(double));
+			scalar ? 1U : size / sizeof(double), cpu.mxcsr);
 	} else {
 		vector_float_alu<float>(result, left.value, right.value,
 			instruction.vector_opcode, instruction.vector_control,
-			scalar ? 1U : size / sizeof(float));
+			scalar ? 1U : size / sizeof(float), cpu.mxcsr);
 	}
 	const auto written = write_vector_operand(gadget, cpu, memory,
 		instruction.destination, result, instruction.vex);
@@ -860,6 +870,35 @@ template<typename Float>
 	return static_cast<std::int32_t>(rounded);
 }
 
+template<typename Float>
+[[nodiscard]] std::uint64_t convert_to_integer(Float value,
+	OperandWidth width, std::uint32_t mxcsr, bool truncate) noexcept
+{
+	long double rounded{};
+	if (truncate) {
+		rounded = std::trunc(static_cast<long double>(value));
+	} else {
+		switch ((mxcsr >> 13U) & 3U) {
+		case 0: rounded = std::nearbyint(static_cast<long double>(value)); break;
+		case 1: rounded = std::floor(static_cast<long double>(value)); break;
+		case 2: rounded = std::ceil(static_cast<long double>(value)); break;
+		case 3: rounded = std::trunc(static_cast<long double>(value)); break;
+		default: rounded = value; break;
+		}
+	}
+	if (width == OperandWidth::qword) {
+		if (!std::isfinite(value) || rounded < -0x1p63L ||
+			rounded >= 0x1p63L)
+			return std::uint64_t{1} << 63U;
+		return static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(rounded));
+	}
+	if (!std::isfinite(value) || rounded < -0x1p31L || rounded >= 0x1p31L)
+		return std::uint64_t{1} << 31U;
+	return static_cast<std::uint32_t>(
+		static_cast<std::int32_t>(rounded));
+}
+
 [[nodiscard]] StepResult vector_convert(const Gadget &gadget, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory) noexcept
 {
@@ -946,6 +985,179 @@ template<typename Float>
 		return written;
 	advance(gadget, cpu);
 	return written;
+}
+
+[[nodiscard]] StepResult vector_scalar_convert(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode == 0x2a) {
+		const auto merge = read_vector_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!merge.succeeded)
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault, merge.fault};
+		auto result = merge.value;
+		if (instruction.vector_prefix >= 2) {
+			const auto input = read_operand(
+				gadget, cpu, memory, instruction.auxiliary);
+			if (!input.succeeded)
+				return read_failure(input);
+			const auto signed_input = instruction.auxiliary.width ==
+				OperandWidth::qword ?
+				static_cast<long double>(static_cast<std::int64_t>(input.value)) :
+				static_cast<long double>(static_cast<std::int32_t>(input.value));
+			if (instruction.vector_prefix == 2)
+				set_vector_element(result, 0,
+					static_cast<float>(signed_input));
+			else
+				set_vector_element(result, 0,
+					static_cast<double>(signed_input));
+		} else {
+			const auto input = read_vector_operand(
+				gadget, cpu, memory, instruction.auxiliary);
+			if (!input.succeeded)
+				return {StepAction::exit,
+					::uml::cpu::EngineEvent::memory_fault, input.fault};
+			for (std::size_t lane = 0; lane < 2; ++lane) {
+				const auto value = vector_element<std::int32_t>(
+					input.value, lane * sizeof(std::int32_t));
+				if (instruction.vector_prefix == 0)
+					set_vector_element(result, lane * sizeof(float),
+						static_cast<float>(value));
+				else
+					set_vector_element(result, lane * sizeof(double),
+						static_cast<double>(value));
+			}
+		}
+		const auto written = write_vector_operand(gadget, cpu, memory,
+			instruction.destination, result, instruction.vex);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+
+	const auto input = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!input.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			input.fault};
+	const bool truncate = instruction.vector_opcode == 0x2c;
+	if (instruction.vector_prefix >= 2) {
+		const auto value = instruction.vector_prefix == 2 ?
+			convert_to_integer(vector_element<float>(input.value, 0),
+				instruction.destination.width, cpu.mxcsr, truncate) :
+			convert_to_integer(vector_element<double>(input.value, 0),
+				instruction.destination.width, cpu.mxcsr, truncate);
+		const auto written = write_operand(gadget, cpu, memory,
+			instruction.destination, value);
+		if (written.action == StepAction::exit)
+			return written;
+		advance(gadget, cpu);
+		return written;
+	}
+	std::array<std::byte, 32> result{};
+	for (std::size_t lane = 0; lane < 2; ++lane) {
+		const auto value = instruction.vector_prefix == 0 ?
+			convert_to_integer(vector_element<float>(input.value,
+				lane * sizeof(float)), OperandWidth::dword,
+				cpu.mxcsr, truncate) :
+			convert_to_integer(vector_element<double>(input.value,
+				lane * sizeof(double)), OperandWidth::dword,
+				cpu.mxcsr, truncate);
+		set_vector_element(result, lane * sizeof(std::uint32_t),
+			static_cast<std::uint32_t>(value));
+	}
+	const auto written = write_vector_operand(gadget, cpu, memory,
+		instruction.destination, result, false);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult vector_compare_flags(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!left.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			left.fault};
+	const auto right = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!right.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			right.fault};
+	bool unordered{};
+	bool equal{};
+	bool less{};
+	if (instruction.vector_prefix == 1) {
+		const auto first = vector_element<double>(left.value, 0);
+		const auto second = vector_element<double>(right.value, 0);
+		unordered = std::isnan(first) || std::isnan(second);
+		equal = first == second;
+		less = first < second;
+	} else {
+		const auto first = vector_element<float>(left.value, 0);
+		const auto second = vector_element<float>(right.value, 0);
+		unordered = std::isnan(first) || std::isnan(second);
+		equal = first == second;
+		less = first < second;
+	}
+	materialize_flags(cpu);
+	constexpr auto affected = rflags_carry | rflags_parity |
+		rflags_auxiliary | rflags_zero | rflags_sign | rflags_overflow;
+	cpu.rflags &= ~affected;
+	if (unordered)
+		cpu.rflags |= rflags_carry | rflags_parity | rflags_zero;
+	else if (equal)
+		cpu.rflags |= rflags_zero;
+	else if (less)
+		cpu.rflags |= rflags_carry;
+	cpu.rflags |= rflags_reserved;
+	cpu.deferred_flags.operation = DeferredFlagOperation::none;
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult vector_mask_store(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto data = read_vector_operand(
+		gadget, cpu, memory, instruction.source);
+	if (!data.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			data.fault};
+	const auto mask = read_vector_operand(
+		gadget, cpu, memory, instruction.auxiliary);
+	if (!mask.succeeded)
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			mask.fault};
+	const auto size = static_cast<std::size_t>(
+		width_bytes(instruction.source.width));
+	const auto address = cpu.gpr(Register::rdi);
+	std::array<std::byte, 16> bytes{};
+	if (!read_memory_bytes(memory, address,
+		std::span{bytes}.first(size)))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::read)};
+	for (std::size_t index = 0; index < size; ++index) {
+		if ((std::to_integer<std::uint8_t>(mask.value[index]) & 0x80U) != 0)
+			bytes[index] = data.value[index];
+	}
+	if (!write_memory_bytes(memory, address,
+		std::span<const std::byte>{bytes}.first(size)))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::write)};
+	memory.invalidate_code(address);
+	advance(gadget, cpu);
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}, address,
+		static_cast<std::uint8_t>(size)};
 }
 
 [[nodiscard]] StepResult vector_gpr_move(const Gadget &gadget,
@@ -2350,6 +2562,62 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	return {};
 }
 
+[[nodiscard]] StepResult segment_move(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	auto &selector = cpu.segment_selectors[instruction.vector_group];
+	if (instruction.vector_opcode == 0x8e) {
+		const auto value = read_operand(
+			gadget, cpu, memory, instruction.source);
+		if (!value.succeeded)
+			return read_failure(value);
+		selector = static_cast<std::uint16_t>(value.value);
+		advance(gadget, cpu);
+		return {};
+	}
+	const auto written = write_operand(
+		gadget, cpu, memory, instruction.destination, selector);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult segment_stack(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool pushing = instruction.vector_opcode == 0xa0 ||
+		instruction.vector_opcode == 0xa8;
+	const auto width = pushing ? instruction.source.width :
+		instruction.destination.width;
+	const auto size = width_bytes(width);
+	if (pushing) {
+		const auto address = cpu.gpr(Register::rsp) - size;
+		if (!write_memory(memory, address, width,
+			cpu.segment_selectors[instruction.vector_group]))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::write)};
+		cpu.gpr(Register::rsp) = address;
+		advance(gadget, cpu);
+		return {StepAction::continue_program,
+			::uml::cpu::EngineEvent::continued, {}, address, size};
+	}
+	const auto address = cpu.gpr(Register::rsp);
+	std::uint64_t value{};
+	if (!read_memory(memory, address, width, value))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::read)};
+	cpu.segment_selectors[instruction.vector_group] =
+		static_cast<std::uint16_t>(value);
+	cpu.gpr(Register::rsp) += size;
+	advance(gadget, cpu);
+	return {};
+}
+
 [[nodiscard]] StepResult push_flags(const Gadget &gadget, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory) noexcept
 {
@@ -2605,6 +2873,32 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 {
 	cpu.rip = condition_holds(cpu, gadget.instruction.condition) ?
 		relative_target(gadget) : gadget.address + gadget.instruction.length;
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}};
+}
+
+[[nodiscard]] StepResult loop(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	const auto opcode = gadget.instruction.vector_opcode;
+	const auto width = gadget.instruction.vector_control != 0 ?
+		OperandWidth::dword : OperandWidth::qword;
+	auto count = cpu.gpr(Register::rcx) & width_mask(width);
+	bool take{};
+	if (opcode == 0xe3) {
+		take = count == 0;
+	} else {
+		count = (count - 1U) & width_mask(width);
+		write_gpr(cpu, static_cast<std::uint8_t>(Register::rcx), width, count);
+		take = count != 0;
+		if (opcode != 0xe2) {
+			materialize_flags(cpu);
+			const bool zero = (cpu.rflags & rflags_zero) != 0;
+			take = take && (opcode == 0xe1 ? zero : !zero);
+		}
+	}
+	cpu.rip = take ? relative_target(gadget) :
+		gadget.address + gadget.instruction.length;
 	return {StepAction::return_to_dispatch,
 		::uml::cpu::EngineEvent::continued, {}};
 }
@@ -2915,6 +3209,29 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	return {};
 }
 
+[[nodiscard]] StepResult mxcsr(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	if (gadget.instruction.vector_group == 2) {
+		const auto value = read_operand(
+			gadget, cpu, memory, gadget.instruction.destination);
+		if (!value.succeeded)
+			return read_failure(value);
+		constexpr std::uint32_t modeled = (1U << 6U) |
+			(3U << 13U) | (1U << 15U);
+		cpu.mxcsr = 0x1f80U |
+			(static_cast<std::uint32_t>(value.value) & modeled);
+		advance(gadget, cpu);
+		return {};
+	}
+	const auto written = write_operand(gadget, cpu, memory,
+		gadget.instruction.destination, cpu.mxcsr);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
 [[nodiscard]] StepResult system_call(const Gadget &gadget, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &) noexcept
 {
@@ -3017,9 +3334,12 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::lahf:
 	case Operation::sahf:
 		return lahf_sahf;
+	case Operation::segment_move: return segment_move;
+	case Operation::segment_stack: return segment_stack;
 	case Operation::jump: return jump;
 	case Operation::jump_indirect: return jump_indirect;
 	case Operation::jump_conditional: return jump_conditional;
+	case Operation::loop: return loop;
 	case Operation::call: return call;
 	case Operation::call_indirect: return call_indirect;
 	case Operation::ret: return ret;
@@ -3048,6 +3368,10 @@ void update_string_register(CpuState &cpu, Register reg, bool address_32,
 	case Operation::vector_integer: return vector_integer;
 	case Operation::vector_to_gpr: return vector_to_gpr;
 	case Operation::vector_insert: return vector_insert;
+	case Operation::vector_scalar_convert: return vector_scalar_convert;
+	case Operation::vector_compare_flags: return vector_compare_flags;
+	case Operation::vector_mask_store: return vector_mask_store;
+	case Operation::mxcsr: return mxcsr;
 	case Operation::system_call: return system_call;
 	case Operation::breakpoint: return breakpoint;
 	}
