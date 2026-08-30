@@ -39,8 +39,11 @@ struct MemoryOperand final {
 	std::uint8_t index{no_register};
 	std::uint8_t scale{1};
 	std::int32_t displacement{};
+	std::uint64_t absolute{};
 	Segment segment{Segment::none};
 	bool rip_relative{};
+	bool address_32{};
+	bool absolute_address{};
 };
 
 struct Operand final {
@@ -54,19 +57,56 @@ struct Operand final {
 enum class Operation : std::uint8_t {
 	nop,
 	move,
+	move_zero_extend,
+	move_sign_extend,
 	lea,
+	exchange,
 	add,
+	add_carry,
 	subtract,
+	subtract_borrow,
+	increment,
+	decrement,
+	negate,
+	bit_not,
 	bit_and,
 	bit_or,
 	bit_xor,
 	compare,
 	test,
+	shift_left,
+	shift_right,
+	shift_arithmetic_right,
+	rotate_left,
+	rotate_right,
+	rotate_carry_left,
+	rotate_carry_right,
+	multiply,
+	multiply_signed,
+	divide,
+	divide_signed,
+	set_condition,
+	conditional_move,
+	byte_swap,
+	sign_extend_accumulator,
+	sign_extend_data,
 	push,
 	pop,
+	push_flags,
+	pop_flags,
+	leave,
+	carry_clear,
+	carry_set,
+	carry_complement,
+	direction_clear,
+	direction_set,
+	lahf,
+	sahf,
 	jump,
+	jump_indirect,
 	jump_conditional,
 	call,
+	call_indirect,
 	ret,
 	system_call,
 	breakpoint,
@@ -95,6 +135,7 @@ struct Instruction final {
 	Operation operation{Operation::nop};
 	Operand destination{};
 	Operand source{};
+	Operand auxiliary{};
 	Condition condition{Condition::equal};
 	std::uint8_t length{};
 	bool locked{};

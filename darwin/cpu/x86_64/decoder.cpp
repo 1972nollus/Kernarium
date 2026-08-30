@@ -138,12 +138,36 @@ public:
 		if (!decode_opcode(opcode, instruction))
 			return failed_ ? fetch_fault() : illegal();
 		instruction.length = reader_.position();
-		if (prefixes_.locked)
+		if (prefixes_.locked && !lock_allowed(instruction))
 			return illegal();
 		return {DecodeStatus::decoded, instruction, 0};
 	}
 
 private:
+	[[nodiscard]] static bool lock_allowed(
+		const Instruction &instruction) noexcept
+	{
+		if (instruction.destination.kind != OperandKind::memory)
+			return false;
+		switch (instruction.operation) {
+		case Operation::add:
+		case Operation::add_carry:
+		case Operation::subtract:
+		case Operation::subtract_borrow:
+		case Operation::increment:
+		case Operation::decrement:
+		case Operation::negate:
+		case Operation::bit_not:
+		case Operation::bit_and:
+		case Operation::bit_or:
+		case Operation::bit_xor:
+		case Operation::exchange:
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	[[nodiscard]] DecodeResult fetch_fault() const noexcept
 	{
 		return {DecodeStatus::fetch_fault, {}, reader_.fault_address()};
@@ -242,12 +266,10 @@ private:
 				width, prefixes_.rex_present);
 			return true;
 		}
-		if (prefixes_.address_size)
-			return false;
-
 		operand.kind = OperandKind::memory;
 		operand.width = width;
 		operand.memory.segment = prefixes_.segment;
+		operand.memory.address_32 = prefixes_.address_size;
 		if (rm == 4) {
 			std::uint8_t sib{};
 			if (!read(sib))
@@ -273,7 +295,7 @@ private:
 			std::uint64_t displacement{};
 			if (!read_unsigned(4, displacement))
 				return false;
-			operand.memory.rip_relative = true;
+			operand.memory.rip_relative = !prefixes_.address_size;
 			operand.memory.displacement = static_cast<std::int32_t>(
 				static_cast<std::uint32_t>(displacement));
 		} else {
@@ -322,6 +344,8 @@ private:
 		switch (group) {
 		case 0: instruction.operation = Operation::add; break;
 		case 1: instruction.operation = Operation::bit_or; break;
+		case 2: instruction.operation = Operation::add_carry; break;
+		case 3: instruction.operation = Operation::subtract_borrow; break;
 		case 4: instruction.operation = Operation::bit_and; break;
 		case 5: instruction.operation = Operation::subtract; break;
 		case 6: instruction.operation = Operation::bit_xor; break;
@@ -342,7 +366,8 @@ private:
 	[[nodiscard]] bool decode_accumulator_immediate(Instruction &instruction,
 		Operation operation, OperandWidth width)
 	{
-		const auto bytes = width == OperandWidth::word ? 2U : 4U;
+		const auto bytes = width == OperandWidth::qword ? 4U :
+			static_cast<unsigned>(width);
 		std::uint64_t immediate{};
 		if (!read_unsigned(bytes, immediate))
 			return false;
@@ -367,6 +392,171 @@ private:
 		return true;
 	}
 
+	[[nodiscard]] bool decode_shift_group(Instruction &instruction,
+		std::uint8_t opcode, OperandWidth width)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+		switch (group) {
+		case 0: instruction.operation = Operation::rotate_left; break;
+		case 1: instruction.operation = Operation::rotate_right; break;
+		case 2: instruction.operation = Operation::rotate_carry_left; break;
+		case 3: instruction.operation = Operation::rotate_carry_right; break;
+		case 4:
+		case 6: instruction.operation = Operation::shift_left; break;
+		case 5: instruction.operation = Operation::shift_right; break;
+		case 7: instruction.operation = Operation::shift_arithmetic_right; break;
+		default: return false;
+		}
+		if (!rm_operand(modrm, width, instruction.destination))
+			return false;
+		if (opcode == 0xc0 || opcode == 0xc1) {
+			std::uint64_t immediate{};
+			if (!read_unsigned(1, immediate))
+				return false;
+			instruction.source = immediate_operand(
+				immediate, OperandWidth::byte);
+		} else if (opcode == 0xd0 || opcode == 0xd1) {
+			instruction.source = immediate_operand(1, OperandWidth::byte);
+		} else {
+			instruction.source = register_operand(
+				1, false, OperandWidth::byte, prefixes_.rex_present);
+		}
+		return true;
+	}
+
+	[[nodiscard]] bool decode_unary_group(Instruction &instruction,
+		std::uint8_t opcode, OperandWidth ordinary)
+	{
+		const auto width = opcode == 0xf6 ? OperandWidth::byte : ordinary;
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+		if (!rm_operand(modrm, width, instruction.destination))
+			return false;
+		switch (group) {
+		case 0: {
+			const auto bytes = width == OperandWidth::byte ? 1U :
+				(width == OperandWidth::word ? 2U : 4U);
+			std::uint64_t immediate{};
+			if (!read_unsigned(bytes, immediate))
+				return false;
+			if (width == OperandWidth::qword)
+				immediate = sign_extend(immediate, 32);
+			instruction.operation = Operation::test;
+			instruction.source = immediate_operand(immediate, width);
+			return true;
+		}
+		case 2: instruction.operation = Operation::bit_not; return true;
+		case 3: instruction.operation = Operation::negate; return true;
+		case 4: instruction.operation = Operation::multiply; return true;
+		case 5: instruction.operation = Operation::multiply_signed; return true;
+		case 6: instruction.operation = Operation::divide; return true;
+		case 7: instruction.operation = Operation::divide_signed; return true;
+		default: return false;
+		}
+	}
+
+	[[nodiscard]] bool decode_ff_group(Instruction &instruction,
+		OperandWidth width)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+		Operand operand{};
+		switch (group) {
+		case 0:
+		case 1:
+			if (!rm_operand(modrm, width, operand))
+				return false;
+			instruction.operation = group == 0 ?
+				Operation::increment : Operation::decrement;
+			instruction.destination = operand;
+			return true;
+		case 2:
+		case 4:
+			if (!rm_operand(modrm, OperandWidth::qword, operand))
+				return false;
+			instruction.operation = group == 2 ?
+				Operation::call_indirect : Operation::jump_indirect;
+			instruction.source = operand;
+			return true;
+		case 6:
+			if (!rm_operand(modrm, stack_width(prefixes_), operand))
+				return false;
+			instruction.operation = Operation::push;
+			instruction.source = operand;
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	[[nodiscard]] bool decode_imul_immediate(Instruction &instruction,
+		std::uint8_t opcode, OperandWidth width)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		Operand source{};
+		if (!rm_operand(modrm, width, source))
+			return false;
+		const auto bytes = opcode == 0x6b ? 1U :
+			(width == OperandWidth::word ? 2U : 4U);
+		std::uint64_t immediate{};
+		if (!read_unsigned(bytes, immediate))
+			return false;
+		instruction.operation = Operation::multiply_signed;
+		instruction.destination = reg_field(modrm, width);
+		instruction.source = source;
+		instruction.auxiliary = immediate_operand(
+			sign_extend(immediate, bytes * 8U), width);
+		return true;
+	}
+
+	[[nodiscard]] bool decode_moffs(Instruction &instruction,
+		std::uint8_t opcode, OperandWidth width)
+	{
+		std::uint64_t address{};
+		if (!read_unsigned(prefixes_.address_size ? 4U : 8U, address))
+			return false;
+		Operand memory{};
+		memory.kind = OperandKind::memory;
+		memory.width = (opcode == 0xa0 || opcode == 0xa2) ?
+			OperandWidth::byte : width;
+		memory.memory.segment = prefixes_.segment;
+		memory.memory.address_32 = prefixes_.address_size;
+		memory.memory.absolute_address = true;
+		memory.memory.absolute = prefixes_.address_size ?
+			static_cast<std::uint32_t>(address) : address;
+		const auto accumulator = register_operand(
+			0, false, memory.width, prefixes_.rex_present);
+		instruction.operation = Operation::move;
+		const bool load = opcode == 0xa0 || opcode == 0xa1;
+		instruction.destination = load ? accumulator : memory;
+		instruction.source = load ? memory : accumulator;
+		return true;
+	}
+
+	[[nodiscard]] bool decode_push_immediate(Instruction &instruction,
+		std::uint8_t opcode)
+	{
+		const auto width = stack_width(prefixes_);
+		const auto bytes = opcode == 0x6a ? 1U :
+			(width == OperandWidth::word ? 2U : 4U);
+		std::uint64_t immediate{};
+		if (!read_unsigned(bytes, immediate))
+			return false;
+		instruction.operation = Operation::push;
+		instruction.source = immediate_operand(
+			sign_extend(immediate, bytes * 8U), width);
+		return true;
+	}
+
 	[[nodiscard]] bool decode_two_byte(Instruction &instruction)
 	{
 		std::uint8_t opcode{};
@@ -376,6 +566,29 @@ private:
 			instruction.condition = static_cast<Condition>(opcode & 0xfU);
 			return decode_relative(instruction,
 				Operation::jump_conditional, 4);
+		}
+		if (opcode >= 0x40 && opcode <= 0x4f) {
+			instruction.condition = static_cast<Condition>(opcode & 0xfU);
+			return decode_binary(instruction, Operation::conditional_move,
+				ordinary_width(prefixes_), true);
+		}
+		if (opcode >= 0x90 && opcode <= 0x9f) {
+			std::uint8_t modrm{};
+			if (!read(modrm) || ((modrm >> 3U) & 7U) != 0)
+				return false;
+			instruction.condition = static_cast<Condition>(opcode & 0xfU);
+			instruction.operation = Operation::set_condition;
+			return rm_operand(modrm, OperandWidth::byte,
+				instruction.destination);
+		}
+		if (opcode >= 0xc8 && opcode <= 0xcf) {
+			const auto width = (prefixes_.rex & 8U) != 0 ?
+				OperandWidth::qword : OperandWidth::dword;
+			instruction.operation = Operation::byte_swap;
+			instruction.destination = register_operand(
+				static_cast<std::uint8_t>(opcode & 7U),
+				(prefixes_.rex & 1U) != 0, width, true);
+			return true;
 		}
 		switch (opcode) {
 		case 0x05:
@@ -399,6 +612,28 @@ private:
 				!rm_operand(modrm, ordinary_width(prefixes_), ignored))
 				return false;
 			instruction.operation = Operation::nop;
+			return true;
+		}
+		case 0xaf:
+			return decode_binary(instruction, Operation::multiply_signed,
+				ordinary_width(prefixes_), true);
+		case 0xb6:
+		case 0xb7:
+		case 0xbe:
+		case 0xbf: {
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			const auto source_width = (opcode == 0xb6 || opcode == 0xbe) ?
+				OperandWidth::byte : OperandWidth::word;
+			Operand source{};
+			if (!rm_operand(modrm, source_width, source))
+				return false;
+			instruction.operation = (opcode == 0xb6 || opcode == 0xb7) ?
+				Operation::move_zero_extend : Operation::move_sign_extend;
+			instruction.destination = reg_field(
+				modrm, ordinary_width(prefixes_));
+			instruction.source = source;
 			return true;
 		}
 		default:
@@ -429,6 +664,32 @@ private:
 			return decode_relative(instruction,
 				Operation::jump_conditional, 1);
 		}
+		if (opcode >= 0x90 && opcode <= 0x97) {
+			const auto register_index = static_cast<std::uint8_t>(opcode & 7U);
+			if (register_index == 0 && (prefixes_.rex & 1U) == 0) {
+				instruction.operation = Operation::nop;
+				return true;
+			}
+			instruction.operation = Operation::exchange;
+			instruction.destination = register_operand(
+				0, false, width, prefixes_.rex_present);
+			instruction.source = register_operand(register_index,
+				(prefixes_.rex & 1U) != 0, width, prefixes_.rex_present);
+			return true;
+		}
+		if (opcode >= 0xb0 && opcode <= 0xb7) {
+			std::uint64_t immediate{};
+			if (!read_unsigned(1, immediate))
+				return false;
+			instruction.operation = Operation::move;
+			instruction.destination = register_operand(
+				static_cast<std::uint8_t>(opcode & 7U),
+				(prefixes_.rex & 1U) != 0, OperandWidth::byte,
+				prefixes_.rex_present);
+			instruction.source = immediate_operand(
+				immediate, OperandWidth::byte);
+			return true;
+		}
 		if (opcode >= 0xb8 && opcode <= 0xbf) {
 			const auto immediate_bytes = width == OperandWidth::qword ? 8U :
 				static_cast<unsigned>(width);
@@ -444,31 +705,113 @@ private:
 		}
 
 		switch (opcode) {
+		case 0x00: return decode_binary(instruction, Operation::add,
+			OperandWidth::byte, false);
 		case 0x01: return decode_binary(instruction, Operation::add, width, false);
+		case 0x02: return decode_binary(instruction, Operation::add,
+			OperandWidth::byte, true);
 		case 0x03: return decode_binary(instruction, Operation::add, width, true);
+		case 0x04: return decode_accumulator_immediate(instruction,
+			Operation::add, OperandWidth::byte);
 		case 0x05: return decode_accumulator_immediate(instruction, Operation::add, width);
+		case 0x08: return decode_binary(instruction, Operation::bit_or,
+			OperandWidth::byte, false);
 		case 0x09: return decode_binary(instruction, Operation::bit_or, width, false);
+		case 0x0a: return decode_binary(instruction, Operation::bit_or,
+			OperandWidth::byte, true);
 		case 0x0b: return decode_binary(instruction, Operation::bit_or, width, true);
+		case 0x0c: return decode_accumulator_immediate(instruction,
+			Operation::bit_or, OperandWidth::byte);
 		case 0x0d: return decode_accumulator_immediate(instruction, Operation::bit_or, width);
+		case 0x10: return decode_binary(instruction, Operation::add_carry,
+			OperandWidth::byte, false);
+		case 0x11: return decode_binary(instruction, Operation::add_carry, width, false);
+		case 0x12: return decode_binary(instruction, Operation::add_carry,
+			OperandWidth::byte, true);
+		case 0x13: return decode_binary(instruction, Operation::add_carry, width, true);
+		case 0x14: return decode_accumulator_immediate(instruction,
+			Operation::add_carry, OperandWidth::byte);
+		case 0x15: return decode_accumulator_immediate(instruction,
+			Operation::add_carry, width);
+		case 0x18: return decode_binary(instruction, Operation::subtract_borrow,
+			OperandWidth::byte, false);
+		case 0x19: return decode_binary(instruction, Operation::subtract_borrow,
+			width, false);
+		case 0x1a: return decode_binary(instruction, Operation::subtract_borrow,
+			OperandWidth::byte, true);
+		case 0x1b: return decode_binary(instruction, Operation::subtract_borrow,
+			width, true);
+		case 0x1c: return decode_accumulator_immediate(instruction,
+			Operation::subtract_borrow, OperandWidth::byte);
+		case 0x1d: return decode_accumulator_immediate(instruction,
+			Operation::subtract_borrow, width);
+		case 0x20: return decode_binary(instruction, Operation::bit_and,
+			OperandWidth::byte, false);
 		case 0x21: return decode_binary(instruction, Operation::bit_and, width, false);
+		case 0x22: return decode_binary(instruction, Operation::bit_and,
+			OperandWidth::byte, true);
 		case 0x23: return decode_binary(instruction, Operation::bit_and, width, true);
+		case 0x24: return decode_accumulator_immediate(instruction,
+			Operation::bit_and, OperandWidth::byte);
 		case 0x25: return decode_accumulator_immediate(instruction, Operation::bit_and, width);
+		case 0x28: return decode_binary(instruction, Operation::subtract,
+			OperandWidth::byte, false);
 		case 0x29: return decode_binary(instruction, Operation::subtract, width, false);
+		case 0x2a: return decode_binary(instruction, Operation::subtract,
+			OperandWidth::byte, true);
 		case 0x2b: return decode_binary(instruction, Operation::subtract, width, true);
+		case 0x2c: return decode_accumulator_immediate(instruction,
+			Operation::subtract, OperandWidth::byte);
 		case 0x2d: return decode_accumulator_immediate(instruction, Operation::subtract, width);
+		case 0x30: return decode_binary(instruction, Operation::bit_xor,
+			OperandWidth::byte, false);
 		case 0x31: return decode_binary(instruction, Operation::bit_xor, width, false);
+		case 0x32: return decode_binary(instruction, Operation::bit_xor,
+			OperandWidth::byte, true);
 		case 0x33: return decode_binary(instruction, Operation::bit_xor, width, true);
+		case 0x34: return decode_accumulator_immediate(instruction,
+			Operation::bit_xor, OperandWidth::byte);
 		case 0x35: return decode_accumulator_immediate(instruction, Operation::bit_xor, width);
+		case 0x38: return decode_binary(instruction, Operation::compare,
+			OperandWidth::byte, false);
 		case 0x39: return decode_binary(instruction, Operation::compare, width, false);
+		case 0x3a: return decode_binary(instruction, Operation::compare,
+			OperandWidth::byte, true);
 		case 0x3b: return decode_binary(instruction, Operation::compare, width, true);
+		case 0x3c: return decode_accumulator_immediate(instruction,
+			Operation::compare, OperandWidth::byte);
 		case 0x3d: return decode_accumulator_immediate(instruction, Operation::compare, width);
+		case 0x63: {
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			Operand source{};
+			if (!rm_operand(modrm, OperandWidth::dword, source))
+				return false;
+			instruction.operation = Operation::move_sign_extend;
+			instruction.destination = reg_field(modrm, width);
+			instruction.source = source;
+			return true;
+		}
+		case 0x68:
+		case 0x6a:
+			return decode_push_immediate(instruction, opcode);
+		case 0x69:
+		case 0x6b:
+			return decode_imul_immediate(instruction, opcode, width);
 		case 0x80: return decode_immediate_group(instruction,
 			OperandWidth::byte, 1, false);
 		case 0x81: return decode_immediate_group(instruction, width,
 			width == OperandWidth::word ? 2U : 4U,
 			width == OperandWidth::qword);
 		case 0x83: return decode_immediate_group(instruction, width, 1, true);
+		case 0x84: return decode_binary(instruction, Operation::test,
+			OperandWidth::byte, false);
 		case 0x85: return decode_binary(instruction, Operation::test, width, false);
+		case 0x86: return decode_binary(instruction, Operation::exchange,
+			OperandWidth::byte, false);
+		case 0x87: return decode_binary(instruction, Operation::exchange,
+			width, false);
 		case 0x88: return decode_binary(instruction, Operation::move,
 			OperandWidth::byte, false);
 		case 0x89: return decode_binary(instruction, Operation::move, width, false);
@@ -483,11 +826,57 @@ private:
 			instruction.destination = reg_field(modrm, width);
 			return rm_operand(modrm, width, instruction.source);
 		}
-		case 0x90:
-			instruction.operation = Operation::nop;
-			return (prefixes_.rex & 1U) == 0;
+		case 0x8f: {
+			std::uint8_t modrm{};
+			if (!read(modrm) || ((modrm >> 3U) & 7U) != 0)
+				return false;
+			instruction.operation = Operation::pop;
+			return rm_operand(modrm, stack_width(prefixes_),
+				instruction.destination);
+		}
+		case 0x98:
+			instruction.operation = Operation::sign_extend_accumulator;
+			instruction.destination = register_operand(
+				0, false, width, prefixes_.rex_present);
+			return true;
+		case 0x99:
+			instruction.operation = Operation::sign_extend_data;
+			instruction.destination = register_operand(
+				2, false, width, prefixes_.rex_present);
+			return true;
+		case 0x9c:
+			instruction.operation = Operation::push_flags;
+			instruction.source.width = stack_width(prefixes_);
+			return true;
+		case 0x9d:
+			instruction.operation = Operation::pop_flags;
+			instruction.destination.width = stack_width(prefixes_);
+			return true;
+		case 0x9e:
+			instruction.operation = Operation::sahf;
+			return true;
+		case 0x9f:
+			instruction.operation = Operation::lahf;
+			return true;
+		case 0xa0:
+		case 0xa1:
+		case 0xa2:
+		case 0xa3:
+			return decode_moffs(instruction, opcode, width);
+		case 0xa8:
+			return decode_accumulator_immediate(instruction,
+				Operation::test, OperandWidth::byte);
 		case 0xa9:
 			return decode_accumulator_immediate(instruction, Operation::test, width);
+		case 0xc0:
+		case 0xc1:
+		case 0xd0:
+		case 0xd1:
+		case 0xd2:
+		case 0xd3:
+			return decode_shift_group(instruction, opcode,
+				(opcode == 0xc0 || opcode == 0xd0 || opcode == 0xd2) ?
+				OperandWidth::byte : width);
 		case 0xc2: {
 			std::uint64_t adjustment{};
 			if (!read_unsigned(2, adjustment))
@@ -499,6 +888,10 @@ private:
 		}
 		case 0xc3:
 			instruction.operation = Operation::ret;
+			return true;
+		case 0xc9:
+			instruction.operation = Operation::leave;
+			instruction.destination.width = stack_width(prefixes_);
 			return true;
 		case 0xc6:
 		case 0xc7: {
@@ -525,6 +918,26 @@ private:
 		case 0xe8: return decode_relative(instruction, Operation::call, 4);
 		case 0xe9: return decode_relative(instruction, Operation::jump, 4);
 		case 0xeb: return decode_relative(instruction, Operation::jump, 1);
+		case 0xf5:
+			instruction.operation = Operation::carry_complement;
+			return true;
+		case 0xf6:
+		case 0xf7:
+			return decode_unary_group(instruction, opcode, width);
+		case 0xf8:
+			instruction.operation = Operation::carry_clear;
+			return true;
+		case 0xf9:
+			instruction.operation = Operation::carry_set;
+			return true;
+		case 0xfc:
+			instruction.operation = Operation::direction_clear;
+			return true;
+		case 0xfd:
+			instruction.operation = Operation::direction_set;
+			return true;
+		case 0xff:
+			return decode_ff_group(instruction, width);
 		case 0x0f: return decode_two_byte(instruction);
 		default:
 			return false;
@@ -542,8 +955,10 @@ bool Instruction::terminal() const noexcept
 {
 	switch (operation) {
 	case Operation::jump:
+	case Operation::jump_indirect:
 	case Operation::jump_conditional:
 	case Operation::call:
+	case Operation::call_indirect:
 	case Operation::ret:
 	case Operation::system_call:
 	case Operation::breakpoint:

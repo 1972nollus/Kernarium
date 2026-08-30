@@ -25,6 +25,8 @@ struct StepResult final {
 	StepAction action{StepAction::continue_program};
 	::uml::cpu::EngineEvent event{::uml::cpu::EngineEvent::continued};
 	::uml::cpu::FaultInfo fault{};
+	std::uint64_t write_address{};
+	std::uint8_t write_size{};
 };
 
 using GadgetEntry = StepResult (*)(const Gadget &, CpuState &,
