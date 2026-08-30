@@ -2,6 +2,9 @@
 #include "program.hpp"
 
 #include <array>
+#include <atomic>
+#include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -223,6 +226,43 @@ void write_gpr(CpuState &cpu, std::uint8_t index, OperandWidth width,
 			std::span<const std::byte>{bytes}.first(width_bytes(width)));
 	} catch (...) {
 		return false;
+	}
+}
+
+[[nodiscard]] bool read_memory_bytes(
+	::uml::memory::GuestAddressSpace &memory, std::uint64_t address,
+	std::span<std::byte> bytes) noexcept
+{
+	try {
+		return memory.read(address, bytes);
+	} catch (...) {
+		return false;
+	}
+}
+
+[[nodiscard]] bool write_memory_bytes(
+	::uml::memory::GuestAddressSpace &memory, std::uint64_t address,
+	std::span<const std::byte> bytes) noexcept
+{
+	try {
+		return memory.write(address, bytes);
+	} catch (...) {
+		return false;
+	}
+}
+
+[[nodiscard]] std::uint64_t next_random() noexcept
+{
+	static std::atomic_uint64_t state{0x6a09e667f3bcc909ULL};
+	auto observed = state.load(std::memory_order_relaxed);
+	for (;;) {
+		auto value = observed;
+		value ^= value << 13U;
+		value ^= value >> 7U;
+		value ^= value << 17U;
+		if (state.compare_exchange_weak(observed, value,
+			std::memory_order_relaxed, std::memory_order_relaxed))
+			return value;
 	}
 }
 
@@ -614,6 +654,74 @@ void advance(const Gadget &gadget, CpuState &cpu) noexcept
 	return written;
 }
 
+[[nodiscard]] StepResult double_shift(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto destination = read_operand(
+		gadget, cpu, memory, gadget.instruction.destination);
+	if (!destination.succeeded)
+		return read_failure(destination);
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	const auto count_read = read_operand(
+		gadget, cpu, memory, gadget.instruction.auxiliary);
+	if (!count_read.succeeded)
+		return read_failure(count_read);
+	const auto width = gadget.instruction.destination.width;
+	const auto bits = width_bits(width);
+	const auto count = static_cast<unsigned>(count_read.value &
+		(bits == 64 ? 0x3fU : 0x1fU));
+	if (count == 0) {
+		StepResult written{};
+		if (gadget.instruction.destination.kind == OperandKind::reg) {
+			written = write_operand(gadget, cpu, memory,
+				gadget.instruction.destination, destination.value);
+			if (written.action == StepAction::exit)
+				return written;
+		}
+		advance(gadget, cpu);
+		return written;
+	}
+
+	const auto mask = width_mask(width);
+	const auto left = static_cast<unsigned __int128>(destination.value & mask);
+	const auto right = static_cast<unsigned __int128>(source.value & mask);
+	unsigned __int128 combined{};
+	std::uint64_t result{};
+	bool carry{};
+	if (gadget.instruction.operation == Operation::double_shift_left) {
+		combined = (left << bits) | right;
+		result = static_cast<std::uint64_t>(
+			(combined << count) >> bits) & mask;
+		carry = ((combined >> (bits * 2U - count)) & 1U) != 0;
+	} else {
+		combined = (right << bits) | left;
+		result = static_cast<std::uint64_t>(combined >> count) & mask;
+		carry = ((combined >> (count - 1U)) & 1U) != 0;
+	}
+	const auto written = write_operand(gadget, cpu, memory,
+		gadget.instruction.destination, result);
+	if (written.action == StepAction::exit)
+		return written;
+	materialize_flags(cpu);
+	set_szp_flags(cpu, result, width);
+	cpu.rflags = carry ? cpu.rflags | rflags_carry :
+		cpu.rflags & ~rflags_carry;
+	if (count == 1) {
+		const bool overflow = gadget.instruction.operation ==
+			Operation::double_shift_left ?
+			(((result >> (bits - 1U)) & 1U) != carry) :
+			(((destination.value >> (bits - 1U)) & 1U) !=
+				((result >> (bits - 1U)) & 1U));
+		cpu.rflags = overflow ? cpu.rflags | rflags_overflow :
+			cpu.rflags & ~rflags_overflow;
+	}
+	advance(gadget, cpu);
+	return written;
+}
+
 void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	unsigned __int128 product) noexcept
 {
@@ -767,6 +875,276 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	}
 	advance(gadget, cpu);
 	return {};
+}
+
+[[nodiscard]] StepResult bit_operation(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto index_read = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!index_read.succeeded)
+		return read_failure(index_read);
+	const auto width = gadget.instruction.destination.width;
+	const auto bits = width_bits(width);
+	std::uint64_t value{};
+	std::uint64_t address{};
+	unsigned bit{};
+	if (gadget.instruction.destination.kind == OperandKind::memory) {
+		address = effective_address(gadget, cpu,
+			gadget.instruction.destination.memory, true);
+		if (gadget.instruction.source.kind == OperandKind::immediate) {
+			bit = static_cast<unsigned>(index_read.value & (bits - 1U));
+		} else {
+			const auto index = static_cast<std::int64_t>(
+				sign_extend_width(index_read.value, width));
+			auto element = index / static_cast<std::int64_t>(bits);
+			auto remainder = index % static_cast<std::int64_t>(bits);
+			if (remainder < 0) {
+				remainder += bits;
+				--element;
+			}
+			address += static_cast<std::uint64_t>(element *
+				static_cast<std::int64_t>(width_bytes(width)));
+			bit = static_cast<unsigned>(remainder);
+		}
+		if (!read_memory(memory, address, width, value))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::read)};
+	} else {
+		const auto destination = read_operand(
+			gadget, cpu, memory, gadget.instruction.destination);
+		if (!destination.succeeded)
+			return read_failure(destination);
+		value = destination.value;
+		bit = static_cast<unsigned>(index_read.value & (bits - 1U));
+	}
+
+	const auto bit_mask = std::uint64_t{1} << bit;
+	const bool carry = (value & bit_mask) != 0;
+	std::uint64_t result = value;
+	switch (gadget.instruction.operation) {
+	case Operation::bit_test: break;
+	case Operation::bit_set: result |= bit_mask; break;
+	case Operation::bit_reset: result &= ~bit_mask; break;
+	case Operation::bit_complement: result ^= bit_mask; break;
+	default:
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+	}
+	StepResult written{};
+	if (gadget.instruction.operation != Operation::bit_test) {
+		if (gadget.instruction.destination.kind == OperandKind::memory) {
+			if (!write_memory(memory, address, width, result))
+				return {StepAction::exit,
+					::uml::cpu::EngineEvent::memory_fault,
+					memory_fault(memory, address,
+						::uml::memory::MemoryAccess::write)};
+			written = {StepAction::continue_program,
+				::uml::cpu::EngineEvent::continued, {}, address,
+				width_bytes(width)};
+		} else {
+			written = write_operand(gadget, cpu, memory,
+				gadget.instruction.destination, result);
+			if (written.action == StepAction::exit)
+				return written;
+		}
+	}
+	materialize_flags(cpu);
+	cpu.rflags = carry ? cpu.rflags | rflags_carry :
+		cpu.rflags & ~rflags_carry;
+	cpu.rflags |= rflags_reserved;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult bit_count(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto source_read = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source_read.succeeded)
+		return read_failure(source_read);
+	const auto width = gadget.instruction.source.width;
+	const auto bits = width_bits(width);
+	const auto source = source_read.value & width_mask(width);
+	std::uint64_t result{};
+	bool write = true;
+	if (gadget.instruction.operation == Operation::bit_scan_forward) {
+		if (source == 0)
+			write = false;
+		else
+			result = std::countr_zero(source);
+	} else if (gadget.instruction.operation == Operation::bit_scan_reverse) {
+		if (source == 0)
+			write = false;
+		else
+			result = 63U - std::countl_zero(source);
+	} else if (gadget.instruction.operation ==
+		Operation::count_trailing_zeros) {
+		result = source == 0 ? bits : std::countr_zero(source);
+	} else if (gadget.instruction.operation ==
+		Operation::count_leading_zeros) {
+		result = source == 0 ? bits :
+			std::countl_zero(source) - (64U - bits);
+	} else if (gadget.instruction.operation == Operation::population_count) {
+		result = std::popcount(source);
+	} else {
+		return {StepAction::exit, ::uml::cpu::EngineEvent::fatal, {}};
+	}
+	if (write) {
+		const auto written = write_operand(gadget, cpu, memory,
+			gadget.instruction.destination, result);
+		if (written.action == StepAction::exit)
+			return written;
+	}
+	materialize_flags(cpu);
+	if (gadget.instruction.operation == Operation::bit_scan_forward ||
+		gadget.instruction.operation == Operation::bit_scan_reverse) {
+		cpu.rflags = source == 0 ? cpu.rflags | rflags_zero :
+			cpu.rflags & ~rflags_zero;
+	} else {
+		constexpr auto arithmetic = rflags_carry | rflags_parity |
+			rflags_auxiliary | rflags_zero | rflags_sign | rflags_overflow;
+		cpu.rflags &= ~arithmetic;
+		if (gadget.instruction.operation == Operation::population_count) {
+			if (source == 0)
+				cpu.rflags |= rflags_zero;
+		} else {
+			if (source == 0)
+				cpu.rflags |= rflags_carry;
+			if (result == 0)
+				cpu.rflags |= rflags_zero;
+		}
+	}
+	cpu.rflags |= rflags_reserved;
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult compare_exchange(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto destination = read_operand(
+		gadget, cpu, memory, gadget.instruction.destination);
+	if (!destination.succeeded)
+		return read_failure(destination);
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	const auto width = gadget.instruction.destination.width;
+	const auto accumulator = cpu.gpr(Register::rax) & width_mask(width);
+	const bool equal = accumulator == destination.value;
+	StepResult written{};
+	if (equal) {
+		written = write_operand(gadget, cpu, memory,
+			gadget.instruction.destination, source.value);
+		if (written.action == StepAction::exit)
+			return written;
+	} else {
+		write_gpr(cpu, static_cast<std::uint8_t>(Register::rax),
+			width, destination.value);
+	}
+	set_arithmetic_flags(cpu, accumulator, destination.value,
+		accumulator - destination.value, width, true, 0);
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult compare_exchange_pair(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto address = effective_address(gadget, cpu,
+		gadget.instruction.destination.memory, true);
+	const auto size = static_cast<std::size_t>(
+		gadget.instruction.auxiliary.immediate);
+	std::array<std::byte, 16> bytes{};
+	if (!read_memory_bytes(memory, address,
+		std::span{bytes}.first(size)))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::read)};
+	std::uint64_t lower{};
+	std::uint64_t upper{};
+	std::memcpy(&lower, bytes.data(), 8);
+	if (size == 16)
+		std::memcpy(&upper, bytes.data() + 8, 8);
+	const auto expected_lower = size == 8 ?
+		static_cast<std::uint32_t>(cpu.gpr(Register::rax)) :
+		cpu.gpr(Register::rax);
+	const auto expected_upper = size == 8 ?
+		static_cast<std::uint32_t>(cpu.gpr(Register::rdx)) :
+		cpu.gpr(Register::rdx);
+	const auto observed_lower = size == 8 ?
+		static_cast<std::uint32_t>(lower) : lower;
+	const auto observed_upper = size == 8 ?
+		static_cast<std::uint32_t>(lower >> 32U) : upper;
+	const bool equal = observed_lower == expected_lower &&
+		observed_upper == expected_upper;
+	StepResult written{};
+	if (equal) {
+		const auto desired_lower = size == 8 ?
+			(static_cast<std::uint64_t>(
+				static_cast<std::uint32_t>(cpu.gpr(Register::rcx))) << 32U) |
+				static_cast<std::uint32_t>(cpu.gpr(Register::rbx)) :
+			cpu.gpr(Register::rbx);
+		const auto desired_upper = cpu.gpr(Register::rcx);
+		std::memcpy(bytes.data(), &desired_lower, 8);
+		if (size == 16)
+			std::memcpy(bytes.data() + 8, &desired_upper, 8);
+		if (!write_memory_bytes(memory, address,
+			std::span<const std::byte>{bytes}.first(size)))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::write)};
+		written = {StepAction::continue_program,
+			::uml::cpu::EngineEvent::continued, {}, address,
+			static_cast<std::uint8_t>(size)};
+	} else if (size == 8) {
+		write_gpr(cpu, static_cast<std::uint8_t>(Register::rax),
+			OperandWidth::dword, observed_lower);
+		write_gpr(cpu, static_cast<std::uint8_t>(Register::rdx),
+			OperandWidth::dword, observed_upper);
+	} else {
+		cpu.gpr(Register::rax) = observed_lower;
+		cpu.gpr(Register::rdx) = observed_upper;
+	}
+	materialize_flags(cpu);
+	cpu.rflags = equal ? cpu.rflags | rflags_zero :
+		cpu.rflags & ~rflags_zero;
+	cpu.rflags |= rflags_reserved;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult exchange_add(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto destination = read_operand(
+		gadget, cpu, memory, gadget.instruction.destination);
+	if (!destination.succeeded)
+		return read_failure(destination);
+	const auto source = read_operand(
+		gadget, cpu, memory, gadget.instruction.source);
+	if (!source.succeeded)
+		return read_failure(source);
+	const auto result = destination.value + source.value;
+	StepResult written{};
+	if (gadget.instruction.destination.kind == OperandKind::memory) {
+		written = write_operand(gadget, cpu, memory,
+			gadget.instruction.destination, result);
+		if (written.action == StepAction::exit)
+			return written;
+		write_register(cpu, gadget.instruction.source, destination.value);
+	} else {
+		write_register(cpu, gadget.instruction.source, destination.value);
+		write_register(cpu, gadget.instruction.destination, result);
+	}
+	set_arithmetic_flags(cpu, destination.value, source.value, result,
+		gadget.instruction.destination.width, false, 0);
+	advance(gadget, cpu);
+	return written;
 }
 
 [[nodiscard]] bool condition_holds(CpuState &cpu,
@@ -953,6 +1331,174 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	return {};
 }
 
+void update_string_register(CpuState &cpu, Register reg, bool address_32,
+	std::uint8_t size, bool decrement) noexcept
+{
+	auto &value = cpu.gpr(reg);
+	if (address_32) {
+		auto narrowed = static_cast<std::uint32_t>(value);
+		narrowed = decrement ? narrowed - size : narrowed + size;
+		value = narrowed;
+	} else {
+		value = decrement ? value - size : value + size;
+	}
+}
+
+[[nodiscard]] StepResult string_operation(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool repeating = instruction.repeat != 0;
+	const bool address_32 = instruction.destination.kind == OperandKind::memory ?
+		instruction.destination.memory.address_32 :
+		instruction.source.memory.address_32;
+	auto remaining = address_32 ?
+		static_cast<std::uint64_t>(
+			static_cast<std::uint32_t>(cpu.gpr(Register::rcx))) :
+		cpu.gpr(Register::rcx);
+	if (repeating && remaining == 0) {
+		advance(gadget, cpu);
+		return {};
+	}
+	const auto width = instruction.destination.kind == OperandKind::none ?
+		instruction.source.width : instruction.destination.width;
+	const auto size = width_bytes(width);
+	bool wrote_memory{};
+	StepResult last_write{};
+	for (;;) {
+		if (instruction.operation == Operation::string_move) {
+			const auto source = read_operand(
+				gadget, cpu, memory, instruction.source);
+			if (!source.succeeded)
+				return read_failure(source);
+			const auto written = write_operand(gadget, cpu, memory,
+				instruction.destination, source.value);
+			if (written.action == StepAction::exit)
+				return written;
+			wrote_memory = true;
+			last_write = written;
+			memory.invalidate_code(written.write_address);
+		} else if (instruction.operation == Operation::string_store) {
+			const auto source = read_operand(
+				gadget, cpu, memory, instruction.source);
+			if (!source.succeeded)
+				return read_failure(source);
+			const auto written = write_operand(gadget, cpu, memory,
+				instruction.destination, source.value);
+			if (written.action == StepAction::exit)
+				return written;
+			wrote_memory = true;
+			last_write = written;
+			memory.invalidate_code(written.write_address);
+		} else if (instruction.operation == Operation::string_load) {
+			const auto source = read_operand(
+				gadget, cpu, memory, instruction.source);
+			if (!source.succeeded)
+				return read_failure(source);
+			write_register(cpu, instruction.destination, source.value);
+		} else {
+			const auto left = read_operand(
+				gadget, cpu, memory, instruction.destination);
+			if (!left.succeeded)
+				return read_failure(left);
+			const auto right = read_operand(
+				gadget, cpu, memory, instruction.source);
+			if (!right.succeeded)
+				return read_failure(right);
+			set_arithmetic_flags(cpu, left.value, right.value,
+				left.value - right.value, width, true, 0);
+		}
+
+		const bool source_pointer =
+			instruction.operation == Operation::string_move ||
+			instruction.operation == Operation::string_compare ||
+			instruction.operation == Operation::string_load;
+		const bool destination_pointer =
+			instruction.operation == Operation::string_move ||
+			instruction.operation == Operation::string_compare ||
+			instruction.operation == Operation::string_store ||
+			instruction.operation == Operation::string_scan;
+		const bool decrement = (cpu.rflags & rflags_direction) != 0;
+		if (source_pointer)
+			update_string_register(cpu, Register::rsi,
+				address_32, size, decrement);
+		if (destination_pointer)
+			update_string_register(cpu, Register::rdi,
+				address_32, size, decrement);
+
+		if (!repeating)
+			break;
+		--remaining;
+		if (address_32)
+			cpu.gpr(Register::rcx) = static_cast<std::uint32_t>(remaining);
+		else
+			cpu.gpr(Register::rcx) = remaining;
+		if (remaining == 0)
+			break;
+		if (instruction.operation == Operation::string_compare ||
+			instruction.operation == Operation::string_scan) {
+			const bool equal = (cpu.rflags & rflags_zero) != 0;
+			if ((instruction.repeat == 0xf3 && !equal) ||
+				(instruction.repeat == 0xf2 && equal))
+				break;
+		}
+	}
+	advance(gadget, cpu);
+	if (wrote_memory) {
+		last_write.action = StepAction::return_to_dispatch;
+		return last_write;
+	}
+	return {};
+}
+
+[[nodiscard]] StepResult enter(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto width = gadget.instruction.destination.width;
+	const auto size = width_bytes(width);
+	const auto nesting = static_cast<unsigned>(
+		gadget.instruction.auxiliary.immediate);
+	auto frame_pointer = cpu.gpr(Register::rbp);
+	auto push_value = [&](std::uint64_t value) -> StepResult {
+		const auto address = cpu.gpr(Register::rsp) - size;
+		if (!write_memory(memory, address, width, value))
+			return {StepAction::exit,
+				::uml::cpu::EngineEvent::memory_fault,
+				memory_fault(memory, address,
+					::uml::memory::MemoryAccess::write)};
+		cpu.gpr(Register::rsp) = address;
+		memory.invalidate_code(address);
+		return {StepAction::continue_program,
+			::uml::cpu::EngineEvent::continued, {}, address, size};
+	};
+	auto written = push_value(frame_pointer);
+	if (written.action == StepAction::exit)
+		return written;
+	const auto frame = cpu.gpr(Register::rsp);
+	if (nesting != 0) {
+		for (unsigned level = 1; level < nesting; ++level) {
+			frame_pointer -= size;
+			std::uint64_t value{};
+			if (!read_memory(memory, frame_pointer, width, value))
+				return {StepAction::exit,
+					::uml::cpu::EngineEvent::memory_fault,
+					memory_fault(memory, frame_pointer,
+						::uml::memory::MemoryAccess::read)};
+			written = push_value(value);
+			if (written.action == StepAction::exit)
+				return written;
+		}
+		written = push_value(frame);
+		if (written.action == StepAction::exit)
+			return written;
+	}
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rbp), width, frame);
+	cpu.gpr(Register::rsp) -= gadget.instruction.source.immediate;
+	advance(gadget, cpu);
+	written.action = StepAction::return_to_dispatch;
+	return written;
+}
+
 [[nodiscard]] std::uint64_t relative_target(const Gadget &gadget) noexcept
 {
 	return gadget.address + gadget.instruction.length +
@@ -1081,6 +1627,219 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 		::uml::cpu::EngineEvent::continued, {}};
 }
 
+[[nodiscard]] StepResult cpuid(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	const auto leaf = static_cast<std::uint32_t>(cpu.gpr(Register::rax));
+	const auto subleaf = static_cast<std::uint32_t>(cpu.gpr(Register::rcx));
+	std::uint32_t eax{};
+	std::uint32_t ebx{};
+	std::uint32_t ecx{};
+	std::uint32_t edx{};
+	switch (leaf) {
+	case 0:
+		eax = 7;
+		ebx = 0x756e6547U;
+		edx = 0x49656e69U;
+		ecx = 0x6c65746eU;
+		break;
+	case 1:
+		eax = 0x0003'06c3U;
+		ebx = 8U << 8U;
+		ecx = (1U << 23U) | (1U << 26U) | (1U << 27U) |
+			(1U << 30U);
+		edx = (1U << 0U) | (1U << 4U) | (1U << 8U) |
+			(1U << 15U) | (1U << 23U) | (1U << 24U) |
+			(1U << 25U) | (1U << 26U);
+		break;
+	case 7:
+		if (subleaf == 0)
+			ebx = (1U << 18U);
+		break;
+	case 0x8000'0000U:
+		eax = 0x8000'0008U;
+		break;
+	case 0x8000'0001U:
+		ecx = 1U << 5U;
+		edx = (1U << 11U) | (1U << 20U) | (1U << 29U);
+		break;
+	case 0x8000'0002U:
+		eax = 0x20554d4cU;
+		ebx = 0x5f363878U;
+		ecx = 0x67203436U;
+		edx = 0x65676461U;
+		break;
+	case 0x8000'0003U:
+		eax = 0x65207374U;
+		ebx = 0x616c756dU;
+		ecx = 0x00726f74U;
+		break;
+	default:
+		break;
+	}
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rax),
+		OperandWidth::dword, eax);
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rbx),
+		OperandWidth::dword, ebx);
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rcx),
+		OperandWidth::dword, ecx);
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rdx),
+		OperandWidth::dword, edx);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult read_extended_control(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &) noexcept
+{
+	const auto value = cpu.gpr(Register::rcx) == 0 ? 3U : 0U;
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rax),
+		OperandWidth::dword, value);
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rdx),
+		OperandWidth::dword, 0);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult read_timestamp(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	const auto now = std::chrono::steady_clock::now().time_since_epoch();
+	const auto ticks = static_cast<std::uint64_t>(
+		std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rax),
+		OperandWidth::dword, ticks);
+	write_gpr(cpu, static_cast<std::uint8_t>(Register::rdx),
+		OperandWidth::dword, ticks >> 32U);
+	if (gadget.instruction.auxiliary.immediate != 0)
+		write_gpr(cpu, static_cast<std::uint8_t>(Register::rcx),
+			OperandWidth::dword, 0);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult read_processor_id(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto written = write_operand(gadget, cpu, memory,
+		gadget.instruction.destination, 1);
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult random_value(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	auto value = next_random() & width_mask(
+		gadget.instruction.destination.width);
+	if (value == 0)
+		value = 1;
+	const auto written = write_operand(gadget, cpu, memory,
+		gadget.instruction.destination, value);
+	if (written.action == StepAction::exit)
+		return written;
+	materialize_flags(cpu);
+	constexpr auto arithmetic = rflags_carry | rflags_parity |
+		rflags_auxiliary | rflags_zero | rflags_sign | rflags_overflow;
+	cpu.rflags = (cpu.rflags & ~arithmetic) | rflags_carry | rflags_reserved;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult fs_gs_base(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto operation = gadget.instruction.operation;
+	if (operation == Operation::read_fs_base ||
+		operation == Operation::read_gs_base) {
+		const auto value = operation == Operation::read_fs_base ?
+			cpu.fs_base : cpu.gs_base;
+		const auto written = write_operand(gadget, cpu, memory,
+			gadget.instruction.destination, value);
+		if (written.action == StepAction::exit)
+			return written;
+	} else {
+		const auto source = read_operand(
+			gadget, cpu, memory, gadget.instruction.source);
+		if (!source.succeeded)
+			return read_failure(source);
+		if (operation == Operation::write_fs_base)
+			cpu.fs_base = source.value;
+		else
+			cpu.gs_base = source.value;
+	}
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult store_gdtr(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto address = effective_address(gadget, cpu,
+		gadget.instruction.destination.memory, true);
+	std::array<std::byte, 10> bytes{};
+	const std::uint64_t base = 0xffff'fffffffe'0000ULL;
+	std::memcpy(bytes.data() + 2, &base, sizeof(base));
+	if (!write_memory_bytes(memory, address, bytes))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::write)};
+	memory.invalidate_code(address);
+	advance(gadget, cpu);
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}, address, 10};
+}
+
+[[nodiscard]] StepResult store_machine_status(const Gadget &gadget,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	StepResult written{};
+	if (gadget.instruction.destination.kind == OperandKind::reg &&
+		gadget.instruction.destination.width == OperandWidth::dword) {
+		auto &value = cpu.registers[
+			gadget.instruction.destination.reg.index];
+		value = (value & 0xffff'ffff'0000'0000ULL) | 0x8005'0033U;
+	} else {
+		written = write_operand(gadget, cpu, memory,
+			gadget.instruction.destination, 0x8005'0033U);
+	}
+	if (written.action == StepAction::exit)
+		return written;
+	advance(gadget, cpu);
+	return written;
+}
+
+[[nodiscard]] StepResult cache_zero(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory) noexcept
+{
+	const auto address = cpu.gpr(Register::rax) & ~std::uint64_t{63};
+	const std::array<std::byte, 64> zeros{};
+	if (!write_memory_bytes(memory, address, zeros))
+		return {StepAction::exit, ::uml::cpu::EngineEvent::memory_fault,
+			memory_fault(memory, address, ::uml::memory::MemoryAccess::write)};
+	memory.invalidate_code(address);
+	advance(gadget, cpu);
+	return {StepAction::return_to_dispatch,
+		::uml::cpu::EngineEvent::continued, {}, address, 64};
+}
+
+[[nodiscard]] StepResult memory_fence(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	advance(gadget, cpu);
+	return {};
+}
+
+[[nodiscard]] StepResult cache_flush(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &) noexcept
+{
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	advance(gadget, cpu);
+	return {};
+}
+
 [[nodiscard]] StepResult system_call(const Gadget &gadget, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &) noexcept
 {
@@ -1133,12 +1892,29 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	case Operation::rotate_carry_left:
 	case Operation::rotate_carry_right:
 		return shift_rotate;
+	case Operation::double_shift_left:
+	case Operation::double_shift_right:
+		return double_shift;
 	case Operation::multiply:
 	case Operation::multiply_signed:
 		return multiply;
 	case Operation::divide:
 	case Operation::divide_signed:
 		return divide;
+	case Operation::bit_test:
+	case Operation::bit_set:
+	case Operation::bit_reset:
+	case Operation::bit_complement:
+		return bit_operation;
+	case Operation::bit_scan_forward:
+	case Operation::bit_scan_reverse:
+	case Operation::count_trailing_zeros:
+	case Operation::count_leading_zeros:
+	case Operation::population_count:
+		return bit_count;
+	case Operation::compare_exchange: return compare_exchange;
+	case Operation::compare_exchange_pair: return compare_exchange_pair;
+	case Operation::exchange_add: return exchange_add;
 	case Operation::set_condition: return set_condition;
 	case Operation::conditional_move: return conditional_move;
 	case Operation::byte_swap: return byte_swap;
@@ -1150,6 +1926,13 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	case Operation::push_flags: return push_flags;
 	case Operation::pop_flags: return pop_flags;
 	case Operation::leave: return leave;
+	case Operation::enter: return enter;
+	case Operation::string_move:
+	case Operation::string_compare:
+	case Operation::string_store:
+	case Operation::string_load:
+	case Operation::string_scan:
+		return string_operation;
 	case Operation::carry_clear:
 	case Operation::carry_set:
 	case Operation::carry_complement:
@@ -1165,6 +1948,21 @@ void write_multiply_pair(CpuState &cpu, OperandWidth width,
 	case Operation::call: return call;
 	case Operation::call_indirect: return call_indirect;
 	case Operation::ret: return ret;
+	case Operation::cpuid: return cpuid;
+	case Operation::read_extended_control: return read_extended_control;
+	case Operation::read_timestamp: return read_timestamp;
+	case Operation::read_processor_id: return read_processor_id;
+	case Operation::random: return random_value;
+	case Operation::read_fs_base:
+	case Operation::read_gs_base:
+	case Operation::write_fs_base:
+	case Operation::write_gs_base:
+		return fs_gs_base;
+	case Operation::store_gdtr: return store_gdtr;
+	case Operation::store_machine_status: return store_machine_status;
+	case Operation::cache_zero: return cache_zero;
+	case Operation::memory_fence: return memory_fence;
+	case Operation::cache_flush: return cache_flush;
 	case Operation::system_call: return system_call;
 	case Operation::breakpoint: return breakpoint;
 	}
