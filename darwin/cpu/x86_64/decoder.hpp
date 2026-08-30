@@ -161,6 +161,7 @@ enum class Operation : std::uint8_t {
 	vector_gpr_move,
 	vector_integer,
 	vector_integer_map2,
+	vector_integer_map3,
 	vector_test,
 	vector_aes,
 	vector_sha,
