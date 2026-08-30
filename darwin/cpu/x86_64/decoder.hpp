@@ -48,6 +48,7 @@ struct MemoryOperand final {
 	bool rip_relative{};
 	bool address_32{};
 	bool absolute_address{};
+	bool vector_index{};
 };
 
 struct Operand final {
@@ -106,6 +107,7 @@ enum class Operation : std::uint8_t {
 	move_byte_swap,
 	crc32,
 	adx,
+	scalar_bmi,
 	set_condition,
 	conditional_move,
 	byte_swap,
@@ -162,6 +164,9 @@ enum class Operation : std::uint8_t {
 	vector_integer,
 	vector_integer_map2,
 	vector_integer_map3,
+	vector_fma,
+	vector_map2_misc,
+	vector_gather,
 	vector_test,
 	vector_aes,
 	vector_sha,
