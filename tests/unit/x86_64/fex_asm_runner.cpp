@@ -528,6 +528,16 @@ int main(int argc, char **argv)
 		const auto result = uml::cpu::x86_64::gadgets::execute(
 			built.program, cpu, memory, remaining);
 		retired += result.retired_instructions;
+		/* One upstream decoder test uses Linux time(2) only to prove that
+		 * SYSCALL reached a live boundary. Keep that test-local service in
+		 * the adapter instead of teaching the CPU engine about Linux ABIs.
+		 */
+		if (result.event == uml::cpu::EngineEvent::system_call &&
+			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&
+			cpu.gpr(uml::cpu::x86_64::Register::rdi) == 0) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 1;
+			continue;
+		}
 		if (result.event != uml::cpu::EngineEvent::continued) {
 			const auto status = result.event ==
 				uml::cpu::EngineEvent::memory_fault ?
