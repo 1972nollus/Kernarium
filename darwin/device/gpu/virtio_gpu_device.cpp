@@ -311,6 +311,7 @@ void VirtioGpuDevice::reset() noexcept
     virglResources_.clear();
     resources_.clear();
     transferStaging_.clear();
+    readbackStaging_.clear();
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
     UML_GPU_DISPLAY.clear();
@@ -1089,27 +1090,28 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         if (!rectangleFits(scanout->rectangle, width, height))
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
-        std::vector<std::uint8_t> replacementPixels;
-        bool replacePixels = false;
+        std::vector<std::uint8_t> replacementReadback;
+        bool replaceReadback = false;
         if (virglResource != nullptr) {
-            const auto byteCount = pixelBufferSize(width, height);
+            const auto byteCount = pixelBufferSize(
+                scanout->rectangle.width, scanout->rectangle.height);
             if (!byteCount) {
                 return response(
                     *header, protocol::GpuResponse::errorOutOfMemory);
             }
-            if (virglResource->pixels.size() != *byteCount) {
+            if (readbackStaging_.size() != *byteCount) {
                 try {
-                    replacementPixels.resize(*byteCount);
+                    replacementReadback.resize(*byteCount);
                 } catch (const std::bad_alloc&) {
                     return response(
                         *header, protocol::GpuResponse::errorOutOfMemory);
                 }
-                replacePixels = true;
+                replaceReadback = true;
             }
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        if (replacePixels)
-            virglResource->pixels.swap(replacementPixels);
+        if (replaceReadback)
+            readbackStaging_.swap(replacementReadback);
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
         return success;
@@ -1176,16 +1178,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             if (!damage)
                 return response(
                     *header, protocol::GpuResponse::okNoData);
-            const auto expectedBytes =
-                pixelBufferSize(resource.width, resource.height);
-            if (!expectedBytes) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            }
-            if (*expectedBytes != resource.pixels.size()) {
-                return response(
-                    *header, protocol::GpuResponse::errorUnspecified);
-            }
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
             void* metalTexture = nullptr;
@@ -1208,13 +1200,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             const auto fallbackDamage =
                 UML_GPU_DISPLAY.needsFullCpuFallback() ?
                 scanoutRectangle_ : *damage;
-            std::vector<std::uint8_t> replacementPixels;
+            const auto readbackBytes = pixelBufferSize(
+                fallbackDamage.width, fallbackDamage.height);
+            if (!readbackBytes || readbackStaging_.size() < *readbackBytes) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
+            const auto readback = std::span<std::uint8_t>(readbackStaging_)
+                .first(*readbackBytes);
+            const auto readbackRowBytes =
+                static_cast<std::size_t>(fallbackDamage.width) *
+                protocol::gpuBytesPerPixel;
             try {
-                replacementPixels = resource.pixels;
                 if (UML_GPU_RENDERER.readResourceRectangle(
                         flush->resourceId,
-                        replacementPixels,
-                        0,
+                        readback,
                         fallbackDamage.x,
                         fallbackDamage.y,
                         fallbackDamage.width,
@@ -1224,14 +1224,13 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                         protocol::GpuResponse::errorUnspecified);
                 }
                 UML_GPU_DISPLAY.update(
-                    std::span<const std::uint8_t>(replacementPixels),
-                    resource.width,
-                    resource.height,
-                    static_cast<std::size_t>(resource.width) *
-                        protocol::gpuBytesPerPixel,
+                    std::span<const std::uint8_t>(readback),
+                    fallbackDamage.width,
+                    fallbackDamage.height,
+                    readbackRowBytes,
                     resource.format,
-                    fallbackDamage.x,
-                    fallbackDamage.y,
+                    0,
+                    0,
                     fallbackDamage.x - scanoutRectangle_.x,
                     fallbackDamage.y - scanoutRectangle_.y,
                     fallbackDamage.width,
@@ -1243,7 +1242,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 return response(
                     *header, protocol::GpuResponse::errorUnspecified);
             }
-            resource.pixels.swap(replacementPixels);
             return success;
         }
 

@@ -40,10 +40,13 @@ VA-API path without a Mesa fork; applications, including Chromium builds,
 must enable Linux VA-API decoding themselves. Encoding, interlaced H.264,
 10-bit profiles, and non-H.264 codecs are not advertised.
 
-Unsupported resource shapes may use a counted CPU conversion path. Native
-performance qualification requires zero sustained CPU fallback. Dropped
-superseded presentation frames are successful guest completions; they must not
-force synchronous GPU readback.
+Supported NV12 surfaces keep VideoToolbox's IOSurface-backed CoreVideo planes
+on the GPU: the host imports them through the ANGLE Metal device and copies
+each plane into the existing guest texture without changing its identity.
+IYUV and unsupported resource shapes may use a CPU conversion path.
+Native performance qualification requires zero sustained CPU fallback.
+Dropped superseded presentation frames are successful guest completions; they
+must not force synchronous GPU readback.
 
 The GPU advertises display geometry and density through EDID. Kernarium point
 mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and

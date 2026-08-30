@@ -3,6 +3,7 @@
 #include "virgl_renderer.hpp"
 
 #include "host_gl_provider.hpp"
+#include "protocol.hpp"
 
 #include <algorithm>
 #include <array>
@@ -433,26 +434,44 @@ int VirglRenderer::transferResource(
 int VirglRenderer::readResourceRectangle(
     std::uint32_t resourceId,
     std::span<std::uint8_t> destination,
-    std::uint32_t offset,
     std::uint32_t x,
     std::uint32_t y,
     std::uint32_t width,
     std::uint32_t height) noexcept
 {
+    if (width == 0 || height == 0)
+        return EINVAL;
+    if (width >
+        std::numeric_limits<std::uint32_t>::max() /
+            protocol::gpuBytesPerPixel) {
+        return EOVERFLOW;
+    }
+    const auto stride = width * protocol::gpuBytesPerPixel;
+    if (height > destination.size() / stride)
+        return ENOSPC;
     iovec vector {
         .iov_base = destination.data(),
         .iov_len = destination.size(),
     };
-    virgl_renderer_get_rect(
-        static_cast<int>(resourceId),
-        &vector,
-        1,
-        offset,
-        static_cast<int>(x),
-        static_cast<int>(y),
-        static_cast<int>(width),
-        static_cast<int>(height));
-    return checkGlDispatchResult(0);
+    virgl_box box {
+        .x = x,
+        .y = y,
+        .z = 0,
+        .w = width,
+        .h = height,
+        .d = 1,
+    };
+    return checkGlDispatchResult(
+        virgl_renderer_transfer_read_iov(
+            resourceId,
+            0,
+            0,
+            stride,
+            0,
+            &box,
+            0,
+            &vector,
+            1));
 }
 
 int VirglRenderer::resourceMetalTexture(
@@ -517,9 +536,10 @@ int VirglRenderer::createFenceAndWait(
 
         const auto deadline =
             std::chrono::steady_clock::now() + maximumFenceWait;
-        // Polling at one millisecond keeps fence latency low without spinning
-        // a host CPU when a Metal queue has substantial work outstanding.
-        constexpr auto pollingInterval = std::chrono::milliseconds(1);
+        // A sub-millisecond interval avoids adding a full scheduler tick to
+        // the many short Metal fences emitted by compositors and video
+        // playback, while the timed wait still keeps this thread off-CPU.
+        constexpr auto pollingInterval = std::chrono::microseconds(100);
         std::unique_lock lock(mutex_);
         while (true) {
             if (fenceCallbackFailed_.load(std::memory_order_acquire))
@@ -550,8 +570,32 @@ int VirglRenderer::createFenceAndWait(
             if (checkGlDispatchResult(0) != 0)
                 return EIO;
             lock.lock();
+            /*
+             * Polling invokes the fence callback synchronously on the common
+             * non-threaded renderer path. Recheck the callback-owned state in
+             * the wait predicate: an unconditional timed wait here loses the
+             * notification which was issued by that just-completed poll and
+             * adds a full polling interval to every retired fence.
+             */
             fenceCondition_.wait_until(
-                lock, std::min(deadline, now + pollingInterval));
+                lock,
+                std::min(deadline, now + pollingInterval),
+                [&] {
+                    if (fenceCallbackFailed_.load(
+                            std::memory_order_acquire)) {
+                        return true;
+                    }
+                    if (stopRequested != nullptr &&
+                        stopRequested->load(std::memory_order_acquire)) {
+                        return true;
+                    }
+                    if (contextZero)
+                        return retiredFence_ >= fenceId;
+                    const auto iterator =
+                        retiredContextFences_.find(key);
+                    return iterator != retiredContextFences_.end() &&
+                        iterator->second >= fenceId;
+                });
         }
     } catch (...) {
         return EIO;

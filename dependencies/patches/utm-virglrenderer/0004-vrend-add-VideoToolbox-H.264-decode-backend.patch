@@ -1,18 +1,20 @@
-From 5617d954e5bf6b3a71e85cbed2b00c23bbeb75e4 Mon Sep 17 00:00:00 2001
+From 94376bbd6e02f9ce2665f6c8212b30b988a10c8f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
 Subject: [PATCH 4/4] vrend: add VideoToolbox H.264 decode backend
 
 ---
- meson.build                          |  19 +-
- src/meson.build                      |  23 +-
- src/vrend/vrend_renderer.c           |   5 +
- src/vrend/vrend_video_h264.c         | 538 +++++++++++++++++
- src/vrend/vrend_video_h264.h         |  58 ++
- src/vrend/vrend_video_videotoolbox.m | 856 +++++++++++++++++++++++++++
- tests/meson.build                    |  13 +
- tests/test_vrend_video_h264.c        | 118 ++++
- 8 files changed, 1622 insertions(+), 8 deletions(-)
+ meson.build                          |   19 +-
+ src/meson.build                      |   23 +-
+ src/vrend/vrend_renderer.c           |   27 +-
+ src/vrend/vrend_video_h264.c         |  553 ++++++++++++
+ src/vrend/vrend_video_h264.h         |   66 ++
+ src/vrend/vrend_video_videotoolbox.m | 1235 ++++++++++++++++++++++++++
+ src/vrend/vrend_winsys_egl.c         |    6 +
+ src/vrend/vrend_winsys_egl.h         |    1 +
+ tests/meson.build                    |   13 +
+ tests/test_vrend_video_h264.c        |  134 +++
+ 10 files changed, 2066 insertions(+), 11 deletions(-)
  create mode 100644 src/vrend/vrend_video_h264.c
  create mode 100644 src/vrend/vrend_video_h264.h
  create mode 100644 src/vrend/vrend_video_videotoolbox.m
@@ -97,7 +99,7 @@ index e6e48ca..6ac7158 100644
  
  if with_host_windows
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 273e3f2..2b393b3 100644
+index 273e3f2..06d45fd 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7967,10 +7967,15 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
@@ -116,12 +118,48 @@ index 273e3f2..2b393b3 100644
     }
  #endif
  
+@@ -10121,8 +10126,23 @@ static int vrend_transfer_send_readpixels(struct vrend_context *ctx,
+    if (num_iovs > 1 || separate_invert)
+       need_temp = 1;
+ 
+-   if (vrend_state.use_gles && vrend_format_is_bgra(res->base.format))
+-      need_temp = true;
++   if (vrend_state.use_gles && vrend_format_is_bgra(res->base.format)) {
++      const uint64_t tight_size =
++         (uint64_t)info->box->width * info->box->height * elsize;
++      const bool direct_bgra = !need_temp && num_iovs == 1 &&
++         info->box->depth == 1 &&
++         info->offset <= iov[0].iov_len &&
++         iov[0].iov_len - info->offset == tight_size &&
++         (!info->stride ||
++          (uint64_t)info->stride ==
++             (uint64_t)info->box->width * elsize);
++
++      /* A tight single destination can receive RGBA pixels directly and be
++       * swizzled in place. Strided, inverted, or split destinations still
++       * need a packed intermediate. */
++      if (!direct_bgra)
++         need_temp = true;
++   }
+ 
+    if (need_temp) {
+       send_size = util_format_get_nblocks(res->base.format, info->box->width, info->box->height);
+@@ -11990,7 +12010,8 @@ void vrend_renderer_check_fences(void)
+       }
+       mtx_unlock(&vrend_state.fence_mutex);
+    } else {
+-      vrend_renderer_force_ctx_0();
++      if (vrend_state.current_hw_ctx != vrend_state.ctx0)
++         vrend_renderer_force_ctx_0();
+ 
+       list_for_each_entry_safe(struct vrend_fence, fence, &vrend_state.fence_list, fences) {
+          if (do_wait(fence, /* can_block */ false)) {
 diff --git a/src/vrend/vrend_video_h264.c b/src/vrend/vrend_video_h264.c
 new file mode 100644
-index 0000000..0382cd9
+index 0000000..37e7aa4
 --- /dev/null
 +++ b/src/vrend/vrend_video_h264.c
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,553 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -584,7 +622,8 @@ index 0000000..0382cd9
 +   }
 +   if (nal_type == 7 || nal_type == 8)
 +      return 0;
-+   if (nal_size > UINT32_MAX || *output_size > capacity - 4 ||
++   if (nal_size > UINT32_MAX || capacity < 4 ||
++       *output_size > capacity - 4 ||
 +       nal_size > capacity - *output_size - 4)
 +      return -1;
 +
@@ -598,32 +637,26 @@ index 0000000..0382cd9
 +   return 0;
 +}
 +
-+int vrend_video_h264_annexb_to_avcc(const uint8_t *annexb,
-+                                    size_t annexb_size,
-+                                    uint8_t **avcc,
-+                                    size_t *avcc_size,
-+                                    uint32_t *pps_id)
++int vrend_video_h264_annexb_to_avcc_buffer(const uint8_t *annexb,
++                                           size_t annexb_size,
++                                           uint8_t *avcc,
++                                           size_t avcc_capacity,
++                                           size_t *avcc_size,
++                                           uint32_t *pps_id)
 +{
-+   uint8_t *output;
-+   size_t capacity;
 +   size_t output_size = 0;
 +   size_t start;
 +   size_t start_length;
 +   bool found_slice = false;
 +
-+   if (!annexb || !annexb_size || !avcc || !avcc_size || !pps_id ||
-+       annexb_size > (SIZE_MAX - 16) / 2)
-+      return -1;
-+
-+   capacity = annexb_size * 2 + 16;
-+   output = malloc(capacity);
-+   if (!output)
++   if (!annexb || !annexb_size || !avcc || !avcc_capacity || !avcc_size ||
++       !pps_id)
 +      return -1;
 +
 +   if (!find_start_code(annexb, annexb_size, 0, &start, &start_length)) {
-+      if (append_avcc_nal(output, capacity, &output_size,
++      if (append_avcc_nal(avcc, avcc_capacity, &output_size,
 +                          annexb, annexb_size, pps_id, &found_slice) != 0)
-+         goto fail;
++         return -1;
 +   } else {
 +      while (true) {
 +         const size_t nal_start = start + start_length;
@@ -639,10 +672,10 @@ index 0000000..0382cd9
 +         }
 +         while (nal_end > nal_start && annexb[nal_end - 1] == 0)
 +            nal_end--;
-+         if (append_avcc_nal(output, capacity, &output_size,
++         if (append_avcc_nal(avcc, avcc_capacity, &output_size,
 +                             annexb + nal_start, nal_end - nal_start,
 +                             pps_id, &found_slice) != 0)
-+            goto fail;
++            return -1;
 +         if (nal_end == annexb_size)
 +            break;
 +         start = next;
@@ -651,21 +684,41 @@ index 0000000..0382cd9
 +   }
 +
 +   if (!found_slice || !output_size)
-+      goto fail;
-+   *avcc = output;
++      return -1;
 +   *avcc_size = output_size;
 +   return 0;
++}
 +
-+fail:
-+   free(output);
-+   return -1;
++int vrend_video_h264_annexb_to_avcc(const uint8_t *annexb,
++                                    size_t annexb_size,
++                                    uint8_t **avcc,
++                                    size_t *avcc_size,
++                                    uint32_t *pps_id)
++{
++   uint8_t *output;
++   size_t capacity;
++
++   if (!annexb || !annexb_size || !avcc || !avcc_size || !pps_id ||
++       annexb_size > (SIZE_MAX - 16) / 2)
++      return -1;
++   capacity = annexb_size * 2 + 16;
++   output = malloc(capacity);
++   if (!output)
++      return -1;
++   if (vrend_video_h264_annexb_to_avcc_buffer(
++          annexb, annexb_size, output, capacity, avcc_size, pps_id) != 0) {
++      free(output);
++      return -1;
++   }
++   *avcc = output;
++   return 0;
 +}
 diff --git a/src/vrend/vrend_video_h264.h b/src/vrend/vrend_video_h264.h
 new file mode 100644
-index 0000000..587d079
+index 0000000..52ea5c8
 --- /dev/null
 +++ b/src/vrend/vrend_video_h264.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,66 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -723,13 +776,21 @@ index 0000000..587d079
 +   size_t *avcc_size,
 +   uint32_t *pps_id);
 +
++int vrend_video_h264_annexb_to_avcc_buffer(
++   const uint8_t *annexb,
++   size_t annexb_size,
++   uint8_t *avcc,
++   size_t avcc_capacity,
++   size_t *avcc_size,
++   uint32_t *pps_id);
++
 +#endif /* VREND_VIDEO_H264_H */
 diff --git a/src/vrend/vrend_video_videotoolbox.m b/src/vrend/vrend_video_videotoolbox.m
 new file mode 100644
-index 0000000..cd1a54e
+index 0000000..6772437
 --- /dev/null
 +++ b/src/vrend/vrend_video_videotoolbox.m
-@@ -0,0 +1,856 @@
+@@ -0,0 +1,1235 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -757,6 +818,7 @@ index 0000000..cd1a54e
 +#import <CoreFoundation/CoreFoundation.h>
 +#import <CoreMedia/CoreMedia.h>
 +#import <CoreVideo/CoreVideo.h>
++#import <Metal/Metal.h>
 +#import <TargetConditionals.h>
 +#import <VideoToolbox/VideoToolbox.h>
 +
@@ -772,14 +834,28 @@ index 0000000..cd1a54e
 +#include "vrend_renderer.h"
 +#include "vrend_video.h"
 +#include "vrend_video_h264.h"
++#include "vrend_winsys.h"
 +
 +#define VREND_VT_MAX_WIDTH 4096
 +#define VREND_VT_MAX_HEIGHT 2304
++#define VREND_VT_METAL_PLANE_COUNT 2
++#define VREND_VT_METAL_CACHE_FLUSH_INTERVAL 64
++
++struct vrend_video_metal_plane {
++   GLuint texture;
++   CVMetalTextureRef source;
++};
 +
 +struct vrend_video_context {
 +   struct vrend_context *ctx;
 +   struct list_head codecs;
 +   struct list_head buffers;
++   CVMetalTextureCacheRef metal_cache;
++   unsigned metal_cache_frames;
++   bool metal_cache_attempted;
++   bool metal_copy_disabled;
++   bool reported_metal_active;
++   bool reported_metal_fallback;
 +};
 +
 +struct vrend_video_codec {
@@ -793,6 +869,10 @@ index 0000000..cd1a54e
 +   CMVideoFormatDescriptionRef format;
 +   VTDecompressionSessionRef session;
 +   struct vrend_h264_parameter_sets parameter_sets;
++   uint8_t *annexb;
++   size_t annexb_capacity;
++   uint8_t *avcc;
++   size_t avcc_capacity;
 +   bool reported_decoded_frame;
 +   bool reported_decode_failure;
 +};
@@ -806,6 +886,10 @@ index 0000000..cd1a54e
 +   uint32_t plane_handles[VREND_VIDEO_BUFFER_PLANE_NUM];
 +   struct vrend_video_context *ctx;
 +   struct list_head head;
++   struct vrend_video_metal_plane metal_planes[VREND_VT_METAL_PLANE_COUNT];
++   GLsync metal_fence;
++   uint8_t *chroma_scratch;
++   size_t chroma_scratch_capacity;
 +};
 +
 +struct decoded_frame {
@@ -814,6 +898,31 @@ index 0000000..cd1a54e
 +};
 +
 +static bool video_initialized;
++
++static bool reserve_buffer(uint8_t **buffer,
++                           size_t *capacity,
++                           size_t required)
++{
++   uint8_t *grown;
++   size_t new_capacity;
++
++   if (required <= *capacity)
++      return true;
++   new_capacity = *capacity ? *capacity : 4096;
++   while (new_capacity < required) {
++      if (new_capacity > SIZE_MAX / 2) {
++         new_capacity = required;
++         break;
++      }
++      new_capacity *= 2;
++   }
++   grown = realloc(*buffer, new_capacity);
++   if (!grown)
++      return false;
++   *buffer = grown;
++   *capacity = new_capacity;
++   return true;
++}
 +
 +static int report_decode_failure(struct vrend_video_codec *codec,
 +                                 const char *stage)
@@ -952,13 +1061,49 @@ index 0000000..cd1a54e
 +      return;
 +   list_del(&codec->head);
 +   destroy_session(codec);
++   free(codec->avcc);
++   free(codec->annexb);
 +   free(codec);
++}
++
++static void release_metal_sources(struct vrend_video_buffer *buffer)
++{
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      if (buffer->metal_planes[i].source) {
++         CFRelease(buffer->metal_planes[i].source);
++         buffer->metal_planes[i].source = NULL;
++      }
++   }
++}
++
++static bool retire_metal_copy(struct vrend_video_buffer *buffer)
++{
++   GLenum wait_result = GL_ALREADY_SIGNALED;
++
++   if (buffer->metal_fence) {
++      do {
++         wait_result = glClientWaitSync(buffer->metal_fence, 0,
++                                        1000000000ULL);
++      } while (wait_result == GL_TIMEOUT_EXPIRED);
++      glDeleteSync(buffer->metal_fence);
++      buffer->metal_fence = NULL;
++      if (wait_result == GL_WAIT_FAILED)
++         glFinish();
++   }
++   release_metal_sources(buffer);
++   return wait_result != GL_WAIT_FAILED;
 +}
 +
 +static void destroy_video_buffer(struct vrend_video_buffer *buffer)
 +{
 +   if (!buffer)
 +      return;
++   retire_metal_copy(buffer);
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      if (buffer->metal_planes[i].texture)
++         glDeleteTextures(1, &buffer->metal_planes[i].texture);
++   }
++   free(buffer->chroma_scratch);
 +   list_del(&buffer->head);
 +   free(buffer);
 +}
@@ -973,6 +1118,10 @@ index 0000000..cd1a54e
 +   list_for_each_entry_safe(struct vrend_video_buffer, buffer,
 +                            &ctx->buffers, head)
 +      destroy_video_buffer(buffer);
++   if (ctx->metal_cache) {
++      CVMetalTextureCacheFlush(ctx->metal_cache, 0);
++      CFRelease(ctx->metal_cache);
++   }
 +   free(ctx);
 +}
 +
@@ -1131,6 +1280,7 @@ index 0000000..cd1a54e
 +      kCVPixelBufferWidthKey,
 +      kCVPixelBufferHeightKey,
 +      kCVPixelBufferIOSurfacePropertiesKey,
++      kCVPixelBufferMetalCompatibilityKey,
 +   };
 +   const void *values[ARRAY_SIZE(keys)];
 +
@@ -1161,6 +1311,7 @@ index 0000000..cd1a54e
 +   values[1] = width_number;
 +   values[2] = height_number;
 +   values[3] = io_surface_properties;
++   values[4] = kCFBooleanTrue;
 +   attributes = CFDictionaryCreate(kCFAllocatorDefault, keys, values,
 +                                   ARRAY_SIZE(keys),
 +                                   &kCFTypeDictionaryKeyCallBacks,
@@ -1285,6 +1436,262 @@ index 0000000..cd1a54e
 +   return 0;
 +}
 +
++#ifdef ENABLE_METAL
++static bool ensure_metal_cache(struct vrend_video_context *ctx)
++{
++   id<MTLDevice> device;
++   int64_t usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
++   CFNumberRef usage_number = NULL;
++   CFDictionaryRef cache_attributes = NULL;
++   CVReturn status = kCVReturnError;
++
++   if (ctx->metal_cache)
++      return true;
++   if (ctx->metal_cache_attempted)
++      return false;
++   ctx->metal_cache_attempted = true;
++
++   device = (id<MTLDevice>)virgl_egl_metal_get_device(egl);
++   if (!device)
++      return false;
++
++   usage_number = CFNumberCreate(kCFAllocatorDefault,
++                                 kCFNumberSInt64Type, &usage);
++   if (usage_number) {
++      const void *keys[] = {kCVMetalTextureUsage};
++      const void *values[] = {usage_number};
++
++      cache_attributes = CFDictionaryCreate(
++         kCFAllocatorDefault, keys, values, ARRAY_SIZE(keys),
++         &kCFTypeDictionaryKeyCallBacks,
++         &kCFTypeDictionaryValueCallBacks);
++   }
++   if (cache_attributes) {
++      status = CVMetalTextureCacheCreate(kCFAllocatorDefault,
++                                         cache_attributes, device, NULL,
++                                         &ctx->metal_cache);
++   }
++   if (cache_attributes)
++      CFRelease(cache_attributes);
++   if (usage_number)
++      CFRelease(usage_number);
++   return status == kCVReturnSuccess && ctx->metal_cache;
++}
++
++static bool ensure_metal_scratch(struct vrend_video_buffer *target)
++{
++   GLuint textures[VREND_VT_METAL_PLANE_COUNT] = {0};
++
++   if (target->metal_planes[0].texture && target->metal_planes[1].texture)
++      return true;
++
++   glGenTextures(VREND_VT_METAL_PLANE_COUNT, textures);
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      glBindTexture(GL_TEXTURE_2D, textures[i]);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++   }
++   glBindTexture(GL_TEXTURE_2D, 0);
++   if (glGetError() != GL_NO_ERROR)
++      goto fail;
++
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      target->metal_planes[i].texture = textures[i];
++   }
++   return true;
++
++fail:
++   glDeleteTextures(VREND_VT_METAL_PLANE_COUNT, textures);
++   return false;
++}
++
++static bool validate_metal_destination(struct vrend_video_buffer *target,
++                                       unsigned plane,
++                                       enum virgl_formats expected_format,
++                                       size_t width,
++                                       size_t height,
++                                       struct vrend_resource **resource_out)
++{
++   struct vrend_resource *resource;
++
++   if (plane >= target->num_planes || width > INT_MAX || height > INT_MAX)
++      return false;
++   resource = vrend_renderer_ctx_res_lookup(
++      target->ctx->ctx, target->plane_handles[plane]);
++   if (!resource || !resource->gl_id ||
++       !has_bit(resource->storage_bits, VREND_STORAGE_GL_TEXTURE) ||
++       resource->base.target != PIPE_TEXTURE_2D ||
++       resource->target != GL_TEXTURE_2D ||
++       resource->base.format != expected_format ||
++       resource->base.depth0 != 1 || resource->base.last_level != 0 ||
++       resource->base.nr_samples > 1 ||
++       width > resource->base.width0 || height > resource->base.height0)
++      return false;
++   *resource_out = resource;
++   return true;
++}
++
++static bool copy_metal_plane(struct vrend_video_metal_plane *plane,
++                             GLuint framebuffer,
++                             EGLImageKHR image,
++                             struct vrend_resource *destination,
++                             size_t width,
++                             size_t height,
++                             bool *copy_issued)
++{
++   GLenum framebuffer_status;
++   GLenum error;
++
++   *copy_issued = false;
++   glBindTexture(GL_TEXTURE_2D, plane->texture);
++   glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
++   if (glGetError() != GL_NO_ERROR)
++      return false;
++
++   glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
++   glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                          GL_TEXTURE_2D, plane->texture, 0);
++   framebuffer_status = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
++   error = glGetError();
++   if (framebuffer_status != GL_FRAMEBUFFER_COMPLETE || error != GL_NO_ERROR)
++      return false;
++
++   glBindTexture(GL_TEXTURE_2D, destination->gl_id);
++   glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0,
++                       (GLsizei)width, (GLsizei)height);
++   *copy_issued = true;
++   return glGetError() == GL_NO_ERROR;
++}
++
++static int copy_nv12_with_metal(struct vrend_video_buffer *target,
++                                CVPixelBufferRef image)
++{
++   static const enum virgl_formats virgl_formats[] = {
++      VIRGL_FORMAT_R8_UNORM,
++      VIRGL_FORMAT_R8G8_UNORM,
++   };
++   static const MTLPixelFormat metal_formats[] = {
++      MTLPixelFormatR8Unorm,
++      MTLPixelFormatRG8Unorm,
++   };
++   struct vrend_video_context *ctx = target->ctx;
++   struct vrend_resource *destinations[VREND_VT_METAL_PLANE_COUNT] = {0};
++   CVMetalTextureRef cv_textures[VREND_VT_METAL_PLANE_COUNT] = {0};
++   EGLImageKHR egl_images[VREND_VT_METAL_PLANE_COUNT] = {
++      EGL_NO_IMAGE_KHR,
++      EGL_NO_IMAGE_KHR,
++   };
++   size_t widths[VREND_VT_METAL_PLANE_COUNT];
++   size_t heights[VREND_VT_METAL_PLANE_COUNT];
++   GLuint framebuffer = 0;
++   id<MTLDevice> device;
++   const OSType pixel_format = CVPixelBufferGetPixelFormatType(image);
++   bool copy_issued = false;
++   unsigned copied_planes = 0;
++   int result = -1;
++
++   if ((pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
++        pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) ||
++       target->format != VIRGL_FORMAT_NV12 || target->num_planes != 2 ||
++       !CVPixelBufferIsPlanar(image) ||
++       CVPixelBufferGetPlaneCount(image) < VREND_VT_METAL_PLANE_COUNT ||
++       !ensure_metal_cache(ctx))
++      return -1;
++   device = (id<MTLDevice>)virgl_egl_metal_get_device(egl);
++   if (!device)
++      return -1;
++
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      widths[i] = CVPixelBufferGetWidthOfPlane(image, i);
++      heights[i] = CVPixelBufferGetHeightOfPlane(image, i);
++      if (!widths[i] || !heights[i] ||
++          !validate_metal_destination(target, i, virgl_formats[i],
++                                      widths[i], heights[i],
++                                      &destinations[i]))
++         return -1;
++   }
++   if (!retire_metal_copy(target) || !ensure_metal_scratch(target))
++      return -1;
++   /* Framebuffer names are not shared between guest subcontexts. Keep this
++    * container local to the active subcontext; the scratch textures persist
++    * safely in the shared object group. */
++   glGenFramebuffers(1, &framebuffer);
++   if (!framebuffer || glGetError() != GL_NO_ERROR)
++      goto out;
++
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      CVReturn status = CVMetalTextureCacheCreateTextureFromImage(
++         kCFAllocatorDefault, ctx->metal_cache, image, NULL,
++         metal_formats[i], widths[i], heights[i], i, &cv_textures[i]);
++      id<MTLTexture> texture = cv_textures[i] ?
++         CVMetalTextureGetTexture(cv_textures[i]) : nil;
++
++      if (status != kCVReturnSuccess || !texture ||
++          texture.device != device || texture.textureType != MTLTextureType2D ||
++          texture.pixelFormat != metal_formats[i] ||
++          texture.width != widths[i] || texture.height != heights[i] ||
++          !(texture.usage & MTLTextureUsageRenderTarget))
++         goto out;
++      egl_images[i] = virgl_egl_metal_image_from_texture(
++         egl, (MTLTexture_id)texture);
++      if (egl_images[i] == EGL_NO_IMAGE_KHR)
++         goto out;
++   }
++
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      bool plane_copy_issued;
++
++      if (!copy_metal_plane(&target->metal_planes[i], framebuffer,
++                            egl_images[i],
++                            destinations[i], widths[i], heights[i],
++                            &plane_copy_issued)) {
++         copy_issued |= plane_copy_issued;
++         break;
++      }
++      copy_issued = true;
++      copied_planes++;
++   }
++   glBindTexture(GL_TEXTURE_2D, 0);
++   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++
++   if (copy_issued) {
++      target->metal_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++      if (!target->metal_fence) {
++         /* This is an error-only safety path: CoreVideo may not recycle the
++          * source IOSurfaces until the already queued copies complete. */
++         glFinish();
++         goto out;
++      }
++      glFlush();
++      for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++         target->metal_planes[i].source = cv_textures[i];
++         cv_textures[i] = NULL;
++      }
++   }
++   if (copied_planes == VREND_VT_METAL_PLANE_COUNT)
++      result = 0;
++
++out:
++   glBindTexture(GL_TEXTURE_2D, 0);
++   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++   if (framebuffer)
++      glDeleteFramebuffers(1, &framebuffer);
++   for (unsigned i = 0; i < VREND_VT_METAL_PLANE_COUNT; i++) {
++      if (egl_images[i] != EGL_NO_IMAGE_KHR)
++         virgl_egl_image_destroy(egl, egl_images[i]);
++      if (cv_textures[i])
++         CFRelease(cv_textures[i]);
++   }
++   if (++ctx->metal_cache_frames == VREND_VT_METAL_CACHE_FLUSH_INTERVAL) {
++      CVMetalTextureCacheFlush(ctx->metal_cache, 0);
++      ctx->metal_cache_frames = 0;
++   }
++   return result;
++}
++#endif
++
 +static int upload_plane(struct vrend_video_buffer *target,
 +                        unsigned target_plane,
 +                        enum virgl_formats expected_format,
@@ -1337,12 +1744,12 @@ index 0000000..cd1a54e
 +   return result;
 +}
 +
-+static int upload_decoded_frame(struct vrend_video_buffer *target,
-+                                CVPixelBufferRef image)
++static int upload_decoded_frame_cpu(struct vrend_video_buffer *target,
++                                    CVPixelBufferRef image)
 +{
 +   const OSType pixel_format = CVPixelBufferGetPixelFormatType(image);
-+   uint8_t *u_plane = NULL;
-+   uint8_t *v_plane = NULL;
++   uint8_t *u_plane;
++   uint8_t *v_plane;
 +   CVReturn lock_status;
 +   int result = -1;
 +
@@ -1384,10 +1791,13 @@ index 0000000..cd1a54e
 +       (chroma_height && chroma_width > SIZE_MAX / chroma_height))
 +      goto out;
 +   const size_t chroma_size = chroma_width * chroma_height;
-+   u_plane = malloc(chroma_size);
-+   v_plane = malloc(chroma_size);
-+   if (!u_plane || !v_plane)
++   if (chroma_size > SIZE_MAX / 2 ||
++       !reserve_buffer(&target->chroma_scratch,
++                       &target->chroma_scratch_capacity,
++                       chroma_size * 2))
 +      goto out;
++   u_plane = target->chroma_scratch;
++   v_plane = u_plane + chroma_size;
 +   for (size_t y = 0; y < chroma_height; y++) {
 +      const uint8_t *source_row = chroma_base + y * chroma_row_bytes;
 +      uint8_t *u_row = u_plane + y * chroma_width;
@@ -1405,10 +1815,35 @@ index 0000000..cd1a54e
 +                         chroma_height, chroma_width, v_plane);
 +
 +out:
-+   free(v_plane);
-+   free(u_plane);
 +   CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
 +   return result;
++}
++
++static int upload_decoded_frame(struct vrend_video_buffer *target,
++                                CVPixelBufferRef image)
++{
++   struct vrend_video_context *ctx = target->ctx;
++
++   if (target->format == VIRGL_FORMAT_NV12) {
++#ifdef ENABLE_METAL
++      if (!ctx->metal_copy_disabled) {
++         if (copy_nv12_with_metal(target, image) == 0) {
++            if (!ctx->reported_metal_active) {
++               ctx->reported_metal_active = true;
++               virgl_info("VideoToolbox H.264 NV12 Metal copy active\n");
++            }
++            return 0;
++         }
++         ctx->metal_copy_disabled = true;
++      }
++#endif
++      if (!ctx->reported_metal_fallback) {
++         ctx->reported_metal_fallback = true;
++         virgl_warn("VideoToolbox H.264 NV12 Metal copy unavailable; "
++                    "using CPU upload\n");
++      }
++   }
++   return upload_decoded_frame_cpu(target, image);
 +}
 +
 +static int decode_frame(struct vrend_video_codec *codec,
@@ -1430,11 +1865,8 @@ index 0000000..cd1a54e
 +   int result = -1;
 +
 +   status = CMBlockBufferCreateWithMemoryBlock(
-+      kCFAllocatorDefault, NULL, avcc_size, kCFAllocatorDefault, NULL,
++      kCFAllocatorDefault, (void *)avcc, avcc_size, kCFAllocatorNull, NULL,
 +      0, avcc_size, 0, &block);
-+   if (status != noErr)
-+      goto out;
-+   status = CMBlockBufferReplaceDataBytes(avcc, block, 0, avcc_size);
 +   if (status != noErr)
 +      goto out;
 +   status = CMSampleBufferCreateReady(
@@ -1478,9 +1910,8 @@ index 0000000..cd1a54e
 +   struct vrend_resource *resource;
 +   union virgl_picture_desc desc;
 +   struct vrend_h264_parameter_sets parameter_sets;
-+   uint8_t *annexb = NULL;
-+   uint8_t *avcc = NULL;
 +   size_t annexb_size = 0;
++   size_t avcc_capacity;
 +   size_t avcc_size = 0;
 +   uint32_t pps_id = 0;
 +   int result = -1;
@@ -1499,8 +1930,8 @@ index 0000000..cd1a54e
 +   }
 +   if (!annexb_size)
 +      return report_decode_failure(codec, "empty-bitstream");
-+   annexb = malloc(annexb_size);
-+   if (!annexb)
++   if (!reserve_buffer(&codec->annexb, &codec->annexb_capacity,
++                       annexb_size))
 +      return report_decode_failure(codec, "bitstream-allocation");
 +
 +   size_t offset = 0;
@@ -1511,7 +1942,7 @@ index 0000000..cd1a54e
 +         goto out;
 +      }
 +      if (vrend_read_from_iovec(resource->iov, resource->num_iovs, 0,
-+                                (char *)annexb + offset,
++                                (char *)codec->annexb + offset,
 +                                buffer_sizes[i]) != buffer_sizes[i]) {
 +         report_decode_failure(codec, "bitstream-read");
 +         goto out;
@@ -1538,8 +1969,19 @@ index 0000000..cd1a54e
 +      goto out;
 +   }
 +
-+   if (vrend_video_h264_annexb_to_avcc(
-+          annexb, annexb_size, &avcc, &avcc_size, &pps_id) != 0) {
++   if (annexb_size > (SIZE_MAX - 16) / 2) {
++      report_decode_failure(codec, "avcc-size-overflow");
++      goto out;
++   }
++   avcc_capacity = annexb_size * 2 + 16;
++   if (!reserve_buffer(&codec->avcc, &codec->avcc_capacity,
++                       avcc_capacity)) {
++      report_decode_failure(codec, "avcc-allocation");
++      goto out;
++   }
++   if (vrend_video_h264_annexb_to_avcc_buffer(
++          codec->annexb, annexb_size, codec->avcc, codec->avcc_capacity,
++          &avcc_size, &pps_id) != 0) {
 +      report_decode_failure(codec, "annexb-to-avcc");
 +      goto out;
 +   }
@@ -1553,13 +1995,11 @@ index 0000000..cd1a54e
 +      report_decode_failure(codec, "session-creation");
 +      goto out;
 +   }
-+   result = decode_frame(codec, target, avcc, avcc_size);
++   result = decode_frame(codec, target, codec->avcc, avcc_size);
 +   if (result != 0)
 +      report_decode_failure(codec, "frame-decode-or-upload");
 +
 +out:
-+   free(avcc);
-+   free(annexb);
 +   return result;
 +}
 +
@@ -1586,6 +2026,35 @@ index 0000000..cd1a54e
 +   return ctx && get_video_codec(ctx, cdc_handle) &&
 +          get_video_buffer(ctx, tgt_handle) ? 0 : -1;
 +}
+diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
+index 184a5ee..5c6b69e 100644
+--- a/src/vrend/vrend_winsys_egl.c
++++ b/src/vrend/vrend_winsys_egl.c
+@@ -616,6 +616,12 @@ virgl_egl_metal_init(UNUSED struct virgl_egl *egl)
+ }
+ 
+ #ifdef ENABLE_METAL
++MTLDevice_id
++virgl_egl_metal_get_device(struct virgl_egl *egl)
++{
++   return egl ? egl->metal_device : NULL;
++}
++
+ bool virgl_egl_metal_create_texture(struct virgl_egl *egl, struct pipe_resource *res,
+                                     uint32_t format, MTLTexture_id *tex)
+ {
+diff --git a/src/vrend/vrend_winsys_egl.h b/src/vrend/vrend_winsys_egl.h
+index fb6d73b..b288922 100644
+--- a/src/vrend/vrend_winsys_egl.h
++++ b/src/vrend/vrend_winsys_egl.h
+@@ -108,6 +108,7 @@ EGLImageKHR virgl_egl_win32_image_from_d3d11_texture2d(struct virgl_egl *egl, ID
+ #endif
+ 
+ #ifdef ENABLE_METAL
++MTLDevice_id virgl_egl_metal_get_device(struct virgl_egl *egl);
+ bool virgl_egl_metal_create_texture(struct virgl_egl *egl, struct pipe_resource *res,
+                                     uint32_t format, MTLTexture_id *tex);
+ bool virgl_egl_metal_create_texture_from_shm(struct virgl_egl *egl, int fd, size_t size,
 diff --git a/tests/meson.build b/tests/meson.build
 index 884a005..14fc9d0 100644
 --- a/tests/meson.build
@@ -1612,10 +2081,10 @@ index 884a005..14fc9d0 100644
  # goes wrong
 diff --git a/tests/test_vrend_video_h264.c b/tests/test_vrend_video_h264.c
 new file mode 100644
-index 0000000..fa40656
+index 0000000..ec1dbec
 --- /dev/null
 +++ b/tests/test_vrend_video_h264.c
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,134 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -1660,6 +2129,8 @@ index 0000000..fa40656
 +      0, 0, 0, 3, 0x65, 0xb2, 0x40,
 +   };
 +   uint8_t *avcc = NULL;
++   uint8_t buffered[sizeof(expected)];
++   size_t buffered_size = 0;
 +   size_t avcc_size = 0;
 +   uint32_t pps_id = 0;
 +
@@ -1669,6 +2140,20 @@ index 0000000..fa40656
 +   assert(avcc_size == sizeof(expected));
 +   assert(memcmp(avcc, expected, sizeof(expected)) == 0);
 +   free(avcc);
++
++   pps_id = 0;
++   assert(vrend_video_h264_annexb_to_avcc_buffer(
++             annexb, sizeof(annexb), buffered, sizeof(buffered),
++             &buffered_size, &pps_id) == 0);
++   assert(pps_id == 3);
++   assert(buffered_size == sizeof(expected));
++   assert(memcmp(buffered, expected, sizeof(expected)) == 0);
++   assert(vrend_video_h264_annexb_to_avcc_buffer(
++             annexb, sizeof(annexb), buffered, sizeof(expected) - 1,
++             &buffered_size, &pps_id) == -1);
++   assert(vrend_video_h264_annexb_to_avcc_buffer(
++             annexb, sizeof(annexb), buffered, 1,
++             &buffered_size, &pps_id) == -1);
 +}
 +
 +static void test_parameter_sets(void)

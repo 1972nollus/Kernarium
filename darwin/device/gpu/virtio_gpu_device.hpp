@@ -75,7 +75,6 @@ private:
         std::uint32_t target {};
         std::uint32_t width {};
         std::uint32_t height {};
-        std::vector<std::uint8_t> pixels;
         std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
     };
@@ -117,6 +116,7 @@ private:
     std::unordered_map<std::uint32_t, VirglResource> virglResources_;
     std::unordered_set<std::uint32_t> contexts_;
     std::vector<std::uint8_t> transferStaging_;
+    std::vector<std::uint8_t> readbackStaging_;
     const std::atomic_bool* stopRequested_ {};
     std::uint32_t scanoutResource_ {};
     protocol::GpuRectangle scanoutRectangle_ {};

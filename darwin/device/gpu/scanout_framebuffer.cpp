@@ -194,15 +194,36 @@ ScanoutRectangle ScanoutFramebuffer::update(
     const auto convertedRowBytes =
         static_cast<std::size_t>(rectangleWidth) *
         protocol::gpuBytesPerPixel;
+    const auto sourceOffset =
+        static_cast<std::size_t>(sourceY) * sourceRowBytes +
+        static_cast<std::size_t>(sourceX) * protocol::gpuBytesPerPixel;
+    if (sourceFormat == protocol::GpuFormat::b8g8r8a8Unorm ||
+        sourceFormat == protocol::GpuFormat::b8g8r8x8Unorm) {
+        std::lock_guard lock(mutex_);
+        for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
+            const auto destinationOffset =
+                (static_cast<std::size_t>(destinationY + row) * width_ +
+                    destinationX) *
+                protocol::gpuBytesPerPixel;
+            std::memcpy(
+                pixels_.data() + destinationOffset,
+                source.data() + sourceOffset +
+                    static_cast<std::size_t>(row) * sourceRowBytes,
+                convertedRowBytes);
+        }
+        return {
+            .x = destinationX,
+            .y = destinationY,
+            .width = rectangleWidth,
+            .height = rectangleHeight,
+        };
+    }
     if (rectangleHeight >
         std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
         throw std::invalid_argument("overflowing display update rectangle");
     }
     std::vector<std::uint8_t> converted(
         convertedRowBytes * static_cast<std::size_t>(rectangleHeight));
-    const auto sourceOffset =
-        static_cast<std::size_t>(sourceY) * sourceRowBytes +
-        static_cast<std::size_t>(sourceX) * protocol::gpuBytesPerPixel;
     copyRectangleWithVImage(
         converted.data(),
         source.data() + sourceOffset,

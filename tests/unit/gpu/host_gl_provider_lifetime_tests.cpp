@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "host_gl_provider.hpp"
+#include "virgl_renderer.hpp"
 
 extern "C" {
 #include <virglrenderer.h>
@@ -108,6 +109,15 @@ void providerReportsExplicitEsVersionRequests()
     }
 }
 
+void rendererRetiresFencesThroughTheExternalProvider()
+{
+    uml::gpu::VirglRenderer renderer;
+    require(renderer.createFenceAndWait(0, 0, 1, nullptr) == 0);
+    require(renderer.createContext(1, 1, "fence-test") == 0);
+    require(renderer.createFenceAndWait(1, 0, 1, nullptr) == 0);
+    renderer.destroyContext(1);
+}
+
 } // namespace
 
 int main()
@@ -115,6 +125,7 @@ int main()
     providerRejectsUnsupportedContexts();
     providerReportsExplicitEsVersionRequests();
     providerOwnsOneSharedAngleTopology();
+    rendererRetiresFencesThroughTheExternalProvider();
     std::puts("ANGLE/Metal host GL provider lifetime tests passed");
     return 0;
 }

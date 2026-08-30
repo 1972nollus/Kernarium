@@ -49,8 +49,8 @@ public:
 
     void update(
         std::span<const std::uint8_t> source,
-        std::uint32_t,
-        std::uint32_t,
+        std::uint32_t sourceWidth,
+        std::uint32_t sourceHeight,
         std::size_t sourceRowBytes,
         protocol::GpuFormat,
         std::uint32_t sourceX,
@@ -61,6 +61,15 @@ public:
         std::uint32_t rectangleHeight) override
     {
         failIfRequested(Operation::display_update);
+        lastDisplaySourceWidth = sourceWidth;
+        lastDisplaySourceHeight = sourceHeight;
+        lastDisplaySourceRowBytes = sourceRowBytes;
+        lastDisplaySourceX = sourceX;
+        lastDisplaySourceY = sourceY;
+        lastDisplayDestinationX = destinationX;
+        lastDisplayDestinationY = destinationY;
+        lastDisplayWidth = rectangleWidth;
+        lastDisplayHeight = rectangleHeight;
         for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
             const auto sourceOffset =
                 static_cast<std::size_t>(sourceY + row) * sourceRowBytes +
@@ -148,18 +157,43 @@ public:
     }
 
     int readResourceRectangle(
-        std::uint32_t,
+        std::uint32_t resourceId,
         std::span<std::uint8_t> destination,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t) override
+        std::uint32_t x,
+        std::uint32_t y,
+        std::uint32_t width,
+        std::uint32_t height) override
     {
         if (reject(Operation::read_resource))
             return EIO;
         failIfRequested(Operation::read_resource);
-        std::fill(destination.begin(), destination.end(), 0x5a);
+        const auto rowBytes =
+            static_cast<std::size_t>(width) * protocol::gpuBytesPerPixel;
+        if (width == 0 || height == 0 ||
+            height > destination.size() / rowBytes ||
+            destination.size() !=
+                static_cast<std::size_t>(height) * rowBytes) {
+            return EINVAL;
+        }
+        lastReadResource = resourceId;
+        lastReadX = x;
+        lastReadY = y;
+        lastReadWidth = width;
+        lastReadHeight = height;
+        lastReadDestinationBytes = destination.size();
+        for (std::uint32_t row = 0; row < height; ++row) {
+            for (std::uint32_t column = 0; column < width; ++column) {
+                const auto offset =
+                    (static_cast<std::size_t>(row) * width + column) *
+                    protocol::gpuBytesPerPixel;
+                destination[offset] =
+                    static_cast<std::uint8_t>(x + column);
+                destination[offset + 1U] =
+                    static_cast<std::uint8_t>(y + row);
+                destination[offset + 2U] = readResourceTag;
+                destination[offset + 3U] = 0xffU;
+            }
+        }
         ++readResourceCount;
         return 0;
     }
@@ -193,7 +227,10 @@ public:
         return PresentOutcome::presented;
     }
 
-    bool needsFullCpuFallback() const noexcept override { return false; }
+    bool needsFullCpuFallback() const noexcept override
+    {
+        return fullCpuFallback;
+    }
 
     void recordCpuFallbackFrame() noexcept override
     {
@@ -296,6 +333,13 @@ public:
     unsigned createResourceCount {};
     unsigned transferCount {};
     unsigned readResourceCount {};
+    std::uint32_t lastReadResource {};
+    std::uint32_t lastReadX {};
+    std::uint32_t lastReadY {};
+    std::uint32_t lastReadWidth {};
+    std::uint32_t lastReadHeight {};
+    std::size_t lastReadDestinationBytes {};
+    std::uint8_t readResourceTag {0x5aU};
     unsigned nativeResourceRequestCount {};
     unsigned resourceMetalTextureCount {};
     unsigned directPresentationCount {};
@@ -304,8 +348,18 @@ public:
     bool directPresentationEnabled {};
     bool directPresentationDrops {};
     bool nativeResourceAvailable {};
+    bool fullCpuFallback {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
+    std::uint32_t lastDisplaySourceWidth {};
+    std::uint32_t lastDisplaySourceHeight {};
+    std::size_t lastDisplaySourceRowBytes {};
+    std::uint32_t lastDisplaySourceX {};
+    std::uint32_t lastDisplaySourceY {};
+    std::uint32_t lastDisplayDestinationX {};
+    std::uint32_t lastDisplayDestinationY {};
+    std::uint32_t lastDisplayWidth {};
+    std::uint32_t lastDisplayHeight {};
     std::uint32_t lastTextureResource {};
     MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
@@ -716,7 +770,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
 
-    auto resource = create3d(702, 2, 2);
+    auto resource = create3d(702, 4, 4);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::create_resource);
     require(responseType(device.process(requestBytes(resource), false)) ==
@@ -787,7 +841,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     protocol::GpuSetScanout scanout {};
     scanout.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
-    scanout.rectangle = {.width = 2, .height = 2};
+    scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = resource.resourceId;
     requireFirstAllocationFailsBeforeCommit(device, scanout);
@@ -824,6 +878,98 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
+
+    // Once setScanout has sized the packed readback staging area, a fallback
+    // flush allocates only its response. Any second allocation is a regression
+    // to per-frame staging or cloning.
+    std::vector<std::uint8_t> warmedFlush;
+    bool warmedFlushAllocated = false;
+    failAfterAllocations(1);
+    try {
+        warmedFlush = device.process(requestBytes(flush), false);
+    } catch (const std::bad_alloc&) {
+        warmedFlushAllocated = true;
+    }
+    clearAllocationFailure();
+    require(!warmedFlushAllocated);
+    require(responseType(warmedFlush) == protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == 4);
+    require(dependencies.displayUpdateCount == 2);
+
+    // A nonzero resource-space damage box is packed at the start of the
+    // staging span and translated into scanout-relative display coordinates.
+    const auto beforePartialFlush = dependencies.framebuffer;
+    dependencies.readResourceTag = 0xa5U;
+    flush.rectangle = {.x = 2, .y = 2, .width = 1, .height = 1};
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastReadResource == resource.resourceId);
+    require(dependencies.lastReadX == 2);
+    require(dependencies.lastReadY == 2);
+    require(dependencies.lastReadWidth == 1);
+    require(dependencies.lastReadHeight == 1);
+    require(dependencies.lastReadDestinationBytes ==
+        protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceWidth == 1);
+    require(dependencies.lastDisplaySourceHeight == 1);
+    require(dependencies.lastDisplaySourceRowBytes ==
+        protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceX == 0);
+    require(dependencies.lastDisplaySourceY == 0);
+    require(dependencies.lastDisplayDestinationX == 1);
+    require(dependencies.lastDisplayDestinationY == 1);
+    require(dependencies.lastDisplayWidth == 1);
+    require(dependencies.lastDisplayHeight == 1);
+    constexpr std::size_t changedPixel =
+        (64U + 1U) * protocol::gpuBytesPerPixel;
+    const std::array<std::uint8_t, protocol::gpuBytesPerPixel>
+        expectedPixel {2U, 2U, 0xa5U, 0xffU};
+    require(std::memcmp(
+        dependencies.framebuffer.data(),
+        beforePartialFlush.data(),
+        changedPixel) == 0);
+    require(std::memcmp(
+        dependencies.framebuffer.data() + changedPixel,
+        expectedPixel.data(),
+        expectedPixel.size()) == 0);
+    require(std::memcmp(
+        dependencies.framebuffer.data() + changedPixel +
+            protocol::gpuBytesPerPixel,
+        beforePartialFlush.data() + changedPixel +
+            protocol::gpuBytesPerPixel,
+        dependencies.framebuffer.size() - changedPixel -
+            protocol::gpuBytesPerPixel) == 0);
+    require(dependencies.readResourceCount == 5);
+    require(dependencies.displayUpdateCount == 3);
+
+    // A display that cannot consume partial damage requests the complete
+    // nonzero-origin scanout, still packed at the start of the staging buffer.
+    dependencies.fullCpuFallback = true;
+    dependencies.readResourceTag = 0xc3U;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastReadX == scanout.rectangle.x);
+    require(dependencies.lastReadY == scanout.rectangle.y);
+    require(dependencies.lastReadWidth == scanout.rectangle.width);
+    require(dependencies.lastReadHeight == scanout.rectangle.height);
+    require(dependencies.lastReadDestinationBytes ==
+        scanout.rectangle.width * scanout.rectangle.height *
+            protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceWidth == scanout.rectangle.width);
+    require(dependencies.lastDisplaySourceHeight == scanout.rectangle.height);
+    require(dependencies.lastDisplaySourceX == 0);
+    require(dependencies.lastDisplaySourceY == 0);
+    require(dependencies.lastDisplayDestinationX == 0);
+    require(dependencies.lastDisplayDestinationY == 0);
+    const std::array<std::uint8_t, protocol::gpuBytesPerPixel>
+        expectedFullOrigin {1U, 1U, 0xc3U, 0xffU};
+    require(std::memcmp(
+        dependencies.framebuffer.data(),
+        expectedFullOrigin.data(),
+        expectedFullOrigin.size()) == 0);
+    dependencies.fullCpuFallback = false;
+    dependencies.readResourceTag = 0x5aU;
+    flush.rectangle = scanout.rectangle;
 
     dependencies.nativeResourceAvailable = true;
     dependencies.directPresentationEnabled = true;
