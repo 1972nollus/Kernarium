@@ -3,6 +3,7 @@
 
 #include "cpu/engine.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/gadgets/executor.hpp"
 #include "memory/static_guest_memory.hpp"
 
 #include <cstddef>
@@ -75,6 +76,7 @@ private:
 struct ThreadExecutionState final {
 	::uml::cpu::arm64::CpuState cpu{};
 	::uml::cpu::x86_64::CpuState x86_cpu{};
+	::uml::cpu::x86_64::gadgets::Executor x86_executor{};
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;
 	GuestInterruptSequence interrupt;

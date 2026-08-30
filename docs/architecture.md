@@ -93,7 +93,10 @@ and feature exposure must agree across engines.
 The macOS 4 KiB mainline product may run x86-64 tasks under the arm64 UML
 kernel. The kernel tags each task's userspace ISA and translates its syscall
 ABI; the host routes x86-64 instruction execution through immutable,
-data-only gadget streams. The backend covers the pinned FEX handwritten
+data-only streams of pointers to precompiled handwritten arm64 assembly
+gadgets. There is no semantic C++ execution fallback. Exact x87 formats and
+transcendentals use bounded software-math primitives called by those native
+gadgets. The backend covers the pinned FEX handwritten
 x86-64 instruction corpus, including x87, MMX, SSE, AVX, AES, SHA, atomic, and
 extended-state operations. That external corpus is the instruction acceptance
 boundary, not proof of an arbitrary distribution or complete Linux syscall

@@ -1799,11 +1799,13 @@ private:
 		}
 
 		const bool supported = opcode <= 0x02 ||
-			(opcode >= 0x04 && opcode <= 0x0f) ||
+			(opcode >= 0x04 && opcode <= 0x06) ||
+			(opcode >= 0x08 && opcode <= 0x0f) ||
 			(opcode >= 0x14 && opcode <= 0x19) || opcode == 0x1d ||
 			(opcode >= 0x20 && opcode <= 0x22) ||
 			(opcode == 0x38 || opcode == 0x39) ||
-			(opcode >= 0x40 && opcode <= 0x44) || opcode == 0x46 ||
+			(opcode >= 0x40 && opcode <= 0x42) || opcode == 0x44 ||
+			opcode == 0x46 ||
 			(opcode >= 0x4a && opcode <= 0x4c) ||
 			(opcode >= 0x60 && opcode <= 0x63) || opcode == 0xcc ||
 			opcode == 0xdf;

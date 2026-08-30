@@ -1,0 +1,176 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Rare exact x87 transcendental and remainder operations. */
+
+.macro x87_unary name, helper
+gadget x87_\name
+	sub sp, sp, #32
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov x0, _cpu
+	mov x1, sp
+	add x2, sp, #16
+	bl NAME(uml_x86_64_x87_\helper)
+	add x11, sp, #16
+	x87_load_value x11, x9, w10
+	add sp, sp, #32
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	retire_and_next
+.endm
+
+x87_unary f2xm1, f2xm1
+x87_unary sqrt, sqrt
+x87_unary round, round
+x87_unary sine, sine
+x87_unary cosine, cosine
+
+.macro x87_two_input name, helper, destination, pop
+gadget x87_\name
+	sub sp, sp, #48
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov w13, #1
+	x87_load_stack w13, x9, w10
+	add x11, sp, #16
+	x87_store_value x11, x9, w10
+	mov x0, _cpu
+	.ifc \name,atan
+	add x1, sp, #16
+	mov x2, sp
+	.else
+	mov x1, sp
+	add x2, sp, #16
+	.endif
+	add x3, sp, #32
+	bl NAME(uml_x86_64_x87_\helper)
+	add x11, sp, #32
+	x87_load_value x11, x9, w10
+	add sp, sp, #48
+	mov w13, #\destination
+	x87_store_stack w13, x9, w10
+	.if \pop
+	x87_pop
+	.endif
+	retire_and_next
+.endm
+
+x87_two_input fyl2x, fyl2x, 1, 1
+x87_two_input fyl2xp1, fyl2xp1, 1, 1
+x87_two_input atan, atan, 1, 1
+x87_two_input scale, scale, 0, 0
+
+gadget x87_tangent
+	sub sp, sp, #32
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov x0, _cpu
+	mov x1, sp
+	add x2, sp, #16
+	bl NAME(uml_x86_64_x87_tangent)
+	add x11, sp, #16
+	x87_load_value x11, x9, w10
+	add sp, sp, #32
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	mov x9, #0x8000000000000000
+	mov w10, #0x3fff
+	x87_push x9, w10
+	retire_and_next
+
+gadget x87_extract
+	sub sp, sp, #48
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov x0, sp
+	add x1, sp, #16
+	add x2, sp, #32
+	bl NAME(uml_x86_64_x87_extract)
+	add x11, sp, #16
+	x87_load_value x11, x9, w10
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	add x11, sp, #32
+	x87_load_value x11, x9, w10
+	add sp, sp, #48
+	x87_push x9, w10
+	retire_and_next
+
+gadget x87_sincos
+	sub sp, sp, #48
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov x0, _cpu
+	mov x1, sp
+	add x2, sp, #16
+	add x3, sp, #32
+	bl NAME(uml_x86_64_x87_sincos)
+	add x11, sp, #16
+	x87_load_value x11, x9, w10
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	add x11, sp, #32
+	x87_load_value x11, x9, w10
+	add sp, sp, #48
+	x87_push x9, w10
+	retire_and_next
+
+/* Current quotient-bit modeling intentionally clears C0/C1/C2/C3 after
+ * FPREM/FPREM1, matching the accepted semantics and FEX corpus contract. */
+.macro x87_clear_remainder_flags name
+	.globl NAME(uml_x86_64_gadget_x87_\name\()_with_flags)
+	.p2align 4
+NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
+	/* Share the calculation body by entering a private duplicate. */
+	sub sp, sp, #48
+	mov w13, #0
+	x87_load_stack w13, x9, w10
+	x87_store_value sp, x9, w10
+	mov w13, #1
+	x87_load_stack w13, x9, w10
+	add x11, sp, #16
+	x87_store_value x11, x9, w10
+	mov x0, _cpu
+	mov x1, sp
+	add x2, sp, #16
+	add x3, sp, #32
+	bl NAME(uml_x86_64_x87_\name)
+	add x11, sp, #32
+	x87_load_value x11, x9, w10
+	add sp, sp, #48
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	mov w10, #0x4700
+	bic w9, w9, w10
+	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	retire_and_next
+.endm
+
+x87_clear_remainder_flags fprem
+x87_clear_remainder_flags fprem1
+
+.purgem x87_clear_remainder_flags
+.purgem x87_two_input
+.purgem x87_unary
+.purgem x87_initialize_state
+.purgem x87_bulk_store
+.purgem x87_bulk_load
+.purgem x87_scalar_store
+.purgem x87_scalar_load
+.purgem x87_set_integer_compare
+.purgem x87_set_status_compare
+.purgem x87_load_value
+.purgem x87_store_value
+.purgem x87_pop
+.purgem x87_push
+.purgem x87_store_stack
+.purgem x87_store_physical
+.purgem x87_set_tag
+.purgem x87_load_stack
+.purgem x87_physical
+.purgem x87_load_u64

@@ -31,6 +31,10 @@ enum class DeferredFlagOperation : std::uint8_t {
 	add,
 	subtract,
 	logical,
+	increment,
+	decrement,
+	add_carry,
+	subtract_borrow,
 };
 
 struct DeferredFlags final {
@@ -39,6 +43,7 @@ struct DeferredFlags final {
 	std::uint64_t result{};
 	DeferredFlagOperation operation{DeferredFlagOperation::none};
 	std::uint8_t width{};
+	std::uint8_t carry{};
 };
 
 struct X87Register final {

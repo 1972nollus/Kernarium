@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu_state.hpp"
+#include "layout/assembly_layout.hpp"
 
 namespace uml::cpu::x86_64 {
 namespace {
@@ -33,7 +34,11 @@ void materialize_flags(CpuState &cpu) noexcept
 	const auto result = deferred.result & mask;
 	constexpr auto arithmetic_flags = rflags_carry | rflags_parity |
 		rflags_auxiliary | rflags_zero | rflags_sign | rflags_overflow;
-	auto flags = cpu.rflags & ~arithmetic_flags;
+	const bool preserve_carry = deferred.operation ==
+		DeferredFlagOperation::increment || deferred.operation ==
+		DeferredFlagOperation::decrement;
+	auto flags = cpu.rflags & ~(preserve_carry ?
+		arithmetic_flags & ~rflags_carry : arithmetic_flags);
 
 	if (result == 0)
 		flags |= rflags_zero;
@@ -44,21 +49,30 @@ void materialize_flags(CpuState &cpu) noexcept
 
 	switch (deferred.operation) {
 	case DeferredFlagOperation::add:
-		if (result < left)
+	case DeferredFlagOperation::increment:
+	case DeferredFlagOperation::add_carry: {
+		const auto adjusted_right = (right + deferred.carry) & mask;
+		if (!preserve_carry && (adjusted_right < right || result < left))
 			flags |= rflags_carry;
 		if (((~(left ^ right) & (left ^ result)) & sign) != 0)
 			flags |= rflags_overflow;
 		if (((left ^ right ^ result) & 0x10U) != 0)
 			flags |= rflags_auxiliary;
 		break;
+	}
 	case DeferredFlagOperation::subtract:
-		if (left < right)
+	case DeferredFlagOperation::decrement:
+	case DeferredFlagOperation::subtract_borrow: {
+		const auto adjusted_right = (right + deferred.carry) & mask;
+		if (!preserve_carry &&
+			(adjusted_right < right || left < adjusted_right))
 			flags |= rflags_carry;
 		if ((((left ^ right) & (left ^ result)) & sign) != 0)
 			flags |= rflags_overflow;
 		if (((left ^ right ^ result) & 0x10U) != 0)
 			flags |= rflags_auxiliary;
 		break;
+	}
 	case DeferredFlagOperation::logical:
 		break;
 	case DeferredFlagOperation::none:

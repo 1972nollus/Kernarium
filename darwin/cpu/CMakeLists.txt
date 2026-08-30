@@ -18,8 +18,12 @@ if(UML_BUILD_X86_64_GUEST)
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
         x86_64/decoder.cpp
+		x86_64/gadgets/engine.S
+		x86_64/gadgets/executor.cpp
+		x86_64/gadgets/native_builder.cpp
+		x86_64/gadgets/native_memory.cpp
         x86_64/gadgets/program.cpp
-        x86_64/gadgets/x87.cpp)
+		x86_64/gadgets/x87_math.cpp)
     uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
     target_link_libraries(uml_x86_64_gadgets
         PUBLIC UML::ThirdPartyCephes128

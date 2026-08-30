@@ -14,42 +14,22 @@
 namespace uml::cpu::x86_64::gadgets {
 
 struct Gadget;
+class Executor;
 
-enum class StepAction : std::uint8_t {
-	continue_program,
-	return_to_dispatch,
-	exit,
-};
-
-struct StepResult final {
-	StepAction action{StepAction::continue_program};
-	::uml::cpu::EngineEvent event{::uml::cpu::EngineEvent::continued};
-	::uml::cpu::FaultInfo fault{};
-	std::uint64_t write_address{};
-	std::uint8_t write_size{};
-};
-
-using GadgetEntry = StepResult (*)(const Gadget &, CpuState &,
-	::uml::memory::GuestAddressSpace &) noexcept;
-
-/* A gadget is immutable translated data: a precompiled entry plus normalized
- * x86 operands. No guest instruction is copied into executable memory. */
+/* A gadget is immutable normalized instruction data. Translation resolves it
+ * exclusively to precompiled arm64 assembly entries; no guest instruction is
+ * copied into executable memory and no semantic C++ executor remains.
+ */
 struct Gadget final {
-	GadgetEntry entry{};
 	std::uint64_t address{};
 	Instruction instruction{};
 };
-
-[[nodiscard]] StepResult execute_x87(const Gadget &gadget, CpuState &cpu,
-	::uml::memory::GuestAddressSpace &memory) noexcept;
-[[nodiscard]] StepResult execute_extended_state(const Gadget &gadget,
-	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory) noexcept;
 
 class Program final {
 public:
 	Program() = default;
 	Program(std::uint64_t address, std::size_t byte_count,
-		std::vector<Gadget> gadgets) noexcept;
+		std::vector<Gadget> gadgets);
 
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
@@ -57,11 +37,20 @@ public:
 	{
 		return gadgets_;
 	}
+	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
+	{
+		return native_stream_;
+	}
+	[[nodiscard]] std::size_t instruction_count() const noexcept
+	{
+		return gadgets_.size();
+	}
 
 private:
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
 	std::vector<Gadget> gadgets_;
+	std::vector<std::uintptr_t> native_stream_;
 };
 
 enum class BuildStatus : std::uint8_t {
@@ -89,6 +78,10 @@ struct ExecuteResult final {
 
 [[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory,
+	std::size_t instruction_budget,
+	const ::uml::cpu::InterruptToken &interrupt = {}) noexcept;
+[[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
 	std::size_t instruction_budget,
 	const ::uml::cpu::InterruptToken &interrupt = {}) noexcept;
 

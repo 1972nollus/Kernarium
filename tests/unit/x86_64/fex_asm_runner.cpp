@@ -2,6 +2,7 @@
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
+#include "cpu/x86_64/gadgets/executor.hpp"
 #include "memory/guest_address_space.hpp"
 
 #include <algorithm>
@@ -95,6 +96,22 @@ public:
 			offset += count;
 		}
 		return true;
+	}
+
+	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
+		std::size_t size, uml::memory::MemoryAccess access) override
+	{
+		if (size == 0 || size > page_size - (address % page_size) ||
+			!mapped(address, size)) {
+			set_fault(address, access);
+			return nullptr;
+		}
+		const auto page_number = address / page_size;
+		auto [iterator, inserted] = pages_.try_emplace(page_number);
+		if (inserted)
+			iterator->second.fill(std::byte{});
+		return iterator->second.data() +
+			static_cast<std::size_t>(address % page_size);
 	}
 
 	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
@@ -425,7 +442,13 @@ void print_result(std::string_view status, std::size_t retired,
 				cpu.gpr(fex_registers[register_index]) !=
 					expectation.values.front()) {
 				status = "result_mismatch";
-				detail = register_name(register_index);
+				std::ostringstream mismatch;
+				mismatch << register_name(register_index) <<
+					" expected=0x" << std::hex <<
+					(expectation.values.empty() ? 0 :
+					 expectation.values.front()) << " actual=0x" <<
+					cpu.gpr(fex_registers[register_index]);
+				detail = mismatch.str();
 				return false;
 			}
 		} else if (index >= 17 && index <= 32) {
@@ -548,6 +571,8 @@ int main(int argc, char **argv)
 	}
 
 	uml::cpu::x86_64::CpuState cpu{};
+	uml::cpu::x86_64::gadgets::Executor executor;
+	executor.prepare(memory);
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
 	cpu.x87_reduced_precision = configuration.x87_reduced_precision;
@@ -581,7 +606,7 @@ int main(int argc, char **argv)
 		}
 		const auto remaining = instruction_limit - retired;
 		const auto result = uml::cpu::x86_64::gadgets::execute(
-			built.program, cpu, memory, remaining);
+			built.program, cpu, memory, executor, remaining);
 		retired += result.retired_instructions;
 		/* One upstream decoder test uses Linux time(2) only to prove that
 		 * SYSCALL reached a live boundary. Keep that test-local service in

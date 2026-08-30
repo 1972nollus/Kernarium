@@ -397,9 +397,12 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 
 [[nodiscard]] uml::cpu::ExecutionResult run_x86_gadgets(
 	x86_64::CpuState &cpu, StaticGuestMemory &memory,
+	x86_64::gadgets::Executor &executor,
 	unsigned long generation, const uml::cpu::InterruptToken &interrupt) noexcept
 {
 	memory.set_generation(generation);
+	executor.prepare(memory, generation,
+		darwin_uml_static_vm_changes(generation));
 	uml::cpu::ExecutionResult result{};
 	result.reason = uml::cpu::ExitReason::fatal;
 	while (result.retired_instructions < dispatch_budget) {
@@ -410,7 +413,9 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			result.reason = uml::cpu::ExitReason::system_call;
 			return result;
 		}
-		const auto built = x86_64::gadgets::build(memory, cpu.rip);
+		const auto available = dispatch_budget - result.retired_instructions;
+		const auto built = x86_64::gadgets::build(
+			memory, cpu.rip, std::min<std::size_t>(64, available));
 		switch (built.status) {
 		case x86_64::gadgets::BuildStatus::fetch_fault:
 			result.reason = uml::cpu::ExitReason::memory_fault;
@@ -425,9 +430,8 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 		case x86_64::gadgets::BuildStatus::built:
 			break;
 		}
-		const auto available = dispatch_budget - result.retired_instructions;
 		const auto executed = x86_64::gadgets::execute(
-			built.program, cpu, memory, available, interrupt);
+			built.program, cpu, memory, executor, available, interrupt);
 		result.retired_instructions += executed.retired_instructions;
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
@@ -473,7 +477,8 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
 	const auto &registered_interrupt = runtime.interrupt;
-	const auto result = run_x86_gadgets(cpu, runtime.memory, generation, {
+	const auto result = run_x86_gadgets(
+		cpu, runtime.memory, runtime.x86_executor, generation, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),

@@ -1,0 +1,228 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Intel SHA-extension state and message operations. */
+
+.macro vector_sha_sigma0 output, input
+	ror w\output, w\input, #7
+	ror w15, w\input, #18
+	eor w\output, w\output, w15
+	eor w\output, w\output, w\input, lsr #3
+.endm
+
+.macro vector_sha_sigma1 output, input
+	ror w\output, w\input, #17
+	ror w15, w\input, #19
+	eor w\output, w\output, w15
+	eor w\output, w\output, w\input, lsr #10
+.endm
+
+.macro vector_sha_sum0 output, input
+	ror w\output, w\input, #2
+	ror w15, w\input, #13
+	eor w\output, w\output, w15
+	ror w15, w\input, #22
+	eor w\output, w\output, w15
+.endm
+
+.macro vector_sha_sum1 output, input
+	ror w\output, w\input, #6
+	ror w15, w\input, #11
+	eor w\output, w\output, w15
+	ror w15, w\input, #25
+	eor w\output, w\output, w15
+.endm
+
+.macro vector_sha_round constant_offset
+	/* choose(e,f,g) */
+	eor w9, w5, w6
+	and w9, w9, w4
+	eor w9, w9, w6
+	vector_sha_sum1 10, 4
+	add w9, w9, w10
+	ldr w8, [_cpu, #(UML_X86_64_CPU_VECTORS + \constant_offset)]
+	add w9, w9, w8
+	add w9, w9, w7
+	/* majority(a,b,c) */
+	eor w10, w0, w1
+	and w10, w10, w2
+	and w11, w0, w1
+	eor w10, w10, w11
+	vector_sha_sum0 11, 0
+	add w13, w9, w10
+	add w13, w13, w11
+	add w14, w9, w3
+	mov w7, w6
+	mov w6, w5
+	mov w5, w4
+	mov w4, w14
+	mov w3, w2
+	mov w2, w1
+	mov w1, w0
+	mov w0, w13
+.endm
+
+.macro vector_sha_body opcode
+	.if \opcode == 0xc8
+	mov v4.16b, v1.16b
+	mov w14, v0.s[3]
+	ror w14, w14, #2
+	mov w15, v1.s[3]
+	add w14, w14, w15
+	mov v4.s[3], w14
+	.elseif \opcode == 0xc9
+	mov w10, v0.s[0]
+	mov w11, v0.s[1]
+	mov w12, v0.s[2]
+	mov w13, v0.s[3]
+	mov w14, v1.s[2]
+	eor w14, w14, w10
+	mov v4.s[0], w14
+	mov w14, v1.s[3]
+	eor w14, w14, w11
+	mov v4.s[1], w14
+	eor w14, w10, w12
+	mov v4.s[2], w14
+	eor w14, w11, w13
+	mov v4.s[3], w14
+	.elseif \opcode == 0xca
+	mov w10, v0.s[3]
+	mov w11, v1.s[2]
+	eor w10, w10, w11
+	ror w10, w10, #31
+	mov v4.s[3], w10
+	mov w11, v0.s[2]
+	mov w12, v1.s[1]
+	eor w11, w11, w12
+	ror w11, w11, #31
+	mov v4.s[2], w11
+	mov w12, v0.s[1]
+	mov w13, v1.s[0]
+	eor w12, w12, w13
+	ror w12, w12, #31
+	mov v4.s[1], w12
+	mov w13, v0.s[0]
+	eor w13, w13, w10
+	ror w13, w13, #31
+	mov v4.s[0], w13
+	.elseif \opcode == 0xcb
+	mov w0, v1.s[3]
+	mov w1, v1.s[2]
+	mov w2, v0.s[3]
+	mov w3, v0.s[2]
+	mov w4, v1.s[1]
+	mov w5, v1.s[0]
+	mov w6, v0.s[1]
+	mov w7, v0.s[0]
+	vector_sha_round 0
+	vector_sha_round 4
+	mov v4.s[3], w0
+	mov v4.s[2], w1
+	mov v4.s[1], w4
+	mov v4.s[0], w5
+	.elseif \opcode == 0xcc
+	mov w10, v1.s[0]
+	vector_sha_sigma0 11, 10
+	mov w12, v0.s[3]
+	add w11, w11, w12
+	mov v4.s[3], w11
+	vector_sha_sigma0 11, 12
+	mov w13, v0.s[2]
+	add w11, w11, w13
+	mov v4.s[2], w11
+	vector_sha_sigma0 11, 13
+	mov w14, v0.s[1]
+	add w11, w11, w14
+	mov v4.s[1], w11
+	vector_sha_sigma0 11, 14
+	mov w13, v0.s[0]
+	add w11, w11, w13
+	mov v4.s[0], w11
+	.else
+	mov w10, v1.s[2]
+	vector_sha_sigma1 11, 10
+	mov w12, v0.s[0]
+	add w12, w12, w11
+	mov v4.s[0], w12
+	mov w10, v1.s[3]
+	vector_sha_sigma1 11, 10
+	mov w13, v0.s[1]
+	add w13, w13, w11
+	mov v4.s[1], w13
+	vector_sha_sigma1 11, 12
+	mov w14, v0.s[2]
+	add w14, w14, w11
+	mov v4.s[2], w14
+	vector_sha_sigma1 11, 13
+	mov w14, v0.s[3]
+	add w14, w14, w11
+	mov v4.s[3], w14
+	.endif
+.endm
+
+.macro vector_sha_register opcode
+gadget vector_sha_\opcode\()_rr
+	ldr x8, [_stream], #8
+	mov x17, x8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	vector_sha_body 0x\opcode
+	and x9, x17, #0xffff
+	str q4, [_cpu, x9]
+	retire_and_next
+.endm
+
+.macro vector_sha_memory opcode
+gadget vector_sha_\opcode\()_rm
+	effective_address
+	ldr x26, [_stream], #8
+	mov x25, x7
+	add x9, x7, #15
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_vector_sha_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, 16
+	ldr q1, [x7]
+	b .Lx86_vector_sha_loaded\@
+.Lx86_vector_sha_cross\@:
+	sub sp, sp, #16
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #16
+	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	cbz w0, .Lx86_vector_sha_cross_fault\@
+	ldr q1, [sp]
+	add sp, sp, #16
+.Lx86_vector_sha_loaded\@:
+	and x10, x26, #0xffff
+	ldr q0, [_cpu, x10]
+	vector_sha_body 0x\opcode
+	and x9, x23, #0xffff
+	str q4, [_cpu, x9]
+	retire_and_next
+.Lx86_vector_sha_cross_fault\@:
+	add sp, sp, #16
+	b .Lx86_memory_fault
+.endm
+
+.macro vector_sha_family opcode
+	vector_sha_register \opcode
+	vector_sha_memory \opcode
+.endm
+
+vector_sha_family c8
+vector_sha_family c9
+vector_sha_family ca
+vector_sha_family cb
+vector_sha_family cc
+vector_sha_family cd
+
+.purgem vector_sha_family
+.purgem vector_sha_memory
+.purgem vector_sha_register
+.purgem vector_sha_body
+.purgem vector_sha_round
+.purgem vector_sha_sum1
+.purgem vector_sha_sum0
+.purgem vector_sha_sigma1
+.purgem vector_sha_sigma0

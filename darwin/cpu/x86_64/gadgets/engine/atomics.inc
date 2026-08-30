@@ -1,0 +1,325 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Compare/exchange and exchange/add scalar operations. */
+
+.macro atomic_normalize width, destination, source
+	.if \width == 8
+	and \destination, \source, #0xff
+	.elseif \width == 16
+	uxth \destination, \source
+	.elseif \width == 32
+	mov \destination, \source
+	.else
+	mov \destination, \source
+	.endif
+.endm
+
+.macro atomic_record_deferred operation, width
+	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	stp x11, x12, [x15]
+	str x13, [x15, #16]
+	mov w14, #\operation
+	strb w14, [x15, #24]
+	mov w14, #(\width / 8)
+	strb w14, [x15, #25]
+	strb wzr, [x15, #26]
+.endm
+
+.macro compare_exchange_register width, load, store, host_register, store_register
+gadget cmpxchg_\width\()_rr
+	ldr x8, [_stream], #8
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	\load \host_register\()24, [_cpu, x9]
+	\load \host_register\()26, [_cpu, x10]
+	\load \host_register\()11, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	cmp \host_register\()11, \host_register\()24
+	b.ne .Lx86_cmpxchg_register_unequal\@
+	\store \store_register\()26, [_cpu, x9]
+	b .Lx86_cmpxchg_register_flags\@
+.Lx86_cmpxchg_register_unequal\@:
+	\store \store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+.Lx86_cmpxchg_register_flags\@:
+	mov x12, x24
+	sub \host_register\()13, \host_register\()11, \host_register\()12
+	atomic_normalize \width, \host_register\()13, \host_register\()13
+	atomic_record_deferred 2, \width
+	retire_and_next
+.endm
+
+.macro compare_exchange_memory width, load, store, host_register, accumulator_store_register
+gadget cmpxchg_\width\()_mr
+	effective_address
+	mov x25, x7
+	and x8, x23, #0xffff
+	\load \host_register\()26, [_cpu, x8]
+	add x9, x7, #(\width / 8 - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_read_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	\load \host_register\()24, [x7]
+	b .Lx86_cmpxchg_loaded\@
+.Lx86_cmpxchg_read_cross\@:
+	mov x0, _context
+	mov x1, x25
+	mov w2, #(\width / 8)
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	mov x24, x0
+.Lx86_cmpxchg_loaded\@:
+	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	cmp \host_register\()27, \host_register\()24
+	b.ne .Lx86_cmpxchg_memory_unequal\@
+	mov x7, x25
+	add x9, x7, #(\width / 8 - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_write_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	\store \host_register\()26, [x7]
+	b .Lx86_cmpxchg_memory_written\@
+.Lx86_cmpxchg_write_cross\@:
+	mov x0, _context
+	mov x1, x25
+	mov x2, x26
+	mov w3, #(\width / 8)
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, .Lx86_memory_fault
+.Lx86_cmpxchg_memory_written\@:
+	mov x11, x27
+	mov x12, x24
+	sub \host_register\()13, \host_register\()11, \host_register\()12
+	atomic_normalize \width, \host_register\()13, \host_register\()13
+	atomic_record_deferred 2, \width
+	finish_store (\width / 8)
+.Lx86_cmpxchg_memory_unequal\@:
+	\store \accumulator_store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	mov x11, x27
+	mov x12, x24
+	sub \host_register\()13, \host_register\()11, \host_register\()12
+	atomic_normalize \width, \host_register\()13, \host_register\()13
+	atomic_record_deferred 2, \width
+	retire_and_next
+.endm
+
+.macro compare_exchange_width width, load, store, host_register, store_register
+	compare_exchange_register \width, \load, \store, \host_register, \store_register
+	compare_exchange_memory \width, \load, \store, \host_register, \store_register
+.endm
+
+compare_exchange_width 8, ldrb, strb, w, w
+compare_exchange_width 16, ldrh, strh, w, w
+compare_exchange_width 32, ldr, str, w, x
+compare_exchange_width 64, ldr, str, x, x
+
+.purgem compare_exchange_width
+.purgem compare_exchange_memory
+.purgem compare_exchange_register
+
+.macro exchange_add_register width, load, store, host_register, store_register
+gadget xadd_\width\()_rr
+	ldr x8, [_stream], #8
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	\load \host_register\()24, [_cpu, x9]
+	\load \host_register\()26, [_cpu, x10]
+	add \host_register\()27, \host_register\()24, \host_register\()26
+	atomic_normalize \width, \host_register\()27, \host_register\()27
+	\store \store_register\()24, [_cpu, x10]
+	\store \store_register\()27, [_cpu, x9]
+	mov x11, x24
+	mov x12, x26
+	mov x13, x27
+	atomic_record_deferred 1, \width
+	retire_and_next
+.endm
+
+.macro exchange_add_memory width, load, store, host_register, source_store_register
+gadget xadd_\width\()_mr
+	effective_address
+	mov x25, x7
+	and x8, x23, #0xffff
+	\load \host_register\()26, [_cpu, x8]
+	add x9, x7, #(\width / 8 - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_xadd_read_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	\load \host_register\()24, [x7]
+	b .Lx86_xadd_loaded\@
+.Lx86_xadd_read_cross\@:
+	mov x0, _context
+	mov x1, x25
+	mov w2, #(\width / 8)
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	mov x24, x0
+.Lx86_xadd_loaded\@:
+	add \host_register\()27, \host_register\()24, \host_register\()26
+	atomic_normalize \width, \host_register\()27, \host_register\()27
+	mov x7, x25
+	add x9, x7, #(\width / 8 - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_xadd_write_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	\store \host_register\()27, [x7]
+	b .Lx86_xadd_written\@
+.Lx86_xadd_write_cross\@:
+	mov x0, _context
+	mov x1, x25
+	mov x2, x27
+	mov w3, #(\width / 8)
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, .Lx86_memory_fault
+.Lx86_xadd_written\@:
+	and x8, x23, #0xffff
+	\store \source_store_register\()24, [_cpu, x8]
+	mov x11, x24
+	mov x12, x26
+	mov x13, x27
+	atomic_record_deferred 1, \width
+	finish_store (\width / 8)
+.endm
+
+.macro exchange_add_width width, load, store, host_register, store_register
+	exchange_add_register \width, \load, \store, \host_register, \store_register
+	exchange_add_memory \width, \load, \store, \host_register, \store_register
+.endm
+
+exchange_add_width 8, ldrb, strb, w, w
+exchange_add_width 16, ldrh, strh, w, w
+exchange_add_width 32, ldr, str, w, x
+exchange_add_width 64, ldr, str, x, x
+
+.purgem exchange_add_width
+.purgem exchange_add_memory
+.purgem exchange_add_register
+
+.macro compare_exchange_pair_flags
+	bl uml_x86_64_gadget_materialize_flags
+	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	bic x8, x8, #0x40
+	cbz w19, .Lx86_cmpxchg_pair_flags_done\@
+	orr x8, x8, #0x40
+.Lx86_cmpxchg_pair_flags_done\@:
+	orr x8, x8, #0x2
+	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+.endm
+
+gadget cmpxchg_pair_8
+	effective_address
+	mov x25, x7
+	add x9, x7, #7
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_pair_8_read_cross
+	translate 0, UML_X86_64_TLB_READ_PAGE, 8
+	ldr x24, [x7]
+	b .Lx86_cmpxchg_pair_8_loaded
+.Lx86_cmpxchg_pair_8_read_cross:
+	mov x0, _context
+	mov x1, x25
+	mov w2, #8
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	mov x24, x0
+.Lx86_cmpxchg_pair_8_loaded:
+	ldr w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	cmp w8, w24
+	b.ne .Lx86_cmpxchg_pair_8_unequal
+	lsr x10, x24, #32
+	cmp w9, w10
+	b.ne .Lx86_cmpxchg_pair_8_unequal
+	mov w19, #1
+	ldr w27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	ldr w16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	orr x27, x27, x16, lsl #32
+	mov x7, x25
+	add x9, x7, #7
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_pair_8_write_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
+	str x27, [x7]
+	b .Lx86_cmpxchg_pair_8_written
+.Lx86_cmpxchg_pair_8_write_cross:
+	mov x0, _context
+	mov x1, x25
+	mov x2, x27
+	mov w3, #8
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, .Lx86_memory_fault
+.Lx86_cmpxchg_pair_8_written:
+	compare_exchange_pair_flags
+	finish_store 8
+.Lx86_cmpxchg_pair_8_unequal:
+	mov w19, wzr
+	mov w8, w24
+	lsr x9, x24, #32
+	mov w9, w9
+	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	compare_exchange_pair_flags
+	retire_and_next
+
+gadget cmpxchg_pair_16
+	effective_address
+	mov x25, x7
+	add x9, x7, #15
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_pair_16_read_cross
+	translate 0, UML_X86_64_TLB_READ_PAGE, 16
+	ldp x24, x26, [x7]
+	b .Lx86_cmpxchg_pair_16_loaded
+.Lx86_cmpxchg_pair_16_read_cross:
+	sub sp, sp, #16
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #16
+	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	cbnz w0, .Lx86_cmpxchg_pair_16_cross_loaded
+	add sp, sp, #16
+	b .Lx86_memory_fault
+.Lx86_cmpxchg_pair_16_cross_loaded:
+	ldp x24, x26, [sp]
+	add sp, sp, #16
+.Lx86_cmpxchg_pair_16_loaded:
+	ldr x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	cmp x8, x24
+	b.ne .Lx86_cmpxchg_pair_16_unequal
+	cmp x9, x26
+	b.ne .Lx86_cmpxchg_pair_16_unequal
+	mov w19, #1
+	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	ldr x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	mov x7, x25
+	add x9, x7, #15
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_cmpxchg_pair_16_write_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
+	stp x27, x16, [x7]
+	b .Lx86_cmpxchg_pair_16_written
+.Lx86_cmpxchg_pair_16_write_cross:
+	sub sp, sp, #16
+	stp x27, x16, [sp]
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #16
+	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	cbnz w0, .Lx86_cmpxchg_pair_16_cross_written
+	add sp, sp, #16
+	b .Lx86_memory_fault
+.Lx86_cmpxchg_pair_16_cross_written:
+	add sp, sp, #16
+.Lx86_cmpxchg_pair_16_written:
+	compare_exchange_pair_flags
+	finish_store 16
+.Lx86_cmpxchg_pair_16_unequal:
+	mov w19, wzr
+	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	compare_exchange_pair_flags
+	retire_and_next
+
+.purgem compare_exchange_pair_flags
+.purgem atomic_record_deferred
+.purgem atomic_normalize

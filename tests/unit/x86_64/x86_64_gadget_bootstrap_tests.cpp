@@ -59,6 +59,17 @@ public:
 		return true;
 	}
 
+	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
+		std::size_t size, uml::memory::MemoryAccess access) override
+	{
+		if (address > bytes_.size() || size > bytes_.size() - address) {
+			fault_ = {address, access};
+			faulted_ = true;
+			return nullptr;
+		}
+		return bytes_.data() + address;
+	}
+
 	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
 	{
 		return fault_;
@@ -246,6 +257,85 @@ private:
 		"UD2 boundary was not reported after the valid prefix");
 }
 
+[[nodiscard]] bool migrated_gadgets_are_native_only()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x90,
+		0x48, 0x0f, 0xc8,
+		0xf8,
+		0x9f,
+		0x48, 0xd1, 0xe0,
+		0x48, 0x0f, 0xa4, 0xc8, 0x01,
+		0x48, 0x0f, 0xaf, 0xc1,
+		0x48, 0xf7, 0xe1,
+		0x48, 0xf7, 0xf1,
+		0x48, 0xf7, 0xf9,
+		0x48, 0x0f, 0xa3, 0xc8,
+		0x48, 0x0f, 0xab, 0xc8,
+		0x48, 0x0f, 0xb3, 0xc8,
+		0x48, 0x0f, 0xbb, 0xc8,
+		0x48, 0x0f, 0xbc, 0xc1,
+		0x48, 0x0f, 0xbd, 0xc1,
+		0xf3, 0x48, 0x0f, 0xbc, 0xc1,
+		0xf3, 0x48, 0x0f, 0xbd, 0xc1,
+		0xf3, 0x48, 0x0f, 0xb8, 0xc1,
+		0x48, 0x0f, 0xb1, 0xc8,
+		0x48, 0x0f, 0xc7, 0x0b,
+		0x48, 0x0f, 0xc1, 0xc8,
+		0x48, 0x0f, 0x38, 0xf0, 0x03,
+		0xf2, 0x48, 0x0f, 0x38, 0xf1, 0xc1,
+		0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc1,
+		0xf3, 0x48, 0x0f, 0x38, 0xf6, 0xc1,
+		0x0f, 0xae, 0x03,
+		0x0f, 0xae, 0x23,
+		0xeb, 0x00,
+	});
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x0102'0304'0506'0708ULL;
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"native-only block did not build") ||
+		!expect(built.program.instruction_count() == 29,
+			"native-only block has the wrong instruction count") ||
+		!expect(!built.program.native_stream().empty(),
+			"native-only block has no threaded assembly stream"))
+		return false;
+	const auto result = gadgets::execute(built.program, cpu, memory, 2);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 2 &&
+		result.instruction_budget_exhausted,
+		"limited native stream did not exhaust its budget") &&
+		expect(cpu.rip == 4 &&
+			cpu.gpr(Register::rax) == 0x0807'0605'0403'0201ULL,
+			"limited native stream produced the wrong state");
+}
+
+[[nodiscard]] bool native_divide_traps_precisely()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(100, {0x48, 0xf7, 0xf1});
+	CpuState cpu{};
+	cpu.rip = 100;
+	cpu.gpr(Register::rax) = 42;
+	cpu.gpr(Register::rdx) = 0;
+	cpu.gpr(Register::rcx) = 0;
+	const auto built = gadgets::build(memory, 100, 1);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"native DIV trap block did not build"))
+		return false;
+	const auto result = gadgets::execute(built.program, cpu, memory, 1);
+	return expect(result.event == uml::cpu::EngineEvent::floating_point_trap,
+		"divide by zero did not return the x86 divide trap") &&
+		expect(result.retired_instructions == 0 && cpu.rip == 100,
+			"divide trap retired or lost its precise RIP") &&
+		expect(cpu.gpr(Register::rax) == 42 &&
+			cpu.gpr(Register::rdx) == 0,
+			"divide trap modified the dividend registers");
+}
+
 } // namespace
 
 int main()
@@ -255,6 +345,8 @@ int main()
 		execute_segment_memory() &&
 		execute_call_and_return() &&
 		preserve_precise_memory_fault() &&
-		retire_valid_prefix_before_decode_fault();
+		retire_valid_prefix_before_decode_fault() &&
+		migrated_gadgets_are_native_only() &&
+		native_divide_traps_precisely();
 	return passed ? 0 : 1;
 }

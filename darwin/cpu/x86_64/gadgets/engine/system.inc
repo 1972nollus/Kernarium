@@ -1,0 +1,295 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* System transitions, architectural identification, counters, and fault exit. */
+gadget syscall
+	bl uml_x86_64_gadget_materialize_flags
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 11 * 8)]
+	strb wzr, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
+	add _executed, _executed, #1
+	mov w0, #UML_X86_64_EVENT_SYSCALL
+	b uml_x86_64_gadget_leave
+
+gadget int80
+	bl uml_x86_64_gadget_materialize_flags
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w9, #1
+	strb w9, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
+	add _executed, _executed, #1
+	mov w0, #UML_X86_64_EVENT_SYSCALL
+	b uml_x86_64_gadget_leave
+
+gadget breakpoint
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	mov w0, #UML_X86_64_EVENT_BREAKPOINT
+	b uml_x86_64_gadget_leave
+
+gadget cpuid
+	ldr w5, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w10, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	mov w6, wzr
+	mov w7, wzr
+	mov w8, wzr
+	mov w9, wzr
+	cbz w5, .Lx86_cpuid_zero
+	cmp w5, #1
+	b.eq .Lx86_cpuid_one
+	cmp w5, #7
+	b.eq .Lx86_cpuid_seven
+	mov w11, #0x8000
+	lsl w11, w11, #16
+	cmp w5, w11
+	b.eq .Lx86_cpuid_extended_zero
+	add w12, w11, #1
+	cmp w5, w12
+	b.eq .Lx86_cpuid_extended_one
+	add w12, w11, #2
+	cmp w5, w12
+	b.eq .Lx86_cpuid_brand_two
+	add w12, w11, #3
+	cmp w5, w12
+	b.eq .Lx86_cpuid_brand_three
+	b .Lx86_cpuid_done
+.Lx86_cpuid_zero:
+	mov w6, #7
+	mov w7, #0x6547
+	movk w7, #0x756e, lsl #16
+	mov w9, #0x6e69
+	movk w9, #0x4965, lsl #16
+	mov w8, #0x746e
+	movk w8, #0x6c65, lsl #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_one:
+	mov w6, #0x06c3
+	movk w6, #0x0003, lsl #16
+	mov w7, #0x0800
+	mov w8, wzr
+	movk w8, #0x4c80, lsl #16
+	mov w9, #0x8111
+	movk w9, #0x0780, lsl #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_seven:
+	cbnz w10, .Lx86_cpuid_done
+	mov w7, #0x4
+	lsl w7, w7, #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_extended_zero:
+	mov w6, #0x8000
+	lsl w6, w6, #16
+	add w6, w6, #8
+	b .Lx86_cpuid_done
+.Lx86_cpuid_extended_one:
+	mov w8, #0x20
+	mov w9, #0x0800
+	movk w9, #0x2010, lsl #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_brand_two:
+	mov w6, #0x4d4c
+	movk w6, #0x2055, lsl #16
+	mov w7, #0x3878
+	movk w7, #0x5f36, lsl #16
+	mov w8, #0x3436
+	movk w8, #0x6720, lsl #16
+	mov w9, #0x6461
+	movk w9, #0x6567, lsl #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_brand_three:
+	mov w6, #0x7374
+	movk w6, #0x6520, lsl #16
+	mov w7, #0x756d
+	movk w7, #0x616c, lsl #16
+	mov w8, #0x6f74
+	movk w8, #0x0072, lsl #16
+.Lx86_cpuid_done:
+	str x6, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	retire_and_next
+
+gadget xgetbv
+	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	cmp x8, #0
+	mov w9, #3
+	csel w8, w9, wzr, eq
+	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str xzr, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	retire_and_next
+
+.macro timestamp rdtscp
+gadget \rdtscp
+	isb
+	mrs x8, cntvct_el0
+	mov w9, w8
+	str x9, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	lsr x8, x8, #32
+	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	.ifc \rdtscp,rdtscp
+	str xzr, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	.endif
+	retire_and_next
+.endm
+
+timestamp rdtsc
+timestamp rdtscp
+.purgem timestamp
+
+gadget rdpid_32_r
+	ldr x8, [_stream], #8
+	mov x9, #1
+	str x9, [_cpu, x8]
+	retire_and_next
+
+gadget rdpid_64_r
+	ldr x8, [_stream], #8
+	mov x9, #1
+	str x9, [_cpu, x8]
+	retire_and_next
+
+.macro read_segment_base name, base, host_register
+gadget read_\name\()_base_\host_register\()_r
+	ldr x8, [_stream], #8
+	ldr x9, [_cpu, #\base]
+	.ifc \host_register,32
+	mov w9, w9
+	.endif
+	str x9, [_cpu, x8]
+	retire_and_next
+.endm
+
+.macro write_segment_base name, base, width, host_register
+gadget write_\name\()_base_\width\()_r
+	ldr x8, [_stream], #8
+	ldr \host_register\()9, [_cpu, x8]
+	str x9, [_cpu, #\base]
+	retire_and_next
+.endm
+
+read_segment_base fs, UML_X86_64_CPU_FS_BASE, 32
+read_segment_base fs, UML_X86_64_CPU_FS_BASE, 64
+read_segment_base gs, UML_X86_64_CPU_GS_BASE, 32
+read_segment_base gs, UML_X86_64_CPU_GS_BASE, 64
+write_segment_base fs, UML_X86_64_CPU_FS_BASE, 32, w
+write_segment_base fs, UML_X86_64_CPU_FS_BASE, 64, x
+write_segment_base gs, UML_X86_64_CPU_GS_BASE, 32, w
+write_segment_base gs, UML_X86_64_CPU_GS_BASE, 64, x
+
+.purgem write_segment_base
+.purgem read_segment_base
+
+gadget memory_fence
+	dmb ish
+	retire_and_next
+
+gadget cache_flush
+	dmb ish
+	retire_and_next
+
+.macro store_machine_status_register width, store, host_register
+gadget store_machine_status_\width\()_r
+	ldr x8, [_stream], #8
+	mov w9, #0x0033
+	movk w9, #0x8005, lsl #16
+	\store \host_register\()9, [_cpu, x8]
+	retire_and_next
+.endm
+
+store_machine_status_register 16, strh, w
+store_machine_status_register 32, str, w
+store_machine_status_register 64, str, x
+
+.purgem store_machine_status_register
+
+gadget store_machine_status_16_m
+	effective_address
+	mov x25, x7
+	mov w24, #0x0033
+	movk w24, #0x8005, lsl #16
+	add x9, x7, #1
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_store_machine_status_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 2
+	strh w24, [x7]
+.Lx86_store_machine_status_done:
+	finish_store 2
+.Lx86_store_machine_status_cross:
+	mov x0, _context
+	mov x1, x25
+	mov x2, x24
+	mov w3, #2
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, .Lx86_memory_fault
+	b .Lx86_store_machine_status_done
+
+gadget mxcsr_load
+	effective_address
+	mov x25, x7
+	add x9, x7, #3
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_mxcsr_load_cross
+	translate 0, UML_X86_64_TLB_READ_PAGE, 4
+	ldr w24, [x7]
+.Lx86_mxcsr_load_done:
+	mov w8, #0xe040
+	and w24, w24, w8
+	orr w24, w24, #0x1f80
+	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	retire_and_next
+.Lx86_mxcsr_load_cross:
+	mov x0, _context
+	mov x1, x25
+	mov w2, #4
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	mov w24, w0
+	b .Lx86_mxcsr_load_done
+
+gadget mxcsr_store
+	effective_address
+	mov x25, x7
+	ldr w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	add x9, x7, #3
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_mxcsr_store_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 4
+	str w24, [x7]
+.Lx86_mxcsr_store_done:
+	finish_store 4
+.Lx86_mxcsr_store_cross:
+	mov x0, _context
+	mov x1, x25
+	mov x2, x24
+	mov w3, #4
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, .Lx86_memory_fault
+	b .Lx86_mxcsr_store_done
+
+gadget cache_zero
+	ldp x23, x22, [_stream], #16
+	ldr x25, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	and x25, x25, #0xffffffffffffffc0
+	mov x7, x25
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 64
+	movi v0.16b, #0
+	stp q0, q0, [x7]
+	stp q0, q0, [x7, #32]
+	mov x0, _context
+	mov x1, x25
+	bl NAME(uml_x86_64_gadget_invalidate_code)
+	ubfx x8, x23, #56, #4
+	add x8, x22, x8
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+
+.p2align 4
+.Lx86_memory_fault:
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
+	b uml_x86_64_gadget_leave

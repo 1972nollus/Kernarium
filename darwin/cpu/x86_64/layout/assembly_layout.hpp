@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/layout/assembly_offsets.h"
+
+#include <cstddef>
+
+namespace uml::cpu::x86_64::layout {
+
+static_assert(offsetof(CpuState, registers) == UML_X86_64_CPU_REGISTERS);
+static_assert(offsetof(CpuState, vectors) == UML_X86_64_CPU_VECTORS);
+static_assert(offsetof(CpuState, mmx) == UML_X86_64_CPU_MMX);
+static_assert(offsetof(CpuState, x87) == UML_X86_64_CPU_X87);
+static_assert(offsetof(CpuState, segment_selectors) ==
+	UML_X86_64_CPU_SEGMENT_SELECTORS);
+static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
+static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
+static_assert(offsetof(CpuState, fs_base) == UML_X86_64_CPU_FS_BASE);
+static_assert(offsetof(CpuState, gs_base) == UML_X86_64_CPU_GS_BASE);
+static_assert(offsetof(CpuState, mxcsr) == UML_X86_64_CPU_MXCSR);
+static_assert(offsetof(CpuState, x87_control) == UML_X86_64_CPU_X87_CONTROL);
+static_assert(offsetof(CpuState, x87_status) == UML_X86_64_CPU_X87_STATUS);
+static_assert(offsetof(CpuState, x87_tag) == UML_X86_64_CPU_X87_TAG);
+static_assert(offsetof(CpuState, x87_top) == UML_X86_64_CPU_X87_TOP);
+static_assert(offsetof(CpuState, x87_reduced_precision) ==
+	UML_X86_64_CPU_X87_REDUCED_PRECISION);
+static_assert(offsetof(CpuState, system_call_32bit) ==
+	UML_X86_64_CPU_SYSTEM_CALL_32BIT);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, left) == UML_X86_64_CPU_DEFERRED_LEFT);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, right) == UML_X86_64_CPU_DEFERRED_RIGHT);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, result) == UML_X86_64_CPU_DEFERRED_RESULT);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, operation) == UML_X86_64_CPU_DEFERRED_OPERATION);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, width) == UML_X86_64_CPU_DEFERRED_WIDTH);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, carry) == UML_X86_64_CPU_DEFERRED_CARRY);
+
+} // namespace uml::cpu::x86_64::layout

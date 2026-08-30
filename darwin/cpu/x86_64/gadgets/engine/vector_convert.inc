@@ -1,0 +1,262 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Packed/scalar floating-point width and signed-int32 conversions. */
+
+.macro vector_convert_round input, output, element, truncate
+	.if \truncate
+	.if \element == 32
+	frintz v\output\().4s, v\input\().4s
+	.else
+	frintz v\output\().2d, v\input\().2d
+	.endif
+	.else
+	ldr w13, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ubfx w13, w13, #13, #2
+	cmp w13, #1
+	b.eq .Lx86_vector_convert_round_down\@
+	cmp w13, #2
+	b.eq .Lx86_vector_convert_round_up\@
+	cmp w13, #3
+	b.eq .Lx86_vector_convert_round_zero\@
+	.if \element == 32
+	frintn v\output\().4s, v\input\().4s
+	.else
+	frintn v\output\().2d, v\input\().2d
+	.endif
+	b .Lx86_vector_convert_round_done\@
+.Lx86_vector_convert_round_down\@:
+	.if \element == 32
+	frintm v\output\().4s, v\input\().4s
+	.else
+	frintm v\output\().2d, v\input\().2d
+	.endif
+	b .Lx86_vector_convert_round_done\@
+.Lx86_vector_convert_round_up\@:
+	.if \element == 32
+	frintp v\output\().4s, v\input\().4s
+	.else
+	frintp v\output\().2d, v\input\().2d
+	.endif
+	b .Lx86_vector_convert_round_done\@
+.Lx86_vector_convert_round_zero\@:
+	.if \element == 32
+	frintz v\output\().4s, v\input\().4s
+	.else
+	frintz v\output\().2d, v\input\().2d
+	.endif
+.Lx86_vector_convert_round_done\@:
+	.endif
+.endm
+
+/* Convert one q register of float/double values to signed int32. Double
+ * inputs produce two packed dwords in the low d register.
+ */
+.macro vector_convert_fp_i32 input, output, element, truncate
+	vector_convert_round \input, 6, \element, \truncate
+	.if \element == 32
+	mov w14, #0x4f000000
+	dup v16.4s, w14
+	fcmgt v7.4s, v16.4s, v6.4s
+	mov w14, #0xcf000000
+	dup v17.4s, w14
+	fcmge v17.4s, v6.4s, v17.4s
+	and v7.16b, v7.16b, v17.16b
+	fcvtzs v16.4s, v6.4s
+	mov w14, #0x80000000
+	dup v17.4s, w14
+	bsl v7.16b, v16.16b, v17.16b
+	mov v\output\().16b, v7.16b
+	.else
+	mov x14, #0x41e0000000000000
+	dup v16.2d, x14
+	fcmgt v7.2d, v16.2d, v6.2d
+	mov x14, #0xc1e0000000000000
+	dup v17.2d, x14
+	fcmge v17.2d, v6.2d, v17.2d
+	and v7.16b, v7.16b, v17.16b
+	fcvtzs v16.2d, v6.2d
+	mov x14, #0x80000000
+	dup v17.2d, x14
+	bsl v7.16b, v16.16b, v17.16b
+	xtn v\output\().2s, v7.2d
+	.endif
+.endm
+
+.macro vector_convert_body operation, output_width, input_size, scalar, truncate
+	.ifc \operation,ps_pd
+	fcvtl v4.2d, v1.2s
+	.if \output_width == 256
+	fcvtl2 v5.2d, v1.4s
+	.endif
+	.endif
+	.ifc \operation,pd_ps
+	movi v4.16b, #0
+	fcvtn v4.2s, v1.2d
+	.if \input_size == 32
+	fcvtn2 v4.4s, v3.2d
+	.endif
+	.endif
+	.ifc \operation,ss_sd
+	mov v4.16b, v0.16b
+	fcvt d6, s1
+	mov v4.d[0], v6.d[0]
+	.endif
+	.ifc \operation,sd_ss
+	mov v4.16b, v0.16b
+	fcvt s6, d1
+	mov v4.s[0], v6.s[0]
+	.endif
+	.ifc \operation,dq_ps
+	scvtf v4.4s, v1.4s
+	.if \output_width == 256
+	scvtf v5.4s, v3.4s
+	.endif
+	.endif
+	.ifc \operation,ps_dq
+	vector_convert_fp_i32 1, 4, 32, \truncate
+	.if \output_width == 256
+	vector_convert_fp_i32 3, 5, 32, \truncate
+	.endif
+	.endif
+	.ifc \operation,dq_pd
+	sshll v6.2d, v1.2s, #0
+	scvtf v4.2d, v6.2d
+	.if \output_width == 256
+	sshll2 v6.2d, v1.4s, #0
+	scvtf v5.2d, v6.2d
+	.endif
+	.endif
+	.ifc \operation,pd_dq
+	vector_convert_fp_i32 1, 4, 64, \truncate
+	.if \input_size == 32
+	vector_convert_fp_i32 3, 5, 64, \truncate
+	mov v4.d[1], v5.d[0]
+	.endif
+	.endif
+.endm
+
+.macro vector_convert_write output_width, descriptor
+	and x9, x\descriptor, #0xffff
+	add x9, _cpu, x9
+	str q4, [x9]
+	.if \output_width == 256
+	str q5, [x9, #16]
+	.else
+	tbz x\descriptor, #63, .Lx86_vector_convert_write_done\@
+	movi v6.16b, #0
+	str q6, [x9, #16]
+.Lx86_vector_convert_write_done\@:
+	.endif
+.endm
+
+.macro vector_convert_register name, operation, output_width, input_size, scalar, truncate
+gadget vector_convert_\name\()_rr
+	ldr x8, [_stream], #8
+	.if \scalar
+	ubfx x10, x8, #16, #16
+	add x10, _cpu, x10
+	ldr q0, [x10]
+	.endif
+	ubfx x11, x8, #32, #16
+	add x11, _cpu, x11
+	ldr q1, [x11]
+	.if \input_size == 32
+	ldr q3, [x11, #16]
+	.endif
+	vector_convert_body \operation, \output_width, \input_size, \scalar, \truncate
+	vector_convert_write \output_width, 8
+	retire_and_next
+.endm
+
+.macro vector_convert_memory name, operation, output_width, input_size, scalar, truncate
+gadget vector_convert_\name\()_rm
+	effective_address
+	ldr x26, [_stream], #8
+	mov x25, x7
+	add x9, x7, #(\input_size - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, .Lx86_vector_convert_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
+	.if \input_size == 4
+	ldr s1, [x7]
+	.elseif \input_size == 8
+	ldr d1, [x7]
+	.else
+	ldr q1, [x7]
+	.if \input_size == 32
+	ldr q3, [x7, #16]
+	.endif
+	.endif
+	b .Lx86_vector_convert_loaded\@
+.Lx86_vector_convert_cross\@:
+	.if \input_size <= 8
+	mov x0, _context
+	mov x1, x25
+	mov w2, #\input_size
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	.if \input_size == 4
+	fmov s1, w0
+	.else
+	fmov d1, x0
+	.endif
+	.else
+	sub sp, sp, #32
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #\input_size
+	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	cbz w0, .Lx86_vector_convert_cross_fault\@
+	ldr q1, [sp]
+	.if \input_size == 32
+	ldr q3, [sp, #16]
+	.endif
+	add sp, sp, #32
+	.endif
+.Lx86_vector_convert_loaded\@:
+	.if \scalar
+	and x10, x26, #0xffff
+	add x10, _cpu, x10
+	ldr q0, [x10]
+	.endif
+	vector_convert_body \operation, \output_width, \input_size, \scalar, \truncate
+	vector_convert_write \output_width, 23
+	retire_and_next
+	.if \input_size > 8
+.Lx86_vector_convert_cross_fault\@:
+	add sp, sp, #32
+	b .Lx86_memory_fault
+	.endif
+.endm
+
+.macro vector_convert_family name, operation, output_width, input_size, scalar=0, truncate=0
+	vector_convert_register \name, \operation, \output_width, \input_size, \scalar, \truncate
+	vector_convert_memory \name, \operation, \output_width, \input_size, \scalar, \truncate
+.endm
+
+vector_convert_family ps_pd_128, ps_pd, 128, 8
+vector_convert_family ps_pd_256, ps_pd, 256, 16
+vector_convert_family pd_ps_128, pd_ps, 128, 16
+vector_convert_family pd_ps_256, pd_ps, 128, 32
+vector_convert_family ss_sd, ss_sd, 128, 4, 1
+vector_convert_family sd_ss, sd_ss, 128, 8, 1
+vector_convert_family dq_ps_128, dq_ps, 128, 16
+vector_convert_family dq_ps_256, dq_ps, 256, 32
+vector_convert_family ps_dq_128, ps_dq, 128, 16
+vector_convert_family ps_dq_256, ps_dq, 256, 32
+vector_convert_family ttps_dq_128, ps_dq, 128, 16, 0, 1
+vector_convert_family ttps_dq_256, ps_dq, 256, 32, 0, 1
+vector_convert_family dq_pd_128, dq_pd, 128, 8
+vector_convert_family dq_pd_256, dq_pd, 256, 16
+vector_convert_family pd_dq_128, pd_dq, 128, 16
+vector_convert_family pd_dq_256, pd_dq, 128, 32
+vector_convert_family ttpd_dq_128, pd_dq, 128, 16, 0, 1
+vector_convert_family ttpd_dq_256, pd_dq, 128, 32, 0, 1
+
+.purgem vector_convert_family
+.purgem vector_convert_memory
+.purgem vector_convert_register
+.purgem vector_convert_write
+.purgem vector_convert_body
+.purgem vector_convert_fp_i32
+.purgem vector_convert_round

@@ -1,0 +1,5888 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "native_builder.hpp"
+
+#include "native_symbols.hpp"
+
+#include <array>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <stdexcept>
+
+namespace uml::cpu::x86_64::gadgets {
+namespace {
+
+using NativeEntry = void (*)();
+
+[[nodiscard]] std::uintptr_t entry_address(NativeEntry entry) noexcept
+{
+	return reinterpret_cast<std::uintptr_t>(entry);
+}
+
+[[nodiscard]] std::optional<std::uint16_t> register_offset(
+	const Operand &operand) noexcept
+{
+	if (operand.kind != OperandKind::reg)
+		return std::nullopt;
+	const auto offset = static_cast<std::uint16_t>(
+		operand.reg.index * sizeof(std::uint64_t) +
+		(operand.reg.high_byte ? 1U : 0U));
+	return offset;
+}
+
+[[nodiscard]] std::optional<std::uint16_t> vector_offset(
+	const Operand &operand) noexcept
+{
+	if (operand.kind != OperandKind::vector_reg)
+		return std::nullopt;
+	return static_cast<std::uint16_t>(offsetof(CpuState, vectors) +
+		operand.reg.index * sizeof(CpuState::vectors[0]));
+}
+
+[[nodiscard]] std::optional<std::uint16_t> mmx_offset(
+	const Operand &operand) noexcept
+{
+	if (operand.kind != OperandKind::mmx_reg || operand.reg.index >= 8U)
+		return std::nullopt;
+	return static_cast<std::uint16_t>(offsetof(CpuState, mmx) +
+		operand.reg.index * sizeof(CpuState::mmx[0]));
+}
+
+[[nodiscard]] std::optional<std::uint16_t> vector_state_offset(
+	const Operand &operand) noexcept
+{
+	if (const auto vector = vector_offset(operand))
+		return vector;
+	return mmx_offset(operand);
+}
+
+#define UML_X86_DEFINE_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width, bool immediate) noexcept \
+	{ \
+		switch (width) { \
+		case OperandWidth::byte: \
+			return entry_address(immediate ? \
+				native::uml_x86_64_gadget_##operation##_8_ri : \
+				native::uml_x86_64_gadget_##operation##_8_rr); \
+		case OperandWidth::word: \
+			return entry_address(immediate ? \
+				native::uml_x86_64_gadget_##operation##_16_ri : \
+				native::uml_x86_64_gadget_##operation##_16_rr); \
+		case OperandWidth::dword: \
+			return entry_address(immediate ? \
+				native::uml_x86_64_gadget_##operation##_32_ri : \
+				native::uml_x86_64_gadget_##operation##_32_rr); \
+		case OperandWidth::qword: \
+			return entry_address(immediate ? \
+				native::uml_x86_64_gadget_##operation##_64_ri : \
+				native::uml_x86_64_gadget_##operation##_64_rr); \
+		case OperandWidth::xmm: \
+		case OperandWidth::ymm: \
+			break; \
+		} \
+		return 0; \
+	}
+
+UML_X86_DEFINE_SELECTOR(move)
+UML_X86_DEFINE_SELECTOR(add)
+UML_X86_DEFINE_SELECTOR(sub)
+UML_X86_DEFINE_SELECTOR(and)
+UML_X86_DEFINE_SELECTOR(or)
+UML_X86_DEFINE_SELECTOR(xor)
+UML_X86_DEFINE_SELECTOR(cmp)
+UML_X86_DEFINE_SELECTOR(test)
+UML_X86_DEFINE_SELECTOR(adc)
+UML_X86_DEFINE_SELECTOR(sbb)
+
+#undef UML_X86_DEFINE_SELECTOR
+
+[[nodiscard]] std::uintptr_t select_exchange(
+	OperandWidth width) noexcept
+{
+	switch (width) {
+	case OperandWidth::byte: return entry_address(
+		native::uml_x86_64_gadget_exchange_8_rr);
+	case OperandWidth::word: return entry_address(
+		native::uml_x86_64_gadget_exchange_16_rr);
+	case OperandWidth::dword: return entry_address(
+		native::uml_x86_64_gadget_exchange_32_rr);
+	case OperandWidth::qword: return entry_address(
+		native::uml_x86_64_gadget_exchange_64_rr);
+	default: return 0;
+	}
+}
+
+#define UML_X86_DEFINE_UNARY_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width) noexcept \
+	{ \
+		switch (width) { \
+		case OperandWidth::byte: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_8_r); \
+		case OperandWidth::word: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_16_r); \
+		case OperandWidth::dword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_32_r); \
+		case OperandWidth::qword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_64_r); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_UNARY_SELECTOR(increment)
+UML_X86_DEFINE_UNARY_SELECTOR(decrement)
+UML_X86_DEFINE_UNARY_SELECTOR(negate)
+UML_X86_DEFINE_UNARY_SELECTOR(not)
+
+#undef UML_X86_DEFINE_UNARY_SELECTOR
+
+#define UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_memory_##operation( \
+		OperandWidth width) noexcept \
+	{ \
+		switch (width) { \
+		case OperandWidth::byte: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_8_m); \
+		case OperandWidth::word: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_16_m); \
+		case OperandWidth::dword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_32_m); \
+		case OperandWidth::qword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_64_m); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(increment)
+UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(decrement)
+UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(negate)
+UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(not)
+
+#undef UML_X86_DEFINE_MEMORY_UNARY_SELECTOR
+
+[[nodiscard]] std::uintptr_t arithmetic_entry(
+	Operation operation, OperandWidth width, bool immediate) noexcept
+{
+	switch (operation) {
+	case Operation::add: return select_add(width, immediate);
+	case Operation::subtract: return select_sub(width, immediate);
+	case Operation::bit_and: return select_and(width, immediate);
+	case Operation::bit_or: return select_or(width, immediate);
+	case Operation::bit_xor: return select_xor(width, immediate);
+	case Operation::compare: return select_cmp(width, immediate);
+	case Operation::test: return select_test(width, immediate);
+	default: return 0;
+	}
+}
+
+enum class MemoryMoveForm {
+	load,
+	store_register,
+	store_immediate,
+};
+
+enum class MemoryArithmeticForm {
+	register_memory,
+	memory_register,
+	memory_immediate,
+};
+
+enum class ShiftForm {
+	register_register,
+	register_immediate,
+	memory_register,
+	memory_immediate,
+};
+
+enum class DoubleShiftForm {
+	register_immediate,
+	register_register,
+	memory_immediate,
+	memory_register,
+};
+
+enum class MultiplyForm {
+	implicit_register,
+	implicit_memory,
+	explicit_register,
+	explicit_memory,
+	immediate_register,
+	immediate_memory,
+};
+
+enum class BmiKind {
+	blsr,
+	blsmsk,
+	blsi,
+	andn,
+	bzhi,
+	bextr,
+	shlx,
+	sarx,
+	shrx,
+	pdep,
+	pext,
+	mulx,
+};
+
+#define UML_X86_DEFINE_SHIFT_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width, ShiftForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry rr, NativeEntry ri, \
+			NativeEntry mr, NativeEntry mi) { \
+			switch (form) { \
+			case ShiftForm::register_register: return entry_address(rr); \
+			case ShiftForm::register_immediate: return entry_address(ri); \
+			case ShiftForm::memory_register: return entry_address(mr); \
+			case ShiftForm::memory_immediate: return entry_address(mi); \
+			} \
+			return std::uintptr_t{}; \
+		}; \
+		switch (width) { \
+		case OperandWidth::byte: return select( \
+			native::uml_x86_64_gadget_##operation##_8_rr, \
+			native::uml_x86_64_gadget_##operation##_8_ri, \
+			native::uml_x86_64_gadget_##operation##_8_mr, \
+			native::uml_x86_64_gadget_##operation##_8_mi); \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_rr, \
+			native::uml_x86_64_gadget_##operation##_16_ri, \
+			native::uml_x86_64_gadget_##operation##_16_mr, \
+			native::uml_x86_64_gadget_##operation##_16_mi); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_rr, \
+			native::uml_x86_64_gadget_##operation##_32_ri, \
+			native::uml_x86_64_gadget_##operation##_32_mr, \
+			native::uml_x86_64_gadget_##operation##_32_mi); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_rr, \
+			native::uml_x86_64_gadget_##operation##_64_ri, \
+			native::uml_x86_64_gadget_##operation##_64_mr, \
+			native::uml_x86_64_gadget_##operation##_64_mi); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_SHIFT_SELECTOR(shl)
+UML_X86_DEFINE_SHIFT_SELECTOR(shr)
+UML_X86_DEFINE_SHIFT_SELECTOR(sar)
+UML_X86_DEFINE_SHIFT_SELECTOR(rol)
+UML_X86_DEFINE_SHIFT_SELECTOR(ror)
+UML_X86_DEFINE_SHIFT_SELECTOR(rcl)
+UML_X86_DEFINE_SHIFT_SELECTOR(rcr)
+
+#undef UML_X86_DEFINE_SHIFT_SELECTOR
+
+[[nodiscard]] std::uintptr_t shift_entry(Operation operation,
+	OperandWidth width, ShiftForm form) noexcept
+{
+	switch (operation) {
+	case Operation::shift_left: return select_shl(width, form);
+	case Operation::shift_right: return select_shr(width, form);
+	case Operation::shift_arithmetic_right: return select_sar(width, form);
+	case Operation::rotate_left: return select_rol(width, form);
+	case Operation::rotate_right: return select_ror(width, form);
+	case Operation::rotate_carry_left: return select_rcl(width, form);
+	case Operation::rotate_carry_right: return select_rcr(width, form);
+	default: return 0;
+	}
+}
+
+#define UML_X86_DEFINE_DOUBLE_SHIFT_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width, DoubleShiftForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry rri, NativeEntry rrr, \
+			NativeEntry mri, NativeEntry mrr) { \
+			switch (form) { \
+			case DoubleShiftForm::register_immediate: return entry_address(rri); \
+			case DoubleShiftForm::register_register: return entry_address(rrr); \
+			case DoubleShiftForm::memory_immediate: return entry_address(mri); \
+			case DoubleShiftForm::memory_register: return entry_address(mrr); \
+			} \
+			return std::uintptr_t{}; \
+		}; \
+		switch (width) { \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_rri, \
+			native::uml_x86_64_gadget_##operation##_16_rrr, \
+			native::uml_x86_64_gadget_##operation##_16_mri, \
+			native::uml_x86_64_gadget_##operation##_16_mrr); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_rri, \
+			native::uml_x86_64_gadget_##operation##_32_rrr, \
+			native::uml_x86_64_gadget_##operation##_32_mri, \
+			native::uml_x86_64_gadget_##operation##_32_mrr); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_rri, \
+			native::uml_x86_64_gadget_##operation##_64_rrr, \
+			native::uml_x86_64_gadget_##operation##_64_mri, \
+			native::uml_x86_64_gadget_##operation##_64_mrr); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_DOUBLE_SHIFT_SELECTOR(shld)
+UML_X86_DEFINE_DOUBLE_SHIFT_SELECTOR(shrd)
+
+#undef UML_X86_DEFINE_DOUBLE_SHIFT_SELECTOR
+
+[[nodiscard]] std::uintptr_t double_shift_entry(Operation operation,
+	OperandWidth width, DoubleShiftForm form) noexcept
+{
+	return operation == Operation::double_shift_left ?
+		select_shld(width, form) : operation == Operation::double_shift_right ?
+		select_shrd(width, form) : 0;
+}
+
+[[nodiscard]] std::uintptr_t multiply_entry(bool sign, OperandWidth width,
+	MultiplyForm form) noexcept
+{
+#define UML_X86_MULTIPLY_IMPLICIT(width_bits) \
+	if (form == MultiplyForm::implicit_register) \
+		return entry_address(sign ? \
+			native::uml_x86_64_gadget_imul_##width_bits##_r : \
+			native::uml_x86_64_gadget_mul_##width_bits##_r); \
+	if (form == MultiplyForm::implicit_memory) \
+		return entry_address(sign ? \
+			native::uml_x86_64_gadget_imul_##width_bits##_m : \
+			native::uml_x86_64_gadget_mul_##width_bits##_m)
+#define UML_X86_MULTIPLY_EXPLICIT(width_bits) \
+	if (form == MultiplyForm::explicit_register) \
+		return entry_address(native::uml_x86_64_gadget_imul_##width_bits##_rr); \
+	if (form == MultiplyForm::explicit_memory) \
+		return entry_address(native::uml_x86_64_gadget_imul_##width_bits##_rmr); \
+	if (form == MultiplyForm::immediate_register) \
+		return entry_address(native::uml_x86_64_gadget_imul_##width_bits##_rri); \
+	if (form == MultiplyForm::immediate_memory) \
+		return entry_address(native::uml_x86_64_gadget_imul_##width_bits##_rmi)
+	switch (width) {
+	case OperandWidth::byte:
+		UML_X86_MULTIPLY_IMPLICIT(8);
+		break;
+	case OperandWidth::word:
+		UML_X86_MULTIPLY_IMPLICIT(16);
+		if (sign) {
+			UML_X86_MULTIPLY_EXPLICIT(16);
+		}
+		break;
+	case OperandWidth::dword:
+		UML_X86_MULTIPLY_IMPLICIT(32);
+		if (sign) {
+			UML_X86_MULTIPLY_EXPLICIT(32);
+		}
+		break;
+	case OperandWidth::qword:
+		UML_X86_MULTIPLY_IMPLICIT(64);
+		if (sign) {
+			UML_X86_MULTIPLY_EXPLICIT(64);
+		}
+		break;
+	default: break;
+	}
+#undef UML_X86_MULTIPLY_EXPLICIT
+#undef UML_X86_MULTIPLY_IMPLICIT
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t divide_entry(bool sign, OperandWidth width,
+	bool memory) noexcept
+{
+#define UML_X86_DIVIDE_ENTRY(operation, width_bits) \
+	return entry_address(memory ? \
+		native::uml_x86_64_gadget_##operation##_##width_bits##_m : \
+		native::uml_x86_64_gadget_##operation##_##width_bits##_r)
+	switch (width) {
+	case OperandWidth::byte:
+		if (sign) UML_X86_DIVIDE_ENTRY(idiv, 8);
+		UML_X86_DIVIDE_ENTRY(div, 8);
+	case OperandWidth::word:
+		if (sign) UML_X86_DIVIDE_ENTRY(idiv, 16);
+		UML_X86_DIVIDE_ENTRY(div, 16);
+	case OperandWidth::dword:
+		if (sign) UML_X86_DIVIDE_ENTRY(idiv, 32);
+		UML_X86_DIVIDE_ENTRY(div, 32);
+	case OperandWidth::qword:
+		if (sign) UML_X86_DIVIDE_ENTRY(idiv, 64);
+		UML_X86_DIVIDE_ENTRY(div, 64);
+	default: break;
+	}
+#undef UML_X86_DIVIDE_ENTRY
+	return 0;
+}
+
+#define UML_X86_DEFINE_BIT_OPERATION_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width, ShiftForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry rr, NativeEntry ri, \
+			NativeEntry mr, NativeEntry mi) { \
+			switch (form) { \
+			case ShiftForm::register_register: return entry_address(rr); \
+			case ShiftForm::register_immediate: return entry_address(ri); \
+			case ShiftForm::memory_register: return entry_address(mr); \
+			case ShiftForm::memory_immediate: return entry_address(mi); \
+			} \
+			return std::uintptr_t{}; \
+		}; \
+		switch (width) { \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_rr, \
+			native::uml_x86_64_gadget_##operation##_16_ri, \
+			native::uml_x86_64_gadget_##operation##_16_mr, \
+			native::uml_x86_64_gadget_##operation##_16_mi); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_rr, \
+			native::uml_x86_64_gadget_##operation##_32_ri, \
+			native::uml_x86_64_gadget_##operation##_32_mr, \
+			native::uml_x86_64_gadget_##operation##_32_mi); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_rr, \
+			native::uml_x86_64_gadget_##operation##_64_ri, \
+			native::uml_x86_64_gadget_##operation##_64_mr, \
+			native::uml_x86_64_gadget_##operation##_64_mi); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_BIT_OPERATION_SELECTOR(bt)
+UML_X86_DEFINE_BIT_OPERATION_SELECTOR(bts)
+UML_X86_DEFINE_BIT_OPERATION_SELECTOR(btr)
+UML_X86_DEFINE_BIT_OPERATION_SELECTOR(btc)
+
+#undef UML_X86_DEFINE_BIT_OPERATION_SELECTOR
+
+[[nodiscard]] std::uintptr_t bit_operation_entry(Operation operation,
+	OperandWidth width, ShiftForm form) noexcept
+{
+	switch (operation) {
+	case Operation::bit_test: return select_bt(width, form);
+	case Operation::bit_set: return select_bts(width, form);
+	case Operation::bit_reset: return select_btr(width, form);
+	case Operation::bit_complement: return select_btc(width, form);
+	default: return 0;
+	}
+}
+
+#define UML_X86_DEFINE_BIT_COUNT_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation( \
+		OperandWidth width, bool memory) noexcept \
+	{ \
+		switch (width) { \
+		case OperandWidth::word: return entry_address(memory ? \
+			native::uml_x86_64_gadget_##operation##_16_rm : \
+			native::uml_x86_64_gadget_##operation##_16_rr); \
+		case OperandWidth::dword: return entry_address(memory ? \
+			native::uml_x86_64_gadget_##operation##_32_rm : \
+			native::uml_x86_64_gadget_##operation##_32_rr); \
+		case OperandWidth::qword: return entry_address(memory ? \
+			native::uml_x86_64_gadget_##operation##_64_rm : \
+			native::uml_x86_64_gadget_##operation##_64_rr); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_BIT_COUNT_SELECTOR(bsf)
+UML_X86_DEFINE_BIT_COUNT_SELECTOR(bsr)
+UML_X86_DEFINE_BIT_COUNT_SELECTOR(tzcnt)
+UML_X86_DEFINE_BIT_COUNT_SELECTOR(lzcnt)
+UML_X86_DEFINE_BIT_COUNT_SELECTOR(popcnt)
+
+#undef UML_X86_DEFINE_BIT_COUNT_SELECTOR
+
+[[nodiscard]] std::uintptr_t bit_count_entry(Operation operation,
+	OperandWidth width, bool memory) noexcept
+{
+	switch (operation) {
+	case Operation::bit_scan_forward: return select_bsf(width, memory);
+	case Operation::bit_scan_reverse: return select_bsr(width, memory);
+	case Operation::count_trailing_zeros: return select_tzcnt(width, memory);
+	case Operation::count_leading_zeros: return select_lzcnt(width, memory);
+	case Operation::population_count: return select_popcnt(width, memory);
+	default: return 0;
+	}
+}
+
+[[nodiscard]] std::uintptr_t atomic_binary_entry(Operation operation,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_ATOMIC_ENTRY(name, width_bits) \
+	return entry_address(memory ? \
+		native::uml_x86_64_gadget_##name##_##width_bits##_mr : \
+		native::uml_x86_64_gadget_##name##_##width_bits##_rr)
+	switch (operation) {
+	case Operation::compare_exchange:
+		switch (width) {
+		case OperandWidth::byte: UML_X86_ATOMIC_ENTRY(cmpxchg, 8);
+		case OperandWidth::word: UML_X86_ATOMIC_ENTRY(cmpxchg, 16);
+		case OperandWidth::dword: UML_X86_ATOMIC_ENTRY(cmpxchg, 32);
+		case OperandWidth::qword: UML_X86_ATOMIC_ENTRY(cmpxchg, 64);
+		default: return 0;
+		}
+	case Operation::exchange_add:
+		switch (width) {
+		case OperandWidth::byte: UML_X86_ATOMIC_ENTRY(xadd, 8);
+		case OperandWidth::word: UML_X86_ATOMIC_ENTRY(xadd, 16);
+		case OperandWidth::dword: UML_X86_ATOMIC_ENTRY(xadd, 32);
+		case OperandWidth::qword: UML_X86_ATOMIC_ENTRY(xadd, 64);
+		default: return 0;
+		}
+	default: return 0;
+	}
+#undef UML_X86_ATOMIC_ENTRY
+}
+
+[[nodiscard]] std::uintptr_t movbe_entry(
+	OperandWidth width, bool load) noexcept
+{
+#define UML_X86_MOVBE_ENTRY(width_bits) \
+	return entry_address(load ? \
+		native::uml_x86_64_gadget_movbe_##width_bits##_rm : \
+		native::uml_x86_64_gadget_movbe_##width_bits##_mr)
+	switch (width) {
+	case OperandWidth::word: UML_X86_MOVBE_ENTRY(16);
+	case OperandWidth::dword: UML_X86_MOVBE_ENTRY(32);
+	case OperandWidth::qword: UML_X86_MOVBE_ENTRY(64);
+	default: return 0;
+	}
+#undef UML_X86_MOVBE_ENTRY
+}
+
+[[nodiscard]] std::uintptr_t crc32_entry(
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_CRC32_ENTRY(width_bits) \
+	return entry_address(memory ? \
+		native::uml_x86_64_gadget_crc32_##width_bits##_rm : \
+		native::uml_x86_64_gadget_crc32_##width_bits##_rr)
+	switch (width) {
+	case OperandWidth::byte: UML_X86_CRC32_ENTRY(8);
+	case OperandWidth::word: UML_X86_CRC32_ENTRY(16);
+	case OperandWidth::dword: UML_X86_CRC32_ENTRY(32);
+	case OperandWidth::qword: UML_X86_CRC32_ENTRY(64);
+	default: return 0;
+	}
+#undef UML_X86_CRC32_ENTRY
+}
+
+[[nodiscard]] std::uintptr_t adx_entry(bool overflow, OperandWidth width,
+	bool memory) noexcept
+{
+#define UML_X86_ADX_ENTRY(operation, width_bits) \
+	return entry_address(memory ? \
+		native::uml_x86_64_gadget_##operation##_##width_bits##_rm : \
+		native::uml_x86_64_gadget_##operation##_##width_bits##_rr)
+	switch (width) {
+	case OperandWidth::dword:
+		if (overflow) UML_X86_ADX_ENTRY(adox, 32);
+		UML_X86_ADX_ENTRY(adcx, 32);
+	case OperandWidth::qword:
+		if (overflow) UML_X86_ADX_ENTRY(adox, 64);
+		UML_X86_ADX_ENTRY(adcx, 64);
+	default: return 0;
+	}
+#undef UML_X86_ADX_ENTRY
+}
+
+[[nodiscard]] std::uintptr_t bmi_unary_entry(BmiKind kind,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_BMI_UNARY_CASE(operation) \
+	case BmiKind::operation: \
+		if (width == OperandWidth::dword) \
+			return entry_address(memory ? \
+				native::uml_x86_64_gadget_##operation##_32_rm : \
+				native::uml_x86_64_gadget_##operation##_32_rr); \
+		if (width == OperandWidth::qword) \
+			return entry_address(memory ? \
+				native::uml_x86_64_gadget_##operation##_64_rm : \
+				native::uml_x86_64_gadget_##operation##_64_rr); \
+		return 0
+	switch (kind) {
+	UML_X86_BMI_UNARY_CASE(blsr);
+	UML_X86_BMI_UNARY_CASE(blsmsk);
+	UML_X86_BMI_UNARY_CASE(blsi);
+	default: return 0;
+	}
+#undef UML_X86_BMI_UNARY_CASE
+}
+
+[[nodiscard]] std::uintptr_t bmi_ternary_entry(BmiKind kind,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_BMI_TERNARY_CASE(operation) \
+	case BmiKind::operation: \
+		if (width == OperandWidth::dword) \
+			return entry_address(memory ? \
+				native::uml_x86_64_gadget_##operation##_32_rrm : \
+				native::uml_x86_64_gadget_##operation##_32_rrr); \
+		if (width == OperandWidth::qword) \
+			return entry_address(memory ? \
+				native::uml_x86_64_gadget_##operation##_64_rrm : \
+				native::uml_x86_64_gadget_##operation##_64_rrr); \
+		return 0
+	switch (kind) {
+	UML_X86_BMI_TERNARY_CASE(andn);
+	UML_X86_BMI_TERNARY_CASE(bzhi);
+	UML_X86_BMI_TERNARY_CASE(bextr);
+	UML_X86_BMI_TERNARY_CASE(shlx);
+	UML_X86_BMI_TERNARY_CASE(sarx);
+	UML_X86_BMI_TERNARY_CASE(shrx);
+	UML_X86_BMI_TERNARY_CASE(pdep);
+	UML_X86_BMI_TERNARY_CASE(pext);
+	UML_X86_BMI_TERNARY_CASE(mulx);
+	default: return 0;
+	}
+#undef UML_X86_BMI_TERNARY_CASE
+}
+
+[[nodiscard]] std::uintptr_t rorx_entry(
+	OperandWidth width, bool memory) noexcept
+{
+	if (width == OperandWidth::dword)
+		return entry_address(memory ?
+			native::uml_x86_64_gadget_rorx_32_rmi :
+			native::uml_x86_64_gadget_rorx_32_rri);
+	if (width == OperandWidth::qword)
+		return entry_address(memory ?
+			native::uml_x86_64_gadget_rorx_64_rmi :
+			native::uml_x86_64_gadget_rorx_64_rri);
+	return 0;
+}
+
+#define UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_memory_##operation( \
+		OperandWidth width, MemoryArithmeticForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry rm, NativeEntry mr, \
+			NativeEntry mi) { \
+			return entry_address(form == \
+				MemoryArithmeticForm::register_memory ? rm : form == \
+				MemoryArithmeticForm::memory_register ? mr : mi); \
+		}; \
+		switch (width) { \
+		case OperandWidth::byte: return select( \
+			native::uml_x86_64_gadget_##operation##_8_rm, \
+			native::uml_x86_64_gadget_##operation##_8_mr, \
+			native::uml_x86_64_gadget_##operation##_8_mi); \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_rm, \
+			native::uml_x86_64_gadget_##operation##_16_mr, \
+			native::uml_x86_64_gadget_##operation##_16_mi); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_rm, \
+			native::uml_x86_64_gadget_##operation##_32_mr, \
+			native::uml_x86_64_gadget_##operation##_32_mi); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_rm, \
+			native::uml_x86_64_gadget_##operation##_64_mr, \
+			native::uml_x86_64_gadget_##operation##_64_mi); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(add)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(sub)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(and)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(or)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(xor)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(cmp)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(test)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(adc)
+UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(sbb)
+
+#undef UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR
+
+[[nodiscard]] std::uintptr_t memory_arithmetic_entry(Operation operation,
+	OperandWidth width, MemoryArithmeticForm form) noexcept
+{
+	switch (operation) {
+	case Operation::add: return select_memory_add(width, form);
+	case Operation::subtract: return select_memory_sub(width, form);
+	case Operation::bit_and: return select_memory_and(width, form);
+	case Operation::bit_or: return select_memory_or(width, form);
+	case Operation::bit_xor: return select_memory_xor(width, form);
+	case Operation::compare: return select_memory_cmp(width, form);
+	case Operation::test: return select_memory_test(width, form);
+	case Operation::add_carry: return select_memory_adc(width, form);
+	case Operation::subtract_borrow: return select_memory_sbb(width, form);
+	default: return 0;
+	}
+}
+
+[[nodiscard]] std::uintptr_t memory_move_entry(
+	OperandWidth width, MemoryMoveForm form) noexcept
+{
+#define UML_X86_MEMORY_MOVE(width_bits) \
+	switch (form) { \
+	case MemoryMoveForm::load: return entry_address( \
+		native::uml_x86_64_gadget_move_##width_bits##_rm); \
+	case MemoryMoveForm::store_register: return entry_address( \
+		native::uml_x86_64_gadget_move_##width_bits##_mr); \
+	case MemoryMoveForm::store_immediate: return entry_address( \
+		native::uml_x86_64_gadget_move_##width_bits##_mi); \
+	}
+	switch (width) {
+	case OperandWidth::byte: UML_X86_MEMORY_MOVE(8);
+	case OperandWidth::word: UML_X86_MEMORY_MOVE(16);
+	case OperandWidth::dword: UML_X86_MEMORY_MOVE(32);
+	case OperandWidth::qword: UML_X86_MEMORY_MOVE(64);
+	default: return 0;
+	}
+#undef UML_X86_MEMORY_MOVE
+	return 0;
+}
+
+struct EncodedMemory final {
+	std::uintptr_t descriptor{};
+	std::uintptr_t displacement{};
+};
+
+[[nodiscard]] std::optional<EncodedMemory> encode_memory(
+	const Gadget &gadget, const Operand &operand,
+	std::uint16_t value_offset, bool apply_segment = true) noexcept
+{
+	if (operand.kind != OperandKind::memory || operand.memory.vector_index)
+		return std::nullopt;
+	const auto &memory = operand.memory;
+	const auto base = memory.base == MemoryOperand::no_register ? 0xffffU :
+		static_cast<unsigned>(memory.base * sizeof(std::uint64_t));
+	const auto index = memory.index == MemoryOperand::no_register ? 0xffffU :
+		static_cast<unsigned>(memory.index * sizeof(std::uint64_t));
+	const auto scale_shift = std::countr_zero(
+		static_cast<unsigned>(memory.scale));
+	std::uintptr_t descriptor = value_offset |
+		(static_cast<std::uintptr_t>(base) << 16U) |
+		(static_cast<std::uintptr_t>(index) << 32U) |
+		(static_cast<std::uintptr_t>(scale_shift) << 48U) |
+		(static_cast<std::uintptr_t>(apply_segment ? memory.segment :
+			Segment::none) << 50U) |
+		(static_cast<std::uintptr_t>(memory.address_32) << 52U) |
+		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
+	std::uintptr_t displacement{};
+	if (memory.absolute_address) {
+		displacement = memory.absolute;
+		descriptor &= ~((std::uintptr_t{0xffff} << 16U) |
+			(std::uintptr_t{0xffff} << 32U));
+		descriptor |= (std::uintptr_t{0xffff} << 16U) |
+			(std::uintptr_t{0xffff} << 32U);
+	} else if (memory.rip_relative) {
+		displacement = gadget.address + gadget.instruction.length +
+			static_cast<std::int64_t>(memory.displacement);
+		descriptor &= ~((std::uintptr_t{0xffff} << 16U) |
+			(std::uintptr_t{0xffff} << 32U));
+		descriptor |= (std::uintptr_t{0xffff} << 16U) |
+			(std::uintptr_t{0xffff} << 32U);
+	} else {
+		displacement = static_cast<std::uintptr_t>(
+			static_cast<std::int64_t>(memory.displacement));
+	}
+	return EncodedMemory{descriptor, displacement};
+}
+
+[[nodiscard]] std::optional<EncodedMemory> encode_gather_memory(
+	const Gadget &gadget, const Operand &operand,
+	std::uint16_t destination_offset) noexcept
+{
+	if (operand.kind != OperandKind::memory ||
+		!operand.memory.vector_index ||
+		operand.memory.index == MemoryOperand::no_register)
+		return std::nullopt;
+	auto base = operand;
+	base.memory.index = MemoryOperand::no_register;
+	base.memory.vector_index = false;
+	return encode_memory(gadget, base, destination_offset);
+}
+
+[[nodiscard]] bool append_memory_move(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool load = instruction.source.kind == OperandKind::memory;
+	const auto &memory_operand = load ?
+		instruction.source : instruction.destination;
+	const auto &value_operand = load ?
+		instruction.destination : instruction.source;
+	MemoryMoveForm form{};
+	std::uint16_t value_offset{};
+	if (load) {
+		const auto offset = register_offset(value_operand);
+		if (!offset)
+			return false;
+		value_offset = *offset;
+		form = MemoryMoveForm::load;
+	} else if (value_operand.kind == OperandKind::immediate) {
+		form = MemoryMoveForm::store_immediate;
+	} else {
+		const auto offset = register_offset(value_operand);
+		if (!offset)
+			return false;
+		value_offset = *offset;
+		form = MemoryMoveForm::store_register;
+	}
+	const auto encoded = encode_memory(gadget, memory_operand, value_offset);
+	const auto entry = memory_move_entry(memory_operand.width, form);
+	if (!encoded || entry == 0)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	if (form == MemoryMoveForm::store_immediate)
+		stream.push_back(value_operand.immediate);
+	return true;
+}
+
+[[nodiscard]] bool append_memory_arithmetic(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool register_memory = instruction.source.kind ==
+		OperandKind::memory;
+	const auto &memory_operand = register_memory ?
+		instruction.source : instruction.destination;
+	const auto &value_operand = register_memory ?
+		instruction.destination : instruction.source;
+	MemoryArithmeticForm form{};
+	std::uint16_t value_offset{};
+	if (register_memory) {
+		const auto offset = register_offset(value_operand);
+		if (!offset)
+			return false;
+		value_offset = *offset;
+		form = MemoryArithmeticForm::register_memory;
+	} else if (value_operand.kind == OperandKind::immediate) {
+		form = MemoryArithmeticForm::memory_immediate;
+	} else {
+		const auto offset = register_offset(value_operand);
+		if (!offset)
+			return false;
+		value_offset = *offset;
+		form = MemoryArithmeticForm::memory_register;
+	}
+	const auto encoded = encode_memory(gadget, memory_operand, value_offset);
+	const auto entry = memory_arithmetic_entry(
+		instruction.operation, memory_operand.width, form);
+	if (!encoded || entry == 0)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	if (form == MemoryArithmeticForm::memory_immediate)
+		stream.push_back(value_operand.immediate);
+	return true;
+}
+
+[[nodiscard]] bool append_shift(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const bool immediate = instruction.source.kind == OperandKind::immediate;
+	if ((!memory && instruction.destination.kind != OperandKind::reg) ||
+		(!immediate && instruction.source.kind != OperandKind::reg))
+		return false;
+	const auto form = memory ?
+		(immediate ? ShiftForm::memory_immediate :
+			ShiftForm::memory_register) :
+		(immediate ? ShiftForm::register_immediate :
+			ShiftForm::register_register);
+	const auto entry = shift_entry(instruction.operation,
+		instruction.destination.width, form);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry);
+		if (immediate) {
+			stream.push_back(*destination);
+			stream.push_back(instruction.source.immediate);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+
+	std::uint16_t count_offset{};
+	if (!immediate) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		count_offset = *source;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, count_offset);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	if (immediate)
+		stream.push_back(instruction.source.immediate);
+	return true;
+}
+
+[[nodiscard]] bool append_double_shift(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const bool immediate = instruction.auxiliary.kind == OperandKind::immediate;
+	if ((!memory && instruction.destination.kind != OperandKind::reg) ||
+		instruction.source.kind != OperandKind::reg ||
+		(!immediate && instruction.auxiliary.kind != OperandKind::reg))
+		return false;
+	const auto source = register_offset(instruction.source);
+	if (!source)
+		return false;
+	const auto form = memory ?
+		(immediate ? DoubleShiftForm::memory_immediate :
+			DoubleShiftForm::memory_register) :
+		(immediate ? DoubleShiftForm::register_immediate :
+			DoubleShiftForm::register_register);
+	const auto entry = double_shift_entry(instruction.operation,
+		instruction.destination.width, form);
+	if (entry == 0)
+		return false;
+	std::uintptr_t count{};
+	if (immediate) {
+		count = instruction.auxiliary.immediate;
+	} else {
+		const auto count_offset = register_offset(instruction.auxiliary);
+		if (!count_offset)
+			return false;
+		count = *count_offset;
+	}
+	if (!memory) {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(count);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, *source);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(count);
+	return true;
+}
+
+[[nodiscard]] bool append_multiply(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool sign = instruction.operation == Operation::multiply_signed;
+	const bool implicit = instruction.source.kind == OperandKind::none;
+	if (implicit) {
+		const bool memory = instruction.destination.kind == OperandKind::memory;
+		if (!memory && instruction.destination.kind != OperandKind::reg)
+			return false;
+		const auto form = memory ? MultiplyForm::implicit_memory :
+			MultiplyForm::implicit_register;
+		const auto entry = multiply_entry(
+			sign, instruction.destination.width, form);
+		if (entry == 0)
+			return false;
+		if (!memory) {
+			const auto source = register_offset(instruction.destination);
+			if (!source)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(*source);
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.destination, 0);
+		if (!encoded)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+
+	if (!sign || instruction.destination.kind != OperandKind::reg)
+		return false;
+	const bool immediate = instruction.auxiliary.kind != OperandKind::none;
+	if (immediate && instruction.auxiliary.kind != OperandKind::immediate)
+		return false;
+	const bool memory = instruction.source.kind == OperandKind::memory;
+	if (!memory && instruction.source.kind != OperandKind::reg)
+		return false;
+	const auto destination = register_offset(instruction.destination);
+	if (!destination)
+		return false;
+	const auto form = memory ?
+		(immediate ? MultiplyForm::immediate_memory :
+			MultiplyForm::explicit_memory) :
+		(immediate ? MultiplyForm::immediate_register :
+			MultiplyForm::explicit_register);
+	const auto entry = multiply_entry(
+		true, instruction.destination.width, form);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		if (immediate)
+			stream.push_back(instruction.auxiliary.immediate);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.source, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	if (immediate)
+		stream.push_back(instruction.auxiliary.immediate);
+	return true;
+}
+
+[[nodiscard]] bool append_divide(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	if (!memory && instruction.destination.kind != OperandKind::reg)
+		return false;
+	const auto entry = divide_entry(
+		instruction.operation == Operation::divide_signed,
+		instruction.destination.width, memory);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto divisor = register_offset(instruction.destination);
+		if (!divisor)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(*divisor);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, 0);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_bit_operation(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const bool immediate = instruction.source.kind == OperandKind::immediate;
+	if ((!memory && instruction.destination.kind != OperandKind::reg) ||
+		(!immediate && instruction.source.kind != OperandKind::reg))
+		return false;
+	const auto form = memory ?
+		(immediate ? ShiftForm::memory_immediate :
+			ShiftForm::memory_register) :
+		(immediate ? ShiftForm::register_immediate :
+			ShiftForm::register_register);
+	const auto entry = bit_operation_entry(instruction.operation,
+		instruction.destination.width, form);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry);
+		if (immediate) {
+			stream.push_back(*destination);
+			stream.push_back(instruction.source.immediate);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	std::uint16_t index_offset{};
+	if (!immediate) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		index_offset = *source;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, index_offset);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	if (immediate)
+		stream.push_back(instruction.source.immediate);
+	return true;
+}
+
+[[nodiscard]] bool append_bit_count(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind != OperandKind::reg)
+		return false;
+	const auto destination = register_offset(instruction.destination);
+	const bool memory = instruction.source.kind == OperandKind::memory;
+	if (!destination || (!memory && instruction.source.kind != OperandKind::reg))
+		return false;
+	const auto entry = bit_count_entry(
+		instruction.operation, instruction.source.width, memory);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.source, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_atomic_binary(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	if ((!memory && instruction.destination.kind != OperandKind::reg) ||
+		instruction.source.kind != OperandKind::reg)
+		return false;
+	const auto source = register_offset(instruction.source);
+	const auto entry = atomic_binary_entry(instruction.operation,
+		instruction.destination.width, memory);
+	if (!source || entry == 0)
+		return false;
+	if (!memory) {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, *source);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_compare_exchange_pair(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind != OperandKind::memory)
+		return false;
+	const auto size = instruction.auxiliary.immediate;
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, 0);
+	if (!encoded || (size != 8 && size != 16))
+		return false;
+	stream.push_back(entry_address(size == 16 ?
+		native::uml_x86_64_gadget_cmpxchg_pair_16 :
+		native::uml_x86_64_gadget_cmpxchg_pair_8));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_movbe(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool load = instruction.source.kind == OperandKind::memory;
+	const auto &memory_operand = load ?
+		instruction.source : instruction.destination;
+	const auto &register_operand_value = load ?
+		instruction.destination : instruction.source;
+	if (memory_operand.kind != OperandKind::memory ||
+		register_operand_value.kind != OperandKind::reg)
+		return false;
+	const auto register_value = register_offset(register_operand_value);
+	const auto entry = movbe_entry(memory_operand.width, load);
+	const auto encoded = register_value ? encode_memory(
+		gadget, memory_operand, *register_value) : std::nullopt;
+	if (!encoded || entry == 0)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_crc32(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind != OperandKind::reg)
+		return false;
+	const auto destination = register_offset(instruction.destination);
+	const bool memory = instruction.source.kind == OperandKind::memory;
+	if (!destination || (!memory && instruction.source.kind != OperandKind::reg))
+		return false;
+	const auto entry = crc32_entry(instruction.source.width, memory);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.source, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_adx(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind != OperandKind::reg)
+		return false;
+	const auto destination = register_offset(instruction.destination);
+	const bool memory = instruction.source.kind == OperandKind::memory;
+	if (!destination || (!memory && instruction.source.kind != OperandKind::reg))
+		return false;
+	const auto entry = adx_entry(instruction.vector_control != 0,
+		instruction.destination.width, memory);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.source, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_scalar_bmi(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind != OperandKind::reg)
+		return false;
+	const auto destination = register_offset(instruction.destination);
+	if (!destination)
+		return false;
+
+	if (instruction.vector_opcode == 0xf3) {
+		BmiKind kind{};
+		switch (instruction.vector_group) {
+		case 1: kind = BmiKind::blsr; break;
+		case 2: kind = BmiKind::blsmsk; break;
+		case 3: kind = BmiKind::blsi; break;
+		default: return false;
+		}
+		const bool memory = instruction.source.kind == OperandKind::memory;
+		if (!memory && instruction.source.kind != OperandKind::reg)
+			return false;
+		const auto entry = bmi_unary_entry(
+			kind, instruction.destination.width, memory);
+		if (entry == 0)
+			return false;
+		if (!memory) {
+			const auto source = register_offset(instruction.source);
+			if (!source)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*source) << 16U));
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.source, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+
+	if (instruction.vector_opcode == 0xf0) {
+		const bool memory = instruction.source.kind == OperandKind::memory;
+		if (!memory && instruction.source.kind != OperandKind::reg)
+			return false;
+		const auto entry = rorx_entry(instruction.destination.width, memory);
+		if (entry == 0)
+			return false;
+		if (!memory) {
+			const auto source = register_offset(instruction.source);
+			if (!source)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*source) << 16U));
+			stream.push_back(instruction.vector_control);
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.source, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+
+	BmiKind kind{};
+	switch (instruction.vector_opcode) {
+	case 0xf2: kind = BmiKind::andn; break;
+	case 0xf5:
+		kind = instruction.vector_prefix == 3 ? BmiKind::pdep :
+			instruction.vector_prefix == 2 ? BmiKind::pext : BmiKind::bzhi;
+		break;
+	case 0xf6: kind = BmiKind::mulx; break;
+	case 0xf7:
+		switch (instruction.vector_prefix) {
+		case 0: kind = BmiKind::bextr; break;
+		case 1: kind = BmiKind::shlx; break;
+		case 2: kind = BmiKind::sarx; break;
+		case 3: kind = BmiKind::shrx; break;
+		default: return false;
+		}
+		break;
+	default: return false;
+	}
+	if (instruction.source.kind != OperandKind::reg)
+		return false;
+	const auto first = register_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	if (!first || (!memory && instruction.auxiliary.kind != OperandKind::reg))
+		return false;
+	const auto entry = bmi_ternary_entry(
+		kind, instruction.destination.width, memory);
+	if (entry == 0)
+		return false;
+	if (!memory) {
+		const auto second = register_offset(instruction.auxiliary);
+		if (!second)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*first) << 16U) |
+			(static_cast<std::uintptr_t>(*second) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*first);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_move(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind == OperandKind::mmx_reg) {
+		const auto destination = mmx_offset(instruction.destination);
+		if (!destination)
+			return false;
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(
+				gadget, instruction.source, *destination);
+			if (!encoded || instruction.source.width != OperandWidth::qword)
+				return false;
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_vector_move_64_mmx_rm));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = vector_state_offset(instruction.source);
+		if (!source || instruction.source.width != OperandWidth::qword)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_vector_move_64_mmx_rr));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	if (instruction.destination.kind == OperandKind::vector_reg &&
+		(instruction.source.kind == OperandKind::vector_reg ||
+		 instruction.source.kind == OperandKind::mmx_reg)) {
+		const auto destination = vector_offset(instruction.destination);
+		const auto source = vector_state_offset(instruction.source);
+		if (!destination || !source)
+			return false;
+		std::uintptr_t entry{};
+		if (instruction.source.width == OperandWidth::qword &&
+			instruction.destination.width == OperandWidth::xmm) {
+			entry = entry_address(instruction.vex ?
+				native::uml_x86_64_gadget_vector_move_64_128_rr_vex :
+				native::uml_x86_64_gadget_vector_move_64_128_rr);
+		} else if (instruction.source.kind == OperandKind::vector_reg &&
+			instruction.source.width == instruction.destination.width) {
+			entry = instruction.destination.width == OperandWidth::ymm ? entry_address(
+				native::uml_x86_64_gadget_vector_move_256_rr) :
+				instruction.destination.width == OperandWidth::xmm ?
+				entry_address(instruction.vex ?
+					native::uml_x86_64_gadget_vector_move_128_rr_vex :
+					native::uml_x86_64_gadget_vector_move_128_rr) : 0;
+		}
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	if (instruction.destination.kind == OperandKind::vector_reg &&
+		instruction.source.kind == OperandKind::memory) {
+		const auto destination = vector_offset(instruction.destination);
+		const auto encoded = destination ? encode_memory(
+			gadget, instruction.source, *destination) : std::nullopt;
+		if (!encoded)
+			return false;
+		std::uintptr_t entry{};
+		if (instruction.source.width == OperandWidth::qword &&
+			instruction.destination.width == OperandWidth::xmm)
+			entry = entry_address(
+				native::uml_x86_64_gadget_vector_move_64_128_rm);
+		else if (instruction.source.width == OperandWidth::ymm)
+			entry = entry_address(native::uml_x86_64_gadget_vector_move_256_rm);
+		else if (instruction.source.width == OperandWidth::xmm)
+			entry = entry_address(instruction.vex ?
+				native::uml_x86_64_gadget_vector_move_128_rm_vex :
+				native::uml_x86_64_gadget_vector_move_128_rm);
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	if (instruction.destination.kind == OperandKind::memory &&
+		(instruction.source.kind == OperandKind::vector_reg ||
+		 instruction.source.kind == OperandKind::mmx_reg)) {
+		const auto source = vector_state_offset(instruction.source);
+		const auto encoded = source ? encode_memory(
+			gadget, instruction.destination, *source) : std::nullopt;
+		if (!encoded)
+			return false;
+		std::uintptr_t entry{};
+		switch (instruction.destination.width) {
+		case OperandWidth::dword:
+			entry = entry_address(native::uml_x86_64_gadget_vector_move_32_mr);
+			break;
+		case OperandWidth::qword:
+			entry = entry_address(native::uml_x86_64_gadget_vector_move_64_mr);
+			break;
+		case OperandWidth::xmm:
+			entry = entry_address(native::uml_x86_64_gadget_vector_move_128_mr);
+			break;
+		case OperandWidth::ymm:
+			entry = entry_address(native::uml_x86_64_gadget_vector_move_256_mr);
+			break;
+		default: return false;
+		}
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	return false;
+}
+
+[[nodiscard]] bool append_vector_move_scalar(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.destination.kind == OperandKind::memory &&
+		instruction.source.kind == OperandKind::vector_reg) {
+		const auto source = vector_offset(instruction.source);
+		const auto encoded = source ? encode_memory(
+			gadget, instruction.destination, *source) : std::nullopt;
+		if (!encoded)
+			return false;
+		NativeEntry entry{};
+		if (instruction.destination.width == OperandWidth::dword)
+			entry = native::uml_x86_64_gadget_vector_move_32_mr;
+		else if (instruction.destination.width == OperandWidth::qword)
+			entry = native::uml_x86_64_gadget_vector_move_64_mr;
+		else
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	if (instruction.destination.kind != OperandKind::vector_reg)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	if (!destination)
+		return false;
+	const bool dword = instruction.source.width == OperandWidth::dword;
+	if (!dword && instruction.source.width != OperandWidth::qword)
+		return false;
+	if (instruction.source.kind == OperandKind::memory) {
+		const auto encoded = encode_memory(
+			gadget, instruction.source, *destination);
+		if (!encoded)
+			return false;
+		const auto entry = dword ?
+			(instruction.vex ?
+				native::uml_x86_64_gadget_vector_scalar_move_32_rm_vex :
+				native::uml_x86_64_gadget_vector_scalar_move_32_rm) :
+			(instruction.vex ?
+				native::uml_x86_64_gadget_vector_scalar_move_64_rm_vex :
+				native::uml_x86_64_gadget_vector_scalar_move_64_rm);
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	const auto source = vector_offset(instruction.source);
+	if (!source)
+		return false;
+	if (instruction.vex) {
+		const auto merge = vector_offset(instruction.auxiliary);
+		if (!merge)
+			return false;
+		stream.push_back(entry_address(dword ?
+			native::uml_x86_64_gadget_vector_scalar_move_32_rr_vex :
+			native::uml_x86_64_gadget_vector_scalar_move_64_rr_vex));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U) |
+			(static_cast<std::uintptr_t>(*merge) << 32U));
+		return true;
+	}
+	stream.push_back(entry_address(dword ?
+		native::uml_x86_64_gadget_vector_scalar_move_32_rr :
+		native::uml_x86_64_gadget_vector_scalar_move_64_rr));
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*source) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_vector_to_gpr(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = register_offset(instruction.destination);
+	const auto source = vector_state_offset(instruction.source);
+	if (!destination || !source)
+		return false;
+	NativeEntry entry{};
+	if (instruction.vector_opcode == 0x50) {
+		const bool doubles = instruction.vector_prefix == 1;
+		if (instruction.source.width == OperandWidth::xmm)
+			entry = doubles ? native::uml_x86_64_gadget_vector_movmsk_64_128 :
+				native::uml_x86_64_gadget_vector_movmsk_32_128;
+		else if (instruction.source.width == OperandWidth::ymm)
+			entry = doubles ? native::uml_x86_64_gadget_vector_movmsk_64_256 :
+				native::uml_x86_64_gadget_vector_movmsk_32_256;
+	} else if (instruction.vector_opcode == 0xd7) {
+		switch (instruction.source.width) {
+		case OperandWidth::qword:
+			entry = native::uml_x86_64_gadget_vector_pmovmskb_64;
+			break;
+		case OperandWidth::xmm:
+			entry = native::uml_x86_64_gadget_vector_pmovmskb_128;
+			break;
+		case OperandWidth::ymm:
+			entry = native::uml_x86_64_gadget_vector_pmovmskb_256;
+			break;
+		default: break;
+		}
+	} else if (instruction.vector_opcode == 0xc5) {
+		switch (instruction.source.width) {
+		case OperandWidth::qword:
+			entry = native::uml_x86_64_gadget_vector_pextrw_64;
+			break;
+		case OperandWidth::xmm:
+			entry = native::uml_x86_64_gadget_vector_pextrw_128;
+			break;
+		case OperandWidth::ymm:
+			entry = native::uml_x86_64_gadget_vector_pextrw_256;
+			break;
+		default: break;
+		}
+	}
+	if (entry == nullptr)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*source) << 16U));
+	if (instruction.vector_opcode == 0xc5)
+		stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_insert(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_state_offset(instruction.destination);
+	const auto merge = vector_state_offset(instruction.source);
+	const bool mmx = instruction.destination.kind == OperandKind::mmx_reg;
+	if (!destination || !merge || (!mmx &&
+		instruction.destination.kind != OperandKind::vector_reg))
+		return false;
+	NativeEntry register_entry{};
+	NativeEntry memory_entry{};
+	if (mmx) {
+		register_entry = native::uml_x86_64_gadget_vector_insert_64_rr;
+		memory_entry = native::uml_x86_64_gadget_vector_insert_64_rm;
+	} else if (instruction.vex) {
+		register_entry = native::uml_x86_64_gadget_vector_insert_128_rr_vex;
+		memory_entry = native::uml_x86_64_gadget_vector_insert_128_rm_vex;
+	} else {
+		register_entry = native::uml_x86_64_gadget_vector_insert_128_rr;
+		memory_entry = native::uml_x86_64_gadget_vector_insert_128_rm;
+	}
+	if (instruction.auxiliary.kind == OperandKind::reg) {
+		const auto input = register_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(register_entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*merge) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	if (instruction.auxiliary.kind != OperandKind::memory)
+		return false;
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(memory_entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*merge) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_test_entry(
+	OperandWidth width, unsigned stride, bool memory) noexcept
+{
+#define UML_X86_VECTOR_TEST_ENTRY(width_bits, stride_value) \
+	return memory ? native::uml_x86_64_gadget_vector_test_##width_bits##_##stride_value##_rm : \
+		native::uml_x86_64_gadget_vector_test_##width_bits##_##stride_value##_rr
+	if (width == OperandWidth::xmm) {
+		switch (stride) {
+		case 1: UML_X86_VECTOR_TEST_ENTRY(128, 1);
+		case 4: UML_X86_VECTOR_TEST_ENTRY(128, 4);
+		case 8: UML_X86_VECTOR_TEST_ENTRY(128, 8);
+		default: return nullptr;
+		}
+	}
+	if (width == OperandWidth::ymm) {
+		switch (stride) {
+		case 1: UML_X86_VECTOR_TEST_ENTRY(256, 1);
+		case 4: UML_X86_VECTOR_TEST_ENTRY(256, 4);
+		case 8: UML_X86_VECTOR_TEST_ENTRY(256, 8);
+		default: return nullptr;
+		}
+	}
+#undef UML_X86_VECTOR_TEST_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_test(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = vector_offset(instruction.source);
+	const unsigned stride = instruction.vector_map == 2 &&
+		instruction.vector_opcode == 0x0f ? 8U :
+		instruction.vector_map == 2 && instruction.vector_opcode == 0x0e ?
+			4U : 1U;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_test_entry(
+		instruction.source.width, stride, memory);
+	if (!left || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*left) |
+			(static_cast<std::uintptr_t>(*right) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *left);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_compare_flags(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto left = vector_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const bool doubles = instruction.vector_prefix == 1;
+	const auto entry = doubles ?
+		(memory ? native::uml_x86_64_gadget_vector_compare_64_rm :
+			native::uml_x86_64_gadget_vector_compare_64_rr) :
+		(memory ? native::uml_x86_64_gadget_vector_compare_32_rm :
+			native::uml_x86_64_gadget_vector_compare_32_rr);
+	if (!left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*left) |
+			(static_cast<std::uintptr_t>(*right) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *left);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_gpr_move(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode == 0x7e &&
+		instruction.vector_prefix == 2) {
+		const auto destination = vector_offset(instruction.destination);
+		if (!destination)
+			return false;
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(
+				gadget, instruction.source, *destination);
+			if (!encoded)
+				return false;
+			stream.push_back(entry_address(instruction.vex ?
+				native::uml_x86_64_gadget_vector_move_64_128_rm_vex :
+				native::uml_x86_64_gadget_vector_move_64_128_rm));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = vector_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry_address(instruction.vex ?
+			native::uml_x86_64_gadget_vector_move_64_128_rr_vex :
+			native::uml_x86_64_gadget_vector_move_64_128_rr));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	if (instruction.vector_opcode == 0x6e) {
+		const bool mmx = instruction.destination.kind == OperandKind::mmx_reg;
+		const auto destination = vector_state_offset(instruction.destination);
+		const bool dword = instruction.source.width == OperandWidth::dword;
+		if (!destination || (!dword &&
+			instruction.source.width != OperandWidth::qword))
+			return false;
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(
+				gadget, instruction.source, *destination);
+			if (!encoded)
+				return false;
+			NativeEntry entry{};
+			if (mmx)
+				entry = dword ?
+					native::uml_x86_64_gadget_vector_memory_32_to_mmx :
+					native::uml_x86_64_gadget_vector_move_64_mmx_rm;
+			else if (dword)
+				entry = instruction.vex ?
+					native::uml_x86_64_gadget_vector_scalar_move_32_rm_vex :
+					native::uml_x86_64_gadget_vector_scalar_move_32_rm;
+			else
+				entry = instruction.vex ?
+					native::uml_x86_64_gadget_vector_scalar_move_64_rm_vex :
+					native::uml_x86_64_gadget_vector_scalar_move_64_rm;
+			stream.push_back(entry_address(entry));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		NativeEntry entry{};
+		if (mmx)
+			entry = dword ? native::uml_x86_64_gadget_vector_gpr_to_mmx_32 :
+				native::uml_x86_64_gadget_vector_gpr_to_mmx_64;
+		else if (dword)
+			entry = instruction.vex ?
+				native::uml_x86_64_gadget_vector_gpr_to_xmm_32_vex :
+				native::uml_x86_64_gadget_vector_gpr_to_xmm_32;
+		else
+			entry = instruction.vex ?
+				native::uml_x86_64_gadget_vector_gpr_to_xmm_64_vex :
+				native::uml_x86_64_gadget_vector_gpr_to_xmm_64;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	if (instruction.vector_opcode != 0x7e)
+		return false;
+	const auto source = vector_state_offset(instruction.source);
+	const bool dword = instruction.destination.width == OperandWidth::dword;
+	if (!source || (!dword &&
+		instruction.destination.width != OperandWidth::qword))
+		return false;
+	if (instruction.destination.kind == OperandKind::memory) {
+		const auto encoded = encode_memory(
+			gadget, instruction.destination, *source);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(dword ?
+			native::uml_x86_64_gadget_vector_move_32_mr :
+			native::uml_x86_64_gadget_vector_move_64_mr));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	const auto destination = register_offset(instruction.destination);
+	if (!destination)
+		return false;
+	stream.push_back(select_move(instruction.destination.width, false));
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*source) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_vector_bitfield(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto source = vector_offset(instruction.source);
+	if (!destination || !source ||
+		(instruction.vector_opcode != 0x78 &&
+		 instruction.vector_opcode != 0x79) ||
+		(instruction.vector_prefix != 1 &&
+		 instruction.vector_prefix != 3))
+		return false;
+	const bool immediate = instruction.vector_opcode == 0x78;
+	const bool extracting = instruction.vector_prefix == 1;
+	const auto control = static_cast<std::uintptr_t>(extracting) |
+		(static_cast<std::uintptr_t>(immediate) << 1U) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 8U) |
+		(static_cast<std::uintptr_t>(instruction.vector_group) << 16U);
+	stream.push_back(entry_address(
+		native::uml_x86_64_gadget_vector_bitfield));
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_mask_store(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto source = vector_state_offset(instruction.source);
+	const auto mask = vector_state_offset(instruction.auxiliary);
+	if (!source || !mask || instruction.source.width !=
+		instruction.auxiliary.width)
+		return false;
+	NativeEntry entry{};
+	if (instruction.source.width == OperandWidth::qword)
+		entry = native::uml_x86_64_gadget_vector_mask_store_64;
+	else if (instruction.source.width == OperandWidth::xmm)
+		entry = native::uml_x86_64_gadget_vector_mask_store_128;
+	else
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(static_cast<std::uintptr_t>(*source) |
+		(static_cast<std::uintptr_t>(*mask) << 16U) |
+		(static_cast<std::uintptr_t>(instruction.length) << 56U));
+	stream.push_back(gadget.address);
+	return true;
+}
+
+enum class VectorDuplicateKind { sldup, shdup, ddup };
+
+[[nodiscard]] NativeEntry vector_duplicate_entry(VectorDuplicateKind kind,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_DUPLICATE_ENTRY(kind_name, width_bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_duplicate_##kind_name##_##width_bits##_rm : \
+		native::uml_x86_64_gadget_vector_duplicate_##kind_name##_##width_bits##_rr
+	if (width == OperandWidth::xmm) {
+		switch (kind) {
+		case VectorDuplicateKind::sldup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(sldup, 128);
+		case VectorDuplicateKind::shdup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(shdup, 128);
+		case VectorDuplicateKind::ddup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(ddup, 128);
+		}
+	}
+	if (width == OperandWidth::ymm) {
+		switch (kind) {
+		case VectorDuplicateKind::sldup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(sldup, 256);
+		case VectorDuplicateKind::shdup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(shdup, 256);
+		case VectorDuplicateKind::ddup:
+			UML_X86_VECTOR_DUPLICATE_ENTRY(ddup, 256);
+		}
+	}
+#undef UML_X86_VECTOR_DUPLICATE_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_lane_move(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode == 0x13 ||
+		instruction.vector_opcode == 0x17) {
+		const auto source = vector_offset(instruction.source);
+		const auto value_offset = source ? static_cast<std::uint16_t>(
+			*source + (instruction.vector_opcode == 0x17 ? 8U : 0U)) : 0;
+		const auto encoded = source ? encode_memory(
+			gadget, instruction.destination, value_offset) : std::nullopt;
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_vector_move_64_mr));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+
+	const bool duplicate = (instruction.vector_opcode == 0x12 &&
+		(instruction.vector_prefix == 2 ||
+		 instruction.vector_prefix == 3)) ||
+		(instruction.vector_opcode == 0x16 &&
+		 instruction.vector_prefix == 2);
+	const auto destination = vector_offset(instruction.destination);
+	if (!destination)
+		return false;
+	if (duplicate) {
+		const auto kind = instruction.vector_prefix == 3 ?
+			VectorDuplicateKind::ddup : instruction.vector_opcode == 0x16 ?
+				VectorDuplicateKind::shdup : VectorDuplicateKind::sldup;
+		const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+		const auto entry = vector_duplicate_entry(
+			kind, instruction.destination.width, memory);
+		if (entry == nullptr)
+			return false;
+		if (!memory) {
+			const auto input = vector_offset(instruction.auxiliary);
+			if (!input)
+				return false;
+			stream.push_back(entry_address(entry));
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*input) << 16U) |
+				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.auxiliary, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+
+	const auto merge = vector_offset(instruction.source);
+	if (!merge)
+		return false;
+	const bool destination_high = instruction.vector_opcode == 0x16;
+	if (instruction.auxiliary.kind == OperandKind::vector_reg) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		const bool source_high = instruction.vector_opcode == 0x12;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_vector_lane_merge_rr));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*merge) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U) |
+			(static_cast<std::uintptr_t>(destination_high) << 48U) |
+			(static_cast<std::uintptr_t>(source_high) << 49U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 50U));
+		return true;
+	}
+	if (instruction.auxiliary.kind != OperandKind::memory)
+		return false;
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(
+		native::uml_x86_64_gadget_vector_lane_merge_rm));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*merge) |
+		(static_cast<std::uintptr_t>(destination_high) << 16U) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 17U));
+	return true;
+}
+
+[[nodiscard]] std::uintptr_t vector_bitwise_entry(std::uint8_t opcode,
+	OperandWidth width, bool vex, bool memory) noexcept
+{
+#define UML_X86_VECTOR_BITWISE_ENTRY(operation) \
+	if (width == OperandWidth::ymm) \
+		return entry_address(memory ? \
+			native::uml_x86_64_gadget_vector_##operation##_256_rm : \
+			native::uml_x86_64_gadget_vector_##operation##_256_rr); \
+	if (width == OperandWidth::xmm) { \
+		if (memory) \
+			return entry_address(vex ? \
+				native::uml_x86_64_gadget_vector_##operation##_128_rm_vex : \
+				native::uml_x86_64_gadget_vector_##operation##_128_rm); \
+		return entry_address(vex ? \
+			native::uml_x86_64_gadget_vector_##operation##_128_rr_vex : \
+			native::uml_x86_64_gadget_vector_##operation##_128_rr); \
+	} \
+	return 0
+	switch (opcode) {
+	case 0x54: UML_X86_VECTOR_BITWISE_ENTRY(and);
+	case 0x55: UML_X86_VECTOR_BITWISE_ENTRY(andnot);
+	case 0x56: UML_X86_VECTOR_BITWISE_ENTRY(or);
+	case 0x57: UML_X86_VECTOR_BITWISE_ENTRY(xor);
+	default: return 0;
+	}
+#undef UML_X86_VECTOR_BITWISE_ENTRY
+}
+
+[[nodiscard]] bool append_vector_bitwise(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode < 0x54 ||
+		instruction.vector_opcode > 0x57 ||
+		instruction.destination.kind != OperandKind::vector_reg ||
+		instruction.source.kind != OperandKind::vector_reg)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (instruction.auxiliary.kind == OperandKind::vector_reg) {
+		const auto right = vector_offset(instruction.auxiliary);
+		const auto entry = vector_bitwise_entry(instruction.vector_opcode,
+			instruction.destination.width, instruction.vex, false);
+		if (!right || entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U));
+		return true;
+	}
+	if (instruction.auxiliary.kind == OperandKind::memory) {
+		const auto encoded = encode_memory(
+			gadget, instruction.auxiliary, *destination);
+		const auto entry = vector_bitwise_entry(instruction.vector_opcode,
+			instruction.destination.width, instruction.vex, true);
+		if (!encoded || entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		stream.push_back(*left);
+		return true;
+	}
+	return false;
+}
+
+enum class VectorShuffleKind {
+	unpack_low,
+	unpack_high,
+	shuffle,
+	hadd,
+	hsub,
+	addsub,
+};
+
+[[nodiscard]] NativeEntry vector_shuffle_entry(VectorShuffleKind kind,
+	unsigned element, OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_SHUFFLE_ENTRY(operation, bits, width_bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_##operation##_##bits##_##width_bits##_rm : \
+		native::uml_x86_64_gadget_vector_##operation##_##bits##_##width_bits##_rr
+#define UML_X86_VECTOR_SHUFFLE_KIND(operation) \
+	case VectorShuffleKind::operation: \
+		if (element == 32 && width == OperandWidth::xmm) \
+			UML_X86_VECTOR_SHUFFLE_ENTRY(operation, 32, 128); \
+		if (element == 32 && width == OperandWidth::ymm) \
+			UML_X86_VECTOR_SHUFFLE_ENTRY(operation, 32, 256); \
+		if (element == 64 && width == OperandWidth::xmm) \
+			UML_X86_VECTOR_SHUFFLE_ENTRY(operation, 64, 128); \
+		if (element == 64 && width == OperandWidth::ymm) \
+			UML_X86_VECTOR_SHUFFLE_ENTRY(operation, 64, 256); \
+		break
+	switch (kind) {
+	UML_X86_VECTOR_SHUFFLE_KIND(unpack_low);
+	UML_X86_VECTOR_SHUFFLE_KIND(unpack_high);
+	UML_X86_VECTOR_SHUFFLE_KIND(shuffle);
+	UML_X86_VECTOR_SHUFFLE_KIND(hadd);
+	UML_X86_VECTOR_SHUFFLE_KIND(hsub);
+	UML_X86_VECTOR_SHUFFLE_KIND(addsub);
+	}
+#undef UML_X86_VECTOR_SHUFFLE_KIND
+#undef UML_X86_VECTOR_SHUFFLE_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_shuffle(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	VectorShuffleKind kind{};
+	switch (instruction.vector_opcode) {
+	case 0x14: kind = VectorShuffleKind::unpack_low; break;
+	case 0x15: kind = VectorShuffleKind::unpack_high; break;
+	case 0xc6: kind = VectorShuffleKind::shuffle; break;
+	case 0x7c: kind = VectorShuffleKind::hadd; break;
+	case 0x7d: kind = VectorShuffleKind::hsub; break;
+	case 0xd0: kind = VectorShuffleKind::addsub; break;
+	default: return false;
+	}
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const unsigned element = instruction.vector_prefix == 1 ? 64U : 32U;
+	const auto entry = vector_shuffle_entry(
+		kind, element, instruction.destination.width, memory);
+	if (!destination || !left || entry == nullptr)
+		return false;
+	const bool control = instruction.vector_opcode == 0xc6;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		if (control)
+			stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*left) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+enum class VectorFloatKind {
+	square_root,
+	reciprocal_square_root,
+	reciprocal,
+	add,
+	multiply,
+	subtract,
+	minimum,
+	divide,
+	maximum,
+};
+
+[[nodiscard]] NativeEntry vector_float_entry(VectorFloatKind kind,
+	unsigned element, OperandWidth width, bool scalar, bool memory) noexcept
+{
+#define UML_X86_VECTOR_FP_ENTRY(operation, bits, shape) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_fp_##operation##_##bits##_##shape##_rm : \
+		native::uml_x86_64_gadget_vector_fp_##operation##_##bits##_##shape##_rr
+#define UML_X86_VECTOR_FP_SHAPE(operation) \
+	if (element == 32 && scalar) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, scalar); \
+	if (element == 64 && scalar) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 64, scalar); \
+	if (element == 32 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, 128); \
+	if (element == 64 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 64, 128); \
+	if (element == 32 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, 256); \
+	if (element == 64 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 64, 256); \
+	break
+	switch (kind) {
+	case VectorFloatKind::square_root:
+		UML_X86_VECTOR_FP_SHAPE(sqrt);
+	case VectorFloatKind::reciprocal_square_root:
+		UML_X86_VECTOR_FP_SHAPE(rsqrt);
+	case VectorFloatKind::reciprocal:
+		UML_X86_VECTOR_FP_SHAPE(rcp);
+	case VectorFloatKind::add:
+		UML_X86_VECTOR_FP_SHAPE(add);
+	case VectorFloatKind::multiply:
+		UML_X86_VECTOR_FP_SHAPE(mul);
+	case VectorFloatKind::subtract:
+		UML_X86_VECTOR_FP_SHAPE(sub);
+	case VectorFloatKind::minimum:
+		UML_X86_VECTOR_FP_SHAPE(min);
+	case VectorFloatKind::divide:
+		UML_X86_VECTOR_FP_SHAPE(div);
+	case VectorFloatKind::maximum:
+		UML_X86_VECTOR_FP_SHAPE(max);
+	}
+#undef UML_X86_VECTOR_FP_SHAPE
+#undef UML_X86_VECTOR_FP_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] NativeEntry vector_float_compare_entry(unsigned predicate,
+	unsigned element, OperandWidth width, bool scalar, bool memory) noexcept
+{
+#define UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, bits, shape) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_fp_cmp_##predicate_value##_##bits##_##shape##_rm : \
+		native::uml_x86_64_gadget_vector_fp_cmp_##predicate_value##_##bits##_##shape##_rr
+#define UML_X86_VECTOR_FP_COMPARE_SHAPE(predicate_value) \
+	if (element == 32 && scalar) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 32, scalar); \
+	if (element == 64 && scalar) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 64, scalar); \
+	if (element == 32 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 32, 128); \
+	if (element == 64 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 64, 128); \
+	if (element == 32 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 32, 256); \
+	if (element == 64 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 64, 256); \
+	break
+	switch (predicate & 0xfU) {
+	case 0: UML_X86_VECTOR_FP_COMPARE_SHAPE(0);
+	case 1: UML_X86_VECTOR_FP_COMPARE_SHAPE(1);
+	case 2: UML_X86_VECTOR_FP_COMPARE_SHAPE(2);
+	case 3: UML_X86_VECTOR_FP_COMPARE_SHAPE(3);
+	case 4: UML_X86_VECTOR_FP_COMPARE_SHAPE(4);
+	case 5: UML_X86_VECTOR_FP_COMPARE_SHAPE(5);
+	case 6: UML_X86_VECTOR_FP_COMPARE_SHAPE(6);
+	case 7: UML_X86_VECTOR_FP_COMPARE_SHAPE(7);
+	case 8: UML_X86_VECTOR_FP_COMPARE_SHAPE(8);
+	case 9: UML_X86_VECTOR_FP_COMPARE_SHAPE(9);
+	case 10: UML_X86_VECTOR_FP_COMPARE_SHAPE(10);
+	case 11: UML_X86_VECTOR_FP_COMPARE_SHAPE(11);
+	case 12: UML_X86_VECTOR_FP_COMPARE_SHAPE(12);
+	case 13: UML_X86_VECTOR_FP_COMPARE_SHAPE(13);
+	case 14: UML_X86_VECTOR_FP_COMPARE_SHAPE(14);
+	case 15: UML_X86_VECTOR_FP_COMPARE_SHAPE(15);
+	default: break;
+	}
+#undef UML_X86_VECTOR_FP_COMPARE_SHAPE
+#undef UML_X86_VECTOR_FP_COMPARE_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_float(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool scalar = instruction.vector_prefix >= 2;
+	const unsigned element = instruction.vector_prefix == 1 ||
+		instruction.vector_prefix == 3 ? 64U : 32U;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	NativeEntry entry{};
+	if (instruction.vector_opcode == 0xc2) {
+		entry = vector_float_compare_entry(instruction.vector_control,
+			element, instruction.destination.width, scalar, memory);
+	} else {
+		VectorFloatKind kind{};
+		switch (instruction.vector_opcode) {
+		case 0x51: kind = VectorFloatKind::square_root; break;
+		case 0x52: kind = VectorFloatKind::reciprocal_square_root; break;
+		case 0x53: kind = VectorFloatKind::reciprocal; break;
+		case 0x58: kind = VectorFloatKind::add; break;
+		case 0x59: kind = VectorFloatKind::multiply; break;
+		case 0x5c: kind = VectorFloatKind::subtract; break;
+		case 0x5d: kind = VectorFloatKind::minimum; break;
+		case 0x5e: kind = VectorFloatKind::divide; break;
+		case 0x5f: kind = VectorFloatKind::maximum; break;
+		default: return false;
+		}
+		entry = vector_float_entry(
+			kind, element, instruction.destination.width, scalar, memory);
+	}
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	if (entry == nullptr || !destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*left) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_convert_entry(const Instruction &instruction,
+	bool memory) noexcept
+{
+#define UML_X86_VECTOR_CONVERT_ENTRY(name) \
+	return memory ? native::uml_x86_64_gadget_vector_convert_##name##_rm : \
+		native::uml_x86_64_gadget_vector_convert_##name##_rr
+	if (instruction.vector_opcode == 0x5a) {
+		switch (instruction.vector_prefix) {
+		case 0:
+			if (instruction.destination.width == OperandWidth::ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(ps_pd_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(ps_pd_128);
+		case 1:
+			if (instruction.auxiliary.width == OperandWidth::ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(pd_ps_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(pd_ps_128);
+		case 2: UML_X86_VECTOR_CONVERT_ENTRY(ss_sd);
+		case 3: UML_X86_VECTOR_CONVERT_ENTRY(sd_ss);
+		default: break;
+		}
+	}
+	if (instruction.vector_opcode == 0x5b) {
+		const bool ymm = instruction.destination.width == OperandWidth::ymm;
+		if (instruction.vector_prefix == 0) {
+			if (ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(dq_ps_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(dq_ps_128);
+		}
+		if (instruction.vector_prefix == 1) {
+			if (ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(ps_dq_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(ps_dq_128);
+		}
+		if (instruction.vector_prefix == 2) {
+			if (ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(ttps_dq_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(ttps_dq_128);
+		}
+	}
+	if (instruction.vector_opcode == 0xe6) {
+		if (instruction.vector_prefix == 2) {
+			if (instruction.destination.width == OperandWidth::ymm)
+				UML_X86_VECTOR_CONVERT_ENTRY(dq_pd_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(dq_pd_128);
+		}
+		const bool wide = instruction.auxiliary.width == OperandWidth::ymm;
+		if (instruction.vector_prefix == 1) {
+			if (wide)
+				UML_X86_VECTOR_CONVERT_ENTRY(ttpd_dq_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(ttpd_dq_128);
+		}
+		if (instruction.vector_prefix == 3) {
+			if (wide)
+				UML_X86_VECTOR_CONVERT_ENTRY(pd_dq_256);
+			UML_X86_VECTOR_CONVERT_ENTRY(pd_dq_128);
+		}
+	}
+#undef UML_X86_VECTOR_CONVERT_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_convert(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const bool scalar = instruction.vector_opcode == 0x5a &&
+		instruction.vector_prefix >= 2;
+	const auto merge = scalar ? vector_offset(instruction.source) : destination;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_convert_entry(instruction, memory);
+	if (!destination || !merge || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*merge) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*merge) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry integer_to_scalar_entry(OperandWidth integer_width,
+	unsigned element, bool memory) noexcept
+{
+#define UML_X86_INTEGER_TO_SCALAR_ENTRY(integer, fp) \
+	return memory ? native::uml_x86_64_gadget_vector_scalar_i##integer##_f##fp##_rm : \
+		native::uml_x86_64_gadget_vector_scalar_i##integer##_f##fp##_rr
+	if (integer_width == OperandWidth::dword && element == 32)
+		UML_X86_INTEGER_TO_SCALAR_ENTRY(32, 32);
+	if (integer_width == OperandWidth::qword && element == 32)
+		UML_X86_INTEGER_TO_SCALAR_ENTRY(64, 32);
+	if (integer_width == OperandWidth::dword && element == 64)
+		UML_X86_INTEGER_TO_SCALAR_ENTRY(32, 64);
+	if (integer_width == OperandWidth::qword && element == 64)
+		UML_X86_INTEGER_TO_SCALAR_ENTRY(64, 64);
+#undef UML_X86_INTEGER_TO_SCALAR_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] NativeEntry scalar_to_integer_entry(unsigned element,
+	OperandWidth integer_width, bool truncate, bool memory) noexcept
+{
+#define UML_X86_SCALAR_TO_INTEGER_ENTRY(fp, integer, truncation) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_scalar_f##fp##_i##integer##_##truncation##_rm : \
+		native::uml_x86_64_gadget_vector_scalar_f##fp##_i##integer##_##truncation##_rr
+	if (element == 32 && integer_width == OperandWidth::dword) {
+		if (truncate)
+			UML_X86_SCALAR_TO_INTEGER_ENTRY(32, 32, 1);
+		UML_X86_SCALAR_TO_INTEGER_ENTRY(32, 32, 0);
+	}
+	if (element == 32 && integer_width == OperandWidth::qword) {
+		if (truncate)
+			UML_X86_SCALAR_TO_INTEGER_ENTRY(32, 64, 1);
+		UML_X86_SCALAR_TO_INTEGER_ENTRY(32, 64, 0);
+	}
+	if (element == 64 && integer_width == OperandWidth::dword) {
+		if (truncate)
+			UML_X86_SCALAR_TO_INTEGER_ENTRY(64, 32, 1);
+		UML_X86_SCALAR_TO_INTEGER_ENTRY(64, 32, 0);
+	}
+	if (element == 64 && integer_width == OperandWidth::qword) {
+		if (truncate)
+			UML_X86_SCALAR_TO_INTEGER_ENTRY(64, 64, 1);
+		UML_X86_SCALAR_TO_INTEGER_ENTRY(64, 64, 0);
+	}
+#undef UML_X86_SCALAR_TO_INTEGER_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] NativeEntry packed_integer_to_float_entry(
+	unsigned element, bool memory) noexcept
+{
+	if (element == 32)
+		return memory ? native::uml_x86_64_gadget_vector_pi_f32_rm :
+			native::uml_x86_64_gadget_vector_pi_f32_rr;
+	if (element == 64)
+		return memory ? native::uml_x86_64_gadget_vector_pi_f64_rm :
+			native::uml_x86_64_gadget_vector_pi_f64_rr;
+	return nullptr;
+}
+
+[[nodiscard]] NativeEntry packed_float_to_integer_entry(unsigned element,
+	bool truncate, bool memory) noexcept
+{
+#define UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY(fp, truncation) \
+	return memory ? native::uml_x86_64_gadget_vector_f##fp##_pi_##truncation##_rm : \
+		native::uml_x86_64_gadget_vector_f##fp##_pi_##truncation##_rr
+	if (element == 32) {
+		if (truncate)
+			UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY(32, 1);
+		UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY(32, 0);
+	}
+	if (element == 64) {
+		if (truncate)
+			UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY(64, 1);
+		UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY(64, 0);
+	}
+#undef UML_X86_PACKED_FLOAT_TO_INTEGER_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_scalar_convert(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool to_float = instruction.vector_opcode == 0x2a;
+	const bool scalar = instruction.vector_prefix >= 2;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const unsigned element = instruction.vector_prefix == 1 ||
+		instruction.vector_prefix == 3 ? 64U : 32U;
+	if (to_float) {
+		const auto destination = vector_offset(instruction.destination);
+		const auto merge = vector_offset(instruction.source);
+		if (!destination || !merge)
+			return false;
+		const auto entry = scalar ? integer_to_scalar_entry(
+			instruction.auxiliary.width, element, memory) :
+			packed_integer_to_float_entry(element, memory);
+		if (entry == nullptr)
+			return false;
+		if (!memory) {
+			const auto input = scalar ? register_offset(instruction.auxiliary) :
+				mmx_offset(instruction.auxiliary);
+			if (!input)
+				return false;
+			stream.push_back(entry_address(entry));
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*merge) << 16U) |
+				(static_cast<std::uintptr_t>(*input) << 32U) |
+				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.auxiliary, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		stream.push_back(static_cast<std::uintptr_t>(*merge) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		return true;
+	}
+
+	const bool truncate = instruction.vector_opcode == 0x2c;
+	if (scalar) {
+		const auto destination = register_offset(instruction.destination);
+		const auto entry = scalar_to_integer_entry(element,
+			instruction.destination.width, truncate, memory);
+		if (!destination || entry == nullptr)
+			return false;
+		if (!memory) {
+			const auto input = vector_offset(instruction.auxiliary);
+			if (!input)
+				return false;
+			stream.push_back(entry_address(entry));
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*input) << 16U));
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.auxiliary, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+
+	const auto destination = mmx_offset(instruction.destination);
+	const auto entry = packed_float_to_integer_entry(
+		element, truncate, memory);
+	if (!destination || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*input) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_3dnow_entry(
+	std::uint8_t opcode, bool memory) noexcept
+{
+#define UML_X86_3DNOW_ENTRY(value, symbol) \
+	case value: return memory ? \
+		native::uml_x86_64_gadget_vector_3dnow_##symbol##_rm : \
+		native::uml_x86_64_gadget_vector_3dnow_##symbol##_rr
+	switch (opcode) {
+	UML_X86_3DNOW_ENTRY(0x0c, 0c);
+	UML_X86_3DNOW_ENTRY(0x0d, 0d);
+	UML_X86_3DNOW_ENTRY(0x1c, 1c);
+	UML_X86_3DNOW_ENTRY(0x1d, 1d);
+	UML_X86_3DNOW_ENTRY(0x86, 86);
+	UML_X86_3DNOW_ENTRY(0x87, 87);
+	UML_X86_3DNOW_ENTRY(0x8a, 8a);
+	UML_X86_3DNOW_ENTRY(0x8e, 8e);
+	UML_X86_3DNOW_ENTRY(0x90, 90);
+	UML_X86_3DNOW_ENTRY(0x94, 94);
+	UML_X86_3DNOW_ENTRY(0x96, 96);
+	UML_X86_3DNOW_ENTRY(0x97, 97);
+	UML_X86_3DNOW_ENTRY(0x9a, 9a);
+	UML_X86_3DNOW_ENTRY(0x9e, 9e);
+	UML_X86_3DNOW_ENTRY(0xa0, a0);
+	UML_X86_3DNOW_ENTRY(0xa4, a4);
+	UML_X86_3DNOW_ENTRY(0xa6, a6);
+	UML_X86_3DNOW_ENTRY(0xa7, a7);
+	UML_X86_3DNOW_ENTRY(0xaa, aa);
+	UML_X86_3DNOW_ENTRY(0xae, ae);
+	UML_X86_3DNOW_ENTRY(0xb0, b0);
+	UML_X86_3DNOW_ENTRY(0xb4, b4);
+	UML_X86_3DNOW_ENTRY(0xb6, b6);
+	UML_X86_3DNOW_ENTRY(0xb7, b7);
+	UML_X86_3DNOW_ENTRY(0xbb, bb);
+	UML_X86_3DNOW_ENTRY(0xbf, bf);
+	default: break;
+	}
+#undef UML_X86_3DNOW_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_3dnow(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = mmx_offset(instruction.destination);
+	const auto left = mmx_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_3dnow_entry(
+		instruction.vector_opcode, memory);
+	if (!destination || !left || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto right = mmx_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_fma_entry(std::uint8_t opcode,
+	unsigned element, OperandWidth width, bool scalar, bool memory) noexcept
+{
+#define UML_X86_FMA_ENTRY(symbol, bits, shape) \
+	return memory ? native::uml_x86_64_gadget_vector_fma_##symbol##_##bits##_##shape##_rm : \
+		native::uml_x86_64_gadget_vector_fma_##symbol##_##bits##_##shape##_rr
+#define UML_X86_FMA_SHAPE(symbol) \
+	if (element == 32 && scalar) \
+		UML_X86_FMA_ENTRY(symbol, 32, scalar); \
+	if (element == 64 && scalar) \
+		UML_X86_FMA_ENTRY(symbol, 64, scalar); \
+	if (element == 32 && width == OperandWidth::xmm) \
+		UML_X86_FMA_ENTRY(symbol, 32, 128); \
+	if (element == 64 && width == OperandWidth::xmm) \
+		UML_X86_FMA_ENTRY(symbol, 64, 128); \
+	if (element == 32 && width == OperandWidth::ymm) \
+		UML_X86_FMA_ENTRY(symbol, 32, 256); \
+	if (element == 64 && width == OperandWidth::ymm) \
+		UML_X86_FMA_ENTRY(symbol, 64, 256); \
+	break
+#define UML_X86_FMA_CASE(value, symbol) \
+	case value: UML_X86_FMA_SHAPE(symbol)
+	switch (opcode) {
+	UML_X86_FMA_CASE(0x96, 96);
+	UML_X86_FMA_CASE(0x97, 97);
+	UML_X86_FMA_CASE(0x98, 98);
+	UML_X86_FMA_CASE(0x99, 99);
+	UML_X86_FMA_CASE(0x9a, 9a);
+	UML_X86_FMA_CASE(0x9b, 9b);
+	UML_X86_FMA_CASE(0x9c, 9c);
+	UML_X86_FMA_CASE(0x9d, 9d);
+	UML_X86_FMA_CASE(0x9e, 9e);
+	UML_X86_FMA_CASE(0x9f, 9f);
+	UML_X86_FMA_CASE(0xa6, a6);
+	UML_X86_FMA_CASE(0xa7, a7);
+	UML_X86_FMA_CASE(0xa8, a8);
+	UML_X86_FMA_CASE(0xa9, a9);
+	UML_X86_FMA_CASE(0xaa, aa);
+	UML_X86_FMA_CASE(0xab, ab);
+	UML_X86_FMA_CASE(0xac, ac);
+	UML_X86_FMA_CASE(0xad, ad);
+	UML_X86_FMA_CASE(0xae, ae);
+	UML_X86_FMA_CASE(0xaf, af);
+	UML_X86_FMA_CASE(0xb6, b6);
+	UML_X86_FMA_CASE(0xb7, b7);
+	UML_X86_FMA_CASE(0xb8, b8);
+	UML_X86_FMA_CASE(0xb9, b9);
+	UML_X86_FMA_CASE(0xba, ba);
+	UML_X86_FMA_CASE(0xbb, bb);
+	UML_X86_FMA_CASE(0xbc, bc);
+	UML_X86_FMA_CASE(0xbd, bd);
+	UML_X86_FMA_CASE(0xbe, be);
+	UML_X86_FMA_CASE(0xbf, bf);
+	default: break;
+	}
+#undef UML_X86_FMA_CASE
+#undef UML_X86_FMA_SHAPE
+#undef UML_X86_FMA_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_fma(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto vvvv = vector_offset(instruction.source);
+	const auto operation = static_cast<std::uint8_t>(
+		instruction.vector_opcode & 0xfU);
+	const bool scalar = operation >= 9U && (operation & 1U) != 0;
+	const unsigned element = instruction.vector_group != 0 ? 64U : 32U;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_fma_entry(instruction.vector_opcode,
+		element, instruction.destination.width, scalar, memory);
+	if (!destination || !vvvv || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto rm = vector_offset(instruction.auxiliary);
+		if (!rm)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*vvvv) << 16U) |
+			(static_cast<std::uintptr_t>(*rm) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*vvvv);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_aes_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_AES_ENTRY(symbol, bits) \
+	return memory ? native::uml_x86_64_gadget_vector_aes_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_aes_##symbol##_##bits##_rr
+	if (opcode == 0xdb && width == OperandWidth::xmm)
+		UML_X86_AES_ENTRY(db, 128);
+	if (opcode == 0xdc && width == OperandWidth::xmm)
+		UML_X86_AES_ENTRY(dc, 128);
+	if (opcode == 0xdc && width == OperandWidth::ymm)
+		UML_X86_AES_ENTRY(dc, 256);
+	if (opcode == 0xdd && width == OperandWidth::xmm)
+		UML_X86_AES_ENTRY(dd, 128);
+	if (opcode == 0xdd && width == OperandWidth::ymm)
+		UML_X86_AES_ENTRY(dd, 256);
+	if (opcode == 0xde && width == OperandWidth::xmm)
+		UML_X86_AES_ENTRY(de, 128);
+	if (opcode == 0xde && width == OperandWidth::ymm)
+		UML_X86_AES_ENTRY(de, 256);
+	if (opcode == 0xdf && width == OperandWidth::xmm)
+		UML_X86_AES_ENTRY(df, 128);
+	if (opcode == 0xdf && width == OperandWidth::ymm)
+		UML_X86_AES_ENTRY(df, 256);
+#undef UML_X86_AES_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_aes(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto state = instruction.source.kind == OperandKind::none ?
+		destination : vector_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_aes_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (!destination || !state || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto key = vector_offset(instruction.auxiliary);
+		if (!key)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*state) << 16U) |
+			(static_cast<std::uintptr_t>(*key) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*state) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_sha_entry(
+	std::uint8_t opcode, bool memory) noexcept
+{
+#define UML_X86_SHA_ENTRY(value, symbol) \
+	case value: return memory ? \
+		native::uml_x86_64_gadget_vector_sha_##symbol##_rm : \
+		native::uml_x86_64_gadget_vector_sha_##symbol##_rr
+	switch (opcode) {
+	UML_X86_SHA_ENTRY(0xc8, c8);
+	UML_X86_SHA_ENTRY(0xc9, c9);
+	UML_X86_SHA_ENTRY(0xca, ca);
+	UML_X86_SHA_ENTRY(0xcb, cb);
+	UML_X86_SHA_ENTRY(0xcc, cc);
+	UML_X86_SHA_ENTRY(0xcd, cd);
+	default: break;
+	}
+#undef UML_X86_SHA_ENTRY
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_sha(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto state = vector_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_sha_entry(instruction.vector_opcode, memory);
+	if (!destination || !state || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*state) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*state);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_integer_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_INTEGER_WIDTH(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_integer_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_integer_##symbol##_##bits##_rr
+#define UML_X86_VECTOR_INTEGER_SHAPE(symbol) \
+	if (width == OperandWidth::qword) \
+		UML_X86_VECTOR_INTEGER_WIDTH(symbol, 64); \
+	if (width == OperandWidth::xmm) \
+		UML_X86_VECTOR_INTEGER_WIDTH(symbol, 128); \
+	if (width == OperandWidth::ymm) \
+		UML_X86_VECTOR_INTEGER_WIDTH(symbol, 256); \
+	break
+#define UML_X86_VECTOR_INTEGER_CASE(value, symbol) \
+	case value: UML_X86_VECTOR_INTEGER_SHAPE(symbol)
+	switch (opcode) {
+	UML_X86_VECTOR_INTEGER_CASE(0x60, 60);
+	UML_X86_VECTOR_INTEGER_CASE(0x61, 61);
+	UML_X86_VECTOR_INTEGER_CASE(0x62, 62);
+	UML_X86_VECTOR_INTEGER_CASE(0x63, 63);
+	UML_X86_VECTOR_INTEGER_CASE(0x64, 64);
+	UML_X86_VECTOR_INTEGER_CASE(0x65, 65);
+	UML_X86_VECTOR_INTEGER_CASE(0x66, 66);
+	UML_X86_VECTOR_INTEGER_CASE(0x67, 67);
+	UML_X86_VECTOR_INTEGER_CASE(0x68, 68);
+	UML_X86_VECTOR_INTEGER_CASE(0x69, 69);
+	UML_X86_VECTOR_INTEGER_CASE(0x6a, 6a);
+	UML_X86_VECTOR_INTEGER_CASE(0x6b, 6b);
+	UML_X86_VECTOR_INTEGER_CASE(0x6c, 6c);
+	UML_X86_VECTOR_INTEGER_CASE(0x6d, 6d);
+	UML_X86_VECTOR_INTEGER_CASE(0x70, 70);
+	UML_X86_VECTOR_INTEGER_CASE(0x74, 74);
+	UML_X86_VECTOR_INTEGER_CASE(0x75, 75);
+	UML_X86_VECTOR_INTEGER_CASE(0x76, 76);
+	UML_X86_VECTOR_INTEGER_CASE(0xd1, d1);
+	UML_X86_VECTOR_INTEGER_CASE(0xd2, d2);
+	UML_X86_VECTOR_INTEGER_CASE(0xd3, d3);
+	UML_X86_VECTOR_INTEGER_CASE(0xd4, d4);
+	UML_X86_VECTOR_INTEGER_CASE(0xd5, d5);
+	UML_X86_VECTOR_INTEGER_CASE(0xd8, d8);
+	UML_X86_VECTOR_INTEGER_CASE(0xd9, d9);
+	UML_X86_VECTOR_INTEGER_CASE(0xda, da);
+	UML_X86_VECTOR_INTEGER_CASE(0xdb, db);
+	UML_X86_VECTOR_INTEGER_CASE(0xdc, dc);
+	UML_X86_VECTOR_INTEGER_CASE(0xdd, dd);
+	UML_X86_VECTOR_INTEGER_CASE(0xde, de);
+	UML_X86_VECTOR_INTEGER_CASE(0xdf, df);
+	UML_X86_VECTOR_INTEGER_CASE(0xe0, e0);
+	UML_X86_VECTOR_INTEGER_CASE(0xe1, e1);
+	UML_X86_VECTOR_INTEGER_CASE(0xe2, e2);
+	UML_X86_VECTOR_INTEGER_CASE(0xe3, e3);
+	UML_X86_VECTOR_INTEGER_CASE(0xe4, e4);
+	UML_X86_VECTOR_INTEGER_CASE(0xe5, e5);
+	UML_X86_VECTOR_INTEGER_CASE(0xe8, e8);
+	UML_X86_VECTOR_INTEGER_CASE(0xe9, e9);
+	UML_X86_VECTOR_INTEGER_CASE(0xea, ea);
+	UML_X86_VECTOR_INTEGER_CASE(0xeb, eb);
+	UML_X86_VECTOR_INTEGER_CASE(0xec, ec);
+	UML_X86_VECTOR_INTEGER_CASE(0xed, ed);
+	UML_X86_VECTOR_INTEGER_CASE(0xee, ee);
+	UML_X86_VECTOR_INTEGER_CASE(0xef, ef);
+	UML_X86_VECTOR_INTEGER_CASE(0xf1, f1);
+	UML_X86_VECTOR_INTEGER_CASE(0xf2, f2);
+	UML_X86_VECTOR_INTEGER_CASE(0xf3, f3);
+	UML_X86_VECTOR_INTEGER_CASE(0xf4, f4);
+	UML_X86_VECTOR_INTEGER_CASE(0xf5, f5);
+	UML_X86_VECTOR_INTEGER_CASE(0xf6, f6);
+	UML_X86_VECTOR_INTEGER_CASE(0xf8, f8);
+	UML_X86_VECTOR_INTEGER_CASE(0xf9, f9);
+	UML_X86_VECTOR_INTEGER_CASE(0xfa, fa);
+	UML_X86_VECTOR_INTEGER_CASE(0xfb, fb);
+	UML_X86_VECTOR_INTEGER_CASE(0xfc, fc);
+	UML_X86_VECTOR_INTEGER_CASE(0xfd, fd);
+	UML_X86_VECTOR_INTEGER_CASE(0xfe, fe);
+	default: break;
+	}
+#undef UML_X86_VECTOR_INTEGER_CASE
+#undef UML_X86_VECTOR_INTEGER_SHAPE
+#undef UML_X86_VECTOR_INTEGER_WIDTH
+	return nullptr;
+}
+
+[[nodiscard]] NativeEntry vector_integer_immediate_entry(
+	std::uint8_t opcode, std::uint8_t group, OperandWidth width) noexcept
+{
+#define UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(symbol, group_value, bits) \
+	return native::uml_x86_64_gadget_vector_integer_##symbol##_g##group_value##_##bits##_ri
+#define UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(symbol, group_value) \
+	if (width == OperandWidth::qword) \
+		UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(symbol, group_value, 64); \
+	if (width == OperandWidth::xmm) \
+		UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(symbol, group_value, 128); \
+	if (width == OperandWidth::ymm) \
+		UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(symbol, group_value, 256); \
+	return nullptr
+	if (opcode == 0x71) {
+		switch (group) {
+		case 2: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(71, 2);
+		case 4: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(71, 4);
+		case 6: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(71, 6);
+		default: return nullptr;
+		}
+	}
+	if (opcode == 0x72) {
+		switch (group) {
+		case 2: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(72, 2);
+		case 4: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(72, 4);
+		case 6: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(72, 6);
+		default: return nullptr;
+		}
+	}
+	if (opcode == 0x73) {
+		if ((group == 3 || group == 7) && width == OperandWidth::qword)
+			return nullptr;
+		switch (group) {
+		case 2: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(73, 2);
+		case 3:
+			if (width == OperandWidth::xmm)
+				UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(73, 3, 128);
+			if (width == OperandWidth::ymm)
+				UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(73, 3, 256);
+			return nullptr;
+		case 6: UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE(73, 6);
+		case 7:
+			if (width == OperandWidth::xmm)
+				UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(73, 7, 128);
+			if (width == OperandWidth::ymm)
+				UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH(73, 7, 256);
+			return nullptr;
+		default: return nullptr;
+		}
+	}
+#undef UML_X86_VECTOR_INTEGER_IMMEDIATE_SHAPE
+#undef UML_X86_VECTOR_INTEGER_IMMEDIATE_WIDTH
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_integer(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_state_offset(instruction.destination);
+	const auto left = vector_state_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (instruction.vector_opcode >= 0x71 &&
+		instruction.vector_opcode <= 0x73) {
+		const auto entry = vector_integer_immediate_entry(
+			instruction.vector_opcode, instruction.vector_group,
+			instruction.destination.width);
+		if (entry == nullptr)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_integer_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto shuffle = static_cast<std::uintptr_t>(
+		instruction.vector_control) |
+		(static_cast<std::uintptr_t>(instruction.vector_prefix) << 8U);
+	if (!memory) {
+		const auto right = vector_state_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		if (instruction.vector_opcode == 0x70)
+			stream.push_back(shuffle);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*left) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	if (instruction.vector_opcode == 0x70)
+		stream.push_back(shuffle);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_integer_map2_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP2_WIDTH(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_integer_map2_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_integer_map2_##symbol##_##bits##_rr
+#define UML_X86_VECTOR_MAP2_SHAPE(symbol) \
+	if (width == OperandWidth::qword) \
+		UML_X86_VECTOR_MAP2_WIDTH(symbol, 64); \
+	if (width == OperandWidth::xmm) \
+		UML_X86_VECTOR_MAP2_WIDTH(symbol, 128); \
+	if (width == OperandWidth::ymm) \
+		UML_X86_VECTOR_MAP2_WIDTH(symbol, 256); \
+	break
+#define UML_X86_VECTOR_MAP2_CASE(value, symbol) \
+	case value: UML_X86_VECTOR_MAP2_SHAPE(symbol)
+	switch (opcode) {
+	UML_X86_VECTOR_MAP2_CASE(0x00, 00);
+	UML_X86_VECTOR_MAP2_CASE(0x01, 01);
+	UML_X86_VECTOR_MAP2_CASE(0x02, 02);
+	UML_X86_VECTOR_MAP2_CASE(0x03, 03);
+	UML_X86_VECTOR_MAP2_CASE(0x04, 04);
+	UML_X86_VECTOR_MAP2_CASE(0x05, 05);
+	UML_X86_VECTOR_MAP2_CASE(0x06, 06);
+	UML_X86_VECTOR_MAP2_CASE(0x07, 07);
+	UML_X86_VECTOR_MAP2_CASE(0x08, 08);
+	UML_X86_VECTOR_MAP2_CASE(0x09, 09);
+	UML_X86_VECTOR_MAP2_CASE(0x0a, 0a);
+	UML_X86_VECTOR_MAP2_CASE(0x0b, 0b);
+	UML_X86_VECTOR_MAP2_CASE(0x10, 10);
+	UML_X86_VECTOR_MAP2_CASE(0x14, 14);
+	UML_X86_VECTOR_MAP2_CASE(0x15, 15);
+	UML_X86_VECTOR_MAP2_CASE(0x1c, 1c);
+	UML_X86_VECTOR_MAP2_CASE(0x1d, 1d);
+	UML_X86_VECTOR_MAP2_CASE(0x1e, 1e);
+	UML_X86_VECTOR_MAP2_CASE(0x20, 20);
+	UML_X86_VECTOR_MAP2_CASE(0x21, 21);
+	UML_X86_VECTOR_MAP2_CASE(0x22, 22);
+	UML_X86_VECTOR_MAP2_CASE(0x23, 23);
+	UML_X86_VECTOR_MAP2_CASE(0x24, 24);
+	UML_X86_VECTOR_MAP2_CASE(0x25, 25);
+	UML_X86_VECTOR_MAP2_CASE(0x28, 28);
+	UML_X86_VECTOR_MAP2_CASE(0x29, 29);
+	UML_X86_VECTOR_MAP2_CASE(0x2b, 2b);
+	UML_X86_VECTOR_MAP2_CASE(0x30, 30);
+	UML_X86_VECTOR_MAP2_CASE(0x31, 31);
+	UML_X86_VECTOR_MAP2_CASE(0x32, 32);
+	UML_X86_VECTOR_MAP2_CASE(0x33, 33);
+	UML_X86_VECTOR_MAP2_CASE(0x34, 34);
+	UML_X86_VECTOR_MAP2_CASE(0x35, 35);
+	UML_X86_VECTOR_MAP2_CASE(0x37, 37);
+	UML_X86_VECTOR_MAP2_CASE(0x38, 38);
+	UML_X86_VECTOR_MAP2_CASE(0x39, 39);
+	UML_X86_VECTOR_MAP2_CASE(0x3a, 3a);
+	UML_X86_VECTOR_MAP2_CASE(0x3b, 3b);
+	UML_X86_VECTOR_MAP2_CASE(0x3c, 3c);
+	UML_X86_VECTOR_MAP2_CASE(0x3d, 3d);
+	UML_X86_VECTOR_MAP2_CASE(0x3e, 3e);
+	UML_X86_VECTOR_MAP2_CASE(0x3f, 3f);
+	UML_X86_VECTOR_MAP2_CASE(0x40, 40);
+	UML_X86_VECTOR_MAP2_CASE(0x41, 41);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP2_CASE
+#undef UML_X86_VECTOR_MAP2_SHAPE
+#undef UML_X86_VECTOR_MAP2_WIDTH
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_integer_map2(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_state_offset(instruction.destination);
+	const auto left = instruction.source.kind == OperandKind::none ?
+		destination : vector_state_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_integer_map2_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (!destination || !left || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto right = vector_state_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*left) |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map2_permute_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP2_PERMUTE(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map2_permute_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map2_permute_##symbol##_##bits##_rr
+#define UML_X86_VECTOR_MAP2_PERMUTE_CASE(value, symbol) \
+	case value: \
+		if (width == OperandWidth::xmm) \
+			UML_X86_VECTOR_MAP2_PERMUTE(symbol, 128); \
+		if (width == OperandWidth::ymm) \
+			UML_X86_VECTOR_MAP2_PERMUTE(symbol, 256); \
+		break
+	switch (opcode) {
+	UML_X86_VECTOR_MAP2_PERMUTE_CASE(0x0c, 0c);
+	UML_X86_VECTOR_MAP2_PERMUTE_CASE(0x0d, 0d);
+	case 0x16:
+		if (width == OperandWidth::ymm)
+			UML_X86_VECTOR_MAP2_PERMUTE(16, 256);
+		break;
+	case 0x36:
+		if (width == OperandWidth::ymm)
+			UML_X86_VECTOR_MAP2_PERMUTE(36, 256);
+		break;
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP2_PERMUTE_CASE
+#undef UML_X86_VECTOR_MAP2_PERMUTE
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map2_permute(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map2_permute_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map2_shift_entry(std::uint8_t opcode,
+	unsigned element, OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP2_SHIFT(symbol, lane, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map2_shift_##symbol##_##lane##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map2_shift_##symbol##_##lane##_##bits##_rr
+#define UML_X86_VECTOR_MAP2_SHIFT_WIDTH(symbol) \
+	if (element == 32 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_MAP2_SHIFT(symbol, 32, 128); \
+	if (element == 32 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_MAP2_SHIFT(symbol, 32, 256); \
+	if (element == 64 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_MAP2_SHIFT(symbol, 64, 128); \
+	if (element == 64 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_MAP2_SHIFT(symbol, 64, 256); \
+	break
+	switch (opcode) {
+	case 0x45: UML_X86_VECTOR_MAP2_SHIFT_WIDTH(45);
+	case 0x46: UML_X86_VECTOR_MAP2_SHIFT_WIDTH(46);
+	case 0x47: UML_X86_VECTOR_MAP2_SHIFT_WIDTH(47);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP2_SHIFT_WIDTH
+#undef UML_X86_VECTOR_MAP2_SHIFT
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map2_shift(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map2_shift_entry(instruction.vector_opcode,
+		instruction.vector_group != 0 ? 64U : 32U,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map2_broadcast_entry(unsigned element,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP2_BROADCAST(lane, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map2_broadcast_##lane##_##bits##_m : \
+		native::uml_x86_64_gadget_vector_map2_broadcast_##lane##_##bits##_r
+	if (element == 8 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_BROADCAST(8, 128);
+	if (element == 8 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_BROADCAST(8, 256);
+	if (element == 16 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_BROADCAST(16, 128);
+	if (element == 16 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_BROADCAST(16, 256);
+	if (element == 32 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_BROADCAST(32, 128);
+	if (element == 32 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_BROADCAST(32, 256);
+	if (element == 64 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_BROADCAST(64, 128);
+	if (element == 64 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_BROADCAST(64, 256);
+	if (element == 128 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_BROADCAST(128, 256);
+#undef UML_X86_VECTOR_MAP2_BROADCAST
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map2_broadcast(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	unsigned element{};
+	switch (instruction.vector_opcode) {
+	case 0x78: element = 8; break;
+	case 0x79: element = 16; break;
+	case 0x18:
+	case 0x58: element = 32; break;
+	case 0x19:
+	case 0x59: element = 64; break;
+	case 0x1a:
+	case 0x5a: element = 128; break;
+	default: return false;
+	}
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map2_broadcast_entry(
+		element, instruction.destination.width, memory);
+	const auto destination = vector_offset(instruction.destination);
+	if (entry == nullptr || !destination)
+		return false;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*input) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map2_half(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode != 0x13)
+		return false;
+	const bool wide = instruction.destination.width == OperandWidth::ymm;
+	if (!wide && instruction.destination.width != OperandWidth::xmm)
+		return false;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = memory ?
+		(wide ? native::uml_x86_64_gadget_vector_map2_half_256_m :
+			native::uml_x86_64_gadget_vector_map2_half_128_m) :
+		(wide ? native::uml_x86_64_gadget_vector_map2_half_256_r :
+			native::uml_x86_64_gadget_vector_map2_half_128_r);
+	const auto destination = vector_offset(instruction.destination);
+	if (!destination)
+		return false;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*input) << 16U));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map2_mask_entry(bool store,
+	unsigned element, OperandWidth width) noexcept
+{
+#define UML_X86_VECTOR_MAP2_MASK(lane, bits) \
+	return store ? \
+		native::uml_x86_64_gadget_vector_map2_mask_store_##lane##_##bits : \
+		native::uml_x86_64_gadget_vector_map2_mask_load_##lane##_##bits
+	if (element == 32 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_MASK(32, 128);
+	if (element == 32 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_MASK(32, 256);
+	if (element == 64 && width == OperandWidth::xmm)
+		UML_X86_VECTOR_MAP2_MASK(64, 128);
+	if (element == 64 && width == OperandWidth::ymm)
+		UML_X86_VECTOR_MAP2_MASK(64, 256);
+#undef UML_X86_VECTOR_MAP2_MASK
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map2_masked_memory(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto opcode = instruction.vector_opcode;
+	const bool load = opcode == 0x2c || opcode == 0x2d || opcode == 0x8c;
+	const bool store = opcode == 0x2e || opcode == 0x2f || opcode == 0x8e;
+	if (!load && !store)
+		return false;
+	const auto entry = vector_map2_mask_entry(store,
+		instruction.vector_group == 8 ? 64U : 32U,
+		instruction.destination.width);
+	const auto mask = vector_offset(instruction.source);
+	if (entry == nullptr || !mask)
+		return false;
+	if (load) {
+		const auto destination = vector_offset(instruction.destination);
+		const auto encoded = destination ? encode_memory(
+			gadget, instruction.auxiliary, *destination) : std::nullopt;
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		stream.push_back(*mask);
+		return true;
+	}
+	const auto data = vector_offset(instruction.auxiliary);
+	const auto encoded = data ? encode_memory(
+		gadget, instruction.destination, *data) : std::nullopt;
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*mask);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map2_misc(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	if (append_vector_map2_masked_memory(stream, gadget))
+		return true;
+	if (append_vector_map2_permute(stream, gadget))
+		return true;
+	if (append_vector_map2_shift(stream, gadget))
+		return true;
+	if (append_vector_map2_broadcast(stream, gadget))
+		return true;
+	return append_vector_map2_half(stream, gadget);
+}
+
+[[nodiscard]] NativeEntry vector_gather_entry(std::uint8_t group) noexcept
+{
+	switch (group & 7U) {
+	case 0: return native::uml_x86_64_gadget_vector_gather_d4_i4_r16;
+	case 1: return native::uml_x86_64_gadget_vector_gather_d8_i4_r16;
+	case 2: return native::uml_x86_64_gadget_vector_gather_d4_i8_r16;
+	case 3: return native::uml_x86_64_gadget_vector_gather_d8_i8_r16;
+	case 4: return native::uml_x86_64_gadget_vector_gather_d4_i4_r32;
+	case 5: return native::uml_x86_64_gadget_vector_gather_d8_i4_r32;
+	case 6: return native::uml_x86_64_gadget_vector_gather_d4_i8_r32;
+	case 7: return native::uml_x86_64_gadget_vector_gather_d8_i8_r32;
+	default: return nullptr;
+	}
+}
+
+[[nodiscard]] bool append_vector_gather(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto mask = vector_offset(instruction.source);
+	const auto &addressing = instruction.auxiliary;
+	if (!destination || !mask || addressing.kind != OperandKind::memory ||
+		!addressing.memory.vector_index ||
+		addressing.memory.index >= 16U)
+		return false;
+	const auto encoded = encode_gather_memory(
+		gadget, addressing, *destination);
+	if (!encoded)
+		return false;
+	const auto index = static_cast<std::uint16_t>(
+		offsetof(CpuState, vectors) + addressing.memory.index *
+		sizeof(CpuState::vectors[0]));
+	stream.push_back(entry_address(vector_gather_entry(
+		instruction.vector_group)));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*mask) |
+		(static_cast<std::uintptr_t>(index) << 16U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map3_extract_entry(
+	unsigned size, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP3_EXTRACT(bits) \
+	return memory ? native::uml_x86_64_gadget_vector_map3_extract_##bits##_m : \
+		native::uml_x86_64_gadget_vector_map3_extract_##bits##_r
+	switch (size) {
+	case 1: UML_X86_VECTOR_MAP3_EXTRACT(1);
+	case 2: UML_X86_VECTOR_MAP3_EXTRACT(2);
+	case 4: UML_X86_VECTOR_MAP3_EXTRACT(4);
+	case 8: UML_X86_VECTOR_MAP3_EXTRACT(8);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_EXTRACT
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map3_extract_scalar(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode < 0x14 ||
+		instruction.vector_opcode > 0x17)
+		return false;
+	unsigned size = instruction.vector_opcode == 0x14 ? 1U :
+		(instruction.vector_opcode == 0x15 ? 2U : 4U);
+	if (instruction.vector_opcode == 0x16 &&
+		instruction.destination.width == OperandWidth::qword)
+		size = 8;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const auto entry = vector_map3_extract_entry(size, memory);
+	const auto source = vector_offset(instruction.source);
+	if (entry == nullptr || !source)
+		return false;
+	if (!memory) {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(gadget, instruction.destination, 0);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*source) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map3_extract_lane(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode != 0x19 &&
+		instruction.vector_opcode != 0x39)
+		return false;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const auto source = vector_offset(instruction.source);
+	if (!source)
+		return false;
+	if (!memory) {
+		const auto destination = vector_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_vector_map3_extract_128_r));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(gadget, instruction.destination, 0);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(
+		native::uml_x86_64_gadget_vector_map3_extract_128_m));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*source) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map3_insert_entry(
+	unsigned size, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP3_INSERT(bits) \
+	return memory ? native::uml_x86_64_gadget_vector_map3_insert_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map3_insert_##bits##_rr
+	switch (size) {
+	case 1: UML_X86_VECTOR_MAP3_INSERT(1);
+	case 4: UML_X86_VECTOR_MAP3_INSERT(4);
+	case 8: UML_X86_VECTOR_MAP3_INSERT(8);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_INSERT
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map3_insert_scalar(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode != 0x20 &&
+		instruction.vector_opcode != 0x22)
+		return false;
+	const unsigned size = instruction.vector_opcode == 0x20 ? 1U :
+		(instruction.auxiliary.width == OperandWidth::qword ? 8U : 4U);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map3_insert_entry(size, memory);
+	const auto destination = vector_offset(instruction.destination);
+	const auto merge = vector_offset(instruction.source);
+	if (entry == nullptr || !destination || !merge)
+		return false;
+	if (!memory) {
+		const auto input = register_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*merge) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*merge) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map3_insertps(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode != 0x21)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto merge = vector_offset(instruction.source);
+	if (!destination || !merge)
+		return false;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	if (!memory) {
+		const auto input = vector_offset(instruction.auxiliary);
+		if (!input)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_vector_map3_insertps_rr));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*merge) << 16U) |
+			(static_cast<std::uintptr_t>(*input) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(
+		native::uml_x86_64_gadget_vector_map3_insertps_rm));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(static_cast<std::uintptr_t>(*merge) |
+		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map3_shuffle_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP3_SHUFFLE_WIDTH(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map3_shuffle_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map3_shuffle_##symbol##_##bits##_rr
+#define UML_X86_VECTOR_MAP3_SHUFFLE_SHAPE(symbol) \
+	if (width == OperandWidth::qword) \
+		UML_X86_VECTOR_MAP3_SHUFFLE_WIDTH(symbol, 64); \
+	if (width == OperandWidth::xmm) \
+		UML_X86_VECTOR_MAP3_SHUFFLE_WIDTH(symbol, 128); \
+	if (width == OperandWidth::ymm) \
+		UML_X86_VECTOR_MAP3_SHUFFLE_WIDTH(symbol, 256); \
+	break
+#define UML_X86_VECTOR_MAP3_SHUFFLE_CASE(value, symbol) \
+	case value: UML_X86_VECTOR_MAP3_SHUFFLE_SHAPE(symbol)
+	switch (opcode) {
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x00, 00);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x01, 01);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x02, 02);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x04, 04);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x05, 05);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x06, 06);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x0c, 0c);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x0d, 0d);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x0e, 0e);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x0f, 0f);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x18, 18);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x38, 38);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x46, 46);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x4a, 4a);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x4b, 4b);
+	UML_X86_VECTOR_MAP3_SHUFFLE_CASE(0x4c, 4c);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_SHUFFLE_CASE
+#undef UML_X86_VECTOR_MAP3_SHUFFLE_SHAPE
+#undef UML_X86_VECTOR_MAP3_SHUFFLE_WIDTH
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map3_shuffle(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map3_shuffle_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto destination = vector_state_offset(instruction.destination);
+	const auto left = instruction.source.kind == OperandKind::none ?
+		destination : vector_state_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_state_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map3_round_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP3_ROUND(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map3_round_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map3_round_##symbol##_##bits##_rr
+	switch (opcode) {
+	case 0x08:
+		if (width == OperandWidth::xmm)
+			UML_X86_VECTOR_MAP3_ROUND(08, 128);
+		if (width == OperandWidth::ymm)
+			UML_X86_VECTOR_MAP3_ROUND(08, 256);
+		break;
+	case 0x09:
+		if (width == OperandWidth::xmm)
+			UML_X86_VECTOR_MAP3_ROUND(09, 128);
+		if (width == OperandWidth::ymm)
+			UML_X86_VECTOR_MAP3_ROUND(09, 256);
+		break;
+	case 0x0a:
+		if (width == OperandWidth::xmm)
+			UML_X86_VECTOR_MAP3_ROUND(0a, 128);
+		break;
+	case 0x0b:
+		if (width == OperandWidth::xmm)
+			UML_X86_VECTOR_MAP3_ROUND(0b, 128);
+		break;
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_ROUND
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map3_round(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map3_round_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = instruction.source.kind == OperandKind::none ?
+		destination : vector_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map3_half(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode != 0x1d)
+		return false;
+	const auto source = vector_offset(instruction.source);
+	if (!source)
+		return false;
+	const bool wide = instruction.source.width == OperandWidth::ymm;
+	if (!wide && instruction.source.width != OperandWidth::xmm)
+		return false;
+	const bool memory = instruction.destination.kind == OperandKind::memory;
+	const auto entry = memory ?
+		(wide ? native::uml_x86_64_gadget_vector_map3_half_256_m :
+			native::uml_x86_64_gadget_vector_map3_half_128_m) :
+		(wide ? native::uml_x86_64_gadget_vector_map3_half_256_r :
+			native::uml_x86_64_gadget_vector_map3_half_128_r);
+	if (!memory) {
+		const auto destination = vector_offset(instruction.destination);
+		if (!destination)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, *source);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] NativeEntry vector_map3_math_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_VECTOR_MAP3_MATH(symbol, bits) \
+	return memory ? \
+		native::uml_x86_64_gadget_vector_map3_math_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_map3_math_##symbol##_##bits##_rr
+#define UML_X86_VECTOR_MAP3_MATH_CASE(value, symbol) \
+	case value: \
+		if (width == OperandWidth::xmm) \
+			UML_X86_VECTOR_MAP3_MATH(symbol, 128); \
+		if (width == OperandWidth::ymm) \
+			UML_X86_VECTOR_MAP3_MATH(symbol, 256); \
+		break
+	switch (opcode) {
+	UML_X86_VECTOR_MAP3_MATH_CASE(0x40, 40);
+	UML_X86_VECTOR_MAP3_MATH_CASE(0x41, 41);
+	UML_X86_VECTOR_MAP3_MATH_CASE(0x42, 42);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_MATH_CASE
+#undef UML_X86_VECTOR_MAP3_MATH
+	return nullptr;
+}
+
+[[nodiscard]] bool append_vector_map3_math(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_map3_math_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (entry == nullptr)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	const auto left = vector_offset(instruction.source);
+	if (!destination || !left)
+		return false;
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map3_crypto(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto opcode = instruction.vector_opcode;
+	if (opcode != 0x44 && opcode != 0xcc && opcode != 0xdf)
+		return false;
+	const auto destination = vector_offset(instruction.destination);
+	if (!destination)
+		return false;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	if (opcode == 0xdf) {
+		const auto entry = memory ?
+			native::uml_x86_64_gadget_vector_map3_aeskeygen_rm :
+			native::uml_x86_64_gadget_vector_map3_aeskeygen_rr;
+		if (!memory) {
+			const auto input = vector_offset(instruction.auxiliary);
+			if (!input)
+				return false;
+			stream.push_back(entry_address(entry));
+			stream.push_back(static_cast<std::uintptr_t>(*destination) |
+				(static_cast<std::uintptr_t>(*input) << 16U) |
+				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			stream.push_back(instruction.vector_control);
+			return true;
+		}
+		const auto encoded = encode_memory(
+			gadget, instruction.auxiliary, *destination);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto left = vector_offset(instruction.source);
+	if (!left)
+		return false;
+	NativeEntry entry{};
+	if (opcode == 0xcc) {
+		entry = memory ?
+			native::uml_x86_64_gadget_vector_map3_sha1rnds4_rm :
+			native::uml_x86_64_gadget_vector_map3_sha1rnds4_rr;
+	} else if (instruction.destination.width == OperandWidth::xmm) {
+		entry = memory ? native::uml_x86_64_gadget_vector_map3_pclmul_128_rm :
+			native::uml_x86_64_gadget_vector_map3_pclmul_128_rr;
+	} else if (instruction.destination.width == OperandWidth::ymm) {
+		entry = memory ? native::uml_x86_64_gadget_vector_map3_pclmul_256_rm :
+			native::uml_x86_64_gadget_vector_map3_pclmul_256_rr;
+	} else {
+		return false;
+	}
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(*left) << 16U) |
+			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(instruction.vector_control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(*left);
+	stream.push_back(instruction.vector_control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_map3_string(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	if (instruction.vector_opcode < 0x60 ||
+		instruction.vector_opcode > 0x63)
+		return false;
+	const auto left = vector_offset(instruction.source);
+	if (!left)
+		return false;
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	NativeEntry entry{};
+#define UML_X86_VECTOR_MAP3_STRING_CASE(value, symbol) \
+	case value: entry = memory ? \
+		native::uml_x86_64_gadget_vector_map3_string_##symbol##_rm : \
+		native::uml_x86_64_gadget_vector_map3_string_##symbol##_rr; break
+	switch (instruction.vector_opcode) {
+	UML_X86_VECTOR_MAP3_STRING_CASE(0x60, 60);
+	UML_X86_VECTOR_MAP3_STRING_CASE(0x61, 61);
+	UML_X86_VECTOR_MAP3_STRING_CASE(0x62, 62);
+	UML_X86_VECTOR_MAP3_STRING_CASE(0x63, 63);
+	default: break;
+	}
+#undef UML_X86_VECTOR_MAP3_STRING_CASE
+	const auto control = static_cast<std::uintptr_t>(
+		instruction.vector_control) |
+		(static_cast<std::uintptr_t>(instruction.vector_group) << 8U);
+	if (!memory) {
+		const auto right = vector_offset(instruction.auxiliary);
+		if (!right)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(static_cast<std::uintptr_t>(*left) |
+			(static_cast<std::uintptr_t>(*right) << 16U) |
+			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(control);
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *left);
+	if (!encoded)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor |
+		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	stream.push_back(control);
+	return true;
+}
+
+[[nodiscard]] bool append_vector_integer_map3(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	if (append_vector_map3_shuffle(stream, gadget))
+		return true;
+	if (append_vector_map3_round(stream, gadget))
+		return true;
+	if (append_vector_map3_half(stream, gadget))
+		return true;
+	if (append_vector_map3_math(stream, gadget))
+		return true;
+	if (append_vector_map3_crypto(stream, gadget))
+		return true;
+	if (append_vector_map3_string(stream, gadget))
+		return true;
+	if (append_vector_map3_extract_scalar(stream, gadget))
+		return true;
+	if (append_vector_map3_extract_lane(stream, gadget))
+		return true;
+	if (append_vector_map3_insert_scalar(stream, gadget))
+		return true;
+	return append_vector_map3_insertps(stream, gadget);
+}
+
+[[nodiscard]] std::uintptr_t extension_entry(bool sign,
+	OperandWidth source, OperandWidth destination) noexcept
+{
+#define UML_X86_EXTENSION(source_bits, destination_bits) \
+	return entry_address(sign ? \
+		native::uml_x86_64_gadget_sext_##source_bits##_##destination_bits##_rr : \
+		native::uml_x86_64_gadget_zext_##source_bits##_##destination_bits##_rr)
+	if (source == OperandWidth::byte && destination == OperandWidth::word)
+		UML_X86_EXTENSION(8, 16);
+	if (source == OperandWidth::byte && destination == OperandWidth::dword)
+		UML_X86_EXTENSION(8, 32);
+	if (source == OperandWidth::byte && destination == OperandWidth::qword)
+		UML_X86_EXTENSION(8, 64);
+	if (source == OperandWidth::word && destination == OperandWidth::dword)
+		UML_X86_EXTENSION(16, 32);
+	if (source == OperandWidth::word && destination == OperandWidth::qword)
+		UML_X86_EXTENSION(16, 64);
+	if (sign && source == OperandWidth::dword &&
+		destination == OperandWidth::word)
+		return entry_address(native::uml_x86_64_gadget_sext_32_16_rr);
+	if (sign && source == OperandWidth::dword &&
+		destination == OperandWidth::dword)
+		return entry_address(native::uml_x86_64_gadget_sext_32_32_rr);
+	if (source == OperandWidth::dword && destination == OperandWidth::qword)
+		UML_X86_EXTENSION(32, 64);
+#undef UML_X86_EXTENSION
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t memory_extension_entry(bool sign,
+	OperandWidth source, OperandWidth destination) noexcept
+{
+#define UML_X86_MEMORY_EXTENSION(source_bits, destination_bits) \
+	return entry_address(sign ? \
+		native::uml_x86_64_gadget_sext_##source_bits##_##destination_bits##_rm : \
+		native::uml_x86_64_gadget_zext_##source_bits##_##destination_bits##_rm)
+	if (source == OperandWidth::byte && destination == OperandWidth::word)
+		UML_X86_MEMORY_EXTENSION(8, 16);
+	if (source == OperandWidth::byte && destination == OperandWidth::dword)
+		UML_X86_MEMORY_EXTENSION(8, 32);
+	if (source == OperandWidth::byte && destination == OperandWidth::qword)
+		UML_X86_MEMORY_EXTENSION(8, 64);
+	if (source == OperandWidth::word && destination == OperandWidth::dword)
+		UML_X86_MEMORY_EXTENSION(16, 32);
+	if (source == OperandWidth::word && destination == OperandWidth::qword)
+		UML_X86_MEMORY_EXTENSION(16, 64);
+	if (sign && source == OperandWidth::dword &&
+		destination == OperandWidth::word)
+		return entry_address(native::uml_x86_64_gadget_sext_32_16_rm);
+	if (sign && source == OperandWidth::dword &&
+		destination == OperandWidth::dword)
+		return entry_address(native::uml_x86_64_gadget_sext_32_32_rm);
+	if (source == OperandWidth::dword && destination == OperandWidth::qword)
+		UML_X86_MEMORY_EXTENSION(32, 64);
+#undef UML_X86_MEMORY_EXTENSION
+	return 0;
+}
+
+[[nodiscard]] bool append_memory_extension(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = register_offset(instruction.destination);
+	const auto encoded = destination ? encode_memory(
+		gadget, instruction.source, *destination) : std::nullopt;
+	const auto entry = memory_extension_entry(
+		instruction.operation == Operation::move_sign_extend,
+		instruction.source.width, instruction.destination.width);
+	if (!encoded || entry == 0)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+#define UML_X86_CONDITION_CASES(select) \
+	select(overflow, o) \
+	select(not_overflow, no) \
+	select(below, b) \
+	select(above_or_equal, ae) \
+	select(equal, e) \
+	select(not_equal, ne) \
+	select(below_or_equal, be) \
+	select(above, a) \
+	select(sign, s) \
+	select(not_sign, ns) \
+	select(parity, p) \
+	select(not_parity, np) \
+	select(less, l) \
+	select(greater_or_equal, ge) \
+	select(less_or_equal, le) \
+	select(greater, g)
+
+[[nodiscard]] std::uintptr_t set_condition_entry(Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_SET_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address(native::uml_x86_64_gadget_set_##name);
+	UML_X86_CONDITION_CASES(UML_X86_SET_CASE)
+#undef UML_X86_SET_CASE
+	}
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t set_condition_memory_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_SET_MEMORY_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address(native::uml_x86_64_gadget_set_##name##_m);
+	UML_X86_CONDITION_CASES(UML_X86_SET_MEMORY_CASE)
+#undef UML_X86_SET_MEMORY_CASE
+	}
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t jump_condition_entry(Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address(native::uml_x86_64_gadget_jump_##name);
+	UML_X86_CONDITION_CASES(UML_X86_JUMP_CASE)
+#undef UML_X86_JUMP_CASE
+	}
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t conditional_move_entry(
+	Condition condition, OperandWidth width) noexcept
+{
+#define UML_X86_CMOV_WIDTH(name) \
+	switch (width) { \
+	case OperandWidth::word: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_16_rr); \
+	case OperandWidth::dword: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_32_rr); \
+	case OperandWidth::qword: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_64_rr); \
+	default: return 0; \
+	}
+	switch (condition) {
+#define UML_X86_CMOV_CASE(enumerator, name) \
+	case Condition::enumerator: UML_X86_CMOV_WIDTH(name);
+	UML_X86_CONDITION_CASES(UML_X86_CMOV_CASE)
+#undef UML_X86_CMOV_CASE
+	}
+#undef UML_X86_CMOV_WIDTH
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t conditional_move_memory_entry(
+	Condition condition, OperandWidth width) noexcept
+{
+#define UML_X86_CMOV_MEMORY_WIDTH(name) \
+	switch (width) { \
+	case OperandWidth::word: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_16_rm); \
+	case OperandWidth::dword: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_32_rm); \
+	case OperandWidth::qword: \
+		return entry_address(native::uml_x86_64_gadget_cmov_##name##_64_rm); \
+	default: return 0; \
+	}
+	switch (condition) {
+#define UML_X86_CMOV_MEMORY_CASE(enumerator, name) \
+	case Condition::enumerator: UML_X86_CMOV_MEMORY_WIDTH(name);
+	UML_X86_CONDITION_CASES(UML_X86_CMOV_MEMORY_CASE)
+#undef UML_X86_CMOV_MEMORY_CASE
+	}
+#undef UML_X86_CMOV_MEMORY_WIDTH
+	return 0;
+}
+
+#undef UML_X86_CONDITION_CASES
+
+[[nodiscard]] bool append_register_pair(
+	std::vector<std::uintptr_t> &stream, std::uintptr_t entry,
+	const Operand &destination, const Operand &source) noexcept
+{
+	const auto destination_offset = register_offset(destination);
+	const auto source_offset = register_offset(source);
+	if (entry == 0 || !destination_offset || !source_offset)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(static_cast<std::uintptr_t>(*destination_offset) |
+		(static_cast<std::uintptr_t>(*source_offset) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_register_binary(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
+	std::uintptr_t entry) noexcept
+{
+	const auto destination = register_offset(
+		gadget.instruction.destination);
+	if (!destination || entry == 0)
+		return false;
+	const auto &source_operand = gadget.instruction.source;
+	if (source_operand.kind == OperandKind::immediate) {
+		stream.push_back(entry);
+		stream.push_back(*destination);
+		stream.push_back(source_operand.immediate);
+		return true;
+	}
+	const auto source = register_offset(source_operand);
+	if (!source)
+		return false;
+	stream.push_back(entry);
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*source) << 16U));
+	return true;
+}
+
+[[nodiscard]] std::optional<std::uint16_t> segment_selector_offset(
+	std::uint8_t index) noexcept
+{
+	if (index >= 6U)
+		return std::nullopt;
+	return static_cast<std::uint16_t>(
+		offsetof(CpuState, segment_selectors) + index * sizeof(std::uint16_t));
+}
+
+[[nodiscard]] bool append_segment_move(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto selector = segment_selector_offset(instruction.vector_group);
+	if (!selector)
+		return false;
+	if (instruction.vector_opcode == 0x8e) {
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(
+				gadget, instruction.source, *selector);
+			if (!encoded)
+				return false;
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_move_16_rm));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry_address(native::uml_x86_64_gadget_move_16_rr));
+		stream.push_back(static_cast<std::uintptr_t>(*selector) |
+			(static_cast<std::uintptr_t>(*source) << 16U));
+		return true;
+	}
+	if (instruction.destination.kind == OperandKind::memory) {
+		const auto encoded = encode_memory(
+			gadget, instruction.destination, *selector);
+		if (!encoded || instruction.destination.width != OperandWidth::word)
+			return false;
+		stream.push_back(entry_address(native::uml_x86_64_gadget_move_16_mr));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	const auto destination = register_offset(instruction.destination);
+	if (!destination)
+		return false;
+	std::uintptr_t entry{};
+	switch (instruction.destination.width) {
+	case OperandWidth::word:
+		entry = entry_address(native::uml_x86_64_gadget_move_16_rr);
+		break;
+	case OperandWidth::dword:
+		entry = entry_address(native::uml_x86_64_gadget_zext_16_32_rr);
+		break;
+	case OperandWidth::qword:
+		entry = entry_address(native::uml_x86_64_gadget_zext_16_64_rr);
+		break;
+	default: return false;
+	}
+	stream.push_back(entry);
+	stream.push_back(static_cast<std::uintptr_t>(*destination) |
+		(static_cast<std::uintptr_t>(*selector) << 16U));
+	return true;
+}
+
+[[nodiscard]] bool append_segment_stack(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto selector = segment_selector_offset(instruction.vector_group);
+	const bool pushing = instruction.vector_opcode == 0xa0 ||
+		instruction.vector_opcode == 0xa8;
+	const auto width = pushing ? instruction.source.width :
+		instruction.destination.width;
+	if (!selector || (width != OperandWidth::word &&
+		width != OperandWidth::qword))
+		return false;
+	NativeEntry entry{};
+	if (pushing)
+		entry = width == OperandWidth::word ?
+			native::uml_x86_64_gadget_push_16_r :
+			native::uml_x86_64_gadget_push_segment_64;
+	else
+		entry = width == OperandWidth::word ?
+			native::uml_x86_64_gadget_pop_16_r :
+			native::uml_x86_64_gadget_pop_segment_64;
+	stream.push_back(entry_address(entry));
+	stream.push_back(static_cast<std::uintptr_t>(*selector) |
+		(static_cast<std::uintptr_t>(instruction.length) << 56U));
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_enter(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	NativeEntry entry{};
+	if (instruction.destination.width == OperandWidth::word)
+		entry = native::uml_x86_64_gadget_enter_16;
+	else if (instruction.destination.width == OperandWidth::qword)
+		entry = native::uml_x86_64_gadget_enter_64;
+	else
+		return false;
+	const auto descriptor =
+		(static_cast<std::uintptr_t>(instruction.auxiliary.immediate) & 0x1fU) |
+		((static_cast<std::uintptr_t>(instruction.source.immediate) & 0xffffU)
+			<< 16U) |
+		(static_cast<std::uintptr_t>(instruction.length) << 56U);
+	stream.push_back(entry_address(entry));
+	stream.push_back(descriptor);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] NativeEntry far_transfer_entry(
+	Operation operation, OperandWidth width) noexcept
+{
+	const bool call = operation == Operation::far_call;
+	switch (width) {
+	case OperandWidth::word:
+		return call ? native::uml_x86_64_gadget_far_call_16 :
+			native::uml_x86_64_gadget_far_jump_16;
+	case OperandWidth::dword:
+		return call ? native::uml_x86_64_gadget_far_call_32 :
+			native::uml_x86_64_gadget_far_jump_32;
+	case OperandWidth::qword:
+		return call ? native::uml_x86_64_gadget_far_call_64 :
+			native::uml_x86_64_gadget_far_jump_64;
+	default: return nullptr;
+	}
+}
+
+[[nodiscard]] bool append_far_transfer(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto encoded = encode_memory(gadget, gadget.instruction.source, 0);
+	const auto entry = far_transfer_entry(gadget.instruction.operation,
+		gadget.instruction.source.width);
+	if (!encoded || entry == nullptr)
+		return false;
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] NativeEntry far_return_entry(OperandWidth width) noexcept
+{
+	switch (width) {
+	case OperandWidth::word:
+		return native::uml_x86_64_gadget_far_return_16;
+	case OperandWidth::dword:
+		return native::uml_x86_64_gadget_far_return_32;
+	case OperandWidth::qword:
+		return native::uml_x86_64_gadget_far_return_64;
+	default: return nullptr;
+	}
+}
+
+[[nodiscard]] NativeEntry interrupt_return_entry(OperandWidth width) noexcept
+{
+	switch (width) {
+	case OperandWidth::word:
+		return native::uml_x86_64_gadget_interrupt_return_16;
+	case OperandWidth::dword:
+		return native::uml_x86_64_gadget_interrupt_return_32;
+	case OperandWidth::qword:
+		return native::uml_x86_64_gadget_interrupt_return_64;
+	default: return nullptr;
+	}
+}
+
+[[nodiscard]] NativeEntry string_entry(
+	Operation operation, OperandWidth width) noexcept
+{
+#define UML_X86_STRING_WIDTH(operation_name) \
+	switch (width) { \
+	case OperandWidth::byte: \
+		return native::uml_x86_64_gadget_string_##operation_name##_8; \
+	case OperandWidth::word: \
+		return native::uml_x86_64_gadget_string_##operation_name##_16; \
+	case OperandWidth::dword: \
+		return native::uml_x86_64_gadget_string_##operation_name##_32; \
+	case OperandWidth::qword: \
+		return native::uml_x86_64_gadget_string_##operation_name##_64; \
+	default: return nullptr; \
+	}
+	switch (operation) {
+	case Operation::string_move: UML_X86_STRING_WIDTH(move);
+	case Operation::string_compare: UML_X86_STRING_WIDTH(compare);
+	case Operation::string_store: UML_X86_STRING_WIDTH(store);
+	case Operation::string_load: UML_X86_STRING_WIDTH(load);
+	case Operation::string_scan: UML_X86_STRING_WIDTH(scan);
+	default: return nullptr;
+	}
+#undef UML_X86_STRING_WIDTH
+	return nullptr;
+}
+
+[[nodiscard]] bool append_string(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto width = instruction.destination.kind == OperandKind::none ?
+		instruction.source.width : instruction.destination.width;
+	const auto entry = string_entry(instruction.operation, width);
+	const auto *memory = instruction.destination.kind == OperandKind::memory ?
+		&instruction.destination : instruction.source.kind == OperandKind::memory ?
+		&instruction.source : nullptr;
+	if (entry == nullptr || memory == nullptr)
+		return false;
+	Segment source_segment{Segment::none};
+	if (instruction.operation == Operation::string_move ||
+		instruction.operation == Operation::string_load)
+		source_segment = instruction.source.memory.segment;
+	else if (instruction.operation == Operation::string_compare)
+		source_segment = instruction.destination.memory.segment;
+	const auto descriptor =
+		static_cast<std::uintptr_t>(memory->memory.address_32) |
+		(static_cast<std::uintptr_t>(source_segment) << 1U) |
+		(static_cast<std::uintptr_t>(instruction.repeat) << 8U) |
+		(static_cast<std::uintptr_t>(instruction.length) << 56U);
+	stream.push_back(entry_address(entry));
+	stream.push_back(descriptor);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_extended_state(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto encoded = encode_memory(gadget, instruction.destination, 0);
+	if (!encoded)
+		return false;
+	NativeEntry entry{};
+	switch (instruction.vector_group) {
+	case 0: entry = native::uml_x86_64_gadget_extended_state_fxsave; break;
+	case 1: entry = native::uml_x86_64_gadget_extended_state_fxrstor; break;
+	case 4: entry = native::uml_x86_64_gadget_extended_state_xsave; break;
+	case 5: entry = native::uml_x86_64_gadget_extended_state_xrstor; break;
+	default: return false;
+	}
+	stream.push_back(entry_address(entry));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
+	stream.push_back(gadget.address);
+	return true;
+}
+
+[[nodiscard]] bool append_x87(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto opcode = instruction.vector_opcode;
+	const auto modrm = instruction.vector_control;
+	const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+	const auto index = static_cast<std::uint8_t>(modrm & 7U);
+	NativeEntry entry{};
+	bool carries_index{};
+	if (opcode == 0x0e || opcode == 0x77) {
+		entry = native::uml_x86_64_gadget_x87_emms;
+	} else if ((modrm >> 6U) != 3) {
+		const auto encoded = encode_memory(gadget, instruction.source, 0);
+		if (!encoded)
+			return false;
+		if (opcode == 0xd9 && group == 5) {
+			entry = native::uml_x86_64_gadget_x87_load_control;
+		} else if (opcode == 0xd9 && group == 7) {
+			entry = native::uml_x86_64_gadget_x87_store_control;
+		} else if (opcode == 0xdd && group == 7) {
+			entry = native::uml_x86_64_gadget_x87_store_status;
+		} else if ((opcode == 0xd9 || opcode == 0xdd) &&
+			(group == 4 || group == 6)) {
+			const bool compact = instruction.vector_prefix != 0;
+			const bool full = opcode == 0xdd;
+			const bool restore = group == 4;
+			if (restore && full)
+				entry = compact ?
+					native::uml_x86_64_gadget_x87_environment_restore_state94 :
+					native::uml_x86_64_gadget_x87_environment_restore_state108;
+			else if (restore)
+				entry = compact ?
+					native::uml_x86_64_gadget_x87_environment_restore_env14 :
+					native::uml_x86_64_gadget_x87_environment_restore_env28;
+			else if (full)
+				entry = compact ?
+					native::uml_x86_64_gadget_x87_environment_save_state94 :
+					native::uml_x86_64_gadget_x87_environment_save_state108;
+			else
+				entry = compact ?
+					native::uml_x86_64_gadget_x87_environment_save_env14 :
+					native::uml_x86_64_gadget_x87_environment_save_env28;
+		} else if (opcode == 0xd9 && group == 0) {
+			entry = native::uml_x86_64_gadget_x87_load_f32;
+		} else if (opcode == 0xdb && group == 0) {
+			entry = native::uml_x86_64_gadget_x87_load_i32;
+		} else if (opcode == 0xdb && group == 5) {
+			entry = native::uml_x86_64_gadget_x87_load_f80;
+		} else if (opcode == 0xdd && group == 0) {
+			entry = native::uml_x86_64_gadget_x87_load_f64;
+		} else if (opcode == 0xdf && group == 0) {
+			entry = native::uml_x86_64_gadget_x87_load_i16;
+		} else if (opcode == 0xdf && group == 4) {
+			entry = native::uml_x86_64_gadget_x87_load_bcd;
+		} else if (opcode == 0xdf && group == 5) {
+			entry = native::uml_x86_64_gadget_x87_load_i64;
+		} else if (opcode == 0xd9 && group == 2) {
+			entry = native::uml_x86_64_gadget_x87_store_f32_keep;
+		} else if (opcode == 0xd9 && group == 3) {
+			entry = native::uml_x86_64_gadget_x87_store_f32_pop;
+		} else if (opcode == 0xdb && group == 1) {
+			entry = native::uml_x86_64_gadget_x87_store_i32_truncate_pop;
+		} else if (opcode == 0xdb && group == 2) {
+			entry = native::uml_x86_64_gadget_x87_store_i32_keep;
+		} else if (opcode == 0xdb && group == 3) {
+			entry = native::uml_x86_64_gadget_x87_store_i32_pop;
+		} else if (opcode == 0xdb && group == 7) {
+			entry = native::uml_x86_64_gadget_x87_store_f80_pop;
+		} else if (opcode == 0xdd && group == 1) {
+			entry = native::uml_x86_64_gadget_x87_store_i64_truncate_pop;
+		} else if (opcode == 0xdd && group == 2) {
+			entry = native::uml_x86_64_gadget_x87_store_f64_keep;
+		} else if (opcode == 0xdd && group == 3) {
+			entry = native::uml_x86_64_gadget_x87_store_f64_pop;
+		} else if (opcode == 0xdf && group == 1) {
+			entry = native::uml_x86_64_gadget_x87_store_i16_truncate_pop;
+		} else if (opcode == 0xdf && group == 2) {
+			entry = native::uml_x86_64_gadget_x87_store_i16_keep;
+		} else if (opcode == 0xdf && group == 3) {
+			entry = native::uml_x86_64_gadget_x87_store_i16_pop;
+		} else if (opcode == 0xdf && group == 6) {
+			entry = native::uml_x86_64_gadget_x87_store_bcd_pop;
+		} else if (opcode == 0xdf && group == 7) {
+			entry = native::uml_x86_64_gadget_x87_store_i64_pop;
+		} else {
+			const auto select = [group](NativeEntry add, NativeEntry multiply,
+				NativeEntry compare_keep, NativeEntry compare_pop,
+				NativeEntry subtract, NativeEntry subtract_reverse,
+				NativeEntry divide, NativeEntry divide_reverse) noexcept {
+				switch (group) {
+				case 0: return add;
+				case 1: return multiply;
+				case 2: return compare_keep;
+				case 3: return compare_pop;
+				case 4: return subtract;
+				case 5: return subtract_reverse;
+				case 6: return divide;
+				case 7: return divide_reverse;
+				default: return NativeEntry{};
+				}
+			};
+#define UML_X86_SELECT_X87_MEMORY(type) select( \
+			native::uml_x86_64_gadget_x87_memory_##type##_add, \
+			native::uml_x86_64_gadget_x87_memory_##type##_multiply, \
+			native::uml_x86_64_gadget_x87_memory_##type##_compare_0, \
+			native::uml_x86_64_gadget_x87_memory_##type##_compare_1, \
+			native::uml_x86_64_gadget_x87_memory_##type##_subtract, \
+			native::uml_x86_64_gadget_x87_memory_##type##_subtract_reverse, \
+			native::uml_x86_64_gadget_x87_memory_##type##_divide, \
+			native::uml_x86_64_gadget_x87_memory_##type##_divide_reverse)
+			if (opcode == 0xd8 || opcode == 0xd9)
+				entry = UML_X86_SELECT_X87_MEMORY(f32);
+			else if (opcode == 0xda || opcode == 0xdb)
+				entry = UML_X86_SELECT_X87_MEMORY(i32);
+			else if (opcode == 0xdc || opcode == 0xdd)
+				entry = UML_X86_SELECT_X87_MEMORY(f64);
+			else
+				entry = UML_X86_SELECT_X87_MEMORY(i16);
+#undef UML_X86_SELECT_X87_MEMORY
+		}
+		stream.push_back(entry_address(entry));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	} else if (opcode == 0xd8 || opcode == 0xdc || opcode == 0xde) {
+		if ((opcode == 0xd8 || opcode == 0xdc) &&
+			(group == 2 || group == 3)) {
+			entry = group == 2 ?
+				native::uml_x86_64_gadget_x87_compare_status_keep :
+				native::uml_x86_64_gadget_x87_compare_status_pop;
+		} else if (opcode == 0xde && group == 2) {
+			entry = native::uml_x86_64_gadget_x87_compare_status_pop;
+		} else if (opcode == 0xde && group == 3) {
+			if (index != 1)
+				return false;
+			entry = native::uml_x86_64_gadget_x87_compare_status_pop2;
+		} else {
+			const auto select = [group](const std::array<NativeEntry, 8> &entries) {
+				return entries[group];
+			};
+#define UML_X86_X87_REGISTER_ENTRIES(opcode_name) \
+			std::array<NativeEntry, 8>{ \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_0, \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_1, \
+				nullptr, nullptr, \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_4, \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_5, \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_6, \
+				native::uml_x86_64_gadget_x87_register_##opcode_name##_7, \
+			}
+			if (opcode == 0xd8)
+				entry = select(UML_X86_X87_REGISTER_ENTRIES(d8));
+			else if (opcode == 0xdc)
+				entry = select(UML_X86_X87_REGISTER_ENTRIES(dc));
+			else
+				entry = select(UML_X86_X87_REGISTER_ENTRIES(de));
+#undef UML_X86_X87_REGISTER_ENTRIES
+			if (entry == nullptr)
+				return false;
+		}
+		carries_index = true;
+	} else if (opcode == 0xd9) {
+		if (group == 0) {
+			entry = native::uml_x86_64_gadget_x87_load_register;
+			carries_index = true;
+		} else if (group == 1) {
+			entry = native::uml_x86_64_gadget_x87_exchange_register;
+			carries_index = true;
+		} else if (modrm == 0xd0) {
+			entry = native::uml_x86_64_gadget_x87_nop;
+		} else if (modrm == 0xe0) {
+			entry = native::uml_x86_64_gadget_x87_change_sign;
+		} else if (modrm == 0xe1) {
+			entry = native::uml_x86_64_gadget_x87_absolute;
+		} else if (modrm == 0xe4) {
+			entry = native::uml_x86_64_gadget_x87_test_zero;
+		} else if (modrm == 0xe5) {
+			entry = native::uml_x86_64_gadget_x87_examine;
+		} else if (modrm >= 0xe8 && modrm <= 0xee) {
+			constexpr std::array<NativeEntry, 7> constants{
+				native::uml_x86_64_gadget_x87_constant_one,
+				native::uml_x86_64_gadget_x87_constant_log2_10,
+				native::uml_x86_64_gadget_x87_constant_log2_e,
+				native::uml_x86_64_gadget_x87_constant_pi,
+				native::uml_x86_64_gadget_x87_constant_log10_2,
+				native::uml_x86_64_gadget_x87_constant_ln_2,
+				native::uml_x86_64_gadget_x87_constant_zero,
+			};
+			entry = constants[modrm - 0xe8U];
+		} else if (modrm == 0xf0) {
+			entry = native::uml_x86_64_gadget_x87_f2xm1;
+		} else if (modrm == 0xf1) {
+			entry = native::uml_x86_64_gadget_x87_fyl2x;
+		} else if (modrm == 0xf2) {
+			entry = native::uml_x86_64_gadget_x87_tangent;
+		} else if (modrm == 0xf3) {
+			entry = native::uml_x86_64_gadget_x87_atan;
+		} else if (modrm == 0xf4) {
+			entry = native::uml_x86_64_gadget_x87_extract;
+		} else if (modrm == 0xf5) {
+			entry = native::uml_x86_64_gadget_x87_fprem1_with_flags;
+		} else if (modrm == 0xf6) {
+			entry = native::uml_x86_64_gadget_x87_decrement_top;
+		} else if (modrm == 0xf7) {
+			entry = native::uml_x86_64_gadget_x87_increment_top;
+		} else if (modrm == 0xf8) {
+			entry = native::uml_x86_64_gadget_x87_fprem_with_flags;
+		} else if (modrm == 0xf9) {
+			entry = native::uml_x86_64_gadget_x87_fyl2xp1;
+		} else if (modrm == 0xfa) {
+			entry = native::uml_x86_64_gadget_x87_sqrt;
+		} else if (modrm == 0xfb) {
+			entry = native::uml_x86_64_gadget_x87_sincos;
+		} else if (modrm == 0xfc) {
+			entry = native::uml_x86_64_gadget_x87_round;
+		} else if (modrm == 0xfd) {
+			entry = native::uml_x86_64_gadget_x87_scale;
+		} else if (modrm == 0xfe) {
+			entry = native::uml_x86_64_gadget_x87_sine;
+		} else if (modrm == 0xff) {
+			entry = native::uml_x86_64_gadget_x87_cosine;
+		} else {
+			return false;
+		}
+	} else if ((opcode == 0xda || opcode == 0xdb) && group <= 3) {
+		constexpr std::array<NativeEntry, 8> conditions{
+			native::uml_x86_64_gadget_x87_conditional_move_0,
+			native::uml_x86_64_gadget_x87_conditional_move_1,
+			native::uml_x86_64_gadget_x87_conditional_move_2,
+			native::uml_x86_64_gadget_x87_conditional_move_3,
+			native::uml_x86_64_gadget_x87_conditional_move_4,
+			native::uml_x86_64_gadget_x87_conditional_move_5,
+			native::uml_x86_64_gadget_x87_conditional_move_6,
+			native::uml_x86_64_gadget_x87_conditional_move_7,
+		};
+		entry = conditions[group + (opcode == 0xdb ? 4U : 0U)];
+		carries_index = true;
+	} else if (opcode == 0xda && modrm == 0xe9) {
+		entry = native::uml_x86_64_gadget_x87_compare_status_pop2;
+		carries_index = true;
+	} else if (opcode == 0xdb && modrm == 0xe2) {
+		entry = native::uml_x86_64_gadget_x87_clear_exceptions;
+	} else if (opcode == 0xdb && modrm == 0xe3) {
+		entry = native::uml_x86_64_gadget_x87_initialize;
+	} else if (opcode == 0xdb && (group == 5 || group == 6 || group == 7)) {
+		entry = native::uml_x86_64_gadget_x87_compare_integer_keep;
+		carries_index = true;
+	} else if (opcode == 0xdd || opcode == 0xdf) {
+		if (group == 0) {
+			entry = opcode == 0xdf ?
+				native::uml_x86_64_gadget_x87_free_register_pop :
+				native::uml_x86_64_gadget_x87_free_register;
+			carries_index = true;
+		} else if (group == 1) {
+			entry = native::uml_x86_64_gadget_x87_exchange_register;
+			carries_index = true;
+		} else if (group == 2 || group == 3) {
+			entry = group == 3 || opcode == 0xdf ?
+				native::uml_x86_64_gadget_x87_store_register_pop :
+				native::uml_x86_64_gadget_x87_store_register_keep;
+			carries_index = true;
+		} else if (opcode == 0xdf && modrm == 0xe0) {
+			entry = native::uml_x86_64_gadget_x87_store_status_ax;
+		} else if (opcode == 0xdd && (group == 4 || group == 5)) {
+			entry = group == 4 ?
+				native::uml_x86_64_gadget_x87_compare_status_keep :
+				native::uml_x86_64_gadget_x87_compare_status_pop;
+			carries_index = true;
+		} else if (opcode == 0xdf && (group == 5 || group == 6)) {
+			entry = native::uml_x86_64_gadget_x87_compare_integer_pop;
+			carries_index = true;
+		} else {
+			return false;
+		}
+	} else {
+		return false;
+	}
+	stream.push_back(entry_address(entry));
+	if (carries_index)
+		stream.push_back(index);
+	return true;
+}
+
+[[nodiscard]] bool append_native(
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const bool native_locked_scalar =
+		instruction.operation == Operation::move ||
+		instruction.operation == Operation::add ||
+		instruction.operation == Operation::subtract ||
+		instruction.operation == Operation::bit_and ||
+		instruction.operation == Operation::bit_or ||
+		instruction.operation == Operation::bit_xor ||
+		instruction.operation == Operation::compare ||
+		instruction.operation == Operation::test ||
+		instruction.operation == Operation::add_carry ||
+		instruction.operation == Operation::subtract_borrow ||
+		instruction.operation == Operation::exchange ||
+		instruction.operation == Operation::increment ||
+		instruction.operation == Operation::decrement ||
+		instruction.operation == Operation::negate ||
+		instruction.operation == Operation::bit_not ||
+		instruction.operation == Operation::shift_left ||
+		instruction.operation == Operation::shift_right ||
+		instruction.operation == Operation::shift_arithmetic_right ||
+		instruction.operation == Operation::rotate_left ||
+		instruction.operation == Operation::rotate_right ||
+		instruction.operation == Operation::rotate_carry_left ||
+		instruction.operation == Operation::rotate_carry_right ||
+		instruction.operation == Operation::double_shift_left ||
+		instruction.operation == Operation::double_shift_right ||
+		instruction.operation == Operation::multiply ||
+		instruction.operation == Operation::multiply_signed ||
+		instruction.operation == Operation::divide ||
+		instruction.operation == Operation::divide_signed ||
+		instruction.operation == Operation::bit_test ||
+		instruction.operation == Operation::bit_set ||
+		instruction.operation == Operation::bit_reset ||
+		instruction.operation == Operation::bit_complement ||
+		instruction.operation == Operation::bit_scan_forward ||
+		instruction.operation == Operation::bit_scan_reverse ||
+		instruction.operation == Operation::count_trailing_zeros ||
+		instruction.operation == Operation::count_leading_zeros ||
+		instruction.operation == Operation::population_count;
+	const bool native_locked_atomic =
+		instruction.operation == Operation::compare_exchange ||
+		instruction.operation == Operation::compare_exchange_pair ||
+		instruction.operation == Operation::exchange_add ||
+		instruction.operation == Operation::move_byte_swap ||
+		instruction.operation == Operation::crc32 ||
+		instruction.operation == Operation::adx ||
+		instruction.operation == Operation::scalar_bmi;
+	if (instruction.locked && !native_locked_scalar && !native_locked_atomic)
+		return false;
+	switch (instruction.operation) {
+	case Operation::nop:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_nop));
+		return true;
+	case Operation::move: {
+		if (instruction.destination.kind == OperandKind::memory ||
+			instruction.source.kind == OperandKind::memory)
+			return append_memory_move(stream, gadget);
+		const bool immediate = instruction.source.kind ==
+			OperandKind::immediate;
+		return append_register_binary(stream, gadget,
+			select_move(instruction.destination.width, immediate));
+	}
+	case Operation::move_zero_extend:
+	case Operation::move_sign_extend:
+		if (instruction.source.kind == OperandKind::memory)
+			return append_memory_extension(stream, gadget);
+		return append_register_pair(stream,
+			extension_entry(
+				instruction.operation == Operation::move_sign_extend,
+				instruction.source.width, instruction.destination.width),
+			instruction.destination, instruction.source);
+	case Operation::lea: {
+		const auto destination = register_offset(instruction.destination);
+		const auto encoded = destination ? encode_memory(
+			gadget, instruction.source, *destination, false) : std::nullopt;
+		if (!encoded)
+			return false;
+		std::uintptr_t entry{};
+		switch (instruction.destination.width) {
+		case OperandWidth::word:
+			entry = entry_address(native::uml_x86_64_gadget_lea_16);
+			break;
+		case OperandWidth::dword:
+			entry = entry_address(native::uml_x86_64_gadget_lea_32);
+			break;
+		case OperandWidth::qword:
+			entry = entry_address(native::uml_x86_64_gadget_lea_64);
+			break;
+		default: return false;
+		}
+		stream.push_back(entry);
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::exchange: {
+		if (instruction.destination.kind == OperandKind::memory) {
+			const auto source = register_offset(instruction.source);
+			const auto encoded = source ? encode_memory(
+				gadget, instruction.destination, *source) : std::nullopt;
+			std::uintptr_t entry{};
+			switch (instruction.destination.width) {
+			case OperandWidth::byte:
+				entry = entry_address(native::uml_x86_64_gadget_exchange_8_mr);
+				break;
+			case OperandWidth::word:
+				entry = entry_address(native::uml_x86_64_gadget_exchange_16_mr);
+				break;
+			case OperandWidth::dword:
+				entry = entry_address(native::uml_x86_64_gadget_exchange_32_mr);
+				break;
+			case OperandWidth::qword:
+				entry = entry_address(native::uml_x86_64_gadget_exchange_64_mr);
+				break;
+			default: return false;
+			}
+			if (!encoded)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		return append_register_pair(stream,
+			select_exchange(instruction.destination.width),
+			instruction.destination, instruction.source);
+	}
+	case Operation::add:
+	case Operation::subtract:
+	case Operation::bit_and:
+	case Operation::bit_or:
+	case Operation::bit_xor:
+	case Operation::compare:
+	case Operation::test: {
+		if (instruction.destination.kind == OperandKind::memory ||
+			instruction.source.kind == OperandKind::memory)
+			return append_memory_arithmetic(stream, gadget);
+		const bool immediate = instruction.source.kind ==
+			OperandKind::immediate;
+		return append_register_binary(stream, gadget,
+			arithmetic_entry(instruction.operation,
+				instruction.destination.width, immediate));
+	}
+	case Operation::add_carry:
+	case Operation::subtract_borrow: {
+		if (instruction.destination.kind == OperandKind::memory ||
+			instruction.source.kind == OperandKind::memory)
+			return append_memory_arithmetic(stream, gadget);
+		const bool immediate = instruction.source.kind == OperandKind::immediate;
+		return append_register_binary(stream, gadget,
+			instruction.operation == Operation::add_carry ?
+				select_adc(instruction.destination.width, immediate) :
+				select_sbb(instruction.destination.width, immediate));
+	}
+	case Operation::increment:
+	case Operation::decrement:
+	case Operation::negate:
+	case Operation::bit_not: {
+		if (instruction.destination.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.destination, 0);
+			std::uintptr_t entry{};
+			switch (instruction.operation) {
+			case Operation::increment:
+				entry = select_memory_increment(instruction.destination.width);
+				break;
+			case Operation::decrement:
+				entry = select_memory_decrement(instruction.destination.width);
+				break;
+			case Operation::negate:
+				entry = select_memory_negate(instruction.destination.width);
+				break;
+			case Operation::bit_not:
+				entry = select_memory_not(instruction.destination.width);
+				break;
+			default: break;
+			}
+			if (!encoded || entry == 0)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		std::uintptr_t entry{};
+		switch (instruction.operation) {
+		case Operation::increment:
+			entry = select_increment(instruction.destination.width);
+			break;
+		case Operation::decrement:
+			entry = select_decrement(instruction.destination.width);
+			break;
+		case Operation::negate:
+			entry = select_negate(instruction.destination.width);
+			break;
+		case Operation::bit_not:
+			entry = select_not(instruction.destination.width);
+			break;
+		default: break;
+		}
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(*destination);
+		return true;
+	}
+	case Operation::shift_left:
+	case Operation::shift_right:
+	case Operation::shift_arithmetic_right:
+	case Operation::rotate_left:
+	case Operation::rotate_right:
+	case Operation::rotate_carry_left:
+	case Operation::rotate_carry_right:
+		return append_shift(stream, gadget);
+	case Operation::double_shift_left:
+	case Operation::double_shift_right:
+		return append_double_shift(stream, gadget);
+	case Operation::multiply:
+	case Operation::multiply_signed:
+		return append_multiply(stream, gadget);
+	case Operation::divide:
+	case Operation::divide_signed:
+		return append_divide(stream, gadget);
+	case Operation::bit_test:
+	case Operation::bit_set:
+	case Operation::bit_reset:
+	case Operation::bit_complement:
+		return append_bit_operation(stream, gadget);
+	case Operation::bit_scan_forward:
+	case Operation::bit_scan_reverse:
+	case Operation::count_trailing_zeros:
+	case Operation::count_leading_zeros:
+	case Operation::population_count:
+		return append_bit_count(stream, gadget);
+	case Operation::compare_exchange:
+	case Operation::exchange_add:
+		return append_atomic_binary(stream, gadget);
+	case Operation::compare_exchange_pair:
+		return append_compare_exchange_pair(stream, gadget);
+	case Operation::move_byte_swap:
+		return append_movbe(stream, gadget);
+	case Operation::crc32:
+		return append_crc32(stream, gadget);
+	case Operation::adx:
+		return append_adx(stream, gadget);
+	case Operation::scalar_bmi:
+		return append_scalar_bmi(stream, gadget);
+	case Operation::byte_swap: {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		const auto entry = instruction.destination.width == OperandWidth::qword ?
+			entry_address(native::uml_x86_64_gadget_byte_swap_64) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_byte_swap_32) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(*destination);
+		return true;
+	}
+	case Operation::sign_extend_accumulator:
+	case Operation::sign_extend_data: {
+		const bool accumulator = instruction.operation ==
+			Operation::sign_extend_accumulator;
+		std::uintptr_t entry{};
+		switch (instruction.destination.width) {
+		case OperandWidth::word:
+			entry = entry_address(accumulator ?
+				native::uml_x86_64_gadget_sign_extend_accumulator_16 :
+				native::uml_x86_64_gadget_sign_extend_data_16);
+			break;
+		case OperandWidth::dword:
+			entry = entry_address(accumulator ?
+				native::uml_x86_64_gadget_sign_extend_accumulator_32 :
+				native::uml_x86_64_gadget_sign_extend_data_32);
+			break;
+		case OperandWidth::qword:
+			entry = entry_address(accumulator ?
+				native::uml_x86_64_gadget_sign_extend_accumulator_64 :
+				native::uml_x86_64_gadget_sign_extend_data_64);
+			break;
+		default: return false;
+		}
+		stream.push_back(entry);
+		return true;
+	}
+	case Operation::carry_clear:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_carry_clear));
+		return true;
+	case Operation::carry_set:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_carry_set));
+		return true;
+	case Operation::carry_complement:
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_carry_complement));
+		return true;
+	case Operation::direction_clear:
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_direction_clear));
+		return true;
+	case Operation::direction_set:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_direction_set));
+		return true;
+	case Operation::lahf:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_lahf));
+		return true;
+	case Operation::sahf:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_sahf));
+		return true;
+	case Operation::segment_move:
+		return append_segment_move(stream, gadget);
+	case Operation::segment_stack:
+		return append_segment_stack(stream, gadget);
+	case Operation::set_condition: {
+		if (instruction.destination.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.destination, 0);
+			const auto entry = set_condition_memory_entry(instruction.condition);
+			if (!encoded || entry == 0)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto destination = register_offset(instruction.destination);
+		const auto entry = set_condition_entry(instruction.condition);
+		if (!destination || entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(*destination);
+		return true;
+	}
+	case Operation::conditional_move:
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto destination = register_offset(instruction.destination);
+			const auto encoded = destination ? encode_memory(
+				gadget, instruction.source, *destination) : std::nullopt;
+			const auto entry = conditional_move_memory_entry(
+				instruction.condition, instruction.destination.width);
+			if (!encoded || entry == 0)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		return append_register_pair(stream,
+			conditional_move_entry(
+				instruction.condition, instruction.destination.width),
+			instruction.destination, instruction.source);
+	case Operation::jump: {
+		const auto next = gadget.address + instruction.length;
+		stream.push_back(entry_address(native::uml_x86_64_gadget_jump));
+		stream.push_back(next + instruction.source.immediate);
+		return true;
+	}
+	case Operation::jump_conditional: {
+		const auto entry = jump_condition_entry(instruction.condition);
+		if (entry == 0)
+			return false;
+		const auto next = gadget.address + instruction.length;
+		stream.push_back(entry);
+		stream.push_back(next + instruction.source.immediate);
+		stream.push_back(next);
+		return true;
+	}
+	case Operation::loop: {
+		NativeEntry entry{};
+#define UML_X86_SELECT_LOOP(opcode) \
+		entry = instruction.vector_control != 0 ? \
+			native::uml_x86_64_gadget_loop_##opcode##_32 : \
+			native::uml_x86_64_gadget_loop_##opcode##_64
+		switch (instruction.vector_opcode) {
+		case 0xe0: UML_X86_SELECT_LOOP(e0); break;
+		case 0xe1: UML_X86_SELECT_LOOP(e1); break;
+		case 0xe2: UML_X86_SELECT_LOOP(e2); break;
+		case 0xe3: UML_X86_SELECT_LOOP(e3); break;
+		default: return false;
+		}
+#undef UML_X86_SELECT_LOOP
+		const auto next = gadget.address + instruction.length;
+		stream.push_back(entry_address(entry));
+		stream.push_back(next + instruction.source.immediate);
+		stream.push_back(next);
+		return true;
+	}
+	case Operation::jump_indirect: {
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.source, 0);
+			if (!encoded)
+				return false;
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_jump_indirect_m));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_jump_indirect_r));
+		stream.push_back(*source);
+		return true;
+	}
+	case Operation::push: {
+		const bool immediate = instruction.source.kind ==
+			OperandKind::immediate;
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.source, 0);
+			const auto entry = instruction.source.width == OperandWidth::word ?
+				entry_address(native::uml_x86_64_gadget_push_16_m) :
+				instruction.source.width == OperandWidth::qword ?
+				entry_address(native::uml_x86_64_gadget_push_64_m) : 0;
+			if (!encoded || entry == 0)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto source = immediate ? std::optional<std::uint16_t>{0} :
+			register_offset(instruction.source);
+		if (!source)
+			return false;
+		std::uintptr_t entry{};
+		if (instruction.source.width == OperandWidth::word)
+			entry = entry_address(immediate ?
+				native::uml_x86_64_gadget_push_16_i :
+				native::uml_x86_64_gadget_push_16_r);
+		else if (instruction.source.width == OperandWidth::qword)
+			entry = entry_address(immediate ?
+				native::uml_x86_64_gadget_push_64_i :
+				native::uml_x86_64_gadget_push_64_r);
+		else
+			return false;
+		const auto descriptor = static_cast<std::uintptr_t>(*source) |
+			(static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.push_back(entry);
+		stream.push_back(descriptor);
+		if (immediate)
+			stream.push_back(instruction.source.immediate);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::pop: {
+		if (instruction.destination.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(
+				gadget, instruction.destination, 0);
+			const auto entry = instruction.destination.width == OperandWidth::word ?
+				entry_address(native::uml_x86_64_gadget_pop_16_m) :
+				instruction.destination.width == OperandWidth::qword ?
+				entry_address(native::uml_x86_64_gadget_pop_64_m) : 0;
+			if (!encoded || entry == 0)
+				return false;
+			stream.push_back(entry);
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		std::uintptr_t entry{};
+		if (instruction.destination.width == OperandWidth::word)
+			entry = entry_address(native::uml_x86_64_gadget_pop_16_r);
+		else if (instruction.destination.width == OperandWidth::qword)
+			entry = entry_address(native::uml_x86_64_gadget_pop_64_r);
+		else
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(*destination) |
+			(static_cast<std::uintptr_t>(instruction.length) << 56U));
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::push_flags: {
+		const auto entry = instruction.source.width == OperandWidth::word ?
+			entry_address(native::uml_x86_64_gadget_push_flags_16) :
+			instruction.source.width == OperandWidth::qword ?
+			entry_address(native::uml_x86_64_gadget_push_flags_64) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::pop_flags: {
+		const auto entry = instruction.destination.width == OperandWidth::word ?
+			entry_address(native::uml_x86_64_gadget_pop_flags_16) :
+			instruction.destination.width == OperandWidth::qword ?
+			entry_address(native::uml_x86_64_gadget_pop_flags_64) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::leave: {
+		const auto entry = instruction.destination.width == OperandWidth::word ?
+			entry_address(native::uml_x86_64_gadget_leave_16) :
+			instruction.destination.width == OperandWidth::qword ?
+			entry_address(native::uml_x86_64_gadget_leave_64) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::enter:
+		return append_enter(stream, gadget);
+	case Operation::string_move:
+	case Operation::string_compare:
+	case Operation::string_store:
+	case Operation::string_load:
+	case Operation::string_scan:
+		return append_string(stream, gadget);
+	case Operation::call: {
+		const auto next = gadget.address + instruction.length;
+		stream.push_back(entry_address(native::uml_x86_64_gadget_call));
+		stream.push_back(next + instruction.source.immediate);
+		stream.push_back(next);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::call_indirect: {
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.source, 0);
+			if (!encoded)
+				return false;
+			const auto next = gadget.address + instruction.length;
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_call_indirect_m));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			stream.push_back(next);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		const auto next = gadget.address + instruction.length;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_call_indirect_r));
+		stream.push_back(*source);
+		stream.push_back(next);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::far_call:
+	case Operation::far_jump:
+		return append_far_transfer(stream, gadget);
+	case Operation::ret:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_return));
+		stream.push_back(instruction.source.immediate);
+		stream.push_back(gadget.address);
+		return true;
+	case Operation::far_ret: {
+		const auto entry = far_return_entry(instruction.destination.width);
+		if (entry == nullptr)
+			return false;
+		const auto adjustment = instruction.source.kind == OperandKind::immediate ?
+			instruction.source.immediate : 0;
+		stream.push_back(entry_address(entry));
+		stream.push_back(adjustment);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::interrupt_ret: {
+		const auto entry = interrupt_return_entry(instruction.destination.width);
+		if (entry == nullptr)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::system_call:
+		stream.push_back(entry_address(instruction.vector_opcode == 0xcd ?
+			native::uml_x86_64_gadget_int80 :
+			native::uml_x86_64_gadget_syscall));
+		stream.push_back(gadget.address + instruction.length);
+		return true;
+	case Operation::breakpoint:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_breakpoint));
+		stream.push_back(gadget.address + instruction.length);
+		return true;
+	case Operation::cpuid:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_cpuid));
+		return true;
+	case Operation::read_extended_control:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_xgetbv));
+		return true;
+	case Operation::read_timestamp:
+		stream.push_back(entry_address(
+			instruction.auxiliary.immediate != 0 ?
+				native::uml_x86_64_gadget_rdtscp :
+				native::uml_x86_64_gadget_rdtsc));
+		return true;
+	case Operation::read_processor_id: {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		const auto entry = instruction.destination.width == OperandWidth::qword ?
+			entry_address(native::uml_x86_64_gadget_rdpid_64_r) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_rdpid_32_r) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(*destination);
+		return true;
+	}
+	case Operation::xlat: {
+		if (instruction.source.kind != OperandKind::memory)
+			return false;
+		const auto config =
+			static_cast<std::uintptr_t>(instruction.source.memory.address_32) |
+			(static_cast<std::uintptr_t>(instruction.source.memory.segment) << 1U);
+		stream.push_back(entry_address(native::uml_x86_64_gadget_xlat));
+		stream.push_back(config);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::random: {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		NativeEntry entry{};
+		switch (instruction.destination.width) {
+		case OperandWidth::word:
+			entry = native::uml_x86_64_gadget_random_16;
+			break;
+		case OperandWidth::dword:
+			entry = native::uml_x86_64_gadget_random_32;
+			break;
+		case OperandWidth::qword:
+			entry = native::uml_x86_64_gadget_random_64;
+			break;
+		default: return false;
+		}
+		stream.push_back(entry_address(entry));
+		stream.push_back(*destination);
+		return true;
+	}
+	case Operation::read_fs_base:
+	case Operation::read_gs_base:
+	case Operation::write_fs_base:
+	case Operation::write_gs_base: {
+		const bool read = instruction.operation == Operation::read_fs_base ||
+			instruction.operation == Operation::read_gs_base;
+		const auto &operand = read ? instruction.destination : instruction.source;
+		const auto offset = register_offset(operand);
+		if (!offset)
+			return false;
+		const bool fs = instruction.operation == Operation::read_fs_base ||
+			instruction.operation == Operation::write_fs_base;
+		NativeEntry entry{};
+		if (read && fs && operand.width == OperandWidth::dword)
+			entry = native::uml_x86_64_gadget_read_fs_base_32_r;
+		else if (read && fs && operand.width == OperandWidth::qword)
+			entry = native::uml_x86_64_gadget_read_fs_base_64_r;
+		else if (read && !fs && operand.width == OperandWidth::dword)
+			entry = native::uml_x86_64_gadget_read_gs_base_32_r;
+		else if (read && !fs && operand.width == OperandWidth::qword)
+			entry = native::uml_x86_64_gadget_read_gs_base_64_r;
+		else if (!read && fs && operand.width == OperandWidth::dword)
+			entry = native::uml_x86_64_gadget_write_fs_base_32_r;
+		else if (!read && fs && operand.width == OperandWidth::qword)
+			entry = native::uml_x86_64_gadget_write_fs_base_64_r;
+		else if (!read && !fs && operand.width == OperandWidth::dword)
+			entry = native::uml_x86_64_gadget_write_gs_base_32_r;
+		else if (!read && !fs && operand.width == OperandWidth::qword)
+			entry = native::uml_x86_64_gadget_write_gs_base_64_r;
+		if (entry == nullptr)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(*offset);
+		return true;
+	}
+	case Operation::memory_fence:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_memory_fence));
+		return true;
+	case Operation::cache_flush:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_cache_flush));
+		return true;
+	case Operation::cache_zero:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_cache_zero));
+		stream.push_back(static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.push_back(gadget.address);
+		return true;
+	case Operation::store_machine_status: {
+		if (instruction.destination.kind == OperandKind::reg) {
+			const auto destination = register_offset(instruction.destination);
+			if (!destination)
+				return false;
+			NativeEntry entry{};
+			switch (instruction.destination.width) {
+			case OperandWidth::word:
+				entry = native::uml_x86_64_gadget_store_machine_status_16_r;
+				break;
+			case OperandWidth::dword:
+				entry = native::uml_x86_64_gadget_store_machine_status_32_r;
+				break;
+			case OperandWidth::qword:
+				entry = native::uml_x86_64_gadget_store_machine_status_64_r;
+				break;
+			default: return false;
+			}
+			stream.push_back(entry_address(entry));
+			stream.push_back(*destination);
+			return true;
+		}
+		const auto encoded = encode_memory(gadget, instruction.destination, 0);
+		if (!encoded || instruction.destination.width != OperandWidth::word)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_store_machine_status_16_m));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::store_gdtr: {
+		const auto encoded = encode_memory(gadget, instruction.destination, 0);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(native::uml_x86_64_gadget_store_gdtr));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::mxcsr: {
+		const auto encoded = encode_memory(gadget, instruction.destination, 0);
+		if (!encoded)
+			return false;
+		stream.push_back(entry_address(instruction.vector_group == 2 ?
+			native::uml_x86_64_gadget_mxcsr_load :
+			native::uml_x86_64_gadget_mxcsr_store));
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::extended_state:
+		return append_extended_state(stream, gadget);
+	case Operation::x87:
+		return append_x87(stream, gadget);
+	case Operation::vector_move:
+		return append_vector_move(stream, gadget);
+	case Operation::vector_move_scalar:
+		return append_vector_move_scalar(stream, gadget);
+	case Operation::vector_to_gpr:
+		return append_vector_to_gpr(stream, gadget);
+	case Operation::vector_insert:
+		return append_vector_insert(stream, gadget);
+	case Operation::vector_test:
+		return append_vector_test(stream, gadget);
+	case Operation::vector_compare_flags:
+		return append_vector_compare_flags(stream, gadget);
+	case Operation::vector_gpr_move:
+		return append_vector_gpr_move(stream, gadget);
+	case Operation::vector_bitfield:
+		return append_vector_bitfield(stream, gadget);
+	case Operation::vector_mask_store:
+		return append_vector_mask_store(stream, gadget);
+	case Operation::vector_lane_move:
+		return append_vector_lane_move(stream, gadget);
+	case Operation::vector_alu:
+		if (append_vector_bitwise(stream, gadget))
+			return true;
+		if (append_vector_shuffle(stream, gadget))
+			return true;
+		return append_vector_float(stream, gadget);
+	case Operation::vector_convert:
+		return append_vector_convert(stream, gadget);
+	case Operation::vector_scalar_convert:
+		return append_vector_scalar_convert(stream, gadget);
+	case Operation::vector_3dnow:
+		return append_vector_3dnow(stream, gadget);
+	case Operation::vector_fma:
+		return append_vector_fma(stream, gadget);
+	case Operation::vector_aes:
+		return append_vector_aes(stream, gadget);
+	case Operation::vector_sha:
+		return append_vector_sha(stream, gadget);
+	case Operation::vector_integer:
+		return append_vector_integer(stream, gadget);
+	case Operation::vector_integer_map2:
+		return append_vector_integer_map2(stream, gadget);
+	case Operation::vector_map2_misc:
+		return append_vector_map2_misc(stream, gadget);
+	case Operation::vector_gather:
+		return append_vector_gather(stream, gadget);
+	case Operation::vector_integer_map3:
+		return append_vector_integer_map3(stream, gadget);
+	case Operation::vector_zero:
+		stream.push_back(entry_address(
+			instruction.auxiliary.immediate != 0 ?
+				native::uml_x86_64_gadget_vector_zero_all :
+				native::uml_x86_64_gadget_vector_zero_upper));
+		return true;
+	default:
+		return false;
+	}
+}
+
+} // namespace
+
+std::vector<std::uintptr_t> build_native_stream(
+	std::span<const Gadget> gadgets, std::uint64_t final_rip)
+{
+	std::vector<std::uintptr_t> stream;
+	stream.reserve(gadgets.size() * 3U + 2U);
+	for (const auto &gadget : gadgets) {
+		if (append_native(stream, gadget))
+			continue;
+		throw std::logic_error{
+			"x86-64 operation has no native assembly gadget"};
+	}
+	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
+	stream.push_back(final_rip);
+	return stream;
+}
+
+} // namespace uml::cpu::x86_64::gadgets
