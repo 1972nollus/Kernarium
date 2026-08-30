@@ -26,4 +26,4 @@ order	filename	stable_patch_id	sha256	subject
 22	0022-UML-DARWIN-LOCAL-reclaim-anonymous-Darwin-physical-R.patch	21da330d18f959548dd79e8f36ee798174e43bc4	d8b4ee91e1948c7ddc346641f7413d5be0ef599b764016417b4df323ad952295	UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
 23	0023-UML-DARWIN-LOCAL-suspend-guests-through-mconsole.patch	550757ee879992ed628f2fce3fb04af383731eb3	7b59b8f99d29cdb4c44a682b810d77eed77e19d3a7b6d7319b54dc9d03e341ef	UML-DARWIN-LOCAL: suspend guests through mconsole
 24	0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch	773b88f6d04552a976bbc1a0f6499eff6795789c	57b439e78845720431544935aab019eb3a036556122e6a3ceaf17f49ff5d3c5d	UML-DARWIN-LOCAL: um: batch UBD discard ranges
-25	0025-arm64-run-x86-64-userspace-through-Darwin-gadgets.patch	b734cfef064a44471dd90ba87038d40232e57460	a959cea5b0dcbf957d2012ea0423b04e0601a7681a51b06da47c62704679500f	arm64: run x86-64 userspace through Darwin gadgets
+25	0025-arm64-run-x86-64-userspace-through-Darwin-gadgets.patch	d800878b4ee8e66389dc33ec65d5c2d0ba9cba74	e782726f3b04a3365d7dd70e847eb6f8a7f3c4bfde4ad3e16774d34c62e721e8	arm64: run x86-64 userspace through Darwin gadgets

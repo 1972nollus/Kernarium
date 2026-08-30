@@ -7,7 +7,8 @@ the accepted general-purpose rootfs.
 Run `build.sh OUTPUT.erofs` on an x86-64 Linux builder with GNU binutils,
 `busybox-static`, and `erofs-utils`. The image contains only x86-64 ELF
 executables. Its PID 1 checks write syscalls, FS-base TLS addressing, signal
-delivery, and `rt_sigreturn`, prints one success line, and powers the guest off.
+delivery, the native x86 XSAVE signal-frame layout, and x87/XMM/YMM restoration
+through `rt_sigreturn`, then prints one success line and powers the guest off.
 BusyBox is present for follow-on instruction-coverage work but is not part of
 the initial boot path.
 

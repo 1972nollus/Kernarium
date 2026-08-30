@@ -182,6 +182,8 @@ static void uml_static_x86_64_signal_return_bridge()
 	registers.pc = base;
 	registers.x[16] = 2;
 	registers.x[4] = stack; // rsp
+	registers.svcr = std::uint64_t{1} << 32;
+	fp.reserved[1] = 0x5838'3634U;
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
 		&registers, &fp, sizeof(fp), generation, &tls);
@@ -189,6 +191,7 @@ static void uml_static_x86_64_signal_return_bridge()
 	require(registers.x[0] == 15);
 	require(registers.x[4] == stack + sizeof(std::uint64_t));
 	require(registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE);
+	require((registers.svcr & (std::uint64_t{1} << 32)) == 0);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 

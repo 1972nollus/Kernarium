@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 from guest import emulator_arguments  # noqa: E402
 
 
-SUCCESS = b"x86_64 gadgets rootfs: syscall tls signal ok"
+SUCCESS = b"x86_64 gadgets rootfs: syscall tls signal xstate ok"
 
 
 def terminate(process: subprocess.Popen[bytes]) -> None:

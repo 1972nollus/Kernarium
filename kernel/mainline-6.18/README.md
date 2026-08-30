@@ -66,8 +66,10 @@ The profiles are:
 The 4 KiB Darwin profile accepts `EM_X86_64` userspace while retaining the
 arm64 kernel. Per-task register state selects the macOS host's x86-64 gadget
 backend, and the kernel translates the supported x86-64 syscall ABI and signal
-frame. The task state overlays existing arm64 bridge slots, so the common ABI
-and the Android kernel series remain unchanged. Host instruction execution is
+frame. Signal delivery exposes the native x86 XSAVE layout for x87, SSE, and
+AVX state and restores user edits through `rt_sigreturn`. The task state
+overlays existing arm64 bridge slots, so the common ABI and the Android kernel
+series remain unchanged. Host instruction execution is
 qualified against the pinned FEX handwritten x86-64 corpus; distribution and
 complete Linux syscall compatibility require separate guest qualification.
 The 16 KiB profile continues to accept `EM_AARCH64` only.

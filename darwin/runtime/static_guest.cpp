@@ -406,6 +406,7 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
 			cpu.gpr(x86_64::Register::rax) =
 				x86_64_rt_sigreturn;
+			cpu.system_call_32bit = false;
 			result.reason = uml::cpu::ExitReason::system_call;
 			return result;
 		}
