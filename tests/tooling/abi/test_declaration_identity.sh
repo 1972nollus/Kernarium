@@ -69,27 +69,46 @@ IMPORT_VERIFY="$REPOSITORY/kernel/common/abi/verify-linux-imports.sh"
 sed -n -E 's/.*(darwin_uml_[A-Za-z0-9_]+)\(.*/\1/p' \
 	"$REPOSITORY"/kernel/common/abi/darwin_uml_*.h |
 	LC_ALL=C sort -u > "$WORK_DIRECTORY/all-symbols"
-awk -F '\t' 'NR > 1 { print $1 }' \
+awk -F '\t' 'NR > 1 && $2 == "4k-only" { print $1 }' \
 	"$REPOSITORY/kernel/common/abi/import-policy.tsv" |
 	LC_ALL=C sort > "$WORK_DIRECTORY/4k-only-symbols"
+awk -F '\t' 'NR > 1 && $2 == "arm64-only" { print $1 }' \
+	"$REPOSITORY/kernel/common/abi/import-policy.tsv" |
+	LC_ALL=C sort > "$WORK_DIRECTORY/arm64-only-symbols"
 comm -23 "$WORK_DIRECTORY/all-symbols" "$WORK_DIRECTORY/4k-only-symbols" \
 	> "$WORK_DIRECTORY/16k-symbols"
+comm -23 "$WORK_DIRECTORY/all-symbols" "$WORK_DIRECTORY/arm64-only-symbols" \
+	> "$WORK_DIRECTORY/x86-4k-symbols"
 awk '{ print "                 U " $0 }' "$WORK_DIRECTORY/all-symbols" \
 	> "$WORK_DIRECTORY/4k.nm"
 awk '{ print "                 U " $0 }' "$WORK_DIRECTORY/16k-symbols" \
 	> "$WORK_DIRECTORY/16k.nm"
+awk '{ print "                 U " $0 }' "$WORK_DIRECTORY/x86-4k-symbols" \
+	> "$WORK_DIRECTORY/x86-4k.nm"
 "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/4k.nm" --page-size 4k \
-	>/dev/null
+	--slice arm64 >/dev/null
 "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k.nm" --page-size 16k \
-	>/dev/null
+	--slice arm64 >/dev/null
+"$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/x86-4k.nm" --page-size 4k \
+	--slice x86_64 >/dev/null
 if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/4k.nm" --page-size 16k \
-	>/dev/null 2>&1; then
+	--slice arm64 >/dev/null 2>&1; then
 	printf '%s\n' "16 KiB import audit accepted a 4 KiB-only symbol" >&2
+	exit 1
+fi
+if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/4k.nm" --page-size 4k \
+	--slice x86_64 >/dev/null 2>&1; then
+	printf '%s\n' "x86_64 import audit accepted an arm64-only symbol" >&2
+	exit 1
+fi
+if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/x86-4k.nm" \
+	--page-size 4k --slice arm64 >/dev/null 2>&1; then
+	printf '%s\n' "arm64 import audit accepted a missing arm64-only symbol" >&2
 	exit 1
 fi
 sed '1d' "$WORK_DIRECTORY/16k.nm" > "$WORK_DIRECTORY/16k-missing.nm"
 if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-missing.nm" \
-	--page-size 16k >/dev/null 2>&1; then
+	--page-size 16k --slice arm64 >/dev/null 2>&1; then
 	printf '%s\n' "16 KiB import audit accepted a missing active symbol" >&2
 	exit 1
 fi

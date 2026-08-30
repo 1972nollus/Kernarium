@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--acceptance", type=Path)
     parser.add_argument("--compatible", action="store_true")
     parser.add_argument("--expected-family")
+    parser.add_argument("--expected-slice")
     parser.add_argument("--expected-release-series")
     parser.add_argument("--expected-page-size", type=int)
     args = parser.parse_args()
@@ -28,6 +29,7 @@ def main() -> None:
     if args.compatible:
         if (
             args.expected_family is None
+            or args.expected_slice is None
             or args.expected_release_series is None
             or args.expected_page_size is None
             or args.kernel_metadata is not None
@@ -35,14 +37,15 @@ def main() -> None:
             or args.acceptance is not None
         ):
             parser.error(
-                "--compatible requires expected family, release series, and "
-                "page size without tracked-source or acceptance inputs"
+                "--compatible requires expected family, slice, release series, "
+                "and page size without tracked-source or acceptance inputs"
             )
         manifest = verify_compatible_artifact(
             args.artifact,
             args.common_root,
             args.abi_metadata,
             args.expected_family,
+            args.expected_slice,
             args.expected_release_series,
             args.expected_page_size,
         )
@@ -61,8 +64,9 @@ def main() -> None:
             acceptance_path=args.acceptance,
         )
     print(
-        f"verified {manifest['family']} {manifest['page_size'] // 1024} KiB "
-        f"kernel artifact: {manifest['directory_name']}"
+        f"verified {manifest['family']} {manifest['slice']} "
+        f"{manifest['page_size'] // 1024} KiB kernel artifact: "
+        f"{manifest['directory_name']}"
     )
 
 

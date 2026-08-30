@@ -650,6 +650,8 @@ cpu-engine-contract	tests/unit	unit	retained
 arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained
 kernel-git-source-preparer	tests/tooling/kernel/test_materialize_git.sh	tooling	retained
 kernel-versioned-layout	tests/tooling/kernel/test_versioned_layout.sh	tooling	retained
+kernel-slice-producer-contract	tests/tooling/kernel/test_kernel_slice_contract.sh	tooling	retained
+kernel-artifact-contract	tests/tooling/kernel/test_kernel_artifact_contract.py	tooling	retained
 android17-builder-lane	tests/tooling/android/test_builder_lane.py	tooling	retained
 android17-aosp-patch-regenerator	tests/tooling/android/test_aosp_patch_regenerator.py	tooling	retained
 android17-kernel-patch-regenerator	tests/tooling/android/test_kernel_patch_regenerator.py	tooling	retained

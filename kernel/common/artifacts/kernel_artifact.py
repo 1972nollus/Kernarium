@@ -14,17 +14,23 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ABI_FINGERPRINT_RE = re.compile(r"^0x[0-9a-f]{16}$")
+PATCH_SERIES_HEADER = "order\tfilename\tstable_patch_id\tsha256\tsubject"
+PATCH_COMPOSITION_HEADER = (
+    "order\tname\tpatch_count\tmanifest_path\tmanifest_sha256"
+)
+PATCH_SERIES_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 TOP_LEVEL_KEYS = {
     "schema_version",
     "release_id",
     "directory_name",
     "family",
+    "slice",
     "published_at_utc",
     "release",
     "page_size",
@@ -49,6 +55,7 @@ ACCEPTANCE_KEYS = {
     "UML_KERNEL_ARTIFACT_RELEASE_ID",
     "UML_KERNEL_ARTIFACT_DIRECTORY_NAME",
     "UML_KERNEL_ARTIFACT_FAMILY",
+    "UML_KERNEL_ARTIFACT_SLICE",
     "UML_KERNEL_ARTIFACT_RELEASE",
     "UML_KERNEL_ARTIFACT_PAGE_SIZE",
     "UML_KERNEL_ARTIFACT_FINAL_TREE",
@@ -160,6 +167,120 @@ def sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def read_patch_provenance(path: Path) -> list[str]:
+    if not path.is_file() or path.is_symlink():
+        fail(f"patch provenance is missing or unsafe: {path}")
+    try:
+        rows = [
+            raw
+            for raw in path.read_text(encoding="utf-8").splitlines()
+            if raw and not raw.startswith("#")
+        ]
+    except (OSError, UnicodeError) as error:
+        fail(f"cannot read patch provenance: {error}")
+    if not rows:
+        fail("patch provenance is empty")
+    return rows
+
+
+def patch_series_count(rows: list[str], label: str) -> int:
+    if rows[0] != PATCH_SERIES_HEADER:
+        fail(f"{label} is not a patch-series manifest")
+    expected_order = 1
+    for line_number, row in enumerate(rows[1:], 2):
+        fields = row.split("\t", 4)
+        if len(fields) != 5:
+            fail(f"patch series provenance is malformed at line {line_number}")
+        order, filename, patch_id, digest, subject = fields
+        if order != str(expected_order):
+            fail(
+                f"patch series provenance order {order} is not "
+                f"{expected_order}"
+            )
+        safe_relative(filename, f"patch series filename at line {line_number}")
+        require_hex(patch_id, 40, f"stable patch ID at line {line_number}")
+        require_hex(digest, 64, f"patch digest at line {line_number}")
+        require_string(subject, f"patch subject at line {line_number}")
+        expected_order += 1
+    count = expected_order - 1
+    if count < 1:
+        fail("patch series provenance contains no patches")
+    return count
+
+
+def patch_provenance_count(
+    path: Path,
+    source_root: Path | None = None,
+    expected_composition: tuple[tuple[str, str], ...] | None = None,
+) -> int:
+    rows = read_patch_provenance(path)
+    header = rows[0]
+    if header == PATCH_SERIES_HEADER:
+        if expected_composition is not None:
+            fail("expected ordered patch composition, found one patch series")
+        return patch_series_count(rows, "patch provenance")
+
+    if header == PATCH_COMPOSITION_HEADER:
+        if source_root is None or not source_root.is_absolute():
+            fail("patch composition requires an absolute source root")
+        total = 0
+        seen_names: set[str] = set()
+        seen_manifests: set[str] = set()
+        expected_order = 1
+        actual_composition: list[tuple[str, str]] = []
+        for line_number, row in enumerate(rows[1:], 2):
+            fields = row.split("\t")
+            if len(fields) != 5:
+                fail(f"patch composition is malformed at line {line_number}")
+            order, name, raw_count, manifest_relative, digest = fields
+            if order != str(expected_order):
+                fail(
+                    f"patch composition order {order} is not "
+                    f"{expected_order}"
+                )
+            if PATCH_SERIES_NAME_RE.fullmatch(name) is None:
+                fail(f"patch composition name is unsafe at line {line_number}")
+            if name in seen_names:
+                fail(f"patch composition repeats series {name}")
+            if re.fullmatch(r"[1-9][0-9]*", raw_count) is None:
+                fail(f"patch composition count is invalid at line {line_number}")
+            require_hex(digest, 64, f"patch manifest digest at line {line_number}")
+            manifest_relative = safe_relative(
+                manifest_relative,
+                f"patch manifest path at line {line_number}",
+            )
+            if manifest_relative in seen_manifests:
+                fail(f"patch composition repeats manifest {manifest_relative}")
+            manifest_path = source_root / manifest_relative
+            referenced_rows = read_patch_provenance(manifest_path)
+            referenced_count = patch_series_count(
+                referenced_rows,
+                f"patch composition series {name}",
+            )
+            if referenced_count != int(raw_count):
+                fail(
+                    f"patch composition series {name} contains "
+                    f"{referenced_count} patches, expected {raw_count}"
+                )
+            if sha256_path(manifest_path) != digest:
+                fail(f"patch composition series {name} digest differs")
+            seen_names.add(name)
+            seen_manifests.add(manifest_relative)
+            actual_composition.append((name, manifest_relative))
+            total += referenced_count
+            expected_order += 1
+        if len(seen_names) < 2:
+            fail("patch composition must contain at least two ordered series")
+        if (
+            expected_composition is not None
+            and tuple(actual_composition) != expected_composition
+        ):
+            fail("patch composition differs from its required ordered series")
+        return total
+
+    fail("patch provenance has an unsupported header")
+
+
 def validate_manifest(value: object) -> dict:
     manifest = require_exact_keys(value, TOP_LEVEL_KEYS, "artifact manifest")
     if manifest["schema_version"] != SCHEMA_VERSION:
@@ -170,13 +291,29 @@ def validate_manifest(value: object) -> dict:
     family = require_string(manifest["family"], "kernel family")
     if family not in ("mainline-6.18", "android-6.18"):
         fail("kernel family is unsupported")
+    kernel_slice = require_string(manifest["slice"], "kernel slice")
+    if kernel_slice not in ("arm64", "x86_64"):
+        fail("kernel slice is unsupported")
     page_size = require_integer(manifest["page_size"], "kernel page size")
     if page_size not in (4096, 16384):
         fail("kernel page size is unsupported")
+    if kernel_slice == "x86_64" and family != "mainline-6.18":
+        fail("the x86_64 kernel slice requires the mainline-6.18 family")
+    if kernel_slice == "x86_64" and page_size != 4096:
+        fail("the x86_64 kernel slice requires 4096-byte pages")
+    if family == "android-6.18" and (
+        kernel_slice != "arm64" or page_size != 16384
+    ):
+        fail("the android-6.18 family requires arm64 and 16384-byte pages")
     directory_name = require_string(manifest["directory_name"], "directory name")
-    expected_directory = f"{family}-{page_size // 1024}k-{release_id}"
+    expected_directory = (
+        f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"
+    )
     if directory_name != expected_directory:
-        fail("artifact directory name does not match family, page size, and release ID")
+        fail(
+            "artifact directory name does not match family, slice, page size, "
+            "and release ID"
+        )
     require_string(manifest["published_at_utc"], "publication timestamp")
     require_string(manifest["release"], "kernel release")
     if manifest["elf_role"] != "darwin-uml":
@@ -279,7 +416,11 @@ def parse_config(path: Path) -> dict[str, str]:
     return values
 
 
-def verify_config(path: Path, page_size: int) -> None:
+def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
+    if kernel_slice not in ("arm64", "x86_64"):
+        fail("kernel config slice is unsupported")
+    if kernel_slice == "x86_64" and page_size != 4096:
+        fail("the x86_64 kernel config requires 4096-byte pages")
     config = parse_config(path)
     expected = {
         "CONFIG_64BIT": "y",
@@ -289,6 +430,9 @@ def verify_config(path: Path, page_size: int) -> None:
         "CONFIG_PAGE_SHIFT": "14" if page_size == 16384 else "12",
         "CONFIG_PAGE_SIZE_16KB": "y" if page_size == 16384 else "n",
         "CONFIG_PAGE_SIZE_4KB": "n" if page_size == 16384 else "y",
+        "CONFIG_UML_X86_64_USERSPACE_ONLY": (
+            "y" if kernel_slice == "x86_64" else "n"
+        ),
     }
     for symbol, wanted in expected.items():
         observed = config.get(symbol, "n")
@@ -361,14 +505,23 @@ def elf_imports(payload: bytes) -> set[str]:
     return imported
 
 
-def expected_imports(common_root: Path, page_size: int) -> set[str]:
+def expected_imports(
+    common_root: Path, page_size: int, kernel_slice: str
+) -> set[str]:
+    if kernel_slice not in {"arm64", "x86_64"}:
+        fail(f"unsupported kernel slice for bridge imports: {kernel_slice}")
+    if kernel_slice == "x86_64" and page_size != 4096:
+        fail("x86_64 bridge imports require 4096-byte pages")
     declared: set[str] = set()
     declaration = re.compile(r"\b(darwin_uml_[A-Za-z0-9_]+)\s*\(")
     for path in sorted((common_root / "abi").glob("darwin_uml_*.h")):
         declared.update(declaration.findall(path.read_text(encoding="utf-8")))
     if not declared:
         fail("shared ABI declarations are missing")
-    conditional: set[str] = set()
+    conditional: dict[str, set[str]] = {
+        "4k-only": set(),
+        "arm64-only": set(),
+    }
     policy = common_root / "abi/import-policy.tsv"
     rows = policy.read_text(encoding="utf-8").splitlines()
     if not rows or rows[0] != "symbol\tavailability\trationale":
@@ -378,18 +531,26 @@ def expected_imports(common_root: Path, page_size: int) -> set[str]:
         if (
             len(fields) != 3
             or re.fullmatch(r"darwin_uml_[A-Za-z0-9_]+", fields[0]) is None
-            or fields[1] != "4k-only"
+            or fields[1] not in conditional
             or not fields[2]
-            or fields[0] in conditional
+            or any(fields[0] in symbols for symbols in conditional.values())
         ):
             fail(f"ABI import policy is malformed at line {line_number}")
-        conditional.add(fields[0])
-    if not conditional <= declared:
+        conditional[fields[1]].add(fields[0])
+    all_conditional = set().union(*conditional.values())
+    if not all_conditional <= declared:
         fail("ABI import policy names undeclared bridge symbols")
-    return declared - conditional if page_size == 16384 else declared
+    expected = set(declared)
+    if page_size == 16384:
+        expected -= conditional["4k-only"]
+    if kernel_slice == "x86_64":
+        expected -= conditional["arm64-only"]
+    return expected
 
 
-def verify_elf(path: Path, page_size: int, common_root: Path) -> None:
+def verify_elf(
+    path: Path, page_size: int, common_root: Path, kernel_slice: str
+) -> None:
     payload = path.read_bytes()
     if len(payload) < 64 or payload[:7] != b"\x7fELF\x02\x01\x01":
         fail("kernel is not a little-endian ELF64 image")
@@ -435,7 +596,7 @@ def verify_elf(path: Path, page_size: int, common_root: Path) -> None:
     if load_count < 2 or not executable or not writable:
         fail("kernel lacks separated executable and writable load segments")
     imported = elf_imports(payload)
-    expected = expected_imports(common_root, page_size)
+    expected = expected_imports(common_root, page_size, kernel_slice)
     if imported != expected:
         fail(
             "kernel bridge imports differ "
@@ -445,18 +606,51 @@ def verify_elf(path: Path, page_size: int, common_root: Path) -> None:
 
 def verify_tracked_identity(
     manifest: dict,
+    source_root: Path,
     kernel_metadata_path: Path,
     patch_manifest_path: Path,
     abi_metadata_path: Path,
 ) -> None:
     kernel = parse_env(kernel_metadata_path)
+    raw_patch_count = kernel.get(
+        "UML_KERNEL_ARTIFACT_PATCH_COUNT",
+        kernel["UML_KERNEL_PATCH_COUNT"],
+    )
+    if re.fullmatch(r"[1-9][0-9]*", raw_patch_count) is None:
+        fail("tracked artifact patch count must be a positive integer")
+    patch_count = int(raw_patch_count)
+    expected_composition = None
+    if (
+        manifest["family"] == "mainline-6.18"
+        and manifest["slice"] == "x86_64"
+    ):
+        expected_composition = (
+            (
+                "common",
+                "kernel/mainline-6.18/patches/series/manifest.tsv",
+            ),
+            (
+                "x86_64",
+                "kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv",
+            ),
+        )
+    provenance_count = patch_provenance_count(
+        patch_manifest_path,
+        source_root,
+        expected_composition,
+    )
+    if provenance_count != patch_count:
+        fail(
+            f"patch provenance contains {provenance_count} patches, "
+            f"tracked artifact identity requires {patch_count}"
+        )
     expected_source = {
         "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
         "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
         "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
         "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
         "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
-        "patch_count": int(kernel["UML_KERNEL_PATCH_COUNT"]),
+        "patch_count": patch_count,
         "patch_manifest_sha256": sha256_path(patch_manifest_path),
     }
     for key, value in expected_source.items():
@@ -480,6 +674,7 @@ def verify_compatible_identity(
     manifest: dict,
     abi_metadata_path: Path,
     expected_family: str,
+    expected_slice: str,
     expected_release_series: str,
     expected_page_size: int,
 ) -> None:
@@ -488,6 +683,11 @@ def verify_compatible_identity(
         fail(
             f"artifact family {manifest['family']} differs from "
             f"required {expected_family}"
+        )
+    if manifest["slice"] != expected_slice:
+        fail(
+            f"artifact slice {manifest['slice']} differs from "
+            f"required {expected_slice}"
         )
     if manifest["page_size"] != expected_page_size:
         fail(
@@ -514,6 +714,7 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "UML_KERNEL_ARTIFACT_RELEASE_ID": manifest["release_id"],
         "UML_KERNEL_ARTIFACT_DIRECTORY_NAME": manifest["directory_name"],
         "UML_KERNEL_ARTIFACT_FAMILY": manifest["family"],
+        "UML_KERNEL_ARTIFACT_SLICE": manifest["slice"],
         "UML_KERNEL_ARTIFACT_RELEASE": manifest["release"],
         "UML_KERNEL_ARTIFACT_PAGE_SIZE": str(manifest["page_size"]),
         "UML_KERNEL_ARTIFACT_FINAL_TREE": manifest["source"]["final_tree"],
@@ -546,6 +747,7 @@ def verify_artifact(
         fail("artifact directory basename differs from its manifest")
     verify_tracked_identity(
         manifest,
+        common_root.parents[1],
         kernel_metadata_path,
         patch_manifest_path,
         abi_metadata_path,
@@ -558,8 +760,17 @@ def verify_artifact(
     ).strip()
     if release != manifest["release"]:
         fail("kernel release payload differs from its manifest")
-    verify_config(artifact_root / "kernel/config", manifest["page_size"])
-    verify_elf(artifact_root / "kernel/vmlinux", manifest["page_size"], common_root)
+    verify_config(
+        artifact_root / "kernel/config",
+        manifest["page_size"],
+        manifest["slice"],
+    )
+    verify_elf(
+        artifact_root / "kernel/vmlinux",
+        manifest["page_size"],
+        common_root,
+        manifest["slice"],
+    )
     return manifest
 
 
@@ -568,6 +779,7 @@ def verify_compatible_artifact(
     common_root: Path,
     abi_metadata_path: Path,
     expected_family: str,
+    expected_slice: str,
     expected_release_series: str,
     expected_page_size: int,
 ) -> dict:
@@ -582,6 +794,7 @@ def verify_compatible_artifact(
         manifest,
         abi_metadata_path,
         expected_family,
+        expected_slice,
         expected_release_series,
         expected_page_size,
     )
@@ -591,6 +804,15 @@ def verify_compatible_artifact(
     ).strip()
     if release != manifest["release"]:
         fail("kernel release payload differs from its manifest")
-    verify_config(artifact_root / "kernel/config", manifest["page_size"])
-    verify_elf(artifact_root / "kernel/vmlinux", manifest["page_size"], common_root)
+    verify_config(
+        artifact_root / "kernel/config",
+        manifest["page_size"],
+        manifest["slice"],
+    )
+    verify_elf(
+        artifact_root / "kernel/vmlinux",
+        manifest["page_size"],
+        common_root,
+        manifest["slice"],
+    )
     return manifest

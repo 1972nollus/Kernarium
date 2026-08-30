@@ -149,16 +149,204 @@ def verify_carrier_tool(verifier: Path) -> None:
             )
 
 
+def verify_accepted_artifact_cache(artifact_cmake: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="accepted-artifact-cache-") as directory:
+        temporary = Path(directory)
+        managed = temporary / "managed"
+        external = temporary / "external" / "copied-artifact"
+        script = temporary / "verify.cmake"
+        script.write_text(
+            f'''cmake_minimum_required(VERSION 3.27)
+include([=[{artifact_cmake.resolve()}]=])
+
+# An older build tree has no default tracker. Its current accepted value is
+# retained and becomes the baseline for following later acceptance changes.
+set(TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v1"}]=] CACHE PATH "test")
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v1"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v1"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
+       [=[{managed / "accepted-v1"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "accepted artifact cache migration failed")
+endif()
+
+# An ambiguous pre-tracker value is preserved as an explicit override even
+# when it names another publication below the managed root.
+set(TEST_MIGRATED_OVERRIDE [=[{managed / "migrated-override"}]=]
+    CACHE PATH "test")
+uml_cache_accepted_artifact_path(
+    TEST_MIGRATED_OVERRIDE [=[{managed / "accepted-v1"}]=]
+    [=[{managed}]=] "test"
+    LEGACY_DEFAULTS [=[{managed / "recognized-other"}]=])
+if(NOT TEST_MIGRATED_OVERRIDE STREQUAL [=[{managed / "migrated-override"}]=] OR
+   TEST_MIGRATED_OVERRIDE_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "migrated managed override was replaced")
+endif()
+
+# A finite caller-owned legacy default advances on first use and then follows
+# later accepted defaults through the normal tracker.
+set(TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v0"}]=]
+    CACHE PATH "test")
+uml_cache_accepted_artifact_path(
+    TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v1"}]=]
+    [=[{managed}]=] "test"
+    LEGACY_DEFAULTS [=[{managed / "legacy-v0"}]=])
+if(NOT TEST_RECOGNIZED_LEGACY STREQUAL [=[{managed / "legacy-v1"}]=] OR
+   NOT TEST_RECOGNIZED_LEGACY_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "recognized legacy default did not advance")
+endif()
+uml_cache_accepted_artifact_path(
+    TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v2"}]=]
+    [=[{managed}]=] "test"
+    LEGACY_DEFAULTS [=[{managed / "legacy-v0"}]=])
+if(NOT TEST_RECOGNIZED_LEGACY STREQUAL [=[{managed / "legacy-v2"}]=] OR
+   NOT TEST_RECOGNIZED_LEGACY_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "migrated legacy default stopped following")
+endif()
+
+# Migrate the earlier equality-only tracker by following its prior default.
+set(TEST_TRACKER_MIGRATION [=[{managed / "tracked-v1"}]=]
+    CACHE PATH "test")
+set(TEST_TRACKER_MIGRATION_ACCEPTED_DEFAULT [=[{managed / "tracked-v1"}]=]
+    CACHE INTERNAL "test")
+uml_cache_accepted_artifact_path(
+    TEST_TRACKER_MIGRATION [=[{managed / "tracked-v2"}]=]
+    [=[{managed}]=] "test")
+if(NOT TEST_TRACKER_MIGRATION STREQUAL [=[{managed / "tracked-v2"}]=] OR
+   NOT TEST_TRACKER_MIGRATION_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "equality-only default tracker migration failed")
+endif()
+
+# A value which still equals the prior generated default follows acceptance.
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v2"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v2"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
+       [=[{managed / "accepted-v2"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "accepted artifact did not follow the new default")
+endif()
+
+# An explicit whole-bundle override remains stable even when it is another
+# publication below the normal managed artifact root.
+set(TEST_MANAGED_ARTIFACT [=[{managed / "local-override"}]=]
+    CACHE PATH "test" FORCE)
+unset(TEST_MANAGED_ARTIFACT)
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v3"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
+       [=[{managed / "accepted-v3"}]=] OR
+   TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "managed whole-bundle override was replaced")
+endif()
+
+# An accepted default may later equal the pinned path without changing its
+# override identity. It must remain pinned across the following change too.
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "local-override"}]=]
+    [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
+       [=[{managed / "local-override"}]=] OR
+   TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "matching accepted default reclassified an override")
+endif()
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
+   TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "managed override followed a later default")
+endif()
+
+# Clearing an override opts back into the current accepted default.
+set(TEST_MANAGED_ARTIFACT "" CACHE PATH "test" FORCE)
+unset(TEST_MANAGED_ARTIFACT)
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v4"}]=])
+    message(FATAL_ERROR "cleared override did not restore acceptance")
+endif()
+uml_cache_accepted_artifact_path(
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v5"}]=] [=[{managed}]=] "test")
+if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v5"}]=] OR
+   NOT TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
+    message(FATAL_ERROR "restored acceptance did not follow a later default")
+endif()
+
+set(TEST_EXTERNAL_ARTIFACT [=[{external}]=] CACHE PATH "test")
+uml_cache_accepted_artifact_path(
+    TEST_EXTERNAL_ARTIFACT [=[{managed / "accepted-v3"}]=] [=[{managed}]=] "test")
+if(NOT TEST_EXTERNAL_ARTIFACT STREQUAL [=[{external}]=])
+    message(FATAL_ERROR "external artifact override was replaced")
+endif()
+''',
+            encoding="utf-8",
+        )
+        checked = subprocess.run(
+            ["cmake", "-P", str(script)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        require(
+            checked.returncode == 0,
+            "accepted artifact cache policy failed:\n"
+            f"{checked.stdout}{checked.stderr}",
+        )
+        invalid_legacy_defaults = (
+            (
+                "relative",
+                Path("relative-legacy"),
+                "Legacy accepted-artifact defaults must be absolute",
+            ),
+            (
+                "outside",
+                external,
+                "Legacy accepted-artifact defaults must be below the managed root",
+            ),
+        )
+        for name, legacy, diagnostic in invalid_legacy_defaults:
+            invalid_script = temporary / f"invalid-{name}.cmake"
+            invalid_script.write_text(
+                f'''cmake_minimum_required(VERSION 3.27)
+include([=[{artifact_cmake.resolve()}]=])
+uml_cache_accepted_artifact_path(
+    TEST_INVALID_LEGACY [=[{managed / "accepted"}]=]
+    [=[{managed}]=] "test" LEGACY_DEFAULTS [=[{legacy}]=])
+''',
+                encoding="utf-8",
+            )
+            rejected = subprocess.run(
+                ["cmake", "-P", str(invalid_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            require(
+                rejected.returncode != 0
+                and diagnostic in f"{rejected.stdout}{rejected.stderr}",
+                f"invalid {name} legacy default was not rejected correctly:\n"
+                f"{rejected.stdout}{rejected.stderr}",
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--presets", type=Path, required=True)
+    parser.add_argument("--root-cmake", type=Path, required=True)
     parser.add_argument("--kernel-cmake", type=Path, required=True)
     parser.add_argument("--artifact-cmake", type=Path, required=True)
     parser.add_argument("--acceptance-16k", type=Path, required=True)
     parser.add_argument("--acceptance-4k", type=Path, required=True)
+    parser.add_argument("--acceptance-x86-4k", type=Path, required=True)
     parser.add_argument("--android-kernel-acceptance", type=Path, required=True)
     parser.add_argument("--android-kernel-publisher", type=Path, required=True)
     parser.add_argument("--runtime-cmake", type=Path, required=True)
+    parser.add_argument("--static-guest-source", type=Path, required=True)
     parser.add_argument("--runtime-source", type=Path, required=True)
     parser.add_argument("--runtime-header", type=Path, required=True)
     parser.add_argument("--runtime-loader", type=Path, required=True)
@@ -186,12 +374,16 @@ def main() -> int:
     }
     acceptance_16k = read(arguments.acceptance_16k)
     acceptance_4k = read(arguments.acceptance_4k)
+    acceptance_x86_4k = read(arguments.acceptance_x86_4k)
     android_kernel_acceptance = read(arguments.android_kernel_acceptance)
     directory_16k = env_value(
         acceptance_16k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
     )
     directory_4k = env_value(
         acceptance_4k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+    )
+    directory_x86_4k = env_value(
+        acceptance_x86_4k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
     )
     require(
         configurations["macos-integration"]["cacheVariables"]
@@ -205,6 +397,18 @@ def main() -> int:
         and "UML_KERNEL_BUILD_DIR"
         not in configurations["macos-integration-4k"]["cacheVariables"],
         "macOS integration still exposes a Kbuild output directory",
+    )
+    x86_profile = configurations["macos-x86_64"]
+    require(
+        x86_profile["cacheVariables"]["UML_KERNEL_PRODUCT"]
+        == "mainline-6.18"
+        and x86_profile["cacheVariables"]["UML_MAINLINE_KERNEL_SLICE"]
+        == "x86_64"
+        and x86_profile["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
+        and x86_profile["cacheVariables"]["UML_BUILD_UNIT_TESTS"] is False
+        and x86_profile["cacheVariables"]["UML_BUILD_INTEGRATION_TESTS"]
+        is False,
+        "macOS x86_64 product is not a fixed mainline 4 KiB slice",
     )
     android_profile = configurations["macos-android17"]
     require(
@@ -241,14 +445,47 @@ def main() -> int:
             f"{platform} page profiles share one CMake build tree",
         )
 
+    root_cmake = read(arguments.root_cmake)
+    for contract in (
+        "UML_X86_64_USERSPACE_ONLY",
+        "DARWIN_UML_X86_64_USERSPACE_ONLY",
+        "The fixed x86_64 userspace product does not use the arm64 unit or ",
+        "The fixed x86_64 userspace slice requires the x86_64 gadget backend",
+    ):
+        require(contract in root_cmake, f"root product selection lacks {contract}")
+    backend_selection = root_cmake.split(
+        "if(UML_TARGET_MACOS AND NOT UML_GUEST_16K_PAGES", 1
+    )[1].split("set(UML_BUILD_X86_64_GUEST ON)", 1)[0]
+    require(
+        "UML_BUILD_UNIT_TESTS" in backend_selection
+        and "UML_BUILD_INTEGRATION_TESTS" not in backend_selection,
+        "arm64 integration still enables the x86_64 gadget backend",
+    )
+    static_guest_source = read(arguments.static_guest_source)
+    fixed_dispatch = static_guest_source.split(
+        "#if DARWIN_UML_X86_64_USERSPACE_ONLY", 1
+    )[1].split("#elif DARWIN_UML_X86_64_GUEST", 1)[0]
+    require(
+        "return run_x86_guest<Kind>" in fixed_dispatch
+        and "mutable_registers.padding" not in fixed_dispatch,
+        "fixed x86_64 product still selects its userspace ISA per task",
+    )
+
     kernel_cmake = read(arguments.kernel_cmake)
     artifact_cmake = read(arguments.artifact_cmake)
+    verify_accepted_artifact_cache(arguments.artifact_cmake)
     for contract in (
         "uml_import_kernel_artifact",
         "UML_MAINLINE_618_KERNEL_ARTIFACT_DIR",
         "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
+        "UML_MAINLINE_KERNEL_SLICE",
         "accepted-16k.env",
         "accepted-4k.env",
+        "slices/x86_64/artifacts/accepted-4k.env",
+        "mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4",
+        "mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4",
+        "The x86_64 mainline kernel slice supports only 4 KiB guest pages",
+        "Accepted mainline kernel slice",
     ):
         require(contract in kernel_cmake, f"kernel importer lacks {contract}")
     for forbidden in (
@@ -267,39 +504,66 @@ def main() -> int:
     for contract in (
         "verify-kernel-artifact.py",
         "--compatible",
+        "EXPECTED_SLICE",
+        "--expected-slice",
         "EXPECTED_RELEASE_SERIES",
         "--expected-release-series",
         "--abi-metadata",
         "add_library(\"${ARTIFACT_TARGET}\" INTERFACE)",
         "UML_KERNEL_IMAGE",
         "UML_KERNEL_MODULES_BUILTIN",
+        "UML_ARTIFACT_SLICE",
         "CMAKE_CONFIGURE_DEPENDS",
+        "uml_cache_accepted_artifact_path",
+        "LEGACY_DEFAULTS",
     ):
         require(contract in artifact_cmake, f"artifact CMake lacks {contract}")
     require(
-        env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
-        and directory_16k.startswith("mainline-6.18-16k-"),
+        env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        and env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
+        and env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
+        and directory_16k.startswith("mainline-6.18-arm64-16k-"),
         "16 KiB artifact acceptance is malformed",
     )
     require(
-        env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
-        and directory_4k.startswith("mainline-6.18-4k-"),
+        env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        and env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
+        and env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
+        and directory_4k.startswith("mainline-6.18-arm64-4k-"),
         "4 KiB artifact acceptance is malformed",
+    )
+    require(
+        env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        and env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SLICE")
+        == "x86_64"
+        and env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE")
+        == "4096"
+        and directory_x86_4k.startswith("mainline-6.18-x86_64-4k-"),
+        "x86-64 4 KiB artifact acceptance is malformed",
     )
     require(
         env_value(android_kernel_acceptance, "UML_KERNEL_ARTIFACT_FAMILY")
         == "android-6.18"
         and env_value(
+            android_kernel_acceptance, "UML_KERNEL_ARTIFACT_SCHEMA"
+        ) == "2"
+        and env_value(
+            android_kernel_acceptance, "UML_KERNEL_ARTIFACT_SLICE"
+        ) == "arm64"
+        and env_value(
             android_kernel_acceptance, "UML_KERNEL_ARTIFACT_PAGE_SIZE"
         ) == "16384"
         and env_value(
             android_kernel_acceptance, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
-        ).startswith("android-6.18-16k-"),
+        ).startswith("android-6.18-arm64-16k-"),
         "Android ACK artifact acceptance is malformed",
     )
     android_kernel_publisher = read(arguments.android_kernel_publisher)
     for contract in (
         'family = "android-6.18"',
+        'kernel_slice = "arm64"',
+        '"slice": kernel_slice',
+        'verify_config(source_paths["kernel/config"], page_size, kernel_slice)',
         "verify_artifact(",
         'page_size = 16384',
         'if name.endswith(".ko")',
@@ -605,6 +869,9 @@ def main() -> int:
         "if(NOT UML_GUEST_16K_PAGES)",
         "UML_ANDROID17_KERNEL_ARTIFACT_DIR",
         "uml_import_kernel_artifact",
+        "EXPECTED_SLICE arm64",
+        "The Android 17 kernel artifact must use the arm64 slice",
+        "android-6.18-16k-20260829-no-ipconfig-8f74db26",
         "EXPECTED_RELEASE_SERIES 6.18",
     ):
         require(contract in android_cmake, f"Android product lacks {contract}")

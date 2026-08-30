@@ -4,11 +4,12 @@ This directory owns the maintained stable Linux 6.18 source identity, local
 Darwin UML patch series, complete kernel configuration, standalone build
 policy, and accepted artifact descriptors.
 
-Exact upstream commit/tree, final tree, ABI identity, patch count, and delta
-limits live in [`patches/metadata.env`](patches/metadata.env). Ordered patch
-identity lives in [`patches/series/manifest.tsv`](patches/series/manifest.tsv).
-Those machine-readable files are the source of truth; replay commit IDs and
-binary hashes are observations.
+Exact upstream commit/tree, shared final tree, ABI identity, patch count, and
+delta limits live in [`patches/metadata.env`](patches/metadata.env). The normal
+arm64 slices consume that shared series directly. The dedicated x86_64
+userspace slice branches from its final tree and owns only its config and patch
+overlay under [`slices/x86_64`](slices/x86_64). Those machine-readable files
+are the source of truth; replay commit IDs and binary hashes are observations.
 
 ## Source preparation and replay
 
@@ -19,6 +20,7 @@ its single absolute `UML_KERNEL_SOURCE_DIR` value.
 ```sh
 kernel/mainline-6.18/scripts/prepare-source.sh
 kernel/mainline-6.18/scripts/prepare-source.sh --verify
+kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
 kernel/mainline-6.18/scripts/verify-replay.sh \
   --work-root /case-sensitive/path
 ```
@@ -28,11 +30,11 @@ Preparation uses the pinned Git cache and creates the managed replay branch.
 replace only a clean stale managed replay; it never replaces an arbitrary
 checkout.
 
-`verify-replay.sh` starts from the pinned upstream commit, applies the complete
-series, checks the final tree and topology policy, and by default builds both
-page profiles. Use `--skip-build` only when source replay is the intended
-scope. Kernel builds use all online processors unless `UML_KERNEL_JOBS` or
-`--jobs` supplies a limit.
+`verify-replay.sh` starts from the pinned upstream commit, verifies the shared
+series, branches and verifies the x86_64 overlay, and by default builds arm64
+16 KiB, arm64 4 KiB, and x86_64-userspace 4 KiB kernels. Use `--skip-build`
+only when source replay is the intended scope. Kernel builds use all online
+processors unless `UML_KERNEL_JOBS` or `--jobs` supplies a limit.
 
 ## Patch maintenance
 
@@ -42,12 +44,15 @@ identity when source changes, then run:
 
 ```sh
 kernel/mainline-6.18/scripts/rebase-patches.sh
+kernel/mainline-6.18/scripts/rebase-patches.sh --slice x86_64
 ```
 
-The regenerator rebases onto the pinned stable commit and updates patch bytes,
-manifest IDs, hashes, subjects, order, and topology policy. Never edit patch
-files or their manifest manually. Update declared topic-path overlaps and delta
-limits only when the resulting series requires it.
+The common regenerator rebases onto the pinned stable commit. The x86_64
+regenerator rebases only its overlay onto the verified common branch. Each
+updates its own patch bytes, manifest IDs, hashes, subjects, order, and
+topology policy. Never edit patch files or their manifest manually. Update
+declared topic-path overlaps and delta limits only when the resulting series
+requires it.
 
 The series is maintained locally. Next-base tooling may recommend local carry,
 drop, or rebase actions but has no submission or push workflow.
@@ -58,21 +63,22 @@ drop, or rebase actions but has no submission or push workflow.
 as the starting `.config`, applies exactly one page fragment, runs
 `olddefconfig`, and verifies that every requested symbol resolved as declared.
 
-The profiles are:
+The normal arm64-userspace profiles are:
 
 - 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
 - 4 KiB pages from `config/page-4k.fragment` (compatibility).
 
-The 4 KiB Darwin profile accepts `EM_X86_64` userspace while retaining the
-arm64 kernel. Per-task register state selects the macOS host's x86-64 gadget
-backend, and the kernel translates the supported x86-64 syscall ABI and signal
-frame. Signal delivery exposes the native x86 XSAVE layout for x87, SSE, and
-AVX state and restores user edits through `rt_sigreturn`. The task state
-overlays existing arm64 bridge slots, so the common ABI and the Android kernel
-series remain unchanged. Host instruction execution is
-qualified against the pinned FEX handwritten x86-64 corpus; distribution and
-complete Linux syscall compatibility require separate guest qualification.
-The 16 KiB profile continues to accept `EM_AARCH64` only.
+The separate x86_64-userspace slice is 4 KiB only. It composes
+`slices/x86_64/config/userspace.fragment` after the shared common and 4 KiB
+fragments and applies only the patches in `slices/x86_64/patches`. The kernel
+still executes its UML kernel mode as native arm64, but its userspace ABI is
+fixed to x86_64: it does not load arm64 userspace and has no per-task ISA
+switch. Signal delivery exposes the native x86 XSAVE layout for x87, SSE, and
+AVX state and restores user edits through `rt_sigreturn`. Host instruction
+execution is qualified against the pinned FEX handwritten x86-64 corpus;
+distribution and complete Linux syscall compatibility require separate guest
+qualification. Both normal arm64 profiles accept `EM_AARCH64` only. Android
+does not consume the x86_64 overlay.
 
 Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only
@@ -129,9 +135,12 @@ Build each profile outside the source tree:
 
 ```sh
 kernel/mainline-6.18/build/build-kernel.sh \
-  --build /case-sensitive/build-16k --page-size 16k
+  --slice arm64 --build /case-sensitive/build-arm64-16k --page-size 16k
 kernel/mainline-6.18/build/build-kernel.sh \
-  --build /case-sensitive/build-4k --page-size 4k
+  --slice arm64 --build /case-sensitive/build-arm64-4k --page-size 4k
+kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
+kernel/mainline-6.18/build/build-kernel.sh \
+  --slice x86_64 --build /case-sensitive/build-x86_64-4k --page-size 4k
 ```
 
 Publish each completed build with
@@ -140,8 +149,11 @@ tracked final tree, validates resolved policy and ELF/ABI geometry, and copies
 only the compact runtime/support bundle. It never builds, fetches, or changes a
 source checkout. Use the script's `--help` for output and release options.
 
-`artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed local
-publications below `.build/kernel/artifacts`. Apple products validate the whole
+`artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
+publications below `.build/kernel/artifacts`.
+`slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
+userspace publication. Artifact identity includes the slice, so an arm64 4 KiB
+kernel cannot satisfy an x86_64 selection. Apple products validate the whole
 selected bundle and derive paths from its manifest; they do not inspect source
 or Kbuild state.
 

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Fixed x86_64 userspace ABI for the dedicated 4 KiB compatibility slice.
+CONFIG_UML_X86_64_USERSPACE_ONLY=y

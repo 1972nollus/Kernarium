@@ -66,6 +66,7 @@ def main() -> None:
     from kernel_artifact import (  # noqa: PLC0415
         PAYLOAD_SPECS,
         RELEASE_ID_RE,
+        SCHEMA_VERSION,
         parse_env,
         sha256_path,
         verify_artifact,
@@ -92,6 +93,7 @@ def main() -> None:
         fail("ACK source tree differs from the tracked final tree")
 
     page_size = 16384
+    kernel_slice = "arm64"
     source_paths = {
         "kernel/System.map": build / "System.map",
         "kernel/config": build / ".config",
@@ -111,8 +113,10 @@ def main() -> None:
             if name.endswith(".ko") or ".ko." in name:
                 fail(f"loadable module output is forbidden: {Path(root) / name}")
 
-    verify_config(source_paths["kernel/config"], page_size)
-    verify_elf(source_paths["kernel/vmlinux"], page_size, common_root)
+    verify_config(source_paths["kernel/config"], page_size, kernel_slice)
+    verify_elf(
+        source_paths["kernel/vmlinux"], page_size, common_root, kernel_slice
+    )
     release = source_paths["kernel/kernel.release"].read_text(
         encoding="utf-8"
     ).strip()
@@ -120,7 +124,7 @@ def main() -> None:
         fail("built kernel release is not ACK 6.18")
 
     family = "android-6.18"
-    directory_name = f"{family}-16k-{args.release_id}"
+    directory_name = f"{family}-{kernel_slice}-16k-{args.release_id}"
     output_root.mkdir(parents=True, exist_ok=True)
     if output_root.is_symlink():
         fail("output root must not be a symlink")
@@ -148,10 +152,11 @@ def main() -> None:
             })
         verify_kernel_config(staging, android_root, enforce_tracked_policy=True)
         manifest = {
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "release_id": args.release_id,
             "directory_name": directory_name,
             "family": family,
+            "slice": kernel_slice,
             "published_at_utc": datetime.datetime.now(
                 datetime.timezone.utc
             ).isoformat(timespec="seconds").replace("+00:00", "Z"),

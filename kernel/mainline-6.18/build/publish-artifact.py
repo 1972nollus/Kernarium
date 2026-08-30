@@ -47,6 +47,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--page-size", choices=("4k", "16k"), required=True)
+    parser.add_argument("--slice", choices=("arm64", "x86_64"), default="arm64")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     args = parser.parse_args()
@@ -58,7 +59,9 @@ def main() -> None:
     from kernel_artifact import (  # noqa: PLC0415
         PAYLOAD_SPECS,
         RELEASE_ID_RE,
+        SCHEMA_VERSION,
         parse_env,
+        patch_provenance_count,
         sha256_path,
         verify_artifact,
         verify_config,
@@ -72,11 +75,47 @@ def main() -> None:
     output_root = args.output_root.resolve()
     if RELEASE_ID_RE.fullmatch(args.release_id) is None:
         fail("release ID has an unsafe format")
+    if args.slice == "x86_64" and args.page_size != "4k":
+        fail("the x86_64 userspace slice supports only 4 KiB pages")
 
-    metadata_path = line_root / "patches/metadata.env"
-    patch_manifest_path = line_root / "patches/series/manifest.tsv"
+    if args.slice == "x86_64":
+        slice_root = line_root / "slices/x86_64"
+        metadata_path = slice_root / "patches/metadata.env"
+        patch_manifest_path = slice_root / "patches/composition.tsv"
+    else:
+        metadata_path = line_root / "patches/metadata.env"
+        patch_manifest_path = line_root / "patches/series/manifest.tsv"
     abi_metadata_path = common_root / "abi/identity.env"
     metadata = parse_env(metadata_path)
+    if args.slice == "x86_64":
+        common_metadata = parse_env(line_root / "patches/metadata.env")
+        if metadata.get("UML_KERNEL_SLICE") != "x86_64":
+            fail("x86_64 patch metadata has the wrong slice identity")
+        if (
+            metadata.get("UML_KERNEL_PARENT_TREE")
+            != common_metadata["UML_KERNEL_FINAL_TREE"]
+        ):
+            fail("x86_64 patch parent tree differs from the common final tree")
+        inherited_keys = (
+            "UML_KERNEL_RELEASE_VERSION",
+            "UML_KERNEL_UPSTREAM_REPOSITORY",
+            "UML_KERNEL_UPSTREAM_BRANCH",
+            "UML_KERNEL_UPSTREAM_COMMIT",
+            "UML_KERNEL_UPSTREAM_TREE",
+            "UML_KERNEL_BASE_REF",
+            "UML_KERNEL_ABI_VERSION",
+            "UML_KERNEL_ABI_FINGERPRINT",
+        )
+        mismatched = [
+            key
+            for key in inherited_keys
+            if metadata.get(key) != common_metadata.get(key)
+        ]
+        if mismatched:
+            fail(
+                "x86_64 patch metadata differs from common identity: "
+                + ", ".join(mismatched)
+            )
     abi = parse_env(abi_metadata_path)
     if run_git(source, "status", "--porcelain=v1", "--untracked-files=all"):
         fail("kernel source worktree is dirty")
@@ -106,8 +145,10 @@ def main() -> None:
             if name.endswith(".ko") or ".ko." in name:
                 fail(f"loadable module output is forbidden: {Path(root) / name}")
 
-    verify_config(source_paths["kernel/config"], page_size)
-    verify_elf(source_paths["kernel/vmlinux"], page_size, common_root)
+    verify_config(source_paths["kernel/config"], page_size, args.slice)
+    verify_elf(
+        source_paths["kernel/vmlinux"], page_size, common_root, args.slice
+    )
     release = source_paths["kernel/kernel.release"].read_text(
         encoding="utf-8"
     ).strip()
@@ -115,7 +156,34 @@ def main() -> None:
         fail("built kernel release does not match tracked release version")
 
     family = "mainline-6.18"
-    directory_name = f"{family}-{args.page_size}-{args.release_id}"
+    directory_name = f"{family}-{args.slice}-{args.page_size}-{args.release_id}"
+    patch_count = int(
+        metadata.get(
+            "UML_KERNEL_ARTIFACT_PATCH_COUNT",
+            metadata["UML_KERNEL_PATCH_COUNT"],
+        )
+    )
+    expected_composition = None
+    if args.slice == "x86_64":
+        expected_composition = (
+            (
+                "common",
+                "kernel/mainline-6.18/patches/series/manifest.tsv",
+            ),
+            (
+                "x86_64",
+                "kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv",
+            ),
+        )
+    if (
+        patch_provenance_count(
+            patch_manifest_path,
+            outer_root,
+            expected_composition,
+        )
+        != patch_count
+    ):
+        fail("tracked patch provenance count differs from kernel metadata")
     output_root.mkdir(parents=True, exist_ok=True)
     if output_root.is_symlink():
         fail("output root must not be a symlink")
@@ -143,10 +211,11 @@ def main() -> None:
                 }
             )
         manifest = {
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "release_id": args.release_id,
             "directory_name": directory_name,
             "family": family,
+            "slice": args.slice,
             "published_at_utc": datetime.datetime.now(
                 datetime.timezone.utc
             ).isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -159,7 +228,7 @@ def main() -> None:
                 "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
                 "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
                 "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
-                "patch_count": int(metadata["UML_KERNEL_PATCH_COUNT"]),
+                "patch_count": patch_count,
                 "patch_manifest_sha256": sha256_path(patch_manifest_path),
             },
             "abi": {
@@ -184,7 +253,7 @@ def main() -> None:
     except BaseException:
         shutil.rmtree(staging_parent, ignore_errors=True)
         raise
-    print(f"published mainline kernel artifact: {destination}")
+    print(f"published {args.slice} mainline kernel artifact: {destination}")
 
 
 if __name__ == "__main__":

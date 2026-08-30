@@ -65,9 +65,11 @@ embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour/page profile for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
-Apple products consume accepted kernel bundles and never invoke Kbuild. Linux
-uses the same accepted 16 KiB or 4 KiB mainline artifact on macOS, Simulator,
-and device. Android uses a separate accepted 16 KiB ACK artifact.
+Apple products consume accepted kernel bundles and never invoke Kbuild. The
+arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
+artifact on macOS, Simulator, and device. The macOS x86_64 userspace product
+uses a separately identified 4 KiB mainline slice. Android uses a separate
+accepted 16 KiB ACK artifact.
 
 ## CPU execution and scheduling
 
@@ -90,18 +92,18 @@ precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines.
 
-The macOS 4 KiB mainline product may run x86-64 tasks under the arm64 UML
-kernel. The kernel tags each task's userspace ISA and translates its syscall
-ABI; the host routes x86-64 instruction execution through immutable,
-data-only streams of pointers to precompiled handwritten arm64 assembly
-gadgets. There is no semantic C++ execution fallback. Exact x87 formats and
-transcendentals use bounded software-math primitives called by those native
-gadgets. The backend covers the pinned FEX handwritten
+The macOS 4 KiB x86_64 compatibility slice keeps native arm64 UML kernel-mode
+execution but exposes only the x86_64 userspace ABI. It cannot load arm64
+userspace, and there is no per-task ISA selection. The host routes userspace
+instruction execution through immutable, data-only streams of pointers to
+precompiled handwritten arm64 assembly gadgets. There is no semantic C++
+execution fallback. Exact x87 formats and transcendentals use bounded
+software-math primitives called by those native gadgets. The backend covers the pinned FEX handwritten
 x86-64 instruction corpus, including x87, MMX, SSE, AVX, AES, SHA, atomic, and
 extended-state operations. That external corpus is the instruction acceptance
 boundary, not proof of an arbitrary distribution or complete Linux syscall
-compatibility. The 16 KiB mainline, iOS, and Android host products remain
-arm64-userspace-only.
+compatibility. The normal mainline slices and Android remain
+arm64-userspace-only and contain none of the x86_64 kernel overlay.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable

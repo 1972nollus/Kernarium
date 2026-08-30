@@ -5,13 +5,9 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 COMMON_ROOT="$ROOT_DIR/kernel/common"
-METADATA="$LINE_ROOT/patches/metadata.env"
-OWNERSHIP="$LINE_ROOT/patches/path-ownership.tsv"
-OUTSIDE_POLICY="$LINE_ROOT/patches/outside-port-justification.tsv"
-SERIES_MANIFEST="$LINE_ROOT/patches/series/manifest.tsv"
-SERIES_DIR="$LINE_ROOT/patches/series"
 SERIES_POLICY="$COMMON_ROOT/tooling/verify-series-policy.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
+SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
 
 fail()
 {
@@ -23,17 +19,23 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/scripts/audit-delta.sh \
-       [--source CONFIGURED_PATH] [--tree TREE]
+       [--slice arm64|x86_64] [--source CONFIGURED_PATH] [--tree TREE]
 
-Classify every path changed from the pinned upstream Linux stable commit and
-enforce the checked-in file-count ceilings. TREE defaults to HEAD.
+Classify every path changed by the selected common or x86_64 overlay series and
+enforce its checked-in file-count ceilings. TREE defaults to HEAD.
 EOF
 }
 
 REQUESTED_SOURCE=''
 TREE=''
+SLICE=arm64
 while [ "$#" -gt 0 ]; do
 	case "$1" in
+	--slice)
+		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
+		SLICE=$2
+		shift 2
+		;;
 	--source)
 		[ "$#" -ge 2 ] || fail "--source requires a path"
 		REQUESTED_SOURCE=$2
@@ -52,6 +54,18 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+[ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
+# shellcheck disable=SC1090
+. "$SLICE_SELECTOR"
+uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
+	fail "cannot select kernel slice: $SLICE"
+METADATA=$UML_KERNEL_METADATA_PATH
+OWNERSHIP="$UML_KERNEL_POLICY_ROOT/patches/path-ownership.tsv"
+OUTSIDE_POLICY="$UML_KERNEL_POLICY_ROOT/patches/outside-port-justification.tsv"
+SERIES_MANIFEST=$UML_KERNEL_MANIFEST_PATH
+SERIES_DIR=$UML_KERNEL_PATCH_DIR
+POLICY_ROOT=$UML_KERNEL_POLICY_ROOT
+
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE=$("$SOURCE_LOCATION" --require-source) ||
 	fail "kernel source configuration is invalid"
@@ -63,21 +77,30 @@ fi
 [ -r "$OUTSIDE_POLICY" ] || fail "missing outside-port policy: $OUTSIDE_POLICY"
 [ -r "$SERIES_MANIFEST" ] || fail "missing series manifest: $SERIES_MANIFEST"
 [ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
-"$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
-# shellcheck disable=SC1090
-. "$METADATA"
+"$SERIES_POLICY" --line-root "$POLICY_ROOT" manifest >/dev/null
 [ -d "$SOURCE/.git" ] || fail "not a Linux checkout: $SOURCE"
 TREE=${TREE:-HEAD}
 git -C "$SOURCE" show-ref --verify --quiet "$UML_KERNEL_BASE_REF" ||
 	fail "pinned upstream base ref is unavailable"
-base_commit=$(git -C "$SOURCE" rev-parse "$UML_KERNEL_BASE_REF^{commit}")
-[ "$base_commit" = "$UML_KERNEL_UPSTREAM_COMMIT" ] ||
-	fail "upstream base is $base_commit, expected $UML_KERNEL_UPSTREAM_COMMIT"
+upstream_commit=$(git -C "$SOURCE" rev-parse "$UML_KERNEL_BASE_REF^{commit}")
+[ "$upstream_commit" = "$UML_KERNEL_UPSTREAM_COMMIT" ] ||
+	fail "upstream base is $upstream_commit, expected $UML_KERNEL_UPSTREAM_COMMIT"
 base_tree=$(git -C "$SOURCE" rev-parse "$UML_KERNEL_BASE_REF^{tree}")
 [ "$base_tree" = "$UML_KERNEL_UPSTREAM_TREE" ] ||
 	fail "upstream base tree is $base_tree, expected $UML_KERNEL_UPSTREAM_TREE"
+BASE_COMMIT=$upstream_commit
+if [ "$UML_KERNEL_SLICE" = x86_64 ]; then
+	common_tree=$(git -C "$SOURCE" rev-parse \
+		"$UML_KERNEL_COMMON_PATCH_BRANCH^{tree}" 2>/dev/null || true)
+	[ "$common_tree" = "$UML_KERNEL_COMMON_FINAL_TREE" ] ||
+		fail "x86_64 parent is not the canonical common kernel tree"
+	BASE_COMMIT=$(git -C "$SOURCE" rev-parse \
+		"$UML_KERNEL_COMMON_PATCH_BRANCH^{commit}")
+fi
 git -C "$SOURCE" cat-file -e "$TREE^{tree}" 2>/dev/null ||
 	fail "tree is unavailable: $TREE"
+git -C "$SOURCE" merge-base --is-ancestor "$BASE_COMMIT" "$TREE" ||
+	fail "selected tree is not based on the $UML_KERNEL_SLICE series parent"
 
 DELTA_TMP=$(/usr/bin/mktemp -d /private/tmp/uml-delta-audit.XXXXXX)
 cleanup()
@@ -92,7 +115,7 @@ trap cleanup 0 HUP INT TERM
 : > "$DELTA_TMP/outside-paths.txt"
 : > "$DELTA_TMP/series-membership.tsv"
 : > "$DELTA_TMP/policy-paths.txt"
-git -C "$SOURCE" diff --numstat "$UML_KERNEL_BASE_REF" "$TREE" \
+git -C "$SOURCE" diff --numstat "$BASE_COMMIT" "$TREE" \
 	--output="$DELTA_TMP/paths.tsv"
 
 tab=$(printf '\t')

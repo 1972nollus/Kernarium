@@ -96,6 +96,24 @@
       }
     },
     {
+      "name": "macos-x86_64",
+      "displayName": "macOS x86_64 userspace compatibility product (4 KiB)",
+      "inherits": "macos-unit-4k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_CLI": true,
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": true,
+        "UML_GUEST_16K_PAGES": false,
+        "UML_KERNEL_PRODUCT": "mainline-6.18",
+        "UML_MAINLINE_KERNEL_SLICE": "x86_64"
+      }
+    },
+    {
       "name": "macos-jitprof",
       "displayName": "macOS JIT profiling emulator",
       "inherits": "macos-integration",
@@ -294,6 +312,11 @@
       "name": "macos-integration-4k",
       "configurePreset": "macos-integration-4k",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-x86_64",
+      "configurePreset": "macos-x86_64",
+      "targets": ["uml-darwin", "tooling-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-jitprof",

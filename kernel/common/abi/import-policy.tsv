@@ -6,3 +6,4 @@ darwin_uml_vm_sync_from_backing	4k-only	Refresh a 4 KiB native shadow from share
 darwin_uml_vm_sync_from_buffer	4k-only	Publish a bounded write from a 4 KiB native shadow
 darwin_uml_vm_stage_stack	4k-only	Stage an implicit 4 KiB stack quarter before resolving its Linux fault
 darwin_uml_vm_finish_stack	4k-only	Merge or discard a staged 4 KiB stack quarter after fault resolution
+darwin_uml_guest_hwcap2	arm64-only	Expose arm64 userspace HWCAP2 bits only to the normal arm64 kernel slices

@@ -34,12 +34,16 @@
 namespace uml::emulator {
 
 namespace arm64 = ::uml::cpu::arm64;
+#if DARWIN_UML_X86_64_GUEST
 namespace x86_64 = ::uml::cpu::x86_64;
+#endif
 using ::uml::memory::StaticGuestMemory;
 namespace {
 
-#if DARWIN_UML_X86_64_GUEST
+#if DARWIN_UML_X86_64_GUEST && !DARWIN_UML_X86_64_USERSPACE_ONLY
 constexpr std::int32_t x86_64_guest_isa = 2;
+#endif
+#if DARWIN_UML_X86_64_GUEST
 constexpr std::uint64_t x86_64_rt_sigreturn = 15;
 constexpr std::uint32_t x86_64_fp_marker = 0x5838'3634U;
 constexpr std::size_t x86_64_register_count = 16;
@@ -657,7 +661,10 @@ int run_common_guest(
 	if (context == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
 	auto runtime = context->thread_execution_state();
-#if DARWIN_UML_X86_64_GUEST
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	return run_x86_guest<Kind>(mutable_registers, fp, generation,
+		*context, *runtime);
+#elif DARWIN_UML_X86_64_GUEST
 	if (mutable_registers.padding == x86_64_guest_isa) {
 		return run_x86_guest<Kind>(mutable_registers, fp, generation,
 			*context, *runtime);

@@ -12,6 +12,8 @@ set(UML_EMULATOR_XCFRAMEWORK "" CACHE PATH
     "Final UMLEmulator XCFramework used for Xcode slice-selection verification")
 set(UML_EXPECTED_GUEST_PAGE_SIZE "16384" CACHE STRING
     "Expected installed package guest page size")
+set(UML_EXPECTED_GUEST_SLICE "arm64" CACHE STRING
+    "Expected installed package userspace ISA slice")
 
 if(UML_EMULATOR_PACKAGE_PREFIX)
     if(UML_EMULATOR_LIBRARY OR UML_EMULATOR_HEADERS OR
@@ -36,6 +38,11 @@ if(UML_EMULATOR_PACKAGE_PREFIX)
        "${UML_EXPECTED_GUEST_PAGE_SIZE}")
         message(FATAL_ERROR
             "Installed package page size ${UMLEmulator_GUEST_PAGE_SIZE} does not match ${UML_EXPECTED_GUEST_PAGE_SIZE}")
+    endif()
+    if(NOT "${UMLEmulator_GUEST_SLICE}" STREQUAL
+       "${UML_EXPECTED_GUEST_SLICE}")
+        message(FATAL_ERROR
+            "Installed package slice ${UMLEmulator_GUEST_SLICE} does not match ${UML_EXPECTED_GUEST_SLICE}")
     endif()
     if(UMLEmulator_PROFILING_ENABLED)
         message(FATAL_ERROR "Installed release package contains profiling")

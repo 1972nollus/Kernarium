@@ -11,6 +11,7 @@ COMMON_ROOT="$ROOT_DIR/kernel/common"
 . "$LINE_ROOT/build/toolchain/darwin.env"
 CONFIG_DIR="$LINE_ROOT/config"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
+SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
 
 fail()
 {
@@ -22,14 +23,15 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
-       --build PATH --page-size 16k|4k [--jobs N]
+       --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
        [--source CONFIGURED_PATH]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
 OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
-kernel policy ships: kernel/mainline-6.18/config/common.fragment is the whole configuration
-and only the page-size fragment varies. The output directory must be outside
+The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
+4 KiB only and composes its own config fragment after the shared common and
+page fragments. The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
 kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
 the same constrained native address-space profile. An omitted jobs value uses
@@ -42,8 +44,14 @@ EOF
 REQUESTED_SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
+SLICE=arm64
 while [ "$#" -gt 0 ]; do
 	case "$1" in
+	--slice)
+		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
+		SLICE=$2
+		shift 2
+		;;
 	--source)
 		[ "$#" -ge 2 ] || fail "--source requires a path"
 		REQUESTED_SOURCE_DIR=$2
@@ -74,6 +82,12 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+[ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
+# shellcheck disable=SC1090
+. "$SLICE_SELECTOR"
+uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
+	fail "cannot select kernel slice: $SLICE"
+
 [ -n "$BUILD_DIR" ] && [ -n "$PAGE_SIZE" ] || {
 	usage >&2
 	exit 2
@@ -88,14 +102,21 @@ case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
 esac
+[ "$UML_KERNEL_SLICE" != x86_64 ] || [ "$PAGE_SIZE" = 4k ] ||
+	fail "the x86_64 userspace slice supports only the 4k page profile"
 case "$UML_KERNEL_JOBS" in
 *[!0-9]*|'') fail "UML_KERNEL_JOBS must be a positive integer" ;;
 esac
 [ "$UML_KERNEL_JOBS" -gt 0 ] || fail "UML_KERNEL_JOBS must be a positive integer"
 
 [ -f "$SOURCE_DIR/Makefile" ] || fail "not a Linux source tree: $SOURCE_DIR"
+[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] ||
+	fail "kernel source working tree is dirty"
+source_tree=$(git -C "$SOURCE_DIR" rev-parse HEAD^{tree} 2>/dev/null || true)
+[ "$source_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
+	fail "$UML_KERNEL_SLICE source tree is $source_tree; expected $UML_KERNEL_FINAL_TREE"
 "$COMMON_ROOT/abi/sync.sh" \
-	--kernel-metadata "$LINE_ROOT/patches/metadata.env" \
+	--kernel-metadata "$UML_KERNEL_METADATA_PATH" \
 	--kernel-source "$SOURCE_DIR" --verify ||
 	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
 mkdir -p -- "$BUILD_DIR"
@@ -295,18 +316,27 @@ esac
 [ -f "$CONFIG_DIR/common.fragment" ] || fail "missing common config fragment"
 cp "$CONFIG_DIR/common.fragment" "$BUILD_DIR/.config"
 apply_config_fragment "$CONFIG_FRAGMENT"
+if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
+	[ -f "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ] ||
+		fail "missing slice config fragment: $UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+	apply_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+fi
 run_make olddefconfig
 verify_config_fragment "$CONFIG_DIR/common.fragment"
 verify_config_fragment "$CONFIG_FRAGMENT"
+if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
+	verify_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+fi
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
 if [ -n "$UML_KERNEL_NM" ]; then
 	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
 		--kernel-binary "$BUILD_DIR/vmlinux" --nm "$UML_KERNEL_NM" \
-		--page-size "$PAGE_SIZE"
+		--page-size "$PAGE_SIZE" --slice "$UML_KERNEL_SLICE"
 else
 	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
-		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE"
+		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
+		--slice "$UML_KERNEL_SLICE"
 fi
-printf '%s\n' "built $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"
+printf '%s\n' "built $UML_KERNEL_SLICE $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"

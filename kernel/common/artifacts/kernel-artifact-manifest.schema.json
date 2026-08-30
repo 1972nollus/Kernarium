@@ -9,6 +9,7 @@
     "release_id",
     "directory_name",
     "family",
+    "slice",
     "published_at_utc",
     "release",
     "page_size",
@@ -18,10 +19,11 @@
     "inventory"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "release_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "directory_name": { "type": "string" },
-    "family": { "type": "string" },
+    "family": { "enum": ["mainline-6.18", "android-6.18"] },
+    "slice": { "enum": ["arm64", "x86_64"] },
     "published_at_utc": { "type": "string" },
     "release": { "type": "string" },
     "page_size": { "enum": [4096, 16384] },
@@ -29,5 +31,28 @@
     "source": { "type": "object" },
     "abi": { "type": "object" },
     "inventory": { "type": "array" }
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "family": { "const": "mainline-6.18" },
+        "slice": { "const": "arm64" },
+        "page_size": { "enum": [4096, 16384] }
+      }
+    },
+    {
+      "properties": {
+        "family": { "const": "mainline-6.18" },
+        "slice": { "const": "x86_64" },
+        "page_size": { "const": 4096 }
+      }
+    },
+    {
+      "properties": {
+        "family": { "const": "android-6.18" },
+        "slice": { "const": "arm64" },
+        "page_size": { "const": 16384 }
+      }
+    }
+  ]
 }

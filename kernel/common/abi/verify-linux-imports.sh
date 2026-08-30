@@ -8,6 +8,7 @@ KERNEL_BINARY=''
 NM_TOOL=${NM:-nm}
 NM_OUTPUT=''
 PAGE_SIZE=''
+KERNEL_SLICE=arm64
 IMPORT_POLICY="$ROOT_DIR/kernel/common/abi/import-policy.tsv"
 
 fail()
@@ -38,6 +39,11 @@ while [ "$#" -gt 0 ]; do
 		PAGE_SIZE=$2
 		shift 2
 		;;
+	--slice)
+		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
+		KERNEL_SLICE=$2
+		shift 2
+		;;
 	*) fail "unknown option: $1" ;;
 	esac
 done
@@ -48,6 +54,12 @@ case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
 esac
+case "$KERNEL_SLICE" in
+arm64|x86_64) ;;
+*) fail "--slice must be arm64 or x86_64" ;;
+esac
+[ "$KERNEL_SLICE" != x86_64 ] || [ "$PAGE_SIZE" = 4k ] ||
+	fail "the x86_64 slice supports only 4k imports"
 [ -f "$IMPORT_POLICY" ] || fail "import policy is missing: $IMPORT_POLICY"
 if [ -n "$KERNEL_BINARY" ]; then
 	[ -f "$KERNEL_BINARY" ] || fail "kernel binary is missing: $KERNEL_BINARY"
@@ -58,8 +70,13 @@ WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/uml-linux-imports.XXXXXX")
 cleanup()
 {
 	rm -f -- "$WORK_DIRECTORY/declared" \
-		"$WORK_DIRECTORY/conditional.unsorted" \
-		"$WORK_DIRECTORY/conditional" "$WORK_DIRECTORY/expected" \
+		"$WORK_DIRECTORY/4k-only.unsorted" \
+		"$WORK_DIRECTORY/4k-only" \
+		"$WORK_DIRECTORY/arm64-only.unsorted" \
+		"$WORK_DIRECTORY/arm64-only" \
+		"$WORK_DIRECTORY/conditional" \
+		"$WORK_DIRECTORY/expected.intermediate" \
+		"$WORK_DIRECTORY/expected" \
 		"$WORK_DIRECTORY/nm" "$WORK_DIRECTORY/imported"
 	rmdir -- "$WORK_DIRECTORY" 2>/dev/null || true
 }
@@ -76,23 +93,41 @@ if ! awk -F '\t' '
 		next
 	}
 	NF != 3 || $1 !~ /^darwin_uml_[A-Za-z0-9_]+$/ ||
-	$2 != "4k-only" || $3 == "" || seen[$1]++ { exit 1 }
-	{ print $1 }
-' "$IMPORT_POLICY" > "$WORK_DIRECTORY/conditional.unsorted"; then
+	($2 != "4k-only" && $2 != "arm64-only") ||
+	$3 == "" || seen[$1]++ { exit 1 }
+' "$IMPORT_POLICY"; then
 	fail "import policy is malformed: $IMPORT_POLICY"
 fi
-LC_ALL=C sort "$WORK_DIRECTORY/conditional.unsorted" \
-	> "$WORK_DIRECTORY/conditional"
+: > "$WORK_DIRECTORY/4k-only.unsorted"
+: > "$WORK_DIRECTORY/arm64-only.unsorted"
+awk -F '\t' 'NR > 1 && $2 == "4k-only" { print $1 }' "$IMPORT_POLICY" \
+	> "$WORK_DIRECTORY/4k-only.unsorted"
+awk -F '\t' 'NR > 1 && $2 == "arm64-only" { print $1 }' "$IMPORT_POLICY" \
+	> "$WORK_DIRECTORY/arm64-only.unsorted"
+LC_ALL=C sort "$WORK_DIRECTORY/4k-only.unsorted" \
+	> "$WORK_DIRECTORY/4k-only"
+LC_ALL=C sort "$WORK_DIRECTORY/arm64-only.unsorted" \
+	> "$WORK_DIRECTORY/arm64-only"
+LC_ALL=C sort -u "$WORK_DIRECTORY/4k-only" \
+	"$WORK_DIRECTORY/arm64-only" > "$WORK_DIRECTORY/conditional"
 undeclared_policy=$(comm -23 "$WORK_DIRECTORY/conditional" \
 	"$WORK_DIRECTORY/declared")
 [ -z "$undeclared_policy" ] ||
 	fail "import policy names undeclared bridge symbols: $undeclared_policy"
 
 if [ "$PAGE_SIZE" = 16k ]; then
-	comm -23 "$WORK_DIRECTORY/declared" "$WORK_DIRECTORY/conditional" \
-		> "$WORK_DIRECTORY/expected"
+	comm -23 "$WORK_DIRECTORY/declared" "$WORK_DIRECTORY/4k-only" \
+		> "$WORK_DIRECTORY/expected.intermediate"
 else
-	cp -- "$WORK_DIRECTORY/declared" "$WORK_DIRECTORY/expected"
+	cp -- "$WORK_DIRECTORY/declared" \
+		"$WORK_DIRECTORY/expected.intermediate"
+fi
+if [ "$KERNEL_SLICE" = x86_64 ]; then
+	comm -23 "$WORK_DIRECTORY/expected.intermediate" \
+		"$WORK_DIRECTORY/arm64-only" > "$WORK_DIRECTORY/expected"
+else
+	cp -- "$WORK_DIRECTORY/expected.intermediate" \
+		"$WORK_DIRECTORY/expected"
 fi
 
 if [ -n "$NM_OUTPUT" ]; then
@@ -115,4 +150,4 @@ cmp -s "$WORK_DIRECTORY/expected" "$WORK_DIRECTORY/imported" || {
 	fail "$PAGE_SIZE bridge declarations do not match Linux imports"
 }
 printf '%s\n' \
-	"verified $PAGE_SIZE Linux imports exactly match the active synchronized bridge"
+	"verified $KERNEL_SLICE $PAGE_SIZE Linux imports exactly match the active synchronized bridge"

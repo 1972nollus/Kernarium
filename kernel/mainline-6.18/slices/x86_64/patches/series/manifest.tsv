@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Ordered final-state topic identity manifest. Fields are order, file, stable
+# patch-id, SHA-256 of the git-generated patch, and commit subject.
+order	filename	stable_patch_id	sha256	subject
+1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	14e792302eaa8298bbf9b353ebda8082e5c68c78	66d42c26976a46a5b4e77cd6fc065ff617af9b76ad337eede5deb5bdc367f747	arm64: add a dedicated x86-64 userspace UML slice

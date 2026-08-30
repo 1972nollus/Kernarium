@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+pattern	owner	disposition	rationale
+arch/arm64/um/*	x86_64-userspace-slice	carry-locally	Fixed x86_64 userspace ABI implementation for the dedicated arm64 UML kernel slice.
+arch/um/*	x86_64-userspace-slice	carry-locally	Shared UML hooks selected only by the fixed x86_64 userspace configuration.
+fs/eventpoll.c	x86_64-userspace-slice	carry-locally	Translate x86_64 epoll event layout at the syscall boundary without changing the normal arm64 slice.
+fs/open.c	x86_64-userspace-slice	carry-locally	Translate x86_64 open syscall structures only for the dedicated userspace ABI.
+include/linux/eventpoll.h	x86_64-userspace-slice	carry-locally	Declare the slice-local epoll conversion helpers used by the syscall adapter.
+include/linux/fs.h	x86_64-userspace-slice	carry-locally	Declare the slice-local open conversion helper used by the syscall adapter.

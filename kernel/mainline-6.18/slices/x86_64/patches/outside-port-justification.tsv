@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Exact policy for every overlay path outside arch/arm64/um and arch/um.
+path	owner	disposition	origin_patch	next_version_policy	rationale
+fs/eventpoll.c	x86_64-userspace-slice	carry-locally	0001	carry-locally	Convert between the fixed x86_64 epoll event layout and the arm64 kernel layout at the dedicated slice's syscall boundary.
+fs/open.c	x86_64-userspace-slice	carry-locally	0001	carry-locally	Convert x86_64 open syscall structures only while building the fixed userspace ABI slice.
+include/linux/eventpoll.h	x86_64-userspace-slice	carry-locally	0001	carry-locally	Expose the slice-only epoll conversion contract to the x86_64 syscall adapter.
+include/linux/fs.h	x86_64-userspace-slice	carry-locally	0001	carry-locally	Expose the slice-only open conversion contract to the x86_64 syscall adapter.

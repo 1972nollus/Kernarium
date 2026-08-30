@@ -129,7 +129,10 @@ def main() -> int:
             print(transcript.decode(errors="replace"), file=sys.stderr)
         raise
 
-    print("PASS engine=gadgets userspace=x86_64 kernel=arm64 page-size=4k")
+    print(
+        "PASS engine=gadgets userspace-slice=x86_64 "
+        "kernel-mode=arm64 page-size=4k"
+    )
     return 0
 
 

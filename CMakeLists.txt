@@ -101,6 +101,25 @@ endif()
 
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
+set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING
+    "Mainline kernel userspace ISA slice")
+set_property(CACHE UML_MAINLINE_KERNEL_SLICE PROPERTY STRINGS arm64 x86_64)
+if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
+   NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
+    message(FATAL_ERROR
+        "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
+endif()
+if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
+   (NOT UML_TARGET_MACOS OR UML_GUEST_16K_PAGES))
+    message(FATAL_ERROR
+        "The x86_64 mainline kernel slice is a 4 KiB macOS product")
+endif()
+if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
+   (UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS))
+    message(FATAL_ERROR
+        "The fixed x86_64 userspace product does not use the arm64 unit or "
+        "integration suites")
+endif()
 option(DARWIN_UML_JIT_GPR_LINK_PROFILE
     "Instrument successful JIT links for guest-GPR traffic profiling" OFF)
 option(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE
@@ -144,10 +163,21 @@ else()
     set(UML_GUEST_PAGE_SIZE 4096)
     set(UML_GUEST_PAGE_SHIFT 12)
 endif()
-if(UML_TARGET_MACOS AND NOT UML_GUEST_16K_PAGES)
+if(UML_TARGET_MACOS AND NOT UML_GUEST_16K_PAGES AND
+   (UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" OR
+    UML_BUILD_UNIT_TESTS))
     set(UML_BUILD_X86_64_GUEST ON)
 else()
     set(UML_BUILD_X86_64_GUEST OFF)
+endif()
+if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
+    set(UML_X86_64_USERSPACE_ONLY ON)
+else()
+    set(UML_X86_64_USERSPACE_ONLY OFF)
+endif()
+if(UML_X86_64_USERSPACE_ONLY AND NOT UML_BUILD_X86_64_GUEST)
+    message(FATAL_ERROR
+        "The fixed x86_64 userspace slice requires the x86_64 gadget backend")
 endif()
 # Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
 # one sparse software guest-address contract. Device and Simulator top-pack the
@@ -186,6 +216,7 @@ add_library(UML::GuestPageConfiguration ALIAS
     uml_guest_page_configuration)
 target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_X86_64_GUEST=$<BOOL:${UML_BUILD_X86_64_GUEST}>
+    DARWIN_UML_X86_64_USERSPACE_ONLY=$<BOOL:${UML_X86_64_USERSPACE_ONLY}>
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
     DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT}
     DARWIN_UML_GUEST_ADDRESS_LIMIT=${UML_GUEST_ADDRESS_LIMIT}

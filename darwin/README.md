@@ -18,9 +18,12 @@ Targets and source lists belong to these directories. See
 
 ## Products and defaults
 
-The standalone macOS application supports embedded Linux kernels with 16 KiB
-or 4 KiB guest pages. When omitted, `mem=` defaults to 8 GiB and `ncpus=` to
-10; explicit kernel arguments override either value independently.
+The standalone macOS application supports the normal arm64-userspace Linux
+kernel with 16 KiB or 4 KiB guest pages and the separate x86_64-userspace
+kernel with 4 KiB pages. When omitted, `mem=` defaults to 8 GiB and `ncpus=`
+to 10; explicit kernel arguments override either value independently.
+`cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
+gadget backend; ordinary 4 KiB presets continue to select arm64 userspace.
 
 Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
 Linux, and 16 KiB Android. Framework names remain stable across patch releases
@@ -56,9 +59,11 @@ kernel window contains guest RAM plus a page-rounded auxiliary allowance equal
 to RAM, bounded from 1 GiB to 4 GiB. macOS places the window at 96 TiB; iOS
 places it below its address ceiling.
 
-Accepted mainline artifacts are shared by macOS and iOS within each page
-profile. The Android product uses its independent accepted 16 KiB ACK artifact.
-Apple CMake validates artifact manifests and never invokes Kbuild.
+Accepted arm64-userspace mainline artifacts are shared by macOS and iOS within
+each page profile. The x86_64-userspace 4 KiB slice has a distinct artifact
+identity and is selected only by the macOS product. The Android product uses
+its independent accepted 16 KiB ACK artifact. Apple CMake validates artifact
+manifests and never invokes Kbuild.
 
 Kernarium carries each kernel ELF in a signed framework `__TEXT` section. The
 loader aliases immutable executable pages from that mapping and copies only
@@ -82,15 +87,15 @@ Engine selection is explicit. The interpreter is the reference oracle,
 gadgets execute non-executable data streams of precompiled entries, and the JIT
 publishes native code only through `cpu/arm64/jit/jit_arena.cpp`.
 
-The macOS 4 KiB mainline runtime also recognizes kernel-tagged x86-64 task
-frames. Those frames always use the x86-64 gadget backend while the UML kernel
-and its kernel-mode execution remain arm64. Integer, vector, x87/MMX, TLS,
-atomic, and extended-state execution is qualified against the pinned FEX
+The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
+while UML kernel-mode execution remains arm64. The kernel slice cannot load
+arm64 userspace and does not switch ISA per task. Integer, vector, x87/MMX,
+TLS, atomic, and extended-state execution is qualified against the pinned FEX
 handwritten x86-64 corpus. Register, YMM, MMX, and x87 state is serialized in
-the task-owned bridge frame so carrier scheduling cannot mix task state.
-Passing that instruction corpus does not by itself establish general
-distribution or complete Linux syscall compatibility. Other host products and
-page profiles retain arm64 userspace execution.
+the task-owned bridge frame across carrier scheduling. Passing that
+instruction corpus does not by itself establish general distribution or
+complete Linux syscall compatibility. Other host products and page profiles
+retain arm64 userspace execution.
 
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs

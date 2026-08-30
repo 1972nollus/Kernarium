@@ -2,8 +2,10 @@
 #pragma once
 
 #include "cpu/engine.hpp"
+#if DARWIN_UML_X86_64_GUEST
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
+#endif
 #include "memory/static_guest_memory.hpp"
 
 #include <cstddef>
@@ -75,8 +77,10 @@ private:
 
 struct ThreadExecutionState final {
 	::uml::cpu::arm64::CpuState cpu{};
+#if DARWIN_UML_X86_64_GUEST
 	::uml::cpu::x86_64::CpuState x86_cpu{};
 	::uml::cpu::x86_64::gadgets::Executor x86_executor{};
+#endif
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;
 	GuestInterruptSequence interrupt;

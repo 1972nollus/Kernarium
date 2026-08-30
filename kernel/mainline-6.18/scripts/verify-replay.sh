@@ -23,7 +23,8 @@ Usage: kernel/mainline-6.18/scripts/verify-replay.sh \
 
 PATH must be on a case-sensitive filesystem. The command materializes the
 exact pinned stable-branch commit there, validates its final tree, and by
-default builds both 16 KiB and 4 KiB configurations out of tree.
+default builds the arm64 16 KiB and 4 KiB slices plus the dedicated x86_64
+userspace 4 KiB slice out of tree.
 EOF
 }
 
@@ -87,9 +88,9 @@ export UML_KERNEL_SOURCE_CONFIG
 printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 	> "$UML_KERNEL_SOURCE_CONFIG"
 
-"$LINE_ROOT/scripts/prepare-source.sh"
-"$LINE_ROOT/scripts/prepare-source.sh" --verify --no-fetch
-"$LINE_ROOT/scripts/audit-delta.sh" --tree HEAD
+"$LINE_ROOT/scripts/prepare-source.sh" --slice arm64
+"$LINE_ROOT/scripts/prepare-source.sh" --slice arm64 --verify --no-fetch
+"$LINE_ROOT/scripts/audit-delta.sh" --slice arm64 --tree HEAD
 python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py" \
 	--linux-source "$REPLAY_DIR/linux"
 python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py" \
@@ -106,14 +107,32 @@ python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py" \
 if [ "$BUILD" -eq 1 ]; then
 	if [ -n "$JOBS" ]; then
 		"$LINE_ROOT/build/build-kernel.sh" \
-			--build "$REPLAY_DIR/build-16k" --page-size 16k --jobs "$JOBS"
+			--slice arm64 --build "$REPLAY_DIR/build-arm64-16k" \
+			--page-size 16k --jobs "$JOBS"
 		"$LINE_ROOT/build/build-kernel.sh" \
-			--build "$REPLAY_DIR/build-4k" --page-size 4k --jobs "$JOBS"
+			--slice arm64 --build "$REPLAY_DIR/build-arm64-4k" \
+			--page-size 4k --jobs "$JOBS"
 	else
 		"$LINE_ROOT/build/build-kernel.sh" \
-			--build "$REPLAY_DIR/build-16k" --page-size 16k
+			--slice arm64 --build "$REPLAY_DIR/build-arm64-16k" --page-size 16k
 		"$LINE_ROOT/build/build-kernel.sh" \
-			--build "$REPLAY_DIR/build-4k" --page-size 4k
+			--slice arm64 --build "$REPLAY_DIR/build-arm64-4k" --page-size 4k
+	fi
+fi
+
+"$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --no-fetch
+"$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --verify --no-fetch
+"$LINE_ROOT/scripts/audit-delta.sh" --slice x86_64 --tree HEAD
+
+if [ "$BUILD" -eq 1 ]; then
+	if [ -n "$JOBS" ]; then
+		"$LINE_ROOT/build/build-kernel.sh" \
+			--slice x86_64 --build "$REPLAY_DIR/build-x86_64-4k" \
+			--page-size 4k --jobs "$JOBS"
+	else
+		"$LINE_ROOT/build/build-kernel.sh" \
+			--slice x86_64 --build "$REPLAY_DIR/build-x86_64-4k" \
+			--page-size 4k
 	fi
 fi
 

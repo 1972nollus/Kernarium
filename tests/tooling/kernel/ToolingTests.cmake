@@ -7,6 +7,24 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-slice-producer-contract
+    COMMAND
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_slice_contract.sh
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME kernel-artifact-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_artifact_contract.py
+        --artifact-module
+            ${PROJECT_SOURCE_DIR}/kernel/common/artifacts/kernel_artifact.py
+        --schema
+            ${PROJECT_SOURCE_DIR}/kernel/common/artifacts/kernel-artifact-manifest.schema.json
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-git-source-preparer
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_git.sh
     LABELS kernel;dependency
@@ -80,6 +98,7 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py
         --presets ${PROJECT_SOURCE_DIR}/CMakePresets.json
+        --root-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
         --kernel-cmake ${PROJECT_SOURCE_DIR}/kernel/CMakeLists.txt
         --artifact-cmake
             ${PROJECT_SOURCE_DIR}/kernel/common/artifacts/KernelArtifact.cmake
@@ -87,11 +106,15 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-16k.env
         --acceptance-4k
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-4k.env
+        --acceptance-x86-4k
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/slices/x86_64/artifacts/accepted-4k.env
         --android-kernel-acceptance
             ${PROJECT_SOURCE_DIR}/kernel/android-6.18/artifacts/accepted-16k.env
         --android-kernel-publisher
             ${PROJECT_SOURCE_DIR}/android/aosp-17/tools/publish-kernel-artifact.py
         --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
+        --static-guest-source
+            ${PROJECT_SOURCE_DIR}/darwin/runtime/static_guest.cpp
         --runtime-source
             ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
         --runtime-header

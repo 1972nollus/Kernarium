@@ -1,7 +1,7 @@
 From 5707c9bab855cbec3118a4d1e4debbe9aefe5f69 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 04/25] uml: add execution and capability core support
+Subject: [PATCH 04/24] uml: add execution and capability core support
 
 Keep task lifecycle, architecture capability reporting, stack handling, and execution initialization in one reviewable final-state topic.
 ---

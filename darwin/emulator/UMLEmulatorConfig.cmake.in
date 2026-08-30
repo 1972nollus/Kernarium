@@ -2,6 +2,7 @@
 
 set(UMLEmulator_APPLE_PLATFORM "@UML_APPLE_PLATFORM@")
 set(UMLEmulator_GUEST_PAGE_SIZE "@UML_GUEST_PAGE_SIZE@")
+set(UMLEmulator_GUEST_SLICE "@UML_MAINLINE_KERNEL_SLICE@")
 set(UMLEmulator_PROFILING_ENABLED "@UML_ENABLE_JIT_PROFILE@")
 
 get_filename_component(_uml_emulator_prefix
