@@ -518,6 +518,42 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     std::span<const std::uint8_t> request,
     bool cursorQueue)
 {
+    return processInternal(request, cursorQueue, 0, nullptr);
+}
+
+VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
+    std::span<const std::uint8_t> request,
+    bool cursorQueue,
+    std::uint64_t fenceCookie)
+{
+    std::optional<DeferredFence> deferredFence;
+    auto response = processInternal(
+        request, cursorQueue, fenceCookie, &deferredFence);
+    return {
+        .response = std::move(response),
+        .fence = deferredFence,
+    };
+}
+
+int VirtioGpuDevice::pollContextFences(
+    std::uint32_t contextId) noexcept
+{
+    return UML_GPU_RENDERER.pollContextFences(contextId);
+}
+
+int VirtioGpuDevice::contextFenceStatus(
+    const DeferredFence& fence) noexcept
+{
+    return UML_GPU_RENDERER.contextFenceStatus(
+        fence.contextId, fence.ringIndex, fence.cookie);
+}
+
+std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
+    std::span<const std::uint8_t> request,
+    bool cursorQueue,
+    std::uint64_t fenceCookie,
+    std::optional<DeferredFence>* deferredFence)
+{
     const auto* header = readStructure<protocol::GpuControlHeader>(request);
     if (header == nullptr) {
         protocol::GpuControlHeader empty {};
@@ -701,16 +737,31 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
-        if ((header->flags & protocol::gpuFlagFence) != 0 &&
-            UML_GPU_RENDERER.createFenceAndWait(
-                header->contextId,
+        if ((header->flags & protocol::gpuFlagFence) != 0) {
+            const std::uint32_t ringIndex =
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
-                    ? header->ringIndex
-                    : 0,
-                header->fenceId,
-                stopRequested_) != 0) {
-            return response(
-                *header, protocol::GpuResponse::errorUnspecified);
+                ? header->ringIndex
+                : 0;
+            if (deferredFence != nullptr && fenceCookie != 0 &&
+                header->contextId != 0 && ringIndex == 0) {
+                if (UML_GPU_RENDERER.createContextFence(
+                        header->contextId, ringIndex, fenceCookie) != 0) {
+                    return response(
+                        *header, protocol::GpuResponse::errorUnspecified);
+                }
+                *deferredFence = DeferredFence {
+                    .contextId = header->contextId,
+                    .ringIndex = ringIndex,
+                    .cookie = fenceCookie,
+                };
+            } else if (UML_GPU_RENDERER.createFenceAndWait(
+                           header->contextId,
+                           ringIndex,
+                           header->fenceId,
+                           stopRequested_) != 0) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
         }
         return success;
     }
@@ -810,16 +861,31 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if ((header->flags & protocol::gpuFlagFence) != 0 &&
-            UML_GPU_RENDERER.createFenceAndWait(
-                header->contextId,
+        if ((header->flags & protocol::gpuFlagFence) != 0) {
+            const std::uint32_t ringIndex =
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
-                    ? header->ringIndex
-                    : 0,
-                header->fenceId,
-                stopRequested_) != 0) {
-            return response(
-                *header, protocol::GpuResponse::errorUnspecified);
+                ? header->ringIndex
+                : 0;
+            if (deferredFence != nullptr && fenceCookie != 0 &&
+                header->contextId != 0 && ringIndex == 0) {
+                if (UML_GPU_RENDERER.createContextFence(
+                        header->contextId, ringIndex, fenceCookie) != 0) {
+                    return response(
+                        *header, protocol::GpuResponse::errorUnspecified);
+                }
+                *deferredFence = DeferredFence {
+                    .contextId = header->contextId,
+                    .ringIndex = ringIndex,
+                    .cookie = fenceCookie,
+                };
+            } else if (UML_GPU_RENDERER.createFenceAndWait(
+                           header->contextId,
+                           ringIndex,
+                           header->fenceId,
+                           stopRequested_) != 0) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
         }
         return success;
     }

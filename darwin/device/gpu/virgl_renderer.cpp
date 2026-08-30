@@ -602,6 +602,75 @@ int VirglRenderer::createFenceAndWait(
     }
 }
 
+int VirglRenderer::createContextFence(
+    std::uint32_t contextId,
+    std::uint32_t ringIndex,
+    std::uint64_t fenceCookie) noexcept
+{
+    try {
+        if (contextId == 0 || ringIndex != 0 || fenceCookie == 0)
+            return EINVAL;
+        if (fenceCallbackFailed_.load(std::memory_order_acquire))
+            return EIO;
+
+        const auto key = contextRingKey(contextId, ringIndex);
+        {
+            /* Publish the callback slot before the renderer can retire the
+             * fence. A synchronously retired fence is then observable by the
+             * caller immediately after this function returns. */
+            std::lock_guard lock(mutex_);
+            retiredContextFences_.try_emplace(key, 0);
+        }
+        constexpr std::uint32_t mergeableFence =
+            VIRGL_RENDERER_FENCE_FLAG_MERGEABLE;
+        return checkGlDispatchResult(virgl_renderer_context_create_fence(
+            contextId, mergeableFence, ringIndex, fenceCookie));
+    } catch (const std::bad_alloc&) {
+        return ENOMEM;
+    } catch (...) {
+        return EIO;
+    }
+}
+
+int VirglRenderer::pollContextFences(std::uint32_t contextId) noexcept
+{
+    try {
+        if (contextId == 0)
+            return EINVAL;
+        if (fenceCallbackFailed_.load(std::memory_order_acquire))
+            return EIO;
+        virgl_renderer_context_poll(contextId);
+        if (checkGlDispatchResult(0) != 0 ||
+            fenceCallbackFailed_.load(std::memory_order_acquire)) {
+            return EIO;
+        }
+        return 0;
+    } catch (...) {
+        return EIO;
+    }
+}
+
+int VirglRenderer::contextFenceStatus(
+    std::uint32_t contextId,
+    std::uint32_t ringIndex,
+    std::uint64_t fenceCookie) noexcept
+{
+    try {
+        if (contextId == 0 || ringIndex != 0 || fenceCookie == 0)
+            return EINVAL;
+        if (fenceCallbackFailed_.load(std::memory_order_acquire))
+            return EIO;
+        const auto key = contextRingKey(contextId, ringIndex);
+        std::lock_guard lock(mutex_);
+        const auto iterator = retiredContextFences_.find(key);
+        if (iterator == retiredContextFences_.end())
+            return EIO;
+        return iterator->second >= fenceCookie ? 0 : EBUSY;
+    } catch (...) {
+        return EIO;
+    }
+}
+
 void VirglRenderer::unrefResource(std::uint32_t resourceId) noexcept
 {
     virgl_renderer_resource_unref(resourceId);

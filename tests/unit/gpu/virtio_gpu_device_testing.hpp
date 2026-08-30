@@ -76,6 +76,16 @@ public:
         std::uint32_t ringIndex,
         std::uint64_t fenceId,
         const std::atomic_bool* stopRequested) noexcept = 0;
+    [[nodiscard]] virtual int createContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept = 0;
+    [[nodiscard]] virtual int pollContextFences(
+        std::uint32_t contextId) noexcept = 0;
+    [[nodiscard]] virtual int contextFenceStatus(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept = 0;
     virtual void unrefResource(std::uint32_t resourceId) noexcept = 0;
     [[nodiscard]] virtual int attachBacking(
         std::uint32_t resourceId,

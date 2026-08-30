@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <new>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace uml::gpu::testing {
@@ -254,6 +255,44 @@ public:
         return 0;
     }
 
+    [[nodiscard]] int createContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept override
+    {
+        if (reject(Operation::fence))
+            return EIO;
+        try {
+            retiredContextFences.try_emplace(
+                contextRingKey(contextId, ringIndex), 0);
+            contextFenceCookies.push_back(fenceCookie);
+        } catch (...) {
+            return ENOMEM;
+        }
+        ++contextFenceCount;
+        return 0;
+    }
+
+    [[nodiscard]] int pollContextFences(
+        std::uint32_t contextId) noexcept override
+    {
+        lastPolledContext = contextId;
+        ++contextFencePollCount;
+        return 0;
+    }
+
+    [[nodiscard]] int contextFenceStatus(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept override
+    {
+        const auto iterator = retiredContextFences.find(
+            contextRingKey(contextId, ringIndex));
+        if (iterator == retiredContextFences.end())
+            return EIO;
+        return iterator->second >= fenceCookie ? 0 : EBUSY;
+    }
+
     void unrefResource(std::uint32_t resourceId) noexcept override
     {
         resources.erase(resourceId);
@@ -301,7 +340,21 @@ public:
         return 0;
     }
 
-    void resetFenceState() noexcept override { ++resetFenceCount; }
+    void resetFenceState() noexcept override
+    {
+        retiredContextFences.clear();
+        contextFenceCookies.clear();
+        ++resetFenceCount;
+    }
+
+    void retireContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie)
+    {
+        retiredContextFences[contextRingKey(contextId, ringIndex)] =
+            fenceCookie;
+    }
 
     void rejectNext(Operation operation) noexcept
     {
@@ -363,6 +416,10 @@ public:
     std::uint32_t lastTextureResource {};
     MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
+    unsigned contextFenceCount {};
+    unsigned contextFencePollCount {};
+    std::uint32_t lastPolledContext {};
+    std::vector<std::uint64_t> contextFenceCookies;
     const std::atomic_bool* lastFenceStopRequest {};
     unsigned unrefResourceCount {};
     unsigned attachBackingCount {};
@@ -372,6 +429,14 @@ public:
     unsigned resetFenceCount {};
 
 private:
+    [[nodiscard]] static std::uint64_t contextRingKey(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex) noexcept
+    {
+        return (static_cast<std::uint64_t>(contextId) << 8U) |
+            (ringIndex & 0xffU);
+    }
+
     [[nodiscard]] bool reject(Operation operation) noexcept
     {
         if (rejectedOperation != operation)
@@ -395,6 +460,8 @@ private:
     Operation rejectedOperation {Operation::none};
     Operation throwingOperation {Operation::none};
     Operation allocationFailureOperation {Operation::none};
+    std::unordered_map<std::uint64_t, std::uint64_t>
+        retiredContextFences;
 };
 
 template<typename Request>
@@ -414,6 +481,15 @@ template<typename Request>
     protocol::GpuControlHeader header {};
     std::memcpy(&header, response.data(), sizeof(header));
     return static_cast<protocol::GpuResponse>(header.type);
+}
+
+[[nodiscard]] protocol::GpuControlHeader responseHeader(
+    const std::vector<std::uint8_t>& response)
+{
+    require(response.size() >= sizeof(protocol::GpuControlHeader));
+    protocol::GpuControlHeader header {};
+    std::memcpy(&header, response.data(), sizeof(header));
+    return header;
 }
 
 template<typename Header>
@@ -1030,6 +1106,102 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.clearCount == clearsBeforeUnref + 1);
 }
 
+void deferredFencesUseHostTimelineAndMergedRetirement()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+
+    const auto firstContext = createContext(801);
+    const auto secondContext = createContext(802);
+    require(responseType(device.process(requestBytes(firstContext), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(secondContext), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    constexpr std::array<std::uint64_t, 3> guestFenceIds {900, 2, 900};
+    constexpr std::array<std::uint64_t, 3> hostFenceCookies {11, 12, 13};
+    for (std::size_t index = 0; index < guestFenceIds.size(); ++index) {
+        protocol::GpuSubmit3d submit {};
+        submit.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        submit.header.flags = protocol::gpuFlagFence;
+        submit.header.contextId = firstContext.header.contextId;
+        submit.header.fenceId = guestFenceIds[index];
+        const auto result = device.processWithDeferredFence(
+            requestBytes(submit), false, hostFenceCookies[index]);
+        require(result.fence.has_value());
+        require(result.fence->contextId == firstContext.header.contextId);
+        require(result.fence->ringIndex == 0);
+        require(result.fence->cookie == hostFenceCookies[index]);
+        const auto reply = responseHeader(result.response);
+        require(reply.type == static_cast<std::uint32_t>(
+            protocol::GpuResponse::okNoData));
+        require(reply.fenceId == guestFenceIds[index]);
+        require((reply.flags & protocol::gpuFlagFence) != 0);
+    }
+    require(dependencies.contextFenceCookies.size() == hostFenceCookies.size());
+    require(std::ranges::equal(
+        dependencies.contextFenceCookies, hostFenceCookies));
+
+    dependencies.retireContextFence(
+        firstContext.header.contextId, 0, hostFenceCookies.back());
+    require(device.pollContextFences(firstContext.header.contextId) == 0);
+    for (const auto cookie : hostFenceCookies) {
+        require(device.contextFenceStatus({
+                    .contextId = firstContext.header.contextId,
+                    .ringIndex = 0,
+                    .cookie = cookie,
+                }) == 0);
+    }
+
+    protocol::GpuSubmit3d otherSubmit {};
+    otherSubmit.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    otherSubmit.header.flags = protocol::gpuFlagFence;
+    otherSubmit.header.contextId = secondContext.header.contextId;
+    otherSubmit.header.fenceId = 1;
+    const auto otherResult = device.processWithDeferredFence(
+        requestBytes(otherSubmit), false, 20);
+    require(otherResult.fence.has_value());
+    require(device.contextFenceStatus(*otherResult.fence) == EBUSY);
+    dependencies.retireContextFence(secondContext.header.contextId, 0, 20);
+    require(device.contextFenceStatus(*otherResult.fence) == 0);
+
+    protocol::GpuSubmit3d nonzeroRing {};
+    nonzeroRing.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    nonzeroRing.header.flags =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    nonzeroRing.header.contextId = firstContext.header.contextId;
+    nonzeroRing.header.ringIndex = 1;
+    nonzeroRing.header.fenceId = 7;
+    const auto synchronous = device.processWithDeferredFence(
+        requestBytes(nonzeroRing), false, 21);
+    require(!synchronous.fence.has_value());
+    require(responseType(synchronous.response) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.fenceCount == 1);
+
+    protocol::GpuSubmit3d failedFence {};
+    failedFence.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    failedFence.header.flags = protocol::gpuFlagFence;
+    failedFence.header.contextId = firstContext.header.contextId;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
+    const auto submitsBeforeFailure = dependencies.submitCount;
+    const auto failure = device.processWithDeferredFence(
+        requestBytes(failedFence), false, 22);
+    require(!failure.fence.has_value());
+    require(responseType(failure.response) ==
+        protocol::GpuResponse::errorUnspecified);
+    require(dependencies.submitCount == submitsBeforeFailure + 1);
+}
+
 void resetRetiresEachExternalOwnerExactlyOnce()
 {
     std::array<std::uint8_t, 64> guestMemory {};
@@ -1474,6 +1646,7 @@ void runVirtioGpuDeviceTests()
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
+    deferredFencesUseHostTimelineAndMergedRetirement();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();
     rendererBackingAttachIsRetryableAfterAllocationFailure();

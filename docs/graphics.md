@@ -20,6 +20,13 @@ display, not as a second graphics backend. With no connected VNC client,
 scanout flushes retire without a synchronous GPU-to-CPU readback; the first
 frame after a zero-client interval refreshes the complete active scanout.
 
+Fenced Virgl submissions and host transfers from ordinary guest contexts may
+remain in flight together. Their descriptor chains retire only after the
+renderer reports the corresponding host-owned timeline cookie. Commands that
+mutate or tear down renderer state wait until those deferred fences retire;
+reset cancels the timer and discards deferred transport state before releasing
+renderer resources.
+
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,
 auxiliary buttons, and wheel events are suppressed, and coordinates are sent
