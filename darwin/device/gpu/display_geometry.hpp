@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace uml::gpu {
 
@@ -22,11 +23,30 @@ struct AspectFitRectangle final {
     double height {};
 };
 
+struct DisplayPoint final {
+    double x {};
+    double y {};
+};
+
+struct ClippedDisplaySegment final {
+    DisplayPoint entry;
+    DisplayPoint exit;
+};
+
 [[nodiscard]] AspectFitRectangle aspectFitRectangle(
     double containerWidth,
     double containerHeight,
     double contentWidth,
     double contentHeight) noexcept;
+
+/* Returns the portion of a pointer path inside a display rectangle. Entry and
+ * exit lie exactly on the rectangle boundary when the corresponding endpoint
+ * is outside. This lets native touchscreen adapters synthesize contact at the
+ * same boundary a physical finger would cross. */
+[[nodiscard]] std::optional<ClippedDisplaySegment> clipDisplaySegment(
+    AspectFitRectangle rectangle,
+    DisplayPoint start,
+    DisplayPoint end) noexcept;
 
 struct GuestDisplayChange final {
     bool changed {};

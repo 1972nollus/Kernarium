@@ -128,6 +128,56 @@ void aspectFitCentersGuestContentWithoutDistortion()
         "invalid guest geometry produced an aspect-fit viewport");
 }
 
+void pointerPathsClipToExactGuestEdges()
+{
+    using uml::gpu::AspectFitRectangle;
+    using uml::gpu::DisplayPoint;
+    using uml::gpu::clipDisplaySegment;
+    const AspectFitRectangle display {
+        .x = 10.0,
+        .y = 20.0,
+        .width = 100.0,
+        .height = 80.0,
+    };
+
+    auto clipped = clipDisplaySegment(
+        display, DisplayPoint {-10.0, 30.0}, DisplayPoint {40.0, 80.0});
+    require(clipped.has_value() &&
+            std::abs(clipped->entry.x - 10.0) < 0.001 &&
+            std::abs(clipped->entry.y - 50.0) < 0.001 &&
+            std::abs(clipped->exit.x - 40.0) < 0.001 &&
+            std::abs(clipped->exit.y - 80.0) < 0.001,
+        "an entering pointer path did not start at the guest edge");
+
+    clipped = clipDisplaySegment(
+        display, DisplayPoint {60.0, 60.0}, DisplayPoint {160.0, 110.0});
+    require(clipped.has_value() &&
+            std::abs(clipped->entry.x - 60.0) < 0.001 &&
+            std::abs(clipped->entry.y - 60.0) < 0.001 &&
+            std::abs(clipped->exit.x - 110.0) < 0.001 &&
+            std::abs(clipped->exit.y - 85.0) < 0.001,
+        "an exiting pointer path did not end at the guest edge");
+
+    clipped = clipDisplaySegment(
+        display, DisplayPoint {-10.0, 60.0}, DisplayPoint {130.0, 60.0});
+    require(clipped.has_value() &&
+            std::abs(clipped->entry.x - 10.0) < 0.001 &&
+            std::abs(clipped->exit.x - 110.0) < 0.001,
+        "a crossing pointer path did not retain both guest edges");
+    require(!clipDisplaySegment(
+                 display,
+                 DisplayPoint {-10.0, 10.0},
+                 DisplayPoint {130.0, 10.0})
+                 .has_value(),
+        "a pointer path outside the guest unexpectedly intersected it");
+    require(!clipDisplaySegment(
+                 display,
+                 DisplayPoint {0.0, 30.0},
+                 DisplayPoint {20.0, 10.0})
+                 .has_value(),
+        "a path tangent to a guest corner became a guest contact");
+}
+
 void guestModesetLatchesHostResizeUntilReset()
 {
     using uml::gpu::DisplayGeometryPolicy;
@@ -232,8 +282,10 @@ void hostTargetCorrelationHandlesBootRollbackAndDuplicates()
     (void)rollback.guestScanoutChanged(800, 600);
     require(rollback.hostSizeSettled(1000, 700),
         "the intermediate host target was not advertised");
-    require(rollback.hostSizeSettled(800, 600),
-        "the host rollback was not advertised");
+    require(!rollback.hostSizeSettled(800, 600),
+        "a host rollback to the active mode requested a redundant modeset");
+    require(rollback.advertisedSize() == uml::gpu::DisplaySize {800, 600},
+        "the silent host rollback did not update advertised geometry");
     change = rollback.guestScanoutChanged(1000, 700);
     require(change.changed && change.independent &&
             !rollback.autoResizeGuestEnabled(),
@@ -262,6 +314,7 @@ int main()
         resizeNotificationsAreCoalescedAndBounded();
         framebufferResizePublishesOneClearedGeometry();
         aspectFitCentersGuestContentWithoutDistortion();
+        pointerPathsClipToExactGuestEdges();
         guestModesetLatchesHostResizeUntilReset();
         configuredOffAlwaysKeepsHostResizeSilent();
         hostTargetCorrelationHandlesBootRollbackAndDuplicates();

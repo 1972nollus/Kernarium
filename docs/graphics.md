@@ -61,16 +61,20 @@ non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
 The first active scanout and a modeset matching the current advertised or a
 pending host target do not change geometry authority. A later guest-selected
 mode that matches neither is independent and disables further host-to-guest
-resizing until the next guest boot. With automatic resizing configured on, the
-macOS window follows each independent guest mode; iOS instead aspect-fits the
-guest mode in its view. With automatic resizing configured off, both products
-retain the guest mode and aspect-fit it in the host content area.
+resizing until the next guest boot. Every active guest mode change resizes the
+macOS content window, independently of that host-to-guest policy. iOS instead
+aspect-fits every guest mode in its view. With automatic resizing configured
+off, later host window or view changes leave the guest mode unchanged and
+aspect-fit it in the available host content area.
 
 Rendering and input use the same centered aspect-fit rectangle. AppKit maps
 that rectangle into the fixed tablet range, while Kernarium maps it into the
-touchscreen range advertised at boot. Input beginning in letterbox or
-pillarbox bars is ignored; an ongoing pointer or touch is constrained to the
-fitted edge so that its final release remains accurate.
+touchscreen range advertised at boot. A touch beginning in a letterbox or
+pillarbox bar remains outside the guest until its path enters the fitted
+rectangle, where a new contact begins at the exact edge. Crossing back out
+releases the contact at the exit edge; re-entry while the physical gesture
+continues begins a new guest contact. Pointer and touch coordinates therefore
+remain aligned with the pixels that are actually visible.
 
 ## Vulkan
 

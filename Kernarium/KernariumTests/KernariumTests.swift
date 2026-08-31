@@ -167,6 +167,176 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchPathStartsAndEndsAtGuestDisplayEdges() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.move(
+            to: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 300, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: true),
+            GuestTouchEvent(x: 280, y: 400, pressed: true),
+        ])
+        #expect(path.cancel(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func coalescedTouchSegmentsCrossTheGuestDisplay() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.move(
+            to: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+        #expect(path.end(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: true),
+            GuestTouchEvent(x: 0, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func coalescedCurvedTouchPathPreservesViewportCrossings() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        let start = CGPoint(x: 50, y: 50)
+        let firstInterior = CGPoint(x: 200, y: 75)
+        let secondInterior = CGPoint(x: 300, y: 175)
+        let current = CGPoint(x: 50, y: 200)
+
+        var endpointOnlyPath = GuestTouchPath()
+        #expect(endpointOnlyPath.begin(
+            at: start,
+            geometry: geometry
+        ).isEmpty)
+        #expect(endpointOnlyPath.move(
+            to: current,
+            geometry: geometry
+        ).isEmpty)
+
+        let samples = GuestTouchSamples.ordered(
+            coalesced: [firstInterior, secondInterior, current],
+            current: current
+        )
+        #expect(samples == [firstInterior, secondInterior, current])
+        #expect(GuestTouchSamples.ordered(
+            coalesced: [firstInterior, secondInterior],
+            current: current
+        ) == [firstInterior, secondInterior, current])
+
+        var coalescedPath = GuestTouchPath()
+        #expect(coalescedPath.begin(
+            at: start,
+            geometry: geometry
+        ).isEmpty)
+        #expect(coalescedPath.move(
+            through: samples,
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 200, pressed: true),
+            GuestTouchEvent(x: 120, y: 240, pressed: true),
+            GuestTouchEvent(x: 280, y: 560, pressed: true),
+            GuestTouchEvent(x: 0, y: 616, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func endingTouchProcessesItsFinalViewportCrossing() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        #expect(path.end(
+            at: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.end(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(

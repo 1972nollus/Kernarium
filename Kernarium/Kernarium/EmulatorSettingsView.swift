@@ -94,10 +94,11 @@ struct EmulatorSettingsView: View {
                     .accessibilityIdentifier("autoResizeGuestToggle")
 
                     Text(
-                        "When off, the guest keeps its resolution and is " +
-                            "fitted to the view. A guest-selected resolution " +
-                            "pauses automatic resizing until the guest " +
-                            "restarts."
+                        "Controls whether settled view-size changes resize " +
+                            "the guest. When off, the guest keeps its " +
+                            "resolution and is fitted to the view. A " +
+                            "guest-selected resolution pauses automatic " +
+                            "resizing until the guest restarts."
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)

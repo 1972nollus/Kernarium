@@ -34,6 +34,73 @@ AspectFitRectangle aspectFitRectangle(
     };
 }
 
+std::optional<ClippedDisplaySegment> clipDisplaySegment(
+    AspectFitRectangle rectangle,
+    DisplayPoint start,
+    DisplayPoint end) noexcept
+{
+    const double right = rectangle.x + rectangle.width;
+    const double top = rectangle.y + rectangle.height;
+    if (!std::isfinite(rectangle.x) || !std::isfinite(rectangle.y) ||
+        !std::isfinite(rectangle.width) ||
+        !std::isfinite(rectangle.height) || !std::isfinite(right) ||
+        !std::isfinite(top) || rectangle.width <= 0.0 ||
+        rectangle.height <= 0.0 || !std::isfinite(start.x) ||
+        !std::isfinite(start.y) || !std::isfinite(end.x) ||
+        !std::isfinite(end.y)) {
+        return std::nullopt;
+    }
+
+    const double deltaX = end.x - start.x;
+    const double deltaY = end.y - start.y;
+    double entry = 0.0;
+    double exit = 1.0;
+    const auto clip = [&](double direction, double distance) {
+        if (direction == 0.0)
+            return distance >= 0.0;
+        const double fraction = distance / direction;
+        if (direction < 0.0) {
+            if (fraction > exit)
+                return false;
+            entry = std::max(entry, fraction);
+        } else {
+            if (fraction < entry)
+                return false;
+            exit = std::min(exit, fraction);
+        }
+        return true;
+    };
+    if (!clip(-deltaX, start.x - rectangle.x) ||
+        !clip(deltaX, right - start.x) ||
+        !clip(-deltaY, start.y - rectangle.y) ||
+        !clip(deltaY, top - start.y) || entry > exit) {
+        return std::nullopt;
+    }
+
+    const auto inside = [&](DisplayPoint point) {
+        return point.x >= rectangle.x && point.x <= right &&
+            point.y >= rectangle.y && point.y <= top;
+    };
+    if (entry == exit && !inside(start) && !inside(end)) {
+        /* Merely touching one corner has no path inside the display and must
+         * not become a zero-duration guest contact. */
+        return std::nullopt;
+    }
+
+    const auto pointAt = [&](double fraction) {
+        return DisplayPoint {
+            .x = std::clamp(
+                start.x + fraction * deltaX, rectangle.x, right),
+            .y = std::clamp(
+                start.y + fraction * deltaY, rectangle.y, top),
+        };
+    };
+    return ClippedDisplaySegment {
+        .entry = pointAt(entry),
+        .exit = pointAt(exit),
+    };
+}
+
 DisplayGeometryPolicy::DisplayGeometryPolicy(
     std::uint32_t width,
     std::uint32_t height,
@@ -86,6 +153,7 @@ bool DisplayGeometryPolicy::hostSizeSettled(
          * size. Retire older targets so a later independent mode cannot be
          * mistaken for a delayed response to one of them. */
         hostTargetCount_ = 0;
+        return false;
     } else if (previous != encoded) {
         appendHostTarget(encoded);
     }
