@@ -2,6 +2,7 @@
 
 #include "native_display.hpp"
 
+#include "display_resize_notifier.hpp"
 #include "metal_presentation.hpp"
 #include "native_display_application.hpp"
 
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <pthread.h>
 #include <signal.h>
@@ -29,6 +31,8 @@ namespace {
 
 namespace native_input = uml::input::vnc;
 using NativeKey = std::pair<unsigned short, std::uint16_t>;
+constexpr std::int64_t resizeSettleNanoseconds =
+    150LL * NSEC_PER_MSEC;
 
 // NSEvent keyCode is the physical ANSI keyboard position. Keep the mapping
 // independent of the active macOS layout, as the VNC path does for keysyms.
@@ -75,6 +79,16 @@ std::optional<std::uint16_t> linuxKeyCode(unsigned short keyCode) noexcept
         if (native == keyCode)
             return linux;
     return std::nullopt;
+}
+
+std::optional<std::uint32_t> displayDimension(
+    CGFloat dimension,
+    std::uint32_t maximum) noexcept
+{
+    if (!std::isfinite(dimension) || dimension < 1.0)
+        return std::nullopt;
+    return static_cast<std::uint32_t>(std::min<CGFloat>(
+        std::floor(dimension), maximum));
 }
 
 // Device-dependent modifier bits from IOKit's IOLLEvent.h. NSEvent carries
@@ -178,14 +192,25 @@ struct NativeDisplayState final :
         std::uint32_t width,
         std::uint32_t height,
         native_input::VncInputSink sink,
-        native_input::PointerMode mode)
-        : presentation(width, height)
+        native_input::PointerMode mode,
+        std::uint32_t maximumDimension)
+        : presentation(
+              DisplayResizeNotifier::clampDimension(
+                  width, maximumDimension),
+              DisplayResizeNotifier::clampDimension(
+                  height, maximumDimension))
+        , resizeNotifier(width, height, maximumDimension)
         , inputSink(std::move(sink))
         , pointerMode(mode)
     {
     }
 
     void scheduleWindow();
+    void scheduleResize(NSSize size) noexcept;
+    void beginResize() noexcept;
+    void commitResize(NSSize size) noexcept;
+    void cancelResize() noexcept;
+    [[nodiscard]] bool drainResizeEvent();
     void requestRedraw() noexcept;
     void sendKey(unsigned short nativeCode, std::int32_t value) noexcept;
     void sendLinuxKey(std::uint16_t code, std::int32_t value) noexcept;
@@ -202,6 +227,7 @@ struct NativeDisplayState final :
     void shutdown() noexcept;
 
     MetalPresentation presentation;
+    DisplayResizeNotifier resizeNotifier;
     native_input::VncInputSink inputSink;
     __weak MTKView* view {};
     NSWindow* window {};
@@ -210,6 +236,11 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
+    std::atomic_bool resizeInProgress {};
+    std::atomic_bool resizeCommitPending {};
+    std::atomic_uint64_t resizeGeneration {};
+    std::mutex resizeLifecycleMutex;
+    std::uint32_t resizeTransitionDepth {};
     native_input::PointerMode pointerMode;
     native_input::DirectTouchContact touchContact;
     // AppKit stops delivering keyUp and flagsChanged once the window loses key
@@ -269,8 +300,9 @@ struct NativeDisplayState final :
 
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size
 {
-    (void)view;
     (void)size;
+    if (auto state = _state.lock(); state && !view.inLiveResize)
+        state->scheduleResize(view.bounds.size);
 }
 
 - (void)keyDown:(NSEvent*)event
@@ -376,6 +408,75 @@ struct NativeDisplayState final :
         state->releaseHeldInput();
 }
 
+- (void)windowWillStartLiveResize:(NSNotification*)notification
+{
+    (void)notification;
+    if (auto state = _state.lock())
+        state->beginResize();
+}
+
+- (void)windowDidEndLiveResize:(NSNotification*)notification
+{
+    NSWindow* window = notification.object;
+    if (auto state = _state.lock()) {
+        state->commitResize(
+            window.contentView == nil ? NSZeroSize :
+                window.contentView.bounds.size);
+    }
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification*)notification
+{
+    (void)notification;
+    if (auto state = _state.lock())
+        state->beginResize();
+}
+
+- (void)windowDidEnterFullScreen:(NSNotification*)notification
+{
+    NSWindow* window = notification.object;
+    if (auto state = _state.lock()) {
+        state->commitResize(
+            window.contentView == nil ? NSZeroSize :
+                window.contentView.bounds.size);
+    }
+}
+
+- (void)windowDidFailToEnterFullScreen:(NSWindow*)window
+{
+    if (auto state = _state.lock()) {
+        state->commitResize(
+            window.contentView == nil ? NSZeroSize :
+                window.contentView.bounds.size);
+    }
+}
+
+- (void)windowWillExitFullScreen:(NSNotification*)notification
+{
+    (void)notification;
+    if (auto state = _state.lock())
+        state->beginResize();
+}
+
+- (void)windowDidExitFullScreen:(NSNotification*)notification
+{
+    NSWindow* window = notification.object;
+    if (auto state = _state.lock()) {
+        state->commitResize(
+            window.contentView == nil ? NSZeroSize :
+                window.contentView.bounds.size);
+    }
+}
+
+- (void)windowDidFailToExitFullScreen:(NSWindow*)window
+{
+    if (auto state = _state.lock()) {
+        state->commitResize(
+            window.contentView == nil ? NSZeroSize :
+                window.contentView.bounds.size);
+    }
+}
+
 - (void)windowWillClose:(NSNotification*)notification
 {
     (void)notification;
@@ -439,6 +540,12 @@ void NativeDisplayState::scheduleWindow()
             [[UmlNativeWindowDelegate alloc] initWithState:state];
         nativeWindow.title = @"Darwin UML Virtio-GPU";
         nativeWindow.contentView = nativeView;
+        nativeWindow.contentMinSize = NSMakeSize(
+            DisplayResizeNotifier::minimumDimension,
+            DisplayResizeNotifier::minimumDimension);
+        nativeWindow.contentMaxSize = NSMakeSize(
+            state->resizeNotifier.maximumDimension(),
+            state->resizeNotifier.maximumDimension());
         nativeWindow.delegate = delegate;
         nativeWindow.acceptsMouseMovedEvents = YES;
         nativeWindow.releasedWhenClosed = NO;
@@ -452,6 +559,82 @@ void NativeDisplayState::scheduleWindow()
         [application activateIgnoringOtherApps:YES];
         [nativeView draw];
     });
+}
+
+void NativeDisplayState::scheduleResize(NSSize size) noexcept
+{
+    if (resizeInProgress.load(std::memory_order_acquire)) {
+        cancelResize();
+        return;
+    }
+    const auto generation =
+        resizeGeneration.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    const auto width = displayDimension(
+        size.width, resizeNotifier.maximumDimension());
+    const auto height = displayDimension(
+        size.height, resizeNotifier.maximumDimension());
+    if (!width || !height)
+        return;
+    auto weak = weak_from_this();
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, resizeSettleNanoseconds),
+        dispatch_get_main_queue(),
+        ^{
+            if (auto state = weak.lock()) {
+                std::lock_guard lock(state->resizeLifecycleMutex);
+                MTKView* nativeView = state->view;
+                if (state->running.load(std::memory_order_acquire) &&
+                    !state->resizeInProgress.load(std::memory_order_acquire) &&
+                    state->resizeGeneration.load(std::memory_order_acquire) ==
+                        generation &&
+                    nativeView != nil && !nativeView.inLiveResize) {
+                    state->resizeNotifier.request(*width, *height);
+                }
+            }
+        });
+}
+
+void NativeDisplayState::beginResize() noexcept
+{
+    std::lock_guard lock(resizeLifecycleMutex);
+    ++resizeTransitionDepth;
+    resizeInProgress.store(true, std::memory_order_release);
+    cancelResize();
+}
+
+void NativeDisplayState::commitResize(NSSize size) noexcept
+{
+    std::lock_guard lock(resizeLifecycleMutex);
+    cancelResize();
+    if (resizeTransitionDepth != 0)
+        --resizeTransitionDepth;
+    if (resizeTransitionDepth != 0)
+        return;
+    const auto width = displayDimension(
+        size.width, resizeNotifier.maximumDimension());
+    const auto height = displayDimension(
+        size.height, resizeNotifier.maximumDimension());
+    if (width && height && running.load(std::memory_order_acquire)) {
+        resizeNotifier.requestCommitted(*width, *height);
+        resizeCommitPending.store(true, std::memory_order_release);
+    }
+    resizeInProgress.store(false, std::memory_order_release);
+}
+
+void NativeDisplayState::cancelResize() noexcept
+{
+    resizeGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+bool NativeDisplayState::drainResizeEvent()
+{
+    std::lock_guard lock(resizeLifecycleMutex);
+    const auto size = resizeNotifier.drain();
+    if (resizeInProgress.load(std::memory_order_acquire))
+        return false;
+    const bool changed = presentation.resize(size.width, size.height);
+    resizeCommitPending.store(false, std::memory_order_release);
+    return changed;
 }
 
 void NativeDisplayState::requestRedraw() noexcept
@@ -549,11 +732,6 @@ void NativeDisplayState::sendPointer(
     if (pointerMode == native_input::PointerMode::touchscreen &&
         !touchContact.update(pressed))
         return;
-    const auto scale = [](double coordinate, double extent) {
-        const double normalized = std::clamp(coordinate / extent, 0.0, 1.0);
-        return static_cast<std::int32_t>(std::lround(
-            normalized * native_input::absoluteMaximum));
-    };
     std::array<native_input::VncInputEvent, 10> events {};
     std::size_t count = 0;
     const auto append = [&](std::uint16_t type,
@@ -564,11 +742,13 @@ void NativeDisplayState::sendPointer(
     append(
         native_input::eventAbsolute,
         native_input::absoluteX,
-        scale(location.x, bounds.width));
+        native_input::normalizedAbsoluteCoordinate(
+            location.x, bounds.width));
     append(
         native_input::eventAbsolute,
         native_input::absoluteY,
-        scale(bounds.height - location.y, bounds.height));
+        native_input::normalizedAbsoluteCoordinate(
+            bounds.height - location.y, bounds.height));
     if (pointerMode == native_input::PointerMode::touchscreen) {
         append(
             native_input::eventKey,
@@ -624,6 +804,11 @@ void NativeDisplayState::shutdown() noexcept
 {
     if (!running.exchange(false, std::memory_order_acq_rel))
         return;
+    {
+        std::lock_guard lock(resizeLifecycleMutex);
+        resizeInProgress.store(true, std::memory_order_release);
+        cancelResize();
+    }
     presentation.shutdown();
     auto state = shared_from_this();
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -645,9 +830,14 @@ NativeDisplay::NativeDisplay(
     std::uint32_t height,
     native_input::VncInputSink inputSink,
     void*,
-    native_input::PointerMode pointerMode)
+    native_input::PointerMode pointerMode,
+    std::uint32_t maximumDimension)
     : state_(std::make_shared<NativeDisplayState>(
-          width, height, std::move(inputSink), pointerMode))
+          width,
+          height,
+          std::move(inputSink),
+          pointerMode,
+          maximumDimension))
 {
     state_->scheduleWindow();
 }
@@ -665,6 +855,32 @@ std::uint32_t NativeDisplay::width() const noexcept
 std::uint32_t NativeDisplay::height() const noexcept
 {
     return state_->presentation.framebuffer().height();
+}
+
+int NativeDisplay::resizeEventDescriptor() const noexcept
+{
+    return state_->resizeNotifier.descriptor();
+}
+
+bool NativeDisplay::drainResizeEvent()
+{
+    return state_->drainResizeEvent();
+}
+
+bool NativeDisplay::claimResizeNotification() noexcept
+{
+    state_->resizeLifecycleMutex.lock();
+    if (state_->resizeInProgress.load(std::memory_order_acquire) ||
+        state_->resizeCommitPending.load(std::memory_order_acquire)) {
+        state_->resizeLifecycleMutex.unlock();
+        return false;
+    }
+    return true;
+}
+
+void NativeDisplay::releaseResizeNotification() noexcept
+{
+    state_->resizeLifecycleMutex.unlock();
 }
 
 void NativeDisplay::clear() noexcept

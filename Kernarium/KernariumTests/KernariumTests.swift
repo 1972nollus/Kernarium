@@ -75,6 +75,43 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchCoordinatesStayAlignedWhenTheDisplayViewResizes() throws {
+        let coordinates = GuestInputCoordinateSpace(
+            size: CGSize(width: 440, height: 860)
+        )
+        let portrait = try #require(coordinates.location(
+            CGPoint(x: 200, y: 400),
+            in: CGSize(width: 400, height: 800)
+        ))
+        let landscape = try #require(coordinates.location(
+            CGPoint(x: 500, y: 250),
+            in: CGSize(width: 1000, height: 500)
+        ))
+        #expect(portrait.x == 220)
+        #expect(portrait.y == 430)
+        #expect(landscape.x == portrait.x)
+        #expect(landscape.y == portrait.y)
+
+        let lowerEdge = try #require(coordinates.location(
+            CGPoint(x: 1000, y: 500),
+            in: CGSize(width: 1000, height: 500)
+        ))
+        #expect(lowerEdge.x == 439)
+        #expect(lowerEdge.y == 859)
+        #expect(coordinates.location(
+            CGPoint(x: CGFloat.nan, y: 1),
+            in: CGSize(width: 1000, height: 500)
+        ) == nil)
+
+        let oversized = GuestInputCoordinateSpace.boundedDisplaySize(
+            CGSize(width: 6016, height: 3384)
+        )
+        #expect(oversized.width == 4095)
+        #expect(oversized.height == 3384)
+    }
+
+    @Test
+    @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(

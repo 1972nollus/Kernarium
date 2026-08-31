@@ -111,6 +111,7 @@ private:
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
     void drainQueueCompletions();
+    void signalPendingConfigChange();
     void completeRequest(
         const PendingRequest& request,
         std::span<const std::uint8_t> response);

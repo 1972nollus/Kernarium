@@ -265,12 +265,50 @@ VirtioGpuDevice::~VirtioGpuDevice()
 
 protocol::GpuConfig VirtioGpuDevice::config() const noexcept
 {
+    std::uint32_t events = 0;
+    if (displayGeneration_ != clearedDisplayGeneration_)
+        events |= protocol::gpuEventDisplay;
     return {
-        .eventsRead = 0,
+        .eventsRead = events,
         .eventsClear = 0,
         .scanoutCount = protocol::primaryScanoutId + 1U,
         .capsetCount = protocol::virgl2CapsetIndex + 1U,
     };
+}
+
+void VirtioGpuDevice::recordConfigRead(
+    std::uint32_t offset,
+    std::uint32_t size) noexcept
+{
+    constexpr std::uint32_t eventsReadOffset =
+        offsetof(protocol::GpuConfig, eventsRead);
+    constexpr std::uint32_t eventsReadEnd =
+        eventsReadOffset + sizeof(protocol::GpuConfig::eventsRead);
+    const auto readEnd =
+        static_cast<std::uint64_t>(offset) + size;
+    if (offset <= eventsReadOffset && readEnd >= eventsReadEnd &&
+        displayGeneration_ != clearedDisplayGeneration_) {
+        /* events_clear acknowledges the generation whose events_read field
+         * the guest actually received. Unrelated partial config reads must
+         * not advance this snapshot. */
+        reportedDisplayGeneration_ = displayGeneration_;
+    }
+}
+
+void VirtioGpuDevice::notifyDisplayChanged() noexcept
+{
+    ++displayGeneration_;
+}
+
+void VirtioGpuDevice::clearEvents(std::uint32_t events) noexcept
+{
+    if ((events & protocol::gpuEventDisplay) != 0)
+        clearedDisplayGeneration_ = reportedDisplayGeneration_;
+}
+
+bool VirtioGpuDevice::displayEventPending() const noexcept
+{
+    return displayGeneration_ != clearedDisplayGeneration_;
 }
 
 void VirtioGpuDevice::setStopRequest(
@@ -311,6 +349,9 @@ void VirtioGpuDevice::reset() noexcept
     virglResources_.clear();
     resources_.clear();
     transferStaging_.clear();
+    displayGeneration_ = 0;
+    reportedDisplayGeneration_ = 0;
+    clearedDisplayGeneration_ = 0;
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
     UML_GPU_DISPLAY.clear();

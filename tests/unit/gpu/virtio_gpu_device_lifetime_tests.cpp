@@ -692,6 +692,60 @@ void edidReportsDisplayPixelsAndEffectiveDensity()
         protocol::GpuResponse::errorInvalidParameter);
 }
 
+void displayChangeEventsPreserveAResizeThatRacesGuestClear()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+
+    const auto recordFullConfigRead = [&device] {
+        device.recordConfigRead(0, sizeof(protocol::GpuConfig));
+    };
+
+    require(device.config().eventsRead == 0);
+    recordFullConfigRead();
+    device.notifyDisplayChanged();
+    require(device.config().eventsRead == protocol::gpuEventDisplay);
+    recordFullConfigRead();
+    require(device.displayEventPending());
+
+    /* The host publishes another geometry after the guest read events_read
+     * but before its matching events_clear write. Clearing the reported
+     * generation must leave that newer change asserted. */
+    device.notifyDisplayChanged();
+    require(device.config().scanoutCount == 1);
+    device.recordConfigRead(
+        offsetof(protocol::GpuConfig, scanoutCount),
+        sizeof(protocol::GpuConfig::scanoutCount));
+    device.clearEvents(protocol::gpuEventDisplay);
+    require(device.config().eventsRead == protocol::gpuEventDisplay);
+    recordFullConfigRead();
+    require(device.displayEventPending());
+    device.clearEvents(protocol::gpuEventDisplay);
+    require(device.config().eventsRead == 0);
+    require(!device.displayEventPending());
+
+    dependencies.displayWidth = 1024;
+    dependencies.displayHeight = 768;
+    protocol::GpuControlHeader request {};
+    request.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::getDisplayInfo);
+    const auto bytes = device.process(requestBytes(request), false);
+    require(bytes.size() == sizeof(protocol::GpuDisplayInfo));
+    protocol::GpuDisplayInfo information {};
+    std::memcpy(&information, bytes.data(), sizeof(information));
+    require(information.modes[0].rectangle.width == 1024);
+    require(information.modes[0].rectangle.height == 768);
+
+    device.notifyDisplayChanged();
+    device.reset();
+    require(device.config().eventsRead == 0);
+}
+
 void rendererExecutionFailuresPreserveDeviceState()
 {
     std::array<std::uint8_t, 256> guestMemory {};
@@ -1325,6 +1379,7 @@ void malformed3dCommandsUseSpecificErrors()
 void runVirtioGpuDeviceTests()
 {
     edidReportsDisplayPixelsAndEffectiveDensity();
+    displayChangeEventsPreserveAResizeThatRacesGuestClear();
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();

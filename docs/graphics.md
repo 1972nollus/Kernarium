@@ -41,6 +41,26 @@ mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and
 density by `nativeScale`. Android receives the same effective density on its
 kernel command line.
 
+## Dynamic native geometry
+
+Native AppKit and UIKit displays track the settled host content geometry.
+AppKit keeps the existing guest mode while a window is in live resize and
+publishes the final logical-point size from `windowDidEndLiveResize`. UIKit
+keeps the existing mode through an interactive view-controller transition and
+publishes the final point or Retina-pixel size from the transition completion.
+Non-interactive layout changes are coalesced until their geometry is stable.
+
+A settled change resizes the host presentation storage and raises the
+Virtio-GPU display event. The guest then reads the new display information and,
+when enabled, EDID. EDID-backed dimensions are limited to 4095 pixels per axis;
+the non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
+
+Input coordinates remain in the device's stable absolute domain. AppKit maps
+the current content bounds into the fixed tablet range, while Kernarium maps
+the current view bounds into the touchscreen range advertised at boot. Pointer
+and touch locations therefore remain aligned before, during, and after a
+display mode change.
+
 ## Vulkan
 
 Guest Vulkan is not implemented. The current transport lacks the complete blob

@@ -21,7 +21,8 @@ std::unique_ptr<Display> makeDisplay(
     std::uint32_t height,
     uml::input::vnc::VncInputSink inputSink,
     void* nativeView,
-    uml::input::vnc::PointerMode pointerMode)
+    uml::input::vnc::PointerMode pointerMode,
+    std::uint32_t maximumDimension)
 {
 #if !UML_GPU_HAS_VNC
     (void)vncBindAddress;
@@ -45,7 +46,12 @@ std::unique_ptr<Display> makeDisplay(
 #endif
     case DisplayMode::native:
         return std::make_unique<NativeDisplay>(
-            width, height, std::move(inputSink), nativeView, pointerMode);
+            width,
+            height,
+            std::move(inputSink),
+            nativeView,
+            pointerMode,
+            maximumDimension);
     }
     throw std::invalid_argument("unsupported Virtio-GPU display mode");
 }

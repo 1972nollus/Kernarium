@@ -125,17 +125,24 @@ struct MetalPresentationState final :
                 description(error));
         }
 
-        MTLTextureDescriptor* textureDescriptor =
+        fallbackTexture = makeFallbackTexture(width, height);
+        if (fallbackTexture == nil)
+            throw std::runtime_error("Metal fallback texture creation failed");
+    }
+
+    [[nodiscard]] id<MTLTexture> makeFallbackTexture(
+        std::uint32_t width,
+        std::uint32_t height) const noexcept
+    {
+        MTLTextureDescriptor* descriptor =
             [MTLTextureDescriptor
                 texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                 width:width
                 height:height
                 mipmapped:NO];
-        textureDescriptor.storageMode = MTLStorageModeShared;
-        textureDescriptor.usage = MTLTextureUsageShaderRead;
-        fallbackTexture = [device newTextureWithDescriptor:textureDescriptor];
-        if (fallbackTexture == nil)
-            throw std::runtime_error("Metal fallback texture creation failed");
+        descriptor.storageMode = MTLStorageModeShared;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        return [device newTextureWithDescriptor:descriptor];
     }
 
     void requestRedraw() noexcept
@@ -164,6 +171,44 @@ struct MetalPresentationState final :
             ++latestGeneration;
         }
         requestRedraw();
+    }
+
+    [[nodiscard]] bool resize(
+        std::uint32_t width,
+        std::uint32_t height) noexcept
+    {
+        @autoreleasepool {
+            try {
+                if (width == framebuffer.width() &&
+                    height == framebuffer.height()) {
+                    return false;
+                }
+                id<MTLTexture> replacement =
+                    makeFallbackTexture(width, height);
+                if (replacement == nil)
+                    throw std::runtime_error(
+                        "Metal fallback resize allocation failed");
+                {
+                    /* A CPU draw verifies and uploads its fallback texture
+                     * under this same lock, so framebuffer storage and the
+                     * matching Metal allocation change as one snapshot. */
+                    std::lock_guard lock(presentationMutex);
+                    framebuffer.resize(width, height);
+                    fallbackTexture = replacement;
+                    latestTexture = nil;
+                    latestIsCpu = true;
+                    ++latestGeneration;
+                }
+                requestRedraw();
+                return true;
+            } catch (...) {
+                if (!resizeFailureReported.exchange(
+                        true, std::memory_order_relaxed)) {
+                    std::fputs("Native Metal display resize failed\n", stderr);
+                }
+                return false;
+            }
+        }
     }
 
     PresentOutcome present(const MetalScanout& scanout) noexcept
@@ -258,14 +303,28 @@ struct MetalPresentationState final :
                     return;
                 }
                 if (useCpu) {
-                    std::lock_guard lock(framebuffer);
-                    const MTLRegion region = MTLRegionMake2D(
-                        0, 0, framebuffer.width(), framebuffer.height());
-                    [fallbackTexture
-                        replaceRegion:region
-                        mipmapLevel:0
-                        withBytes:framebuffer.pixels().data()
-                        bytesPerRow:framebuffer.rowBytes()];
+                    bool currentFallback = false;
+                    {
+                        std::lock_guard presentationLock(presentationMutex);
+                        currentFallback = sourceTexture == fallbackTexture;
+                        if (currentFallback) {
+                            std::lock_guard framebufferLock(framebuffer);
+                            const MTLRegion region = MTLRegionMake2D(
+                                0,
+                                0,
+                                framebuffer.width(),
+                                framebuffer.height());
+                            [sourceTexture
+                                replaceRegion:region
+                                mipmapLevel:0
+                                withBytes:framebuffer.pixels().data()
+                                bytesPerRow:framebuffer.rowBytes()];
+                        }
+                    }
+                    if (!currentFallback) {
+                        finishPresentation(generation);
+                        return;
+                    }
                 }
                 id<MTLCommandBuffer> buffer = [commandQueue commandBuffer];
                 if (buffer == nil) {
@@ -393,6 +452,7 @@ struct MetalPresentationState final :
     std::atomic_bool running {true};
     std::atomic_bool directPathReported {};
     std::atomic_bool renderFailureReported {};
+    std::atomic_bool resizeFailureReported {};
     std::atomic_uint64_t guestFrames {};
     std::atomic_uint64_t presentedFrames {};
     std::atomic_uint64_t droppedFrames {};
@@ -434,6 +494,13 @@ ScanoutFramebuffer& MetalPresentation::framebuffer() noexcept
 const ScanoutFramebuffer& MetalPresentation::framebuffer() const noexcept
 {
     return state_->framebuffer;
+}
+
+bool MetalPresentation::resize(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    return state_->resize(width, height);
 }
 
 void MetalPresentation::publishCpuFrame() noexcept

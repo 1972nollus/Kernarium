@@ -26,6 +26,9 @@ public:
     [[nodiscard]] void* device() const noexcept;
     [[nodiscard]] ScanoutFramebuffer& framebuffer() noexcept;
     [[nodiscard]] const ScanoutFramebuffer& framebuffer() const noexcept;
+    [[nodiscard]] bool resize(
+        std::uint32_t width,
+        std::uint32_t height) noexcept;
     void publishCpuFrame() noexcept;
     [[nodiscard]] PresentOutcome present(
         const MetalScanout& scanout) noexcept;

@@ -2,8 +2,10 @@
 
 #include "vnc_input.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <utility>
 
 namespace uml::input::vnc {
@@ -129,6 +131,17 @@ bool DirectTouchContact::update(bool pressed) noexcept
 bool DirectTouchContact::release() noexcept
 {
     return std::exchange(active_, false);
+}
+
+std::int32_t normalizedAbsoluteCoordinate(
+    double coordinate,
+    double extent) noexcept
+{
+    if (!std::isfinite(coordinate) || !std::isfinite(extent) || extent <= 0.0)
+        return 0;
+    const double normalized = std::clamp(coordinate / extent, 0.0, 1.0);
+    return static_cast<std::int32_t>(
+        std::lround(normalized * absoluteMaximum));
 }
 
 bool tryDeliver(

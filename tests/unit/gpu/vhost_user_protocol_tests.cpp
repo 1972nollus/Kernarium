@@ -213,6 +213,311 @@ private:
     std::atomic_uint attempts_ {};
 };
 
+class ConfigChangeDevice final : public uml::virtio::VhostUserDevice {
+public:
+    ConfigChangeDevice()
+    {
+        std::array<int, 2> descriptors {-1, -1};
+        require(::pipe(descriptors.data()) == 0);
+        readinessRead_ = UniqueDescriptor {descriptors[0]};
+        readinessWrite_ = UniqueDescriptor {descriptors[1]};
+    }
+
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "config change fixture";
+    }
+    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
+    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
+    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
+    {
+        protocol::GpuConfig config {
+            .eventsRead = 0,
+            .eventsClear = 0,
+            .scanoutCount = 1,
+            .capsetCount = 0,
+        };
+        const auto generation =
+            generation_.load(std::memory_order_acquire);
+        if (generation !=
+            clearedGeneration_.load(std::memory_order_acquire)) {
+            config.eventsRead = protocol::gpuEventDisplay;
+        }
+        const auto* first = reinterpret_cast<const std::uint8_t*>(&config);
+        return {first, first + sizeof(config)};
+    }
+    void configurationRead(
+        std::uint32_t offset,
+        std::uint32_t size) noexcept override
+    {
+        constexpr std::uint32_t eventsReadOffset =
+            offsetof(protocol::GpuConfig, eventsRead);
+        constexpr std::uint32_t eventsReadEnd =
+            eventsReadOffset + sizeof(protocol::GpuConfig::eventsRead);
+        const auto readEnd =
+            static_cast<std::uint64_t>(offset) + size;
+        if (offset <= eventsReadOffset && readEnd >= eventsReadEnd) {
+            reportedGeneration_.store(
+                generation_.load(std::memory_order_acquire),
+                std::memory_order_release);
+        }
+    }
+    void writeConfiguration(
+        std::uint32_t offset,
+        std::uint32_t flags,
+        std::span<const std::uint8_t> bytes) override
+    {
+        require(offset == offsetof(protocol::GpuConfig, eventsClear));
+        require(flags == protocol::configFlagWritable);
+        require(bytes.size() == sizeof(std::uint32_t));
+        std::uint32_t events {};
+        std::memcpy(&events, bytes.data(), sizeof(events));
+        if ((events & protocol::gpuEventDisplay) == 0)
+            return;
+        clearedGeneration_.store(
+            reportedGeneration_.load(std::memory_order_acquire),
+            std::memory_order_release);
+        if (generation_.load(std::memory_order_acquire) !=
+            clearedGeneration_.load(std::memory_order_acquire)) {
+            pending_.store(true, std::memory_order_release);
+        }
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t,
+        std::uint64_t,
+        std::span<const std::uint8_t>,
+        std::size_t) override
+    {
+        return {};
+    }
+    void reset() noexcept override
+    {
+        pending_.store(false, std::memory_order_release);
+        generation_.store(0, std::memory_order_release);
+        reportedGeneration_.store(0, std::memory_order_release);
+        clearedGeneration_.store(0, std::memory_order_release);
+    }
+    [[nodiscard]] int eventDescriptor() const noexcept override
+    {
+        return readinessRead_.get();
+    }
+    void drainEventSource() override
+    {
+        std::uint8_t ready {};
+        require(::read(readinessRead_.get(), &ready, sizeof(ready)) == 1);
+        pending_.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] bool configChangePending() const noexcept override
+    {
+        return pending_.load(std::memory_order_acquire);
+    }
+    void clearConfigChange() noexcept override
+    {
+        pending_.store(false, std::memory_order_release);
+    }
+
+    void trigger()
+    {
+        generation_.fetch_add(1, std::memory_order_acq_rel);
+        constexpr std::uint8_t ready = 1;
+        require(::write(readinessWrite_.get(), &ready, sizeof(ready)) == 1);
+    }
+
+    [[nodiscard]] bool pending() const noexcept
+    {
+        return pending_.load(std::memory_order_acquire);
+    }
+
+private:
+    UniqueDescriptor readinessRead_;
+    UniqueDescriptor readinessWrite_;
+    std::atomic_bool pending_ {};
+    std::atomic_uint64_t generation_ {};
+    mutable std::atomic_uint64_t reportedGeneration_ {};
+    std::atomic_uint64_t clearedGeneration_ {};
+};
+
+void configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement()
+{
+    auto device = std::make_unique<ConfigChangeDevice>();
+    auto* source = device.get();
+    VhostUserServer server {std::move(device)};
+    withServerConnection(server, [&](int socket) {
+        constexpr std::uint64_t features =
+            protocol::protocolFeatureReplyAck |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureConfig;
+        negotiateProtocolFeatures(socket, features);
+
+        /* Publish before SET_SLAVE_REQ_FD to prove the transport retains the
+         * notification until it has a channel on which to deliver it. */
+        source->trigger();
+        auto backend = makeSocketPair();
+        const std::array descriptors {backend.descriptors[1].get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setSlaveRequestFd,
+            {},
+            descriptors);
+
+        pollfd ready {
+            .fd = backend.descriptors[0].get(),
+            .events = POLLIN,
+        };
+        require(::poll(&ready, 1, 2000) == 1);
+        protocol::VhostHeader notification {};
+        readExact(
+            backend.descriptors[0].get(),
+            &notification,
+            sizeof(notification));
+        require(notification.request == static_cast<std::uint32_t>(
+            protocol::VhostSlaveRequest::configChange));
+        require(notification.flags ==
+            (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
+        require(notification.size == 0);
+        require(source->pending());
+
+        const auto acknowledge = [&](const protocol::VhostHeader& request) {
+            const protocol::VhostHeader acknowledgement {
+                .request = request.request,
+                .flags =
+                    protocol::vhostUserVersion | protocol::vhostUserReply,
+                .size = sizeof(std::uint64_t),
+            };
+            constexpr std::uint64_t status = 0;
+            sendMessageWithDescriptors(
+                backend.descriptors[0].get(),
+                acknowledgement,
+                {},
+                bytesOf(status));
+        };
+        const auto waitUntilDelivered = [&] {
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds {2};
+            while (source->pending() &&
+                   std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::yield();
+            }
+            require(!source->pending());
+        };
+        const auto readNotification = [&] {
+            pollfd descriptor {
+                .fd = backend.descriptors[0].get(),
+                .events = POLLIN,
+            };
+            require(::poll(&descriptor, 1, 2000) == 1);
+            protocol::VhostHeader next {};
+            readExact(backend.descriptors[0].get(), &next, sizeof(next));
+            require(next.request == static_cast<std::uint32_t>(
+                protocol::VhostSlaveRequest::configChange));
+            require(next.flags ==
+                (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
+            require(next.size == 0);
+            return next;
+        };
+        const auto readConfig = [&] {
+            const protocol::ConfigHeader header {
+                .offset = 0,
+                .size = sizeof(protocol::GpuConfig),
+                .flags = protocol::configFlagWritable,
+            };
+            const std::array<std::uint8_t, sizeof(protocol::GpuConfig)> zeros {};
+            sendRequest(
+                socket,
+                protocol::VhostRequest::getConfig,
+                configPayload(header, zeros),
+                {},
+                false);
+            protocol::VhostHeader response {};
+            std::array<
+                std::uint8_t,
+                sizeof(protocol::ConfigHeader) + sizeof(protocol::GpuConfig)>
+                payload {};
+            readExact(socket, &response, sizeof(response));
+            readExact(socket, payload.data(), payload.size());
+            require(response.request == static_cast<std::uint32_t>(
+                protocol::VhostRequest::getConfig));
+            require(response.size == payload.size());
+            protocol::GpuConfig config {};
+            std::memcpy(
+                &config,
+                payload.data() + sizeof(protocol::ConfigHeader),
+                sizeof(config));
+            return config;
+        };
+        const auto clearDisplayEvent = [&] {
+            constexpr std::uint32_t events = protocol::gpuEventDisplay;
+            const protocol::ConfigHeader header {
+                .offset = offsetof(protocol::GpuConfig, eventsClear),
+                .size = sizeof(events),
+                .flags = protocol::configFlagWritable,
+            };
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setConfig,
+                configPayload(header, bytesOf(events)));
+        };
+        const auto readScanoutCount = [&] {
+            const protocol::ConfigHeader header {
+                .offset = offsetof(protocol::GpuConfig, scanoutCount),
+                .size = sizeof(protocol::GpuConfig::scanoutCount),
+                .flags = protocol::configFlagWritable,
+            };
+            const std::array<
+                std::uint8_t,
+                sizeof(protocol::GpuConfig::scanoutCount)> zeros {};
+            sendRequest(
+                socket,
+                protocol::VhostRequest::getConfig,
+                configPayload(header, zeros),
+                {},
+                false);
+            protocol::VhostHeader response {};
+            std::array<
+                std::uint8_t,
+                sizeof(protocol::ConfigHeader) +
+                    sizeof(protocol::GpuConfig::scanoutCount)> payload {};
+            readExact(socket, &response, sizeof(response));
+            readExact(socket, payload.data(), payload.size());
+            require(response.request == static_cast<std::uint32_t>(
+                protocol::VhostRequest::getConfig));
+            require(response.size == payload.size());
+            std::uint32_t scanoutCount {};
+            std::memcpy(
+                &scanoutCount,
+                payload.data() + sizeof(protocol::ConfigHeader),
+                sizeof(scanoutCount));
+            return scanoutCount;
+        };
+
+        acknowledge(notification);
+        waitUntilDelivered();
+        require(readConfig().eventsRead == protocol::gpuEventDisplay);
+
+        /* A second resize reaches the IRQ path while the first config work is
+         * still represented by its old events_read snapshot. Its interrupt
+         * may coalesce, so clearing that snapshot must enqueue another
+         * backend notification after SET_CONFIG has been acknowledged. */
+        source->trigger();
+        const auto coalesced = readNotification();
+        acknowledge(coalesced);
+        waitUntilDelivered();
+        require(readScanoutCount() == 1);
+        clearDisplayEvent();
+        const auto rearmed = readNotification();
+        acknowledge(rearmed);
+        waitUntilDelivered();
+
+        require(readConfig().eventsRead == protocol::gpuEventDisplay);
+        clearDisplayEvent();
+        pollfd unexpected {
+            .fd = backend.descriptors[0].get(),
+            .events = POLLIN,
+        };
+        require(::poll(&unexpected, 1, 100) == 0);
+    });
+}
+
 void deferredCompletionSupportsFourQueues()
 {
     auto device = std::make_unique<DeferredQueueDevice>();
@@ -1270,6 +1575,7 @@ void runVhostUserProtocolTests()
     const auto before = descriptorCount();
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
+    configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
     {
         VhostUserServer server {
             {}, "127.0.0.1", 0, {}, 64, 64, false};

@@ -160,6 +160,22 @@ if(TARGET uml_gpu_service)
 endif()
 
 if(TARGET uml_gpu_display)
+    add_executable(uml_gpu_display_resize_tests
+        display_resize_tests.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_resize_notifier.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp)
+    target_include_directories(uml_gpu_display_resize_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_link_libraries(uml_gpu_display_resize_tests PRIVATE
+        "-framework Accelerate")
+    target_compile_features(uml_gpu_display_resize_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_display_resize_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME gpu-display-resize
+        COMMAND uml_gpu_display_resize_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu)
+
     add_library(uml_gpu_display_test_variant STATIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vnc_display.cpp

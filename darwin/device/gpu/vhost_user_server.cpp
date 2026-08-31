@@ -316,7 +316,8 @@ public:
         VirtioGpuDevice::GuestReader reader,
         VirtioGpuDevice::GuestMapper mapper,
         std::uint32_t dotsPerInch)
-        : gpu_(
+        : display_(display)
+        , gpu_(
               display,
               std::move(reader),
               std::move(mapper),
@@ -349,6 +350,13 @@ public:
         return {bytes, bytes + sizeof(config)};
     }
 
+    void configurationRead(
+        std::uint32_t offset,
+        std::uint32_t size) noexcept override
+    {
+        gpu_.recordConfigRead(offset, size);
+    }
+
     void writeConfiguration(
         std::uint32_t offset,
         std::uint32_t flags,
@@ -372,7 +380,20 @@ public:
             (flags == protocol::configFlagWritable && !writableRange)) {
             throw std::runtime_error("invalid Virtio-GPU config write");
         }
-        // events_clear is write-only. No asynchronous display events exist.
+        if (flags == protocol::configFlagWritable) {
+            std::uint32_t clearEvents = 0;
+            const auto relativeOffset =
+                static_cast<std::size_t>(offset - eventsClearOffset);
+            std::memcpy(
+                reinterpret_cast<std::uint8_t*>(&clearEvents) + relativeOffset,
+                bytes.data(),
+                bytes.size());
+            gpu_.clearEvents(clearEvents);
+            if ((clearEvents & protocol::gpuEventDisplay) != 0 &&
+                gpu_.displayEventPending()) {
+                configChangePending_ = true;
+            }
+        }
     }
 
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
@@ -396,7 +417,44 @@ public:
         };
     }
 
-    void reset() noexcept override { gpu_.reset(); }
+    void reset() noexcept override
+    {
+        gpu_.reset();
+        configChangePending_ = false;
+    }
+
+    [[nodiscard]] int eventDescriptor() const noexcept override
+    {
+        return display_.resizeEventDescriptor();
+    }
+
+    void drainEventSource() override
+    {
+        if (display_.drainResizeEvent()) {
+            gpu_.notifyDisplayChanged();
+            configChangePending_ = true;
+        }
+    }
+
+    [[nodiscard]] bool configChangePending() const noexcept override
+    {
+        return configChangePending_;
+    }
+
+    [[nodiscard]] bool claimConfigChange() noexcept override
+    {
+        return configChangePending_ && display_.claimResizeNotification();
+    }
+
+    void releaseConfigChange() noexcept override
+    {
+        display_.releaseResizeNotification();
+    }
+
+    void clearConfigChange() noexcept override
+    {
+        configChangePending_ = false;
+    }
 
     void setStopRequest(
         const std::atomic_bool* stopRequested) noexcept override
@@ -433,8 +491,10 @@ public:
     }
 
 private:
+    Display& display_;
     VirtioGpuDevice gpu_;
     bool hasEdid_;
+    bool configChangePending_ {};
 };
 
 } // namespace
@@ -463,7 +523,10 @@ VhostUserServer::VhostUserServer(
           height,
           std::move(inputSink),
           nativeView,
-          pointerMode))
+          pointerMode,
+          dotsPerInch == 0 ?
+              protocol::maximumDisplayDimension :
+              protocol::maximumEdidDimension))
 {
     device_ = std::make_unique<GpuVhostUserDevice>(
         *display_,
@@ -875,6 +938,67 @@ void VhostUserServer::signalQueue(std::uint32_t index)
         throw std::runtime_error(
             "invalid vhost-user in-band completion acknowledgement");
     }
+}
+
+void VhostUserServer::signalPendingConfigChange()
+{
+    if (!device_->configChangePending())
+        return;
+    constexpr std::uint64_t requiredFeatures =
+        protocol::protocolFeatureReplyAck |
+        protocol::protocolFeatureSlaveRequest |
+        protocol::protocolFeatureConfig;
+    if ((negotiatedProtocolFeatures_ & requiredFeatures) != requiredFeatures ||
+        slaveRequestDescriptor_.get() < 0) {
+        return;
+    }
+    if (!device_->claimConfigChange())
+        return;
+
+    const protocol::VhostHeader header {
+        .request = static_cast<std::uint32_t>(
+            protocol::VhostSlaveRequest::configChange),
+        .flags = protocol::vhostUserVersion | protocol::vhostUserNeedReply,
+        .size = 0,
+    };
+    try {
+        writeFrame(
+            slaveRequestDescriptor_.get(),
+            header,
+            {},
+            connectionStopRequested_);
+    } catch (...) {
+        device_->releaseConfigChange();
+        throw;
+    }
+    /* Publication is the transition boundary. The UI can begin resizing once
+     * the complete request is on the backend channel; it need not wait for a
+     * potentially slow frontend acknowledgement. */
+    device_->releaseConfigChange();
+
+    VhostUserMessage reply;
+    if (!receiveVhostUserMessage(
+            slaveRequestDescriptor_.get(),
+            reply,
+            connectionStopRequested_)) {
+        if (connectionStopRequested_ != nullptr &&
+            connectionStopRequested_->load(std::memory_order_acquire)) {
+            throw ConnectionStopped {};
+        }
+        throw std::runtime_error(
+            "closed vhost-user config-change channel");
+    }
+    constexpr std::uint32_t expectedReplyFlags =
+        protocol::vhostUserVersion | protocol::vhostUserReply;
+    if (reply.header.request != header.request ||
+        reply.header.flags != expectedReplyFlags ||
+        reply.payload.size() != sizeof(std::uint64_t) ||
+        !reply.descriptors.empty() ||
+        payloadAs<std::uint64_t>(reply.payload) != 0) {
+        throw std::runtime_error(
+            "invalid vhost-user config-change acknowledgement");
+    }
+    device_->clearConfigChange();
 }
 
 std::uint64_t VhostUserServer::allocateRequestId()
@@ -1386,12 +1510,17 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("short GET_CONFIG payload");
         const auto configRequest =
             payloadAs<protocol::ConfigHeader>(message.payload);
-        const auto configuration = device_->configuration();
         if (message.payload.size() !=
             sizeof(protocol::ConfigHeader) + configRequest.size) {
             throw std::runtime_error("invalid Virtio-GPU config request size");
         }
-        if (configRequest.flags != protocol::configFlagWritable ||
+        if (configRequest.flags != protocol::configFlagWritable) {
+            sendReply(socket, message.header, {});
+            sentReply = true;
+            break;
+        }
+        const auto configuration = device_->configuration();
+        if (
             configRequest.offset > configuration.size() ||
             configRequest.size > configuration.size() - configRequest.offset) {
             sendReply(socket, message.header, {});
@@ -1408,6 +1537,7 @@ void VhostUserServer::handleMessage(
             configuration.data() + configRequest.offset,
             configRequest.size);
         sendReply(socket, message.header, payload);
+        device_->configurationRead(configRequest.offset, configRequest.size);
         sentReply = true;
         break;
     }
@@ -1473,6 +1603,11 @@ void VhostUserServer::serveConnection(
     const std::size_t deviceEventIndex = queues_.size() + 1U;
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
+            /* This also publishes a resize which arrived before the guest
+             * installed its backend-request descriptor. Running it at the
+             * loop boundary ensures any SET_SLAVE_REQ_FD acknowledgement was
+             * sent on the main channel before waiting for this reply. */
+            signalPendingConfigChange();
             bool activePolling = false;
             for (std::uint32_t index = 0; index < queues_.size(); ++index) {
                 auto& queue = queues_[index];
@@ -1535,6 +1670,7 @@ void VhostUserServer::serveConnection(
                 throw std::runtime_error("invalid virtio device event descriptor");
             if (deviceEvents != 0) {
                 device_->drainEventSource();
+                signalPendingConfigChange();
                 drainQueueCompletions();
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     processQueue(index);

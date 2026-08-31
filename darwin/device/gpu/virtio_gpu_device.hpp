@@ -48,6 +48,12 @@ public:
     ~VirtioGpuDevice();
 
     [[nodiscard]] protocol::GpuConfig config() const noexcept;
+    void recordConfigRead(
+        std::uint32_t offset,
+        std::uint32_t size) noexcept;
+    void notifyDisplayChanged() noexcept;
+    void clearEvents(std::uint32_t events) noexcept;
+    [[nodiscard]] bool displayEventPending() const noexcept;
     // The caller owns this flag and must keep it alive until it clears the
     // registration after process() has returned.
     void setStopRequest(const std::atomic_bool* stopRequested) noexcept;
@@ -118,6 +124,9 @@ private:
     std::unordered_set<std::uint32_t> contexts_;
     std::vector<std::uint8_t> transferStaging_;
     const std::atomic_bool* stopRequested_ {};
+    std::uint64_t displayGeneration_ {};
+    std::uint64_t reportedDisplayGeneration_ {};
+    std::uint64_t clearedDisplayGeneration_ {};
     std::uint32_t scanoutResource_ {};
     protocol::GpuRectangle scanoutRectangle_ {};
 };

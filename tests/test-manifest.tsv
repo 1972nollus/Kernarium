@@ -35,6 +35,7 @@ gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	co
 gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
 gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
 gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional
+gpu-display-resize	tests/unit/gpu/display_resize_tests.cpp	unit	conditional
 gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional
 vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained
 native-4k-shadow-mmu	tests/unit/arm64	unit	conditional

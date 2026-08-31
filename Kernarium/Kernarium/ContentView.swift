@@ -266,7 +266,51 @@ private struct GuestDisplayGeometry {
     let dotsPerInch: UInt32
 }
 
-private struct GuestDisplayView: UIViewRepresentable {
+struct GuestInputCoordinateSpace {
+    static let maximumDisplayDimension = CGFloat(4095)
+
+    let size: CGSize
+
+    static func boundedDisplaySize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: min(size.width, maximumDisplayDimension),
+            height: min(size.height, maximumDisplayDimension)
+        )
+    }
+
+    func location(
+        _ point: CGPoint,
+        in bounds: CGSize
+    ) -> (x: UInt32, y: UInt32)? {
+        guard size.width >= 1, size.height >= 1,
+              bounds.width > 0, bounds.height > 0,
+              point.x.isFinite, point.y.isFinite,
+              size.width.isFinite, size.height.isFinite,
+              bounds.width.isFinite, bounds.height.isFinite,
+              size.width <= CGFloat(UInt32.max),
+              size.height <= CGFloat(UInt32.max) else { return nil }
+        let x = min(
+            max((point.x * size.width / bounds.width).rounded(.down), 0),
+            size.width - 1
+        )
+        let y = min(
+            max((point.y * size.height / bounds.height).rounded(.down), 0),
+            size.height - 1
+        )
+        return (UInt32(x), UInt32(y))
+    }
+}
+
+private extension Notification.Name {
+    static let guestDisplayResizeWillBegin = Notification.Name(
+        "org.linux-um-darwin.guest-display-resize-will-begin"
+    )
+    static let guestDisplayResizeDidEnd = Notification.Name(
+        "org.linux-um-darwin.guest-display-resize-did-end"
+    )
+}
+
+private struct GuestDisplayView: UIViewControllerRepresentable {
     @Binding var keyboardVisible: Bool
     let retinaMode: Bool
     let viewDidLayout: @MainActor (
@@ -274,7 +318,7 @@ private struct GuestDisplayView: UIViewRepresentable {
         GuestDisplayGeometry
     ) -> Void
 
-    func makeUIView(context: Context) -> GuestMetalView {
+    func makeUIViewController(context: Context) -> GuestDisplayViewController {
         let view = GuestMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.viewDidLayout = viewDidLayout
         view.retinaMode = retinaMode
@@ -282,17 +326,59 @@ private struct GuestDisplayView: UIViewRepresentable {
         view.enableSetNeedsDisplay = true
         view.autoResizeDrawable = false
         view.isMultipleTouchEnabled = false
-        return view
+        return GuestDisplayViewController(metalView: view)
     }
 
-    func updateUIView(_ view: GuestMetalView, context: Context) {
+    func updateUIViewController(
+        _ controller: GuestDisplayViewController,
+        context: Context
+    ) {
+        let view = controller.metalView
         view.retinaMode = retinaMode
         view.setKeyboardVisible(keyboardVisible)
         view.reportLayout()
     }
 
-    static func dismantleUIView(_ view: GuestMetalView, coordinator: ()) {
-        view.resignFirstResponder()
+    static func dismantleUIViewController(
+        _ controller: GuestDisplayViewController,
+        coordinator: ()
+    ) {
+        controller.metalView.finishHostResize()
+        controller.metalView.resignFirstResponder()
+    }
+}
+
+private final class GuestDisplayViewController: UIViewController {
+    let metalView: GuestMetalView
+    private var transitionGeneration: UInt64 = 0
+
+    init(metalView: GuestMetalView) {
+        self.metalView = metalView
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = metalView
+    }
+
+    override func viewWillTransition(
+        to size: CGSize,
+        with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        transitionGeneration &+= 1
+        let generation = transitionGeneration
+        metalView.beginHostResize()
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self,
+                  self.transitionGeneration == generation else { return }
+            self.metalView.finishHostResize()
+        }
     }
 }
 
@@ -301,8 +387,9 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         GuestMetalView,
         GuestDisplayGeometry
     ) -> Void)?
-    var guestPixelSize: CGSize?
+    var inputCoordinateSpace: GuestInputCoordinateSpace?
     var retinaMode = false
+    @objc private(set) var umlGuestResizeInProgress = false
     private var trackedTouch: UITouch?
 
     override var canBecomeFirstResponder: Bool { true }
@@ -342,6 +429,25 @@ private final class GuestMetalView: MTKView, UIKeyInput {
                 pixelSize: pixelSize,
                 dotsPerInch: dotsPerInch
             )
+        )
+    }
+
+    func beginHostResize() {
+        guard !umlGuestResizeInProgress else { return }
+        umlGuestResizeInProgress = true
+        NotificationCenter.default.post(
+            name: .guestDisplayResizeWillBegin,
+            object: self
+        )
+    }
+
+    func finishHostResize() {
+        guard umlGuestResizeInProgress else { return }
+        reportLayout()
+        umlGuestResizeInProgress = false
+        NotificationCenter.default.post(
+            name: .guestDisplayResizeDidEnd,
+            object: self
         )
     }
 
@@ -409,20 +515,15 @@ private final class GuestMetalView: MTKView, UIKeyInput {
 
     private func sendTouch(_ touch: UITouch, pressed: Bool) {
         let point = touch.location(in: self)
-        let size = guestPixelSize ?? bounds.size
-        guard size.width >= 1, size.height >= 1,
-              bounds.width > 0, bounds.height > 0 else { return }
-        let x = min(
-            max((point.x * size.width / bounds.width).rounded(.down), 0),
-            size.width - 1
-        )
-        let y = min(
-            max((point.y * size.height / bounds.height).rounded(.down), 0),
-            size.height - 1
-        )
+        let coordinateSpace = inputCoordinateSpace ??
+            GuestInputCoordinateSpace(size: bounds.size)
+        guard let location = coordinateSpace.location(
+            point,
+            in: bounds.size
+        ) else { return }
         kernarium_runtime_loader_send_touch(
-            UInt32(x),
-            UInt32(y),
+            location.x,
+            location.y,
             pressed ? 1 : 0
         )
     }
@@ -699,8 +800,13 @@ private final class EmulatorLauncher {
         }
         started = true
         startThermalObservation()
-        let size = geometry.pixelSize
-        view.guestPixelSize = size
+        let size = GuestInputCoordinateSpace.boundedDisplaySize(
+            geometry.pixelSize
+        )
+        // Virtio-input publishes its ABS_X/Y range only when it is probed.
+        // Keep that launch-time coordinate space stable while later layouts
+        // resize Virtio-GPU, and normalize every current view point into it.
+        view.inputCoordinateSpace = GuestInputCoordinateSpace(size: size)
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))

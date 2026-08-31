@@ -33,6 +33,11 @@ public:
     [[nodiscard]] virtual std::uint64_t features() const noexcept = 0;
     [[nodiscard]] virtual std::size_t queueCount() const noexcept = 0;
     [[nodiscard]] virtual std::vector<std::uint8_t> configuration() const = 0;
+    virtual void configurationRead(
+        std::uint32_t,
+        std::uint32_t) noexcept
+    {
+    }
     virtual void writeConfiguration(
         std::uint32_t offset,
         std::uint32_t flags,
@@ -54,6 +59,18 @@ public:
     {
         return false;
     }
+    /* A device event may also require a transport-level Virtio config
+     * interrupt rather than a virtqueue retry or completion. */
+    [[nodiscard]] virtual bool configChangePending() const noexcept
+    {
+        return false;
+    }
+    [[nodiscard]] virtual bool claimConfigChange() noexcept
+    {
+        return configChangePending();
+    }
+    virtual void releaseConfigChange() noexcept {}
+    virtual void clearConfigChange() noexcept {}
     virtual void setStopRequest(const std::atomic_bool*) noexcept {}
     virtual void traceQueue(
         std::uint32_t,

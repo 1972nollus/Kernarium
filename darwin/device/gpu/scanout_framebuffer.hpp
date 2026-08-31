@@ -3,6 +3,7 @@
 
 #include "protocol.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -42,6 +43,7 @@ public:
     void lock() noexcept;
     void unlock() noexcept;
 
+    void resize(std::uint32_t width, std::uint32_t height);
     void clear() noexcept;
     void clearLocked() noexcept;
     [[nodiscard]] ScanoutRectangle update(
@@ -60,8 +62,7 @@ public:
     void fillSelfTestPatternLocked();
 
 private:
-    std::uint32_t width_;
-    std::uint32_t height_;
+    std::atomic_uint64_t dimensions_;
     std::vector<std::uint8_t> pixels_;
     FramebufferMutex mutex_;
 };
