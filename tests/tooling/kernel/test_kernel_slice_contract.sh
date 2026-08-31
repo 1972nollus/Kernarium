@@ -68,7 +68,7 @@ for path in \
 	require_file "$path"
 done
 
-# The normal arm64 product owns the shared 24-topic base and no compatibility
+# The normal arm64 product owns the shared 25-topic base and no compatibility
 # topic.  These identifiers name the former mixed-ABI implementation rather
 # than ordinary architecture-neutral x86 references in upstream UML code.
 # shellcheck disable=SC1090
@@ -84,14 +84,14 @@ COMMON_UPSTREAM_TREE=$UML_KERNEL_UPSTREAM_TREE
 COMMON_BASE_REF=$UML_KERNEL_BASE_REF
 COMMON_ABI_VERSION=$UML_KERNEL_ABI_VERSION
 COMMON_ABI_FINGERPRINT=$UML_KERNEL_ABI_FINGERPRINT
-[ "$COMMON_PATCH_COUNT" -eq 24 ] ||
-	fail "common series has $COMMON_PATCH_COUNT patches; expected 24"
-[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 24 ] ||
-	fail "common series manifest is not the canonical 24-topic base"
+[ "$COMMON_PATCH_COUNT" -eq 25 ] ||
+	fail "common series has $COMMON_PATCH_COUNT patches; expected 25"
+[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 25 ] ||
+	fail "common series manifest is not the canonical 25-topic base"
 common_patch_files=$(find "$COMMON_SERIES" -maxdepth 1 -type f \
 	-name '*.patch' | wc -l | tr -d ' ')
-[ "$common_patch_files" -eq 24 ] ||
-	fail "common series contains $common_patch_files generated patches; expected 24"
+[ "$common_patch_files" -eq 25 ] ||
+	fail "common series contains $common_patch_files generated patches; expected 25"
 if grep -E -i \
 	'UML_X86_64_USERSPACE_ONLY|UPT_IS_X86_64|upt_is_x86_64|UML_GUEST_ISA_X86_64|enum uml_guest_isa|run x86-64 userspace through Darwin gadgets' \
 	"$COMMON_SERIES"/*.patch >/dev/null; then
@@ -109,6 +109,12 @@ fi
 grep -F 'CONFIG_UML_X86_64_USERSPACE_ONLY=y' \
 	"$SLICE_ROOT/config/userspace.fragment" >/dev/null ||
 	fail "x86_64 userspace fragment does not select its fixed-ABI kernel mode"
+grep -Fxq '# CONFIG_BPF_SYSCALL is not set' \
+	"$SLICE_ROOT/config/userspace.fragment" ||
+	fail "x86_64 userspace slice still exposes the eBPF syscall"
+grep -Fxq '# CONFIG_CGROUP_BPF is not set' \
+	"$SLICE_ROOT/config/userspace.fragment" ||
+	fail "x86_64 userspace slice still exposes cgroup eBPF attachment"
 [ ! -e "$SLICE_ROOT/config/common.fragment" ] ||
 	fail "x86_64 slice duplicates the shared common config fragment"
 [ ! -e "$SLICE_ROOT/config/page-4k.fragment" ] ||
@@ -956,7 +962,7 @@ printf '%s\n' \
 	"UML_KERNEL_BASE_REF='$COMMON_BASE_REF'" \
 	"UML_KERNEL_PATCH_BRANCH='$COMMON_PATCH_BRANCH'" \
 	"UML_KERNEL_FINAL_TREE='$COMMON_FINAL_TREE'" \
-	'UML_KERNEL_PATCH_COUNT=24' \
+	"UML_KERNEL_PATCH_COUNT=$COMMON_PATCH_COUNT" \
 	"UML_KERNEL_ABI_VERSION=$COMMON_ABI_VERSION" \
 	"UML_KERNEL_ABI_FINGERPRINT='$COMMON_ABI_FINGERPRINT'" \
 	> "$BUILD_FIXTURE/kernel/mainline-6.18/patches/metadata.env"

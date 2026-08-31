@@ -6,3 +6,4 @@ fs/eventpoll.c	x86_64-userspace-slice	carry-locally	Translate x86_64 epoll event
 fs/open.c	x86_64-userspace-slice	carry-locally	Translate x86_64 open syscall structures only for the dedicated userspace ABI.
 include/linux/eventpoll.h	x86_64-userspace-slice	carry-locally	Declare the slice-local epoll conversion helpers used by the syscall adapter.
 include/linux/fs.h	x86_64-userspace-slice	carry-locally	Declare the slice-local open conversion helper used by the syscall adapter.
+net/ethtool/ioctl.c	x86_64-userspace-slice	carry-locally	Accept the x86 compat ethtool structure layout only in the dedicated userspace slice.

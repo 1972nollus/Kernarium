@@ -2,4 +2,5 @@
 # Ordered final-state topic identity manifest. Fields are order, file, stable
 # patch-id, SHA-256 of the git-generated patch, and commit subject.
 order	filename	stable_patch_id	sha256	subject
-1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	14e792302eaa8298bbf9b353ebda8082e5c68c78	66d42c26976a46a5b4e77cd6fc065ff617af9b76ad337eede5deb5bdc367f747	arm64: add a dedicated x86-64 userspace UML slice
+1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	14e792302eaa8298bbf9b353ebda8082e5c68c78	b5d2b1c8d59b61cc63ed1532182f742c00b6c9b6f4e3fdaaf8a58478dc7bf073	arm64: add a dedicated x86-64 userspace UML slice
+2	0002-arm64-add-initial-i386-userspace-task-support.patch	fa663eb98366d7c64479e061753a5be7d66eedae	8a531576e787ad2d14892671589e0819a59187115198cc45e2d0344ac965acb2	arm64: add initial i386 userspace task support

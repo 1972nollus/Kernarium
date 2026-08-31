@@ -1,0 +1,675 @@
+From f60eba9cac1ac1d1158f3edadd31abf72b99c469 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 22:10:26 +0900
+Subject: [PATCH 2/2] arm64: add initial i386 userspace task support
+
+---
+ arch/arm64/um/Kconfig                   |  12 ++-
+ arch/arm64/um/Makefile                  |   1 +
+ arch/arm64/um/asm/elf.h                 |  75 ++++++++++++++++-
+ arch/arm64/um/asm/seccomp.h             |  42 ++++++++++
+ arch/arm64/um/asm/syscall.h             |   4 +-
+ arch/arm64/um/asm/unistd.h              |  15 ++++
+ arch/arm64/um/mmap.c                    |   9 +++
+ arch/arm64/um/shared/sysdep/ptrace.h    |  15 ++++
+ arch/arm64/um/x86_32_syscalls.c         |  21 +++++
+ arch/um/include/asm/Kbuild              |   1 -
+ arch/um/include/asm/compat.h            | 103 ++++++++++++++++++++++++
+ arch/um/include/asm/pgtable-2level.h    |   4 +
+ arch/um/include/asm/pgtable-3level.h    |   4 +
+ arch/um/include/asm/pgtable-4level.h    |   4 +
+ arch/um/include/asm/processor-generic.h |  17 ++++
+ arch/um/include/asm/thread_info.h       |   6 ++
+ arch/um/include/shared/kern_util.h      |   1 +
+ arch/um/kernel/skas/process.c           |   9 +++
+ arch/um/kernel/skas/syscall.c           |  28 +++++++
+ arch/um/os-Darwin/skas/process.c        |   4 +
+ net/ethtool/ioctl.c                     |   1 +
+ 21 files changed, 369 insertions(+), 7 deletions(-)
+ create mode 100644 arch/arm64/um/asm/seccomp.h
+ create mode 100644 arch/arm64/um/asm/unistd.h
+ create mode 100644 arch/arm64/um/x86_32_syscalls.c
+ create mode 100644 arch/um/include/asm/compat.h
+
+diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
+index a81eeaad7..274c79083 100644
+--- a/arch/arm64/um/Kconfig
++++ b/arch/arm64/um/Kconfig
+@@ -25,9 +25,15 @@ config UML_X86_64_USERSPACE_ONLY
+ 	depends on PAGE_SIZE_4KB
+ 	help
+ 	  Build the dedicated Darwin UML compatibility slice whose kernel
+-	  remains arm64.  Every userspace task uses the Linux x86-64 ABI, and
+-	  arm64 userspace executables are rejected.  This slice requires 4 KiB
+-	  guest pages and must not be selected by a native arm64 slice.
++	  remains arm64.  Userspace uses the Linux x86 family ABI, while arm64
++	  userspace executables are rejected.  This slice requires 4 KiB guest
++	  pages and must not be selected by a native arm64 slice.
++
++config COMPAT
++	def_bool UML_X86_64_USERSPACE_ONLY
++
++config COMPAT_FOR_U64_ALIGNMENT
++	def_bool COMPAT
+ 
+ config ARCH_MMAP_RND_BITS_MIN
+ 	int
+diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
+index eaf07b7cd..e45262019 100644
+--- a/arch/arm64/um/Makefile
++++ b/arch/arm64/um/Makefile
+@@ -3,6 +3,7 @@
+ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
+ 	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
+ 	x86_64_syscalls.o
++obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
+ obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o
+ 
+ $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
+diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
+index 695f610fa..4836958c0 100644
+--- a/arch/arm64/um/asm/elf.h
++++ b/arch/arm64/um/asm/elf.h
+@@ -32,18 +32,89 @@
+ #define ELF_HWCAP2 0
+ #define ELF_EXEC_PAGESIZE PAGE_SIZE
+ #define ELF_ET_DYN_BASE (TASK_SIZE * 2 / 3)
+-#define STACK_RND_MASK (0x3ffff >> (PAGE_SHIFT - 12))
++#define STACK_RND_MASK (test_thread_flag(TIF_32BIT) ? \
++	(0x7ff >> (PAGE_SHIFT - 12)) : \
++	(0x3ffff >> (PAGE_SHIFT - 12)))
+ 
+-#define elf_check_arch(header) ((header)->e_machine == EM_X86_64)
++#define elf_check_arch(header) \
++	((header)->e_machine == EM_X86_64 && \
++	 (header)->e_ident[EI_CLASS] == ELFCLASS64 && \
++	 (header)->e_ident[EI_DATA] == ELFDATA2LSB)
+ 
+ #define ELF_PLAT_INIT(regs, load_address) do { \
+ 	UPT_X86_64(&(regs)->regs, UML_X86_64_RDX) = 0; \
+ } while (0)
+ 
+ #define SET_PERSONALITY(executable) do { \
++	clear_thread_flag(TIF_32BIT); \
+ 	current->personality &= ~READ_IMPLIES_EXEC; \
+ } while (0)
+ 
++#ifdef CONFIG_COMPAT
++#define COMPAT_ELF_PLATFORM "i686"
++#define COMPAT_ELF_ET_DYN_BASE 0x00400000UL
++
++extern void start_thread(struct pt_regs *regs, unsigned long entry,
++			 unsigned long stack);
++
++#define compat_elf_check_arch(header) \
++	((header)->e_machine == EM_386 && \
++	 (header)->e_ident[EI_CLASS] == ELFCLASS32 && \
++	 (header)->e_ident[EI_DATA] == ELFDATA2LSB)
++
++static inline void uml_x86_32_elf_init(struct pt_regs *regs)
++{
++	struct uml_pt_regs *guest = &regs->regs;
++
++	UPT_X86_64(guest, UML_X86_64_RBX) = 0;
++	UPT_X86_64(guest, UML_X86_64_RCX) = 0;
++	UPT_X86_64(guest, UML_X86_64_RDX) = 0;
++	UPT_X86_64(guest, UML_X86_64_RSI) = 0;
++	UPT_X86_64(guest, UML_X86_64_RDI) = 0;
++	UPT_X86_64(guest, UML_X86_64_RBP) = 0;
++	UPT_X86_64(guest, UML_X86_64_R8) = 0;
++	UPT_X86_64(guest, UML_X86_64_R9) = 0;
++	UPT_X86_64(guest, UML_X86_64_R10) = 0;
++	UPT_X86_64(guest, UML_X86_64_R11) = 0;
++	UPT_X86_64(guest, UML_X86_64_R12) = 0;
++	UPT_X86_64(guest, UML_X86_64_R13) = 0;
++	UPT_X86_64(guest, UML_X86_64_R14) = 0;
++	UPT_X86_64(guest, UML_X86_64_R15) = 0;
++	UPT_X86_64_FS_BASE(guest) = 0;
++	UPT_X86_64_GS_BASE(guest) = 0;
++	upt_x86_64_set_segment_selector(guest, 0, 0x2b);
++	upt_x86_64_set_segment_selector(guest, 1, 0x23);
++	upt_x86_64_set_segment_selector(guest, 2, 0x2b);
++	upt_x86_64_set_segment_selector(guest, 3, 0x2b);
++	upt_x86_64_set_segment_selector(guest, 4, 0);
++	upt_x86_64_set_segment_selector(guest, 5, 0);
++}
++
++#define COMPAT_ELF_PLAT_INIT(regs, load_address) \
++	uml_x86_32_elf_init(regs)
++
++static inline void uml_x86_32_start_thread(struct pt_regs *regs,
++					    unsigned long entry,
++					    unsigned long stack)
++{
++	start_thread(regs, (u32)entry, (u32)stack);
++	upt_x86_64_set_segment_selector(&regs->regs, 1, 0x23);
++	upt_x86_64_set_segment_selector(&regs->regs, 2, 0x2b);
++}
++
++#define COMPAT_START_THREAD(executable, regs, entry, stack) \
++	uml_x86_32_start_thread(regs, entry, stack)
++
++#define COMPAT_SET_PERSONALITY(executable) do { \
++	set_thread_flag(TIF_32BIT); \
++	current->personality &= ~READ_IMPLIES_EXEC; \
++} while (0)
++
++#define COMPAT_ELF_NGREG 17
++typedef unsigned int compat_elf_greg_t;
++typedef compat_elf_greg_t compat_elf_gregset_t[COMPAT_ELF_NGREG];
++#endif
++
+ typedef unsigned long elf_greg_t;
+ #define ELF_NGREG 27
+ typedef elf_greg_t elf_gregset_t[ELF_NGREG];
+diff --git a/arch/arm64/um/asm/seccomp.h b/arch/arm64/um/asm/seccomp.h
+new file mode 100644
+index 000000000..0a1814658
+--- /dev/null
++++ b/arch/arm64/um/asm/seccomp.h
+@@ -0,0 +1,42 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_UM_ARM64_SECCOMP_H
++#define _ASM_UM_ARM64_SECCOMP_H
++
++#include <asm/unistd.h>
++
++#define __NR_seccomp_read 0
++#define __NR_seccomp_write 1
++#define __NR_seccomp_exit 60
++#define __NR_seccomp_sigreturn 15
++
++#ifdef CONFIG_COMPAT
++#define __NR_seccomp_read_32 3
++#define __NR_seccomp_write_32 4
++#define __NR_seccomp_exit_32 1
++#define __NR_seccomp_sigreturn_32 119
++#endif
++
++#define SECCOMP_ARCH_NATIVE AUDIT_ARCH_X86_64
++#define SECCOMP_ARCH_NATIVE_NR NR_syscalls
++#define SECCOMP_ARCH_NATIVE_NAME "x86_64"
++#ifdef CONFIG_COMPAT
++#define SECCOMP_ARCH_COMPAT AUDIT_ARCH_I386
++#define SECCOMP_ARCH_COMPAT_NR UML_X86_32_NR_SYSCALLS
++#define SECCOMP_ARCH_COMPAT_NAME "ia32"
++
++static inline const int *get_compat_mode1_syscalls(void)
++{
++	static const int mode1_syscalls_32[] = {
++		__NR_seccomp_read_32,
++		__NR_seccomp_write_32,
++		__NR_seccomp_exit_32,
++		__NR_seccomp_sigreturn_32,
++		-1,
++	};
++
++	return mode1_syscalls_32;
++}
++#define get_compat_mode1_syscalls get_compat_mode1_syscalls
++#endif
++
++#endif
+diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
+index 583e2b091..4c8ff4c43 100644
+--- a/arch/arm64/um/asm/syscall.h
++++ b/arch/arm64/um/asm/syscall.h
+@@ -14,13 +14,15 @@ static inline int syscall_get_arch(struct task_struct *task)
+ {
+ 	struct uml_pt_regs *regs = &task->thread.regs.regs;
+ 
+-	if (UPT_X86_64_COMPAT_SYSCALL(regs))
++	if (test_tsk_thread_flag(task, TIF_32BIT) ||
++	    UPT_X86_64_COMPAT_SYSCALL(regs))
+ 		return AUDIT_ARCH_I386;
+ 	return AUDIT_ARCH_X86_64;
+ }
+ 
+ int uml_x86_64_syscall_number(int syscall);
+ int uml_x86_32_syscall_number(int syscall);
++extern const sys_call_ptr_t uml_x86_32_sys_call_table[];
+ int uml_x86_64_special_syscall(struct uml_pt_regs *regs, long *result);
+ long uml_x86_64_arch_prctl(struct uml_pt_regs *regs);
+ long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result);
+diff --git a/arch/arm64/um/asm/unistd.h b/arch/arm64/um/asm/unistd.h
+new file mode 100644
+index 000000000..3c71deae8
+--- /dev/null
++++ b/arch/arm64/um/asm/unistd.h
+@@ -0,0 +1,15 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_UM_ARM64_UNISTD_H
++#define _ASM_UM_ARM64_UNISTD_H
++
++#define __ARCH_WANT_SYS_CLONE
++#define __ARCH_WANT_NEW_STAT
++
++#include <asm/unistd_64.h>
++
++#define NR_syscalls (__NR_syscalls)
++
++/* The first i386 milestone exposes only exit(1) and write(4). */
++#define UML_X86_32_NR_SYSCALLS 5
++
++#endif
+diff --git a/arch/arm64/um/mmap.c b/arch/arm64/um/mmap.c
+index 1a8b242f6..3294381b9 100644
+--- a/arch/arm64/um/mmap.c
++++ b/arch/arm64/um/mmap.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ 
+ #include <linux/errno.h>
++#include <linux/compat.h>
+ #include <linux/hugetlb.h>
+ #include <linux/mm.h>
+ #include <linux/mman.h>
+@@ -66,6 +67,10 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		       unsigned long len, unsigned long pgoff,
+ 		       unsigned long flags, vm_flags_t vm_flags)
+ {
++	if (is_compat_task())
++		return generic_get_unmapped_area(filp, addr, len, pgoff, flags,
++					 vm_flags);
++
+ 	if (flags & MAP_32BIT)
+ 		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
+ 						     vm_flags);
+@@ -85,6 +90,10 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
+ 	const unsigned long mmap_end = arch_get_mmap_end(addr, len, flags);
+ 	unsigned long result;
+ 
++	if (is_compat_task())
++		return generic_get_unmapped_area_topdown(filp, addr, len, pgoff,
++						 flags, vm_flags);
++
+ 	if (flags & MAP_32BIT)
+ 		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
+ 						     vm_flags);
+diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
+index 41fcf8089..877a2b790 100644
+--- a/arch/arm64/um/shared/sysdep/ptrace.h
++++ b/arch/arm64/um/shared/sysdep/ptrace.h
+@@ -71,6 +71,7 @@ struct uml_pt_regs {
+ #define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
+ #define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
+ #define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
++#define UML_X86_32_TASK_MODE (1UL << 33)
+ 
+ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
+ {
+@@ -80,6 +81,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
+ #define UPT_X86_64_COMPAT_SYSCALL(regs) \
+ 	upt_x86_64_compat_syscall(regs)
+ 
++static inline int upt_x86_32_task_mode(const struct uml_pt_regs *regs)
++{
++	return !!(regs->svcr & UML_X86_32_TASK_MODE);
++}
++
++static inline void upt_x86_32_set_task_mode(struct uml_pt_regs *regs,
++					     int enabled)
++{
++	if (enabled)
++		regs->svcr |= UML_X86_32_TASK_MODE;
++	else
++		regs->svcr &= ~UML_X86_32_TASK_MODE;
++}
++
+ static inline unsigned short
+ upt_x86_64_segment_selector(const struct uml_pt_regs *regs, unsigned int index)
+ {
+diff --git a/arch/arm64/um/x86_32_syscalls.c b/arch/arm64/um/x86_32_syscalls.c
+new file mode 100644
+index 000000000..636db34c8
+--- /dev/null
++++ b/arch/arm64/um/x86_32_syscalls.c
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/cache.h>
++#include <linux/linkage.h>
++#include <linux/sys.h>
++#include <asm/syscall.h>
++#include <asm/unistd.h>
++
++extern asmlinkage long sys_ni_syscall(unsigned long, unsigned long,
++		unsigned long, unsigned long, unsigned long, unsigned long);
++extern asmlinkage long sys_exit(unsigned long, unsigned long,
++		unsigned long, unsigned long, unsigned long, unsigned long);
++extern asmlinkage long sys_write(unsigned long, unsigned long,
++		unsigned long, unsigned long, unsigned long, unsigned long);
++
++const sys_call_ptr_t
++uml_x86_32_sys_call_table[UML_X86_32_NR_SYSCALLS] ____cacheline_aligned = {
++	[0 ... UML_X86_32_NR_SYSCALLS - 1] = sys_ni_syscall,
++	[1] = sys_exit,
++	[4] = sys_write,
++};
+diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
+index ef01d6006..424190cc8 100644
+--- a/arch/um/include/asm/Kbuild
++++ b/arch/um/include/asm/Kbuild
+@@ -1,6 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
+ generic-y += bug.h
+-generic-y += compat.h
+ generic-y += device.h
+ generic-y += dma-mapping.h
+ generic-y += emergency-restart.h
+diff --git a/arch/um/include/asm/compat.h b/arch/um/include/asm/compat.h
+new file mode 100644
+index 000000000..b49369aed
+--- /dev/null
++++ b/arch/um/include/asm/compat.h
+@@ -0,0 +1,103 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __UM_COMPAT_H
++#define __UM_COMPAT_H
++
++#ifndef CONFIG_UML_X86_64_USERSPACE_ONLY
++#include <asm-generic/compat.h>
++#else
++
++#include <linux/types.h>
++
++#define compat_mode_t compat_mode_t
++typedef u16 compat_mode_t;
++
++#define __compat_uid_t __compat_uid_t
++typedef u16 __compat_uid_t;
++typedef u16 __compat_gid_t;
++
++#define compat_dev_t compat_dev_t
++typedef u16 compat_dev_t;
++
++#define compat_ipc_pid_t compat_ipc_pid_t
++typedef u16 compat_ipc_pid_t;
++
++#define compat_statfs compat_statfs
++
++#include <asm-generic/compat.h>
++
++#define COMPAT_UTS_MACHINE "i686\0\0"
++
++typedef u16 compat_nlink_t;
++
++struct compat_stat {
++	u32 st_dev;
++	compat_ino_t st_ino;
++	compat_mode_t st_mode;
++	compat_nlink_t st_nlink;
++	__compat_uid_t st_uid;
++	__compat_gid_t st_gid;
++	u32 st_rdev;
++	u32 st_size;
++	u32 st_blksize;
++	u32 st_blocks;
++	u32 st_atime;
++	u32 st_atime_nsec;
++	u32 st_mtime;
++	u32 st_mtime_nsec;
++	u32 st_ctime;
++	u32 st_ctime_nsec;
++	u32 __unused4;
++	u32 __unused5;
++};
++
++#define __ARCH_NEED_COMPAT_FLOCK64_PACKED
++
++struct compat_statfs {
++	int f_type;
++	int f_bsize;
++	int f_blocks;
++	int f_bfree;
++	int f_bavail;
++	int f_files;
++	int f_ffree;
++	compat_fsid_t f_fsid;
++	int f_namelen;
++	int f_frsize;
++	int f_flags;
++	int f_spare[4];
++};
++
++#ifdef CONFIG_COMPAT
++#include <linux/sched.h>
++#include <linux/sched/task_stack.h>
++#include <asm/processor.h>
++
++#define compat_user_stack_pointer() \
++	(user_stack_pointer(task_pt_regs(current)))
++#define COMPAT_MINSIGSTKSZ 2048
++
++static inline int is_compat_task(void)
++{
++	return test_thread_flag(TIF_32BIT);
++}
++
++static inline int is_compat_thread(struct thread_info *thread)
++{
++	return test_ti_thread_flag(thread, TIF_32BIT);
++}
++
++static inline bool in_compat_syscall(void)
++{
++	return is_compat_task();
++}
++#define in_compat_syscall in_compat_syscall
++#define compat_need_64bit_alignment_fixup in_compat_syscall
++#else
++static inline int is_compat_thread(struct thread_info *thread)
++{
++	return 0;
++}
++#endif
++
++#endif
++#endif
+diff --git a/arch/um/include/asm/pgtable-2level.h b/arch/um/include/asm/pgtable-2level.h
+index 14ec16f92..8706382ab 100644
+--- a/arch/um/include/asm/pgtable-2level.h
++++ b/arch/um/include/asm/pgtable-2level.h
+@@ -21,7 +21,11 @@
+  * we don't really have any PMD directory physically.
+  */
+ #define PTRS_PER_PTE	1024
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#else
+ #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#endif
+ #define PTRS_PER_PGD	1024
+ 
+ #define pte_ERROR(e) \
+diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
+index 6b6712f2c..6f82262f9 100644
+--- a/arch/um/include/asm/pgtable-3level.h
++++ b/arch/um/include/asm/pgtable-3level.h
+@@ -24,7 +24,11 @@
+ 
+ #define HUGE_MAX_HSTATE	1
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#else
+ #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#endif
+ 
+ #define pte_ERROR(e) \
+ 	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
+diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
+index ac825e88e..f5d6e828e 100644
+--- a/arch/um/include/asm/pgtable-4level.h
++++ b/arch/um/include/asm/pgtable-4level.h
+@@ -44,7 +44,11 @@
+ 
+ #define HUGE_MAX_HSTATE 2
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#else
+ #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
++#endif
+ 
+ #define pte_ERROR(e) \
+         printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
+diff --git a/arch/um/include/asm/processor-generic.h b/arch/um/include/asm/processor-generic.h
+index 9e9f2c7f1..33655f5b8 100644
+--- a/arch/um/include/asm/processor-generic.h
++++ b/arch/um/include/asm/processor-generic.h
+@@ -50,7 +50,17 @@ struct thread_struct {
+  */
+ extern unsigned long task_size;
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define UML_X86_32_TASK_SIZE 0xffffe000UL
++#define TASK_SIZE \
++	(test_thread_flag(TIF_32BIT) ? UML_X86_32_TASK_SIZE : task_size)
++#define TASK_SIZE_OF(task) \
++	(test_tsk_thread_flag((task), TIF_32BIT) ? \
++	 UML_X86_32_TASK_SIZE : task_size)
++#else
+ #define TASK_SIZE (task_size)
++#define TASK_SIZE_OF(task) TASK_SIZE
++#endif
+ 
+ #undef STACK_TOP
+ #undef STACK_TOP_MAX
+@@ -71,7 +81,14 @@ extern unsigned long stacksizelim;
+  * above that host reservation.  Linux still owns the guest virtual address
+  * space; the Darwin shadow-MMU maps these addresses into this process.
+  */
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define TASK_UNMAPPED_BASE \
++	(test_thread_flag(TIF_32BIT) ? \
++	 PAGE_ALIGN(UML_X86_32_TASK_SIZE / 3) : \
++	 UML_DARWIN_TASK_UNMAPPED_BASE)
++#else
+ #define TASK_UNMAPPED_BASE	(UML_DARWIN_TASK_UNMAPPED_BASE)
++#endif
+ #else
+ #define TASK_UNMAPPED_BASE	(0x40000000)
+ #endif
+diff --git a/arch/um/include/asm/thread_info.h b/arch/um/include/asm/thread_info.h
+index 7a6f4dc99..ef1108e67 100644
+--- a/arch/um/include/asm/thread_info.h
++++ b/arch/um/include/asm/thread_info.h
+@@ -44,6 +44,9 @@ struct thread_info {
+ #define TIF_SECCOMP		9	/* secure computing */
+ #define TIF_SINGLESTEP		10	/* single stepping userspace */
+ #define TIF_SYSCALL_TRACEPOINT	11	/* syscall tracepoint instrumentation */
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define TIF_32BIT		12	/* i386 userspace task */
++#endif
+ 
+ 
+ #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
+@@ -55,6 +58,9 @@ struct thread_info {
+ #define _TIF_NOTIFY_RESUME	(1 << TIF_NOTIFY_RESUME)
+ #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
+ #define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++#define _TIF_32BIT		(1 << TIF_32BIT)
++#endif
+ 
+ #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL | \
+ 				 _TIF_NOTIFY_RESUME)
+diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
+index d36d5b8f7..27eade173 100644
+--- a/arch/um/include/shared/kern_util.h
++++ b/arch/um/include/shared/kern_util.h
+@@ -56,6 +56,7 @@ extern void do_uml_exitcalls(void);
+  */
+ extern int __uml_cant_sleep(void);
+ extern int get_current_pid(void);
++extern int current_is_x86_32_userspace(void);
+ extern int copy_from_user_proc(void *to, void *from, int size);
+ extern char *uml_strdup(const char *string);
+ int uml_need_resched(void);
+diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
+index 64b45ceee..d671c7b02 100644
+--- a/arch/um/kernel/skas/process.c
++++ b/arch/um/kernel/skas/process.c
+@@ -67,6 +67,15 @@ unsigned long current_tls(void)
+ 	return current->thread.arch.tpidr_el0;
+ }
+ 
++int current_is_x86_32_userspace(void)
++{
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	return test_thread_flag(TIF_32BIT);
++#else
++	return 0;
++#endif
++}
++
+ void current_set_tls(unsigned long tls)
+ {
+ 	current->thread.arch.tpidr_el0 = tls;
+diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
+index f4f5b15ab..6d1a249be 100644
+--- a/arch/um/kernel/skas/syscall.c
++++ b/arch/um/kernel/skas/syscall.c
+@@ -31,6 +31,34 @@ void handle_syscall(struct uml_pt_regs *r)
+ 		goto out;
+ 
+ 	syscall = UPT_SYSCALL_NR(r);
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	if (test_thread_flag(TIF_32BIT)) {
++		unsigned long ret;
++
++		/* True i386 tasks enter through int 0x80.  Do not reuse the
++		 * restricted long-mode int80 number translation: i386 has its own
++		 * syscall-number and structure ABI.
++		 */
++		if (!UPT_X86_64_COMPAT_SYSCALL(r) || syscall < 0 ||
++		    syscall >= UML_X86_32_NR_SYSCALLS)
++			goto out;
++		ret = (*uml_x86_32_sys_call_table[syscall])(
++			UPT_SYSCALL_ARG1(&regs->regs),
++			UPT_SYSCALL_ARG2(&regs->regs),
++			UPT_SYSCALL_ARG3(&regs->regs),
++			UPT_SYSCALL_ARG4(&regs->regs),
++			UPT_SYSCALL_ARG5(&regs->regs),
++			UPT_SYSCALL_ARG6(&regs->regs));
++		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
++		if (IS_ERR_VALUE(ret) &&
++		    (time_travel_mode == TT_MODE_INFCPU ||
++		     time_travel_mode == TT_MODE_EXTERNAL)) {
++			um_udelay(1);
++			schedule();
++		}
++		goto out;
++	}
++#endif
+ 	if (!UPT_X86_64_COMPAT_SYSCALL(r)) {
+ 		long result;
+ 
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index fd81d8795..a919b5b72 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -447,6 +447,10 @@ void userspace(struct uml_pt_regs *registers)
+ 		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
+ 		 */
+ 		registers->is_user = 1;
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++		upt_x86_32_set_task_mode(registers,
++					 current_is_x86_32_userspace());
++#endif
+ 		guest_tls = current_tls();
+ 		/* Snapshot before polling so an IPI racing with the poll remains
+ 		 * visible to the translated-block check.  Polling may migrate this
+diff --git a/net/ethtool/ioctl.c b/net/ethtool/ioctl.c
+index 9431e305b..27f7331a7 100644
+--- a/net/ethtool/ioctl.c
++++ b/net/ethtool/ioctl.c
+@@ -844,6 +844,7 @@ ethtool_rxnfc_copy_from_compat(struct ethtool_rxnfc *rxnfc,
+ 	 * On non-x86, no conversion should be needed.
+ 	 */
+ 	BUILD_BUG_ON(!IS_ENABLED(CONFIG_X86_64) &&
++		     !IS_ENABLED(CONFIG_UML_X86_64_USERSPACE_ONLY) &&
+ 		     sizeof(struct compat_ethtool_rxnfc) !=
+ 		     sizeof(struct ethtool_rxnfc));
+ 	BUILD_BUG_ON(offsetof(struct compat_ethtool_rxnfc, fs.m_ext) +

@@ -242,18 +242,19 @@ apply_config_fragment()
 
 # `olddefconfig` resolves a requested symbol against its dependencies in
 # silence.  A symbol whose menu is closed is simply dropped, and one that
-# another symbol selects is force-enabled, so a fragment can disagree with
-# every kernel it produces without anything saying so.  CONFIG_NAMESPACES
+# another symbol selects is force-enabled, so the composed fragments can
+# disagree with every kernel they produce without anything saying so. Later
+# fragments intentionally override earlier policy for a product slice.
+# CONFIG_NAMESPACES
 # defaulting off under EXPERT cost USER_NS and TIME_NS that way, and the guest
 # lost every namespace while the fragment still claimed two of them.  Compare
 # what was asked for against what the resolved configuration actually holds.
-verify_config_fragment()
+verify_composed_config()
 {
-	fragment=$1
 	mismatches=$(awk -v config="$BUILD_DIR/.config" '
 	function record(symbol, wanted, got) {
-		problems = problems sprintf("  %s: requested %s, resolved %s\n",
-			symbol, wanted, got)
+		problems = problems sprintf("  %s: %s requested %s, resolved %s\n",
+			symbol, owner[symbol], wanted, got)
 		count++
 	}
 	BEGIN {
@@ -274,31 +275,35 @@ verify_config_fragment()
 	{
 		if (match($0, /^CONFIG_[A-Za-z0-9_]+=/)) {
 			symbol = substr($0, 1, index($0, "=") - 1)
-			wanted = substr($0, index($0, "=") + 1)
+			requested[symbol] = substr($0, index($0, "=") + 1)
 		} else if (match($0, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
 			symbol = $2
-			wanted = "n"
+			requested[symbol] = "n"
 		} else {
 			next
 		}
-		# An absent symbol is one whose dependencies were never met.
-		got = (symbol in built) ? built[symbol] : "n"
-		if (got == wanted)
-			next
-		# A .config records a disabled symbol as a comment or omits it,
-		# so both spellings of "off" agree.
-		if (wanted == "n" && !(symbol in built))
-			next
-		record(symbol, wanted, (symbol in built) ? got : "absent")
+		owner[symbol] = FILENAME
 	}
 	END {
+		for (symbol in requested) {
+			wanted = requested[symbol]
+			# An absent symbol is one whose dependencies were never met.
+			got = (symbol in built) ? built[symbol] : "n"
+			if (got == wanted)
+				continue
+			# A .config records a disabled symbol as a comment or omits it,
+			# so both spellings of "off" agree.
+			if (wanted == "n" && !(symbol in built))
+				continue
+			record(symbol, wanted, (symbol in built) ? got : "absent")
+		}
 		if (count > 0)
 			printf "%s", problems
 	}
-	' "$fragment")
+	' "$@")
 	[ -z "$mismatches" ] || {
 		printf '%s\n' \
-			"kernel/mainline-6.18/build/build-kernel.sh: $fragment did not survive olddefconfig:" >&2
+			"kernel/mainline-6.18/build/build-kernel.sh: composed configuration did not survive olddefconfig:" >&2
 		printf '%s\n' "$mismatches" >&2
 		fail "kernel configuration does not match its fragment"
 	}
@@ -322,11 +327,11 @@ if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	apply_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
 run_make olddefconfig
-verify_config_fragment "$CONFIG_DIR/common.fragment"
-verify_config_fragment "$CONFIG_FRAGMENT"
+set -- "$CONFIG_DIR/common.fragment" "$CONFIG_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
-	verify_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
+verify_composed_config "$@"
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"

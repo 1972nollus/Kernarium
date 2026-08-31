@@ -433,6 +433,9 @@ def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
         "CONFIG_UML_X86_64_USERSPACE_ONLY": (
             "y" if kernel_slice == "x86_64" else "n"
         ),
+        "CONFIG_BPF": "y",
+        "CONFIG_BPF_SYSCALL": "n" if kernel_slice == "x86_64" else "y",
+        "CONFIG_CGROUP_BPF": "n" if kernel_slice == "x86_64" else "y",
     }
     for symbol, wanted in expected.items():
         observed = config.get(symbol, "n")

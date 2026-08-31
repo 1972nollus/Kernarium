@@ -5,3 +5,4 @@ fs/eventpoll.c	x86_64-userspace-slice	carry-locally	0001	carry-locally	Convert b
 fs/open.c	x86_64-userspace-slice	carry-locally	0001	carry-locally	Convert x86_64 open syscall structures only while building the fixed userspace ABI slice.
 include/linux/eventpoll.h	x86_64-userspace-slice	carry-locally	0001	carry-locally	Expose the slice-only epoll conversion contract to the x86_64 syscall adapter.
 include/linux/fs.h	x86_64-userspace-slice	carry-locally	0001	carry-locally	Expose the slice-only open conversion contract to the x86_64 syscall adapter.
+net/ethtool/ioctl.c	x86_64-userspace-slice	carry-locally	0002	carry-locally	Recognize that this arm64 kernel deliberately uses x86 compat ethtool layouts only in the dedicated slice.

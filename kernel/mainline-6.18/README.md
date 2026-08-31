@@ -80,6 +80,10 @@ distribution and complete Linux syscall compatibility require separate guest
 qualification. Both normal arm64 profiles accept `EM_AARCH64` only. Android
 does not consume the x86_64 overlay.
 
+The x86_64 slice keeps the networking-selected classic BPF interpreter but
+does not expose the `bpf(2)` syscall or cgroup eBPF attachment. System services
+must treat eBPF as unavailable on this compatibility product.
+
 Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only
 drivers, and the same host/kernel ABI. There is no platform-specific image or

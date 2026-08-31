@@ -9,6 +9,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 import json
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
@@ -127,6 +128,68 @@ def schema_identities(path: Path) -> set[tuple[str, str, int]]:
     return identities
 
 
+def config_values(kernel_slice: str) -> dict[str, str]:
+    return {
+        "CONFIG_64BIT": "y",
+        "CONFIG_ARM64": "y",
+        "CONFIG_UML": "y",
+        "CONFIG_MODULES": "n",
+        "CONFIG_PAGE_SHIFT": "12",
+        "CONFIG_PAGE_SIZE_16KB": "n",
+        "CONFIG_PAGE_SIZE_4KB": "y",
+        "CONFIG_UML_X86_64_USERSPACE_ONLY": (
+            "y" if kernel_slice == "x86_64" else "n"
+        ),
+        "CONFIG_BPF": "y",
+        "CONFIG_BPF_SYSCALL": "n" if kernel_slice == "x86_64" else "y",
+        "CONFIG_CGROUP_BPF": "n" if kernel_slice == "x86_64" else "y",
+    }
+
+
+def write_config(path: Path, values: dict[str, str]) -> None:
+    lines = [
+        f"# {symbol} is not set" if value == "n" else f"{symbol}={value}"
+        for symbol, value in sorted(values.items())
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def require_config_accepted(
+    module: ModuleType,
+    root: Path,
+    kernel_slice: str,
+    values: dict[str, str],
+) -> None:
+    path = root / f"{kernel_slice}-accepted.config"
+    write_config(path, values)
+    module.verify_config(path, 4096, kernel_slice)
+
+
+def require_config_rejected(
+    module: ModuleType,
+    root: Path,
+    kernel_slice: str,
+    values: dict[str, str],
+    symbol: str,
+    wanted: str,
+) -> None:
+    observed = values[symbol]
+    path = root / f"{kernel_slice}-{symbol}.config"
+    write_config(path, values)
+    try:
+        module.verify_config(path, 4096, kernel_slice)
+    except SystemExit as error:
+        diagnostic = f"kernel config {symbol}={observed}, expected {wanted}"
+        require(
+            diagnostic in str(error),
+            f"invalid kernel config was rejected for the wrong reason: {error}",
+        )
+    else:
+        raise AssertionError(
+            f"invalid {kernel_slice} kernel config accepted {symbol}={observed}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-module", type=Path, required=True)
@@ -162,6 +225,27 @@ def main() -> int:
         16384,
         "x86_64 kernel slice requires 4096-byte pages",
     )
+
+    with tempfile.TemporaryDirectory(prefix="uml-kernel-config-contract-") as raw:
+        root = Path(raw)
+        for kernel_slice in ("arm64", "x86_64"):
+            expected = config_values(kernel_slice)
+            require_config_accepted(module, root, kernel_slice, expected)
+            for symbol in (
+                "CONFIG_BPF",
+                "CONFIG_BPF_SYSCALL",
+                "CONFIG_CGROUP_BPF",
+            ):
+                invalid = dict(expected)
+                invalid[symbol] = "n" if expected[symbol] == "y" else "y"
+                require_config_rejected(
+                    module,
+                    root,
+                    kernel_slice,
+                    invalid,
+                    symbol,
+                    expected[symbol],
+                )
 
     print("kernel artifact family/slice/page contract verified")
     return 0
