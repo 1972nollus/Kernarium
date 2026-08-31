@@ -592,7 +592,7 @@ def run_guest(
         terminate_process(process)
         console.close()
 
-    if expect_poweroff and return_code != 0:
+    if return_code != 0:
         raise RuntimeError(f"emulator exited with status {return_code}")
     return return_code, saw_pass, saw_fail
 
