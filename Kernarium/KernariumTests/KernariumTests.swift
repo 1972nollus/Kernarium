@@ -112,6 +112,61 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchCoordinatesAccountForAspectFitLetterboxing() throws {
+        let coordinates = GuestInputCoordinateSpace(
+            size: CGSize(width: 400, height: 800)
+        )
+        let bounds = CGSize(width: 500, height: 250)
+        let drawable = CGSize(width: 1000, height: 500)
+        let square = CGSize(width: 800, height: 800)
+        let viewport = try #require(GuestDisplayViewport.aspectFit(
+            contentSize: square,
+            in: drawable
+        ))
+        #expect(viewport == CGRect(x: 250, y: 0, width: 500, height: 500))
+
+        #expect(coordinates.location(
+            CGPoint(x: 100, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square
+        ) == nil)
+
+        let center = try #require(coordinates.location(
+            CGPoint(x: 250, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square
+        ))
+        #expect(center.x == 200)
+        #expect(center.y == 400)
+
+        let clampedBar = try #require(coordinates.location(
+            CGPoint(x: 100, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square,
+            clampToContent: true
+        ))
+        #expect(clampedBar.x == 0)
+        #expect(clampedBar.y == 400)
+
+        let wideModeCenter = try #require(coordinates.location(
+            CGPoint(x: 250, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: CGSize(width: 1600, height: 900)
+        ))
+        #expect(wideModeCenter.x == center.x)
+        #expect(wideModeCenter.y == center.y)
+        #expect(GuestDisplayViewport.aspectFit(
+            contentSize: .zero,
+            in: drawable
+        ) == nil)
+    }
+
+    @Test
+    @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
@@ -235,6 +290,7 @@ struct KernariumTests {
         #expect(configuration.rootfsFilename == "rootfs.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
+        #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
     }
 
@@ -251,6 +307,7 @@ struct KernariumTests {
             rootfsFilename: "phosh.erofs",
             kernelPageSize: .fourKiB,
             retinaMode: true,
+            autoResizeGuest: false,
             androidBootMode: .recovery
         ).save(defaults: defaults)
         #expect(
@@ -265,6 +322,7 @@ struct KernariumTests {
                 rootfsFilename: "phosh.erofs",
                 kernelPageSize: .fourKiB,
                 retinaMode: true,
+                autoResizeGuest: false,
                 androidBootMode: .recovery
             )
         )
@@ -286,6 +344,7 @@ struct KernariumTests {
         #expect(normalized.rootfsFilename == "rootfs.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
+        #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)
     }
 
@@ -318,6 +377,7 @@ struct KernariumTests {
         defaults.set(2048, forKey: "emulator.guestMemoryMiB")
         defaults.set(16, forKey: "emulator.overlaySizeGiB")
         defaults.set(true, forKey: "emulator.retinaMode")
+        defaults.set(false, forKey: "emulator.autoResizeGuest")
         defaults.set(
             AndroidBootMode.normal.rawValue,
             forKey: "emulator.androidBootMode"
@@ -331,6 +391,7 @@ struct KernariumTests {
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1536",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "8",
                 EmulatorConfiguration.retinaEnvironmentKey: "0",
+                EmulatorConfiguration.autoResizeGuestEnvironmentKey: "1",
                 AndroidBootMode.environmentKey: "recovery"
             ]
         )
@@ -338,6 +399,7 @@ struct KernariumTests {
         #expect(selected.guestMemoryMiB == 1536)
         #expect(selected.overlaySizeGiB == 8)
         #expect(selected.retinaMode == false)
+        #expect(selected.autoResizeGuest == true)
         #expect(selected.androidBootMode == .recovery)
 
         let invalid = EmulatorConfiguration.load(
@@ -348,6 +410,7 @@ struct KernariumTests {
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1500",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "0",
                 EmulatorConfiguration.retinaEnvironmentKey: "false",
+                EmulatorConfiguration.autoResizeGuestEnvironmentKey: "true",
                 AndroidBootMode.environmentKey: "invalid"
             ]
         )
@@ -355,6 +418,7 @@ struct KernariumTests {
         #expect(invalid.guestMemoryMiB == 2048)
         #expect(invalid.overlaySizeGiB == 16)
         #expect(invalid.retinaMode == true)
+        #expect(invalid.autoResizeGuest == false)
         #expect(invalid.androidBootMode == .normal)
     }
 

@@ -22,6 +22,10 @@ public:
 
     [[nodiscard]] virtual std::uint32_t width() const noexcept = 0;
     [[nodiscard]] virtual std::uint32_t height() const noexcept = 0;
+    [[nodiscard]] virtual bool guestScanoutChanged(
+        std::uint32_t width,
+        std::uint32_t height) noexcept = 0;
+    virtual void resetGuestSession() noexcept = 0;
     virtual void clear() noexcept = 0;
     virtual void update(
         std::span<const std::uint8_t> source,

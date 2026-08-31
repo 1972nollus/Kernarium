@@ -43,23 +43,34 @@ kernel command line.
 
 ## Dynamic native geometry
 
-Native AppKit and UIKit displays track the settled host content geometry.
-AppKit keeps the existing guest mode while a window is in live resize and
-publishes the final logical-point size from `windowDidEndLiveResize`. UIKit
-keeps the existing mode through an interactive view-controller transition and
-publishes the final point or Retina-pixel size from the transition completion.
-Non-interactive layout changes are coalesced until their geometry is stable.
+Native AppKit and UIKit displays publish host geometry only after it settles.
+AppKit retains the active guest mode throughout live window resize and
+publishes the final logical-point content size when live resize ends. UIKit
+retains it through an interactive view-controller transition and publishes the
+final point or Retina-pixel size from transition completion. Non-interactive
+layout changes are coalesced until their geometry is stable.
 
-A settled change resizes the host presentation storage and raises the
-Virtio-GPU display event. The guest then reads the new display information and,
-when enabled, EDID. EDID-backed dimensions are limited to 4095 pixels per axis;
-the non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
+Host-to-guest automatic resizing is enabled by default. Kernarium stores the
+choice in its iOS app settings; the macOS executable selects it with
+`--gpu-auto-resize=on|off`. When enabled, a settled host change updates the
+Virtio-GPU advertised mode and raises its display event. Presentation storage
+remains sized to the active guest scanout until the guest accepts a mode with
+`SET_SCANOUT`. EDID-backed dimensions are limited to 4095 pixels per axis; the
+non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
 
-Input coordinates remain in the device's stable absolute domain. AppKit maps
-the current content bounds into the fixed tablet range, while Kernarium maps
-the current view bounds into the touchscreen range advertised at boot. Pointer
-and touch locations therefore remain aligned before, during, and after a
-display mode change.
+The first active scanout and a modeset matching the current advertised or a
+pending host target do not change geometry authority. A later guest-selected
+mode that matches neither is independent and disables further host-to-guest
+resizing until the next guest boot. With automatic resizing configured on, the
+macOS window follows each independent guest mode; iOS instead aspect-fits the
+guest mode in its view. With automatic resizing configured off, both products
+retain the guest mode and aspect-fit it in the host content area.
+
+Rendering and input use the same centered aspect-fit rectangle. AppKit maps
+that rectangle into the fixed tablet range, while Kernarium maps it into the
+touchscreen range advertised at boot. Input beginning in letterbox or
+pillarbox bars is ignored; an ongoing pointer or touch is constrained to the
+fitted edge so that its final release remains accurate.
 
 ## Vulkan
 

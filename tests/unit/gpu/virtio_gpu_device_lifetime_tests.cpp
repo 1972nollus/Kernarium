@@ -41,6 +41,21 @@ public:
         return displayHeight;
     }
 
+    [[nodiscard]] bool guestScanoutChanged(
+        std::uint32_t width,
+        std::uint32_t height) noexcept override
+    {
+        lastGuestScanoutWidth = width;
+        lastGuestScanoutHeight = height;
+        ++guestScanoutChangeCount;
+        return guestScanoutChangeAccepted;
+    }
+
+    void resetGuestSession() noexcept override
+    {
+        ++guestSessionResetCount;
+    }
+
     void clear() noexcept override
     {
         std::fill(framebuffer.begin(), framebuffer.end(), 0);
@@ -306,6 +321,11 @@ public:
     bool nativeResourceAvailable {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
+    std::uint32_t lastGuestScanoutWidth {};
+    std::uint32_t lastGuestScanoutHeight {};
+    unsigned guestScanoutChangeCount {};
+    bool guestScanoutChangeAccepted {true};
+    unsigned guestSessionResetCount {};
     std::uint32_t lastTextureResource {};
     MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
@@ -1305,13 +1325,52 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     }
     clearAllocationFailure();
     require(responseFailed);
+    require(dependencies.guestScanoutChangeCount == 0);
 
     failNextAllocation();
     const auto retry = device.process(requestBytes(scanout), false);
     clearAllocationFailure();
     require(responseType(retry) == protocol::GpuResponse::errorOutOfMemory);
+    require(dependencies.guestScanoutChangeCount == 0);
     require(responseType(device.process(requestBytes(scanout), false)) ==
         protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == 1);
+    require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
+    require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
+
+    /* Resource rebinds at the active geometry are page flips, not guest mode
+     * changes, and must not disturb the host-to-guest resize policy. */
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == 1);
+
+    scanout.rectangle = {.x = 1, .y = 0, .width = 3, .height = 4};
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == 2);
+    require(dependencies.lastGuestScanoutWidth == 3);
+    require(dependencies.lastGuestScanoutHeight == 4);
+
+    scanout.resourceId = 999;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::errorInvalidResource);
+    require(dependencies.guestScanoutChangeCount == 2);
+
+    scanout.resourceId = create.resourceId;
+    scanout.rectangle = {.x = 0, .y = 0, .width = 2, .height = 4};
+    dependencies.guestScanoutChangeAccepted = false;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::errorOutOfMemory);
+    require(dependencies.guestScanoutChangeCount == 3);
+    dependencies.guestScanoutChangeAccepted = true;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == 4);
+    require(dependencies.lastGuestScanoutWidth == 2);
+    require(dependencies.lastGuestScanoutHeight == 4);
+
+    device.reset();
+    require(dependencies.guestSessionResetCount == 1);
 }
 
 void malformed3dCommandsUseSpecificErrors()

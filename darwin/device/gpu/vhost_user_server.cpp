@@ -511,7 +511,8 @@ VhostUserServer::VhostUserServer(
     DisplayMode displayMode,
     void* nativeView,
     std::uint32_t dotsPerInch,
-    uml::input::vnc::PointerMode pointerMode)
+    uml::input::vnc::PointerMode pointerMode,
+    bool autoResizeGuest)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , display_(makeDisplay(
@@ -526,7 +527,8 @@ VhostUserServer::VhostUserServer(
           pointerMode,
           dotsPerInch == 0 ?
               protocol::maximumDisplayDimension :
-              protocol::maximumEdidDimension))
+              protocol::maximumEdidDimension,
+          autoResizeGuest))
 {
     device_ = std::make_unique<GpuVhostUserDevice>(
         *display_,

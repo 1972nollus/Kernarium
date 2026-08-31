@@ -77,6 +77,20 @@ public:
         return -1;
     }
     [[nodiscard]] virtual bool drainResizeEvent() { return false; }
+    /* SET_SCANOUT is the point at which a guest mode becomes active. Native
+     * displays keep that content geometry separate from their host-preferred
+     * mode so either side can resize without distorting the other. Returning
+     * false rejects the modeset when presentation storage cannot be prepared
+     * transactionally. */
+    [[nodiscard]] virtual bool guestScanoutChanged(
+        std::uint32_t,
+        std::uint32_t) noexcept
+    {
+        return true;
+    }
+    /* A new guest boot restores the configured host-to-guest policy after an
+     * independent guest modeset latched it off for the previous session. */
+    virtual void resetGuestSession() noexcept {}
     /* Serialize a guest config notification against the beginning of an
      * interactive host transition. A successful claim remains held until the
      * transport calls releaseResizeNotification(). */
@@ -152,6 +166,7 @@ protected:
     void* nativeView = nullptr,
     uml::input::vnc::PointerMode pointerMode =
         uml::input::vnc::PointerMode::mouse,
-    std::uint32_t maximumDimension = protocol::maximumDisplayDimension);
+    std::uint32_t maximumDimension = protocol::maximumDisplayDimension,
+    bool autoResizeGuest = true);
 
 } // namespace uml::gpu

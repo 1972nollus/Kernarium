@@ -22,7 +22,8 @@ public:
         uml::input::vnc::PointerMode pointerMode =
             uml::input::vnc::PointerMode::mouse,
         std::uint32_t maximumDimension =
-            protocol::maximumDisplayDimension);
+            protocol::maximumDisplayDimension,
+        bool autoResizeGuest = true);
     ~NativeDisplay() override;
 
     NativeDisplay(const NativeDisplay&) = delete;
@@ -32,6 +33,10 @@ public:
     [[nodiscard]] std::uint32_t height() const noexcept override;
     [[nodiscard]] int resizeEventDescriptor() const noexcept override;
     [[nodiscard]] bool drainResizeEvent() override;
+    [[nodiscard]] bool guestScanoutChanged(
+        std::uint32_t width,
+        std::uint32_t height) noexcept override;
+    void resetGuestSession() noexcept override;
     [[nodiscard]] bool claimResizeNotification() noexcept override;
     void releaseResizeNotification() noexcept override;
     void clear() noexcept override;

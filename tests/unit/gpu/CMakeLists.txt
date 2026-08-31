@@ -162,6 +162,7 @@ endif()
 if(TARGET uml_gpu_display)
     add_executable(uml_gpu_display_resize_tests
         display_resize_tests.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_resize_notifier.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp)
     target_include_directories(uml_gpu_display_resize_tests PRIVATE

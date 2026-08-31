@@ -2,6 +2,7 @@
 
 #include "native_display.hpp"
 
+#include "display_geometry.hpp"
 #include "display_resize_notifier.hpp"
 #include "metal_presentation.hpp"
 #include "native_display_application.hpp"
@@ -193,13 +194,20 @@ struct NativeDisplayState final :
         std::uint32_t height,
         native_input::VncInputSink sink,
         native_input::PointerMode mode,
-        std::uint32_t maximumDimension)
+        std::uint32_t maximumDimension,
+        bool autoResizeGuest)
         : presentation(
               DisplayResizeNotifier::clampDimension(
                   width, maximumDimension),
               DisplayResizeNotifier::clampDimension(
                   height, maximumDimension))
         , resizeNotifier(width, height, maximumDimension)
+        , geometryPolicy(
+              DisplayResizeNotifier::clampDimension(
+                  width, maximumDimension),
+              DisplayResizeNotifier::clampDimension(
+                  height, maximumDimension),
+              autoResizeGuest)
         , inputSink(std::move(sink))
         , pointerMode(mode)
     {
@@ -211,11 +219,25 @@ struct NativeDisplayState final :
     void commitResize(NSSize size) noexcept;
     void cancelResize() noexcept;
     [[nodiscard]] bool drainResizeEvent();
+    [[nodiscard]] bool guestScanoutChanged(
+        std::uint32_t width,
+        std::uint32_t height) noexcept;
+    void resetGuestSession() noexcept;
+    void scheduleGuestWindowResize(DisplaySize size) noexcept;
+    void applyPendingGuestWindowResize() noexcept;
     void requestRedraw() noexcept;
+    [[nodiscard]] AspectFitRectangle guestContentRectangle(
+        NSSize bounds) const noexcept;
+    [[nodiscard]] bool pointerLandedOnGuest(
+        NSPoint location,
+        NSSize bounds) const noexcept;
     void sendKey(unsigned short nativeCode, std::int32_t value) noexcept;
     void sendLinuxKey(std::uint16_t code, std::int32_t value) noexcept;
     void sendModifier(NSEvent* event) noexcept;
     void releaseHeldInput() noexcept;
+    void releasePointerInput() noexcept;
+    void releasePointerInputLocked(
+        bool suppressActiveGesture = false) noexcept;
     void sendPointer(
         NSPoint location,
         NSSize bounds,
@@ -228,6 +250,7 @@ struct NativeDisplayState final :
 
     MetalPresentation presentation;
     DisplayResizeNotifier resizeNotifier;
+    DisplayGeometryPolicy geometryPolicy;
     native_input::VncInputSink inputSink;
     __weak MTKView* view {};
     NSWindow* window {};
@@ -241,8 +264,12 @@ struct NativeDisplayState final :
     std::atomic_uint64_t resizeGeneration {};
     std::mutex resizeLifecycleMutex;
     std::uint32_t resizeTransitionDepth {};
+    std::optional<DisplaySize> pendingGuestWindowSize;
     native_input::PointerMode pointerMode;
+    std::mutex pointerMutex;
     native_input::DirectTouchContact touchContact;
+    NSUInteger deliveredPointerButtons {};
+    bool pointerGestureSuppressed {};
     // AppKit stops delivering keyUp and flagsChanged once the window loses key
     // status, so remember what the guest still believes is held and release it
     // at that boundary. Keyboard codes are all below BTN_MISC.
@@ -301,8 +328,11 @@ struct NativeDisplayState final :
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size
 {
     (void)size;
-    if (auto state = _state.lock(); state && !view.inLiveResize)
-        state->scheduleResize(view.bounds.size);
+    if (auto state = _state.lock()) {
+        state->presentation.drawableSizeChanged();
+        if (!view.inLiveResize)
+            state->scheduleResize(view.bounds.size);
+    }
 }
 
 - (void)keyDown:(NSEvent*)event
@@ -334,7 +364,9 @@ struct NativeDisplayState final :
 {
     const NSPoint location = [self convertPoint:event.locationInWindow
                                        fromView:nil];
-    return NSMouseInRect(location, self.bounds, self.isFlipped);
+    if (auto state = _state.lock())
+        return state->pointerLandedOnGuest(location, self.bounds.size);
+    return NO;
 }
 
 - (void)sendPointerEvent:(NSEvent*)event
@@ -506,12 +538,12 @@ void NativeDisplayState::scheduleWindow()
         if (!state->running.load(std::memory_order_acquire))
             return;
         NSApplication* application = NSApplication.sharedApplication;
-        const auto& framebuffer = state->presentation.framebuffer();
+        const auto hostSize = state->geometryPolicy.settledHostSize();
         const NSRect frame = NSMakeRect(
             0.0,
             0.0,
-            static_cast<CGFloat>(framebuffer.width()),
-            static_cast<CGFloat>(framebuffer.height()));
+            static_cast<CGFloat>(hostSize.width),
+            static_cast<CGFloat>(hostSize.height));
         UmlNativeMetalView* nativeView = [[UmlNativeMetalView alloc]
             initWithFrame:frame
             device:(__bridge id<MTLDevice>)state->presentation.device()
@@ -558,6 +590,7 @@ void NativeDisplayState::scheduleWindow()
         [nativeWindow makeFirstResponder:nativeView];
         [application activateIgnoringOtherApps:YES];
         [nativeView draw];
+        state->applyPendingGuestWindowResize();
     });
 }
 
@@ -604,21 +637,29 @@ void NativeDisplayState::beginResize() noexcept
 
 void NativeDisplayState::commitResize(NSSize size) noexcept
 {
-    std::lock_guard lock(resizeLifecycleMutex);
-    cancelResize();
-    if (resizeTransitionDepth != 0)
-        --resizeTransitionDepth;
-    if (resizeTransitionDepth != 0)
-        return;
-    const auto width = displayDimension(
-        size.width, resizeNotifier.maximumDimension());
-    const auto height = displayDimension(
-        size.height, resizeNotifier.maximumDimension());
-    if (width && height && running.load(std::memory_order_acquire)) {
-        resizeNotifier.requestCommitted(*width, *height);
-        resizeCommitPending.store(true, std::memory_order_release);
+    {
+        std::lock_guard lock(resizeLifecycleMutex);
+        cancelResize();
+        if (resizeTransitionDepth != 0)
+            --resizeTransitionDepth;
+        if (resizeTransitionDepth != 0)
+            return;
+        const auto width = displayDimension(
+            size.width, resizeNotifier.maximumDimension());
+        const auto height = displayDimension(
+            size.height, resizeNotifier.maximumDimension());
+        if (width && height && running.load(std::memory_order_acquire)) {
+            resizeNotifier.requestCommitted(*width, *height);
+            resizeCommitPending.store(
+                geometryPolicy.autoResizeGuestEnabled(),
+                std::memory_order_release);
+        }
+        resizeInProgress.store(false, std::memory_order_release);
     }
-    resizeInProgress.store(false, std::memory_order_release);
+    auto state = shared_from_this();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        state->applyPendingGuestWindowResize();
+    });
 }
 
 void NativeDisplayState::cancelResize() noexcept
@@ -632,9 +673,103 @@ bool NativeDisplayState::drainResizeEvent()
     const auto size = resizeNotifier.drain();
     if (resizeInProgress.load(std::memory_order_acquire))
         return false;
-    const bool changed = presentation.resize(size.width, size.height);
+    const bool changed = geometryPolicy.hostSizeSettled(
+        size.width, size.height);
     resizeCommitPending.store(false, std::memory_order_release);
     return changed;
+}
+
+bool NativeDisplayState::guestScanoutChanged(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    bool followGuest = false;
+    bool publishFrame = false;
+    {
+        std::lock_guard pointerLock(pointerMutex);
+        const auto active = geometryPolicy.activeGuestSize();
+        std::lock_guard lock(resizeLifecycleMutex);
+        const auto& framebuffer = presentation.framebuffer();
+        const bool presentationChanged =
+            framebuffer.width() != width || framebuffer.height() != height;
+        if (presentationChanged) {
+            if (!presentation.resize(width, height, false))
+                return false;
+            publishFrame = true;
+        }
+        if (active.width != width || active.height != height)
+            releasePointerInputLocked(true);
+        const auto change = geometryPolicy.guestScanoutChanged(width, height);
+        if (change.changed) {
+            publishFrame = true;
+            if (!geometryPolicy.autoResizeGuestEnabled())
+                resizeCommitPending.store(false, std::memory_order_release);
+            followGuest = change.independent &&
+                geometryPolicy.configuredAutoResizeGuest();
+        }
+    }
+    if (publishFrame)
+        presentation.publishCpuFrame();
+    if (followGuest)
+        scheduleGuestWindowResize({width, height});
+    return true;
+}
+
+void NativeDisplayState::resetGuestSession() noexcept
+{
+    std::lock_guard pointerLock(pointerMutex);
+    releasePointerInputLocked(true);
+    std::lock_guard lock(resizeLifecycleMutex);
+    const auto latestHost = resizeNotifier.drain();
+    (void)geometryPolicy.hostSizeSettled(
+        latestHost.width, latestHost.height);
+    const auto restored = geometryPolicy.settledHostSize();
+    const auto& framebuffer = presentation.framebuffer();
+    const DisplaySize presented {
+        .width = framebuffer.width(),
+        .height = framebuffer.height(),
+    };
+    const bool presentationReady = presented == restored ||
+        presentation.resize(restored.width, restored.height, false);
+    geometryPolicy.resetGuestSession(
+        presentationReady ? restored : presented);
+    pendingGuestWindowSize.reset();
+    resizeCommitPending.store(false, std::memory_order_release);
+}
+
+void NativeDisplayState::scheduleGuestWindowResize(DisplaySize size) noexcept
+{
+    {
+        std::lock_guard lock(resizeLifecycleMutex);
+        if (!running.load(std::memory_order_acquire))
+            return;
+        pendingGuestWindowSize = size;
+    }
+    auto state = shared_from_this();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        state->applyPendingGuestWindowResize();
+    });
+}
+
+void NativeDisplayState::applyPendingGuestWindowResize() noexcept
+{
+    std::lock_guard lock(resizeLifecycleMutex);
+    NSWindow* nativeWindow = window;
+    if (!pendingGuestWindowSize || nativeWindow == nil ||
+        !running.load(std::memory_order_acquire) ||
+        resizeTransitionDepth != 0 || nativeWindow.inLiveResize ||
+        (nativeWindow.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+        return;
+    }
+    const auto size = *pendingGuestWindowSize;
+    pendingGuestWindowSize.reset();
+    /* An independent guest mode already latched host-to-guest resizing off.
+     * Keep the lifecycle lock across this synchronous AppKit adjustment so a
+     * reset cannot restore that direction between the decision and the frame
+     * change. The drawable callback only schedules its delayed work here. */
+    [nativeWindow setContentSize:NSMakeSize(
+        static_cast<CGFloat>(size.width),
+        static_cast<CGFloat>(size.height))];
 }
 
 void NativeDisplayState::requestRedraw() noexcept
@@ -652,6 +787,45 @@ void NativeDisplayState::requestRedraw() noexcept
         if (nativeView != nil)
             [nativeView draw];
     });
+}
+
+AspectFitRectangle NativeDisplayState::guestContentRectangle(
+    NSSize bounds) const noexcept
+{
+    const auto guestSize = geometryPolicy.activeGuestSize();
+    MTKView* nativeView = view;
+    const NSSize drawable = nativeView == nil ? NSZeroSize :
+        nativeView.drawableSize;
+    const auto fitted = aspectFitRectangle(
+        drawable.width,
+        drawable.height,
+        guestSize.width,
+        guestSize.height);
+    if (fitted.width <= 0.0 || fitted.height <= 0.0 ||
+        bounds.width <= 0.0 || bounds.height <= 0.0 ||
+        drawable.width <= 0.0 || drawable.height <= 0.0) {
+        return {};
+    }
+    const double scaleX = bounds.width / drawable.width;
+    const double scaleY = bounds.height / drawable.height;
+    return {
+        .x = fitted.x * scaleX,
+        .y = fitted.y * scaleY,
+        .width = fitted.width * scaleX,
+        .height = fitted.height * scaleY,
+    };
+}
+
+bool NativeDisplayState::pointerLandedOnGuest(
+    NSPoint location,
+    NSSize bounds) const noexcept
+{
+    const auto content = guestContentRectangle(bounds);
+    return content.width > 0.0 && content.height > 0.0 &&
+        location.x >= content.x &&
+        location.x <= content.x + content.width &&
+        location.y >= content.y &&
+        location.y <= content.y + content.height;
 }
 
 void NativeDisplayState::sendKey(
@@ -694,6 +868,22 @@ void NativeDisplayState::releaseHeldInput() noexcept
         if (heldKeys[code])
             sendLinuxKey(static_cast<std::uint16_t>(code), 0);
     }
+    releasePointerInput();
+}
+
+void NativeDisplayState::releasePointerInput() noexcept
+{
+    std::lock_guard lock(pointerMutex);
+    releasePointerInputLocked();
+}
+
+void NativeDisplayState::releasePointerInputLocked(
+    bool suppressActiveGesture) noexcept
+{
+    if (suppressActiveGesture && deliveredPointerButtons != 0)
+        pointerGestureSuppressed = true;
+    else if (!suppressActiveGesture)
+        pointerGestureSuppressed = false;
     // Pointer contacts live above the tracked keyboard range, so clear them
     // explicitly when the window loses focus.
     if (pointerMode == native_input::PointerMode::touchscreen) {
@@ -704,6 +894,7 @@ void NativeDisplayState::releaseHeldInput() noexcept
         sendLinuxKey(native_input::buttonMiddle, 0);
         sendLinuxKey(native_input::buttonRight, 0);
     }
+    deliveredPointerButtons = 0;
 }
 
 void NativeDisplayState::sendModifier(NSEvent* event) noexcept
@@ -728,10 +919,32 @@ void NativeDisplayState::sendPointer(
 {
     if (!inputSink || bounds.width <= 0.0 || bounds.height <= 0.0)
         return;
+    std::lock_guard lock(pointerMutex);
+    const auto content = guestContentRectangle(bounds);
+    if (content.width <= 0.0 || content.height <= 0.0)
+        return;
+    const bool inside = location.x >= content.x &&
+        location.x <= content.x + content.width &&
+        location.y >= content.y &&
+        location.y <= content.y + content.height;
+    const NSUInteger pointerButtons = buttons & 7U;
+    if (pointerGestureSuppressed) {
+        if (pointerButtons == 0)
+            pointerGestureSuppressed = false;
+        return;
+    }
+    if (!inside && deliveredPointerButtons == 0) {
+        if (pointerButtons != 0)
+            pointerGestureSuppressed = true;
+        return;
+    }
     const bool pressed = (buttons & 1U) != 0;
     if (pointerMode == native_input::PointerMode::touchscreen &&
         !touchContact.update(pressed))
         return;
+    deliveredPointerButtons =
+        pointerMode == native_input::PointerMode::touchscreen ?
+            (pressed ? 1U : 0U) : pointerButtons;
     std::array<native_input::VncInputEvent, 10> events {};
     std::size_t count = 0;
     const auto append = [&](std::uint16_t type,
@@ -743,12 +956,13 @@ void NativeDisplayState::sendPointer(
         native_input::eventAbsolute,
         native_input::absoluteX,
         native_input::normalizedAbsoluteCoordinate(
-            location.x, bounds.width));
+            location.x - content.x, content.width));
     append(
         native_input::eventAbsolute,
         native_input::absoluteY,
         native_input::normalizedAbsoluteCoordinate(
-            bounds.height - location.y, bounds.height));
+            content.y + content.height - location.y,
+            content.height));
     if (pointerMode == native_input::PointerMode::touchscreen) {
         append(
             native_input::eventKey,
@@ -831,13 +1045,15 @@ NativeDisplay::NativeDisplay(
     native_input::VncInputSink inputSink,
     void*,
     native_input::PointerMode pointerMode,
-    std::uint32_t maximumDimension)
+    std::uint32_t maximumDimension,
+    bool autoResizeGuest)
     : state_(std::make_shared<NativeDisplayState>(
           width,
           height,
           std::move(inputSink),
           pointerMode,
-          maximumDimension))
+          maximumDimension,
+          autoResizeGuest))
 {
     state_->scheduleWindow();
 }
@@ -849,12 +1065,12 @@ NativeDisplay::~NativeDisplay()
 
 std::uint32_t NativeDisplay::width() const noexcept
 {
-    return state_->presentation.framebuffer().width();
+    return state_->geometryPolicy.advertisedSize().width;
 }
 
 std::uint32_t NativeDisplay::height() const noexcept
 {
-    return state_->presentation.framebuffer().height();
+    return state_->geometryPolicy.advertisedSize().height;
 }
 
 int NativeDisplay::resizeEventDescriptor() const noexcept
@@ -867,11 +1083,24 @@ bool NativeDisplay::drainResizeEvent()
     return state_->drainResizeEvent();
 }
 
+bool NativeDisplay::guestScanoutChanged(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    return state_->guestScanoutChanged(width, height);
+}
+
+void NativeDisplay::resetGuestSession() noexcept
+{
+    state_->resetGuestSession();
+}
+
 bool NativeDisplay::claimResizeNotification() noexcept
 {
     state_->resizeLifecycleMutex.lock();
     if (state_->resizeInProgress.load(std::memory_order_acquire) ||
-        state_->resizeCommitPending.load(std::memory_order_acquire)) {
+        state_->resizeCommitPending.load(std::memory_order_acquire) ||
+        !state_->geometryPolicy.autoResizeGuestEnabled()) {
         state_->resizeLifecycleMutex.unlock();
         return false;
     }

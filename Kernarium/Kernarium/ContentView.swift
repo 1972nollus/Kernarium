@@ -280,24 +280,90 @@ struct GuestInputCoordinateSpace {
 
     func location(
         _ point: CGPoint,
-        in bounds: CGSize
+        in bounds: CGSize,
+        drawableSize: CGSize? = nil,
+        contentSize: CGSize? = nil,
+        clampToContent: Bool = false
     ) -> (x: UInt32, y: UInt32)? {
+        let drawableSize = drawableSize ?? bounds
+        let contentSize = contentSize ?? drawableSize
         guard size.width >= 1, size.height >= 1,
               bounds.width > 0, bounds.height > 0,
               point.x.isFinite, point.y.isFinite,
               size.width.isFinite, size.height.isFinite,
               bounds.width.isFinite, bounds.height.isFinite,
+              drawableSize.width.isFinite, drawableSize.height.isFinite,
+              drawableSize.width > 0, drawableSize.height > 0,
               size.width <= CGFloat(UInt32.max),
               size.height <= CGFloat(UInt32.max) else { return nil }
+        guard let viewport = GuestDisplayViewport.aspectFit(
+            contentSize: contentSize,
+            in: drawableSize
+        ) else { return nil }
+        var drawablePoint = CGPoint(
+            x: point.x * drawableSize.width / bounds.width,
+            y: point.y * drawableSize.height / bounds.height
+        )
+        if clampToContent {
+            drawablePoint.x = min(
+                max(drawablePoint.x, viewport.minX), viewport.maxX
+            )
+            drawablePoint.y = min(
+                max(drawablePoint.y, viewport.minY), viewport.maxY
+            )
+        } else if drawablePoint.x < viewport.minX ||
+                    drawablePoint.x > viewport.maxX ||
+                    drawablePoint.y < viewport.minY ||
+                    drawablePoint.y > viewport.maxY {
+            return nil
+        }
         let x = min(
-            max((point.x * size.width / bounds.width).rounded(.down), 0),
+            max(
+                (
+                    (drawablePoint.x - viewport.minX) * size.width /
+                        viewport.width
+                ).rounded(.down),
+                0
+            ),
             size.width - 1
         )
         let y = min(
-            max((point.y * size.height / bounds.height).rounded(.down), 0),
+            max(
+                (
+                    (drawablePoint.y - viewport.minY) * size.height /
+                        viewport.height
+                ).rounded(.down),
+                0
+            ),
             size.height - 1
         )
         return (UInt32(x), UInt32(y))
+    }
+}
+
+enum GuestDisplayViewport {
+    static func aspectFit(
+        contentSize: CGSize,
+        in containerSize: CGSize
+    ) -> CGRect? {
+        guard contentSize.width.isFinite, contentSize.height.isFinite,
+              containerSize.width.isFinite, containerSize.height.isFinite,
+              contentSize.width > 0, contentSize.height > 0,
+              containerSize.width > 0, containerSize.height > 0 else {
+            return nil
+        }
+        let scale = min(
+            containerSize.width / contentSize.width,
+            containerSize.height / contentSize.height
+        )
+        let width = contentSize.width * scale
+        let height = contentSize.height * scale
+        return CGRect(
+            x: (containerSize.width - width) / 2,
+            y: (containerSize.height - height) / 2,
+            width: width,
+            height: height
+        )
     }
 }
 
@@ -343,6 +409,7 @@ private struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
+        controller.metalView.releaseGuestInput()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -391,6 +458,8 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     var retinaMode = false
     @objc private(set) var umlGuestResizeInProgress = false
     private var trackedTouch: UITouch?
+    private var lastTouchLocation: (x: UInt32, y: UInt32)?
+    private var guestContentSize: CGSize?
 
     override var canBecomeFirstResponder: Bool { true }
     var hasText: Bool { true }
@@ -451,6 +520,23 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
+    @objc(umlSetGuestDisplayWidth:height:)
+    func setGuestDisplay(width: UInt32, height: UInt32) {
+        releaseTrackedTouch()
+        guard width > 0, height > 0 else {
+            guestContentSize = nil
+            return
+        }
+        guestContentSize = CGSize(
+            width: CGFloat(width),
+            height: CGFloat(height)
+        )
+    }
+
+    func releaseGuestInput() {
+        releaseTrackedTouch()
+    }
+
     func setKeyboardVisible(_ visible: Bool) {
         if visible {
             becomeFirstResponder()
@@ -484,14 +570,20 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         guard trackedTouch == nil, let touch = touches.first else { return }
+        guard let location = touchLocation(touch) else { return }
         trackedTouch = touch
-        sendTouch(touch, pressed: true)
+        lastTouchLocation = location
+        sendTouch(location, pressed: true)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        sendTouch(touch, pressed: true)
+        guard let location = touchLocation(touch, clampToContent: true) else {
+            return
+        }
+        lastTouchLocation = location
+        sendTouch(location, pressed: true)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -509,23 +601,49 @@ private final class GuestMetalView: MTKView, UIKeyInput {
 
     private func finishTouch(in touches: Set<UITouch>) {
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        sendTouch(touch, pressed: false)
+        let location = touchLocation(touch, clampToContent: true) ??
+            lastTouchLocation
+        if let location {
+            sendTouch(location, pressed: false)
+        }
         trackedTouch = nil
+        lastTouchLocation = nil
     }
 
-    private func sendTouch(_ touch: UITouch, pressed: Bool) {
+    private func touchLocation(
+        _ touch: UITouch,
+        clampToContent: Bool = false
+    ) -> (x: UInt32, y: UInt32)? {
         let point = touch.location(in: self)
         let coordinateSpace = inputCoordinateSpace ??
             GuestInputCoordinateSpace(size: bounds.size)
-        guard let location = coordinateSpace.location(
+        return coordinateSpace.location(
             point,
-            in: bounds.size
-        ) else { return }
+            in: bounds.size,
+            drawableSize: drawableSize,
+            contentSize: guestContentSize ?? drawableSize,
+            clampToContent: clampToContent
+        )
+    }
+
+    private func sendTouch(
+        _ location: (x: UInt32, y: UInt32),
+        pressed: Bool
+    ) {
         kernarium_runtime_loader_send_touch(
             location.x,
             location.y,
             pressed ? 1 : 0
         )
+    }
+
+    private func releaseTrackedTouch() {
+        guard trackedTouch != nil else { return }
+        if let lastTouchLocation {
+            sendTouch(lastTouchLocation, pressed: false)
+        }
+        trackedTouch = nil
+        lastTouchLocation = nil
     }
 
     private func sendKey(code: UInt16, pressed: Bool) {
@@ -719,7 +837,8 @@ private func runGuest(
     height: UInt32,
     dotsPerInch: UInt32,
     guestMemoryMiB: UInt32,
-    vCPUCount: UInt32
+    vCPUCount: UInt32,
+    autoResizeGuest: Bool
 ) -> Int32 {
     boot.withCPaths { paths in
         var request = kernarium_runtime_boot()
@@ -730,6 +849,7 @@ private func runGuest(
         request.guest_memory_mib = guestMemoryMiB
         request.guest_processor_count = vCPUCount
         request.android_boot_mode = boot.androidBootMode.rawValue
+        request.auto_resize_guest = autoResizeGuest ? 1 : 0
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_disk_path = paths[2]
@@ -807,12 +927,17 @@ private final class EmulatorLauncher {
         // Keep that launch-time coordinate space stable while later layouts
         // resize Virtio-GPU, and normalize every current view point into it.
         view.inputCoordinateSpace = GuestInputCoordinateSpace(size: size)
+        view.setGuestDisplay(
+            width: UInt32(size.width.rounded(.down)),
+            height: UInt32(size.height.rounded(.down))
+        )
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
         let dotsPerInch = geometry.dotsPerInch
+        let autoResizeGuest = configuration.autoResizeGuest
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be the
         // main thread. Own the thread outright rather than depending on where a
@@ -827,7 +952,8 @@ private final class EmulatorLauncher {
                 height: height,
                 dotsPerInch: dotsPerInch,
                 guestMemoryMiB: guestMemoryMiB,
-                vCPUCount: vCPUCount
+                vCPUCount: vCPUCount,
+                autoResizeGuest: autoResizeGuest
             )
             Task { @MainActor in
                 EmulatorLauncher.shared.finished(result: result)

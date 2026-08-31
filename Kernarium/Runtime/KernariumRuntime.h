@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 7U
+#define KERNARIUM_RUNTIME_API_VERSION 8U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -42,6 +42,7 @@ typedef struct kernarium_runtime_boot {
     uint32_t guest_memory_mib;
     uint32_t guest_processor_count;
     uint32_t android_boot_mode;
+    uint32_t auto_resize_guest;
     const char* rootfs_path;
     const char* overlay_path;
     const char* android_disk_path;
@@ -110,7 +111,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v7(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v8(void);
 
 #ifdef __cplusplus
 }

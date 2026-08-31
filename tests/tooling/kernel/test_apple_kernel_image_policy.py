@@ -355,7 +355,7 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v7" in runtime_source
+        "kernarium_runtime_get_api_v8" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
@@ -383,10 +383,17 @@ def main() -> int:
         "deferred runtime still owns the pre-main timer constructor",
     )
     for contract in (
+        "#define KERNARIUM_RUNTIME_API_VERSION 8U",
+        "uint32_t auto_resize_guest;",
         "set_console_output_callback",
         "send_console_input",
     ):
         require(contract in runtime_header, f"runtime API lacks {contract}")
+    require(
+        "boot->auto_resize_guest > 1U" in runtime_source
+        and ".autoResizeGuest = boot->auto_resize_guest != 0" in runtime_source,
+        "runtime does not validate and forward the display resize policy",
+    )
     for contract in (
         "publishConsoleOutput",
         "runtimeSetConsoleOutputCallback",
@@ -397,7 +404,7 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v7")',
+        'dlsym(handle, "kernarium_runtime_get_api_v8")',
         "selectedPageSize == guestPageSize",
         "releaseFirst >= '0' && releaseFirst <= '9'",
         "forwardConsoleOutput",
@@ -502,6 +509,10 @@ def main() -> int:
         and "(CGFloat(160) * scale).rounded()" in content_view
         and "request.dots_per_inch = dotsPerInch" in content_view,
         "Kernarium does not scale and forward the Android display density",
+    )
+    require(
+        "request.auto_resize_guest = autoResizeGuest ? 1 : 0" in content_view,
+        "Kernarium does not forward the persisted display resize policy",
     )
     require(
         '"androidboot.lcd_density="' in runtime_source

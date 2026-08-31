@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "display_geometry.hpp"
 #include "protocol.hpp"
 #include "unique_descriptor.hpp"
 
@@ -8,11 +9,6 @@
 #include <cstdint>
 
 namespace uml::gpu {
-
-struct DisplaySize final {
-    std::uint32_t width {};
-    std::uint32_t height {};
-};
 
 /* Apple UI callbacks publish only the newest usable geometry here. The GPU
  * transport thread drains the readiness descriptor and is the sole consumer

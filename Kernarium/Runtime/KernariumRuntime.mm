@@ -1038,6 +1038,10 @@ int runtimeRun(
             std::fputs("Kernarium: invalid display geometry\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
+        if (boot->auto_resize_guest > 1U) {
+            std::fputs("Kernarium: invalid display resize policy\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
         const NSUInteger hostProcessorCount =
             [NSProcessInfo processInfo].processorCount;
         const uint32_t maximumGuestProcessorCount = hostProcessorCount == 0
@@ -1091,6 +1095,7 @@ int runtimeRun(
                 .height = height,
                 .dotsPerInch = dotsPerInch,
                 .nativeView = (__bridge void*)view,
+                .autoResizeGuest = boot->auto_resize_guest != 0,
             });
         uml::input::virtio::InProcessInputService touchscreen(
             uml::input::virtio::DeviceKind::touchscreen, width, height);
@@ -1451,7 +1456,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v7(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v8(void)
 {
     return &runtimeApi;
 }

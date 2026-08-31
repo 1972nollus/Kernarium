@@ -232,6 +232,8 @@ struct HostGpuOptions {
 	bool enabled {};
 	uml::gpu::DisplayMode display_mode {uml::gpu::DisplayMode::vnc};
 	bool vnc_option_specified {};
+	bool auto_resize_guest {true};
+	bool auto_resize_guest_specified {};
 	std::string vnc_bind_address {"127.0.0.1"};
 	std::uint16_t vnc_port {5900};
 	std::string vnc_password;
@@ -351,6 +353,18 @@ PreparedArguments prepare_host_arguments(
 					std::string(argument));
 			prepared.gpu.vnc_option_specified = true;
 			prepared.gpu.enabled = true;
+		} else if (argument.starts_with("--gpu-auto-resize=")) {
+			const auto value = argument.substr(
+				std::string_view{"--gpu-auto-resize="}.size());
+			if (value == "on")
+				prepared.gpu.auto_resize_guest = true;
+			else if (value == "off")
+				prepared.gpu.auto_resize_guest = false;
+			else
+				throw std::invalid_argument(
+					"--gpu-auto-resize must be on or off");
+			prepared.gpu.auto_resize_guest_specified = true;
+			prepared.gpu.enabled = true;
 		} else if (argument.starts_with("--net-forward=")) {
 			auto specification = std::string{argument.substr(
 				std::string_view{"--net-forward="}.size())};
@@ -377,6 +391,10 @@ PreparedArguments prepare_host_arguments(
 	    prepared.gpu.vnc_option_specified)
 		throw std::invalid_argument(
 			"--gpu-vnc-* options require --gpu-display=vnc");
+	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::native &&
+	    prepared.gpu.auto_resize_guest_specified)
+		throw std::invalid_argument(
+			"--gpu-auto-resize requires --gpu-display=native");
 	if (prepared.gpu.dots_per_inch != 0 &&
 	    (prepared.gpu.width > uml::gpu::protocol::maximumEdidDimension ||
 	     prepared.gpu.height > uml::gpu::protocol::maximumEdidDimension))
@@ -505,6 +523,8 @@ int uml::app::runEmbeddedKernel(
 						.pointerMode = configuration.touchscreen_input ?
 							uml::input::vnc::PointerMode::touchscreen :
 							uml::input::vnc::PointerMode::mouse,
+						.autoResizeGuest =
+							prepared.gpu.auto_resize_guest,
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +

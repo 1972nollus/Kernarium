@@ -354,6 +354,7 @@ void VirtioGpuDevice::reset() noexcept
     clearedDisplayGeneration_ = 0;
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.resetGuestSession();
     UML_GPU_DISPLAY.clear();
 }
 
@@ -1149,6 +1150,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             }
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
+        const bool dimensionsChanged =
+            scanoutRectangle_.width != scanout->rectangle.width ||
+            scanoutRectangle_.height != scanout->rectangle.height;
+        if (dimensionsChanged &&
+            !UML_GPU_DISPLAY.guestScanoutChanged(
+                scanout->rectangle.width,
+                scanout->rectangle.height)) {
+            protocol::GpuControlHeader failure = *header;
+            failure.type = static_cast<std::uint32_t>(
+                protocol::GpuResponse::errorOutOfMemory);
+            failure.flags &=
+                protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+            std::memcpy(success.data(), &failure, sizeof(failure));
+            return success;
+        }
         if (replacePixels)
             virglResource->pixels.swap(replacementPixels);
         scanoutResource_ = scanout->resourceId;

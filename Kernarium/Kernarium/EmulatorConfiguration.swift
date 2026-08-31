@@ -54,6 +54,7 @@ struct EmulatorConfiguration: Equatable {
     static let overlaySizeEnvironmentKey = "KERNARIUM_OVERLAY_SIZE_GIB"
     static let androidDiskSizeEnvironmentKey = "KERNARIUM_ANDROID_DISK_SIZE_GIB"
     static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
+    static let autoResizeGuestEnvironmentKey = "KERNARIUM_GPU_AUTO_RESIZE"
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
@@ -67,6 +68,7 @@ struct EmulatorConfiguration: Equatable {
     static let defaultAndroidDiskSizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB
     static let defaultRetinaMode = false
+    static let defaultAutoResizeGuest = true
     static let defaultAndroidBootMode = AndroidBootMode.automatic
 
     let vCPUCount: Int
@@ -76,6 +78,7 @@ struct EmulatorConfiguration: Equatable {
     let rootfsFilename: String
     let kernelPageSize: KernelPageSize
     let retinaMode: Bool
+    let autoResizeGuest: Bool
     let androidBootMode: AndroidBootMode
 
     static var physicalProcessorCount: Int {
@@ -131,6 +134,11 @@ struct EmulatorConfiguration: Equatable {
         let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
             ? defaultRetinaMode
             : defaults.bool(forKey: Key.retinaMode)
+        let storedAutoResizeGuest = defaults.object(
+            forKey: Key.autoResizeGuest
+        ) == nil
+            ? defaultAutoResizeGuest
+            : defaults.bool(forKey: Key.autoResizeGuest)
         let storedAndroidBootMode = defaults.object(
             forKey: Key.androidBootMode
         ) == nil
@@ -159,6 +167,15 @@ struct EmulatorConfiguration: Equatable {
         )
         let environmentRetinaMode = environment[retinaEnvironmentKey].flatMap {
             value in
+            switch value {
+            case "0": false
+            case "1": true
+            default: nil
+            }
+        }
+        let environmentAutoResizeGuest = environment[
+            autoResizeGuestEnvironmentKey
+        ].flatMap { value in
             switch value {
             case "0": false
             case "1": true
@@ -210,6 +227,8 @@ struct EmulatorConfiguration: Equatable {
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredKernelPageSize ?? requestedKernelPageSize,
             retinaMode: environmentRetinaMode ?? storedRetinaMode,
+            autoResizeGuest: environmentAutoResizeGuest ??
+                storedAutoResizeGuest,
             androidBootMode: environmentAndroidBootMode ?? storedAndroidBootMode
         )
     }
@@ -226,6 +245,7 @@ struct EmulatorConfiguration: Equatable {
         )
         defaults.set(kernelPageSize.rawValue, forKey: Key.kernelPageSize)
         defaults.set(retinaMode, forKey: Key.retinaMode)
+        defaults.set(autoResizeGuest, forKey: Key.autoResizeGuest)
         defaults.set(androidBootMode.rawValue, forKey: Key.androidBootMode)
     }
 
@@ -259,6 +279,7 @@ struct EmulatorConfiguration: Equatable {
         static let rootfsFilename = "emulator.rootfsFilename"
         static let kernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"
+        static let autoResizeGuest = "emulator.autoResizeGuest"
         static let androidBootMode = "emulator.androidBootMode"
     }
 }
