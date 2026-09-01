@@ -2,6 +2,7 @@
 #pragma once
 
 #include "display.hpp"
+#include "display_geometry.hpp"
 #include "scanout_framebuffer.hpp"
 
 #include <cstdint>
@@ -30,6 +31,10 @@ public:
         std::uint32_t width,
         std::uint32_t height,
         bool requestRedraw = true) noexcept;
+    [[nodiscard]] DisplayRotation rotation() const noexcept;
+    /* Rotates only host presentation. The guest scanout dimensions and
+     * contents remain unchanged. */
+    [[nodiscard]] bool setRotation(DisplayRotation rotation) noexcept;
     /* Re-present the latest guest content after the host drawable changes.
      * This is independent of the guest frame timeline and therefore must not
      * make a later guest frame look superseded. */

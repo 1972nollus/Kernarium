@@ -139,6 +139,86 @@ void aspectFitCentersGuestContentWithoutDistortion()
         "invalid guest geometry produced an aspect-fit viewport");
 }
 
+void hostRotationSwapsPresentationAndMapsGuestInput()
+{
+    using uml::gpu::DisplayPoint;
+    using uml::gpu::DisplayRotation;
+    using uml::gpu::DisplaySize;
+    using uml::gpu::guestPointFromPresentedPoint;
+    using uml::gpu::presentedDisplaySize;
+    using uml::gpu::rotateDisplay;
+
+    const DisplaySize guest {1600, 900};
+    require(
+        presentedDisplaySize(guest, DisplayRotation::upright) == guest &&
+            presentedDisplaySize(guest, DisplayRotation::upsideDown) == guest,
+        "a half-turn changed the presented display dimensions");
+    const DisplaySize portrait {900, 1600};
+    require(
+        presentedDisplaySize(guest, DisplayRotation::clockwise90) == portrait &&
+            presentedDisplaySize(
+                guest, DisplayRotation::counterclockwise90) == portrait,
+        "a quarter-turn did not swap the presented display dimensions");
+    require(
+        presentedDisplaySize(portrait, DisplayRotation::clockwise90) == guest,
+        "a rotated host size did not map back to guest orientation");
+    uml::gpu::DisplayGeometryPolicy policy {
+        guest.width, guest.height, true};
+    const auto guestOrientedWindow = presentedDisplaySize(
+        portrait, DisplayRotation::clockwise90);
+    require(
+        !policy.hostSizeSettled(
+            guestOrientedWindow.width, guestOrientedWindow.height) &&
+            policy.advertisedSize() == guest &&
+            policy.activeGuestSize() == guest,
+        "rotating the host window produced a guest resolution change");
+
+    require(
+        rotateDisplay(DisplayRotation::upright, 1) ==
+                DisplayRotation::clockwise90 &&
+            rotateDisplay(DisplayRotation::upright, -1) ==
+                DisplayRotation::counterclockwise90 &&
+            rotateDisplay(DisplayRotation::counterclockwise90, 2) ==
+                DisplayRotation::clockwise90 &&
+            rotateDisplay(DisplayRotation::upright, 5) ==
+                DisplayRotation::clockwise90,
+        "display quarter-turn composition was incorrect");
+
+    const auto requirePoint = [](DisplayPoint actual,
+                                  double x,
+                                  double y,
+                                  const char* message) {
+        require(
+            std::abs(actual.x - x) < 0.001 &&
+                std::abs(actual.y - y) < 0.001,
+            message);
+    };
+    requirePoint(
+        guestPointFromPresentedPoint(
+            {0.0, 0.0}, DisplayRotation::clockwise90),
+        0.0,
+        1.0,
+        "clockwise presentation top-left did not map to guest bottom-left");
+    requirePoint(
+        guestPointFromPresentedPoint(
+            {1.0, 0.0}, DisplayRotation::clockwise90),
+        0.0,
+        0.0,
+        "clockwise presentation top-right did not map to guest top-left");
+    requirePoint(
+        guestPointFromPresentedPoint(
+            {0.0, 0.0}, DisplayRotation::counterclockwise90),
+        1.0,
+        0.0,
+        "counterclockwise presentation top-left did not map to guest top-right");
+    requirePoint(
+        guestPointFromPresentedPoint(
+            {0.25, 0.75}, DisplayRotation::upsideDown),
+        0.75,
+        0.25,
+        "half-turn input did not map back to guest coordinates");
+}
+
 void pointerPathsClipToExactGuestEdges()
 {
     using uml::gpu::AspectFitRectangle;
@@ -310,6 +390,7 @@ int main()
         resizeNotificationsAreCoalescedAndBounded();
         framebufferResizePublishesOneClearedGeometry();
         aspectFitCentersGuestContentWithoutDistortion();
+        hostRotationSwapsPresentationAndMapsGuestInput();
         pointerPathsClipToExactGuestEdges();
         guestModesetsNeverDisableHostResize();
         configuredOffAlwaysKeepsHostResizeSilent();

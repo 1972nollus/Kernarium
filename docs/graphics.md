@@ -106,6 +106,14 @@ available host content area. EDID-backed dimensions are limited to 4095 pixels
 per axis; the non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per
 axis.
 
+The macOS native window's Display menu can rotate presentation clockwise or
+counterclockwise in 90-degree steps without changing the guest scanout or
+advertised mode. Quarter-turns swap the content window dimensions, and later
+host resize dimensions are translated back into guest orientation before they
+are advertised. The inverse presentation transform is applied to pointer and
+touch coordinates. An active contact ends when rotation changes and cannot
+restart until the physical gesture is released.
+
 Rendering and input use the same centered aspect-fit rectangle. AppKit maps
 that rectangle into the fixed tablet range, while Kernarium maps it into the
 touchscreen range advertised at boot. A touch beginning in a letterbox or

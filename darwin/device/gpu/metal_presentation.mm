@@ -49,14 +49,29 @@ vertex RasterData displayVertex(unsigned int vertexId [[vertex_id]])
 
 fragment float4 displayFragment(
     RasterData input [[stage_in]],
-    texture2d<float> scanout [[texture(0)]])
+    texture2d<float> scanout [[texture(0)]],
+    constant uint& rotation [[buffer(0)]])
 {
     constexpr sampler textureSampler(
         mag_filter::nearest,
         min_filter::nearest,
         address::clamp_to_edge);
+    float2 coordinate = input.textureCoordinate;
+    switch (rotation & 3u) {
+    case 1u:
+        coordinate = float2(coordinate.y, 1.0 - coordinate.x);
+        break;
+    case 2u:
+        coordinate = float2(1.0 - coordinate.x, 1.0 - coordinate.y);
+        break;
+    case 3u:
+        coordinate = float2(1.0 - coordinate.y, coordinate.x);
+        break;
+    default:
+        break;
+    }
     const float4 color = scanout.sample(
-        textureSampler, input.textureCoordinate);
+        textureSampler, coordinate);
     return float4(color.rgb, 1.0);
 }
 )metal";
@@ -187,6 +202,25 @@ struct MetalPresentationState final :
         requestRedraw();
     }
 
+    [[nodiscard]] DisplayRotation currentRotation() const noexcept
+    {
+        std::lock_guard lock(presentationMutex);
+        return displayRotation;
+    }
+
+    [[nodiscard]] bool setRotation(DisplayRotation rotation) noexcept
+    {
+        {
+            std::lock_guard lock(presentationMutex);
+            if (displayRotation == rotation)
+                return false;
+            displayRotation = rotation;
+            ++latestPresentationGeneration;
+        }
+        requestRedraw();
+        return true;
+    }
+
     [[nodiscard]] bool resize(
         std::uint32_t width,
         std::uint32_t height,
@@ -302,6 +336,7 @@ struct MetalPresentationState final :
             std::uint64_t presentationGeneration = 0;
             std::uint32_t activeContentWidth = 0;
             std::uint32_t activeContentHeight = 0;
+            DisplayRotation activeRotation = DisplayRotation::upright;
             bool useCpu = false;
             id<MTLTexture> sourceTexture;
             try {
@@ -319,6 +354,7 @@ struct MetalPresentationState final :
                     presentationGeneration = latestPresentationGeneration;
                     activeContentWidth = contentWidth;
                     activeContentHeight = contentHeight;
+                    activeRotation = displayRotation;
                     useCpu = latestIsCpu;
                     sourceTexture = useCpu ? fallbackTexture : latestTexture;
                     if (sourceTexture == nil)
@@ -365,11 +401,15 @@ struct MetalPresentationState final :
                         return;
                     }
                 }
+                const auto presented = presentedDisplaySize(
+                    {.width = activeContentWidth,
+                     .height = activeContentHeight},
+                    activeRotation);
                 const auto fitted = aspectFitRectangle(
                     static_cast<double>(drawable.texture.width),
                     static_cast<double>(drawable.texture.height),
-                    static_cast<double>(activeContentWidth),
-                    static_cast<double>(activeContentHeight));
+                    static_cast<double>(presented.width),
+                    static_cast<double>(presented.height));
                 if (fitted.width <= 0.0 || fitted.height <= 0.0) {
                     finishPresentation(
                         contentGeneration, presentationGeneration);
@@ -401,6 +441,11 @@ struct MetalPresentationState final :
                 [encoder setRenderPipelineState:pipeline];
                 [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
+                const auto shaderRotation =
+                    static_cast<std::uint32_t>(activeRotation);
+                [encoder setFragmentBytes:&shaderRotation
+                                    length:sizeof(shaderRotation)
+                                   atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle
                             vertexStart:0
                             vertexCount:3];
@@ -509,13 +554,14 @@ struct MetalPresentationState final :
     id<MTLTexture> latestTexture;
     std::mutex callbackMutex;
     std::function<void()> redrawCallback;
-    std::mutex presentationMutex;
+    mutable std::mutex presentationMutex;
     std::uint64_t latestContentGeneration {1};
     std::uint64_t presentedContentGeneration {};
     std::uint64_t latestPresentationGeneration {1};
     std::uint64_t presentedPresentationGeneration {};
     std::uint32_t contentWidth;
     std::uint32_t contentHeight;
+    DisplayRotation displayRotation {DisplayRotation::upright};
     bool latestIsCpu {true};
     bool presentationInFlight {};
     std::atomic_bool running {true};
@@ -571,6 +617,16 @@ bool MetalPresentation::resize(
     bool requestRedraw) noexcept
 {
     return state_->resize(width, height, requestRedraw);
+}
+
+DisplayRotation MetalPresentation::rotation() const noexcept
+{
+    return state_->currentRotation();
+}
+
+bool MetalPresentation::setRotation(DisplayRotation rotation) noexcept
+{
+    return state_->setRotation(rotation);
 }
 
 void MetalPresentation::drawableSizeChanged() noexcept

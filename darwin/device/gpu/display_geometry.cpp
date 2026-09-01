@@ -34,6 +34,44 @@ AspectFitRectangle aspectFitRectangle(
     };
 }
 
+DisplayRotation rotateDisplay(
+    DisplayRotation rotation,
+    int quarterTurns) noexcept
+{
+    constexpr int rotationCount = 4;
+    int value = static_cast<int>(rotation) + quarterTurns % rotationCount;
+    value %= rotationCount;
+    if (value < 0)
+        value += rotationCount;
+    return static_cast<DisplayRotation>(value);
+}
+
+DisplaySize presentedDisplaySize(
+    DisplaySize guestSize,
+    DisplayRotation rotation) noexcept
+{
+    if ((static_cast<std::uint8_t>(rotation) & 1U) == 0)
+        return guestSize;
+    return {.width = guestSize.height, .height = guestSize.width};
+}
+
+DisplayPoint guestPointFromPresentedPoint(
+    DisplayPoint point,
+    DisplayRotation rotation) noexcept
+{
+    switch (rotation) {
+    case DisplayRotation::upright:
+        return point;
+    case DisplayRotation::clockwise90:
+        return {.x = point.y, .y = 1.0 - point.x};
+    case DisplayRotation::upsideDown:
+        return {.x = 1.0 - point.x, .y = 1.0 - point.y};
+    case DisplayRotation::counterclockwise90:
+        return {.x = 1.0 - point.y, .y = point.x};
+    }
+    return point;
+}
+
 std::optional<ClippedDisplaySegment> clipDisplaySegment(
     AspectFitRectangle rectangle,
     DisplayPoint start,

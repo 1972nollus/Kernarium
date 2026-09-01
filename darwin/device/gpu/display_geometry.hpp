@@ -26,6 +26,13 @@ struct DisplayPoint final {
     double y {};
 };
 
+enum class DisplayRotation : std::uint8_t {
+    upright,
+    clockwise90,
+    upsideDown,
+    counterclockwise90,
+};
+
 struct ClippedDisplaySegment final {
     DisplayPoint entry;
     DisplayPoint exit;
@@ -36,6 +43,18 @@ struct ClippedDisplaySegment final {
     double containerHeight,
     double contentWidth,
     double contentHeight) noexcept;
+
+[[nodiscard]] DisplayRotation rotateDisplay(
+    DisplayRotation rotation,
+    int quarterTurns) noexcept;
+[[nodiscard]] DisplaySize presentedDisplaySize(
+    DisplaySize guestSize,
+    DisplayRotation rotation) noexcept;
+/* Maps a normalized, top-left-origin point from the rotated presentation back
+ * into the guest's unchanged scanout coordinate system. */
+[[nodiscard]] DisplayPoint guestPointFromPresentedPoint(
+    DisplayPoint point,
+    DisplayRotation rotation) noexcept;
 
 /* Returns the portion of a pointer path inside a display rectangle. Entry and
  * exit lie exactly on the rectangle boundary when the corresponding endpoint

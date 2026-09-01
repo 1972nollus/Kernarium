@@ -225,9 +225,13 @@ struct NativeDisplayState final :
     void resetGuestSession() noexcept;
     void scheduleGuestWindowResize(DisplaySize size) noexcept;
     void applyPendingGuestWindowResize() noexcept;
+    void rotatePresentation(int quarterTurns) noexcept;
     void requestRedraw() noexcept;
+    [[nodiscard]] std::optional<DisplaySize> guestOrientedHostSize(
+        NSSize size) const noexcept;
     [[nodiscard]] AspectFitRectangle guestContentRectangle(
-        NSSize bounds) const noexcept;
+        NSSize bounds,
+        DisplayRotation rotation) const noexcept;
     [[nodiscard]] bool pointerLandedOnGuest(
         NSPoint location,
         NSSize bounds) const noexcept;
@@ -288,6 +292,8 @@ struct NativeDisplayState final :
 
 @interface UmlNativeWindowDelegate : NSObject <NSWindowDelegate, NSApplicationDelegate>
 - (instancetype)initWithState:(std::weak_ptr<uml::gpu::NativeDisplayState>)state;
+- (void)rotateGuestDisplayClockwise:(id)sender;
+- (void)rotateGuestDisplayCounterclockwise:(id)sender;
 @end
 
 @implementation UmlNativeMetalView {
@@ -431,6 +437,20 @@ struct NativeDisplayState final :
     return self;
 }
 
+- (void)rotateGuestDisplayClockwise:(id)sender
+{
+    (void)sender;
+    if (auto state = _state.lock())
+        state->rotatePresentation(1);
+}
+
+- (void)rotateGuestDisplayCounterclockwise:(id)sender
+{
+    (void)sender;
+    if (auto state = _state.lock())
+        state->rotatePresentation(-1);
+}
+
 - (void)windowDidResignKey:(NSNotification*)notification
 {
     (void)notification;
@@ -571,6 +591,40 @@ void NativeDisplayState::scheduleWindow()
         }
         UmlNativeWindowDelegate* delegate =
             [[UmlNativeWindowDelegate alloc] initWithState:state];
+        NSMenu* mainMenu = [[NSMenu alloc] initWithTitle:@""];
+        NSMenuItem* applicationItem = [[NSMenuItem alloc]
+            initWithTitle:@""
+            action:nil
+            keyEquivalent:@""];
+        [mainMenu addItem:applicationItem];
+        NSMenu* applicationMenu = [[NSMenu alloc] initWithTitle:@""];
+        const auto applicationName = NSProcessInfo.processInfo.processName;
+        NSMenuItem* quitItem = [applicationMenu
+            addItemWithTitle:[@"Quit " stringByAppendingString:applicationName]
+            action:@selector(terminate:)
+            keyEquivalent:@"q"];
+        quitItem.target = application;
+        applicationItem.submenu = applicationMenu;
+
+        NSMenuItem* displayItem = [[NSMenuItem alloc]
+            initWithTitle:@"Display"
+            action:nil
+            keyEquivalent:@""];
+        [mainMenu addItem:displayItem];
+        NSMenu* displayMenu = [[NSMenu alloc] initWithTitle:@"Display"];
+        NSMenuItem* clockwiseItem = [displayMenu
+            addItemWithTitle:@"Rotate Guest Display 90° Clockwise"
+            action:@selector(rotateGuestDisplayClockwise:)
+            keyEquivalent:@""];
+        clockwiseItem.target = delegate;
+        NSMenuItem* counterclockwiseItem = [displayMenu
+            addItemWithTitle:@"Rotate Guest Display 90° Counterclockwise"
+            action:@selector(rotateGuestDisplayCounterclockwise:)
+            keyEquivalent:@""];
+        counterclockwiseItem.target = delegate;
+        displayItem.submenu = displayMenu;
+        application.mainMenu = mainMenu;
+
         nativeWindow.title = @"Darwin UML Virtio-GPU";
         nativeWindow.contentView = nativeView;
         nativeWindow.contentMinSize = NSMakeSize(
@@ -603,11 +657,7 @@ void NativeDisplayState::scheduleResize(NSSize size) noexcept
     }
     const auto generation =
         resizeGeneration.fetch_add(1, std::memory_order_acq_rel) + 1U;
-    const auto width = displayDimension(
-        size.width, resizeNotifier.maximumDimension());
-    const auto height = displayDimension(
-        size.height, resizeNotifier.maximumDimension());
-    if (!width || !height)
+    if (!guestOrientedHostSize(size))
         return;
     auto weak = weak_from_this();
     dispatch_after(
@@ -622,7 +672,11 @@ void NativeDisplayState::scheduleResize(NSSize size) noexcept
                     state->resizeGeneration.load(std::memory_order_acquire) ==
                         generation &&
                     nativeView != nil && !nativeView.inLiveResize) {
-                    state->resizeNotifier.request(*width, *height);
+                    if (const auto guestSize =
+                            state->guestOrientedHostSize(size)) {
+                        state->resizeNotifier.request(
+                            guestSize->width, guestSize->height);
+                    }
                 }
             }
         });
@@ -645,11 +699,8 @@ void NativeDisplayState::commitResize(NSSize size) noexcept
             --resizeTransitionDepth;
         if (resizeTransitionDepth != 0)
             return;
-        const auto width = displayDimension(
-            size.width, resizeNotifier.maximumDimension());
-        const auto height = displayDimension(
-            size.height, resizeNotifier.maximumDimension());
-        if (width && height && running.load(std::memory_order_acquire)) {
+        const auto guestSize = guestOrientedHostSize(size);
+        if (guestSize && running.load(std::memory_order_acquire)) {
             const bool autoResizeGuest =
                 geometryPolicy.autoResizeGuestEnabled();
             /* With automatic resize, this completed host interaction is newer
@@ -658,7 +709,8 @@ void NativeDisplayState::commitResize(NSSize size) noexcept
              * SET_SCANOUT choose the window size that follows. */
             if (autoResizeGuest)
                 pendingGuestWindowSize.reset();
-            resizeNotifier.requestCommitted(*width, *height);
+            resizeNotifier.requestCommitted(
+                guestSize->width, guestSize->height);
             resizeCommitPending.store(
                 autoResizeGuest, std::memory_order_release);
         }
@@ -767,8 +819,10 @@ void NativeDisplayState::applyPendingGuestWindowResize() noexcept
         (nativeWindow.styleMask & NSWindowStyleMaskFullScreen) != 0) {
         return;
     }
-    const auto size = *pendingGuestWindowSize;
+    const auto guestSize = *pendingGuestWindowSize;
     pendingGuestWindowSize.reset();
+    const auto size = presentedDisplaySize(
+        guestSize, presentation.rotation());
     NSView* contentView = nativeWindow.contentView;
     const NSSize current = contentView == nil ? NSZeroSize :
         contentView.bounds.size;
@@ -789,6 +843,22 @@ void NativeDisplayState::applyPendingGuestWindowResize() noexcept
         static_cast<CGFloat>(size.height))];
 }
 
+void NativeDisplayState::rotatePresentation(int quarterTurns) noexcept
+{
+    {
+        std::lock_guard pointerLock(pointerMutex);
+        releasePointerInputLocked(true);
+        std::lock_guard lock(resizeLifecycleMutex);
+        cancelResize();
+        const auto next = rotateDisplay(
+            presentation.rotation(), quarterTurns);
+        if (!presentation.setRotation(next))
+            return;
+        pendingGuestWindowSize = geometryPolicy.activeGuestSize();
+    }
+    applyPendingGuestWindowResize();
+}
+
 void NativeDisplayState::requestRedraw() noexcept
 {
     if (!running.load(std::memory_order_acquire) ||
@@ -806,10 +876,25 @@ void NativeDisplayState::requestRedraw() noexcept
     });
 }
 
-AspectFitRectangle NativeDisplayState::guestContentRectangle(
-    NSSize bounds) const noexcept
+std::optional<DisplaySize> NativeDisplayState::guestOrientedHostSize(
+    NSSize size) const noexcept
 {
-    const auto guestSize = geometryPolicy.activeGuestSize();
+    const auto width = displayDimension(
+        size.width, resizeNotifier.maximumDimension());
+    const auto height = displayDimension(
+        size.height, resizeNotifier.maximumDimension());
+    if (!width || !height)
+        return std::nullopt;
+    return presentedDisplaySize(
+        {.width = *width, .height = *height}, presentation.rotation());
+}
+
+AspectFitRectangle NativeDisplayState::guestContentRectangle(
+    NSSize bounds,
+    DisplayRotation rotation) const noexcept
+{
+    const auto guestSize = presentedDisplaySize(
+        geometryPolicy.activeGuestSize(), rotation);
     MTKView* nativeView = view;
     const NSSize drawable = nativeView == nil ? NSZeroSize :
         nativeView.drawableSize;
@@ -837,7 +922,8 @@ bool NativeDisplayState::pointerLandedOnGuest(
     NSPoint location,
     NSSize bounds) const noexcept
 {
-    const auto content = guestContentRectangle(bounds);
+    const auto content = guestContentRectangle(
+        bounds, presentation.rotation());
     return content.width > 0.0 && content.height > 0.0 &&
         location.x >= content.x &&
         location.x <= content.x + content.width &&
@@ -938,7 +1024,8 @@ void NativeDisplayState::sendPointer(
     if (!inputSink || bounds.width <= 0.0 || bounds.height <= 0.0)
         return;
     std::lock_guard lock(pointerMutex);
-    const auto content = guestContentRectangle(bounds);
+    const auto rotation = presentation.rotation();
+    const auto content = guestContentRectangle(bounds, rotation);
     if (content.width <= 0.0 || content.height <= 0.0)
         return;
     const bool inside = location.x >= content.x &&
@@ -955,25 +1042,34 @@ void NativeDisplayState::sendPointer(
         return;
     }
     const bool pressed = (buttons & 1U) != 0;
+    const auto guestPoint = [&](DisplayPoint point) {
+        return guestPointFromPresentedPoint(
+            {
+                .x = (point.x - content.x) / content.width,
+                .y = (content.y + content.height - point.y) /
+                    content.height,
+            },
+            rotation);
+    };
     if (pointerMode == native_input::PointerMode::touchscreen) {
         const DisplayPoint current {.x = location.x, .y = location.y};
         const auto deliver = [&](DisplayPoint point, bool active) {
             if (!touchContact.update(active))
                 return;
             deliveredPointerButtons = active ? 1U : 0U;
+            const auto guest = guestPoint(point);
             const std::array events {
                 native_input::VncInputEvent {
                     .type = native_input::eventAbsolute,
                     .code = native_input::absoluteX,
                     .value = native_input::normalizedAbsoluteCoordinate(
-                        point.x - content.x, content.width),
+                        guest.x, 1.0),
                 },
                 native_input::VncInputEvent {
                     .type = native_input::eventAbsolute,
                     .code = native_input::absoluteY,
                     .value = native_input::normalizedAbsoluteCoordinate(
-                        content.y + content.height - point.y,
-                        content.height),
+                        guest.y, 1.0),
                 },
                 native_input::VncInputEvent {
                     .type = native_input::eventKey,
@@ -1056,6 +1152,7 @@ void NativeDisplayState::sendPointer(
         return;
     }
     deliveredPointerButtons = pointerButtons;
+    const auto guest = guestPoint({.x = location.x, .y = location.y});
     std::array<native_input::VncInputEvent, 10> events {};
     std::size_t count = 0;
     const auto append = [&](std::uint16_t type,
@@ -1067,13 +1164,12 @@ void NativeDisplayState::sendPointer(
         native_input::eventAbsolute,
         native_input::absoluteX,
         native_input::normalizedAbsoluteCoordinate(
-            location.x - content.x, content.width));
+            guest.x, 1.0));
     append(
         native_input::eventAbsolute,
         native_input::absoluteY,
         native_input::normalizedAbsoluteCoordinate(
-            content.y + content.height - location.y,
-            content.height));
+            guest.y, 1.0));
     append(
         native_input::eventKey,
         native_input::buttonLeft,
