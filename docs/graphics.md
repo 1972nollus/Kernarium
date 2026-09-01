@@ -96,10 +96,12 @@ remains sized to the active guest scanout until the guest accepts a mode with
 non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
 
 The first active scanout and a modeset matching the current advertised or a
-pending host target do not change geometry authority. A later guest-selected
-mode that matches neither is independent and disables further host-to-guest
-resizing until the next guest boot. Every active guest mode change resizes the
-macOS content window, independently of that host-to-guest policy. iOS instead
+pending host target do not change geometry authority. This correlation accepts
+the up-to-16-pixel downward adjustment per dimension that Linux virtio-gpu
+allows when CVT rounds a preferred host mode. A later guest-selected mode that
+matches neither is independent and disables further host-to-guest resizing
+until the next guest boot. Every active guest mode change resizes the macOS
+content window, independently of that host-to-guest policy. iOS instead
 aspect-fits every guest mode in its view. With automatic resizing configured
 off, later host window or view changes leave the guest mode unchanged and
 aspect-fit it in the available host content area.

@@ -317,6 +317,58 @@ void hostTargetCorrelationHandlesBootRollbackAndDuplicates()
         "a response between duplicate host targets disabled auto resize");
 }
 
+void roundedHostResponsesKeepLaterResizesEnabled()
+{
+    using uml::gpu::DisplayGeometryPolicy;
+
+    DisplayGeometryPolicy policy {1280, 720, true};
+    (void)policy.guestScanoutChanged(1280, 720);
+    require(policy.hostSizeSettled(1000, 700),
+        "the exact host target was not advertised");
+    auto change = policy.guestScanoutChanged(1000, 700);
+    require(change.changed && !change.independent &&
+            policy.autoResizeGuestEnabled(),
+        "the exact first host response disabled auto resize");
+
+    require(policy.hostSizeSettled(1100, 650),
+        "the unaligned host target was not advertised");
+    change = policy.guestScanoutChanged(1096, 650);
+    require(change.changed && !change.independent &&
+            policy.autoResizeGuestEnabled(),
+        "virtio-gpu preferred-mode rounding disabled auto resize");
+
+    require(policy.hostSizeSettled(1200, 800),
+        "a resize after a rounded guest response was ignored");
+    change = policy.guestScanoutChanged(1200, 800);
+    require(change.changed && !change.independent &&
+            policy.autoResizeGuestEnabled(),
+        "the guest did not retain host resize authority after rounding");
+
+    change = policy.guestScanoutChanged(1192, 800);
+    require(change.changed && change.independent &&
+            !policy.autoResizeGuestEnabled(),
+        "a nearby guest mode without a pending host target was masked");
+
+    DisplayGeometryPolicy boundary {1280, 720, true};
+    (void)boundary.guestScanoutChanged(1280, 720);
+    require(boundary.hostSizeSettled(1100, 650),
+        "the rounding-boundary host target was not advertised");
+    change = boundary.guestScanoutChanged(1084, 634);
+    require(change.changed && !change.independent &&
+            boundary.autoResizeGuestEnabled(),
+        "the documented virtio-gpu rounding boundary disabled auto resize");
+
+    DisplayGeometryPolicy outsideTolerance {1280, 720, true};
+    (void)outsideTolerance.guestScanoutChanged(1280, 720);
+    require(outsideTolerance.hostSizeSettled(1100, 650),
+        "the beyond-tolerance host target was not advertised");
+    change = outsideTolerance.guestScanoutChanged(1083, 650);
+    require(change.changed && change.independent &&
+            !outsideTolerance.autoResizeGuestEnabled(),
+        "a guest mode beyond virtio-gpu rounding tolerance retained "
+        "host authority");
+}
+
 } // namespace
 
 int main()
@@ -329,6 +381,7 @@ int main()
         guestModesetLatchesHostResizeUntilReset();
         configuredOffAlwaysKeepsHostResizeSilent();
         hostTargetCorrelationHandlesBootRollbackAndDuplicates();
+        roundedHostResponsesKeepLaterResizesEnabled();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GPU display resize test failed: %s\n", error.what());

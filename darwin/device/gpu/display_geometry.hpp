@@ -87,11 +87,15 @@ public:
 
 private:
     static constexpr std::size_t targetCapacity = 16;
+    static constexpr std::uint32_t maximumPreferredModeRounding = 16;
 
     [[nodiscard]] static std::uint64_t encode(DisplaySize size) noexcept;
     [[nodiscard]] static DisplaySize decode(std::uint64_t size) noexcept;
+    [[nodiscard]] static bool matchesHostTarget(
+        std::uint64_t guest,
+        std::uint64_t target) noexcept;
     void appendHostTarget(std::uint64_t target) noexcept;
-    [[nodiscard]] bool consumeHostTarget(std::uint64_t target) noexcept;
+    [[nodiscard]] bool consumeHostTarget(std::uint64_t guest) noexcept;
 
     const bool configuredAutoResizeGuest_;
     std::atomic_bool autoResizeGuestEnabled_;

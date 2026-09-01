@@ -221,6 +221,22 @@ DisplaySize DisplayGeometryPolicy::decode(std::uint64_t size) noexcept
     };
 }
 
+bool DisplayGeometryPolicy::matchesHostTarget(
+    std::uint64_t guest,
+    std::uint64_t target) noexcept
+{
+    const auto guestSize = decode(guest);
+    const auto hostSize = decode(target);
+    /* Without EDID, Linux virtio-gpu creates the preferred mode through CVT
+     * and accepts a mode rounded down by as many as 16 pixels per dimension.
+     * That modeset is still the response to this host request, not a transfer
+     * of geometry authority to the guest. */
+    return guestSize.width <= hostSize.width &&
+        hostSize.width - guestSize.width <= maximumPreferredModeRounding &&
+        guestSize.height <= hostSize.height &&
+        hostSize.height - guestSize.height <= maximumPreferredModeRounding;
+}
+
 void DisplayGeometryPolicy::appendHostTarget(std::uint64_t target) noexcept
 {
     if (hostTargetCount_ == targetCapacity) {
@@ -233,11 +249,11 @@ void DisplayGeometryPolicy::appendHostTarget(std::uint64_t target) noexcept
     hostTargets_[hostTargetCount_++] = target;
 }
 
-bool DisplayGeometryPolicy::consumeHostTarget(std::uint64_t target) noexcept
+bool DisplayGeometryPolicy::consumeHostTarget(std::uint64_t guest) noexcept
 {
     std::size_t match = hostTargetCount_;
     for (std::size_t index = 0; index < hostTargetCount_; ++index) {
-        if (hostTargets_[index] == target) {
+        if (matchesHostTarget(guest, hostTargets_[index])) {
             match = index;
             break;
         }
