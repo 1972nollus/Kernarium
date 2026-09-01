@@ -40,20 +40,29 @@ on the qualified images. GLES 2 and GLES 3 conformance matrices have been run
 on macOS and the signed 16 KiB iOS path. These results do not imply GLES 3.1,
 GLES 3.2, desktop OpenGL above the exposed Virgl profile, or Vulkan support.
 
-Virgl also exposes hardware H.264 bitstream decoding for baseline,
-constrained-baseline, main, and high profiles up to 4096x2304, with
-progressive 8-bit 4:2:0 output in NV12 or IYUV guest buffers. The Apple host
-reconstructs H.264 parameter sets from the standard Virgl picture descriptor
-and requires a VideoToolbox hardware decoder. Guests use the upstream Mesa
-VA-API path without a Mesa fork; applications, including Chromium builds,
-must enable Linux VA-API decoding themselves. Encoding, interlaced H.264,
-10-bit profiles, and non-H.264 codecs are not advertised.
+Virgl exposes hardware bitstream decoding for H.264 baseline,
+constrained-baseline, main, and high profiles and for HEVC Main and Main10, up
+to 4096x2304. Progressive 8-bit 4:2:0 output uses NV12 or IYUV guest buffers;
+10-bit output uses P010. The Apple host reconstructs H.264 or HEVC parameter
+sets from the standard Virgl picture descriptor and requires the corresponding
+VideoToolbox hardware decoder. Guests use the upstream Mesa VA-API path
+without a Mesa fork; applications, including Chromium builds, must enable
+Linux VA-API decoding themselves.
 
-Supported NV12 surfaces keep VideoToolbox's IOSurface-backed CoreVideo planes
-on the GPU: the host imports them through the ANGLE Metal device and copies
-each plane into the existing guest texture without changing its identity.
-IYUV and unsupported resource shapes may use a CPU conversion path.
-Native performance qualification requires zero sustained CPU fallback.
+H.264 High10 is advertised only when a profile-specific VideoToolbox hardware
+probe succeeds. The connected A15 iPad on iPadOS 18.5 passes that probe and
+produces 10-bit bi-planar output. Current macOS VideoToolbox rejects a
+representative High10 frame, so macOS does not advertise the profile. Upstream
+Chromium maps HEVC Main and Main10 to its VA-API decoder but does not map H.264
+High10; the latter remains available to upstream VA-API clients such as
+FFmpeg. Encoding, interlaced H.264, and other codec profiles are not
+advertised.
+
+Supported NV12 and P010 surfaces keep VideoToolbox's IOSurface-backed
+CoreVideo planes on the GPU: the host imports them through the ANGLE Metal
+device and copies each plane into the existing guest texture without changing
+its identity. IYUV and unsupported resource shapes may use a CPU conversion
+path. Native performance qualification requires zero sustained CPU fallback.
 Dropped superseded presentation frames are successful guest completions; they
 must not force synchronous GPU readback.
 

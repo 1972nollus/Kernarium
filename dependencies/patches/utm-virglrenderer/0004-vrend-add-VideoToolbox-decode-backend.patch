@@ -1,24 +1,30 @@
-From 94376bbd6e02f9ce2665f6c8212b30b988a10c8f Mon Sep 17 00:00:00 2001
+From 98f5e2ef1a14f006dd0780ea7b2885f2fee54ce6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
-Subject: [PATCH 4/4] vrend: add VideoToolbox H.264 decode backend
+Subject: [PATCH 4/4] vrend: add VideoToolbox decode backend
 
 ---
  meson.build                          |   19 +-
- src/meson.build                      |   23 +-
+ src/meson.build                      |   24 +-
  src/vrend/vrend_renderer.c           |   27 +-
- src/vrend/vrend_video_h264.c         |  553 ++++++++++++
+ src/vrend/vrend_video_h264.c         |  560 ++++++++++
  src/vrend/vrend_video_h264.h         |   66 ++
- src/vrend/vrend_video_videotoolbox.m | 1235 ++++++++++++++++++++++++++
+ src/vrend/vrend_video_h265.c         |  623 +++++++++++
+ src/vrend/vrend_video_h265.h         |   62 ++
+ src/vrend/vrend_video_videotoolbox.m | 1524 ++++++++++++++++++++++++++
  src/vrend/vrend_winsys_egl.c         |    6 +
  src/vrend/vrend_winsys_egl.h         |    1 +
- tests/meson.build                    |   13 +
- tests/test_vrend_video_h264.c        |  134 +++
- 10 files changed, 2066 insertions(+), 11 deletions(-)
+ tests/meson.build                    |   24 +
+ tests/test_vrend_video_h264.c        |  171 +++
+ tests/test_vrend_video_h265.c        |  131 +++
+ 13 files changed, 3227 insertions(+), 11 deletions(-)
  create mode 100644 src/vrend/vrend_video_h264.c
  create mode 100644 src/vrend/vrend_video_h264.h
+ create mode 100644 src/vrend/vrend_video_h265.c
+ create mode 100644 src/vrend/vrend_video_h265.h
  create mode 100644 src/vrend/vrend_video_videotoolbox.m
  create mode 100644 tests/test_vrend_video_h264.c
+ create mode 100644 tests/test_vrend_video_h265.c
 
 diff --git a/meson.build b/meson.build
 index b863ecc..b46e133 100644
@@ -58,10 +64,10 @@ index b863ecc..b46e133 100644
  
  with_tests = get_option('tests')
 diff --git a/src/meson.build b/src/meson.build
-index e6e48ca..6ac7158 100644
+index e6e48ca..c040251 100644
 --- a/src/meson.build
 +++ b/src/meson.build
-@@ -190,10 +190,23 @@ if with_render_server == 'thread'
+@@ -190,10 +190,24 @@ if with_render_server == 'thread'
     ]
  endif
  
@@ -75,6 +81,7 @@ index e6e48ca..6ac7158 100644
 +   if with_host_darwin
 +      video_sources += [
 +         'vrend/vrend_video_h264.c',
++         'vrend/vrend_video_h265.c',
 +         'vrend/vrend_video_videotoolbox.m',
 +      ]
 +      video_depends += [videotoolbox_dep]
@@ -89,7 +96,7 @@ index e6e48ca..6ac7158 100644
  
  virgl_depends = [
     gallium_dep,
-@@ -298,7 +311,7 @@ endif
+@@ -298,7 +312,7 @@ endif
  
  if with_video
    virgl_sources += video_sources
@@ -156,10 +163,10 @@ index 273e3f2..06d45fd 100644
           if (do_wait(fence, /* can_block */ false)) {
 diff --git a/src/vrend/vrend_video_h264.c b/src/vrend/vrend_video_h264.c
 new file mode 100644
-index 0000000..37e7aa4
+index 0000000..5352a6e
 --- /dev/null
 +++ b/src/vrend/vrend_video_h264.c
-@@ -0,0 +1,553 @@
+@@ -0,0 +1,560 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -333,6 +340,10 @@ index 0000000..37e7aa4
 +      *profile_idc = 100;
 +      *constraints = 0;
 +      return true;
++   case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10:
++      *profile_idc = 110;
++      *constraints = 0;
++      return true;
 +   default:
 +      return false;
 +   }
@@ -411,8 +422,11 @@ index 0000000..37e7aa4
 +
 +   sps = &desc->pps.sps;
 +   pps = &desc->pps;
++   const uint8_t expected_bit_depth =
++      profile == PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10 ? 2 : 0;
 +   if (sps->chroma_format_idc != 1 || sps->separate_colour_plane_flag ||
-+       sps->bit_depth_luma_minus8 || sps->bit_depth_chroma_minus8 ||
++       sps->bit_depth_luma_minus8 != expected_bit_depth ||
++       sps->bit_depth_chroma_minus8 != expected_bit_depth ||
 +       sps->log2_max_frame_num_minus4 > 12 ||
 +       sps->log2_max_pic_order_cnt_lsb_minus4 > 12 ||
 +       sps->pic_order_cnt_type > 2 || !sps->frame_mbs_only_flag ||
@@ -423,7 +437,7 @@ index 0000000..37e7aa4
 +   rbsp_put_bits(&sps_writer, constraints, 8);
 +   rbsp_put_bits(&sps_writer, sps->level_idc ? sps->level_idc : 51, 8);
 +   rbsp_put_ue(&sps_writer, 0);
-+   if (profile_idc == 100) {
++   if (profile_idc >= 100) {
 +      rbsp_put_ue(&sps_writer, sps->chroma_format_idc);
 +      rbsp_put_ue(&sps_writer, sps->bit_depth_luma_minus8);
 +      rbsp_put_ue(&sps_writer, sps->bit_depth_chroma_minus8);
@@ -491,7 +505,7 @@ index 0000000..37e7aa4
 +   rbsp_put_bit(&pps_writer, pps->constrained_intra_pred_flag);
 +   rbsp_put_bit(&pps_writer, pps->redundant_pic_cnt_present_flag);
 +
-+   has_pps_extension = profile_idc == 100 || pps->transform_8x8_mode_flag ||
++   has_pps_extension = profile_idc >= 100 || pps->transform_8x8_mode_flag ||
 +                       pps->second_chroma_qp_index_offset !=
 +                          pps->chroma_qp_index_offset;
 +   if (has_pps_extension) {
@@ -785,12 +799,709 @@ index 0000000..52ea5c8
 +   uint32_t *pps_id);
 +
 +#endif /* VREND_VIDEO_H264_H */
+diff --git a/src/vrend/vrend_video_h265.c b/src/vrend/vrend_video_h265.c
+new file mode 100644
+index 0000000..aa2df3b
+--- /dev/null
++++ b/src/vrend/vrend_video_h265.c
+@@ -0,0 +1,623 @@
++/**************************************************************************
++ *
++ * Copyright (C) 2026 Linux-UM Darwin contributors
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included
++ * in all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ *
++ **************************************************************************/
++
++#include "vrend_video_h265.h"
++
++#include <stdbool.h>
++#include <string.h>
++
++#include "pipe/p_video_enums.h"
++
++struct rbsp_writer {
++   uint8_t data[VREND_H265_PARAMETER_SET_MAX_SIZE];
++   size_t bit_count;
++   bool failed;
++};
++
++struct bit_reader {
++   const uint8_t *data;
++   size_t size;
++   size_t bit_offset;
++};
++
++static void rbsp_put_bit(struct rbsp_writer *writer, uint32_t bit)
++{
++   const size_t byte = writer->bit_count / 8;
++   const unsigned shift = 7 - (writer->bit_count % 8);
++
++   if (byte >= sizeof(writer->data)) {
++      writer->failed = true;
++      return;
++   }
++   if ((writer->bit_count % 8) == 0)
++      writer->data[byte] = 0;
++   writer->data[byte] |= (bit & 1U) << shift;
++   writer->bit_count++;
++}
++
++static void rbsp_put_bits(struct rbsp_writer *writer,
++                          uint64_t value,
++                          unsigned count)
++{
++   while (count > 0) {
++      count--;
++      rbsp_put_bit(writer, (uint32_t)(value >> count));
++   }
++}
++
++static void rbsp_put_ue(struct rbsp_writer *writer, uint32_t value)
++{
++   const uint64_t code = (uint64_t)value + 1;
++   uint64_t remaining = code;
++   unsigned bits = 0;
++
++   while (remaining) {
++      bits++;
++      remaining >>= 1;
++   }
++   for (unsigned i = 1; i < bits; i++)
++      rbsp_put_bit(writer, 0);
++   rbsp_put_bits(writer, code, bits);
++}
++
++static void rbsp_put_se(struct rbsp_writer *writer, int32_t value)
++{
++   const uint32_t code = value <= 0 ? (uint32_t)(-(int64_t)value * 2) :
++                                      (uint32_t)((int64_t)value * 2 - 1);
++   rbsp_put_ue(writer, code);
++}
++
++static void rbsp_finish(struct rbsp_writer *writer)
++{
++   rbsp_put_bit(writer, 1);
++   while (writer->bit_count % 8)
++      rbsp_put_bit(writer, 0);
++}
++
++static int rbsp_to_nal(uint8_t nal_type,
++                       const struct rbsp_writer *writer,
++                       uint8_t *nal,
++                       size_t *nal_size)
++{
++   size_t output = 0;
++   unsigned zero_count = 0;
++   const size_t rbsp_size = writer->bit_count / 8;
++
++   if (writer->failed || !nal || !nal_size)
++      return -1;
++   nal[output++] = nal_type << 1;
++   nal[output++] = 1;
++   for (size_t i = 0; i < rbsp_size; i++) {
++      const uint8_t byte = writer->data[i];
++
++      if (zero_count >= 2 && byte <= 3) {
++         if (output >= VREND_H265_PARAMETER_SET_MAX_SIZE)
++            return -1;
++         nal[output++] = 3;
++         zero_count = 0;
++      }
++      if (output >= VREND_H265_PARAMETER_SET_MAX_SIZE)
++         return -1;
++      nal[output++] = byte;
++      zero_count = byte == 0 ? zero_count + 1 : 0;
++   }
++   *nal_size = output;
++   return 0;
++}
++
++static bool h265_profile(uint32_t profile,
++                         uint8_t *profile_idc,
++                         uint8_t bit_depth_minus8)
++{
++   switch (profile) {
++   case PIPE_VIDEO_PROFILE_HEVC_MAIN:
++      if (bit_depth_minus8 != 0)
++         return false;
++      *profile_idc = 1;
++      return true;
++   case PIPE_VIDEO_PROFILE_HEVC_MAIN_10:
++      if (bit_depth_minus8 != 0 && bit_depth_minus8 != 2)
++         return false;
++      *profile_idc = 2;
++      return true;
++   default:
++      return false;
++   }
++}
++
++static uint8_t h265_level_idc(uint32_t level)
++{
++   if (!level)
++      return 153;
++   if (level < 90)
++      level *= 3;
++   return level <= UINT8_MAX ? (uint8_t)level : 153;
++}
++
++static void rbsp_put_profile_tier_level(struct rbsp_writer *writer,
++                                        uint8_t profile_idc,
++                                        uint8_t level_idc)
++{
++   uint32_t compatibility = 1U << (31 - profile_idc);
++
++   if (profile_idc == 1)
++      compatibility |= 1U << (31 - 2);
++   rbsp_put_bits(writer, 0, 2);
++   rbsp_put_bit(writer, 0);
++   rbsp_put_bits(writer, profile_idc, 5);
++   rbsp_put_bits(writer, compatibility, 32);
++   rbsp_put_bit(writer, 1);
++   rbsp_put_bit(writer, 0);
++   rbsp_put_bit(writer, 0);
++   rbsp_put_bit(writer, 1);
++   rbsp_put_bits(writer, 0, 44);
++   rbsp_put_bits(writer, level_idc, 8);
++}
++
++static bool matrix_is_valid(const uint8_t *matrix, size_t size)
++{
++   for (size_t i = 0; i < size; i++) {
++      if (!matrix[i])
++         return false;
++   }
++   return true;
++}
++
++static void rbsp_put_scaling_matrix(struct rbsp_writer *writer,
++                                    const uint8_t *matrix,
++                                    size_t size,
++                                    int dc)
++{
++   int next_coef = 8;
++
++   rbsp_put_bit(writer, 1);
++   if (dc >= 0) {
++      rbsp_put_se(writer, dc - 8);
++      next_coef = dc;
++   }
++   for (size_t i = 0; i < size; i++) {
++      int delta = (int)matrix[i] - next_coef;
++
++      if (delta > 127)
++         delta -= 256;
++      else if (delta < -128)
++         delta += 256;
++      rbsp_put_se(writer, delta);
++      next_coef = matrix[i];
++   }
++}
++
++static void rbsp_put_scaling_lists(struct rbsp_writer *writer,
++                                   const struct virgl_h265_sps *sps)
++{
++   for (unsigned size_id = 0; size_id < 4; size_id++) {
++      const unsigned step = size_id == 3 ? 3 : 1;
++
++      for (unsigned matrix_id = 0; matrix_id < 6; matrix_id += step) {
++         const uint8_t *matrix;
++         size_t count;
++         int dc = -1;
++
++         if (size_id == 0) {
++            matrix = sps->ScalingList4x4[matrix_id];
++            count = 16;
++         } else if (size_id == 1) {
++            matrix = sps->ScalingList8x8[matrix_id];
++            count = 64;
++         } else if (size_id == 2) {
++            matrix = sps->ScalingList16x16[matrix_id];
++            count = 64;
++            dc = sps->ScalingListDCCoeff16x16[matrix_id];
++         } else {
++            const unsigned index = matrix_id / 3;
++            matrix = sps->ScalingList32x32[index];
++            count = 64;
++            dc = sps->ScalingListDCCoeff32x32[index];
++         }
++         if (!matrix_is_valid(matrix, count) || (dc == 0 && size_id > 1)) {
++            rbsp_put_bit(writer, 0);
++            rbsp_put_ue(writer, 0);
++         } else {
++            rbsp_put_scaling_matrix(writer, matrix, count, dc);
++         }
++      }
++   }
++}
++
++static bool long_term_is_current(const struct virgl_h265_picture_desc *desc,
++                                 unsigned reference)
++{
++   for (unsigned i = 0; i < desc->NumPocLtCurr && i < 8; i++) {
++      if (desc->RefPicSetLtCurr[i] == reference)
++         return true;
++   }
++   return false;
++}
++
++static void rbsp_put_short_term_sets(struct rbsp_writer *writer,
++                                     unsigned count)
++{
++   for (unsigned i = 0; i < count; i++) {
++      if (i != 0)
++         rbsp_put_bit(writer, 0);
++      rbsp_put_ue(writer, 0);
++      rbsp_put_ue(writer, 0);
++   }
++}
++
++int vrend_video_h265_build_parameter_sets(
++   uint32_t profile,
++   uint32_t level,
++   uint32_t width,
++   uint32_t height,
++   uint32_t pps_id,
++   const struct virgl_h265_picture_desc *desc,
++   struct vrend_h265_parameter_sets *sets)
++{
++   struct rbsp_writer vps = {0};
++   struct rbsp_writer sps_writer = {0};
++   struct rbsp_writer pps_writer = {0};
++   const struct virgl_h265_sps *sps;
++   const struct virgl_h265_pps *pps;
++   uint8_t profile_idc;
++   uint8_t level_idc;
++   unsigned poc_bits;
++
++   if (!desc || !sets || !width || !height || pps_id > 63)
++      return -1;
++   sps = &desc->pps.sps;
++   pps = &desc->pps;
++   if (!h265_profile(profile, &profile_idc, sps->bit_depth_luma_minus8) ||
++       sps->chroma_format_idc != 1 || sps->separate_colour_plane_flag ||
++       sps->bit_depth_chroma_minus8 != sps->bit_depth_luma_minus8 ||
++       sps->pic_width_in_luma_samples != width ||
++       sps->pic_height_in_luma_samples != height ||
++       sps->log2_max_pic_order_cnt_lsb_minus4 > 12 ||
++       sps->num_short_term_ref_pic_sets > 64 ||
++       sps->num_long_term_ref_pics_sps > 16 ||
++       pps->num_tile_columns_minus1 >= 20 ||
++       pps->num_tile_rows_minus1 >= 22)
++      return -1;
++   level_idc = h265_level_idc(level);
++   poc_bits = sps->log2_max_pic_order_cnt_lsb_minus4 + 4;
++
++   rbsp_put_bits(&vps, 0, 4);
++   rbsp_put_bit(&vps, 1);
++   rbsp_put_bit(&vps, 1);
++   rbsp_put_bits(&vps, 0, 6);
++   rbsp_put_bits(&vps, 0, 3);
++   rbsp_put_bit(&vps, 1);
++   rbsp_put_bits(&vps, 0xffff, 16);
++   rbsp_put_profile_tier_level(&vps, profile_idc, level_idc);
++   rbsp_put_bit(&vps, 1);
++   rbsp_put_ue(&vps, sps->sps_max_dec_pic_buffering_minus1);
++   rbsp_put_ue(&vps, sps->sps_max_dec_pic_buffering_minus1);
++   rbsp_put_ue(&vps, 0);
++   rbsp_put_bits(&vps, 0, 6);
++   rbsp_put_ue(&vps, 0);
++   rbsp_put_bit(&vps, 0);
++   rbsp_put_bit(&vps, 0);
++   rbsp_finish(&vps);
++   if (rbsp_to_nal(32, &vps, sets->vps, &sets->vps_size) != 0)
++      return -1;
++
++   rbsp_put_bits(&sps_writer, 0, 4);
++   rbsp_put_bits(&sps_writer, 0, 3);
++   rbsp_put_bit(&sps_writer, 1);
++   rbsp_put_profile_tier_level(&sps_writer, profile_idc, level_idc);
++   rbsp_put_ue(&sps_writer, 0);
++   rbsp_put_ue(&sps_writer, sps->chroma_format_idc);
++   rbsp_put_ue(&sps_writer, width);
++   rbsp_put_ue(&sps_writer, height);
++   rbsp_put_bit(&sps_writer, 0);
++   rbsp_put_ue(&sps_writer, sps->bit_depth_luma_minus8);
++   rbsp_put_ue(&sps_writer, sps->bit_depth_chroma_minus8);
++   rbsp_put_ue(&sps_writer, sps->log2_max_pic_order_cnt_lsb_minus4);
++   rbsp_put_bit(&sps_writer, 1);
++   rbsp_put_ue(&sps_writer, sps->sps_max_dec_pic_buffering_minus1);
++   rbsp_put_ue(&sps_writer, sps->sps_max_dec_pic_buffering_minus1);
++   rbsp_put_ue(&sps_writer, 0);
++   rbsp_put_ue(&sps_writer, sps->log2_min_luma_coding_block_size_minus3);
++   rbsp_put_ue(&sps_writer,
++               sps->log2_diff_max_min_luma_coding_block_size);
++   rbsp_put_ue(&sps_writer, sps->log2_min_transform_block_size_minus2);
++   rbsp_put_ue(&sps_writer,
++               sps->log2_diff_max_min_transform_block_size);
++   rbsp_put_ue(&sps_writer, sps->max_transform_hierarchy_depth_inter);
++   rbsp_put_ue(&sps_writer, sps->max_transform_hierarchy_depth_intra);
++   rbsp_put_bit(&sps_writer, sps->scaling_list_enabled_flag);
++   if (sps->scaling_list_enabled_flag) {
++      rbsp_put_bit(&sps_writer, 1);
++      rbsp_put_scaling_lists(&sps_writer, sps);
++   }
++   rbsp_put_bit(&sps_writer, sps->amp_enabled_flag);
++   rbsp_put_bit(&sps_writer, sps->sample_adaptive_offset_enabled_flag);
++   rbsp_put_bit(&sps_writer, sps->pcm_enabled_flag);
++   if (sps->pcm_enabled_flag) {
++      rbsp_put_bits(&sps_writer, sps->pcm_sample_bit_depth_luma_minus1, 4);
++      rbsp_put_bits(&sps_writer, sps->pcm_sample_bit_depth_chroma_minus1, 4);
++      rbsp_put_ue(&sps_writer,
++                  sps->log2_min_pcm_luma_coding_block_size_minus3);
++      rbsp_put_ue(&sps_writer,
++                  sps->log2_diff_max_min_pcm_luma_coding_block_size);
++      rbsp_put_bit(&sps_writer, sps->pcm_loop_filter_disabled_flag);
++   }
++   rbsp_put_ue(&sps_writer, sps->num_short_term_ref_pic_sets);
++   rbsp_put_short_term_sets(&sps_writer, sps->num_short_term_ref_pic_sets);
++   rbsp_put_bit(&sps_writer, sps->long_term_ref_pics_present_flag);
++   if (sps->long_term_ref_pics_present_flag) {
++      unsigned emitted = 0;
++
++      rbsp_put_ue(&sps_writer, sps->num_long_term_ref_pics_sps);
++      for (unsigned i = 0; i < 16 &&
++                           emitted < sps->num_long_term_ref_pics_sps; i++) {
++         if (!desc->IsLongTerm[i])
++            continue;
++         rbsp_put_bits(&sps_writer, (uint32_t)desc->PicOrderCntVal[i],
++                       poc_bits);
++         rbsp_put_bit(&sps_writer, long_term_is_current(desc, i));
++         emitted++;
++      }
++      while (emitted++ < sps->num_long_term_ref_pics_sps) {
++         rbsp_put_bits(&sps_writer, 0, poc_bits);
++         rbsp_put_bit(&sps_writer, 0);
++      }
++   }
++   rbsp_put_bit(&sps_writer, sps->sps_temporal_mvp_enabled_flag);
++   rbsp_put_bit(&sps_writer, sps->strong_intra_smoothing_enabled_flag);
++   rbsp_put_bit(&sps_writer, 0);
++   rbsp_put_bit(&sps_writer, 0);
++   rbsp_finish(&sps_writer);
++   if (rbsp_to_nal(33, &sps_writer, sets->sps, &sets->sps_size) != 0)
++      return -1;
++
++   rbsp_put_ue(&pps_writer, pps_id);
++   rbsp_put_ue(&pps_writer, 0);
++   rbsp_put_bit(&pps_writer, pps->dependent_slice_segments_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->output_flag_present_flag);
++   rbsp_put_bits(&pps_writer, pps->num_extra_slice_header_bits, 3);
++   rbsp_put_bit(&pps_writer, pps->sign_data_hiding_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->cabac_init_present_flag);
++   rbsp_put_ue(&pps_writer, pps->num_ref_idx_l0_default_active_minus1);
++   rbsp_put_ue(&pps_writer, pps->num_ref_idx_l1_default_active_minus1);
++   rbsp_put_se(&pps_writer, pps->init_qp_minus26);
++   rbsp_put_bit(&pps_writer, pps->constrained_intra_pred_flag);
++   rbsp_put_bit(&pps_writer, pps->transform_skip_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->cu_qp_delta_enabled_flag);
++   if (pps->cu_qp_delta_enabled_flag)
++      rbsp_put_ue(&pps_writer, pps->diff_cu_qp_delta_depth);
++   rbsp_put_se(&pps_writer, pps->pps_cb_qp_offset);
++   rbsp_put_se(&pps_writer, pps->pps_cr_qp_offset);
++   rbsp_put_bit(&pps_writer,
++                pps->pps_slice_chroma_qp_offsets_present_flag);
++   rbsp_put_bit(&pps_writer, pps->weighted_pred_flag);
++   rbsp_put_bit(&pps_writer, pps->weighted_bipred_flag);
++   rbsp_put_bit(&pps_writer, pps->transquant_bypass_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->tiles_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->entropy_coding_sync_enabled_flag);
++   if (pps->tiles_enabled_flag) {
++      rbsp_put_ue(&pps_writer, pps->num_tile_columns_minus1);
++      rbsp_put_ue(&pps_writer, pps->num_tile_rows_minus1);
++      rbsp_put_bit(&pps_writer, pps->uniform_spacing_flag);
++      if (!pps->uniform_spacing_flag) {
++         for (unsigned i = 0; i < pps->num_tile_columns_minus1; i++)
++            rbsp_put_ue(&pps_writer, pps->column_width_minus1[i]);
++         for (unsigned i = 0; i < pps->num_tile_rows_minus1; i++)
++            rbsp_put_ue(&pps_writer, pps->row_height_minus1[i]);
++      }
++      rbsp_put_bit(&pps_writer,
++                   pps->loop_filter_across_tiles_enabled_flag);
++   }
++   rbsp_put_bit(&pps_writer,
++                pps->pps_loop_filter_across_slices_enabled_flag);
++   rbsp_put_bit(&pps_writer, pps->deblocking_filter_control_present_flag);
++   if (pps->deblocking_filter_control_present_flag) {
++      rbsp_put_bit(&pps_writer,
++                   pps->deblocking_filter_override_enabled_flag);
++      rbsp_put_bit(&pps_writer, pps->pps_deblocking_filter_disabled_flag);
++      if (!pps->pps_deblocking_filter_disabled_flag) {
++         rbsp_put_se(&pps_writer, pps->pps_beta_offset_div2);
++         rbsp_put_se(&pps_writer, pps->pps_tc_offset_div2);
++      }
++   }
++   rbsp_put_bit(&pps_writer, 0);
++   rbsp_put_bit(&pps_writer, pps->lists_modification_present_flag);
++   rbsp_put_ue(&pps_writer, pps->log2_parallel_merge_level_minus2);
++   rbsp_put_bit(&pps_writer,
++                pps->slice_segment_header_extension_present_flag);
++   rbsp_put_bit(&pps_writer, 0);
++   rbsp_finish(&pps_writer);
++   return rbsp_to_nal(34, &pps_writer, sets->pps, &sets->pps_size);
++}
++
++static bool bit_reader_get_bit(struct bit_reader *reader, uint32_t *bit)
++{
++   if (reader->bit_offset >= reader->size * 8)
++      return false;
++   *bit = (reader->data[reader->bit_offset / 8] >>
++           (7 - reader->bit_offset % 8)) & 1U;
++   reader->bit_offset++;
++   return true;
++}
++
++static bool bit_reader_get_ue(struct bit_reader *reader, uint32_t *value)
++{
++   unsigned zeros = 0;
++   uint32_t bit = 0;
++   uint64_t suffix = 0;
++
++   while (bit_reader_get_bit(reader, &bit) && bit == 0) {
++      if (++zeros > 31)
++         return false;
++   }
++   if (bit == 0)
++      return false;
++   for (unsigned i = 0; i < zeros; i++) {
++      if (!bit_reader_get_bit(reader, &bit))
++         return false;
++      suffix = (suffix << 1) | bit;
++   }
++   suffix += ((uint64_t)1 << zeros) - 1;
++   if (suffix > UINT32_MAX)
++      return false;
++   *value = (uint32_t)suffix;
++   return true;
++}
++
++static bool h265_slice_pps_id(const uint8_t *nal,
++                              size_t nal_size,
++                              uint32_t *pps_id)
++{
++   uint8_t rbsp[128];
++   size_t rbsp_size = 0;
++   unsigned zero_count = 0;
++   struct bit_reader reader;
++   uint32_t bit;
++   const unsigned nal_type = nal_size >= 2 ? (nal[0] >> 1) & 0x3f : 64;
++
++   if (nal_type > 31)
++      return false;
++   for (size_t i = 2; i < nal_size && rbsp_size < sizeof(rbsp); i++) {
++      if (zero_count >= 2 && nal[i] == 3) {
++         zero_count = 0;
++         continue;
++      }
++      rbsp[rbsp_size++] = nal[i];
++      zero_count = nal[i] == 0 ? zero_count + 1 : 0;
++   }
++   reader = (struct bit_reader){.data = rbsp, .size = rbsp_size};
++   if (!bit_reader_get_bit(&reader, &bit))
++      return false;
++   if (nal_type >= 16 && nal_type <= 23 &&
++       !bit_reader_get_bit(&reader, &bit))
++      return false;
++   return bit_reader_get_ue(&reader, pps_id);
++}
++
++static bool find_start_code(const uint8_t *data,
++                            size_t size,
++                            size_t from,
++                            size_t *offset,
++                            size_t *length)
++{
++   for (size_t i = from; i + 2 < size; i++) {
++      if (data[i] != 0 || data[i + 1] != 0)
++         continue;
++      if (data[i + 2] == 1) {
++         *offset = i;
++         *length = 3;
++         return true;
++      }
++      if (i + 3 < size && data[i + 2] == 0 && data[i + 3] == 1) {
++         *offset = i;
++         *length = 4;
++         return true;
++      }
++   }
++   return false;
++}
++
++static int append_hvcc_nal(uint8_t *output,
++                           size_t capacity,
++                           size_t *output_size,
++                           const uint8_t *nal,
++                           size_t nal_size,
++                           uint32_t *pps_id,
++                           bool *found_slice)
++{
++   uint32_t length;
++   const unsigned nal_type = nal_size >= 2 ? (nal[0] >> 1) & 0x3f : 64;
++
++   if (!nal_size)
++      return 0;
++   if (nal_type <= 31 && !*found_slice) {
++      if (!h265_slice_pps_id(nal, nal_size, pps_id))
++         return -1;
++      *found_slice = true;
++   }
++   if (nal_type >= 32 && nal_type <= 37)
++      return 0;
++   if (nal_size > UINT32_MAX || capacity < 4 ||
++       *output_size > capacity - 4 ||
++       nal_size > capacity - *output_size - 4)
++      return -1;
++   length = (uint32_t)nal_size;
++   output[(*output_size)++] = length >> 24;
++   output[(*output_size)++] = length >> 16;
++   output[(*output_size)++] = length >> 8;
++   output[(*output_size)++] = length;
++   memcpy(output + *output_size, nal, nal_size);
++   *output_size += nal_size;
++   return 0;
++}
++
++int vrend_video_h265_annexb_to_hvcc_buffer(
++   const uint8_t *annexb,
++   size_t annexb_size,
++   uint8_t *hvcc,
++   size_t hvcc_capacity,
++   size_t *hvcc_size,
++   uint32_t *pps_id)
++{
++   size_t output_size = 0;
++   size_t start;
++   size_t start_length;
++   bool found_slice = false;
++
++   if (!annexb || !annexb_size || !hvcc || !hvcc_capacity || !hvcc_size ||
++       !pps_id)
++      return -1;
++   if (!find_start_code(annexb, annexb_size, 0, &start, &start_length)) {
++      if (append_hvcc_nal(hvcc, hvcc_capacity, &output_size,
++                          annexb, annexb_size, pps_id, &found_slice) != 0)
++         return -1;
++   } else {
++      while (true) {
++         const size_t nal_start = start + start_length;
++         size_t next;
++         size_t next_length;
++         size_t nal_end;
++
++         if (find_start_code(annexb, annexb_size, nal_start,
++                             &next, &next_length))
++            nal_end = next;
++         else
++            nal_end = annexb_size;
++         while (nal_end > nal_start && annexb[nal_end - 1] == 0)
++            nal_end--;
++         if (append_hvcc_nal(hvcc, hvcc_capacity, &output_size,
++                             annexb + nal_start, nal_end - nal_start,
++                             pps_id, &found_slice) != 0)
++            return -1;
++         if (nal_end == annexb_size)
++            break;
++         start = next;
++         start_length = next_length;
++      }
++   }
++   if (!found_slice || !output_size)
++      return -1;
++   *hvcc_size = output_size;
++   return 0;
++}
+diff --git a/src/vrend/vrend_video_h265.h b/src/vrend/vrend_video_h265.h
+new file mode 100644
+index 0000000..6cf584d
+--- /dev/null
++++ b/src/vrend/vrend_video_h265.h
+@@ -0,0 +1,62 @@
++/**************************************************************************
++ *
++ * Copyright (C) 2026 Linux-UM Darwin contributors
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included
++ * in all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ *
++ **************************************************************************/
++
++#ifndef VREND_VIDEO_H265_H
++#define VREND_VIDEO_H265_H
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#include "virgl_video_hw.h"
++
++#define VREND_H265_PARAMETER_SET_MAX_SIZE 8192
++
++struct vrend_h265_parameter_sets {
++   uint8_t vps[VREND_H265_PARAMETER_SET_MAX_SIZE];
++   size_t vps_size;
++   uint8_t sps[VREND_H265_PARAMETER_SET_MAX_SIZE];
++   size_t sps_size;
++   uint8_t pps[VREND_H265_PARAMETER_SET_MAX_SIZE];
++   size_t pps_size;
++};
++
++int vrend_video_h265_build_parameter_sets(
++   uint32_t profile,
++   uint32_t level,
++   uint32_t width,
++   uint32_t height,
++   uint32_t pps_id,
++   const struct virgl_h265_picture_desc *desc,
++   struct vrend_h265_parameter_sets *sets);
++
++int vrend_video_h265_annexb_to_hvcc_buffer(
++   const uint8_t *annexb,
++   size_t annexb_size,
++   uint8_t *hvcc,
++   size_t hvcc_capacity,
++   size_t *hvcc_size,
++   uint32_t *pps_id);
++
++#endif /* VREND_VIDEO_H265_H */
 diff --git a/src/vrend/vrend_video_videotoolbox.m b/src/vrend/vrend_video_videotoolbox.m
 new file mode 100644
-index 0000000..6772437
+index 0000000..784678a
 --- /dev/null
 +++ b/src/vrend/vrend_video_videotoolbox.m
-@@ -0,0 +1,1235 @@
+@@ -0,0 +1,1524 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -834,6 +1545,7 @@ index 0000000..6772437
 +#include "vrend_renderer.h"
 +#include "vrend_video.h"
 +#include "vrend_video_h264.h"
++#include "vrend_video_h265.h"
 +#include "vrend_winsys.h"
 +
 +#define VREND_VT_MAX_WIDTH 4096
@@ -856,11 +1568,13 @@ index 0000000..6772437
 +   bool metal_copy_disabled;
 +   bool reported_metal_active;
 +   bool reported_metal_fallback;
++   bool reported_p010_cpu;
 +};
 +
 +struct vrend_video_codec {
 +   uint32_t handle;
 +   uint32_t profile;
++   uint32_t level;
 +   uint32_t width;
 +   uint32_t height;
 +   struct vrend_video_context *ctx;
@@ -868,11 +1582,14 @@ index 0000000..6772437
 +
 +   CMVideoFormatDescriptionRef format;
 +   VTDecompressionSessionRef session;
-+   struct vrend_h264_parameter_sets parameter_sets;
++   union {
++      struct vrend_h264_parameter_sets h264;
++      struct vrend_h265_parameter_sets h265;
++   } parameter_sets;
 +   uint8_t *annexb;
 +   size_t annexb_capacity;
-+   uint8_t *avcc;
-+   size_t avcc_capacity;
++   uint8_t *sample_data;
++   size_t sample_data_capacity;
 +   bool reported_decoded_frame;
 +   bool reported_decode_failure;
 +};
@@ -898,6 +1615,121 @@ index 0000000..6772437
 +};
 +
 +static bool video_initialized;
++static bool h264_initialized;
++static bool h264_high10_initialized;
++static bool hevc_initialized;
++
++static void h264_high10_probe_output(void *decompression_output_refcon,
++                                     void *source_frame_refcon,
++                                     OSStatus status,
++                                     VTDecodeInfoFlags info_flags,
++                                     CVImageBufferRef image,
++                                     CMTime presentation_time_stamp,
++                                     CMTime presentation_duration)
++{
++   (void)decompression_output_refcon;
++   (void)source_frame_refcon;
++   (void)status;
++   (void)info_flags;
++   (void)image;
++   (void)presentation_time_stamp;
++   (void)presentation_duration;
++}
++
++static bool probe_h264_high10_hardware(void)
++{
++#if !TARGET_OS_OSX
++   if (@available(iOS 17.0, tvOS 17.0, *)) {
++#endif
++   /* A representative 64x64 x264 High10 sequence header.  In particular,
++    * this covers CABAC and 8x8 transforms that a family-level H.264 probe
++    * can accept even when the hardware does not implement High10. */
++   static const uint8_t sps[] = {
++      0x67, 0x6e, 0x00, 0x0a, 0xa6, 0xcd, 0x94, 0x42,
++      0x6c, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40,
++      0x00, 0x00, 0x1e, 0x03, 0xc4, 0x89, 0x65, 0x80,
++   };
++   static const uint8_t pps[] = {
++      0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0,
++   };
++   const uint8_t *parameter_sets[] = {sps, pps};
++   const size_t parameter_set_sizes[] = {sizeof(sps), sizeof(pps)};
++   const void *decoder_keys[] = {
++      kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
++   };
++   const void *decoder_values[] = {kCFBooleanTrue};
++   int32_t pixel_format =
++      kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
++   VTDecompressionOutputCallbackRecord callback = {
++      .decompressionOutputCallback = h264_high10_probe_output,
++      .decompressionOutputRefCon = NULL,
++   };
++   CMVideoFormatDescriptionRef format = NULL;
++   CFDictionaryRef decoder_specification = NULL;
++   CFNumberRef pixel_format_number = NULL;
++   CFDictionaryRef image_attributes = NULL;
++   VTDecompressionSessionRef session = NULL;
++   CFTypeRef using_hardware = NULL;
++   OSStatus status;
++   bool supported = false;
++
++   status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
++      kCFAllocatorDefault, ARRAY_SIZE(parameter_sets), parameter_sets,
++      parameter_set_sizes, 4, &format);
++   if (status != noErr)
++      goto out;
++   decoder_specification = CFDictionaryCreate(
++      kCFAllocatorDefault, decoder_keys, decoder_values,
++      ARRAY_SIZE(decoder_keys), &kCFTypeDictionaryKeyCallBacks,
++      &kCFTypeDictionaryValueCallBacks);
++   pixel_format_number = CFNumberCreate(kCFAllocatorDefault,
++                                        kCFNumberSInt32Type,
++                                        &pixel_format);
++   if (pixel_format_number) {
++      const void *image_keys[] = {kCVPixelBufferPixelFormatTypeKey};
++      const void *image_values[] = {pixel_format_number};
++
++      image_attributes = CFDictionaryCreate(
++         kCFAllocatorDefault, image_keys, image_values,
++         ARRAY_SIZE(image_keys), &kCFTypeDictionaryKeyCallBacks,
++         &kCFTypeDictionaryValueCallBacks);
++   }
++   if (!decoder_specification || !image_attributes)
++      goto out;
++   status = VTDecompressionSessionCreate(
++      kCFAllocatorDefault, format, decoder_specification, image_attributes,
++      &callback, &session);
++   if (status != noErr)
++      goto out;
++   status = VTSessionCopyProperty(
++      session,
++      kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
++      kCFAllocatorDefault, &using_hardware);
++   if (status != noErr || using_hardware != kCFBooleanTrue)
++      goto out;
++   supported = true;
++
++out:
++   if (using_hardware)
++      CFRelease(using_hardware);
++   if (session) {
++      VTDecompressionSessionInvalidate(session);
++      CFRelease(session);
++   }
++   if (image_attributes)
++      CFRelease(image_attributes);
++   if (pixel_format_number)
++      CFRelease(pixel_format_number);
++   if (decoder_specification)
++      CFRelease(decoder_specification);
++   if (format)
++      CFRelease(format);
++   return supported;
++#if !TARGET_OS_OSX
++   }
++   return false;
++#endif
++}
 +
 +static bool reserve_buffer(uint8_t **buffer,
 +                           size_t *capacity,
@@ -929,7 +1761,8 @@ index 0000000..6772437
 +{
 +   if (codec && !codec->reported_decode_failure) {
 +      codec->reported_decode_failure = true;
-+      virgl_warn("VideoToolbox H.264 decode failed at %s\n", stage);
++      virgl_warn("VideoToolbox decode failed: profile=%u stage=%s\n",
++                 (unsigned)codec->profile, stage);
 +   }
 +   return -1;
 +}
@@ -954,17 +1787,43 @@ index 0000000..6772437
 +   return NULL;
 +}
 +
-+static bool is_supported_profile(uint32_t profile)
++static bool is_h264_profile(uint32_t profile)
 +{
 +   switch (profile) {
 +   case PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE:
 +   case PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE:
 +   case PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN:
 +   case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH:
++   case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10:
 +      return true;
 +   default:
 +      return false;
 +   }
++}
++
++static bool is_hevc_profile(uint32_t profile)
++{
++   return profile == PIPE_VIDEO_PROFILE_HEVC_MAIN ||
++          profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10;
++}
++
++static bool is_10_bit_profile(uint32_t profile)
++{
++   return profile == PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10 ||
++          profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10;
++}
++
++static bool is_supported_profile(uint32_t profile)
++{
++   if (profile == PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10)
++      return h264_high10_initialized;
++   return (h264_initialized && is_h264_profile(profile)) ||
++          (hevc_initialized && is_hevc_profile(profile));
++}
++
++static const char *codec_family_name(uint32_t profile)
++{
++   return is_hevc_profile(profile) ? "HEVC" : "H.264";
 +}
 +
 +static void destroy_session(struct vrend_video_codec *codec)
@@ -995,14 +1854,22 @@ index 0000000..6772437
 +int vrend_video_init(int drm_fd)
 +{
 +   (void)drm_fd;
-+   video_initialized = hardware_requirement_is_available() &&
-+                       VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
++   if (!hardware_requirement_is_available())
++      return -1;
++   h264_initialized = VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
++   h264_high10_initialized = h264_initialized && !TARGET_OS_OSX &&
++                              probe_h264_high10_hardware();
++   hevc_initialized = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
++   video_initialized = h264_initialized || hevc_initialized;
 +   return video_initialized ? 0 : -1;
 +}
 +
 +void vrend_video_fini(void)
 +{
 +   video_initialized = false;
++   h264_initialized = false;
++   h264_high10_initialized = false;
++   hevc_initialized = false;
 +}
 +
 +static void fill_video_cap(struct virgl_video_caps *cap, uint32_t profile)
@@ -1010,10 +1877,11 @@ index 0000000..6772437
 +   memset(cap, 0, sizeof(*cap));
 +   cap->profile = profile;
 +   cap->entrypoint = PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
-+   cap->max_level = 51;
++   cap->max_level = is_hevc_profile(profile) ? 153 : 51;
 +   cap->max_width = VREND_VT_MAX_WIDTH;
 +   cap->max_height = VREND_VT_MAX_HEIGHT;
-+   cap->prefered_format = VIRGL_FORMAT_NV12;
++   cap->prefered_format = is_10_bit_profile(profile) ? VIRGL_FORMAT_P010 :
++                                                       VIRGL_FORMAT_NV12;
 +   cap->max_macroblocks =
 +      VREND_VT_MAX_WIDTH * VREND_VT_MAX_HEIGHT / (16 * 16);
 +   cap->npot_texture = 1;
@@ -1027,6 +1895,9 @@ index 0000000..6772437
 +      PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE,
 +      PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN,
 +      PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH,
++      PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10,
++      PIPE_VIDEO_PROFILE_HEVC_MAIN,
++      PIPE_VIDEO_PROFILE_HEVC_MAIN_10,
 +   };
 +
 +   if (!caps)
@@ -1036,6 +1907,8 @@ index 0000000..6772437
 +      return -1;
 +
 +   for (unsigned i = 0; i < ARRAY_SIZE(profiles); i++) {
++      if (!is_supported_profile(profiles[i]))
++         continue;
 +      fill_video_cap(&caps->v2.video_caps[caps->v2.num_video_caps],
 +                     profiles[i]);
 +      caps->v2.num_video_caps++;
@@ -1061,7 +1934,7 @@ index 0000000..6772437
 +      return;
 +   list_del(&codec->head);
 +   destroy_session(codec);
-+   free(codec->avcc);
++   free(codec->sample_data);
 +   free(codec->annexb);
 +   free(codec);
 +}
@@ -1138,7 +2011,6 @@ index 0000000..6772437
 +{
 +   struct vrend_video_codec *codec;
 +
-+   (void)level;
 +   (void)max_ref;
 +   (void)flags;
 +
@@ -1157,6 +2029,7 @@ index 0000000..6772437
 +      return -1;
 +   codec->handle = handle;
 +   codec->profile = profile;
++   codec->level = level;
 +   codec->width = width;
 +   codec->height = height;
 +   codec->ctx = ctx;
@@ -1187,11 +2060,13 @@ index 0000000..6772437
 +      return 0;
 +   const bool valid_nv12 = format == VIRGL_FORMAT_NV12 && num_res == 2;
 +   const bool valid_iyuv = format == VIRGL_FORMAT_IYUV && num_res == 3;
++   const bool valid_p010 = format == VIRGL_FORMAT_P010 && num_res == 2;
 +   bool valid_handles = res_handles != NULL;
 +
 +   for (unsigned i = 0; valid_handles && i < num_res; i++)
 +      valid_handles = res_handles[i] != 0;
-+   if ((!valid_nv12 && !valid_iyuv) || !width || !height || !valid_handles)
++   if ((!valid_nv12 && !valid_iyuv && !valid_p010) || !width || !height ||
++       !valid_handles)
 +      return -1;
 +
 +   buffer = calloc(1, sizeof(*buffer));
@@ -1264,10 +2139,13 @@ index 0000000..6772437
 +#endif
 +}
 +
-+static CFDictionaryRef create_image_attributes(uint32_t width,
++static CFDictionaryRef create_image_attributes(uint32_t profile,
++                                               uint32_t width,
 +                                               uint32_t height)
 +{
-+   int32_t pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
++   int32_t pixel_format = is_10_bit_profile(profile) ?
++      kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange :
++      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 +   int32_t image_width = width;
 +   int32_t image_height = height;
 +   CFNumberRef pixel_format_number;
@@ -1323,7 +2201,7 @@ index 0000000..6772437
 +   return attributes;
 +}
 +
-+static bool parameter_sets_match(
++static bool h264_parameter_sets_match(
 +   const struct vrend_h264_parameter_sets *left,
 +   const struct vrend_h264_parameter_sets *right)
 +{
@@ -1333,11 +2211,69 @@ index 0000000..6772437
 +          memcmp(left->pps, right->pps, left->pps_size) == 0;
 +}
 +
-+static int create_session(struct vrend_video_codec *codec,
-+                          const struct vrend_h264_parameter_sets *sets)
++static bool h265_parameter_sets_match(
++   const struct vrend_h265_parameter_sets *left,
++   const struct vrend_h265_parameter_sets *right)
 +{
-+   const uint8_t *parameter_set_pointers[] = {sets->sps, sets->pps};
-+   const size_t parameter_set_sizes[] = {sets->sps_size, sets->pps_size};
++   return left->vps_size == right->vps_size &&
++          left->sps_size == right->sps_size &&
++          left->pps_size == right->pps_size &&
++          memcmp(left->vps, right->vps, left->vps_size) == 0 &&
++          memcmp(left->sps, right->sps, left->sps_size) == 0 &&
++          memcmp(left->pps, right->pps, left->pps_size) == 0;
++}
++
++static bool parameter_sets_match(struct vrend_video_codec *codec,
++                                 const void *sets)
++{
++   if (is_hevc_profile(codec->profile)) {
++      return h265_parameter_sets_match(&codec->parameter_sets.h265,
++                                       sets);
++   }
++   return h264_parameter_sets_match(&codec->parameter_sets.h264, sets);
++}
++
++static void store_parameter_sets(struct vrend_video_codec *codec,
++                                 const void *sets)
++{
++   if (is_hevc_profile(codec->profile))
++      codec->parameter_sets.h265 =
++         *(const struct vrend_h265_parameter_sets *)sets;
++   else
++      codec->parameter_sets.h264 =
++         *(const struct vrend_h264_parameter_sets *)sets;
++}
++
++static OSStatus create_format_description(
++   struct vrend_video_codec *codec,
++   const void *sets,
++   CMVideoFormatDescriptionRef *format)
++{
++   if (is_hevc_profile(codec->profile)) {
++      const struct vrend_h265_parameter_sets *h265_sets = sets;
++      const uint8_t *pointers[] = {
++         h265_sets->vps, h265_sets->sps, h265_sets->pps,
++      };
++      const size_t sizes[] = {
++         h265_sets->vps_size, h265_sets->sps_size, h265_sets->pps_size,
++      };
++
++      return CMVideoFormatDescriptionCreateFromHEVCParameterSets(
++         kCFAllocatorDefault, ARRAY_SIZE(pointers), pointers, sizes, 4,
++         NULL, format);
++   }
++
++   const struct vrend_h264_parameter_sets *h264_sets = sets;
++   const uint8_t *pointers[] = {h264_sets->sps, h264_sets->pps};
++   const size_t sizes[] = {h264_sets->sps_size, h264_sets->pps_size};
++   return CMVideoFormatDescriptionCreateFromH264ParameterSets(
++      kCFAllocatorDefault, ARRAY_SIZE(pointers), pointers, sizes, 4,
++      format);
++}
++
++static int create_session(struct vrend_video_codec *codec,
++                          const void *sets)
++{
 +   VTDecompressionOutputCallbackRecord callback = {
 +      .decompressionOutputCallback = decompression_output,
 +      .decompressionOutputRefCon = codec,
@@ -1348,14 +2284,13 @@ index 0000000..6772437
 +   OSStatus status;
 +
 +   destroy_session(codec);
-+   status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
-+      kCFAllocatorDefault, ARRAY_SIZE(parameter_set_pointers),
-+      parameter_set_pointers, parameter_set_sizes, 4, &codec->format);
++   status = create_format_description(codec, sets, &codec->format);
 +   if (status != noErr)
 +      goto fail;
 +
 +   decoder_specification = create_decoder_specification();
-+   image_attributes = create_image_attributes(codec->width, codec->height);
++   image_attributes = create_image_attributes(codec->profile, codec->width,
++                                              codec->height);
 +   if (!decoder_specification || !image_attributes)
 +      goto fail;
 +   status = VTDecompressionSessionCreate(
@@ -1388,16 +2323,17 @@ index 0000000..6772437
 +      goto fail;
 +   }
 +   CFRelease(using_hardware);
-+   codec->parameter_sets = *sets;
-+   virgl_info("VideoToolbox H.264 hardware decoder active: "
++   store_parameter_sets(codec, sets);
++   virgl_info("VideoToolbox %s hardware decoder active: "
 +              "profile=%u size=%ux%u\n",
-+              (unsigned)codec->profile, (unsigned)codec->width,
++              codec_family_name(codec->profile), (unsigned)codec->profile,
++              (unsigned)codec->width,
 +              (unsigned)codec->height);
 +   return 0;
 +
 +fail:
-+   virgl_warn("VideoToolbox H.264 session creation failed: status=%d\n",
-+              (int)status);
++   virgl_warn("VideoToolbox %s session creation failed: status=%d\n",
++              codec_family_name(codec->profile), (int)status);
 +   if (decoder_specification)
 +      CFRelease(decoder_specification);
 +   if (image_attributes)
@@ -1407,21 +2343,17 @@ index 0000000..6772437
 +}
 +
 +static int ensure_session(struct vrend_video_codec *codec,
-+                          const struct vrend_h264_parameter_sets *sets)
++                          const void *sets)
 +{
-+   const uint8_t *parameter_set_pointers[] = {sets->sps, sets->pps};
-+   const size_t parameter_set_sizes[] = {sets->sps_size, sets->pps_size};
 +   CMVideoFormatDescriptionRef format = NULL;
 +   OSStatus status;
 +
-+   if (codec->session && parameter_sets_match(&codec->parameter_sets, sets))
++   if (codec->session && parameter_sets_match(codec, sets))
 +      return 0;
 +   if (!codec->session)
 +      return create_session(codec, sets);
 +
-+   status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
-+      kCFAllocatorDefault, ARRAY_SIZE(parameter_set_pointers),
-+      parameter_set_pointers, parameter_set_sizes, 4, &format);
++   status = create_format_description(codec, sets, &format);
 +   if (status != noErr || !format)
 +      return -1;
 +   if (!VTDecompressionSessionCanAcceptFormatDescription(codec->session,
@@ -1432,7 +2364,7 @@ index 0000000..6772437
 +
 +   CFRelease(codec->format);
 +   codec->format = format;
-+   codec->parameter_sets = *sets;
++   store_parameter_sets(codec, sets);
 +   return 0;
 +}
 +
@@ -1565,17 +2497,11 @@ index 0000000..6772437
 +   return glGetError() == GL_NO_ERROR;
 +}
 +
-+static int copy_nv12_with_metal(struct vrend_video_buffer *target,
-+                                CVPixelBufferRef image)
++static int copy_biplanar_with_metal(struct vrend_video_buffer *target,
++                                    CVPixelBufferRef image)
 +{
-+   static const enum virgl_formats virgl_formats[] = {
-+      VIRGL_FORMAT_R8_UNORM,
-+      VIRGL_FORMAT_R8G8_UNORM,
-+   };
-+   static const MTLPixelFormat metal_formats[] = {
-+      MTLPixelFormatR8Unorm,
-+      MTLPixelFormatRG8Unorm,
-+   };
++   enum virgl_formats virgl_formats[VREND_VT_METAL_PLANE_COUNT];
++   MTLPixelFormat metal_formats[VREND_VT_METAL_PLANE_COUNT];
 +   struct vrend_video_context *ctx = target->ctx;
 +   struct vrend_resource *destinations[VREND_VT_METAL_PLANE_COUNT] = {0};
 +   CVMetalTextureRef cv_textures[VREND_VT_METAL_PLANE_COUNT] = {0};
@@ -1588,17 +2514,33 @@ index 0000000..6772437
 +   GLuint framebuffer = 0;
 +   id<MTLDevice> device;
 +   const OSType pixel_format = CVPixelBufferGetPixelFormatType(image);
++   const bool p010 = target->format == VIRGL_FORMAT_P010;
 +   bool copy_issued = false;
 +   unsigned copied_planes = 0;
 +   int result = -1;
 +
-+   if ((pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
-+        pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) ||
-+       target->format != VIRGL_FORMAT_NV12 || target->num_planes != 2 ||
++   const bool compatible_pixel_format = p010 ?
++      pixel_format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange :
++      (pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
++       pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange);
++   if (!compatible_pixel_format ||
++       (target->format != VIRGL_FORMAT_NV12 && !p010) ||
++       target->num_planes != 2 ||
 +       !CVPixelBufferIsPlanar(image) ||
 +       CVPixelBufferGetPlaneCount(image) < VREND_VT_METAL_PLANE_COUNT ||
 +       !ensure_metal_cache(ctx))
 +      return -1;
++   if (p010) {
++      virgl_formats[0] = VIRGL_FORMAT_R16_UNORM;
++      virgl_formats[1] = VIRGL_FORMAT_R16G16_UNORM;
++      metal_formats[0] = MTLPixelFormatR16Unorm;
++      metal_formats[1] = MTLPixelFormatRG16Unorm;
++   } else {
++      virgl_formats[0] = VIRGL_FORMAT_R8_UNORM;
++      virgl_formats[1] = VIRGL_FORMAT_R8G8_UNORM;
++      metal_formats[0] = MTLPixelFormatR8Unorm;
++      metal_formats[1] = MTLPixelFormatRG8Unorm;
++   }
 +   device = (id<MTLDevice>)virgl_egl_metal_get_device(egl);
 +   if (!device)
 +      return -1;
@@ -1748,12 +2690,15 @@ index 0000000..6772437
 +                                    CVPixelBufferRef image)
 +{
 +   const OSType pixel_format = CVPixelBufferGetPixelFormatType(image);
++   const bool p010 =
++      pixel_format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
 +   uint8_t *u_plane;
 +   uint8_t *v_plane;
 +   CVReturn lock_status;
 +   int result = -1;
 +
-+   if (pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
++   if (!p010 &&
++       pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
 +       pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
 +      return -1;
 +   if (!CVPixelBufferIsPlanar(image) ||
@@ -1775,10 +2720,21 @@ index 0000000..6772437
 +      CVPixelBufferGetBytesPerRowOfPlane(image, 1);
 +   uint8_t *chroma_base = CVPixelBufferGetBaseAddressOfPlane(image, 1);
 +
++   if (p010) {
++      if (target->format != VIRGL_FORMAT_P010 || target->num_planes != 2 ||
++          upload_plane(target, 0, VIRGL_FORMAT_R16_UNORM,
++                       y_width, y_height, y_row_bytes, y_base) != 0)
++         goto out;
++      result = upload_plane(target, 1, VIRGL_FORMAT_R16G16_UNORM,
++                            chroma_width, chroma_height, chroma_row_bytes,
++                            chroma_base);
++      goto out;
++   }
++
 +   if (upload_plane(target, 0, VIRGL_FORMAT_R8_UNORM, y_width, y_height,
 +                    y_row_bytes, y_base) != 0)
 +      goto out;
-+   if (target->format == VIRGL_FORMAT_NV12) {
++   if (target->format == VIRGL_FORMAT_NV12 && target->num_planes == 2) {
 +      result = upload_plane(target, 1, VIRGL_FORMAT_R8G8_UNORM,
 +                            chroma_width, chroma_height, chroma_row_bytes,
 +                            chroma_base);
@@ -1824,22 +2780,27 @@ index 0000000..6772437
 +{
 +   struct vrend_video_context *ctx = target->ctx;
 +
-+   if (target->format == VIRGL_FORMAT_NV12) {
++   if (target->format == VIRGL_FORMAT_NV12 ||
++       target->format == VIRGL_FORMAT_P010) {
 +#ifdef ENABLE_METAL
 +      if (!ctx->metal_copy_disabled) {
-+         if (copy_nv12_with_metal(target, image) == 0) {
++         if (copy_biplanar_with_metal(target, image) == 0) {
 +            if (!ctx->reported_metal_active) {
 +               ctx->reported_metal_active = true;
-+               virgl_info("VideoToolbox H.264 NV12 Metal copy active\n");
++               virgl_info("VideoToolbox bi-planar Metal copy active\n");
 +            }
 +            return 0;
 +         }
 +         ctx->metal_copy_disabled = true;
 +      }
 +#endif
-+      if (!ctx->reported_metal_fallback) {
++      if (target->format == VIRGL_FORMAT_P010 && !ctx->reported_p010_cpu) {
++         ctx->reported_p010_cpu = true;
++         virgl_info("VideoToolbox P010 CPU upload active\n");
++      } else if (target->format == VIRGL_FORMAT_NV12 &&
++                 !ctx->reported_metal_fallback) {
 +         ctx->reported_metal_fallback = true;
-+         virgl_warn("VideoToolbox H.264 NV12 Metal copy unavailable; "
++         virgl_warn("VideoToolbox bi-planar Metal copy unavailable; "
 +                    "using CPU upload\n");
 +      }
 +   }
@@ -1848,8 +2809,8 @@ index 0000000..6772437
 +
 +static int decode_frame(struct vrend_video_codec *codec,
 +                        struct vrend_video_buffer *target,
-+                        const uint8_t *avcc,
-+                        size_t avcc_size)
++                        const uint8_t *sample_data,
++                        size_t sample_data_size)
 +{
 +   CMBlockBufferRef block = NULL;
 +   CMSampleBufferRef sample = NULL;
@@ -1858,15 +2819,15 @@ index 0000000..6772437
 +      .presentationTimeStamp = kCMTimeInvalid,
 +      .decodeTimeStamp = kCMTimeInvalid,
 +   };
-+   const size_t sample_size = avcc_size;
++   const size_t sample_size = sample_data_size;
 +   struct decoded_frame frame = {.status = noErr, .image = NULL};
 +   VTDecodeInfoFlags info_flags = 0;
 +   OSStatus status;
 +   int result = -1;
 +
 +   status = CMBlockBufferCreateWithMemoryBlock(
-+      kCFAllocatorDefault, (void *)avcc, avcc_size, kCFAllocatorNull, NULL,
-+      0, avcc_size, 0, &block);
++      kCFAllocatorDefault, (void *)sample_data, sample_data_size,
++      kCFAllocatorNull, NULL, 0, sample_data_size, 0, &block);
 +   if (status != noErr)
 +      goto out;
 +   status = CMSampleBufferCreateReady(
@@ -1878,13 +2839,27 @@ index 0000000..6772437
 +   status = VTDecompressionSessionDecodeFrame(
 +      codec->session, sample, 0, &frame, &info_flags);
 +   if (status != noErr || frame.status != noErr || !frame.image ||
-+       (info_flags & kVTDecodeInfo_FrameDropped))
++       (info_flags & kVTDecodeInfo_FrameDropped)) {
++      if (!codec->reported_decode_failure) {
++         virgl_warn("VideoToolbox frame decode rejected: profile=%u "
++                    "status=%d callback=%d image=%s flags=0x%x\n",
++                    (unsigned)codec->profile, (int)status,
++                    (int)frame.status, frame.image ? "yes" : "no",
++                    (unsigned)info_flags);
++      }
 +      goto out;
++   }
 +   result = upload_decoded_frame(target, frame.image);
++   if (result != 0 && !codec->reported_decode_failure) {
++      virgl_warn("VideoToolbox frame upload rejected: profile=%u "
++                 "target-format=%u pixel-format=0x%08x\n",
++                 (unsigned)codec->profile, (unsigned)target->format,
++                 (unsigned)CVPixelBufferGetPixelFormatType(frame.image));
++   }
 +   if (result == 0 && !codec->reported_decoded_frame) {
 +      codec->reported_decoded_frame = true;
-+      virgl_info("VideoToolbox H.264 hardware decoder produced its first "
-+                 "decoded frame\n");
++      virgl_info("VideoToolbox %s hardware decoder produced its first "
++                 "decoded frame\n", codec_family_name(codec->profile));
 +   }
 +
 +out:
@@ -1909,10 +2884,14 @@ index 0000000..6772437
 +   struct vrend_video_buffer *target;
 +   struct vrend_resource *resource;
 +   union virgl_picture_desc desc;
-+   struct vrend_h264_parameter_sets parameter_sets;
++   union {
++      struct vrend_h264_parameter_sets h264;
++      struct vrend_h265_parameter_sets h265;
++   } parameter_sets = {0};
++   const void *selected_parameter_sets = NULL;
 +   size_t annexb_size = 0;
-+   size_t avcc_capacity;
-+   size_t avcc_size = 0;
++   size_t sample_data_capacity;
++   size_t sample_data_size = 0;
 +   uint32_t pps_id = 0;
 +   int result = -1;
 +
@@ -1922,6 +2901,9 @@ index 0000000..6772437
 +   target = get_video_buffer(ctx, tgt_handle);
 +   if (!codec || !target)
 +      return -1;
++   if (is_10_bit_profile(codec->profile) !=
++       (target->format == VIRGL_FORMAT_P010))
++      return report_decode_failure(codec, "target-format");
 +
 +   for (unsigned i = 0; i < num_buffers; i++) {
 +      if (buffer_sizes[i] > SIZE_MAX - annexb_size)
@@ -1962,40 +2944,58 @@ index 0000000..6772437
 +      report_decode_failure(codec, "descriptor-read");
 +      goto out;
 +   }
-+   if (desc.h264.base.profile != codec->profile ||
-+       desc.h264.base.entry_point != PIPE_VIDEO_ENTRYPOINT_BITSTREAM ||
-+       desc.h264.field_pic_flag) {
++   if (desc.base.profile != codec->profile ||
++       desc.base.entry_point != PIPE_VIDEO_ENTRYPOINT_BITSTREAM ||
++       (is_h264_profile(codec->profile) && desc.h264.field_pic_flag)) {
 +      report_decode_failure(codec, "descriptor-validation");
 +      goto out;
 +   }
 +
 +   if (annexb_size > (SIZE_MAX - 16) / 2) {
-+      report_decode_failure(codec, "avcc-size-overflow");
++      report_decode_failure(codec, "sample-data-size-overflow");
 +      goto out;
 +   }
-+   avcc_capacity = annexb_size * 2 + 16;
-+   if (!reserve_buffer(&codec->avcc, &codec->avcc_capacity,
-+                       avcc_capacity)) {
-+      report_decode_failure(codec, "avcc-allocation");
++   sample_data_capacity = annexb_size * 2 + 16;
++   if (!reserve_buffer(&codec->sample_data, &codec->sample_data_capacity,
++                       sample_data_capacity)) {
++      report_decode_failure(codec, "sample-data-allocation");
 +      goto out;
 +   }
-+   if (vrend_video_h264_annexb_to_avcc_buffer(
-+          codec->annexb, annexb_size, codec->avcc, codec->avcc_capacity,
-+          &avcc_size, &pps_id) != 0) {
-+      report_decode_failure(codec, "annexb-to-avcc");
-+      goto out;
++   if (is_hevc_profile(codec->profile)) {
++      if (vrend_video_h265_annexb_to_hvcc_buffer(
++             codec->annexb, annexb_size, codec->sample_data,
++             codec->sample_data_capacity, &sample_data_size,
++             &pps_id) != 0 ||
++          vrend_video_h265_build_parameter_sets(
++             codec->profile, codec->level, codec->width, codec->height,
++             pps_id, &desc.h265, &parameter_sets.h265) != 0) {
++         report_decode_failure(codec, "hevc-bitstream-preparation");
++         goto out;
++      }
++      selected_parameter_sets = &parameter_sets.h265;
++   } else {
++      if (vrend_video_h264_annexb_to_avcc_buffer(
++             codec->annexb, annexb_size, codec->sample_data,
++             codec->sample_data_capacity, &sample_data_size,
++             &pps_id) != 0 ||
++          vrend_video_h264_build_parameter_sets(
++             codec->profile, codec->width, codec->height, pps_id,
++             &desc.h264, &parameter_sets.h264) != 0) {
++         report_decode_failure(codec, "h264-bitstream-preparation");
++         goto out;
++      }
++      selected_parameter_sets = &parameter_sets.h264;
 +   }
-+   if (vrend_video_h264_build_parameter_sets(
-+          codec->profile, codec->width, codec->height, pps_id,
-+          &desc.h264, &parameter_sets) != 0) {
++   if (!selected_parameter_sets) {
 +      report_decode_failure(codec, "parameter-set-synthesis");
 +      goto out;
 +   }
-+   if (ensure_session(codec, &parameter_sets) != 0) {
++   if (ensure_session(codec, selected_parameter_sets) != 0) {
 +      report_decode_failure(codec, "session-creation");
 +      goto out;
 +   }
-+   result = decode_frame(codec, target, codec->avcc, avcc_size);
++   result = decode_frame(codec, target, codec->sample_data,
++                         sample_data_size);
 +   if (result != 0)
 +      report_decode_failure(codec, "frame-decode-or-upload");
 +
@@ -2056,10 +3056,10 @@ index fb6d73b..b288922 100644
                                      uint32_t format, MTLTexture_id *tex);
  bool virgl_egl_metal_create_texture_from_shm(struct virgl_egl *egl, int fd, size_t size,
 diff --git a/tests/meson.build b/tests/meson.build
-index 884a005..14fc9d0 100644
+index 884a005..698ce0c 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
-@@ -74,6 +74,19 @@ foreach t : tests
+@@ -74,6 +74,30 @@ foreach t : tests
     test(t[0], test_virgl)
  endforeach
  
@@ -2074,6 +3074,17 @@ index 884a005..14fc9d0 100644
 +      dependencies : [videotoolbox_dep],
 +   )
 +   test('test_vrend_video_h264', test_vrend_video_h264)
++
++   test_vrend_video_h265 = executable(
++      'test_vrend_video_h265',
++      [
++         'test_vrend_video_h265.c',
++         '../src/vrend/vrend_video_h265.c',
++      ],
++      include_directories : [inc_gallium, inc_configuration, '../src/vrend'],
++      dependencies : [videotoolbox_dep],
++   )
++   test('test_vrend_video_h265', test_vrend_video_h265)
 +endif
 +
  # For some unknown reason running this test in paralel with the others
@@ -2081,10 +3092,10 @@ index 884a005..14fc9d0 100644
  # goes wrong
 diff --git a/tests/test_vrend_video_h264.c b/tests/test_vrend_video_h264.c
 new file mode 100644
-index 0000000..ec1dbec
+index 0000000..29242f7
 --- /dev/null
 +++ b/tests/test_vrend_video_h264.c
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,171 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -2213,9 +3224,183 @@ index 0000000..ec1dbec
 +             desc.base.profile, 1921, 1080, 3, &desc, &sets) == -1);
 +}
 +
++static void test_high10_parameter_sets(void)
++{
++   struct virgl_h264_picture_desc desc = {0};
++   struct vrend_h264_parameter_sets sets = {0};
++   const uint8_t *pointers[2];
++   size_t sizes[2];
++   CMVideoFormatDescriptionRef format = NULL;
++
++   desc.base.profile = PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10;
++   desc.base.entry_point = PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
++   desc.pps.sps.level_idc = 42;
++   desc.pps.sps.chroma_format_idc = 1;
++   desc.pps.sps.bit_depth_luma_minus8 = 2;
++   desc.pps.sps.bit_depth_chroma_minus8 = 2;
++   desc.pps.sps.frame_mbs_only_flag = 1;
++   desc.pps.sps.direct_8x8_inference_flag = 1;
++   desc.pps.sps.max_num_ref_frames = 4;
++   desc.pps.deblocking_filter_control_present_flag = 1;
++
++   assert(vrend_video_h264_build_parameter_sets(
++             desc.base.profile, 1920, 1080, 0, &desc, &sets) == 0);
++   pointers[0] = sets.sps;
++   pointers[1] = sets.pps;
++   sizes[0] = sets.sps_size;
++   sizes[1] = sets.pps_size;
++   assert(CMVideoFormatDescriptionCreateFromH264ParameterSets(
++             kCFAllocatorDefault, 2, pointers, sizes, 4, &format) == noErr);
++   assert(format != NULL);
++   CFRelease(format);
++
++   desc.pps.sps.bit_depth_luma_minus8 = 0;
++   desc.pps.sps.bit_depth_chroma_minus8 = 0;
++   assert(vrend_video_h264_build_parameter_sets(
++             desc.base.profile, 1920, 1080, 0, &desc, &sets) == -1);
++}
++
 +int main(void)
 +{
 +   test_annexb_conversion();
 +   test_parameter_sets();
++   test_high10_parameter_sets();
++   return 0;
++}
+diff --git a/tests/test_vrend_video_h265.c b/tests/test_vrend_video_h265.c
+new file mode 100644
+index 0000000..cbd832b
+--- /dev/null
++++ b/tests/test_vrend_video_h265.c
+@@ -0,0 +1,131 @@
++/**************************************************************************
++ *
++ * Copyright (C) 2026 Linux-UM Darwin contributors
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included
++ * in all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ *
++ **************************************************************************/
++
++#include <CoreMedia/CoreMedia.h>
++
++#include <assert.h>
++#include <string.h>
++
++#include "pipe/p_video_enums.h"
++#include "vrend_video_h265.h"
++
++static void test_annexb_conversion(void)
++{
++   static const uint8_t annexb[] = {
++      0, 0, 0, 1, 0x40, 0x01, 0x0c,
++      0, 0, 1, 0x42, 0x01, 0x01,
++      0, 0, 1, 0x44, 0x01, 0xc0,
++      0, 0, 1, 0x26, 0x01, 0x88,
++   };
++   static const uint8_t expected[] = {
++      0, 0, 0, 3, 0x26, 0x01, 0x88,
++   };
++   uint8_t output[sizeof(expected)];
++   size_t output_size = 0;
++   uint32_t pps_id = 0;
++
++   assert(vrend_video_h265_annexb_to_hvcc_buffer(
++             annexb, sizeof(annexb), output, sizeof(output),
++             &output_size, &pps_id) == 0);
++   assert(pps_id == 3);
++   assert(output_size == sizeof(expected));
++   assert(memcmp(output, expected, sizeof(expected)) == 0);
++   assert(vrend_video_h265_annexb_to_hvcc_buffer(
++             annexb, sizeof(annexb), output, sizeof(output) - 1,
++             &output_size, &pps_id) == -1);
++}
++
++static void fill_descriptor(struct virgl_h265_picture_desc *desc,
++                            uint32_t profile,
++                            uint8_t bit_depth_minus8)
++{
++   desc->base.profile = profile;
++   desc->base.entry_point = PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
++   desc->pps.sps.pic_width_in_luma_samples = 1920;
++   desc->pps.sps.pic_height_in_luma_samples = 1080;
++   desc->pps.sps.chroma_format_idc = 1;
++   desc->pps.sps.bit_depth_luma_minus8 = bit_depth_minus8;
++   desc->pps.sps.bit_depth_chroma_minus8 = bit_depth_minus8;
++   desc->pps.sps.log2_max_pic_order_cnt_lsb_minus4 = 4;
++   desc->pps.sps.sps_max_dec_pic_buffering_minus1 = 4;
++   desc->pps.sps.log2_min_luma_coding_block_size_minus3 = 0;
++   desc->pps.sps.log2_diff_max_min_luma_coding_block_size = 3;
++   desc->pps.sps.log2_min_transform_block_size_minus2 = 0;
++   desc->pps.sps.log2_diff_max_min_transform_block_size = 3;
++   desc->pps.sps.sample_adaptive_offset_enabled_flag = 1;
++   desc->pps.sps.sps_temporal_mvp_enabled_flag = 1;
++   desc->pps.sps.strong_intra_smoothing_enabled_flag = 1;
++   desc->pps.sign_data_hiding_enabled_flag = 1;
++   desc->pps.cu_qp_delta_enabled_flag = 1;
++   desc->pps.diff_cu_qp_delta_depth = 1;
++   desc->pps.weighted_pred_flag = 1;
++   desc->pps.entropy_coding_sync_enabled_flag = 1;
++   desc->pps.pps_loop_filter_across_slices_enabled_flag = 1;
++}
++
++static void validate_parameter_sets(uint32_t profile, uint8_t bit_depth)
++{
++   struct virgl_h265_picture_desc desc = {0};
++   struct vrend_h265_parameter_sets sets = {0};
++   const uint8_t *pointers[3];
++   size_t sizes[3];
++   CMVideoDimensions dimensions;
++   CMVideoFormatDescriptionRef format = NULL;
++
++   fill_descriptor(&desc, profile, bit_depth);
++   assert(vrend_video_h265_build_parameter_sets(
++             profile, 120, 1920, 1080, 3, &desc, &sets) == 0);
++   assert(sets.vps_size > 4 && ((sets.vps[0] >> 1) & 0x3f) == 32);
++   assert(sets.sps_size > 4 && ((sets.sps[0] >> 1) & 0x3f) == 33);
++   assert(sets.pps_size > 2 && ((sets.pps[0] >> 1) & 0x3f) == 34);
++   pointers[0] = sets.vps;
++   pointers[1] = sets.sps;
++   pointers[2] = sets.pps;
++   sizes[0] = sets.vps_size;
++   sizes[1] = sets.sps_size;
++   sizes[2] = sets.pps_size;
++   assert(CMVideoFormatDescriptionCreateFromHEVCParameterSets(
++             kCFAllocatorDefault, 3, pointers, sizes, 4, NULL,
++             &format) == noErr);
++   assert(format != NULL);
++   dimensions = CMVideoFormatDescriptionGetDimensions(format);
++   assert(dimensions.width == 1920);
++   assert(dimensions.height == 1080);
++   CFRelease(format);
++}
++
++int main(void)
++{
++   struct virgl_h265_picture_desc invalid = {0};
++   struct vrend_h265_parameter_sets sets = {0};
++
++   test_annexb_conversion();
++   validate_parameter_sets(PIPE_VIDEO_PROFILE_HEVC_MAIN, 0);
++   validate_parameter_sets(PIPE_VIDEO_PROFILE_HEVC_MAIN_10, 2);
++   fill_descriptor(&invalid, PIPE_VIDEO_PROFILE_HEVC_MAIN, 2);
++   assert(vrend_video_h265_build_parameter_sets(
++             invalid.base.profile, 120, 1920, 1080, 0,
++             &invalid, &sets) == -1);
 +   return 0;
 +}
