@@ -251,6 +251,27 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertEqual(pending, b"")
         self.assertEqual(stream.getvalue(), b"0123456789")
 
+    def test_no_auto_poweroff_rejects_nonzero_emulator_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fake_emulator = (
+                "import sys;"
+                "sys.stdout.write('\\n# ');sys.stdout.flush();"
+                "sys.stdin.buffer.readline();"
+                f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+'\\n');"
+                "sys.stdout.flush();"
+                "raise SystemExit(9)"
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "emulator exited with status 9"
+            ):
+                run_gpu_guest.run_guest(
+                    [sys.executable, "-c", fake_emulator],
+                    b"BOOT",
+                    Path(directory) / "console.log",
+                    timeout=5,
+                    expect_poweroff=False,
+                )
+
     def test_serial_socket_relays_console_output_and_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

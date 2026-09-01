@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <new>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace uml::gpu::testing {
@@ -64,8 +65,8 @@ public:
 
     void update(
         std::span<const std::uint8_t> source,
-        std::uint32_t,
-        std::uint32_t,
+        std::uint32_t sourceWidth,
+        std::uint32_t sourceHeight,
         std::size_t sourceRowBytes,
         protocol::GpuFormat,
         std::uint32_t sourceX,
@@ -76,6 +77,15 @@ public:
         std::uint32_t rectangleHeight) override
     {
         failIfRequested(Operation::display_update);
+        lastDisplaySourceWidth = sourceWidth;
+        lastDisplaySourceHeight = sourceHeight;
+        lastDisplaySourceRowBytes = sourceRowBytes;
+        lastDisplaySourceX = sourceX;
+        lastDisplaySourceY = sourceY;
+        lastDisplayDestinationX = destinationX;
+        lastDisplayDestinationY = destinationY;
+        lastDisplayWidth = rectangleWidth;
+        lastDisplayHeight = rectangleHeight;
         for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
             const auto sourceOffset =
                 static_cast<std::size_t>(sourceY + row) * sourceRowBytes +
@@ -163,18 +173,43 @@ public:
     }
 
     int readResourceRectangle(
-        std::uint32_t,
+        std::uint32_t resourceId,
         std::span<std::uint8_t> destination,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t,
-        std::uint32_t) override
+        std::uint32_t x,
+        std::uint32_t y,
+        std::uint32_t width,
+        std::uint32_t height) override
     {
         if (reject(Operation::read_resource))
             return EIO;
         failIfRequested(Operation::read_resource);
-        std::fill(destination.begin(), destination.end(), 0x5a);
+        const auto rowBytes =
+            static_cast<std::size_t>(width) * protocol::gpuBytesPerPixel;
+        if (width == 0 || height == 0 ||
+            height > destination.size() / rowBytes ||
+            destination.size() !=
+                static_cast<std::size_t>(height) * rowBytes) {
+            return EINVAL;
+        }
+        lastReadResource = resourceId;
+        lastReadX = x;
+        lastReadY = y;
+        lastReadWidth = width;
+        lastReadHeight = height;
+        lastReadDestinationBytes = destination.size();
+        for (std::uint32_t row = 0; row < height; ++row) {
+            for (std::uint32_t column = 0; column < width; ++column) {
+                const auto offset =
+                    (static_cast<std::size_t>(row) * width + column) *
+                    protocol::gpuBytesPerPixel;
+                destination[offset] =
+                    static_cast<std::uint8_t>(x + column);
+                destination[offset + 1U] =
+                    static_cast<std::uint8_t>(y + row);
+                destination[offset + 2U] = readResourceTag;
+                destination[offset + 3U] = 0xffU;
+            }
+        }
         ++readResourceCount;
         return 0;
     }
@@ -208,7 +243,10 @@ public:
         return PresentOutcome::presented;
     }
 
-    bool needsFullCpuFallback() const noexcept override { return false; }
+    bool needsFullCpuFallback() const noexcept override
+    {
+        return fullCpuFallback;
+    }
 
     void recordCpuFallbackFrame() noexcept override
     {
@@ -230,6 +268,44 @@ public:
             return EIO;
         ++fenceCount;
         return 0;
+    }
+
+    [[nodiscard]] int createContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept override
+    {
+        if (reject(Operation::fence))
+            return EIO;
+        try {
+            retiredContextFences.try_emplace(
+                contextRingKey(contextId, ringIndex), 0);
+            contextFenceCookies.push_back(fenceCookie);
+        } catch (...) {
+            return ENOMEM;
+        }
+        ++contextFenceCount;
+        return 0;
+    }
+
+    [[nodiscard]] int pollContextFences(
+        std::uint32_t contextId) noexcept override
+    {
+        lastPolledContext = contextId;
+        ++contextFencePollCount;
+        return 0;
+    }
+
+    [[nodiscard]] int contextFenceStatus(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept override
+    {
+        const auto iterator = retiredContextFences.find(
+            contextRingKey(contextId, ringIndex));
+        if (iterator == retiredContextFences.end())
+            return EIO;
+        return iterator->second >= fenceCookie ? 0 : EBUSY;
     }
 
     void unrefResource(std::uint32_t resourceId) noexcept override
@@ -279,7 +355,21 @@ public:
         return 0;
     }
 
-    void resetFenceState() noexcept override { ++resetFenceCount; }
+    void resetFenceState() noexcept override
+    {
+        retiredContextFences.clear();
+        contextFenceCookies.clear();
+        ++resetFenceCount;
+    }
+
+    void retireContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie)
+    {
+        retiredContextFences[contextRingKey(contextId, ringIndex)] =
+            fenceCookie;
+    }
 
     void rejectNext(Operation operation) noexcept
     {
@@ -311,6 +401,13 @@ public:
     unsigned createResourceCount {};
     unsigned transferCount {};
     unsigned readResourceCount {};
+    std::uint32_t lastReadResource {};
+    std::uint32_t lastReadX {};
+    std::uint32_t lastReadY {};
+    std::uint32_t lastReadWidth {};
+    std::uint32_t lastReadHeight {};
+    std::size_t lastReadDestinationBytes {};
+    std::uint8_t readResourceTag {0x5aU};
     unsigned nativeResourceRequestCount {};
     unsigned resourceMetalTextureCount {};
     unsigned directPresentationCount {};
@@ -319,8 +416,18 @@ public:
     bool directPresentationEnabled {};
     bool directPresentationDrops {};
     bool nativeResourceAvailable {};
+    bool fullCpuFallback {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
+    std::uint32_t lastDisplaySourceWidth {};
+    std::uint32_t lastDisplaySourceHeight {};
+    std::size_t lastDisplaySourceRowBytes {};
+    std::uint32_t lastDisplaySourceX {};
+    std::uint32_t lastDisplaySourceY {};
+    std::uint32_t lastDisplayDestinationX {};
+    std::uint32_t lastDisplayDestinationY {};
+    std::uint32_t lastDisplayWidth {};
+    std::uint32_t lastDisplayHeight {};
     std::uint32_t lastGuestScanoutWidth {};
     std::uint32_t lastGuestScanoutHeight {};
     unsigned guestScanoutChangeCount {};
@@ -329,6 +436,10 @@ public:
     std::uint32_t lastTextureResource {};
     MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
+    unsigned contextFenceCount {};
+    unsigned contextFencePollCount {};
+    std::uint32_t lastPolledContext {};
+    std::vector<std::uint64_t> contextFenceCookies;
     const std::atomic_bool* lastFenceStopRequest {};
     unsigned unrefResourceCount {};
     unsigned attachBackingCount {};
@@ -338,6 +449,14 @@ public:
     unsigned resetFenceCount {};
 
 private:
+    [[nodiscard]] static std::uint64_t contextRingKey(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex) noexcept
+    {
+        return (static_cast<std::uint64_t>(contextId) << 8U) |
+            (ringIndex & 0xffU);
+    }
+
     [[nodiscard]] bool reject(Operation operation) noexcept
     {
         if (rejectedOperation != operation)
@@ -361,6 +480,8 @@ private:
     Operation rejectedOperation {Operation::none};
     Operation throwingOperation {Operation::none};
     Operation allocationFailureOperation {Operation::none};
+    std::unordered_map<std::uint64_t, std::uint64_t>
+        retiredContextFences;
 };
 
 template<typename Request>
@@ -380,6 +501,15 @@ template<typename Request>
     protocol::GpuControlHeader header {};
     std::memcpy(&header, response.data(), sizeof(header));
     return static_cast<protocol::GpuResponse>(header.type);
+}
+
+[[nodiscard]] protocol::GpuControlHeader responseHeader(
+    const std::vector<std::uint8_t>& response)
+{
+    require(response.size() >= sizeof(protocol::GpuControlHeader));
+    protocol::GpuControlHeader header {};
+    std::memcpy(&header, response.data(), sizeof(header));
+    return header;
 }
 
 template<typename Header>
@@ -790,7 +920,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
 
-    auto resource = create3d(702, 2, 2);
+    auto resource = create3d(702, 4, 4);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::create_resource);
     require(responseType(device.process(requestBytes(resource), false)) ==
@@ -861,7 +991,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     protocol::GpuSetScanout scanout {};
     scanout.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
-    scanout.rectangle = {.width = 2, .height = 2};
+    scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = resource.resourceId;
     requireFirstAllocationFailsBeforeCommit(device, scanout);
@@ -898,6 +1028,98 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
+
+    // Once setScanout has sized the packed readback staging area, a fallback
+    // flush allocates only its response. Any second allocation is a regression
+    // to per-frame staging or cloning.
+    std::vector<std::uint8_t> warmedFlush;
+    bool warmedFlushAllocated = false;
+    failAfterAllocations(1);
+    try {
+        warmedFlush = device.process(requestBytes(flush), false);
+    } catch (const std::bad_alloc&) {
+        warmedFlushAllocated = true;
+    }
+    clearAllocationFailure();
+    require(!warmedFlushAllocated);
+    require(responseType(warmedFlush) == protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == 4);
+    require(dependencies.displayUpdateCount == 2);
+
+    // A nonzero resource-space damage box is packed at the start of the
+    // staging span and translated into scanout-relative display coordinates.
+    const auto beforePartialFlush = dependencies.framebuffer;
+    dependencies.readResourceTag = 0xa5U;
+    flush.rectangle = {.x = 2, .y = 2, .width = 1, .height = 1};
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastReadResource == resource.resourceId);
+    require(dependencies.lastReadX == 2);
+    require(dependencies.lastReadY == 2);
+    require(dependencies.lastReadWidth == 1);
+    require(dependencies.lastReadHeight == 1);
+    require(dependencies.lastReadDestinationBytes ==
+        protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceWidth == 1);
+    require(dependencies.lastDisplaySourceHeight == 1);
+    require(dependencies.lastDisplaySourceRowBytes ==
+        protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceX == 0);
+    require(dependencies.lastDisplaySourceY == 0);
+    require(dependencies.lastDisplayDestinationX == 1);
+    require(dependencies.lastDisplayDestinationY == 1);
+    require(dependencies.lastDisplayWidth == 1);
+    require(dependencies.lastDisplayHeight == 1);
+    constexpr std::size_t changedPixel =
+        (64U + 1U) * protocol::gpuBytesPerPixel;
+    const std::array<std::uint8_t, protocol::gpuBytesPerPixel>
+        expectedPixel {2U, 2U, 0xa5U, 0xffU};
+    require(std::memcmp(
+        dependencies.framebuffer.data(),
+        beforePartialFlush.data(),
+        changedPixel) == 0);
+    require(std::memcmp(
+        dependencies.framebuffer.data() + changedPixel,
+        expectedPixel.data(),
+        expectedPixel.size()) == 0);
+    require(std::memcmp(
+        dependencies.framebuffer.data() + changedPixel +
+            protocol::gpuBytesPerPixel,
+        beforePartialFlush.data() + changedPixel +
+            protocol::gpuBytesPerPixel,
+        dependencies.framebuffer.size() - changedPixel -
+            protocol::gpuBytesPerPixel) == 0);
+    require(dependencies.readResourceCount == 5);
+    require(dependencies.displayUpdateCount == 3);
+
+    // A display that cannot consume partial damage requests the complete
+    // nonzero-origin scanout, still packed at the start of the staging buffer.
+    dependencies.fullCpuFallback = true;
+    dependencies.readResourceTag = 0xc3U;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastReadX == scanout.rectangle.x);
+    require(dependencies.lastReadY == scanout.rectangle.y);
+    require(dependencies.lastReadWidth == scanout.rectangle.width);
+    require(dependencies.lastReadHeight == scanout.rectangle.height);
+    require(dependencies.lastReadDestinationBytes ==
+        scanout.rectangle.width * scanout.rectangle.height *
+            protocol::gpuBytesPerPixel);
+    require(dependencies.lastDisplaySourceWidth == scanout.rectangle.width);
+    require(dependencies.lastDisplaySourceHeight == scanout.rectangle.height);
+    require(dependencies.lastDisplaySourceX == 0);
+    require(dependencies.lastDisplaySourceY == 0);
+    require(dependencies.lastDisplayDestinationX == 0);
+    require(dependencies.lastDisplayDestinationY == 0);
+    const std::array<std::uint8_t, protocol::gpuBytesPerPixel>
+        expectedFullOrigin {1U, 1U, 0xc3U, 0xffU};
+    require(std::memcmp(
+        dependencies.framebuffer.data(),
+        expectedFullOrigin.data(),
+        expectedFullOrigin.size()) == 0);
+    dependencies.fullCpuFallback = false;
+    dependencies.readResourceTag = 0x5aU;
+    flush.rectangle = scanout.rectangle;
 
     dependencies.nativeResourceAvailable = true;
     dependencies.directPresentationEnabled = true;
@@ -956,6 +1178,102 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(responseType(device.process(requestBytes(unref), false)) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.clearCount == clearsBeforeUnref + 1);
+}
+
+void deferredFencesUseHostTimelineAndMergedRetirement()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+
+    const auto firstContext = createContext(801);
+    const auto secondContext = createContext(802);
+    require(responseType(device.process(requestBytes(firstContext), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(secondContext), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    constexpr std::array<std::uint64_t, 3> guestFenceIds {900, 2, 900};
+    constexpr std::array<std::uint64_t, 3> hostFenceCookies {11, 12, 13};
+    for (std::size_t index = 0; index < guestFenceIds.size(); ++index) {
+        protocol::GpuSubmit3d submit {};
+        submit.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        submit.header.flags = protocol::gpuFlagFence;
+        submit.header.contextId = firstContext.header.contextId;
+        submit.header.fenceId = guestFenceIds[index];
+        const auto result = device.processWithDeferredFence(
+            requestBytes(submit), false, hostFenceCookies[index]);
+        require(result.fence.has_value());
+        require(result.fence->contextId == firstContext.header.contextId);
+        require(result.fence->ringIndex == 0);
+        require(result.fence->cookie == hostFenceCookies[index]);
+        const auto reply = responseHeader(result.response);
+        require(reply.type == static_cast<std::uint32_t>(
+            protocol::GpuResponse::okNoData));
+        require(reply.fenceId == guestFenceIds[index]);
+        require((reply.flags & protocol::gpuFlagFence) != 0);
+    }
+    require(dependencies.contextFenceCookies.size() == hostFenceCookies.size());
+    require(std::ranges::equal(
+        dependencies.contextFenceCookies, hostFenceCookies));
+
+    dependencies.retireContextFence(
+        firstContext.header.contextId, 0, hostFenceCookies.back());
+    require(device.pollContextFences(firstContext.header.contextId) == 0);
+    for (const auto cookie : hostFenceCookies) {
+        require(device.contextFenceStatus({
+                    .contextId = firstContext.header.contextId,
+                    .ringIndex = 0,
+                    .cookie = cookie,
+                }) == 0);
+    }
+
+    protocol::GpuSubmit3d otherSubmit {};
+    otherSubmit.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    otherSubmit.header.flags = protocol::gpuFlagFence;
+    otherSubmit.header.contextId = secondContext.header.contextId;
+    otherSubmit.header.fenceId = 1;
+    const auto otherResult = device.processWithDeferredFence(
+        requestBytes(otherSubmit), false, 20);
+    require(otherResult.fence.has_value());
+    require(device.contextFenceStatus(*otherResult.fence) == EBUSY);
+    dependencies.retireContextFence(secondContext.header.contextId, 0, 20);
+    require(device.contextFenceStatus(*otherResult.fence) == 0);
+
+    protocol::GpuSubmit3d nonzeroRing {};
+    nonzeroRing.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    nonzeroRing.header.flags =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    nonzeroRing.header.contextId = firstContext.header.contextId;
+    nonzeroRing.header.ringIndex = 1;
+    nonzeroRing.header.fenceId = 7;
+    const auto synchronous = device.processWithDeferredFence(
+        requestBytes(nonzeroRing), false, 21);
+    require(!synchronous.fence.has_value());
+    require(responseType(synchronous.response) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.fenceCount == 1);
+
+    protocol::GpuSubmit3d failedFence {};
+    failedFence.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    failedFence.header.flags = protocol::gpuFlagFence;
+    failedFence.header.contextId = firstContext.header.contextId;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
+    const auto submitsBeforeFailure = dependencies.submitCount;
+    const auto failure = device.processWithDeferredFence(
+        requestBytes(failedFence), false, 22);
+    require(!failure.fence.has_value());
+    require(responseType(failure.response) ==
+        protocol::GpuResponse::errorUnspecified);
+    require(dependencies.submitCount == submitsBeforeFailure + 1);
 }
 
 void resetRetiresEachExternalOwnerExactlyOnce()
@@ -1442,6 +1760,7 @@ void runVirtioGpuDeviceTests()
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
+    deferredFencesUseHostTimelineAndMergedRetirement();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();
     rendererBackingAttachIsRetryableAfterAllocationFailure();

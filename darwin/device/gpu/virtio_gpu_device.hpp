@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <unordered_set>
 #include <unordered_map>
@@ -32,6 +33,15 @@ public:
         std::function<bool(std::uint64_t, std::span<std::uint8_t>)>;
     using GuestMapper =
         std::function<std::span<std::uint8_t>(std::uint64_t, std::size_t)>;
+    struct DeferredFence {
+        std::uint32_t contextId {};
+        std::uint32_t ringIndex {};
+        std::uint64_t cookie {};
+    };
+    struct ProcessResult {
+        std::vector<std::uint8_t> response;
+        std::optional<DeferredFence> fence;
+    };
 #if UML_GPU_DEVICE_TESTING
     VirtioGpuDevice(
         testing::VirtioGpuDeviceDependencies& dependencies,
@@ -61,6 +71,14 @@ public:
     [[nodiscard]] std::vector<std::uint8_t> process(
         std::span<const std::uint8_t> request,
         bool cursorQueue);
+    [[nodiscard]] ProcessResult processWithDeferredFence(
+        std::span<const std::uint8_t> request,
+        bool cursorQueue,
+        std::uint64_t fenceCookie);
+    [[nodiscard]] int pollContextFences(
+        std::uint32_t contextId) noexcept;
+    [[nodiscard]] int contextFenceStatus(
+        const DeferredFence& fence) noexcept;
 
 private:
     struct BackingEntry {
@@ -81,7 +99,6 @@ private:
         std::uint32_t target {};
         std::uint32_t width {};
         std::uint32_t height {};
-        std::vector<std::uint8_t> pixels;
         std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
     };
@@ -107,6 +124,11 @@ private:
         const protocol::GpuGetCapsetInfo& request) const;
     [[nodiscard]] std::vector<std::uint8_t> capset(
         const protocol::GpuGetCapset& request) const;
+    [[nodiscard]] std::vector<std::uint8_t> processInternal(
+        std::span<const std::uint8_t> request,
+        bool cursorQueue,
+        std::uint64_t fenceCookie,
+        std::optional<DeferredFence>* deferredFence);
 
 #if UML_GPU_DEVICE_TESTING
     testing::VirtioGpuDeviceDependencies& dependencies_;
@@ -123,6 +145,7 @@ private:
     std::unordered_map<std::uint32_t, VirglResource> virglResources_;
     std::unordered_set<std::uint32_t> contexts_;
     std::vector<std::uint8_t> transferStaging_;
+    std::vector<std::uint8_t> readbackStaging_;
     const std::atomic_bool* stopRequested_ {};
     std::uint64_t displayGeneration_ {};
     std::uint64_t reportedDisplayGeneration_ {};

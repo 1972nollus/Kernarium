@@ -363,7 +363,7 @@ PKG_CONFIG_SYSROOT_DIR= \
 	--wrap-mode=nodownload \
 	-Ddefault_library=static -Dtests=false -Dvtest=false \
 	-Dcheck-gl-errors=false -Dvenus=false -Dneptune=false \
-	-Dplatforms=egl -Drender-server-mode=thread
+	-Dplatforms=egl -Drender-server-mode=thread -Dvideo=true
 "$MESON" compile -C "$BUILDS/virglrenderer" -j "$JOBS"
 "$MESON" install -C "$BUILDS/virglrenderer"
 install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \

@@ -207,6 +207,7 @@ def main() -> int:
             "systemd-networkd.service systemd-resolved.service",
             "serial-getty@hvc0.service",
             "plasma-desktop konsole chromium sudo",
+            "libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg",
             "debian ALL=(ALL:ALL) NOPASSWD: ALL",
             "startplasma-wayland",
         ),

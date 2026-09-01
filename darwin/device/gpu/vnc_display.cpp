@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <array>
 #include <cstdio>
+#include <limits>
 #include <mutex>
 #include <pthread.h>
 #include <stdexcept>
@@ -23,6 +24,48 @@ namespace uml::gpu {
 namespace {
 
 namespace vnc_input = uml::input::vnc;
+
+constexpr std::uint64_t clientCountMask =
+    std::numeric_limits<std::uint32_t>::max();
+constexpr unsigned connectionEpochShift = 32;
+
+[[nodiscard]] constexpr std::uint32_t stateClientCount(
+    const std::uint64_t state) noexcept
+{
+    return static_cast<std::uint32_t>(state & clientCountMask);
+}
+
+[[nodiscard]] constexpr std::uint32_t stateConnectionEpoch(
+    const std::uint64_t state) noexcept
+{
+    return static_cast<std::uint32_t>(state >> connectionEpochShift);
+}
+
+[[nodiscard]] constexpr std::uint64_t makeClientState(
+    const std::uint32_t epoch,
+    const std::uint32_t count) noexcept
+{
+    return static_cast<std::uint64_t>(epoch) << connectionEpochShift | count;
+}
+
+[[nodiscard]] constexpr std::uint64_t makeExtent(
+    const std::uint32_t width,
+    const std::uint32_t height) noexcept
+{
+    return static_cast<std::uint64_t>(width) << 32U | height;
+}
+
+[[nodiscard]] constexpr std::uint32_t extentWidth(
+    const std::uint64_t extent) noexcept
+{
+    return static_cast<std::uint32_t>(extent >> 32U);
+}
+
+[[nodiscard]] constexpr std::uint32_t extentHeight(
+    const std::uint64_t extent) noexcept
+{
+    return static_cast<std::uint32_t>(extent);
+}
 
 class ScreenInitializationGuard final {
 public:
@@ -65,6 +108,9 @@ VncDisplay::VncDisplay(
     , password_(std::move(password))
     , pointerMode_(pointerMode)
 {
+    cpuFallbackExtent_.store(
+        makeExtent(framebuffer_.width(), framebuffer_.height()),
+        std::memory_order_relaxed);
     int argumentCount = 0;
     screen_ = rfbGetScreen(
         &argumentCount,
@@ -93,6 +139,17 @@ VncDisplay::VncDisplay(
     screen_->displayFinishedHook = [](rfbClientPtr client, int) noexcept {
         static_cast<VncDisplay*>(client->screen->screenData)
             ->framebuffer_.unlock();
+    };
+    screen_->newClientHook = [](rfbClientPtr client) noexcept {
+        auto* display =
+            static_cast<VncDisplay*>(client->screen->screenData);
+        if (!display->clientConnected())
+            return RFB_CLIENT_REFUSE;
+        client->clientGoneHook = [](rfbClientPtr disconnected) noexcept {
+            static_cast<VncDisplay*>(disconnected->screen->screenData)
+                ->clientDisconnected();
+        };
+        return RFB_CLIENT_ACCEPT;
     };
     screen_->kbdAddEvent = [](
                                rfbBool down,
@@ -235,6 +292,9 @@ void VncDisplay::update(
     std::uint32_t width,
     std::uint32_t height)
 {
+    const auto updateEpoch = connectionEpoch();
+    const auto expectedExtent =
+        cpuFallbackExtent_.load(std::memory_order_acquire);
     const auto rectangle = framebuffer_.update(
         source,
         sourceWidth,
@@ -256,6 +316,11 @@ void VncDisplay::update(
         static_cast<int>(rectangle.y),
         static_cast<int>(rectangle.x + rectangle.width),
         static_cast<int>(rectangle.y + rectangle.height));
+    if (rectangle.x == 0 && rectangle.y == 0 &&
+        rectangle.width == extentWidth(expectedExtent) &&
+        rectangle.height == extentHeight(expectedExtent)) {
+        recordFullFrame(updateEpoch);
+    }
 }
 
 void VncDisplay::fillSelfTestPattern()
@@ -264,6 +329,87 @@ void VncDisplay::fillSelfTestPattern()
     framebuffer_.fillSelfTestPatternLocked();
     rfbMarkRectAsModified(
         screen_, 0, 0, static_cast<int>(width()), static_cast<int>(height()));
+}
+
+PresentOutcome VncDisplay::presentMetal(
+    const MetalScanout& scanout) noexcept
+{
+    /* With no remote consumer, accepting and dropping the scanout avoids the
+     * synchronous Metal-to-CPU readback. Once a client exists, unsupported
+     * deliberately selects the ordinary CPU framebuffer path. */
+    if (stateClientCount(
+            clientState_.load(std::memory_order_acquire)) == 0) {
+        return PresentOutcome::dropped;
+    }
+    cpuFallbackExtent_.store(
+        makeExtent(
+            std::min(scanout.width, framebuffer_.width()),
+            std::min(scanout.height, framebuffer_.height())),
+        std::memory_order_release);
+    return PresentOutcome::unsupported;
+}
+
+bool VncDisplay::needsFullCpuFallback() const noexcept
+{
+    const auto state = clientState_.load(std::memory_order_acquire);
+    return stateClientCount(state) != 0 &&
+        fullFrameEpoch_.load(std::memory_order_acquire) !=
+            stateConnectionEpoch(state);
+}
+
+bool VncDisplay::clientConnected() noexcept
+{
+    auto state = clientState_.load(std::memory_order_relaxed);
+    while (true) {
+        const auto count = stateClientCount(state);
+        const auto epoch = stateConnectionEpoch(state);
+        if (count == std::numeric_limits<std::uint32_t>::max())
+            return false;
+        const auto desired = makeClientState(
+            count == 0 ? epoch + 1U : epoch,
+            count + 1U);
+        if (clientState_.compare_exchange_weak(
+                state,
+                desired,
+                std::memory_order_release,
+                std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+}
+
+void VncDisplay::clientDisconnected() noexcept
+{
+    auto state = clientState_.load(std::memory_order_relaxed);
+    while (stateClientCount(state) != 0) {
+        const auto desired = makeClientState(
+            stateConnectionEpoch(state), stateClientCount(state) - 1U);
+        if (clientState_.compare_exchange_weak(
+                state,
+                desired,
+                std::memory_order_release,
+                std::memory_order_relaxed)) {
+            return;
+        }
+    }
+}
+
+std::uint32_t VncDisplay::connectionEpoch() const noexcept
+{
+    return stateConnectionEpoch(
+        clientState_.load(std::memory_order_acquire));
+}
+
+void VncDisplay::recordFullFrame(const std::uint32_t epoch) noexcept
+{
+    auto completed = fullFrameEpoch_.load(std::memory_order_relaxed);
+    while (completed < epoch &&
+           !fullFrameEpoch_.compare_exchange_weak(
+               completed,
+               epoch,
+               std::memory_order_release,
+               std::memory_order_relaxed)) {
+    }
 }
 
 void VncDisplay::handleKey(bool down, std::uint32_t keySymbol) noexcept

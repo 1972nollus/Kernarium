@@ -9,6 +9,6 @@ payload	static-libepoxy,static-libvirglrenderer,dynamic-EGL-framework,dynamic-GL
 gl_provider	angle-metal
 graphics_api	ANGLE-EGL-GLES
 presentation_api	Metal
-renderer_features	gles,native-share-texture,render-server-thread
+renderer_features	gles,native-share-texture,render-server-thread,video-h264-decode,video-hevc-decode,video-jpeg-decode
 components	utm-webkit,utm-libepoxy,utm-virglrenderer
 source_manifest	dependencies/manifest.tsv

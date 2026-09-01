@@ -81,7 +81,6 @@ public:
     [[nodiscard]] int readResourceRectangle(
         std::uint32_t resourceId,
         std::span<std::uint8_t> destination,
-        std::uint32_t offset,
         std::uint32_t x,
         std::uint32_t y,
         std::uint32_t width,
@@ -94,6 +93,16 @@ public:
         std::uint32_t ringIndex,
         std::uint64_t fenceId,
         const std::atomic_bool* stopRequested) noexcept;
+    [[nodiscard]] int createContextFence(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept;
+    [[nodiscard]] int pollContextFences(
+        std::uint32_t contextId) noexcept;
+    [[nodiscard]] int contextFenceStatus(
+        std::uint32_t contextId,
+        std::uint32_t ringIndex,
+        std::uint64_t fenceCookie) noexcept;
     void unrefResource(std::uint32_t resourceId) noexcept;
     [[nodiscard]] int attachBacking(
         std::uint32_t resourceId,

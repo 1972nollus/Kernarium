@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
+#include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -323,7 +325,34 @@ public:
               std::move(mapper),
               dotsPerInch)
         , hasEdid_(dotsPerInch != 0)
+        , eventQueue_(::kqueue())
     {
+        if (eventQueue_.get() < 0)
+            throw std::runtime_error("creating GPU event queue failed");
+        setCloseOnExec(eventQueue_.get());
+        const int resizeDescriptor = display_.resizeEventDescriptor();
+        if (resizeDescriptor >= 0) {
+            struct kevent change {};
+            EV_SET(
+                &change,
+                static_cast<std::uintptr_t>(resizeDescriptor),
+                EVFILT_READ,
+                EV_ADD | EV_ENABLE,
+                0,
+                0,
+                nullptr);
+            int result;
+            do {
+                result = ::kevent(
+                    eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
+            } while (result < 0 && errno == EINTR);
+            if (result < 0) {
+                throw std::runtime_error(
+                    "registering GPU display-resize event failed");
+            }
+        }
+        pendingFences_.reserve(protocol::maximumVirtqueueSize);
+        readyFences_.reserve(protocol::maximumVirtqueueSize);
     }
 
     [[nodiscard]] const char* name() const noexcept override
@@ -402,38 +431,160 @@ public:
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) override
     {
-        (void)requestId;
         const bool cursorQueue = index == protocol::gpuCursorQueue;
         if (!cursorQueue &&
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
             throw std::runtime_error("short Virtio-GPU response buffer");
         }
-        auto response = gpu_.process(request, cursorQueue);
-        if (response.size() > responseCapacity)
+        if (!pendingFences_.empty() &&
+            !canProcessWhileFencesPending(cursorQueue, request)) {
+            return {.action = uml::virtio::VhostUserQueueAction::retry};
+        }
+
+        const bool mayDefer = canDeferFence(cursorQueue, request);
+        if (mayDefer &&
+            pendingFences_.size() == protocol::maximumVirtqueueSize) {
+            return {.action = uml::virtio::VhostUserQueueAction::retry};
+        }
+        if (mayDefer && pendingFences_.empty())
+            armFenceTimer();
+
+        auto result = gpu_.processWithDeferredFence(
+            request, cursorQueue, requestId);
+        if (result.response.size() > responseCapacity)
             throw std::runtime_error("short Virtio-GPU response buffer");
+        if (result.fence) {
+            if (!mayDefer ||
+                pendingFences_.size() == protocol::maximumVirtqueueSize) {
+                throw std::runtime_error("invalid deferred GPU fence");
+            }
+            const auto requestHeader =
+                loadUnaligned<protocol::GpuControlHeader>(request.data());
+            pendingFences_.push_back(PendingFence {
+                .requestId = requestId,
+                .requestHeader = requestHeader,
+                .response = std::move(result.response),
+                .fence = *result.fence,
+                .deadline = std::chrono::steady_clock::now() +
+                    maximumFenceWait,
+            });
+            return {.action = uml::virtio::VhostUserQueueAction::defer};
+        }
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
-            .response = std::move(response),
+            .response = std::move(result.response),
         };
     }
 
     void reset() noexcept override
     {
+        cancelFenceTimer();
+        pendingFences_.clear();
+        readyFences_.clear();
         gpu_.reset();
         configChangePending_ = false;
     }
 
     [[nodiscard]] int eventDescriptor() const noexcept override
     {
-        return display_.resizeEventDescriptor();
+        return eventQueue_.get();
     }
 
     void drainEventSource() override
     {
-        if (display_.drainResizeEvent()) {
+        std::array<struct kevent, 2> events {};
+        const timespec timeout {};
+        int eventCount;
+        do {
+            eventCount = ::kevent(
+                eventQueue_.get(),
+                nullptr,
+                0,
+                events.data(),
+                static_cast<int>(events.size()),
+                &timeout);
+        } while (eventCount < 0 && errno == EINTR);
+        if (eventCount < 0)
+            throw std::runtime_error("draining GPU events failed");
+
+        bool resizeReady = false;
+        bool fenceTimerReady = false;
+        const int resizeDescriptor = display_.resizeEventDescriptor();
+        for (int index = 0; index < eventCount; ++index) {
+            const auto& event = events[static_cast<std::size_t>(index)];
+            if ((event.flags & EV_ERROR) != 0)
+                throw std::runtime_error("GPU event source failed");
+            if (event.filter == EVFILT_TIMER &&
+                event.ident == fenceTimerIdentifier) {
+                fenceTimerReady = true;
+                continue;
+            }
+            if (resizeDescriptor >= 0 && event.filter == EVFILT_READ &&
+                event.ident ==
+                    static_cast<std::uintptr_t>(resizeDescriptor)) {
+                resizeReady = true;
+                continue;
+            }
+            throw std::runtime_error("unexpected GPU event source");
+        }
+
+        if (resizeReady && display_.drainResizeEvent()) {
             gpu_.notifyDisplayChanged();
             configChangePending_ = true;
         }
+        if (!fenceTimerReady || pendingFences_.empty())
+            return;
+
+        /* The pinned non-threaded Virgl renderer checks every context fence
+         * from virgl_renderer_context_poll(). Polling each pending context
+         * would repeat the same GL sync scan and context switching work. */
+        if (gpu_.pollContextFences(
+                pendingFences_.front().fence.contextId) != 0) {
+            throw std::runtime_error("polling GPU fences failed");
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        for (std::size_t index = 0; index < pendingFences_.size();) {
+            auto& pending = pendingFences_[index];
+            const int status = gpu_.contextFenceStatus(pending.fence);
+            if (status == EBUSY) {
+                if (now >= pending.deadline)
+                    throw std::runtime_error("GPU fence timed out");
+                ++index;
+                continue;
+            }
+            if (status != 0)
+                throw std::runtime_error("reading GPU fence status failed");
+            if (readyFences_.size() == protocol::maximumVirtqueueSize)
+                throw std::runtime_error("GPU fence completion overflow");
+
+            const auto* requestBytes = reinterpret_cast<const std::uint8_t*>(
+                &pending.requestHeader);
+            traceQueue(
+                protocol::gpuControlQueue,
+                {requestBytes, sizeof(pending.requestHeader)},
+                pending.response);
+            readyFences_.push_back(ReadyFence {
+                .requestId = pending.requestId,
+                .response = std::move(pending.response),
+            });
+            pendingFences_.erase(pendingFences_.begin() + index);
+        }
+        if (!pendingFences_.empty())
+            armFenceTimer();
+    }
+
+    [[nodiscard]] bool takeQueueCompletion(
+        uml::virtio::VhostUserQueueCompletion& completion) override
+    {
+        if (readyFences_.empty())
+            return false;
+        completion = {
+            .requestId = readyFences_.front().requestId,
+            .response = std::move(readyFences_.front().response),
+        };
+        readyFences_.erase(readyFences_.begin());
+        return true;
     }
 
     [[nodiscard]] bool configChangePending() const noexcept override
@@ -491,10 +642,111 @@ public:
     }
 
 private:
+    struct PendingFence {
+        std::uint64_t requestId {};
+        protocol::GpuControlHeader requestHeader {};
+        std::vector<std::uint8_t> response;
+        VirtioGpuDevice::DeferredFence fence;
+        std::chrono::steady_clock::time_point deadline;
+    };
+
+    struct ReadyFence {
+        std::uint64_t requestId {};
+        std::vector<std::uint8_t> response;
+    };
+
+    static constexpr auto maximumFenceWait = std::chrono::seconds(60);
+    static constexpr std::uintptr_t fenceTimerIdentifier = 1;
+    static constexpr std::intptr_t fencePollMicroseconds = 100;
+
+    [[nodiscard]] static bool canDeferFence(
+        bool cursorQueue,
+        std::span<const std::uint8_t> request) noexcept
+    {
+        if (cursorQueue || request.size() < sizeof(protocol::GpuControlHeader))
+            return false;
+        const auto header =
+            loadUnaligned<protocol::GpuControlHeader>(request.data());
+        const auto command = static_cast<protocol::GpuCommand>(header.type);
+        const bool fence = (header.flags & protocol::gpuFlagFence) != 0;
+        const auto ringIndex =
+            (header.flags & protocol::gpuFlagInfoRingIndex) != 0
+            ? header.ringIndex
+            : 0;
+        const bool pipelineCommand =
+            command == protocol::GpuCommand::submit3d ||
+            command == protocol::GpuCommand::transferToHost3d ||
+            command == protocol::GpuCommand::transferFromHost3d;
+        return pipelineCommand && fence && header.contextId != 0 &&
+            ringIndex == 0;
+    }
+
+    [[nodiscard]] static bool canProcessWhileFencesPending(
+        bool cursorQueue,
+        std::span<const std::uint8_t> request) noexcept
+    {
+        if (cursorQueue || request.size() < sizeof(protocol::GpuControlHeader))
+            return true;
+        const auto header =
+            loadUnaligned<protocol::GpuControlHeader>(request.data());
+        switch (static_cast<protocol::GpuCommand>(header.type)) {
+        case protocol::GpuCommand::getDisplayInfo:
+        case protocol::GpuCommand::getEdid:
+        case protocol::GpuCommand::getCapsetInfo:
+        case protocol::GpuCommand::getCapset:
+        case protocol::GpuCommand::submit3d:
+        case protocol::GpuCommand::transferToHost3d:
+        case protocol::GpuCommand::transferFromHost3d:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void armFenceTimer()
+    {
+        struct kevent change {};
+        EV_SET(
+            &change,
+            fenceTimerIdentifier,
+            EVFILT_TIMER,
+            EV_ADD | EV_ENABLE | EV_ONESHOT,
+            NOTE_USECONDS,
+            fencePollMicroseconds,
+            nullptr);
+        int result;
+        do {
+            result = ::kevent(
+                eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0)
+            throw std::runtime_error("arming GPU fence timer failed");
+    }
+
+    void cancelFenceTimer() noexcept
+    {
+        struct kevent change {};
+        EV_SET(
+            &change,
+            fenceTimerIdentifier,
+            EVFILT_TIMER,
+            EV_DELETE,
+            0,
+            0,
+            nullptr);
+        while (::kevent(
+                   eventQueue_.get(), &change, 1, nullptr, 0, nullptr) < 0 &&
+            errno == EINTR) {
+        }
+    }
+
     Display& display_;
     VirtioGpuDevice gpu_;
     bool hasEdid_;
     bool configChangePending_ {};
+    UniqueDescriptor eventQueue_;
+    std::vector<PendingFence> pendingFences_;
+    std::vector<ReadyFence> readyFences_;
 };
 
 } // namespace

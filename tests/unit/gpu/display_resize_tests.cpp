@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -101,6 +102,16 @@ void framebufferResizePublishesOneClearedGeometry()
         1);
     require(changed.width == 1 && changed.height == 1,
         "resized framebuffer rejected its new lower-right pixel");
+    {
+        std::lock_guard lock(framebuffer);
+        const auto pixels = framebuffer.pixels();
+        require(std::equal(
+                    bluePixel.begin(),
+                    bluePixel.end(),
+                    pixels.end() -
+                        static_cast<std::ptrdiff_t>(bluePixel.size())),
+            "packed update used the pre-resize framebuffer stride");
+    }
 }
 
 void aspectFitCentersGuestContentWithoutDistortion()

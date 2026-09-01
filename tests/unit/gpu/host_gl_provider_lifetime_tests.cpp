@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "host_gl_provider.hpp"
+#include "virgl_renderer.hpp"
 
 extern "C" {
 #include <virglrenderer.h>
 }
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -108,6 +112,25 @@ void providerReportsExplicitEsVersionRequests()
     }
 }
 
+void rendererRetiresFencesThroughTheExternalProvider()
+{
+    uml::gpu::VirglRenderer renderer;
+    require(renderer.createFenceAndWait(0, 0, 1, nullptr) == 0);
+    require(renderer.createContext(1, 1, "fence-test") == 0);
+    require(renderer.createContextFence(1, 0, 1) == 0);
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    int status = EBUSY;
+    while (status == EBUSY && std::chrono::steady_clock::now() < deadline) {
+        require(renderer.pollContextFences(1) == 0);
+        status = renderer.contextFenceStatus(1, 0, 1);
+        if (status == EBUSY)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    require(status == 0);
+    renderer.destroyContext(1);
+}
+
 } // namespace
 
 int main()
@@ -115,6 +138,7 @@ int main()
     providerRejectsUnsupportedContexts();
     providerReportsExplicitEsVersionRequests();
     providerOwnsOneSharedAngleTopology();
+    rendererRetiresFencesThroughTheExternalProvider();
     std::puts("ANGLE/Metal host GL provider lifetime tests passed");
     return 0;
 }
