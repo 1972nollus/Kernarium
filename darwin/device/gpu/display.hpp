@@ -88,8 +88,8 @@ public:
     {
         return true;
     }
-    /* A new guest boot restores the configured host-to-guest policy after an
-     * independent guest modeset latched it off for the previous session. */
+    /* A new guest boot seeds presentation from the latest settled host
+     * geometry while retaining the configured host-to-guest policy. */
     virtual void resetGuestSession() noexcept {}
     /* Serialize a guest config notification against the beginning of an
      * interactive host transition. A successful claim remains held until the

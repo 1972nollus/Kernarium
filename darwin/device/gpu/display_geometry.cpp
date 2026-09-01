@@ -105,8 +105,7 @@ DisplayGeometryPolicy::DisplayGeometryPolicy(
     std::uint32_t width,
     std::uint32_t height,
     bool autoResizeGuest) noexcept
-    : configuredAutoResizeGuest_(autoResizeGuest)
-    , autoResizeGuestEnabled_(autoResizeGuest)
+    : autoResizeGuest_(autoResizeGuest)
     , advertisedSize_(encode({width, height}))
     , activeGuestSize_(encode({width, height}))
     , settledHostSize_(encode({width, height}))
@@ -128,14 +127,9 @@ DisplaySize DisplayGeometryPolicy::settledHostSize() const noexcept
     return decode(settledHostSize_.load(std::memory_order_acquire));
 }
 
-bool DisplayGeometryPolicy::configuredAutoResizeGuest() const noexcept
-{
-    return configuredAutoResizeGuest_;
-}
-
 bool DisplayGeometryPolicy::autoResizeGuestEnabled() const noexcept
 {
-    return autoResizeGuestEnabled_.load(std::memory_order_acquire);
+    return autoResizeGuest_;
 }
 
 bool DisplayGeometryPolicy::hostSizeSettled(
@@ -149,58 +143,27 @@ bool DisplayGeometryPolicy::hostSizeSettled(
     const auto previous = advertisedSize_.exchange(
         encoded, std::memory_order_acq_rel);
     if (activeGuestSize_.load(std::memory_order_acquire) == encoded) {
-        /* No SET_SCANOUT is required when the guest already presents this
-         * size. Retire older targets so a later independent mode cannot be
-         * mistaken for a delayed response to one of them. */
-        hostTargetCount_ = 0;
-        return false;
-    } else if (previous != encoded) {
-        appendHostTarget(encoded);
-    }
-    if (previous == encoded) {
+        /* AppKit follows every applied guest mode. Its resulting drawable
+         * callback settles at the already-active guest size and must not feed
+         * that size back to the guest as another resize request. */
         return false;
     }
-    return true;
+    return previous != encoded;
 }
 
-GuestDisplayChange DisplayGeometryPolicy::guestScanoutChanged(
+bool DisplayGeometryPolicy::guestScanoutChanged(
     std::uint32_t width,
     std::uint32_t height) noexcept
 {
     if (width == 0 || height == 0)
-        return {};
+        return false;
     const auto encoded = encode({width, height});
-    const auto previous = activeGuestSize_.load(std::memory_order_acquire);
-    if (hasActiveGuestScanout_ && encoded == previous) {
-        (void)consumeHostTarget(encoded);
-        return {};
-    }
-
-    const bool firstScanout = !hasActiveGuestScanout_;
-    hasActiveGuestScanout_ = true;
-    activeGuestSize_.store(encoded, std::memory_order_release);
-    const bool expectedHostResponse = autoResizeGuestEnabled() &&
-        (consumeHostTarget(encoded) ||
-            advertisedSize_.load(std::memory_order_acquire) == encoded);
-    if (firstScanout) {
-        /* The first nonzero scanout establishes the guest's boot mode rather
-         * than changing an already active resolution. */
-        return {.changed = encoded != previous, .independent = false};
-    }
-    const bool independent = !expectedHostResponse;
-    if (autoResizeGuestEnabled() && independent) {
-        autoResizeGuestEnabled_.store(false, std::memory_order_release);
-        hostTargetCount_ = 0;
-    }
-    return {.changed = true, .independent = independent};
+    return activeGuestSize_.exchange(encoded, std::memory_order_acq_rel) !=
+        encoded;
 }
 
 void DisplayGeometryPolicy::resetGuestSession(DisplaySize activeSize) noexcept
 {
-    hostTargetCount_ = 0;
-    hasActiveGuestScanout_ = false;
-    autoResizeGuestEnabled_.store(
-        configuredAutoResizeGuest_, std::memory_order_release);
     const auto settled = settledHostSize_.load(std::memory_order_acquire);
     advertisedSize_.store(settled, std::memory_order_release);
     const auto active = activeSize.width == 0 || activeSize.height == 0 ?
@@ -219,54 +182,6 @@ DisplaySize DisplayGeometryPolicy::decode(std::uint64_t size) noexcept
         .width = static_cast<std::uint32_t>(size >> 32U),
         .height = static_cast<std::uint32_t>(size),
     };
-}
-
-bool DisplayGeometryPolicy::matchesHostTarget(
-    std::uint64_t guest,
-    std::uint64_t target) noexcept
-{
-    const auto guestSize = decode(guest);
-    const auto hostSize = decode(target);
-    /* Without EDID, Linux virtio-gpu creates the preferred mode through CVT
-     * and accepts a mode rounded down by as many as 16 pixels per dimension.
-     * That modeset is still the response to this host request, not a transfer
-     * of geometry authority to the guest. */
-    return guestSize.width <= hostSize.width &&
-        hostSize.width - guestSize.width <= maximumPreferredModeRounding &&
-        guestSize.height <= hostSize.height &&
-        hostSize.height - guestSize.height <= maximumPreferredModeRounding;
-}
-
-void DisplayGeometryPolicy::appendHostTarget(std::uint64_t target) noexcept
-{
-    if (hostTargetCount_ == targetCapacity) {
-        std::move(
-            hostTargets_.begin() + 1,
-            hostTargets_.end(),
-            hostTargets_.begin());
-        --hostTargetCount_;
-    }
-    hostTargets_[hostTargetCount_++] = target;
-}
-
-bool DisplayGeometryPolicy::consumeHostTarget(std::uint64_t guest) noexcept
-{
-    std::size_t match = hostTargetCount_;
-    for (std::size_t index = 0; index < hostTargetCount_; ++index) {
-        if (matchesHostTarget(guest, hostTargets_[index])) {
-            match = index;
-            break;
-        }
-    }
-    if (match == hostTargetCount_)
-        return false;
-    const auto consumed = match + 1U;
-    std::move(
-        hostTargets_.begin() + static_cast<std::ptrdiff_t>(consumed),
-        hostTargets_.begin() + static_cast<std::ptrdiff_t>(hostTargetCount_),
-        hostTargets_.begin());
-    hostTargetCount_ -= consumed;
-    return true;
 }
 
 } // namespace uml::gpu

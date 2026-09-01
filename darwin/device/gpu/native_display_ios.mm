@@ -301,7 +301,7 @@ bool NativeDisplayState::guestScanoutChanged(
     std::uint32_t height) noexcept
 {
     DisplaySize guestSize;
-    GuestDisplayChange change;
+    bool changed = false;
     bool publishFrame = false;
     {
         std::lock_guard lock(resizeLifecycleMutex);
@@ -313,16 +313,12 @@ bool NativeDisplayState::guestScanoutChanged(
                 return false;
             publishFrame = true;
         }
-        change = geometryPolicy.guestScanoutChanged(width, height);
+        changed = geometryPolicy.guestScanoutChanged(width, height);
         guestSize = geometryPolicy.activeGuestSize();
-        if (change.independent) {
-            resizeGeneration.fetch_add(1, std::memory_order_acq_rel);
-            resizeCommitPending.store(false, std::memory_order_release);
-        }
     }
-    if (change.changed)
+    if (changed)
         publishGuestSize(guestSize);
-    if (change.changed || publishFrame) {
+    if (changed || publishFrame) {
         /* The UIKit coordinate update above reaches the main queue before the
          * redraw requested here can expose the new aspect ratio. */
         presentation.publishCpuFrame();

@@ -189,7 +189,7 @@ void pointerPathsClipToExactGuestEdges()
         "a path tangent to a guest corner became a guest contact");
 }
 
-void guestModesetLatchesHostResizeUntilReset()
+void guestModesetsNeverDisableHostResize()
 {
     using uml::gpu::DisplayGeometryPolicy;
     const auto requireSize = [](uml::gpu::DisplaySize size,
@@ -200,74 +200,70 @@ void guestModesetLatchesHostResizeUntilReset()
     };
 
     DisplayGeometryPolicy policy {800, 600, true};
-    require(policy.configuredAutoResizeGuest(),
-        "enabled auto resize lost its configured state");
     require(policy.autoResizeGuestEnabled(),
-        "enabled auto resize did not start active");
-    auto change = policy.guestScanoutChanged(800, 600);
-    require(!change.changed && !change.independent,
-        "the initial scanout was classified as a guest modeset");
+        "configured auto resize did not start enabled");
+    require(!policy.guestScanoutChanged(800, 600),
+        "an unchanged initial scanout changed presentation geometry");
 
     require(policy.hostSizeSettled(1000, 700),
-        "the first settled host resize was not advertised");
-    require(policy.hostSizeSettled(1200, 800),
-        "the second settled host resize was not advertised");
-    requireSize(policy.advertisedSize(), 1200, 800,
-        "the newest settled host geometry was not advertised");
+        "a settled host resize was not advertised");
+    require(!policy.hostSizeSettled(1000, 700),
+        "one settled host size requested the same guest resize twice");
+    require(policy.guestScanoutChanged(996, 700),
+        "the guest's rounded host response was ignored");
+    requireSize(policy.activeGuestSize(), 996, 700,
+        "rounded guest geometry was not published for presentation");
+    require(!policy.hostSizeSettled(996, 700),
+        "following the applied guest size fed a resize back to the guest");
+    requireSize(policy.advertisedSize(), 996, 700,
+        "following the guest did not synchronize advertised geometry");
 
-    change = policy.guestScanoutChanged(1000, 700);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "a delayed response to an earlier host target disabled auto resize");
-    change = policy.guestScanoutChanged(1200, 800);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "the newest host resize response disabled auto resize");
-
-    change = policy.guestScanoutChanged(1024, 768);
-    require(change.changed && change.independent,
-        "an independent guest modeset was not identified");
-    require(!policy.autoResizeGuestEnabled(),
-        "an independent guest modeset did not latch host resize off");
+    require(policy.guestScanoutChanged(1024, 768),
+        "a guest-initiated modeset was ignored");
+    require(policy.autoResizeGuestEnabled(),
+        "a guest-initiated modeset disabled later host resizing");
     requireSize(policy.activeGuestSize(), 1024, 768,
         "the guest modeset did not publish active presentation geometry");
-    requireSize(policy.advertisedSize(), 1200, 800,
-        "the guest modeset overwrote the host-advertised geometry");
 
-    require(!policy.hostSizeSettled(1440, 900),
-        "a host resize escaped while guest authority was latched");
-    change = policy.guestScanoutChanged(1280, 720);
-    require(change.changed && change.independent,
-        "a later guest modeset lost guest-authoritative classification");
+    require(policy.hostSizeSettled(1200, 800),
+        "host resize stopped after an unrelated guest mode");
+    require(policy.guestScanoutChanged(1280, 720),
+        "a nonmatching eventual guest size was ignored");
+    requireSize(policy.activeGuestSize(), 1280, 720,
+        "presentation rejected a nonmatching eventual guest size");
+    require(!policy.hostSizeSettled(1280, 720),
+        "following a nonmatching guest result produced resize feedback");
+
+    require(policy.hostSizeSettled(1440, 900),
+        "host resize stopped after a guest-initiated modeset");
+    require(policy.guestScanoutChanged(1432, 900),
+        "the eventual guest size after a new host resize was ignored");
     policy.resetGuestSession({1440, 900});
     require(policy.autoResizeGuestEnabled(),
-        "guest reset did not restore the configured auto-resize policy");
+        "guest reset changed the configured auto-resize policy");
     requireSize(policy.advertisedSize(), 1440, 900,
         "guest reset did not seed the latest settled host geometry");
     requireSize(policy.activeGuestSize(), 1440, 900,
         "guest reset retained stale presentation geometry");
-    change = policy.guestScanoutChanged(1280, 720);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "the first scanout after reset was treated as an active modeset");
+    require(policy.guestScanoutChanged(1280, 720),
+        "the first changed scanout after reset was ignored");
 }
 
 void configuredOffAlwaysKeepsHostResizeSilent()
 {
     uml::gpu::DisplayGeometryPolicy policy {800, 600, false};
-    require(!policy.configuredAutoResizeGuest() &&
-            !policy.autoResizeGuestEnabled(),
-        "disabled auto resize did not preserve its configured state");
-    auto change = policy.guestScanoutChanged(640, 480);
-    require(change.changed && !change.independent,
-        "the initial configured-off scanout was treated as a modeset");
+    require(!policy.autoResizeGuestEnabled(),
+        "configured-off auto resize started enabled");
+    require(policy.guestScanoutChanged(640, 480),
+        "configured-off guest geometry was not published");
     require(!policy.hostSizeSettled(1000, 800),
         "configured-off host geometry produced a guest notification");
     require(policy.advertisedSize() == uml::gpu::DisplaySize {800, 600},
         "configured-off host resize changed the running guest mode");
-    change = policy.guestScanoutChanged(1024, 768);
-    require(change.changed && change.independent,
-        "a configured-off guest modeset was not classified independently");
+    require(policy.guestScanoutChanged(1024, 768),
+        "a later configured-off guest modeset was ignored");
+    require(policy.activeGuestSize() == uml::gpu::DisplaySize {1024, 768},
+        "configured-off presentation did not follow the guest");
     policy.resetGuestSession({1000, 800});
     require(!policy.autoResizeGuestEnabled(),
         "guest reset enabled a configured-off policy");
@@ -276,97 +272,34 @@ void configuredOffAlwaysKeepsHostResizeSilent()
         "guest reset did not adopt the current host boot geometry");
 }
 
-void hostTargetCorrelationHandlesBootRollbackAndDuplicates()
-{
-    using uml::gpu::DisplayGeometryPolicy;
-
-    DisplayGeometryPolicy boot {800, 600, true};
-    auto change = boot.guestScanoutChanged(1024, 768);
-    require(change.changed && !change.independent,
-        "the first temporary boot scanout was classified independently");
-    change = boot.guestScanoutChanged(800, 600);
-    require(change.changed && !change.independent &&
-            boot.autoResizeGuestEnabled(),
-        "adopting the initially advertised mode disabled auto resize");
-
-    DisplayGeometryPolicy rollback {800, 600, true};
-    (void)rollback.guestScanoutChanged(800, 600);
-    require(rollback.hostSizeSettled(1000, 700),
-        "the intermediate host target was not advertised");
-    require(!rollback.hostSizeSettled(800, 600),
-        "a host rollback to the active mode requested a redundant modeset");
-    require(rollback.advertisedSize() == uml::gpu::DisplaySize {800, 600},
-        "the silent host rollback did not update advertised geometry");
-    change = rollback.guestScanoutChanged(1000, 700);
-    require(change.changed && change.independent &&
-            !rollback.autoResizeGuestEnabled(),
-        "a stale rolled-back host target masked a guest modeset");
-
-    DisplayGeometryPolicy duplicates {800, 600, true};
-    (void)duplicates.guestScanoutChanged(800, 600);
-    require(duplicates.hostSizeSettled(1000, 700) &&
-            duplicates.hostSizeSettled(1200, 800) &&
-            duplicates.hostSizeSettled(1000, 700),
-        "duplicate host targets were not advertised");
-    change = duplicates.guestScanoutChanged(1000, 700);
-    require(change.changed && !change.independent,
-        "the first duplicate host response was misclassified");
-    change = duplicates.guestScanoutChanged(1200, 800);
-    require(change.changed && !change.independent &&
-            duplicates.autoResizeGuestEnabled(),
-        "a response between duplicate host targets disabled auto resize");
-}
-
-void roundedHostResponsesKeepLaterResizesEnabled()
+void repeatedSettledResizesRequestOnceAndFollowEveryGuestResult()
 {
     using uml::gpu::DisplayGeometryPolicy;
 
     DisplayGeometryPolicy policy {1280, 720, true};
     (void)policy.guestScanoutChanged(1280, 720);
-    require(policy.hostSizeSettled(1000, 700),
-        "the exact host target was not advertised");
-    auto change = policy.guestScanoutChanged(1000, 700);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "the exact first host response disabled auto resize");
-
-    require(policy.hostSizeSettled(1100, 650),
-        "the unaligned host target was not advertised");
-    change = policy.guestScanoutChanged(1096, 650);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "virtio-gpu preferred-mode rounding disabled auto resize");
-
-    require(policy.hostSizeSettled(1200, 800),
-        "a resize after a rounded guest response was ignored");
-    change = policy.guestScanoutChanged(1200, 800);
-    require(change.changed && !change.independent &&
-            policy.autoResizeGuestEnabled(),
-        "the guest did not retain host resize authority after rounding");
-
-    change = policy.guestScanoutChanged(1192, 800);
-    require(change.changed && change.independent &&
-            !policy.autoResizeGuestEnabled(),
-        "a nearby guest mode without a pending host target was masked");
-
-    DisplayGeometryPolicy boundary {1280, 720, true};
-    (void)boundary.guestScanoutChanged(1280, 720);
-    require(boundary.hostSizeSettled(1100, 650),
-        "the rounding-boundary host target was not advertised");
-    change = boundary.guestScanoutChanged(1084, 634);
-    require(change.changed && !change.independent &&
-            boundary.autoResizeGuestEnabled(),
-        "the documented virtio-gpu rounding boundary disabled auto resize");
-
-    DisplayGeometryPolicy outsideTolerance {1280, 720, true};
-    (void)outsideTolerance.guestScanoutChanged(1280, 720);
-    require(outsideTolerance.hostSizeSettled(1100, 650),
-        "the beyond-tolerance host target was not advertised");
-    change = outsideTolerance.guestScanoutChanged(1083, 650);
-    require(change.changed && change.independent &&
-            !outsideTolerance.autoResizeGuestEnabled(),
-        "a guest mode beyond virtio-gpu rounding tolerance retained "
-        "host authority");
+    for (std::uint32_t index = 0; index < 32; ++index) {
+        const uml::gpu::DisplaySize requested {
+            .width = 900U + index * 37U,
+            .height = 600U + (index % 7U) * 29U,
+        };
+        const uml::gpu::DisplaySize applied {
+            .width = requested.width - (index % 3U) * 4U,
+            .height = requested.height - (index % 2U) * 2U,
+        };
+        require(policy.hostSizeSettled(requested.width, requested.height),
+            "a later settled host resize was ignored");
+        require(!policy.hostSizeSettled(requested.width, requested.height),
+            "one settled host size requested more than one guest resize");
+        require(policy.guestScanoutChanged(applied.width, applied.height),
+            "the eventual guest-applied size was ignored");
+        require(policy.activeGuestSize() == applied,
+            "presentation did not adopt the eventual guest-applied size");
+        require(!policy.hostSizeSettled(applied.width, applied.height),
+            "following the guest window size fed back another resize");
+        require(policy.autoResizeGuestEnabled(),
+            "repeated guest results disabled host-to-guest resizing");
+    }
 }
 
 } // namespace
@@ -378,10 +311,9 @@ int main()
         framebufferResizePublishesOneClearedGeometry();
         aspectFitCentersGuestContentWithoutDistortion();
         pointerPathsClipToExactGuestEdges();
-        guestModesetLatchesHostResizeUntilReset();
+        guestModesetsNeverDisableHostResize();
         configuredOffAlwaysKeepsHostResizeSilent();
-        hostTargetCorrelationHandlesBootRollbackAndDuplicates();
-        roundedHostResponsesKeepLaterResizesEnabled();
+        repeatedSettledResizesRequestOnceAndFollowEveryGuestResult();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GPU display resize test failed: %s\n", error.what());

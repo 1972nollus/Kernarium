@@ -90,21 +90,21 @@ layout changes are coalesced until their geometry is stable.
 Host-to-guest automatic resizing is enabled by default. Kernarium stores the
 choice in its iOS app settings; the macOS executable selects it with
 `--gpu-auto-resize=on|off`. When enabled, a settled host change updates the
-Virtio-GPU advertised mode and raises its display event. Presentation storage
-remains sized to the active guest scanout until the guest accepts a mode with
-`SET_SCANOUT`. EDID-backed dimensions are limited to 4095 pixels per axis; the
-non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
+Virtio-GPU advertised mode and raises one display event. Duplicate callbacks
+for the same settled size do not raise another event. Presentation storage
+remains sized to the active guest scanout until the guest applies its eventual
+mode with `SET_SCANOUT`.
 
-The first active scanout and a modeset matching the current advertised or a
-pending host target do not change geometry authority. This correlation accepts
-the up-to-16-pixel downward adjustment per dimension that Linux virtio-gpu
-allows when CVT rounds a preferred host mode. A later guest-selected mode that
-matches neither is independent and disables further host-to-guest resizing
-until the next guest boot. Every active guest mode change resizes the macOS
-content window, independently of that host-to-guest policy. iOS instead
-aspect-fits every guest mode in its view. With automatic resizing configured
-off, later host window or view changes leave the guest mode unchanged and
-aspect-fit it in the available host content area.
+Every applied guest mode is authoritative for presentation, whether selected
+by the guest or produced by guest-side rounding of a host request. macOS
+resizes its content window to that applied size; the resulting host callback
+does not feed the same size back to the guest. iOS instead aspect-fits every
+guest mode in its view. A guest-initiated mode does not disable later automatic
+host-to-guest resize requests. With automatic resizing configured off, host
+window or view changes leave the guest mode unchanged and aspect-fit it in the
+available host content area. EDID-backed dimensions are limited to 4095 pixels
+per axis; the non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per
+axis.
 
 Rendering and input use the same centered aspect-fit rectangle. AppKit maps
 that rectangle into the fixed tablet range, while Kernarium maps it into the

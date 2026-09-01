@@ -649,15 +649,18 @@ void NativeDisplayState::commitResize(NSSize size) noexcept
             size.width, resizeNotifier.maximumDimension());
         const auto height = displayDimension(
             size.height, resizeNotifier.maximumDimension());
-        if (width && height && running.load(std::memory_order_acquire) &&
-            (!pendingGuestWindowSize ||
-                *pendingGuestWindowSize == DisplaySize {*width, *height})) {
+        if (width && height && running.load(std::memory_order_acquire)) {
+            const bool autoResizeGuest =
+                geometryPolicy.autoResizeGuestEnabled();
+            /* With automatic resize, this completed host interaction is newer
+             * than a guest-window adjustment deferred during the interaction.
+             * Publish the host target once, then let the guest's eventual
+             * SET_SCANOUT choose the window size that follows. */
+            if (autoResizeGuest)
+                pendingGuestWindowSize.reset();
             resizeNotifier.requestCommitted(*width, *height);
             resizeCommitPending.store(
-                geometryPolicy.autoResizeGuestEnabled(),
-                std::memory_order_release);
-        } else if (pendingGuestWindowSize) {
-            resizeCommitPending.store(false, std::memory_order_release);
+                autoResizeGuest, std::memory_order_release);
         }
         resizeInProgress.store(false, std::memory_order_release);
     }
@@ -704,11 +707,10 @@ bool NativeDisplayState::guestScanoutChanged(
         }
         if (active.width != width || active.height != height)
             releasePointerInputLocked(true);
-        const auto change = geometryPolicy.guestScanoutChanged(width, height);
-        if (change.changed) {
+        const bool guestChanged =
+            geometryPolicy.guestScanoutChanged(width, height);
+        if (guestChanged) {
             publishFrame = true;
-            if (!geometryPolicy.autoResizeGuestEnabled())
-                resizeCommitPending.store(false, std::memory_order_release);
             followGuest = true;
         }
     }
