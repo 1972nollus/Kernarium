@@ -3,4 +3,4 @@ order	patch	stable_patch_id	sha256	subject
 1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	ae3d2ea8825df5cbca4fca2a1135f4b9bf5581a3823ef3d08fe018c3b0a232cc	vrend: support GLES 3.0 MSAA on iOS Metal
 2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	9ac722b7b2b213056984988c75907b6a7a7d6cf8e7e23109b315d23967b284a2	vrend: map GLES separate transform feedback buffers
 3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	2bc1aa3c93d26baaf651388b2a16388d7927f4cc76fcf69f0fb85298f514bf6b	vrend: stop advertising emulated GLES Z32_UNORM
-4	0004-vrend-add-VideoToolbox-decode-backend.patch	f5ad4e612accd713701cc8cde30ee51142ec8893	f8a3b195c4b468551d5180a290b63068bf9819c324e1513f67374b76b900ca7b	vrend: add VideoToolbox decode backend
+4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	3fd60b4702ef53fbbd1f8599ef7c08eecc550f52ec42a49de3050c3d6a371552	vrend: add VideoToolbox decode backend

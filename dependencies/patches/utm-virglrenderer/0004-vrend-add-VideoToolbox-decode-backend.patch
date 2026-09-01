@@ -1,4 +1,4 @@
-From ca4f5df3b4b10b435208ec17502a2e11f5decded Mon Sep 17 00:00:00 2001
+From 90fce64f536c9a1bb1effe6b1fc69132bd8d9c22 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
 Subject: [PATCH 4/4] vrend: add VideoToolbox decode backend
@@ -15,9 +15,9 @@ Subject: [PATCH 4/4] vrend: add VideoToolbox decode backend
  src/vrend/vrend_winsys_egl.c         |    6 +
  src/vrend/vrend_winsys_egl.h         |    1 +
  tests/meson.build                    |   24 +
- tests/test_vrend_video_h264.c        |  171 +++
- tests/test_vrend_video_h265.c        |  131 +++
- 13 files changed, 3300 insertions(+), 11 deletions(-)
+ tests/test_vrend_video_h264.c        |  174 +++
+ tests/test_vrend_video_h265.c        |  134 +++
+ 13 files changed, 3306 insertions(+), 11 deletions(-)
  create mode 100644 src/vrend/vrend_video_h264.c
  create mode 100644 src/vrend/vrend_video_h264.h
  create mode 100644 src/vrend/vrend_video_h265.c
@@ -3165,10 +3165,10 @@ index 884a005..698ce0c 100644
  # goes wrong
 diff --git a/tests/test_vrend_video_h264.c b/tests/test_vrend_video_h264.c
 new file mode 100644
-index 0000000..29242f7
+index 0000000..2d2aec2
 --- /dev/null
 +++ b/tests/test_vrend_video_h264.c
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,174 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -3195,6 +3195,9 @@ index 0000000..29242f7
 +
 +#include <CoreMedia/CoreMedia.h>
 +
++#ifdef NDEBUG
++#undef NDEBUG
++#endif
 +#include <assert.h>
 +#include <stdlib.h>
 +#include <string.h>
@@ -3342,10 +3345,10 @@ index 0000000..29242f7
 +}
 diff --git a/tests/test_vrend_video_h265.c b/tests/test_vrend_video_h265.c
 new file mode 100644
-index 0000000..cbd832b
+index 0000000..65c2afe
 --- /dev/null
 +++ b/tests/test_vrend_video_h265.c
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,134 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -3372,6 +3375,9 @@ index 0000000..cbd832b
 +
 +#include <CoreMedia/CoreMedia.h>
 +
++#ifdef NDEBUG
++#undef NDEBUG
++#endif
 +#include <assert.h>
 +#include <string.h>
 +

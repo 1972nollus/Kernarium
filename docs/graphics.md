@@ -52,12 +52,12 @@ VA-API path; applications, including Chromium builds, must enable Linux VA-API
 decoding themselves.
 
 H.264 High10 is advertised only on Apple targets where a profile-specific
-VideoToolbox hardware probe succeeds. The connected A15 iPad on iPadOS 18.5
-passes that probe and produces 10-bit bi-planar output. A session-only probe on
-macOS is insufficient: native decoding rejects a representative High10 frame,
-so macOS does not advertise the profile. Upstream Chromium maps HEVC Main and
-Main10 to its VA-API decoder but does not map H.264 High10; the latter remains
-available on qualifying hosts to upstream VA-API clients such as FFmpeg.
+VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
+10-bit bi-planar output. A session-only probe on macOS is insufficient: native
+decoding rejects a representative High10 frame, so macOS does not advertise
+the profile. Upstream Chromium maps HEVC Main and Main10 to its VA-API decoder
+but does not map H.264 High10; the latter remains available on qualifying hosts
+to upstream VA-API clients such as FFmpeg.
 
 The stock Debian libva/Mesa interface does not expose the required H.264 or
 HEVC 4:2:2 and 4:4:4 profile and surface combinations, so the host does not
