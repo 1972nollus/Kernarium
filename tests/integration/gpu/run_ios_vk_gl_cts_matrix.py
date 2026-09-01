@@ -210,7 +210,7 @@ def app_file_identity(
         relative_files.append(Path("Kernarium.debug.dylib"))
     suffix = "16K" if page_profile == "16k" else "4K"
     runtime_frameworks = sorted(
-        (app / "Frameworks").glob(f"KernariumRuntime_*_{suffix}.framework")
+        (app / "Frameworks").glob(f"KRuntime_[0-9]*_{suffix}.framework")
     )
     if len(runtime_frameworks) != 1:
         raise cts.CampaignError(

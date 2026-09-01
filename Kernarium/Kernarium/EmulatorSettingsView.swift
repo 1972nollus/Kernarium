@@ -11,6 +11,7 @@ struct EmulatorSettingsView: View {
     @State private var rootfsFilename: String
     @State private var kernelPageSize: KernelPageSize
     @State private var retinaMode: Bool
+    @State private var autoResizeGuest: Bool
     @State private var androidBootMode: AndroidBootMode
 
     private let maximumVCPUCount: Int
@@ -75,6 +76,7 @@ struct EmulatorSettingsView: View {
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
         _kernelPageSize = State(initialValue: configuration.kernelPageSize)
         _retinaMode = State(initialValue: configuration.retinaMode)
+        _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
         _androidBootMode = State(initialValue: configuration.androidBootMode)
     }
 
@@ -84,6 +86,22 @@ struct EmulatorSettingsView: View {
                 Section("Hardware") {
                     Toggle("Retina mode", isOn: $retinaMode)
                         .accessibilityIdentifier("retinaModeToggle")
+
+                    Toggle(
+                        "Automatically resize guest display",
+                        isOn: $autoResizeGuest
+                    )
+                    .accessibilityIdentifier("autoResizeGuestToggle")
+
+                    Text(
+                        "Controls whether settled view-size changes resize " +
+                            "the guest. When off, the guest keeps its " +
+                            "resolution and is fitted to the view. A " +
+                            "guest-selected resolution pauses automatic " +
+                            "resizing until the guest restarts."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
 
                     Picker("Kernel page size", selection: shownPageSize) {
                         ForEach(KernelPageSize.allCases) { pageSize in
@@ -185,6 +203,7 @@ struct EmulatorSettingsView: View {
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredPageSize ?? kernelPageSize,
             retinaMode: retinaMode,
+            autoResizeGuest: autoResizeGuest,
             androidBootMode: androidBootMode
         ).save(defaults: defaults)
         dismiss()

@@ -178,6 +178,7 @@ constexpr std::size_t maxGpuScanouts = 16;
 constexpr std::size_t gpuBytesPerPixel = 4;
 constexpr std::uint32_t primaryScanoutId = 0;
 constexpr std::uint32_t enabledDisplayMode = 1;
+constexpr std::uint32_t gpuEventDisplay = 1U << 0U;
 constexpr std::uint32_t invalidResourceId = 0;
 constexpr std::uint32_t invalidContextId = 0;
 // Virgl capsets from the stable Virtio-GPU ABI.
@@ -192,6 +193,7 @@ constexpr std::size_t maximumGpuSubmitSize = 16U * 1024U * 1024U;
 constexpr std::size_t maximumEdidSize = 1024;
 constexpr std::size_t baseEdidSize = 128;
 constexpr std::uint32_t maximumEdidDimension = 4095;
+constexpr std::uint32_t maximumDisplayDimension = 8192;
 constexpr std::uint32_t referenceDotsPerInch = 96;
 // Defensive bound for the variable-size RESOURCE_ATTACH_BACKING request.
 constexpr std::uint32_t maximumResourceBackingEntries = 16'384;

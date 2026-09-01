@@ -1,5 +1,5 @@
 import Foundation
-import KernariumGPTFDisk
+import GPTFDisk
 
 protocol DiskCapacityManaging {
     func resizeAndroidImage(at image: URL, toGiB capacity: Int) throws -> Bool

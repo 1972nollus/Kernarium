@@ -2,6 +2,8 @@
 
 #include "metal_presentation.hpp"
 
+#include "display_geometry.hpp"
+
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
@@ -88,6 +90,8 @@ struct MetalPresentationState final :
     public std::enable_shared_from_this<MetalPresentationState> {
     MetalPresentationState(std::uint32_t width, std::uint32_t height)
         : framebuffer(width, height)
+        , contentWidth(width)
+        , contentHeight(height)
     {
         device = MTLCreateSystemDefaultDevice();
         if (device == nil)
@@ -125,17 +129,24 @@ struct MetalPresentationState final :
                 description(error));
         }
 
-        MTLTextureDescriptor* textureDescriptor =
+        fallbackTexture = makeFallbackTexture(width, height);
+        if (fallbackTexture == nil)
+            throw std::runtime_error("Metal fallback texture creation failed");
+    }
+
+    [[nodiscard]] id<MTLTexture> makeFallbackTexture(
+        std::uint32_t width,
+        std::uint32_t height) const noexcept
+    {
+        MTLTextureDescriptor* descriptor =
             [MTLTextureDescriptor
                 texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                 width:width
                 height:height
                 mipmapped:NO];
-        textureDescriptor.storageMode = MTLStorageModeShared;
-        textureDescriptor.usage = MTLTextureUsageShaderRead;
-        fallbackTexture = [device newTextureWithDescriptor:textureDescriptor];
-        if (fallbackTexture == nil)
-            throw std::runtime_error("Metal fallback texture creation failed");
+        descriptor.storageMode = MTLStorageModeShared;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        return [device newTextureWithDescriptor:descriptor];
     }
 
     void requestRedraw() noexcept
@@ -161,9 +172,62 @@ struct MetalPresentationState final :
             std::lock_guard lock(presentationMutex);
             latestTexture = nil;
             latestIsCpu = true;
-            ++latestGeneration;
+            ++latestContentGeneration;
+            ++latestPresentationGeneration;
         }
         requestRedraw();
+    }
+
+    void drawableSizeChanged() noexcept
+    {
+        {
+            std::lock_guard lock(presentationMutex);
+            ++latestPresentationGeneration;
+        }
+        requestRedraw();
+    }
+
+    [[nodiscard]] bool resize(
+        std::uint32_t width,
+        std::uint32_t height,
+        bool shouldRequestRedraw) noexcept
+    {
+        @autoreleasepool {
+            try {
+                if (width == framebuffer.width() &&
+                    height == framebuffer.height()) {
+                    return false;
+                }
+                id<MTLTexture> replacement =
+                    makeFallbackTexture(width, height);
+                if (replacement == nil)
+                    throw std::runtime_error(
+                        "Metal fallback resize allocation failed");
+                {
+                    /* A CPU draw verifies and uploads its fallback texture
+                     * under this same lock, so framebuffer storage and the
+                     * matching Metal allocation change as one snapshot. */
+                    std::lock_guard lock(presentationMutex);
+                    framebuffer.resize(width, height);
+                    fallbackTexture = replacement;
+                    contentWidth = width;
+                    contentHeight = height;
+                    latestTexture = nil;
+                    latestIsCpu = true;
+                    ++latestContentGeneration;
+                    ++latestPresentationGeneration;
+                }
+                if (shouldRequestRedraw)
+                    requestRedraw();
+                return true;
+            } catch (...) {
+                if (!resizeFailureReported.exchange(
+                        true, std::memory_order_relaxed)) {
+                    std::fputs("Native Metal display resize failed\n", stderr);
+                }
+                return false;
+            }
+        }
     }
 
     PresentOutcome present(const MetalScanout& scanout) noexcept
@@ -185,10 +249,16 @@ struct MetalPresentationState final :
             bool superseded = false;
             {
                 std::lock_guard lock(presentationMutex);
-                superseded = latestGeneration > presentedGeneration;
+                if (scanout.width != contentWidth ||
+                    scanout.height != contentHeight) {
+                    return PresentOutcome::unsupported;
+                }
+                superseded = latestContentGeneration >
+                    presentedContentGeneration;
                 latestTexture = texture;
                 latestIsCpu = false;
-                ++latestGeneration;
+                ++latestContentGeneration;
+                ++latestPresentationGeneration;
             }
             if (superseded)
                 droppedFrames.fetch_add(1, std::memory_order_relaxed);
@@ -206,14 +276,20 @@ struct MetalPresentationState final :
         }
     }
 
-    void finishPresentation(std::uint64_t generation) noexcept
+    void finishPresentation(
+        std::uint64_t contentGeneration,
+        std::uint64_t presentationGeneration) noexcept
     {
         bool pending = false;
         {
             std::lock_guard lock(presentationMutex);
-            presentedGeneration = std::max(presentedGeneration, generation);
+            presentedContentGeneration = std::max(
+                presentedContentGeneration, contentGeneration);
+            presentedPresentationGeneration = std::max(
+                presentedPresentationGeneration, presentationGeneration);
             presentationInFlight = false;
-            pending = latestGeneration > presentedGeneration;
+            pending = latestPresentationGeneration >
+                presentedPresentationGeneration;
         }
         if (pending)
             requestRedraw();
@@ -222,7 +298,10 @@ struct MetalPresentationState final :
     void draw(void* nativeView) noexcept
     {
         @autoreleasepool {
-            std::uint64_t generation = 0;
+            std::uint64_t contentGeneration = 0;
+            std::uint64_t presentationGeneration = 0;
+            std::uint32_t activeContentWidth = 0;
+            std::uint32_t activeContentHeight = 0;
             bool useCpu = false;
             id<MTLTexture> sourceTexture;
             try {
@@ -232,10 +311,14 @@ struct MetalPresentationState final :
                 {
                     std::lock_guard lock(presentationMutex);
                     if (presentationInFlight ||
-                        latestGeneration <= presentedGeneration) {
+                        latestPresentationGeneration <=
+                            presentedPresentationGeneration) {
                         return;
                     }
-                    generation = latestGeneration;
+                    contentGeneration = latestContentGeneration;
+                    presentationGeneration = latestPresentationGeneration;
+                    activeContentWidth = contentWidth;
+                    activeContentHeight = contentHeight;
                     useCpu = latestIsCpu;
                     sourceTexture = useCpu ? fallbackTexture : latestTexture;
                     if (sourceTexture == nil)
@@ -258,27 +341,65 @@ struct MetalPresentationState final :
                     return;
                 }
                 if (useCpu) {
-                    std::lock_guard lock(framebuffer);
-                    const MTLRegion region = MTLRegionMake2D(
-                        0, 0, framebuffer.width(), framebuffer.height());
-                    [fallbackTexture
-                        replaceRegion:region
-                        mipmapLevel:0
-                        withBytes:framebuffer.pixels().data()
-                        bytesPerRow:framebuffer.rowBytes()];
+                    bool currentFallback = false;
+                    {
+                        std::lock_guard presentationLock(presentationMutex);
+                        currentFallback = sourceTexture == fallbackTexture;
+                        if (currentFallback) {
+                            std::lock_guard framebufferLock(framebuffer);
+                            const MTLRegion region = MTLRegionMake2D(
+                                0,
+                                0,
+                                framebuffer.width(),
+                                framebuffer.height());
+                            [sourceTexture
+                                replaceRegion:region
+                                mipmapLevel:0
+                                withBytes:framebuffer.pixels().data()
+                                bytesPerRow:framebuffer.rowBytes()];
+                        }
+                    }
+                    if (!currentFallback) {
+                        finishPresentation(
+                            contentGeneration, presentationGeneration);
+                        return;
+                    }
+                }
+                const auto fitted = aspectFitRectangle(
+                    static_cast<double>(drawable.texture.width),
+                    static_cast<double>(drawable.texture.height),
+                    static_cast<double>(activeContentWidth),
+                    static_cast<double>(activeContentHeight));
+                if (fitted.width <= 0.0 || fitted.height <= 0.0) {
+                    finishPresentation(
+                        contentGeneration, presentationGeneration);
+                    return;
                 }
                 id<MTLCommandBuffer> buffer = [commandQueue commandBuffer];
                 if (buffer == nil) {
-                    finishPresentation(generation);
+                    finishPresentation(
+                        contentGeneration, presentationGeneration);
                     return;
                 }
+                pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+                pass.colorAttachments[0].clearColor = view.clearColor;
                 id<MTLRenderCommandEncoder> encoder =
                     [buffer renderCommandEncoderWithDescriptor:pass];
                 if (encoder == nil) {
-                    finishPresentation(generation);
+                    finishPresentation(
+                        contentGeneration, presentationGeneration);
                     return;
                 }
+                const MTLViewport viewport {
+                    .originX = fitted.x,
+                    .originY = fitted.y,
+                    .width = fitted.width,
+                    .height = fitted.height,
+                    .znear = 0.0,
+                    .zfar = 1.0,
+                };
                 [encoder setRenderPipelineState:pipeline];
+                [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle
                             vertexStart:0
@@ -289,7 +410,8 @@ struct MetalPresentationState final :
                 [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
                     state->presentedFrames.fetch_add(
                         1, std::memory_order_relaxed);
-                    state->finishPresentation(generation);
+                    state->finishPresentation(
+                        contentGeneration, presentationGeneration);
                 }];
                 [buffer commit];
             } catch (...) {
@@ -297,8 +419,10 @@ struct MetalPresentationState final :
                         true, std::memory_order_relaxed)) {
                     std::fputs("Native Metal display failed\n", stderr);
                 }
-                if (generation != 0)
-                    finishPresentation(generation);
+                if (presentationGeneration != 0) {
+                    finishPresentation(
+                        contentGeneration, presentationGeneration);
+                }
             }
         }
     }
@@ -386,13 +510,18 @@ struct MetalPresentationState final :
     std::mutex callbackMutex;
     std::function<void()> redrawCallback;
     std::mutex presentationMutex;
-    std::uint64_t latestGeneration {1};
-    std::uint64_t presentedGeneration {};
+    std::uint64_t latestContentGeneration {1};
+    std::uint64_t presentedContentGeneration {};
+    std::uint64_t latestPresentationGeneration {1};
+    std::uint64_t presentedPresentationGeneration {};
+    std::uint32_t contentWidth;
+    std::uint32_t contentHeight;
     bool latestIsCpu {true};
     bool presentationInFlight {};
     std::atomic_bool running {true};
     std::atomic_bool directPathReported {};
     std::atomic_bool renderFailureReported {};
+    std::atomic_bool resizeFailureReported {};
     std::atomic_uint64_t guestFrames {};
     std::atomic_uint64_t presentedFrames {};
     std::atomic_uint64_t droppedFrames {};
@@ -434,6 +563,19 @@ ScanoutFramebuffer& MetalPresentation::framebuffer() noexcept
 const ScanoutFramebuffer& MetalPresentation::framebuffer() const noexcept
 {
     return state_->framebuffer;
+}
+
+bool MetalPresentation::resize(
+    std::uint32_t width,
+    std::uint32_t height,
+    bool requestRedraw) noexcept
+{
+    return state_->resize(width, height, requestRedraw);
+}
+
+void MetalPresentation::drawableSizeChanged() noexcept
+{
+    state_->drawableSizeChanged();
 }
 
 void MetalPresentation::publishCpuFrame() noexcept

@@ -266,7 +266,418 @@ private struct GuestDisplayGeometry {
     let dotsPerInch: UInt32
 }
 
-private struct GuestDisplayView: UIViewRepresentable {
+struct GuestInputCoordinateSpace {
+    static let maximumDisplayDimension = CGFloat(4095)
+
+    let size: CGSize
+
+    static func boundedDisplaySize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: min(size.width, maximumDisplayDimension),
+            height: min(size.height, maximumDisplayDimension)
+        )
+    }
+
+    func location(
+        _ point: CGPoint,
+        in bounds: CGSize,
+        drawableSize: CGSize? = nil,
+        contentSize: CGSize? = nil,
+        clampToContent: Bool = false
+    ) -> (x: UInt32, y: UInt32)? {
+        let drawableSize = drawableSize ?? bounds
+        let contentSize = contentSize ?? drawableSize
+        guard size.width >= 1, size.height >= 1,
+              bounds.width > 0, bounds.height > 0,
+              point.x.isFinite, point.y.isFinite,
+              size.width.isFinite, size.height.isFinite,
+              bounds.width.isFinite, bounds.height.isFinite,
+              drawableSize.width.isFinite, drawableSize.height.isFinite,
+              drawableSize.width > 0, drawableSize.height > 0,
+              size.width <= CGFloat(UInt32.max),
+              size.height <= CGFloat(UInt32.max) else { return nil }
+        guard let viewport = GuestDisplayViewport.aspectFit(
+            contentSize: contentSize,
+            in: drawableSize
+        ) else { return nil }
+        var drawablePoint = CGPoint(
+            x: point.x * drawableSize.width / bounds.width,
+            y: point.y * drawableSize.height / bounds.height
+        )
+        if clampToContent {
+            drawablePoint.x = min(
+                max(drawablePoint.x, viewport.minX), viewport.maxX
+            )
+            drawablePoint.y = min(
+                max(drawablePoint.y, viewport.minY), viewport.maxY
+            )
+        } else if drawablePoint.x < viewport.minX ||
+                    drawablePoint.x > viewport.maxX ||
+                    drawablePoint.y < viewport.minY ||
+                    drawablePoint.y > viewport.maxY {
+            return nil
+        }
+        let x = min(
+            max(
+                (
+                    (drawablePoint.x - viewport.minX) * size.width /
+                        viewport.width
+                ).rounded(.down),
+                0
+            ),
+            size.width - 1
+        )
+        let y = min(
+            max(
+                (
+                    (drawablePoint.y - viewport.minY) * size.height /
+                        viewport.height
+                ).rounded(.down),
+                0
+            ),
+            size.height - 1
+        )
+        return (UInt32(x), UInt32(y))
+    }
+}
+
+enum GuestDisplayViewport {
+    static func aspectFit(
+        contentSize: CGSize,
+        in containerSize: CGSize
+    ) -> CGRect? {
+        guard contentSize.width.isFinite, contentSize.height.isFinite,
+              containerSize.width.isFinite, containerSize.height.isFinite,
+              contentSize.width > 0, contentSize.height > 0,
+              containerSize.width > 0, containerSize.height > 0 else {
+            return nil
+        }
+        let scale = min(
+            containerSize.width / contentSize.width,
+            containerSize.height / contentSize.height
+        )
+        let width = contentSize.width * scale
+        let height = contentSize.height * scale
+        return CGRect(
+            x: (containerSize.width - width) / 2,
+            y: (containerSize.height - height) / 2,
+            width: width,
+            height: height
+        )
+    }
+}
+
+struct GuestTouchEvent: Equatable {
+    let x: UInt32
+    let y: UInt32
+    let pressed: Bool
+}
+
+enum GuestTouchSamples {
+    static func ordered(
+        coalesced: [CGPoint],
+        current: CGPoint
+    ) -> [CGPoint] {
+        guard coalesced.last != current else { return coalesced }
+        return coalesced + [current]
+    }
+}
+
+struct GuestTouchGeometry {
+    private let coordinateSpace: GuestInputCoordinateSpace
+    private let boundsSize: CGSize
+    private let drawableSize: CGSize
+    private let contentSize: CGSize
+    private let viewport: CGRect
+
+    init?(
+        coordinateSpace: GuestInputCoordinateSpace,
+        boundsSize: CGSize,
+        drawableSize: CGSize,
+        contentSize: CGSize
+    ) {
+        guard boundsSize.width.isFinite, boundsSize.height.isFinite,
+              boundsSize.width > 0, boundsSize.height > 0,
+              drawableSize.width.isFinite, drawableSize.height.isFinite,
+              drawableSize.width > 0, drawableSize.height > 0,
+              let viewport = GuestDisplayViewport.aspectFit(
+                  contentSize: contentSize,
+                  in: drawableSize
+              ) else { return nil }
+        self.coordinateSpace = coordinateSpace
+        self.boundsSize = boundsSize
+        self.drawableSize = drawableSize
+        self.contentSize = contentSize
+        self.viewport = viewport
+    }
+
+    fileprivate func drawablePoint(for point: CGPoint) -> CGPoint? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        let drawablePoint = CGPoint(
+            x: point.x * drawableSize.width / boundsSize.width,
+            y: point.y * drawableSize.height / boundsSize.height
+        )
+        guard drawablePoint.x.isFinite, drawablePoint.y.isFinite else {
+            return nil
+        }
+        return drawablePoint
+    }
+
+    fileprivate func contains(_ point: CGPoint) -> Bool {
+        point.x >= viewport.minX && point.x <= viewport.maxX &&
+            point.y >= viewport.minY && point.y <= viewport.maxY
+    }
+
+    fileprivate func touchEvent(
+        at drawablePoint: CGPoint,
+        pressed: Bool
+    ) -> GuestTouchEvent? {
+        let boundsPoint = CGPoint(
+            x: drawablePoint.x * boundsSize.width / drawableSize.width,
+            y: drawablePoint.y * boundsSize.height / drawableSize.height
+        )
+        guard let location = coordinateSpace.location(
+            boundsPoint,
+            in: boundsSize,
+            drawableSize: drawableSize,
+            contentSize: contentSize,
+            clampToContent: true
+        ) else { return nil }
+        return GuestTouchEvent(
+            x: location.x,
+            y: location.y,
+            pressed: pressed
+        )
+    }
+
+    fileprivate func clippedSegment(
+        from start: CGPoint,
+        to end: CGPoint
+    ) -> (
+        entry: CGPoint,
+        exit: CGPoint,
+        entryParameter: CGFloat,
+        exitParameter: CGFloat
+    )? {
+        let delta = CGPoint(x: end.x - start.x, y: end.y - start.y)
+        var entryParameter = CGFloat.zero
+        var exitParameter = CGFloat(1)
+
+        func clipped(
+            _ direction: CGFloat,
+            _ distance: CGFloat,
+            entry: inout CGFloat,
+            exit: inout CGFloat
+        ) -> Bool {
+            if direction == 0 {
+                return distance >= 0
+            }
+            let parameter = distance / direction
+            if direction < 0 {
+                guard parameter <= exit else { return false }
+                entry = max(entry, parameter)
+            } else {
+                guard parameter >= entry else { return false }
+                exit = min(exit, parameter)
+            }
+            return true
+        }
+
+        guard clipped(
+            -delta.x,
+            start.x - viewport.minX,
+            entry: &entryParameter,
+            exit: &exitParameter
+        ), clipped(
+            delta.x,
+            viewport.maxX - start.x,
+            entry: &entryParameter,
+            exit: &exitParameter
+        ), clipped(
+            -delta.y,
+            start.y - viewport.minY,
+            entry: &entryParameter,
+            exit: &exitParameter
+        ), clipped(
+            delta.y,
+            viewport.maxY - start.y,
+            entry: &entryParameter,
+            exit: &exitParameter
+        ), entryParameter <= exitParameter else { return nil }
+
+        return (
+            CGPoint(
+                x: start.x + delta.x * entryParameter,
+                y: start.y + delta.y * entryParameter
+            ),
+            CGPoint(
+                x: start.x + delta.x * exitParameter,
+                y: start.y + delta.y * exitParameter
+            ),
+            entryParameter,
+            exitParameter
+        )
+    }
+}
+
+struct GuestTouchPath {
+    private var previousPoint: CGPoint?
+    private var guestContactActive = false
+    private var lastGuestEvent: GuestTouchEvent?
+
+    mutating func begin(
+        at point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchEvent] {
+        previousPoint = point
+        guestContactActive = false
+        lastGuestEvent = nil
+        guard let geometry,
+              let drawablePoint = geometry.drawablePoint(for: point),
+              geometry.contains(drawablePoint),
+              let event = geometry.touchEvent(
+                  at: drawablePoint,
+                  pressed: true
+              ) else { return [] }
+        guestContactActive = true
+        lastGuestEvent = event
+        return [event]
+    }
+
+    mutating func move(
+        to point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchEvent] {
+        guard let previousPoint else {
+            return begin(at: point, geometry: geometry)
+        }
+        self.previousPoint = point
+        guard let geometry,
+              let start = geometry.drawablePoint(for: previousPoint),
+              let end = geometry.drawablePoint(for: point) else { return [] }
+
+        var events: [GuestTouchEvent] = []
+        let startInside = geometry.contains(start)
+        let endInside = geometry.contains(end)
+
+        if guestContactActive && !startInside {
+            appendLastRelease(to: &events)
+        }
+
+        if guestContactActive {
+            if endInside {
+                append(
+                    geometry.touchEvent(at: end, pressed: true),
+                    to: &events
+                )
+            } else if let segment = geometry.clippedSegment(
+                from: start,
+                to: end
+            ) {
+                append(
+                    geometry.touchEvent(at: segment.exit, pressed: false),
+                    to: &events
+                )
+            } else {
+                appendLastRelease(to: &events)
+            }
+            return events
+        }
+
+        guard let segment = geometry.clippedSegment(from: start, to: end),
+              startInside || endInside ||
+                segment.exitParameter > segment.entryParameter else {
+            return events
+        }
+        append(
+            geometry.touchEvent(at: segment.entry, pressed: true),
+            to: &events
+        )
+        if endInside {
+            if segment.entryParameter < 1 {
+                append(
+                    geometry.touchEvent(at: end, pressed: true),
+                    to: &events
+                )
+            }
+        } else {
+            append(
+                geometry.touchEvent(at: segment.exit, pressed: false),
+                to: &events
+            )
+        }
+        return events
+    }
+
+    mutating func move(
+        through points: [CGPoint],
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchEvent] {
+        var events: [GuestTouchEvent] = []
+        for point in points {
+            events.append(contentsOf: move(to: point, geometry: geometry))
+        }
+        return events
+    }
+
+    mutating func end(
+        at point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchEvent] {
+        var events = move(to: point, geometry: geometry)
+        appendLastRelease(to: &events)
+        previousPoint = nil
+        return events
+    }
+
+    mutating func cancel(
+        at point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchEvent] {
+        end(at: point, geometry: geometry)
+    }
+
+    mutating func release() -> [GuestTouchEvent] {
+        var events: [GuestTouchEvent] = []
+        appendLastRelease(to: &events)
+        previousPoint = nil
+        return events
+    }
+
+    private mutating func append(
+        _ event: GuestTouchEvent?,
+        to events: inout [GuestTouchEvent]
+    ) {
+        guard let event else { return }
+        events.append(event)
+        guestContactActive = event.pressed
+        lastGuestEvent = event.pressed ? event : nil
+    }
+
+    private mutating func appendLastRelease(
+        to events: inout [GuestTouchEvent]
+    ) {
+        guard guestContactActive, let lastGuestEvent else { return }
+        events.append(GuestTouchEvent(
+            x: lastGuestEvent.x,
+            y: lastGuestEvent.y,
+            pressed: false
+        ))
+        guestContactActive = false
+        self.lastGuestEvent = nil
+    }
+}
+
+private extension Notification.Name {
+    static let guestDisplayResizeWillBegin = Notification.Name(
+        "org.linux-um-darwin.guest-display-resize-will-begin"
+    )
+    static let guestDisplayResizeDidEnd = Notification.Name(
+        "org.linux-um-darwin.guest-display-resize-did-end"
+    )
+}
+
+private struct GuestDisplayView: UIViewControllerRepresentable {
     @Binding var keyboardVisible: Bool
     let retinaMode: Bool
     let viewDidLayout: @MainActor (
@@ -274,7 +685,7 @@ private struct GuestDisplayView: UIViewRepresentable {
         GuestDisplayGeometry
     ) -> Void
 
-    func makeUIView(context: Context) -> GuestMetalView {
+    func makeUIViewController(context: Context) -> GuestDisplayViewController {
         let view = GuestMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.viewDidLayout = viewDidLayout
         view.retinaMode = retinaMode
@@ -282,17 +693,60 @@ private struct GuestDisplayView: UIViewRepresentable {
         view.enableSetNeedsDisplay = true
         view.autoResizeDrawable = false
         view.isMultipleTouchEnabled = false
-        return view
+        return GuestDisplayViewController(metalView: view)
     }
 
-    func updateUIView(_ view: GuestMetalView, context: Context) {
+    func updateUIViewController(
+        _ controller: GuestDisplayViewController,
+        context: Context
+    ) {
+        let view = controller.metalView
         view.retinaMode = retinaMode
         view.setKeyboardVisible(keyboardVisible)
         view.reportLayout()
     }
 
-    static func dismantleUIView(_ view: GuestMetalView, coordinator: ()) {
-        view.resignFirstResponder()
+    static func dismantleUIViewController(
+        _ controller: GuestDisplayViewController,
+        coordinator: ()
+    ) {
+        controller.metalView.releaseGuestInput()
+        controller.metalView.finishHostResize()
+        controller.metalView.resignFirstResponder()
+    }
+}
+
+private final class GuestDisplayViewController: UIViewController {
+    let metalView: GuestMetalView
+    private var transitionGeneration: UInt64 = 0
+
+    init(metalView: GuestMetalView) {
+        self.metalView = metalView
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = metalView
+    }
+
+    override func viewWillTransition(
+        to size: CGSize,
+        with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        transitionGeneration &+= 1
+        let generation = transitionGeneration
+        metalView.beginHostResize()
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self,
+                  self.transitionGeneration == generation else { return }
+            self.metalView.finishHostResize()
+        }
     }
 }
 
@@ -301,9 +755,12 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         GuestMetalView,
         GuestDisplayGeometry
     ) -> Void)?
-    var guestPixelSize: CGSize?
+    var inputCoordinateSpace: GuestInputCoordinateSpace?
     var retinaMode = false
+    @objc private(set) var umlGuestResizeInProgress = false
     private var trackedTouch: UITouch?
+    private var touchPath = GuestTouchPath()
+    private var guestContentSize: CGSize?
 
     override var canBecomeFirstResponder: Bool { true }
     var hasText: Bool { true }
@@ -345,6 +802,42 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
+    func beginHostResize() {
+        guard !umlGuestResizeInProgress else { return }
+        umlGuestResizeInProgress = true
+        NotificationCenter.default.post(
+            name: .guestDisplayResizeWillBegin,
+            object: self
+        )
+    }
+
+    func finishHostResize() {
+        guard umlGuestResizeInProgress else { return }
+        reportLayout()
+        umlGuestResizeInProgress = false
+        NotificationCenter.default.post(
+            name: .guestDisplayResizeDidEnd,
+            object: self
+        )
+    }
+
+    @objc(umlSetGuestDisplayWidth:height:)
+    func setGuestDisplay(width: UInt32, height: UInt32) {
+        releaseTrackedTouch()
+        guard width > 0, height > 0 else {
+            guestContentSize = nil
+            return
+        }
+        guestContentSize = CGSize(
+            width: CGFloat(width),
+            height: CGFloat(height)
+        )
+    }
+
+    func releaseGuestInput() {
+        releaseTrackedTouch()
+    }
+
     func setKeyboardVisible(_ visible: Bool) {
         if visible {
             becomeFirstResponder()
@@ -379,13 +872,27 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         super.touchesBegan(touches, with: event)
         guard trackedTouch == nil, let touch = touches.first else { return }
         trackedTouch = touch
-        sendTouch(touch, pressed: true)
+        sendTouchEvents(touchPath.begin(
+            at: touch.location(in: self),
+            geometry: touchGeometry()
+        ))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        sendTouch(touch, pressed: true)
+        let current = touch.location(in: self)
+        let coalescedTouches = event?.coalescedTouches(for: touch) ?? []
+        let coalesced = coalescedTouches.map {
+            $0.location(in: self)
+        }
+        sendTouchEvents(touchPath.move(
+            through: GuestTouchSamples.ordered(
+                coalesced: coalesced,
+                current: current
+            ),
+            geometry: touchGeometry()
+        ))
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -398,33 +905,47 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         with event: UIEvent?
     ) {
         super.touchesCancelled(touches, with: event)
-        finishTouch(in: touches)
+        finishTouch(in: touches, cancelled: true)
     }
 
-    private func finishTouch(in touches: Set<UITouch>) {
+    private func finishTouch(
+        in touches: Set<UITouch>,
+        cancelled: Bool = false
+    ) {
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        sendTouch(touch, pressed: false)
+        let point = touch.location(in: self)
+        let events = cancelled ?
+            touchPath.cancel(at: point, geometry: touchGeometry()) :
+            touchPath.end(at: point, geometry: touchGeometry())
+        sendTouchEvents(events)
         trackedTouch = nil
     }
 
-    private func sendTouch(_ touch: UITouch, pressed: Bool) {
-        let point = touch.location(in: self)
-        let size = guestPixelSize ?? bounds.size
-        guard size.width >= 1, size.height >= 1,
-              bounds.width > 0, bounds.height > 0 else { return }
-        let x = min(
-            max((point.x * size.width / bounds.width).rounded(.down), 0),
-            size.width - 1
+    private func touchGeometry() -> GuestTouchGeometry? {
+        let coordinateSpace = inputCoordinateSpace ??
+            GuestInputCoordinateSpace(size: bounds.size)
+        return GuestTouchGeometry(
+            coordinateSpace: coordinateSpace,
+            boundsSize: bounds.size,
+            drawableSize: drawableSize,
+            contentSize: guestContentSize ?? drawableSize
         )
-        let y = min(
-            max((point.y * size.height / bounds.height).rounded(.down), 0),
-            size.height - 1
-        )
-        kernarium_runtime_loader_send_touch(
-            UInt32(x),
-            UInt32(y),
-            pressed ? 1 : 0
-        )
+    }
+
+    private func sendTouchEvents(_ events: [GuestTouchEvent]) {
+        for event in events {
+            kernarium_runtime_loader_send_touch(
+                event.x,
+                event.y,
+                event.pressed ? 1 : 0
+            )
+        }
+    }
+
+    private func releaseTrackedTouch() {
+        guard trackedTouch != nil else { return }
+        sendTouchEvents(touchPath.release())
+        trackedTouch = nil
     }
 
     private func sendKey(code: UInt16, pressed: Bool) {
@@ -618,7 +1139,8 @@ private func runGuest(
     height: UInt32,
     dotsPerInch: UInt32,
     guestMemoryMiB: UInt32,
-    vCPUCount: UInt32
+    vCPUCount: UInt32,
+    autoResizeGuest: Bool
 ) -> Int32 {
     boot.withCPaths { paths in
         var request = kernarium_runtime_boot()
@@ -629,6 +1151,7 @@ private func runGuest(
         request.guest_memory_mib = guestMemoryMiB
         request.guest_processor_count = vCPUCount
         request.android_boot_mode = boot.androidBootMode.rawValue
+        request.auto_resize_guest = autoResizeGuest ? 1 : 0
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_disk_path = paths[2]
@@ -699,14 +1222,24 @@ private final class EmulatorLauncher {
         }
         started = true
         startThermalObservation()
-        let size = geometry.pixelSize
-        view.guestPixelSize = size
+        let size = GuestInputCoordinateSpace.boundedDisplaySize(
+            geometry.pixelSize
+        )
+        // Virtio-input publishes its ABS_X/Y range only when it is probed.
+        // Keep that launch-time coordinate space stable while later layouts
+        // resize Virtio-GPU, and normalize every current view point into it.
+        view.inputCoordinateSpace = GuestInputCoordinateSpace(size: size)
+        view.setGuestDisplay(
+            width: UInt32(size.width.rounded(.down)),
+            height: UInt32(size.height.rounded(.down))
+        )
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
         let dotsPerInch = geometry.dotsPerInch
+        let autoResizeGuest = configuration.autoResizeGuest
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be the
         // main thread. Own the thread outright rather than depending on where a
@@ -721,7 +1254,8 @@ private final class EmulatorLauncher {
                 height: height,
                 dotsPerInch: dotsPerInch,
                 guestMemoryMiB: guestMemoryMiB,
-                vCPUCount: vCPUCount
+                vCPUCount: vCPUCount,
+                autoResizeGuest: autoResizeGuest
             )
             Task { @MainActor in
                 EmulatorLauncher.shared.finished(result: result)

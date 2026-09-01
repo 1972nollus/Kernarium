@@ -328,7 +328,8 @@ def main() -> int:
         "UML_ARTIFACT_FAMILY",
         "UML_KERNEL_PAGE_SIZE",
         'KERNARIUM_KERNEL_RELEASE_SERIES "6.18"',
-        "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
+        "KRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
+        "KRuntime_ACK_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
         'OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"',
         "verify-signed-kernel-carrier.py",
         "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
@@ -354,7 +355,7 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v7" in runtime_source
+        "kernarium_runtime_get_api_v8" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
@@ -382,10 +383,17 @@ def main() -> int:
         "deferred runtime still owns the pre-main timer constructor",
     )
     for contract in (
+        "#define KERNARIUM_RUNTIME_API_VERSION 8U",
+        "uint32_t auto_resize_guest;",
         "set_console_output_callback",
         "send_console_input",
     ):
         require(contract in runtime_header, f"runtime API lacks {contract}")
+    require(
+        "boot->auto_resize_guest > 1U" in runtime_source
+        and ".autoResizeGuest = boot->auto_resize_guest != 0" in runtime_source,
+        "runtime does not validate and forward the display resize policy",
+    )
     for contract in (
         "publishConsoleOutput",
         "runtimeSetConsoleOutputCallback",
@@ -396,8 +404,9 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v7")',
+        'dlsym(handle, "kernarium_runtime_get_api_v8")',
         "selectedPageSize == guestPageSize",
+        "releaseFirst >= '0' && releaseFirst <= '9'",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",
     ):
@@ -425,9 +434,9 @@ def main() -> int:
     )
     verify_carrier_tool(arguments.carrier_verifier)
 
-    runtime_4k = "KernariumRuntime_6_18_4K"
-    runtime_16k = "KernariumRuntime_6_18_16K"
-    runtime_android = "KernariumRuntimeAndroid_6_18_16K"
+    runtime_4k = "KRuntime_6_18_4K"
+    runtime_16k = "KRuntime_6_18_16K"
+    runtime_android = "KRuntime_ACK_6_18_16K"
     package_script = read(arguments.package_script)
     for contract in (
         "kernarium-runtime-ios-device-4k",
@@ -437,6 +446,9 @@ def main() -> int:
         'create_xcframework "$RUNTIME_4K"',
         'create_xcframework "$RUNTIME_16K"',
         'create_xcframework "$RUNTIME_ANDROID_16K"',
+        'build-ios-zstd.sh',
+        'GPTFDisk.xcframework',
+        'LibZstd.xcframework',
     ):
         require(contract in package_script, f"runtime packaging lacks {contract}")
 
@@ -447,9 +459,19 @@ def main() -> int:
             f"Xcode does not embed {runtime}",
         )
     require(
-        "KernariumRuntime.xcframework" not in xcode_project,
-        "Xcode retains the directly linked unversioned runtime",
+        "KernariumRuntime" not in xcode_project
+        and "KernariumGPTFDisk" not in xcode_project,
+        "Xcode retains an obsolete framework name",
     )
+    for dependency in ("GPTFDisk", "LibZstd"):
+        require(
+            f"{dependency}.xcframework in Frameworks" in xcode_project,
+            f"Xcode does not link {dependency}",
+        )
+        require(
+            f"{dependency}.xcframework in Embed Frameworks" not in xcode_project,
+            f"Xcode embeds static dependency {dependency}",
+        )
     for contract in (
         'repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";',
         f"version = {SWIFTTERM_VERSION};",
@@ -489,6 +511,10 @@ def main() -> int:
         "Kernarium does not scale and forward the Android display density",
     )
     require(
+        "request.auto_resize_guest = autoResizeGuest ? 1 : 0" in content_view,
+        "Kernarium does not forward the persisted display resize policy",
+    )
+    require(
         '"androidboot.lcd_density="' in runtime_source
         and "std::to_string(dotsPerInch)" in runtime_source
         and "boot->android_command_line_path, dotsPerInch" in runtime_source,
@@ -507,7 +533,7 @@ def main() -> int:
         "/* Begin PBXFrameworksBuildPhase section */", 1
     )[1].split("/* End PBXFrameworksBuildPhase section */", 1)[0]
     require(
-        "KernariumRuntime_" not in frameworks_phase,
+        "KRuntime_" not in frameworks_phase,
         "a selectable runtime is linked for process launch instead of only embedded",
     )
 

@@ -78,6 +78,41 @@ mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and
 density by `nativeScale`. Android receives the same effective density on its
 kernel command line.
 
+## Dynamic native geometry
+
+Native AppKit and UIKit displays publish host geometry only after it settles.
+AppKit retains the active guest mode throughout live window resize and
+publishes the final logical-point content size when live resize ends. UIKit
+retains it through an interactive view-controller transition and publishes the
+final point or Retina-pixel size from transition completion. Non-interactive
+layout changes are coalesced until their geometry is stable.
+
+Host-to-guest automatic resizing is enabled by default. Kernarium stores the
+choice in its iOS app settings; the macOS executable selects it with
+`--gpu-auto-resize=on|off`. When enabled, a settled host change updates the
+Virtio-GPU advertised mode and raises its display event. Presentation storage
+remains sized to the active guest scanout until the guest accepts a mode with
+`SET_SCANOUT`. EDID-backed dimensions are limited to 4095 pixels per axis; the
+non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per axis.
+
+The first active scanout and a modeset matching the current advertised or a
+pending host target do not change geometry authority. A later guest-selected
+mode that matches neither is independent and disables further host-to-guest
+resizing until the next guest boot. Every active guest mode change resizes the
+macOS content window, independently of that host-to-guest policy. iOS instead
+aspect-fits every guest mode in its view. With automatic resizing configured
+off, later host window or view changes leave the guest mode unchanged and
+aspect-fit it in the available host content area.
+
+Rendering and input use the same centered aspect-fit rectangle. AppKit maps
+that rectangle into the fixed tablet range, while Kernarium maps it into the
+touchscreen range advertised at boot. A touch beginning in a letterbox or
+pillarbox bar remains outside the guest until its path enters the fitted
+rectangle, where a new contact begins at the exact edge. Crossing back out
+releases the contact at the exit edge; re-entry while the physical gesture
+continues begins a new guest contact. Pointer and touch coordinates therefore
+remain aligned with the pixels that are actually visible.
+
 ## Vulkan
 
 Guest Vulkan is not implemented. The current transport lacks the complete blob

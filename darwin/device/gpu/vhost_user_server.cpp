@@ -318,17 +318,39 @@ public:
         VirtioGpuDevice::GuestReader reader,
         VirtioGpuDevice::GuestMapper mapper,
         std::uint32_t dotsPerInch)
-        : gpu_(
+        : display_(display)
+        , gpu_(
               display,
               std::move(reader),
               std::move(mapper),
               dotsPerInch)
         , hasEdid_(dotsPerInch != 0)
-        , fenceTimer_(::kqueue())
+        , eventQueue_(::kqueue())
     {
-        if (fenceTimer_.get() < 0)
-            throw std::runtime_error("creating GPU fence timer failed");
-        setCloseOnExec(fenceTimer_.get());
+        if (eventQueue_.get() < 0)
+            throw std::runtime_error("creating GPU event queue failed");
+        setCloseOnExec(eventQueue_.get());
+        const int resizeDescriptor = display_.resizeEventDescriptor();
+        if (resizeDescriptor >= 0) {
+            struct kevent change {};
+            EV_SET(
+                &change,
+                static_cast<std::uintptr_t>(resizeDescriptor),
+                EVFILT_READ,
+                EV_ADD | EV_ENABLE,
+                0,
+                0,
+                nullptr);
+            int result;
+            do {
+                result = ::kevent(
+                    eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
+            } while (result < 0 && errno == EINTR);
+            if (result < 0) {
+                throw std::runtime_error(
+                    "registering GPU display-resize event failed");
+            }
+        }
         pendingFences_.reserve(protocol::maximumVirtqueueSize);
         readyFences_.reserve(protocol::maximumVirtqueueSize);
     }
@@ -357,6 +379,13 @@ public:
         return {bytes, bytes + sizeof(config)};
     }
 
+    void configurationRead(
+        std::uint32_t offset,
+        std::uint32_t size) noexcept override
+    {
+        gpu_.recordConfigRead(offset, size);
+    }
+
     void writeConfiguration(
         std::uint32_t offset,
         std::uint32_t flags,
@@ -380,7 +409,20 @@ public:
             (flags == protocol::configFlagWritable && !writableRange)) {
             throw std::runtime_error("invalid Virtio-GPU config write");
         }
-        // events_clear is write-only. No asynchronous display events exist.
+        if (flags == protocol::configFlagWritable) {
+            std::uint32_t clearEvents = 0;
+            const auto relativeOffset =
+                static_cast<std::size_t>(offset - eventsClearOffset);
+            std::memcpy(
+                reinterpret_cast<std::uint8_t*>(&clearEvents) + relativeOffset,
+                bytes.data(),
+                bytes.size());
+            gpu_.clearEvents(clearEvents);
+            if ((clearEvents & protocol::gpuEventDisplay) != 0 &&
+                gpu_.displayEventPending()) {
+                configChangePending_ = true;
+            }
+        }
     }
 
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
@@ -440,17 +482,57 @@ public:
         pendingFences_.clear();
         readyFences_.clear();
         gpu_.reset();
+        configChangePending_ = false;
     }
 
     [[nodiscard]] int eventDescriptor() const noexcept override
     {
-        return fenceTimer_.get();
+        return eventQueue_.get();
     }
 
     void drainEventSource() override
     {
-        drainFenceTimer();
-        if (pendingFences_.empty())
+        std::array<struct kevent, 2> events {};
+        const timespec timeout {};
+        int eventCount;
+        do {
+            eventCount = ::kevent(
+                eventQueue_.get(),
+                nullptr,
+                0,
+                events.data(),
+                static_cast<int>(events.size()),
+                &timeout);
+        } while (eventCount < 0 && errno == EINTR);
+        if (eventCount < 0)
+            throw std::runtime_error("draining GPU events failed");
+
+        bool resizeReady = false;
+        bool fenceTimerReady = false;
+        const int resizeDescriptor = display_.resizeEventDescriptor();
+        for (int index = 0; index < eventCount; ++index) {
+            const auto& event = events[static_cast<std::size_t>(index)];
+            if ((event.flags & EV_ERROR) != 0)
+                throw std::runtime_error("GPU event source failed");
+            if (event.filter == EVFILT_TIMER &&
+                event.ident == fenceTimerIdentifier) {
+                fenceTimerReady = true;
+                continue;
+            }
+            if (resizeDescriptor >= 0 && event.filter == EVFILT_READ &&
+                event.ident ==
+                    static_cast<std::uintptr_t>(resizeDescriptor)) {
+                resizeReady = true;
+                continue;
+            }
+            throw std::runtime_error("unexpected GPU event source");
+        }
+
+        if (resizeReady && display_.drainResizeEvent()) {
+            gpu_.notifyDisplayChanged();
+            configChangePending_ = true;
+        }
+        if (!fenceTimerReady || pendingFences_.empty())
             return;
 
         /* The pinned non-threaded Virgl renderer checks every context fence
@@ -503,6 +585,26 @@ public:
         };
         readyFences_.erase(readyFences_.begin());
         return true;
+    }
+
+    [[nodiscard]] bool configChangePending() const noexcept override
+    {
+        return configChangePending_;
+    }
+
+    [[nodiscard]] bool claimConfigChange() noexcept override
+    {
+        return configChangePending_ && display_.claimResizeNotification();
+    }
+
+    void releaseConfigChange() noexcept override
+    {
+        display_.releaseResizeNotification();
+    }
+
+    void clearConfigChange() noexcept override
+    {
+        configChangePending_ = false;
     }
 
     void setStopRequest(
@@ -615,25 +717,10 @@ private:
         int result;
         do {
             result = ::kevent(
-                fenceTimer_.get(), &change, 1, nullptr, 0, nullptr);
+                eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
         } while (result < 0 && errno == EINTR);
         if (result < 0)
             throw std::runtime_error("arming GPU fence timer failed");
-    }
-
-    void drainFenceTimer()
-    {
-        struct kevent event {};
-        const timespec timeout {};
-        int result;
-        do {
-            result = ::kevent(
-                fenceTimer_.get(), nullptr, 0, &event, 1, &timeout);
-        } while (result < 0 && errno == EINTR);
-        if (result < 0 ||
-            (result != 0 && (event.flags & EV_ERROR) != 0)) {
-            throw std::runtime_error("draining GPU fence timer failed");
-        }
     }
 
     void cancelFenceTimer() noexcept
@@ -648,19 +735,16 @@ private:
             0,
             nullptr);
         while (::kevent(
-                   fenceTimer_.get(), &change, 1, nullptr, 0, nullptr) < 0 &&
+                   eventQueue_.get(), &change, 1, nullptr, 0, nullptr) < 0 &&
             errno == EINTR) {
-        }
-        struct kevent event {};
-        const timespec timeout {};
-        while (::kevent(
-                   fenceTimer_.get(), nullptr, 0, &event, 1, &timeout) > 0) {
         }
     }
 
+    Display& display_;
     VirtioGpuDevice gpu_;
     bool hasEdid_;
-    UniqueDescriptor fenceTimer_;
+    bool configChangePending_ {};
+    UniqueDescriptor eventQueue_;
     std::vector<PendingFence> pendingFences_;
     std::vector<ReadyFence> readyFences_;
 };
@@ -679,7 +763,8 @@ VhostUserServer::VhostUserServer(
     DisplayMode displayMode,
     void* nativeView,
     std::uint32_t dotsPerInch,
-    uml::input::vnc::PointerMode pointerMode)
+    uml::input::vnc::PointerMode pointerMode,
+    bool autoResizeGuest)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , display_(makeDisplay(
@@ -691,7 +776,11 @@ VhostUserServer::VhostUserServer(
           height,
           std::move(inputSink),
           nativeView,
-          pointerMode))
+          pointerMode,
+          dotsPerInch == 0 ?
+              protocol::maximumDisplayDimension :
+              protocol::maximumEdidDimension,
+          autoResizeGuest))
 {
     device_ = std::make_unique<GpuVhostUserDevice>(
         *display_,
@@ -1103,6 +1192,67 @@ void VhostUserServer::signalQueue(std::uint32_t index)
         throw std::runtime_error(
             "invalid vhost-user in-band completion acknowledgement");
     }
+}
+
+void VhostUserServer::signalPendingConfigChange()
+{
+    if (!device_->configChangePending())
+        return;
+    constexpr std::uint64_t requiredFeatures =
+        protocol::protocolFeatureReplyAck |
+        protocol::protocolFeatureSlaveRequest |
+        protocol::protocolFeatureConfig;
+    if ((negotiatedProtocolFeatures_ & requiredFeatures) != requiredFeatures ||
+        slaveRequestDescriptor_.get() < 0) {
+        return;
+    }
+    if (!device_->claimConfigChange())
+        return;
+
+    const protocol::VhostHeader header {
+        .request = static_cast<std::uint32_t>(
+            protocol::VhostSlaveRequest::configChange),
+        .flags = protocol::vhostUserVersion | protocol::vhostUserNeedReply,
+        .size = 0,
+    };
+    try {
+        writeFrame(
+            slaveRequestDescriptor_.get(),
+            header,
+            {},
+            connectionStopRequested_);
+    } catch (...) {
+        device_->releaseConfigChange();
+        throw;
+    }
+    /* Publication is the transition boundary. The UI can begin resizing once
+     * the complete request is on the backend channel; it need not wait for a
+     * potentially slow frontend acknowledgement. */
+    device_->releaseConfigChange();
+
+    VhostUserMessage reply;
+    if (!receiveVhostUserMessage(
+            slaveRequestDescriptor_.get(),
+            reply,
+            connectionStopRequested_)) {
+        if (connectionStopRequested_ != nullptr &&
+            connectionStopRequested_->load(std::memory_order_acquire)) {
+            throw ConnectionStopped {};
+        }
+        throw std::runtime_error(
+            "closed vhost-user config-change channel");
+    }
+    constexpr std::uint32_t expectedReplyFlags =
+        protocol::vhostUserVersion | protocol::vhostUserReply;
+    if (reply.header.request != header.request ||
+        reply.header.flags != expectedReplyFlags ||
+        reply.payload.size() != sizeof(std::uint64_t) ||
+        !reply.descriptors.empty() ||
+        payloadAs<std::uint64_t>(reply.payload) != 0) {
+        throw std::runtime_error(
+            "invalid vhost-user config-change acknowledgement");
+    }
+    device_->clearConfigChange();
 }
 
 std::uint64_t VhostUserServer::allocateRequestId()
@@ -1614,12 +1764,17 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("short GET_CONFIG payload");
         const auto configRequest =
             payloadAs<protocol::ConfigHeader>(message.payload);
-        const auto configuration = device_->configuration();
         if (message.payload.size() !=
             sizeof(protocol::ConfigHeader) + configRequest.size) {
             throw std::runtime_error("invalid Virtio-GPU config request size");
         }
-        if (configRequest.flags != protocol::configFlagWritable ||
+        if (configRequest.flags != protocol::configFlagWritable) {
+            sendReply(socket, message.header, {});
+            sentReply = true;
+            break;
+        }
+        const auto configuration = device_->configuration();
+        if (
             configRequest.offset > configuration.size() ||
             configRequest.size > configuration.size() - configRequest.offset) {
             sendReply(socket, message.header, {});
@@ -1636,6 +1791,7 @@ void VhostUserServer::handleMessage(
             configuration.data() + configRequest.offset,
             configRequest.size);
         sendReply(socket, message.header, payload);
+        device_->configurationRead(configRequest.offset, configRequest.size);
         sentReply = true;
         break;
     }
@@ -1701,6 +1857,11 @@ void VhostUserServer::serveConnection(
     const std::size_t deviceEventIndex = queues_.size() + 1U;
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
+            /* This also publishes a resize which arrived before the guest
+             * installed its backend-request descriptor. Running it at the
+             * loop boundary ensures any SET_SLAVE_REQ_FD acknowledgement was
+             * sent on the main channel before waiting for this reply. */
+            signalPendingConfigChange();
             bool activePolling = false;
             for (std::uint32_t index = 0; index < queues_.size(); ++index) {
                 auto& queue = queues_[index];
@@ -1763,6 +1924,7 @@ void VhostUserServer::serveConnection(
                 throw std::runtime_error("invalid virtio device event descriptor");
             if (deviceEvents != 0) {
                 device_->drainEventSource();
+                signalPendingConfigChange();
                 drainQueueCompletions();
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     processQueue(index);

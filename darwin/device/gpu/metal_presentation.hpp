@@ -26,6 +26,14 @@ public:
     [[nodiscard]] void* device() const noexcept;
     [[nodiscard]] ScanoutFramebuffer& framebuffer() noexcept;
     [[nodiscard]] const ScanoutFramebuffer& framebuffer() const noexcept;
+    [[nodiscard]] bool resize(
+        std::uint32_t width,
+        std::uint32_t height,
+        bool requestRedraw = true) noexcept;
+    /* Re-present the latest guest content after the host drawable changes.
+     * This is independent of the guest frame timeline and therefore must not
+     * make a later guest frame look superseded. */
+    void drawableSizeChanged() noexcept;
     void publishCpuFrame() noexcept;
     [[nodiscard]] PresentOutcome present(
         const MetalScanout& scanout) noexcept;

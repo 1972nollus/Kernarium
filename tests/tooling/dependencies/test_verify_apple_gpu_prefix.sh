@@ -124,7 +124,11 @@ expect_failure "wrong platform contract" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/tampered-provenance"
 copy_fixture "$CASE_PREFIX"
-printf '%s\n' '# tampered' >>"$CASE_PREFIX/share/uml-dependencies/manifest.tsv"
+sed 's/^utm-webkit\ted78ab6\t/utm-webkit\ttampered\t/' \
+	"$CASE_PREFIX/share/uml-dependencies/manifest.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/manifest.tsv.changed"
+mv "$CASE_PREFIX/share/uml-dependencies/manifest.tsv.changed" \
+	"$CASE_PREFIX/share/uml-dependencies/manifest.tsv"
 expect_failure "tampered installed provenance" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/unexpected-library"

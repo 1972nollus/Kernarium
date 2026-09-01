@@ -30,6 +30,8 @@ target_link_libraries(uml_gpu_renderer PRIVATE
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
 set(_uml_gpu_display_sources
+    display_geometry.cpp
+    display_resize_notifier.cpp
     display.cpp
     metal_presentation.mm
     scanout_framebuffer.cpp)

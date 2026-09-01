@@ -228,7 +228,8 @@ private:
                 options_.displayMode,
                 options_.nativeView,
                 options_.dotsPerInch,
-                options_.pointerMode);
+                options_.pointerMode,
+                options_.autoResizeGuest);
             server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);

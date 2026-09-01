@@ -35,13 +35,13 @@ find_tool()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 
-RUNTIME_4K="KernariumRuntime_6_18_4K"
-RUNTIME_16K="KernariumRuntime_6_18_16K"
+RUNTIME_4K="KRuntime_6_18_4K"
+RUNTIME_16K="KRuntime_6_18_16K"
 
 # The Android runtime carries an independently accepted ACK artifact. Rootfs
 # release updates do not rename this framework and kernel-only updates do not
 # invalidate an existing guest bundle.
-RUNTIME_ANDROID_16K="KernariumRuntimeAndroid_6_18_16K"
+RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
 
 SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
@@ -51,7 +51,8 @@ SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-andr
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64/Frameworks"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
-STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/KernariumGPTFDisk.xcframework"
+STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
+ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 
 # Packaging is an independent trust boundary: revalidate the complete source,
 # contract, provenance, binary-platform, and provider-negative policy before
@@ -61,6 +62,7 @@ STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/KernariumGPTFDisk.xcframework
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
 	--platform ios --verify-only
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
+"$ROOT_DIR/dependencies/build-ios-zstd.sh"
 
 for framework in \
 	"$SIMULATOR_RUNTIME_4K" \
@@ -73,7 +75,8 @@ for framework in \
 	"$DEVICE_GPU/EGL.framework" \
 	"$SIMULATOR_GPU/GLESv2.framework" \
 	"$DEVICE_GPU/GLESv2.framework" \
-	"$STORAGE"; do
+	"$STORAGE" \
+	"$ZSTD"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
 
@@ -114,7 +117,9 @@ create_xcframework EGL \
 create_xcframework GLESv2 \
 	"$SIMULATOR_GPU/GLESv2.framework" "$DEVICE_GPU/GLESv2.framework"
 "$CMAKE" -E copy_directory "$STORAGE" \
-	"$STAGE/KernariumGPTFDisk.xcframework"
+	"$STAGE/GPTFDisk.xcframework"
+"$CMAKE" -E copy_directory "$ZSTD" \
+	"$STAGE/LibZstd.xcframework"
 
 for platform in ios-arm64 ios-arm64-simulator; do
 	for framework in "$RUNTIME_4K" "$RUNTIME_16K" \
@@ -125,8 +130,10 @@ for platform in ios-arm64 ios-arm64-simulator; do
 done
 
 for platform in ios-arm64 ios-arm64-simulator; do
-	binary="$STAGE/KernariumGPTFDisk.xcframework/$platform/libKernariumGPTFDisk.a"
+	binary="$STAGE/GPTFDisk.xcframework/$platform/GPTFDisk.framework/GPTFDisk"
 	[ -f "$binary" ] || fail "missing packaged GPT fdisk core: $binary"
+	binary="$STAGE/LibZstd.xcframework/$platform/LibZstd.framework/LibZstd"
+	[ -f "$binary" ] || fail "missing packaged zstd decompressor: $binary"
 done
 
 if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then

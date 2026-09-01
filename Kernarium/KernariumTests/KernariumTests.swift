@@ -1,9 +1,32 @@
+import Darwin
 import Foundation
 import Testing
 import UIKit
 @testable import Kernarium
 
 struct KernariumTests {
+    private static let zstdFixture = Data([
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0xf4, 0x00,
+        0x00, 0xb0, 0x4b, 0x45, 0x52, 0x4e, 0x41, 0x52,
+        0x49, 0x55, 0x4d, 0x2d, 0x5a, 0x53, 0x54, 0x44,
+        0x2d, 0x42, 0x45, 0x47, 0x49, 0x4e, 0x0a, 0x00,
+        0x01, 0x00, 0xce, 0xff, 0x73, 0xd0, 0x04, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x02, 0x00, 0x10, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x75, 0x00, 0x00, 0x20, 0x45,
+        0x4e, 0x44, 0x0a, 0x02, 0x00, 0x18, 0x00, 0x80,
+        0x74, 0xf0, 0x01, 0x20, 0xe7, 0x79, 0xb9, 0xf0,
+    ])
+    private static let zstdPrefix = Data("KERNARIUM-ZSTD-BEGIN\n".utf8)
+    private static let zstdSuffix = Data("KERNARIUM-ZSTD-END\n".utf8)
+    private static let zstdOutputSize = 2 * 1024 * 1024 +
+        zstdPrefix.count + zstdSuffix.count
+
     private struct StubDiskCapacityManager: DiskCapacityManaging {
         func resizeAndroidImage(at _: URL, toGiB _: Int) throws -> Bool {
             true
@@ -52,13 +75,278 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchCoordinatesStayAlignedWhenTheDisplayViewResizes() throws {
+        let coordinates = GuestInputCoordinateSpace(
+            size: CGSize(width: 440, height: 860)
+        )
+        let portrait = try #require(coordinates.location(
+            CGPoint(x: 200, y: 400),
+            in: CGSize(width: 400, height: 800)
+        ))
+        let landscape = try #require(coordinates.location(
+            CGPoint(x: 500, y: 250),
+            in: CGSize(width: 1000, height: 500)
+        ))
+        #expect(portrait.x == 220)
+        #expect(portrait.y == 430)
+        #expect(landscape.x == portrait.x)
+        #expect(landscape.y == portrait.y)
+
+        let lowerEdge = try #require(coordinates.location(
+            CGPoint(x: 1000, y: 500),
+            in: CGSize(width: 1000, height: 500)
+        ))
+        #expect(lowerEdge.x == 439)
+        #expect(lowerEdge.y == 859)
+        #expect(coordinates.location(
+            CGPoint(x: CGFloat.nan, y: 1),
+            in: CGSize(width: 1000, height: 500)
+        ) == nil)
+
+        let oversized = GuestInputCoordinateSpace.boundedDisplaySize(
+            CGSize(width: 6016, height: 3384)
+        )
+        #expect(oversized.width == 4095)
+        #expect(oversized.height == 3384)
+    }
+
+    @Test
+    @MainActor
+    func touchCoordinatesAccountForAspectFitLetterboxing() throws {
+        let coordinates = GuestInputCoordinateSpace(
+            size: CGSize(width: 400, height: 800)
+        )
+        let bounds = CGSize(width: 500, height: 250)
+        let drawable = CGSize(width: 1000, height: 500)
+        let square = CGSize(width: 800, height: 800)
+        let viewport = try #require(GuestDisplayViewport.aspectFit(
+            contentSize: square,
+            in: drawable
+        ))
+        #expect(viewport == CGRect(x: 250, y: 0, width: 500, height: 500))
+
+        #expect(coordinates.location(
+            CGPoint(x: 100, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square
+        ) == nil)
+
+        let center = try #require(coordinates.location(
+            CGPoint(x: 250, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square
+        ))
+        #expect(center.x == 200)
+        #expect(center.y == 400)
+
+        let clampedBar = try #require(coordinates.location(
+            CGPoint(x: 100, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: square,
+            clampToContent: true
+        ))
+        #expect(clampedBar.x == 0)
+        #expect(clampedBar.y == 400)
+
+        let wideModeCenter = try #require(coordinates.location(
+            CGPoint(x: 250, y: 125),
+            in: bounds,
+            drawableSize: drawable,
+            contentSize: CGSize(width: 1600, height: 900)
+        ))
+        #expect(wideModeCenter.x == center.x)
+        #expect(wideModeCenter.y == center.y)
+        #expect(GuestDisplayViewport.aspectFit(
+            contentSize: .zero,
+            in: drawable
+        ) == nil)
+    }
+
+    @Test
+    @MainActor
+    func touchPathStartsAndEndsAtGuestDisplayEdges() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.move(
+            to: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 300, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: true),
+            GuestTouchEvent(x: 280, y: 400, pressed: true),
+        ])
+        #expect(path.cancel(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func coalescedTouchSegmentsCrossTheGuestDisplay() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.move(
+            to: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+        #expect(path.end(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: true),
+            GuestTouchEvent(x: 0, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func coalescedCurvedTouchPathPreservesViewportCrossings() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        let start = CGPoint(x: 50, y: 50)
+        let firstInterior = CGPoint(x: 200, y: 75)
+        let secondInterior = CGPoint(x: 300, y: 175)
+        let current = CGPoint(x: 50, y: 200)
+
+        var endpointOnlyPath = GuestTouchPath()
+        #expect(endpointOnlyPath.begin(
+            at: start,
+            geometry: geometry
+        ).isEmpty)
+        #expect(endpointOnlyPath.move(
+            to: current,
+            geometry: geometry
+        ).isEmpty)
+
+        let samples = GuestTouchSamples.ordered(
+            coalesced: [firstInterior, secondInterior, current],
+            current: current
+        )
+        #expect(samples == [firstInterior, secondInterior, current])
+        #expect(GuestTouchSamples.ordered(
+            coalesced: [firstInterior, secondInterior],
+            current: current
+        ) == [firstInterior, secondInterior, current])
+
+        var coalescedPath = GuestTouchPath()
+        #expect(coalescedPath.begin(
+            at: start,
+            geometry: geometry
+        ).isEmpty)
+        #expect(coalescedPath.move(
+            through: samples,
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 200, pressed: true),
+            GuestTouchEvent(x: 120, y: 240, pressed: true),
+            GuestTouchEvent(x: 280, y: 560, pressed: true),
+            GuestTouchEvent(x: 0, y: 616, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func endingTouchProcessesItsFinalViewportCrossing() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        #expect(path.end(
+            at: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.end(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 0, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
             isDirectory: true
         )
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
         defer { try? manager.removeItem(at: directory) }
 
         let first = try OverlayDisk.recreate(sizeGiB: 3, in: directory)
@@ -85,7 +373,10 @@ struct KernariumTests {
             UUID().uuidString,
             isDirectory: true
         )
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
         defer { try? manager.removeItem(at: directory) }
         let image = directory.appendingPathComponent("disk.img")
         let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
@@ -169,6 +460,7 @@ struct KernariumTests {
         #expect(configuration.rootfsFilename == "rootfs.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
+        #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
     }
 
@@ -185,6 +477,7 @@ struct KernariumTests {
             rootfsFilename: "phosh.erofs",
             kernelPageSize: .fourKiB,
             retinaMode: true,
+            autoResizeGuest: false,
             androidBootMode: .recovery
         ).save(defaults: defaults)
         #expect(
@@ -199,6 +492,7 @@ struct KernariumTests {
                 rootfsFilename: "phosh.erofs",
                 kernelPageSize: .fourKiB,
                 retinaMode: true,
+                autoResizeGuest: false,
                 androidBootMode: .recovery
             )
         )
@@ -220,6 +514,7 @@ struct KernariumTests {
         #expect(normalized.rootfsFilename == "rootfs.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
+        #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)
     }
 
@@ -252,6 +547,7 @@ struct KernariumTests {
         defaults.set(2048, forKey: "emulator.guestMemoryMiB")
         defaults.set(16, forKey: "emulator.overlaySizeGiB")
         defaults.set(true, forKey: "emulator.retinaMode")
+        defaults.set(false, forKey: "emulator.autoResizeGuest")
         defaults.set(
             AndroidBootMode.normal.rawValue,
             forKey: "emulator.androidBootMode"
@@ -265,6 +561,7 @@ struct KernariumTests {
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1536",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "8",
                 EmulatorConfiguration.retinaEnvironmentKey: "0",
+                EmulatorConfiguration.autoResizeGuestEnvironmentKey: "1",
                 AndroidBootMode.environmentKey: "recovery"
             ]
         )
@@ -272,6 +569,7 @@ struct KernariumTests {
         #expect(selected.guestMemoryMiB == 1536)
         #expect(selected.overlaySizeGiB == 8)
         #expect(selected.retinaMode == false)
+        #expect(selected.autoResizeGuest == true)
         #expect(selected.androidBootMode == .recovery)
 
         let invalid = EmulatorConfiguration.load(
@@ -282,6 +580,7 @@ struct KernariumTests {
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1500",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "0",
                 EmulatorConfiguration.retinaEnvironmentKey: "false",
+                EmulatorConfiguration.autoResizeGuestEnvironmentKey: "true",
                 AndroidBootMode.environmentKey: "invalid"
             ]
         )
@@ -289,6 +588,7 @@ struct KernariumTests {
         #expect(invalid.guestMemoryMiB == 2048)
         #expect(invalid.overlaySizeGiB == 16)
         #expect(invalid.retinaMode == true)
+        #expect(invalid.autoResizeGuest == false)
         #expect(invalid.androidBootMode == .normal)
     }
 
@@ -388,6 +688,101 @@ struct KernariumTests {
                 "pmos-sxmo.erofs",
                 "rootfs-gl-gles.ext4",
                 "rootfs.erofs",
+            ]
+        )
+    }
+
+    @Test
+    func zstdUtilReportsProgressAndCreatesSparseOutput() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("disk.img.zst")
+        let destination = directory.appendingPathComponent("disk.img")
+        try Self.zstdFixture.write(to: source)
+        var reports: [ZstdUtil.DecompressionProgress] = []
+
+        try ZstdUtil.decompress(
+            from: source,
+            to: destination,
+            sparse: true
+        ) { reports.append($0) }
+
+        let attributes = try manager.attributesOfItem(atPath: destination.path)
+        #expect((attributes[.size] as? NSNumber)?.intValue == Self.zstdOutputSize)
+        let handle = try FileHandle(forReadingFrom: destination)
+        var status = stat()
+        let statResult = Darwin.fstat(handle.fileDescriptor, &status)
+        #expect(statResult == 0)
+        #expect(
+            (reports.last?.sparseBytesSkipped ?? 0) >
+                UInt64(Self.zstdOutputSize - 256 * 1024)
+        )
+        #expect(Int(status.st_blocks) * 512 < Self.zstdOutputSize / 2)
+
+        let prefix = try handle.read(upToCount: Self.zstdPrefix.count)
+        try handle.seek(
+            toOffset: UInt64(Self.zstdOutputSize - Self.zstdSuffix.count)
+        )
+        let suffix = try handle.read(upToCount: Self.zstdSuffix.count)
+        try handle.close()
+        #expect(prefix == Self.zstdPrefix)
+        #expect(suffix == Self.zstdSuffix)
+        #expect(reports.first?.compressedBytesConsumed == 0)
+        #expect(
+            reports.last?.compressedBytesConsumed ==
+                UInt64(Self.zstdFixture.count)
+        )
+        #expect(
+            reports.last?.compressedBytesTotal ==
+                UInt64(Self.zstdFixture.count)
+        )
+        #expect(
+            reports.last?.decompressedBytesWritten ==
+                UInt64(Self.zstdOutputSize)
+        )
+        #expect(reports.last?.fractionCompleted == 1)
+    }
+
+    @Test
+    func zstdUtilLeavesExistingDestinationUntouchedOnFailure() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try manager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("invalid.zst")
+        let destination = directory.appendingPathComponent("existing.img")
+        let original = Data("existing destination".utf8)
+        try Data([0x00, 0x01, 0x02, 0x03]).write(to: source)
+        try original.write(to: destination)
+
+        var failed = false
+        do {
+            try ZstdUtil.decompress(from: source, to: destination)
+        } catch {
+            failed = true
+        }
+        #expect(failed)
+        #expect(try Data(contentsOf: destination) == original)
+        #expect(
+            try manager.contentsOfDirectory(atPath: directory.path).sorted() == [
+                "existing.img",
+                "invalid.zst",
             ]
         )
     }

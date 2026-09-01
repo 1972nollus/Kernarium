@@ -9,6 +9,7 @@ endif()
 if(NOT DEFINED PLATFORM)
     set(PLATFORM ios-simulator)
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 if(PLATFORM STREQUAL "ios-simulator")
     set(_platform_receipt ios-simulator-network-arm64.tsv)
     set(_mach_platform 7)
@@ -36,9 +37,12 @@ foreach(_file IN LISTS _required)
     endif()
 endforeach()
 
-set(_provenance_files
-    "manifest.tsv"
-    "${_platform_receipt}")
+uml_verify_dependency_manifest_product(
+    SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
+    INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
+    PRODUCT ios-network
+    LABEL "iOS network")
+set(_provenance_files "${_platform_receipt}")
 set(_series "patches/glib-ios/series.tsv")
 list(APPEND _provenance_files "${_series}")
 get_filename_component(_series_directory "${_series}" DIRECTORY)

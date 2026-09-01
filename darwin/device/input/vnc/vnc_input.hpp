@@ -49,6 +49,13 @@ private:
     bool active_ {};
 };
 
+/* Native windows use a stable absolute tablet range. Mapping through the
+ * current host extent keeps the same visual location after either side
+ * changes resolution. */
+[[nodiscard]] std::int32_t normalizedAbsoluteCoordinate(
+    double coordinate,
+    double extent) noexcept;
+
 [[nodiscard]] std::optional<std::uint16_t> keyCode(
     std::uint32_t keySymbol) noexcept;
 

@@ -19,6 +19,14 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME dependency-product-manifest-verifier
+    COMMAND ${CMAKE_COMMAND}
+        -DVERIFY_SCRIPT=${PROJECT_SOURCE_DIR}/dependencies/cmake/VerifyManifestProduct.cmake
+        -P ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_manifest_product_verifier.cmake
+    LABELS dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME dependency-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_prefix.sh
     LABELS dependency

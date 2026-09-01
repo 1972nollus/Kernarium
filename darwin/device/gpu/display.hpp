@@ -70,6 +70,35 @@ public:
 
     [[nodiscard]] virtual std::uint32_t width() const noexcept = 0;
     [[nodiscard]] virtual std::uint32_t height() const noexcept = 0;
+    /* Native AppKit/UIKit surfaces publish resize readiness from the UI
+     * thread. The transport drains and applies it on its GPU owner thread. */
+    [[nodiscard]] virtual int resizeEventDescriptor() const noexcept
+    {
+        return -1;
+    }
+    [[nodiscard]] virtual bool drainResizeEvent() { return false; }
+    /* SET_SCANOUT is the point at which a guest mode becomes active. Native
+     * displays keep that content geometry separate from their host-preferred
+     * mode so either side can resize without distorting the other. Returning
+     * false rejects the modeset when presentation storage cannot be prepared
+     * transactionally. */
+    [[nodiscard]] virtual bool guestScanoutChanged(
+        std::uint32_t,
+        std::uint32_t) noexcept
+    {
+        return true;
+    }
+    /* A new guest boot restores the configured host-to-guest policy after an
+     * independent guest modeset latched it off for the previous session. */
+    virtual void resetGuestSession() noexcept {}
+    /* Serialize a guest config notification against the beginning of an
+     * interactive host transition. A successful claim remains held until the
+     * transport calls releaseResizeNotification(). */
+    [[nodiscard]] virtual bool claimResizeNotification() noexcept
+    {
+        return true;
+    }
+    virtual void releaseResizeNotification() noexcept {}
     [[nodiscard]] virtual std::optional<std::uint16_t> vncPort() const noexcept
     {
         return std::nullopt;
@@ -136,6 +165,8 @@ protected:
     uml::input::vnc::VncInputSink inputSink = {},
     void* nativeView = nullptr,
     uml::input::vnc::PointerMode pointerMode =
-        uml::input::vnc::PointerMode::mouse);
+        uml::input::vnc::PointerMode::mouse,
+    std::uint32_t maximumDimension = protocol::maximumDisplayDimension,
+    bool autoResizeGuest = true);
 
 } // namespace uml::gpu

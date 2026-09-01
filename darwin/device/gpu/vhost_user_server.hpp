@@ -35,7 +35,8 @@ public:
         void* nativeView = nullptr,
         std::uint32_t dotsPerInch = 0,
         uml::input::vnc::PointerMode pointerMode =
-            uml::input::vnc::PointerMode::mouse);
+            uml::input::vnc::PointerMode::mouse,
+        bool autoResizeGuest = true);
     explicit VhostUserServer(
         std::unique_ptr<uml::virtio::VhostUserDevice> device);
     ~VhostUserServer();
@@ -111,6 +112,7 @@ private:
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
     void drainQueueCompletions();
+    void signalPendingConfigChange();
     void completeRequest(
         const PendingRequest& request,
         std::span<const std::uint8_t> response);

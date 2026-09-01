@@ -6,24 +6,29 @@ endif()
 if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required for storage verification")
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 
-set(_xcframework "${PREFIX}/KernariumGPTFDisk.xcframework")
+set(_xcframework "${PREFIX}/GPTFDisk.xcframework")
 set(_required
     "${_xcframework}/Info.plist"
-    "${_xcframework}/ios-arm64/libKernariumGPTFDisk.a"
-    "${_xcframework}/ios-arm64/Headers/KernariumGPTFDisk.h"
-    "${_xcframework}/ios-arm64/Headers/module.modulemap"
-    "${_xcframework}/ios-arm64-simulator/libKernariumGPTFDisk.a"
-    "${_xcframework}/ios-arm64-simulator/Headers/KernariumGPTFDisk.h"
-    "${_xcframework}/ios-arm64-simulator/Headers/module.modulemap")
+    "${_xcframework}/ios-arm64/GPTFDisk.framework/GPTFDisk"
+    "${_xcframework}/ios-arm64/GPTFDisk.framework/Headers/GPTFDisk.h"
+    "${_xcframework}/ios-arm64/GPTFDisk.framework/Modules/module.modulemap"
+    "${_xcframework}/ios-arm64-simulator/GPTFDisk.framework/GPTFDisk"
+    "${_xcframework}/ios-arm64-simulator/GPTFDisk.framework/Headers/GPTFDisk.h"
+    "${_xcframework}/ios-arm64-simulator/GPTFDisk.framework/Modules/module.modulemap")
 foreach(_file IN LISTS _required)
     if(NOT EXISTS "${_file}" OR IS_SYMLINK "${_file}")
         message(FATAL_ERROR "Invalid iOS storage dependency: ${_file}")
     endif()
 endforeach()
 
+uml_verify_dependency_manifest_product(
+    SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
+    INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
+    PRODUCT ios-storage
+    LABEL "iOS storage")
 set(_provenance_files
-    "manifest.tsv"
     "ios-device-storage-arm64.tsv"
     "ios-simulator-storage-arm64.tsv"
     "patches/gptfdisk/series.tsv")
@@ -61,7 +66,7 @@ foreach(_relative IN LISTS _provenance_files)
 endforeach()
 
 foreach(_slice IN ITEMS ios-arm64 ios-arm64-simulator)
-    set(_archive "${_xcframework}/${_slice}/libKernariumGPTFDisk.a")
+    set(_archive "${_xcframework}/${_slice}/GPTFDisk.framework/GPTFDisk")
     execute_process(
         COMMAND lipo -archs "${_archive}"
         RESULT_VARIABLE _lipo_status

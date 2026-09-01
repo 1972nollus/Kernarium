@@ -3,6 +3,7 @@
 # changes exist only as the ordered git-format-patch series in the final field.
 name	version	products	repository	commit	source_paths	patch_series
 zlib	1.3.2	macos	https://github.com/madler/zlib.git	da607da739fa6047df13e66a2af6b8bec7c2a498	.	-
+zstd	1.5.7	ios-compression	https://github.com/facebook/zstd.git	f8745da6ff1ad1e7bab384bd1f9d742439278e99	.	-
 pcre2	10.47	macos,ios-network	https://github.com/PCRE2Project/pcre2.git	f454e231fe5006dd7ff8f4693fd2b8eb94333429	.	-
 libffi	3.7.1	macos,ios-network	https://github.com/libffi/libffi.git	5c1c43091ed611fdea774374355eb938c73a9157	.	-
 gnulib	2024-12-12	macos	https://git.savannah.gnu.org/git/gnulib.git	2e8033f55cbe31f49db6e78f2b9d15f2677bde90	.	-

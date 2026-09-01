@@ -17,6 +17,38 @@ namespace {
 
 constexpr std::uint8_t opaqueAlpha = 0xffU;
 
+std::uint64_t displayDimensions(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    return static_cast<std::uint64_t>(width) << 32U | height;
+}
+
+std::uint32_t displayWidth(std::uint64_t dimensions) noexcept
+{
+    return static_cast<std::uint32_t>(dimensions >> 32U);
+}
+
+std::uint32_t displayHeight(std::uint64_t dimensions) noexcept
+{
+    return static_cast<std::uint32_t>(dimensions);
+}
+
+std::size_t framebufferSize(std::uint32_t width, std::uint32_t height)
+{
+    if (width == 0 || height == 0 ||
+        width > static_cast<std::uint32_t>(
+                    std::numeric_limits<int>::max()) ||
+        height > static_cast<std::uint32_t>(
+                     std::numeric_limits<int>::max()) ||
+        width > std::numeric_limits<std::size_t>::max() / height /
+            protocol::gpuBytesPerPixel) {
+        throw std::invalid_argument("invalid Virtio-GPU display dimensions");
+    }
+    return static_cast<std::size_t>(width) * height *
+        protocol::gpuBytesPerPixel;
+}
+
 std::array<std::uint8_t, 4> channelPermutation(protocol::GpuFormat format)
 {
     switch (format) {
@@ -83,36 +115,24 @@ void copyRectangleWithVImage(
 ScanoutFramebuffer::ScanoutFramebuffer(
     std::uint32_t width,
     std::uint32_t height)
-    : width_(width)
-    , height_(height)
+    : dimensions_(displayDimensions(width, height))
+    , pixels_(framebufferSize(width, height))
 {
-    if (width == 0 || height == 0 ||
-        width > static_cast<std::uint32_t>(
-                    std::numeric_limits<int>::max()) ||
-        height > static_cast<std::uint32_t>(
-                     std::numeric_limits<int>::max()) ||
-        width > std::numeric_limits<std::size_t>::max() / height /
-            protocol::gpuBytesPerPixel) {
-        throw std::invalid_argument("invalid Virtio-GPU display dimensions");
-    }
-    pixels_.resize(
-        static_cast<std::size_t>(width) * height *
-        protocol::gpuBytesPerPixel);
 }
 
 std::uint32_t ScanoutFramebuffer::width() const noexcept
 {
-    return width_;
+    return displayWidth(dimensions_.load(std::memory_order_acquire));
 }
 
 std::uint32_t ScanoutFramebuffer::height() const noexcept
 {
-    return height_;
+    return displayHeight(dimensions_.load(std::memory_order_acquire));
 }
 
 std::size_t ScanoutFramebuffer::rowBytes() const noexcept
 {
-    return static_cast<std::size_t>(width_) * protocol::gpuBytesPerPixel;
+    return static_cast<std::size_t>(width()) * protocol::gpuBytesPerPixel;
 }
 
 std::span<const std::uint8_t> ScanoutFramebuffer::pixels() const noexcept
@@ -133,6 +153,19 @@ void ScanoutFramebuffer::lock() noexcept
 void ScanoutFramebuffer::unlock() noexcept
 {
     mutex_.unlock();
+}
+
+void ScanoutFramebuffer::resize(
+    std::uint32_t width,
+    std::uint32_t height)
+{
+    const auto replacementDimensions = displayDimensions(width, height);
+    if (dimensions_.load(std::memory_order_acquire) == replacementDimensions)
+        return;
+    std::vector<std::uint8_t> replacement(framebufferSize(width, height));
+    std::lock_guard lock(mutex_);
+    pixels_ = std::move(replacement);
+    dimensions_.store(replacementDimensions, std::memory_order_release);
 }
 
 void ScanoutFramebuffer::clear() noexcept
@@ -159,6 +192,10 @@ ScanoutRectangle ScanoutFramebuffer::update(
     std::uint32_t width,
     std::uint32_t height)
 {
+    const auto framebufferDimensions =
+        dimensions_.load(std::memory_order_acquire);
+    const auto destinationWidth = displayWidth(framebufferDimensions);
+    const auto destinationHeight = displayHeight(framebufferDimensions);
     const auto minimumSourceRowBytes =
         static_cast<std::size_t>(sourceWidth) *
         protocol::gpuBytesPerPixel;
@@ -181,13 +218,14 @@ ScanoutRectangle ScanoutFramebuffer::update(
             throw std::invalid_argument("short Virtio-GPU resource");
     }
     if (sourceX >= sourceWidth || sourceY >= sourceHeight ||
-        destinationX >= width_ || destinationY >= height_) {
+        destinationX >= destinationWidth ||
+        destinationY >= destinationHeight) {
         return {};
     }
     const auto rectangleWidth = std::min(
-        {width, sourceWidth - sourceX, width_ - destinationX});
+        {width, sourceWidth - sourceX, destinationWidth - destinationX});
     const auto rectangleHeight = std::min(
-        {height, sourceHeight - sourceY, height_ - destinationY});
+        {height, sourceHeight - sourceY, destinationHeight - destinationY});
     if (rectangleWidth == 0 || rectangleHeight == 0)
         return {};
 
@@ -200,10 +238,14 @@ ScanoutRectangle ScanoutFramebuffer::update(
     if (sourceFormat == protocol::GpuFormat::b8g8r8a8Unorm ||
         sourceFormat == protocol::GpuFormat::b8g8r8x8Unorm) {
         std::lock_guard lock(mutex_);
+        if (dimensions_.load(std::memory_order_acquire) !=
+            framebufferDimensions) {
+            return {};
+        }
         for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
             const auto destinationOffset =
-                (static_cast<std::size_t>(destinationY + row) * width_ +
-                    destinationX) *
+                (static_cast<std::size_t>(destinationY + row) *
+                    destinationWidth + destinationX) *
                 protocol::gpuBytesPerPixel;
             std::memcpy(
                 pixels_.data() + destinationOffset,
@@ -234,9 +276,11 @@ ScanoutRectangle ScanoutFramebuffer::update(
         sourceFormat);
 
     std::lock_guard lock(mutex_);
+    if (dimensions_.load(std::memory_order_acquire) != framebufferDimensions)
+        return {};
     for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
         const auto destinationOffset =
-            (static_cast<std::size_t>(destinationY + row) * width_ +
+            (static_cast<std::size_t>(destinationY + row) * destinationWidth +
                 destinationX) *
             protocol::gpuBytesPerPixel;
         std::memcpy(
@@ -266,12 +310,15 @@ void ScanoutFramebuffer::fillSelfTestPatternLocked()
     };
     constexpr std::uint8_t testRed = 0x5aU;
 
-    for (std::uint32_t y = 0; y < height_; ++y) {
+    const auto dimensions = dimensions_.load(std::memory_order_acquire);
+    const auto currentWidth = displayWidth(dimensions);
+    const auto currentHeight = displayHeight(dimensions);
+    for (std::uint32_t y = 0; y < currentHeight; ++y) {
         std::uint32_t x = 0;
         const uint8x16_t lane = vld1q_u8(pixelLanes.data());
-        for (; width_ - x >= 16U; x += 16U) {
+        for (; currentWidth - x >= 16U; x += 16U) {
             const auto offset =
-                (static_cast<std::size_t>(y) * width_ + x) * 4U;
+                (static_cast<std::size_t>(y) * currentWidth + x) * 4U;
             uint8x16x4_t pixels {};
             pixels.val[0] =
                 vaddq_u8(lane, vdupq_n_u8(static_cast<std::uint8_t>(x)));
@@ -281,9 +328,9 @@ void ScanoutFramebuffer::fillSelfTestPatternLocked()
             pixels.val[3] = vdupq_n_u8(opaqueAlpha);
             vst4q_u8(pixels_.data() + offset, pixels);
         }
-        for (; x < width_; ++x) {
+        for (; x < currentWidth; ++x) {
             const auto offset =
-                (static_cast<std::size_t>(y) * width_ + x) * 4U;
+                (static_cast<std::size_t>(y) * currentWidth + x) * 4U;
             pixels_[offset] = static_cast<std::uint8_t>(x & 0xffU);
             pixels_[offset + 1U] = static_cast<std::uint8_t>(y & 0xffU);
             pixels_[offset + 2U] = testRed;

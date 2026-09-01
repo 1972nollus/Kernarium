@@ -133,6 +133,11 @@ grows a filesystem after observing that its containing partition is larger.
 This keeps the same host-capacity workflow available to later Linux image
 formats without putting disk policy back into a kernel runtime.
 
+Compressed rootfs delivery is also an app boundary. `ZstdUtil` streams a zstd
+source into an adjacent temporary file, optionally represents zero regions as
+sparse holes, and publishes the destination only after a complete decode.
+Runtime frameworks receive only the resulting ordinary disk image.
+
 ## Devices and graphics
 
 The vhost-user transport owns connection, queue framing, and deferred used-ring

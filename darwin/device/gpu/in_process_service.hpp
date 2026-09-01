@@ -20,6 +20,7 @@ struct InProcessGpuOptions {
     uml::input::vnc::PointerMode pointerMode {
         uml::input::vnc::PointerMode::mouse};
     void* nativeView {};
+    bool autoResizeGuest {true};
 };
 
 class InProcessGpuService {

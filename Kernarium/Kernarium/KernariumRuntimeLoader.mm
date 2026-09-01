@@ -95,19 +95,35 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 }
 
-/* The flavour leads the framework name so that matching one never matches the
- * other: a trailing marker would leave the Android framework sharing the Linux
- * page-profile suffix. */
+/* The flavour leads the framework name. Linux additionally requires a numeric
+ * release after its prefix because the ACK name shares the KRuntime_ stem. */
 [[nodiscard]] NSString* flavorPrefix(uint32_t guestFlavor)
 {
     switch (guestFlavor) {
     case KERNARIUM_RUNTIME_GUEST_LINUX:
-        return @"KernariumRuntime_";
+        return @"KRuntime_";
     case KERNARIUM_RUNTIME_GUEST_ANDROID:
-        return @"KernariumRuntimeAndroid_";
+        return @"KRuntime_ACK_";
     default:
         return nil;
     }
+}
+
+[[nodiscard]] bool matchesFlavor(
+    NSString* name,
+    NSString* prefix,
+    uint32_t guestFlavor)
+{
+    if (![name hasPrefix:prefix])
+        return false;
+    if (guestFlavor != KERNARIUM_RUNTIME_GUEST_LINUX)
+        return true;
+
+    NSUInteger releaseIndex = prefix.length;
+    if (name.length <= releaseIndex)
+        return false;
+    unichar releaseFirst = [name characterAtIndex:releaseIndex];
+    return releaseFirst >= '0' && releaseFirst <= '9';
 }
 
 [[nodiscard]] NSURL* findRuntimeFramework(
@@ -138,7 +154,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     NSMutableArray<NSURL*>* matches = [NSMutableArray array];
     for (NSURL* candidate in contents) {
         NSString* name = candidate.lastPathComponent;
-        if ([name hasPrefix:prefix] && [name hasSuffix:suffix])
+        if (matchesFlavor(name, prefix, guestFlavor) &&
+            [name hasSuffix:suffix])
             [matches addObject:candidate];
     }
     [matches sortUsingComparator:^NSComparisonResult(NSURL* first, NSURL* second) {
@@ -204,12 +221,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v7");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v8");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v6: %s\n",
+            "Kernarium: selected runtime lacks API v8: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;

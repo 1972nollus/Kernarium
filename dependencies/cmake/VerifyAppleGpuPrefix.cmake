@@ -9,6 +9,7 @@ endif()
 if(NOT DEFINED PLATFORM)
     set(PLATFORM macos)
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 
 if(PLATFORM STREQUAL "macos")
     set(_platform_contract macos-gpu-arm64.tsv)
@@ -125,6 +126,11 @@ _contract_expect(renderer_features
 _contract_expect(components utm-webkit,utm-libepoxy,utm-virglrenderer)
 _contract_expect(source_manifest dependencies/manifest.tsv)
 
+uml_verify_dependency_manifest_product(
+    SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
+    INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
+    PRODUCT apple-gpu
+    LABEL "Apple GPU")
 set(_provenance_files manifest.tsv "${_platform_contract}")
 foreach(_series IN ITEMS
     "patches/utm-webkit/series.tsv"
@@ -147,14 +153,17 @@ foreach(_series IN ITEMS
 endforeach()
 
 foreach(_relative IN LISTS _provenance_files)
+    set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
+    if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
+        message(FATAL_ERROR "Missing Apple GPU provenance: ${_installed}")
+    endif()
+    if(_relative STREQUAL "manifest.tsv")
+        continue()
+    endif()
     if(_relative STREQUAL "${_platform_contract}")
         set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
     else()
         set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
-    endif()
-    set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
-    if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
-        message(FATAL_ERROR "Missing Apple GPU provenance: ${_installed}")
     endif()
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E compare_files "${_source}" "${_installed}"

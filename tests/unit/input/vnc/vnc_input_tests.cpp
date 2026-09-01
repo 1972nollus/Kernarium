@@ -58,6 +58,23 @@ void directTouchContactSuppressesHoverAndTracksAContact()
         "focus loss did not release an active touch contact");
 }
 
+void nativeCoordinatesRemainNormalizedWhenTheViewResizes()
+{
+    using uml::input::vnc::absoluteMaximum;
+    using uml::input::vnc::normalizedAbsoluteCoordinate;
+
+    require(normalizedAbsoluteCoordinate(0.0, 640.0) == 0,
+        "the native pointer origin did not map to the absolute origin");
+    require(normalizedAbsoluteCoordinate(640.0, 640.0) == absoluteMaximum,
+        "the native pointer edge did not map to the absolute edge");
+    require(normalizedAbsoluteCoordinate(320.0, 640.0) ==
+            normalizedAbsoluteCoordinate(700.0, 1400.0),
+        "resizing the native view changed the normalized pointer location");
+    require(normalizedAbsoluteCoordinate(-10.0, 640.0) == 0 &&
+            normalizedAbsoluteCoordinate(700.0, 640.0) == absoluteMaximum,
+        "native pointer coordinates were not clamped to the display");
+}
+
 void inputDeliveryContainsSinkFailuresAndCanRetry()
 {
     const std::array events{
@@ -99,6 +116,7 @@ int main()
         keySymbolsMapToStableGuestCodes();
         primaryPointerContactUsesTheDirectTouchCode();
         directTouchContactSuppressesHoverAndTracksAContact();
+        nativeCoordinatesRemainNormalizedWhenTheViewResizes();
         inputDeliveryContainsSinkFailuresAndCanRetry();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
