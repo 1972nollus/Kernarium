@@ -65,6 +65,17 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-ubd-discard-policy
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_ubd_discard_policy.py
+        --mainline-patch
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
+        --android-patch
+            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series/0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
+    LABELS kernel;android;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME apple-shared-kernel-image-policy
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py

@@ -25,4 +25,4 @@ order	filename	stable_patch_id	sha256	subject
 21	0021-UML-DARWIN-LOCAL-um-receive-Darwin-user-network-fram.patch	9a580a44d3a9cd5a331a804063d33a704cf47478	0444534cb9153298690eeb422b230818b267766855065e92752870635759ef4e	UML-DARWIN-LOCAL: um: receive Darwin user network frames with NAPI
 22	0022-UML-DARWIN-LOCAL-reclaim-anonymous-Darwin-physical-R.patch	21da330d18f959548dd79e8f36ee798174e43bc4	f083a868e59e92b98432924aa1f34fb6505195246d67eb5ef450848655c4fcf7	UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
 23	0023-UML-DARWIN-LOCAL-suspend-guests-through-mconsole.patch	550757ee879992ed628f2fce3fb04af383731eb3	e5a2b0aed0767285f47318aa64c41edf040b750465f314e7302804880c50a26f	UML-DARWIN-LOCAL: suspend guests through mconsole
-24	0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch	773b88f6d04552a976bbc1a0f6499eff6795789c	6663a90811e66437d236fc41a8149071964bab43bc80daf0148b790512526914	UML-DARWIN-LOCAL: um: batch UBD discard ranges
+24	0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch	7a2df1956383e413f1e7aa12bdbdd7bead05428b	e279ab8269cc620e1ec2421c25ebb8b65158dd1937e9f2b975329cd193e3de87	UML-DARWIN-LOCAL: um: batch UBD discard ranges

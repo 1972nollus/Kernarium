@@ -38,4 +38,4 @@ order	filename	stable_patch_id	sha256	subject
 34	0034-UML-DARWIN-LOCAL-use-anonymous-memory-for-Android-ph.patch	7f39f6e5a1000d34d24d1ffcf397dfee2cbf1a9d	ac18e04ec445aa210e1ce13f6f1b08984222683232695886d4a926a6e70b8b93	UML-DARWIN-LOCAL: use anonymous memory for Android physical RAM
 35	0035-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch	a66e76d53cf00357a8b64b8f9cee2b1c0279ee55	bff32e2bf550afaccb62e0846d19dd7e63bb4728384d52603078a18eb99a615e	UML-DARWIN-LOCAL: power: add Kernarium host battery
 36	0036-UML-DARWIN-LOCAL-suspend-guests-through-mconsole.patch	550757ee879992ed628f2fce3fb04af383731eb3	6ed93d1e46015c09bd97cb23a3843551d26b2f7026c95ba4411a1471cd4bfc70	UML-DARWIN-LOCAL: suspend guests through mconsole
-37	0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch	773b88f6d04552a976bbc1a0f6499eff6795789c	691df3bf8164d83fab186e0530acc6e28ef651d18c47ee0be9d8a3df56b40b68	UML-DARWIN-LOCAL: um: batch UBD discard ranges
+37	0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch	7a2df1956383e413f1e7aa12bdbdd7bead05428b	557979c6a727a4281f8708be146441c4047c96c0c0cfb001552c4a23ef710bbe	UML-DARWIN-LOCAL: um: batch UBD discard ranges
