@@ -41,21 +41,28 @@ on macOS and the signed 16 KiB iOS path. These results do not imply GLES 3.1,
 GLES 3.2, desktop OpenGL above the exposed Virgl profile, or Vulkan support.
 
 Virgl exposes hardware bitstream decoding for H.264 baseline,
-constrained-baseline, main, and high profiles and for HEVC Main and Main10, up
-to 4096x2304. Progressive 8-bit 4:2:0 output uses NV12 or IYUV guest buffers;
-10-bit output uses P010. The Apple host reconstructs H.264 or HEVC parameter
-sets from the standard Virgl picture descriptor and requires the corresponding
-VideoToolbox hardware decoder. Guests use the upstream Mesa VA-API path
-without a Mesa fork; applications, including Chromium builds, must enable
-Linux VA-API decoding themselves.
+constrained-baseline, main, and high profiles up to 4096x2304; HEVC Main and
+Main10 up to 8192x4320 and level 6.2; and JPEG Baseline/MJPEG up to 4096x2304.
+The supported inputs are progressive 4:2:0. Eight-bit output uses NV12 or IYUV
+guest buffers, while 10-bit HEVC output uses P010. The Apple host reconstructs
+H.264 or HEVC parameter sets from the standard Virgl picture descriptor and
+passes complete JPEG pictures to the corresponding VideoToolbox hardware
+decoder. Guests use unmodified upstream Mesa and libva through the standard
+VA-API path; applications, including Chromium builds, must enable Linux VA-API
+decoding themselves.
 
-H.264 High10 is advertised only when a profile-specific VideoToolbox hardware
-probe succeeds. The connected A15 iPad on iPadOS 18.5 passes that probe and
-produces 10-bit bi-planar output. Current macOS VideoToolbox rejects a
-representative High10 frame, so macOS does not advertise the profile. Upstream
-Chromium maps HEVC Main and Main10 to its VA-API decoder but does not map H.264
-High10; the latter remains available to upstream VA-API clients such as
-FFmpeg. Encoding, interlaced H.264, and other codec profiles are not
+H.264 High10 is advertised only on Apple targets where a profile-specific
+VideoToolbox hardware probe succeeds. The connected A15 iPad on iPadOS 18.5
+passes that probe and produces 10-bit bi-planar output. A session-only probe on
+macOS is insufficient: native decoding rejects a representative High10 frame,
+so macOS does not advertise the profile. Upstream Chromium maps HEVC Main and
+Main10 to its VA-API decoder but does not map H.264 High10; the latter remains
+available on qualifying hosts to upstream VA-API clients such as FFmpeg.
+
+The stock Debian libva/Mesa interface does not expose the required H.264 or
+HEVC 4:2:2 and 4:4:4 profile and surface combinations, so the host does not
+advertise them. This boundary deliberately avoids guest-library forks or
+private profiles. Encoding, interlaced H.264, and other codec profiles are not
 advertised.
 
 Supported NV12 and P010 surfaces keep VideoToolbox's IOSurface-backed

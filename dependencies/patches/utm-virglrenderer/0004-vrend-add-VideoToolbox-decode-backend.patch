@@ -1,4 +1,4 @@
-From 98f5e2ef1a14f006dd0780ea7b2885f2fee54ce6 Mon Sep 17 00:00:00 2001
+From ca4f5df3b4b10b435208ec17502a2e11f5decded Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
 Subject: [PATCH 4/4] vrend: add VideoToolbox decode backend
@@ -7,17 +7,17 @@ Subject: [PATCH 4/4] vrend: add VideoToolbox decode backend
  meson.build                          |   19 +-
  src/meson.build                      |   24 +-
  src/vrend/vrend_renderer.c           |   27 +-
- src/vrend/vrend_video_h264.c         |  560 ++++++++++
+ src/vrend/vrend_video_h264.c         |  560 +++++++++
  src/vrend/vrend_video_h264.h         |   66 ++
- src/vrend/vrend_video_h265.c         |  623 +++++++++++
- src/vrend/vrend_video_h265.h         |   62 ++
- src/vrend/vrend_video_videotoolbox.m | 1524 ++++++++++++++++++++++++++
+ src/vrend/vrend_video_h265.c         |  623 ++++++++++
+ src/vrend/vrend_video_h265.h         |   62 +
+ src/vrend/vrend_video_videotoolbox.m | 1597 ++++++++++++++++++++++++++
  src/vrend/vrend_winsys_egl.c         |    6 +
  src/vrend/vrend_winsys_egl.h         |    1 +
  tests/meson.build                    |   24 +
  tests/test_vrend_video_h264.c        |  171 +++
  tests/test_vrend_video_h265.c        |  131 +++
- 13 files changed, 3227 insertions(+), 11 deletions(-)
+ 13 files changed, 3300 insertions(+), 11 deletions(-)
  create mode 100644 src/vrend/vrend_video_h264.c
  create mode 100644 src/vrend/vrend_video_h264.h
  create mode 100644 src/vrend/vrend_video_h265.c
@@ -1498,10 +1498,10 @@ index 0000000..6cf584d
 +#endif /* VREND_VIDEO_H265_H */
 diff --git a/src/vrend/vrend_video_videotoolbox.m b/src/vrend/vrend_video_videotoolbox.m
 new file mode 100644
-index 0000000..784678a
+index 0000000..8a9975f
 --- /dev/null
 +++ b/src/vrend/vrend_video_videotoolbox.m
-@@ -0,0 +1,1524 @@
+@@ -0,0 +1,1597 @@
 +/**************************************************************************
 + *
 + * Copyright (C) 2026 Linux-UM Darwin contributors
@@ -1548,8 +1548,12 @@ index 0000000..784678a
 +#include "vrend_video_h265.h"
 +#include "vrend_winsys.h"
 +
-+#define VREND_VT_MAX_WIDTH 4096
-+#define VREND_VT_MAX_HEIGHT 2304
++#define VREND_VT_H264_MAX_WIDTH 4096
++#define VREND_VT_H264_MAX_HEIGHT 2304
++#define VREND_VT_HEVC_MAX_WIDTH 8192
++#define VREND_VT_HEVC_MAX_HEIGHT 4320
++#define VREND_VT_JPEG_MAX_WIDTH 4096
++#define VREND_VT_JPEG_MAX_HEIGHT 2304
 +#define VREND_VT_METAL_PLANE_COUNT 2
 +#define VREND_VT_METAL_CACHE_FLUSH_INTERVAL 64
 +
@@ -1618,6 +1622,7 @@ index 0000000..784678a
 +static bool h264_initialized;
 +static bool h264_high10_initialized;
 +static bool hevc_initialized;
++static bool jpeg_initialized;
 +
 +static void h264_high10_probe_output(void *decompression_output_refcon,
 +                                     void *source_frame_refcon,
@@ -1807,6 +1812,11 @@ index 0000000..784678a
 +          profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10;
 +}
 +
++static bool is_jpeg_profile(uint32_t profile)
++{
++   return profile == PIPE_VIDEO_PROFILE_JPEG_BASELINE;
++}
++
 +static bool is_10_bit_profile(uint32_t profile)
 +{
 +   return profile == PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10 ||
@@ -1818,12 +1828,35 @@ index 0000000..784678a
 +   if (profile == PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10)
 +      return h264_high10_initialized;
 +   return (h264_initialized && is_h264_profile(profile)) ||
-+          (hevc_initialized && is_hevc_profile(profile));
++          (hevc_initialized && is_hevc_profile(profile)) ||
++          (jpeg_initialized && is_jpeg_profile(profile));
 +}
 +
 +static const char *codec_family_name(uint32_t profile)
 +{
-+   return is_hevc_profile(profile) ? "HEVC" : "H.264";
++   if (is_hevc_profile(profile))
++      return "HEVC";
++   if (is_jpeg_profile(profile))
++      return "JPEG";
++   return "H.264";
++}
++
++static uint32_t max_width_for_profile(uint32_t profile)
++{
++   if (is_hevc_profile(profile))
++      return VREND_VT_HEVC_MAX_WIDTH;
++   if (is_jpeg_profile(profile))
++      return VREND_VT_JPEG_MAX_WIDTH;
++   return VREND_VT_H264_MAX_WIDTH;
++}
++
++static uint32_t max_height_for_profile(uint32_t profile)
++{
++   if (is_hevc_profile(profile))
++      return VREND_VT_HEVC_MAX_HEIGHT;
++   if (is_jpeg_profile(profile))
++      return VREND_VT_JPEG_MAX_HEIGHT;
++   return VREND_VT_H264_MAX_HEIGHT;
 +}
 +
 +static void destroy_session(struct vrend_video_codec *codec)
@@ -1860,7 +1893,9 @@ index 0000000..784678a
 +   h264_high10_initialized = h264_initialized && !TARGET_OS_OSX &&
 +                              probe_h264_high10_hardware();
 +   hevc_initialized = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
-+   video_initialized = h264_initialized || hevc_initialized;
++   jpeg_initialized = VTIsHardwareDecodeSupported(kCMVideoCodecType_JPEG);
++   video_initialized = h264_initialized || hevc_initialized ||
++                       jpeg_initialized;
 +   return video_initialized ? 0 : -1;
 +}
 +
@@ -1870,6 +1905,7 @@ index 0000000..784678a
 +   h264_initialized = false;
 +   h264_high10_initialized = false;
 +   hevc_initialized = false;
++   jpeg_initialized = false;
 +}
 +
 +static void fill_video_cap(struct virgl_video_caps *cap, uint32_t profile)
@@ -1877,13 +1913,14 @@ index 0000000..784678a
 +   memset(cap, 0, sizeof(*cap));
 +   cap->profile = profile;
 +   cap->entrypoint = PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
-+   cap->max_level = is_hevc_profile(profile) ? 153 : 51;
-+   cap->max_width = VREND_VT_MAX_WIDTH;
-+   cap->max_height = VREND_VT_MAX_HEIGHT;
++   cap->max_level = is_hevc_profile(profile) ? 186 :
++                    is_jpeg_profile(profile) ? 0 : 51;
++   cap->max_width = max_width_for_profile(profile);
++   cap->max_height = max_height_for_profile(profile);
 +   cap->prefered_format = is_10_bit_profile(profile) ? VIRGL_FORMAT_P010 :
 +                                                       VIRGL_FORMAT_NV12;
 +   cap->max_macroblocks =
-+      VREND_VT_MAX_WIDTH * VREND_VT_MAX_HEIGHT / (16 * 16);
++      cap->max_width * cap->max_height / (16 * 16);
 +   cap->npot_texture = 1;
 +   cap->supports_progressive = 1;
 +}
@@ -1898,6 +1935,7 @@ index 0000000..784678a
 +      PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10,
 +      PIPE_VIDEO_PROFILE_HEVC_MAIN,
 +      PIPE_VIDEO_PROFILE_HEVC_MAIN_10,
++      PIPE_VIDEO_PROFILE_JPEG_BASELINE,
 +   };
 +
 +   if (!caps)
@@ -2021,7 +2059,8 @@ index 0000000..784678a
 +   if (!is_supported_profile(profile) ||
 +       entrypoint != PIPE_VIDEO_ENTRYPOINT_BITSTREAM ||
 +       chroma_format != PIPE_VIDEO_CHROMA_FORMAT_420 || !width || !height ||
-+       width > VREND_VT_MAX_WIDTH || height > VREND_VT_MAX_HEIGHT)
++       width > max_width_for_profile(profile) ||
++       height > max_height_for_profile(profile))
 +      return -1;
 +
 +   codec = calloc(1, sizeof(*codec));
@@ -2226,6 +2265,8 @@ index 0000000..784678a
 +static bool parameter_sets_match(struct vrend_video_codec *codec,
 +                                 const void *sets)
 +{
++   if (is_jpeg_profile(codec->profile))
++      return codec->session != NULL;
 +   if (is_hevc_profile(codec->profile)) {
 +      return h265_parameter_sets_match(&codec->parameter_sets.h265,
 +                                       sets);
@@ -2236,6 +2277,8 @@ index 0000000..784678a
 +static void store_parameter_sets(struct vrend_video_codec *codec,
 +                                 const void *sets)
 +{
++   if (is_jpeg_profile(codec->profile))
++      return;
 +   if (is_hevc_profile(codec->profile))
 +      codec->parameter_sets.h265 =
 +         *(const struct vrend_h265_parameter_sets *)sets;
@@ -2249,6 +2292,11 @@ index 0000000..784678a
 +   const void *sets,
 +   CMVideoFormatDescriptionRef *format)
 +{
++   if (is_jpeg_profile(codec->profile)) {
++      return CMVideoFormatDescriptionCreate(
++         kCFAllocatorDefault, kCMVideoCodecType_JPEG,
++         (int32_t)codec->width, (int32_t)codec->height, NULL, format);
++   }
 +   if (is_hevc_profile(codec->profile)) {
 +      const struct vrend_h265_parameter_sets *h265_sets = sets;
 +      const uint8_t *pointers[] = {
@@ -2317,12 +2365,15 @@ index 0000000..784678a
 +         kCFAllocatorDefault, &using_hardware);
 +   }
 +#endif
-+   if (status != noErr || using_hardware != kCFBooleanTrue) {
++   if ((status != noErr || using_hardware != kCFBooleanTrue) &&
++       !(is_jpeg_profile(codec->profile) &&
++         status == kVTPropertyNotSupportedErr)) {
 +      if (using_hardware)
 +         CFRelease(using_hardware);
 +      goto fail;
 +   }
-+   CFRelease(using_hardware);
++   if (using_hardware)
++      CFRelease(using_hardware);
 +   store_parameter_sets(codec, sets);
 +   virgl_info("VideoToolbox %s hardware decoder active: "
 +              "profile=%u size=%ux%u\n",
@@ -2948,6 +2999,28 @@ index 0000000..784678a
 +       desc.base.entry_point != PIPE_VIDEO_ENTRYPOINT_BITSTREAM ||
 +       (is_h264_profile(codec->profile) && desc.h264.field_pic_flag)) {
 +      report_decode_failure(codec, "descriptor-validation");
++      goto out;
++   }
++
++   if (is_jpeg_profile(codec->profile)) {
++      size_t jpeg_offset = 0;
++
++      while (jpeg_offset + 1 < annexb_size &&
++             (codec->annexb[jpeg_offset] != 0xff ||
++              codec->annexb[jpeg_offset + 1] != 0xd8))
++         jpeg_offset++;
++      if (jpeg_offset + 1 >= annexb_size) {
++         report_decode_failure(codec, "jpeg-start-of-image");
++         goto out;
++      }
++      if (ensure_session(codec, NULL) != 0) {
++         report_decode_failure(codec, "session-creation");
++         goto out;
++      }
++      result = decode_frame(codec, target, codec->annexb + jpeg_offset,
++                            annexb_size - jpeg_offset);
++      if (result != 0)
++         report_decode_failure(codec, "frame-decode-or-upload");
 +      goto out;
 +   }
 +
