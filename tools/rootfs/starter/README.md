@@ -66,3 +66,9 @@ Boot the resulting disk as `ubd0`, load the common initramfs, and use
 Virtio-console service to reach the image-owned `hvc0` getty. The `ip=off`
 override is harmless with the shipped configuration and also suppresses a
 legacy launcher's kernel-DHCP default.
+
+The KDE convenience launcher expects an accepted Plasma artifact at
+`.build/rootfs/starter/debian-13-plasma-wayland.img` by default. It attaches
+the disk read-only, selects `/dev/ubda1`, and uses the image-owned network,
+account, getty, and Plasma session. `--rootfs`, `--rootfs-type`, and
+`--root-device` remain available for an explicit legacy-image launch.

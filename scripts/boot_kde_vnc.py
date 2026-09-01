@@ -17,7 +17,13 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
-DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
+DEFAULT_ROOTFS = (
+    REPO_ROOT / ".build/rootfs/starter/debian-13-plasma-wayland.img"
+)
+DEFAULT_ROOT_DEVICE_BY_TYPE = {
+    "erofs": "/dev/ubda",
+    "ext4": "/dev/ubda1",
+}
 CDROM_DEVICE = "/dev/ubdb"
 CDROM_MOUNT_POINT = "/mnt/cdrom"
 ISO_MOUNT_COMMAND = (
@@ -26,7 +32,47 @@ ISO_MOUNT_COMMAND = (
     f"findmnt -n -o SOURCE,FSTYPE,OPTIONS -T {CDROM_MOUNT_POINT}"
 )
 
-KDE_OVERLAY_COMMANDS = (
+STARTER_KDE_OVERLAY_COMMANDS = (
+    "getent passwd debian >/dev/null",
+    "install -d -m 0755 -o debian -g debian "
+    "/home/debian/Desktop /home/debian/Documents /home/debian/Downloads "
+    "/home/debian/Music /home/debian/Pictures /home/debian/Public "
+    "/home/debian/Templates /home/debian/Videos /home/debian/.config "
+    "/home/debian/.local/share/pki "
+    "/home/debian/.local/share/Trash/files "
+    "/home/debian/.local/share/Trash/info",
+    "printf '%s\\n' "
+    "'XDG_DESKTOP_DIR=\"$HOME/Desktop\"' "
+    "'XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"' "
+    "'XDG_TEMPLATES_DIR=\"$HOME/Templates\"' "
+    "'XDG_PUBLICSHARE_DIR=\"$HOME/Public\"' "
+    "'XDG_DOCUMENTS_DIR=\"$HOME/Documents\"' "
+    "'XDG_MUSIC_DIR=\"$HOME/Music\"' "
+    "'XDG_PICTURES_DIR=\"$HOME/Pictures\"' "
+    "'XDG_VIDEOS_DIR=\"$HOME/Videos\"' "
+    "> /home/debian/.config/user-dirs.dirs",
+    "chown debian:debian /home/debian/.config/user-dirs.dirs",
+    # KInfoCenter 6.3 counts Mesa's CPU-only Lavapipe Vulkan device as the
+    # guest GPU and labels an otherwise accelerated Virgl session "llvmpipe".
+    # This OpenGL-only guest has no Vulkan render path, so hide that software
+    # ICD in the disposable overlay.
+    "rm -f /usr/share/vulkan/icd.d/lvp_icd.json",
+    # The desktop:/ KIO worker crashes under UML. Keep Plasma's normal Folder
+    # View containment, but use the stable local-file worker for this session.
+    "sed -i "
+    "'s#<default>desktop:/</default>#"
+    "<default>file:///home/debian/Desktop</default>#' "
+    "/usr/share/plasma/plasmoids/org.kde.desktopcontainment/"
+    "contents/config/main.xml",
+    "printf '%s\\n' '[Daemon]' 'Autolock=false' 'LockOnResume=false' "
+    "'Timeout=0' > /home/debian/.config/kscreenlockerrc; "
+    "chown debian:debian /home/debian/.config/kscreenlockerrc",
+)
+
+# Explicit EROFS overrides retain the compatibility setup owned by the legacy
+# unified KDE image. The default starter image uses the smaller overlay above
+# and keeps its account, getty, and session policy image-owned.
+LEGACY_EROFS_KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
     "usermod -a -G video,render,input uml",
     # The image enables getty@tty0. /dev/tty0 is the *active* VT alias rather
@@ -182,12 +228,24 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
-    parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
+    parser.add_argument(
+        "--rootfs",
+        type=Path,
+        default=DEFAULT_ROOTFS,
+        help="read-only lower disk (default: codec-enabled Plasma starter)",
+    )
     parser.add_argument(
         "--rootfs-type",
         choices=("erofs", "ext4"),
-        default="erofs",
-        help="lower filesystem type (default: erofs)",
+        default="ext4",
+        help="lower filesystem type (default: ext4)",
+    )
+    parser.add_argument(
+        "--root-device",
+        help=(
+            "guest root device (default: /dev/ubda1 for ext4, "
+            "/dev/ubda for erofs)"
+        ),
     )
     parser.add_argument(
         "--iso",
@@ -220,6 +278,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         options.bind = "127.0.0.1"
     if options.port is None:
         options.port = 5900
+    if options.root_device is None:
+        options.root_device = DEFAULT_ROOT_DEVICE_BY_TYPE[options.rootfs_type]
     return options
 
 
@@ -233,6 +293,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         str(options.rootfs),
         "--rootfs-type",
         options.rootfs_type,
+        "--root-device",
+        options.root_device,
         "--memory",
         options.memory,
         "--unit",
@@ -241,7 +303,12 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         "0",
         "--no-auto-poweroff",
     ]
-    for overlay_command in KDE_OVERLAY_COMMANDS:
+    overlay_commands = (
+        STARTER_KDE_OVERLAY_COMMANDS
+        if options.rootfs_type == "ext4"
+        else LEGACY_EROFS_KDE_OVERLAY_COMMANDS
+    )
+    for overlay_command in overlay_commands:
         command.extend(("--command", overlay_command))
     if options.iso is not None:
         command.extend(("--command", ISO_MOUNT_COMMAND))
@@ -254,6 +321,10 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
     ))
+    if options.rootfs_type == "ext4":
+        # Starter images own DHCP/DNS. This later argument overrides the GPU
+        # harness's legacy kernel-DHCP default.
+        command.append("ip=off")
     if options.iso is not None:
         command.append(f"ubd1r={options.iso}")
     command.extend(("--audio", "--gpu", f"--gpu-display={options.display}"))

@@ -30,7 +30,32 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIsNone(options.password)
         self.assertEqual(options.cpus, 10)
         self.assertEqual(options.engine, "jit")
-        self.assertEqual(options.rootfs_type, "erofs")
+        self.assertEqual(options.rootfs, boot_kde_vnc.DEFAULT_ROOTFS)
+        self.assertEqual(options.rootfs_type, "ext4")
+        self.assertEqual(options.root_device, "/dev/ubda1")
+
+    def test_default_starter_disk_contract_is_forwarded(self) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        harness_arguments = command[:separator]
+        self.assertIn(str(boot_kde_vnc.DEFAULT_ROOTFS), harness_arguments)
+        self.assertEqual(
+            harness_arguments[
+                harness_arguments.index("--rootfs-type") :
+                harness_arguments.index("--rootfs-type") + 2
+            ],
+            ["--rootfs-type", "ext4"],
+        )
+        self.assertEqual(
+            harness_arguments[
+                harness_arguments.index("--root-device") :
+                harness_arguments.index("--root-device") + 2
+            ],
+            ["--root-device", "/dev/ubda1"],
+        )
+        self.assertIn("ip=off", command[separator + 1 :])
 
     def test_execution_settings_are_forwarded(self) -> None:
         options = boot_kde_vnc.parse_arguments(
@@ -137,11 +162,16 @@ class KdeVncLauncherTests(unittest.TestCase):
             )
 
     def test_guest_harness_runs_directly(self) -> None:
-        options = boot_kde_vnc.parse_arguments(["--rootfs", "/tmp/rootfs.erofs"])
+        options = boot_kde_vnc.parse_arguments(
+            [
+                "--rootfs", "/tmp/rootfs.erofs",
+                "--rootfs-type", "erofs",
+            ]
+        )
         command = boot_kde_vnc.build_harness_command(options)
         self.assertEqual(command[0], sys.executable)
         self.assertEqual(
-            command[1:8],
+            command[1:10],
             [
                 str(boot_kde_vnc.GUEST_HARNESS),
                 "--emulator",
@@ -150,6 +180,8 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "/tmp/rootfs.erofs",
                 "--rootfs-type",
                 "erofs",
+                "--root-device",
+                "/dev/ubda",
             ],
         )
 
@@ -165,38 +197,42 @@ class KdeVncLauncherTests(unittest.TestCase):
             command[rootfs_type : rootfs_type + 2],
             ["--rootfs-type", "ext4"],
         )
+        root_device = command.index("--root-device")
+        self.assertEqual(
+            command[root_device : root_device + 2],
+            ["--root-device", "/dev/ubda1"],
+        )
 
     def test_desktop_idle_lock_is_disabled_in_overlay(self) -> None:
-        commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
+        commands = "\n".join(boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS)
         self.assertIn("kscreenlockerrc", commands)
         self.assertIn("Autolock=false", commands)
         self.assertIn("LockOnResume=false", commands)
 
-    def test_vt_getty_is_relocated_off_the_active_vt_alias(self) -> None:
-        commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
-        self.assertIn("systemctl mask --now getty@tty0.service", commands)
-        self.assertIn("systemctl start getty@tty1.service", commands)
-        # The exception is bounded to the VT getty that collides with SDDM's
-        # VT. Serial getties, credentials, and autologin stay image-owned.
+    def test_starter_image_owns_account_and_login_policy(self) -> None:
+        commands = "\n".join(boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS)
+        self.assertIn("getent passwd debian", commands)
+        self.assertIn("/home/debian", commands)
+        self.assertNotIn("useradd", commands)
+        self.assertNotIn("usermod", commands)
+        self.assertNotIn("systemctl", commands)
+        self.assertNotIn("sddm", commands.lower())
         self.assertNotIn("serial-getty@", commands)
         self.assertNotIn("agetty", commands)
         self.assertNotIn("chpasswd", commands)
 
-    def test_existing_uml_desktop_user_is_reused(self) -> None:
-        commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
+    def test_legacy_erofs_override_retains_uml_compatibility(self) -> None:
+        options = boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])
+        self.assertEqual(options.root_device, "/dev/ubda")
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        commands = "\n".join(command[:separator])
         self.assertIn("getent passwd uml", commands)
         self.assertIn("User=uml", commands)
         self.assertIn("/home/uml", commands)
         self.assertNotIn("useradd", commands)
-        self.assertNotIn("User=plasma", commands)
-        self.assertNotIn("/home/plasma", commands)
-        for runner_name in ("run_chromium_webgl.py", "run_webgl_samples.py"):
-            runner = (GPU_INTEGRATION / runner_name).read_text(encoding="utf-8")
-            self.assertIn('runtime="/run/user/$(id -u uml)"', runner)
-            self.assertIn("runuser -u uml", runner)
-            self.assertIn("HOME=/home/uml", runner)
-            self.assertNotIn("runuser -u plasma", runner)
-            self.assertNotIn("HOME=/home/plasma", runner)
+        self.assertNotIn("getent passwd debian", commands)
+        self.assertNotIn("ip=off", command[separator + 1 :])
 
     def test_password_is_forwarded_to_the_host_gpu(self) -> None:
         options = boot_kde_vnc.parse_arguments(
