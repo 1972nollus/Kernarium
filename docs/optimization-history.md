@@ -273,6 +273,30 @@ fifth of the wall time and is what these entries used.
 | X12 | Evaluate carry conditions from the deferred record | Rejected, reproducing X9 from the opposite direction. This version replaced the call instead of adding a check in front of it, and carry-condition branches were still 70% slower. The zero-condition shortcut it imitates works because a recorded result is already width-masked and one compare answers it; carry needs the recorded operation, so the shortcut reintroduces the dispatch it exists to avoid, in a gadget rather than in a shared routine. |
 | X13 | Stop advertising ERMS | Accepted. CPUID leaf 7 set the bit that tells glibc's ifunc resolver REP MOVSB is the fast way to copy, while this engine implements REP as a per-element loop. Withholding it moves string work onto the vector gadgets: PDF Renderer +8.6%, Horizon Detection +8.4%, File Compression +1.5%, every distribution non-overlapping. A capability claim is a scheduling hint to the guest's own dispatchers, so it is a performance decision, not only a compatibility one. |
 
+The campaign closed with a matched ABBA over the full single-core suite,
+sixteen workloads per run, warm-up discarded, four runs per arm. Every workload
+improved or held and none regressed: the geometric mean of per-workload rates
+rose 3.94 percent, with Photo Filter +13.5, Structure from Motion +12.9,
+Horizon Detection +10.1, PDF Renderer +10.0 and File Compression +5.9 percent.
+
+The same profile retires most of what the plan still had open, because it ranks
+candidates by what executes rather than by what a static instruction histogram
+counts. Truncating FP conversion and scalar FP compare -- the `frint32z` and
+`axflag` candidates -- appear nowhere in any workload's profile. Locked
+read-modify-write is under 0.01 percent, so LSE atomics have nothing to win.
+Software-TLB misses are 0.17 percent, leaving gadget-TLB associativity nothing
+to fix. Every shift form together is 1.6 percent and PUSH with POP 1.3 percent,
+so specializing shifts on a constant count and fusing adjacent stack operations
+are each worth well under one percent. Narrow-width flag extraction was
+overtaken by X10, which removed the width dispatch it targeted.
+
+What remains large is the 37 percent in stream re-entry, which the plan already
+classified as study-before-building: inlining the conditional fall-through, a
+return-address stack for RET, and a linear host window. The indirect-link
+trainer a return-address stack would relieve is 0.26 percent by itself, so that
+case rests on the C++ round trips each miss causes rather than on gadget cost,
+and needs its own measurement before it is built.
+
 Four lessons generalize. A guest binary's own ELF markings change which engine
 paths run at all: an executable-stack declaration makes every data page
 executable and turned a rare call into a per-store one. Instruction count inside
