@@ -104,6 +104,12 @@ those corpora does not by itself establish arbitrary distribution or complete
 Linux syscall compatibility. Other host products and page profiles retain
 arm64 userspace execution.
 
+The x86_64 gadget engine assembles against ARMv8.5-A, so it lowers guest
+semantics onto LSE atomics, FlagM/FlagM2 condition transfer, and FRINTTS
+truncating conversion directly. Every arm64 Mac implements those extensions,
+and the engine is a macOS-only backend, so this constrains no shipping product.
+The arm64 engine keeps its own, higher, ARMv8.6-A declaration.
+
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs
 must match every consumed guest word before reuse. Shared gadget translations

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "../../layout/assembly_offsets.h"
 
-.arch armv8-a
+.arch armv8.5-a
 
 #if __APPLE__
 #define NAME(value) _##value
