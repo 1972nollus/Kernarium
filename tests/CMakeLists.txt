@@ -144,7 +144,8 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_X86_64_GUEST)
     list(APPEND _uml_required_conditional_tests
         native-4k-shadow-mmu
         emulator-native-4k-admission
-        x86-64-gadget-bootstrap)
+        x86-64-gadget-bootstrap
+        x86-64-instruction-corpus)
 endif()
 if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES)
     list(APPEND _uml_required_conditional_tests

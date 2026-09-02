@@ -29,11 +29,12 @@ The dependency products are:
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
 - `ios-compression`: the pinned, decode-only zstd library as one static arm64
   `LibZstd.xcframework` with iOS device and Simulator slices; and
-- `x86-conformance`: the test-only FEX source and instruction corpus plus its
-  pinned NASM producer tool, used to qualify x86-64 gadget semantics. The
-  macOS 4 KiB x86 backend also consumes the Berkeley SoftFloat 3e and
-  128-bit Cephes archives carried by the same pinned FEX source; no FEX
-  runtime code is linked.
+- `x86-conformance`: the test-only FEX and K x86-64 semantics instruction
+  corpora plus their pinned producer inputs, used to generate the checked-in
+  self-contained x86 unit corpus and qualify x86 gadget
+  semantics. The macOS 4 KiB x86 backend also consumes the Berkeley SoftFloat
+  3e and 128-bit Cephes archives carried by the pinned FEX source; no external
+  conformance runtime code is linked.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat `EGL.framework` and `GLESv2.framework` payloads. All Apple platforms use

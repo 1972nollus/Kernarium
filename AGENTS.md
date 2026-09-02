@@ -142,6 +142,10 @@ sanitizers, Apple packaging, Android, LTP, performance, external-network, and
 official A64 campaigns are opt-in and are required only when the change crosses
 their boundary. See [`docs/testing.md`](docs/testing.md).
 
+Treat every guest illegal-instruction failure as a correctness blocker. Do not
+skip, exclude, or route around a workload that encounters `SIGILL`; diagnose
+and implement the missing instruction semantics before continuing the campaign.
+
 Every CTest has exactly one primary suite: `unit`, `tooling`, or `integration`.
 Keep the current-state `tests/test-manifest.tsv` synchronized.
 

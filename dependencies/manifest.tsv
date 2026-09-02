@@ -20,3 +20,4 @@ utm-libepoxy	bf98587	apple-gpu	https://github.com/utmapp/libepoxy.git	bf98587477
 utm-virglrenderer	65cc14e	apple-gpu	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.	patches/utm-virglrenderer/series.tsv
 fex	FEX-2608	macos,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
 nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-
+x86-k-semantics	2020-03-04	x86-conformance	https://github.com/kframework/X86-64-semantics.git	592380aea04820ea11cfa5475b343f0257f2474e	.	-

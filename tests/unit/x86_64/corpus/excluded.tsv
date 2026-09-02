@@ -1,0 +1,96 @@
+origin	source	reason
+fex	3DNow/0C.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/0D.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/0E.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/1C.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/1D.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/86.asm	obsolete AMD-only 3DNow extension; obsolete AMD multimedia extension
+fex	3DNow/87.asm	obsolete AMD-only 3DNow extension; obsolete AMD multimedia extension
+fex	3DNow/8A.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/8E.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/90.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/94.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/96.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/97.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/9A.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/9E.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/A0.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/A4.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/A6.asm	obsolete AMD-only 3DNow extension; obsolete AMD multimedia extension
+fex	3DNow/A7.asm	obsolete AMD-only 3DNow extension; obsolete AMD multimedia extension
+fex	3DNow/AA.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/AE.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/B0.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/B4.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/B6.asm	obsolete AMD-only 3DNow extension; obsolete AMD multimedia extension
+fex	3DNow/B7.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/BB.asm	obsolete AMD-only 3DNow extension
+fex	3DNow/BF.asm	obsolete AMD-only 3DNow extension
+fex	DAZTest.asm	AMD floating-point extension outside v3
+fex	FEX_bugs/3DNow_ModRMSIBDecode.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/H0F3AREXBug.asm	post-AVX2 SHA extension
+fex	FEX_bugs/REX/DDDNow.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/adcx_size.asm	post-x86-64-v3 ADX extension
+fex	FEX_bugs/fxsave_bug.asm	exact duplicate normalized case
+fex	FEX_bugs/nzcv_spill_enderlilies.asm	post-AVX2 SHA extension
+fex	H0F38/adcx.asm	post-x86-64-v3 ADX extension
+fex	H0F38/adox.asm	post-x86-64-v3 ADX extension
+fex	H0F38/sha1msg1.asm	post-AVX2 SHA extension
+fex	H0F38/sha1msg2.asm	post-AVX2 SHA extension
+fex	H0F38/sha1nexte.asm	post-AVX2 SHA extension
+fex	H0F38/sha256msg1.asm	post-AVX2 SHA extension
+fex	H0F38/sha256msg2.asm	post-AVX2 SHA extension
+fex	H0F38/sha256rnds2.asm	post-AVX2 SHA extension
+fex	H0F3A/sha1rnds4.asm	post-AVX2 SHA extension
+fex	Primary/Primary_E8.asm	upstream marks this source unsupported
+fex	Primary/Primary_E9.asm	upstream marks this source unsupported
+fex	REP/F3_2B.asm	AMD-only extension outside x86-64-v3
+fex	REPNE/F2_2B.asm	AMD-only extension outside x86-64-v3
+fex	SSE4a/extrq_imm.asm	AMD-only extension outside x86-64-v3
+fex	SSE4a/extrq_variable.asm	AMD-only extension outside x86-64-v3
+fex	SSE4a/insertq_imm.asm	AMD-only extension outside x86-64-v3
+fex	SSE4a/insertq_variable.asm	AMD-only extension outside x86-64-v3
+fex	SSELanePreservation/extrq_imm.asm	AMD-only extension outside x86-64-v3
+fex	SSELanePreservation/extrq_variable.asm	AMD-only extension outside x86-64-v3
+fex	SSELanePreservation/insertq_imm.asm	AMD-only extension outside x86-64-v3
+fex	SSELanePreservation/insertq_variable.asm	AMD-only extension outside x86-64-v3
+fex	SSELanePreservation/sha1msgx.asm	post-AVX2 SHA extension
+fex	SSELanePreservation/sha1nexte.asm	post-AVX2 SHA extension
+fex	SSELanePreservation/sha1rnds4.asm	post-AVX2 SHA extension
+fex	SSELanePreservation/sha256msgx.asm	post-AVX2 SHA extension
+fex	SSELanePreservation/sha256rnds2.asm	post-AVX2 SHA extension
+fex	Secondary/08_XX_04.asm	exact duplicate normalized case
+fex	Secondary/08_XX_04_2.asm	exact duplicate normalized case
+fex	Secondary/09_F3_07.asm	post-AVX2 processor-identification extension
+fex	Secondary/09_XX_06.asm	nondeterministic random-number extension outside v3
+fex	Secondary/09_XX_07.asm	nondeterministic random-number extension outside v3
+fex	Secondary/CLFLUSHOPT.asm	post-AVX2 cache-management extension
+fex	Secondary/CLWB.asm	post-AVX2 cache-management extension
+fex	SecondaryModRM/Reg_7_4.asm	AMD-only cache-zero extension
+fex	SecondaryModRM/Reg_7_4_2.asm	AMD-only cache-zero extension
+fex	TwoByte/0F_0E.asm	obsolete AMD-only 3DNow extension
+fex	TwoByte/0F_5A_1.asm	exact duplicate normalized case
+fex	TwoByte/0F_F6.asm	privileged interrupt-control instruction
+fex	VEX/vaesdec256.asm	post-AVX2 vector AES extension
+fex	VEX/vaesdeclast256.asm	post-AVX2 vector AES extension
+fex	VEX/vaesenc256.asm	post-AVX2 vector AES extension
+fex	VEX/vaesenclast256.asm	post-AVX2 vector AES extension
+fex	X87/D9_F2.asm	upstream marks this source unsupported
+fex	X87/D9_F8.asm	upstream marks this source unsupported
+fex	X87/D9_F9.asm	upstream marks this source unsupported
+fex	X87/invalid_simple_test.asm	exact duplicate normalized case
+fex	modrm_oob/SecondaryModRM.asm	AMD-only cache-zero extension
+fex	modrm_oob/SecondaryREP.asm	AMD-only extension outside x86-64-v3
+fex	modrm_oob/SecondaryREPNE.asm	AMD-only extension outside x86-64-v3
+k	tests/mcsema-unit-tests/binary/addsd/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/addss/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/divpd/test.s	upstream test source is empty
+k	tests/mcsema-unit-tests/binary/divps/test.s	upstream test source is empty
+k	tests/mcsema-unit-tests/binary/divsd/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/divss/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/mulpd/test.s	upstream test source is empty
+k	tests/mcsema-unit-tests/binary/mulps/test.s	upstream test source is empty
+k	tests/mcsema-unit-tests/binary/mulsd/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/mulss/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/subsd/test.s	upstream source contains invalid x86-64 operand forms
+k	tests/mcsema-unit-tests/binary/subss/test.s	upstream source contains invalid x86-64 operand forms

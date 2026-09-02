@@ -1851,6 +1851,81 @@ read_test_code_sequences(void *opaque) noexcept
 		"clear-overflow INTO did not retire normally");
 }
 
+/* Clang's AVX2 path uses VMOVLHPS with the r/m source aliased to the
+ * destination while saving its lexer stack.  The gadget must capture that
+ * source lane before replacing the destination with the VEX merge operand.
+ */
+[[nodiscard]] bool vex_vmovlhps_preserves_aliased_source()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc5, 0xe8, 0x16, 0xc9, // vmovlhps xmm1,xmm2,xmm1
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"aliased VMOVLHPS sequence did not build"))
+		return false;
+	CpuState cpu{};
+	constexpr std::uint64_t original_destination_low = 0x1122'3344'5566'7788;
+	constexpr std::uint64_t merge_low = 0x0102'0304'0506'0708;
+	cpu.vectors[1].fill(std::byte{0xa5});
+	cpu.vectors[2].fill(std::byte{0x5a});
+	std::memcpy(cpu.vectors[1].data(), &original_destination_low,
+		sizeof(original_destination_low));
+	std::memcpy(cpu.vectors[2].data(), &merge_low, sizeof(merge_low));
+	const auto result = gadgets::execute(built.program, cpu, memory, 2);
+	std::array<std::uint64_t, 4> actual{};
+	std::memcpy(actual.data(), cpu.vectors[1].data(), sizeof(actual));
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2 && cpu.rip == 6,
+			"aliased VMOVLHPS did not reach SYSCALL") &&
+		expect(actual[0] == merge_low &&
+			actual[1] == original_destination_low,
+			"aliased VMOVLHPS read its source after writing the destination") &&
+		expect(actual[2] == 0 && actual[3] == 0,
+			"VEX VMOVLHPS did not clear the upper YMM lane");
+}
+
+[[nodiscard]] bool vector_invalid_results_use_x86_indefinite_nan()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xf2, 0x0f, 0x5e, 0xc1, // divsd xmm0,xmm1: +0 / +0
+		0xf3, 0x0f, 0x51, 0xd3, // sqrtss xmm2,xmm3: sqrt(-1)
+		0xf3, 0x0f, 0x52, 0xe5, // rsqrtss xmm4,xmm5: 1 / sqrt(-4)
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"invalid vector floating-point sequence did not build"))
+		return false;
+	CpuState cpu{};
+	constexpr std::uint32_t negative_one = 0xbf80'0000;
+	constexpr std::uint32_t negative_four = 0xc080'0000;
+	std::memcpy(cpu.vectors[3].data(), &negative_one, sizeof(negative_one));
+	std::memcpy(cpu.vectors[5].data(), &negative_four, sizeof(negative_four));
+	const auto result = gadgets::execute(built.program, cpu, memory, 4);
+	std::uint64_t quotient{};
+	std::uint32_t square_root{};
+	std::uint32_t reciprocal_square_root{};
+	std::memcpy(&quotient, cpu.vectors[0].data(), sizeof(quotient));
+	std::memcpy(&square_root, cpu.vectors[2].data(), sizeof(square_root));
+	std::memcpy(&reciprocal_square_root, cpu.vectors[4].data(),
+		sizeof(reciprocal_square_root));
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 4 && cpu.rip == 14,
+			"invalid vector floating-point sequence did not reach SYSCALL") &&
+		expect(quotient == 0xfff8'0000'0000'0000ULL,
+			"DIVSD 0/0 did not return the x86 double indefinite NaN") &&
+		expect(square_root == 0xffc0'0000,
+			"SQRTSS of a negative value did not return the x86 indefinite NaN") &&
+		expect(reciprocal_square_root == 0xffc0'0000,
+			"RSQRTSS of a negative value did not return the x86 indefinite NaN");
+}
+
 /* The gadget a block selects for its first instruction. */
 [[nodiscard]] std::uintptr_t first_native_entry(
 	std::initializer_list<std::uint8_t> code)
@@ -2208,6 +2283,8 @@ int main()
 		migrated_gadgets_are_native_only() &&
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
+		vex_vmovlhps_preserves_aliased_source() &&
+		vector_invalid_results_use_x86_indefinite_nan() &&
 		locked_memory_updates_select_exclusive_gadgets() &&
 		glibc_rwlock_xadd_fast_path_is_exact() &&
 		gobject_closure_bitfield_cmpxchg_is_exact() &&

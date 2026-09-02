@@ -124,11 +124,14 @@ gadget vector_lane_merge_rr
 	add x10, _cpu, x10
 	add x11, _cpu, x11
 	ldr q0, [x10]
-	str q0, [x9]
 	tbz x8, #49, .Lx86_vector_lane_merge_rr_source_ready
 	add x11, x11, #8
 .Lx86_vector_lane_merge_rr_source_ready:
+	/* All x86 sources are read before the destination is written.  The
+	 * incoming register may alias the destination in three-operand VEX forms.
+	 */
 	ldr x12, [x11]
+	str q0, [x9]
 	tbz x8, #48, .Lx86_vector_lane_merge_rr_store
 	add x9, x9, #8
 .Lx86_vector_lane_merge_rr_store:
