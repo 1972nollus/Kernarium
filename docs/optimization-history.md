@@ -268,12 +268,42 @@ fifth of the wall time and is what these entries used.
 | X8 | Skip the store-side publication and overlap check | First attempts rejected: hoisting the check before the store, gating it on the write-code flag, and gating it on the executable-page bit all measured no gain, because Linux grants READ_IMPLIES_EXEC to binaries without a non-executable stack marking and every data page then qualifies as executable. |
 | X8b | Call code publication only when a store can publish something | Accepted. Publication is 54% of every guest store and its call is a lookup that misses whenever the page holds no cached translation. Recording that in the write translation, and retiring the translation when a page gains code, turns it into one bit test. Stores 47% to 54% faster; File Compression +3.5%, Text Processing +2.1%. The lesson is that the expensive part of a sequence can be the call it guards rather than the instructions that are visible. |
 | X9 | Evaluate branch conditions from the deferred record | Rejected. The premise was that a conditional branch pays full flag materialization, but that routine exits early and is already cheap; adding a pre-check ahead of it made conditional branches 57% slower in two independent implementations. |
+| X10 | Fold the recorded operation and width into flag materialization | Accepted. Both keys are constants at the recording site, but the materializer rediscovered them through two run-time chains that reached the commonest cases last. One bounded table branch now selects a body with both folded in, so the width masks, the sign-bit index and the clear mask are immediates. INC 22% faster, SETcc and ADC 18%, CMP/Jcc 15%; File Compression +3.1%, PDF Renderer +3.1%, Horizon Detection +2.9%. |
+| X11 | Discard the deferred record in the bit-count family | Accepted. TZCNT, LZCNT and POPCNT define every arithmetic flag and cleared all six immediately after paying to materialize them, and every override any gadget records lies inside that same clear mask. Two stores replace the call, and a TZCNT after an ADD is 69% faster. |
+| X12 | Evaluate carry conditions from the deferred record | Rejected, reproducing X9 from the opposite direction. This version replaced the call instead of adding a check in front of it, and carry-condition branches were still 70% slower. The zero-condition shortcut it imitates works because a recorded result is already width-masked and one compare answers it; carry needs the recorded operation, so the shortcut reintroduces the dispatch it exists to avoid, in a gadget rather than in a shared routine. |
 
-Three lessons generalize. A guest binary's own ELF markings change which engine paths run at all: an executable-stack declaration makes every data page executable and turned a rare call into a per-store one. Beyond that: Instruction count inside a gadget is a weak predictor:
-the changes that paid removed a loop, a call, or a branch, and those that only
-shortened a straight-line body did not. And a probe measures the mechanism it
-names and nothing else, so a candidate that only affects translation, or that
-trades throughput for latency, needs a workload to judge it.
+Four lessons generalize. A guest binary's own ELF markings change which engine
+paths run at all: an executable-stack declaration makes every data page
+executable and turned a rare call into a per-store one. Instruction count inside
+a gadget is a weak predictor: the changes that paid removed a loop, a call, or a
+branch, and those that only shortened a straight-line body did not. A probe
+measures the mechanism it names and nothing else, so a candidate that only
+affects translation, or that trades throughput for latency, needs a workload to
+judge it. And laziness is worth paying for only where retrieving the deferred
+value is cheaper than computing it: X9 and X12 failed at the same boundary from
+opposite directions, while X10 succeeded by making the deferred path itself
+cheaper rather than trying to avoid it.
+
+Host sampling profiles this engine without instrumenting it. The bank publishes
+a symbol per gadget, so a sampled host PC attributes straight to the gadget that
+owned it; assembler-local labels fold into their routine, and self time is a
+frame's count less its children's. Threaded dispatch leaves no usable frame
+chain -- x29 is the retired-instruction counter, not a frame pointer -- but the
+deepest frame is the real PC, which is all a gadget profile needs, and a 5 ms
+interval left the scored rate unchanged.
+
+Profiling all sixteen Geekbench 6.7.1 single-core workloads this way, weighting
+each workload equally because the score is a geometric mean, splits emulator
+time about evenly between the gadget bank and its C++ support. Roughly 37
+percent goes to leaving and re-entering the stream -- block selection, cache
+validation, link activation and the surrounding loop -- against about 0.9
+percent for the assembly entry and exit sequences those C++ round trips wrap.
+Flag materialization is the largest single symbol at 9.8 percent and is
+top-four in every workload, peaking at 23 percent in Horizon Detection.
+Self-modifying-code bookkeeping is 6.1 percent, and no individual gadget exceeds
+about 2 percent. The three lowest-scoring workloads -- Text Processing, Clang
+and HTML5 Browser -- are exactly the ones spending over 40 percent on stream
+re-entry, so block-transition cost, not gadget quality, is what bounds them.
 
 ## Graphics backend investigations
 
