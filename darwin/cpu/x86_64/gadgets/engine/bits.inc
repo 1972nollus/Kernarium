@@ -208,7 +208,23 @@ bit_family btc
 .endm
 
 .macro bit_count_flags operation, host_register
+	.ifc \operation,bsf
 	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	.ifc \operation,bsr
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	.ifnc \operation,bsf
+	.ifnc \operation,bsr
+	/* TZCNT, LZCNT and POPCNT define every arithmetic flag below, and the
+	 * only overrides any gadget records lie inside that same set, so a
+	 * pending record has nothing left to contribute. Discard it rather than
+	 * materializing a value this macro immediately clears.
+	 */
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	.endif
+	.endif
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \operation,bsf
 	bic x8, x8, #0x40
