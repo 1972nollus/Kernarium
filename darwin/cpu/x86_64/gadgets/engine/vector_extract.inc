@@ -125,9 +125,7 @@ vector_insert_register 128, _vex
 gadget vector_insert_\width\()_rm\vex
 	effective_address
 	mov x25, x7
-	add x9, x7, #1
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_insert_cross\@
+	page_cross_check 2, .Lx86_vector_insert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 2
 	ldrh w27, [x7]
 	b .Lx86_vector_insert_loaded\@

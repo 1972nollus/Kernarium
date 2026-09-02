@@ -399,9 +399,7 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 	ldr x26, [_stream], #8
 	mov x25, x7
 	vector_map2_input_size \opcode, \width
-	add x9, x7, #(.Lx86_vector_map2_input_size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_cross\@
+	page_cross_check (.Lx86_vector_map2_input_size), .Lx86_vector_map2_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_map2_input_size
 	.if .Lx86_vector_map2_input_size == 1
 	ldr b1, [x7]

@@ -170,9 +170,7 @@
 .endm
 
 .macro x87_scalar_load size, destination
-	add x9, x7, #(\size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_x87_scalar_load_cross\@
+	page_cross_check (\size), .Lx86_x87_scalar_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	.if \size == 2
 	ldrh w9, [x7]
@@ -195,9 +193,7 @@
 .macro x87_scalar_store size, source
 	mov x24, \source
 	mov x7, x25
-	add x9, x7, #(\size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_x87_scalar_store_cross\@
+	page_cross_check (\size), .Lx86_x87_scalar_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	.if \size == 2
 	strh w24, [x7]

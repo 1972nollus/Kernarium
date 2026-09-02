@@ -70,9 +70,7 @@ scalar_move_ri move_64_ri, str, x
 gadget move_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_load_cross\@
+	page_cross_check (\width / 8), .Lx86_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()11, [x7]
 .Lx86_load_write\@:
@@ -103,9 +101,7 @@ gadget move_\width\()_m\form
 	.ifc \form,i
 	ldr x24, [_stream], #8
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_store_cross\@
+	page_cross_check (\width / 8), .Lx86_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 	finish_store (\width / 8)
@@ -166,9 +162,7 @@ gadget push_\width\()_r
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_cross\@
+	page_cross_check (\width / 8), .Lx86_push_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 .Lx86_push_done\@:
@@ -194,9 +188,7 @@ gadget push_\width\()_i
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_immediate_cross\@
+	page_cross_check (\width / 8), .Lx86_push_immediate_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 .Lx86_push_immediate_done\@:
@@ -220,9 +212,7 @@ gadget pop_\width\()_r
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_cross\@
+	page_cross_check (\width / 8), .Lx86_pop_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 .Lx86_pop_done\@:
@@ -269,9 +259,7 @@ gadget push_flags_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_flags_cross\@
+	page_cross_check (\width / 8), .Lx86_push_flags_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 .Lx86_push_flags_done\@:
@@ -301,9 +289,7 @@ gadget pop_flags_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_flags_cross\@
+	page_cross_check (\width / 8), .Lx86_pop_flags_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 .Lx86_pop_flags_done\@:
@@ -348,9 +334,7 @@ gadget leave_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_leave_cross\@
+	page_cross_check (\width / 8), .Lx86_leave_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 .Lx86_leave_done\@:
@@ -381,9 +365,7 @@ leave 64, ldr, str, x
 gadget push_\width\()_m
 	effective_address
 	mov x26, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_memory_source_cross\@
+	page_cross_check (\width / 8), .Lx86_push_memory_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()24, [x7]
 	b .Lx86_push_memory_source_done\@
@@ -401,9 +383,7 @@ gadget push_\width\()_m
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_memory_stack_cross\@
+	page_cross_check (\width / 8), .Lx86_push_memory_stack_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \store_register\()24, [x7]
 .Lx86_push_memory_done\@:
@@ -433,9 +413,7 @@ gadget pop_\width\()_m
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_memory_stack_cross\@
+	page_cross_check (\width / 8), .Lx86_pop_memory_stack_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()24, [x7]
 	b .Lx86_pop_memory_stack_done\@
@@ -455,9 +433,7 @@ gadget pop_\width\()_m
 	effective_address
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x27, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_memory_destination_cross\@
+	page_cross_check (\width / 8), .Lx86_pop_memory_destination_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \store_register\()24, [x7]
 .Lx86_pop_memory_done\@:
@@ -509,9 +485,7 @@ pop_memory 64, ldr, x, str, x
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_call_cross\@
+	page_cross_check (\width / 8), .Lx86_call_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 .Lx86_call_done\@:
@@ -567,9 +541,7 @@ gadget \name
 gadget \name
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_call_indirect_source_cross\@
+	page_cross_check (\width / 8), .Lx86_call_indirect_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()26, [x7]
 	b .Lx86_call_indirect_source_done\@
@@ -624,9 +596,7 @@ gadget \name
 	mov w25, w25
 	.endif
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_return_cross\@
+	page_cross_check (\width / 8), .Lx86_return_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 .Lx86_return_done\@:
@@ -676,9 +646,7 @@ gadget \name
 gadget \name
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_jump_indirect_cross\@
+	page_cross_check (\width / 8), .Lx86_jump_indirect_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_jump_indirect_done\@
@@ -769,9 +737,7 @@ scalar_extend sext_32_64_rr, ldrsw, x, str, x
 gadget \name
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\source_width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_extend_cross\@
+	page_cross_check (\source_width / 8), .Lx86_extend_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\source_width / 8)
 	\load \load_register\()11, [x7]
 	b .Lx86_extend_write\@

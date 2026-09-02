@@ -117,9 +117,7 @@ gadget vector_map2_permute_\symbol\()_\width\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_permute_cross\@
+	page_cross_check (\width / 8), .Lx86_vector_map2_permute_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256
@@ -234,9 +232,7 @@ gadget vector_map2_shift_\symbol\()_\element\()_\width\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_shift_cross\@
+	page_cross_check (\width / 8), .Lx86_vector_map2_shift_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256
@@ -320,9 +316,7 @@ gadget vector_map2_broadcast_\element\()_\width\()_r
 gadget vector_map2_broadcast_\element\()_\width\()_m
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\element / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_broadcast_cross\@
+	page_cross_check (\element / 8), .Lx86_vector_map2_broadcast_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 8)
 	.if \element == 8
 	ldr b1, [x7]
@@ -403,9 +397,7 @@ gadget vector_map2_half_\width\()_r
 gadget vector_map2_half_\width\()_m
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\input_size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_half_cross\@
+	page_cross_check (\input_size), .Lx86_vector_map2_half_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 8
 	ldr d1, [x7]

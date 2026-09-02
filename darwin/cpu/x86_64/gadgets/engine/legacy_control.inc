@@ -4,9 +4,7 @@
 .macro enter_push width, store, host_register
 	sub x25, x25, #(\width / 8)
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_enter_push_cross\@
+	page_cross_check (\width / 8), .Lx86_enter_push_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_enter_push_done\@
@@ -24,9 +22,7 @@
 
 .macro enter_load width, load, host_register
 	mov x7, x24
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_enter_load_cross\@
+	page_cross_check (\width / 8), .Lx86_enter_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()27, [x7]
 	b .Lx86_enter_load_done\@
@@ -85,9 +81,7 @@ enter_gadget 64, ldr, x, str, x
 
 .macro legacy_load width, load, host_register, destination
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_legacy_load_cross\@
+	page_cross_check (\width / 8), .Lx86_legacy_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()\destination, [x7]
 	b .Lx86_legacy_load_done\@
@@ -121,9 +115,7 @@ gadget far_\kind\()_\width
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 4)
 	mov x7, x25
-	add x9, x7, #(\width / 4 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_far_call_cross\@
+	page_cross_check (\width / 4), .Lx86_far_call_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 4)
 	.if \width == 16
 	bfi x24, x19, #16, #16
@@ -212,9 +204,7 @@ far_return 64, ldr, x
 .macro iret_load width, load, host_register, destination, offset
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add x7, x7, #((\width / 8) * \offset)
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_iret_load_cross\@
+	page_cross_check (\width / 8), .Lx86_iret_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()\destination, [x7]
 	b .Lx86_iret_load_done\@

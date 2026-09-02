@@ -189,9 +189,7 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	.else
 	.set .Lx86_vector_fma_input_size\@, (\width / 8)
 	.endif
-	add x9, x7, #(.Lx86_vector_fma_input_size\@ - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_fma_cross\@
+	page_cross_check (.Lx86_vector_fma_input_size\@), .Lx86_vector_fma_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_fma_input_size\@
 	.if \scalar
 	.if \element == 32

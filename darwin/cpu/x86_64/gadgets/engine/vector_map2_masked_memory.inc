@@ -45,9 +45,7 @@ gadget vector_map2_mask_load_\element\()_\width
 	tbz x14, #63, .Lx86_vector_map2_mask_load_next\@
 	.endif
 	add x7, x25, x19
-	add x9, x7, #(\element / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_mask_load_cross\@
+	page_cross_check (\element / 8), .Lx86_vector_map2_mask_load_cross\@
 	vector_map2_mask_translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 8), .Lx86_vector_map2_mask_load_fault\@
 	.if \element == 32
 	ldr w24, [x7]
@@ -114,9 +112,7 @@ gadget vector_map2_mask_store_\element\()_\width
 	ldr x24, [x27, x19]
 	.endif
 	add x7, x25, x19
-	add x9, x7, #(\element / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map2_mask_store_cross\@
+	page_cross_check (\element / 8), .Lx86_vector_map2_mask_store_cross\@
 	vector_map2_mask_translate 1, UML_X86_64_TLB_WRITE_PAGE, (\element / 8), .Lx86_memory_fault
 	.if \element == 32
 	str w24, [x7]

@@ -384,9 +384,7 @@ gadget vector_integer_\opcode\()_\width\()_rm
 	ldr x27, [_stream], #8
 	.endif
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_integer_cross\@
+	page_cross_check (\width / 8), .Lx86_vector_integer_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	.if \width == 64
 	ldr d1, [x7]

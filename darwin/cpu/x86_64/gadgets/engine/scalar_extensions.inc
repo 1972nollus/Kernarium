@@ -16,9 +16,7 @@
 gadget movbe_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_movbe_load_cross\@
+	page_cross_check (\width / 8), .Lx86_movbe_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_movbe_loaded\@
@@ -43,9 +41,7 @@ gadget movbe_\width\()_mr
 	and x8, x23, #0xffff
 	\load \host_register\()24, [_cpu, x8]
 	reverse_scalar \width, \host_register\()24, \host_register\()24
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_movbe_store_cross\@
+	page_cross_check (\width / 8), .Lx86_movbe_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 	finish_store (\width / 8)
@@ -92,9 +88,7 @@ gadget crc32_\width\()_rr
 gadget crc32_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_crc32_read_cross\@
+	page_cross_check (\width / 8), .Lx86_crc32_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()15, [x7]
 	b .Lx86_crc32_loaded\@
@@ -160,9 +154,7 @@ gadget \name\()_\width\()_rr
 gadget \name\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_adx_read_cross\@
+	page_cross_check (\width / 8), .Lx86_adx_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()26, [x7]
 	b .Lx86_adx_loaded\@

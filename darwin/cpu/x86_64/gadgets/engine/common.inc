@@ -30,6 +30,18 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
+/* A guest access no wider than one byte lies inside one page by construction,
+ * so the boundary test folds away entirely at assembly time. `size` is the
+ * access width in bytes and must be an absolute expression.
+ */
+.macro page_cross_check size, label
+	.if (\size) > 1
+	add x9, x7, #((\size) - 1)
+	eor x9, x9, x7
+	tbnz x9, #12, \label
+	.endif
+.endm
+
 /* A host W-form instruction writes the whole 64-bit register, so a result
  * computed at 32 or 64 bits already is the guest value. Only the narrow widths
  * still need masking. Sites whose producer is a narrow load or the zero-extending

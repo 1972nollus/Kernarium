@@ -42,9 +42,7 @@ gadget vector_map3_extract_\size\()_m
 	.else
 	ldr x24, [x10, x13, lsl #3]
 	.endif
-	add x9, x7, #(\size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_extract_cross\@
+	page_cross_check (\size), .Lx86_vector_map3_extract_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	.if \size == 1
 	strb w24, [x7]
@@ -101,9 +99,7 @@ gadget vector_map3_extract_128_m
 	add x10, _cpu, x10
 	add x10, x10, x13, lsl #4
 	ldr q0, [x10]
-	add x9, x7, #15
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_extract_128_cross
+	page_cross_check 16, .Lx86_vector_map3_extract_128_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	str q0, [x7]
 	finish_store 16
@@ -152,9 +148,7 @@ gadget vector_map3_insert_\size\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #(\size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_insert_cross\@
+	page_cross_check (\size), .Lx86_vector_map3_insert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	.if \size == 1
 	ldrb w24, [x7]
@@ -276,9 +270,7 @@ gadget vector_map3_insertps_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #3
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_insertps_cross
+	page_cross_check 4, .Lx86_vector_map3_insertps_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
 	b .Lx86_vector_map3_insertps_loaded

@@ -363,9 +363,7 @@ gadget vector_map3_string_\symbol\()_rm
 	effective_address
 	ldr x27, [_stream], #8
 	mov x25, x7
-	add x9, x7, #15
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_string_cross\@
+	page_cross_check 16, .Lx86_vector_map3_string_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldr q1, [x7]
 	b .Lx86_vector_map3_string_loaded\@

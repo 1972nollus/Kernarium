@@ -140,9 +140,7 @@ gadget vector_map3_math_\symbol\()_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_math_cross\@
+	page_cross_check (\width / 8), .Lx86_vector_map3_math_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256

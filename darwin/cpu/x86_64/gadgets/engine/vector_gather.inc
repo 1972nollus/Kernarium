@@ -77,9 +77,7 @@ gadget vector_gather_d\data\()_i\index\()_r\register_bytes
 	tbz x23, #52, .Lx86_vector_gather_address_ready\@
 	mov w7, w7
 .Lx86_vector_gather_address_ready\@:
-	add x9, x7, #(\data - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_gather_cross\@
+	page_cross_check (\data), .Lx86_vector_gather_cross\@
 	vector_gather_translate \data, .Lx86_vector_gather_fault\@
 	.if \data == 4
 	ldr w14, [x7]

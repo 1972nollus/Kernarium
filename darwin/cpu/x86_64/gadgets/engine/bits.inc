@@ -97,9 +97,7 @@ gadget \operation\()_\width\()_m\form
 	finish_store (\width / 8)
 .Lx86_bit_split\@:
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_bit_read_cross\@
+	page_cross_check (\width / 8), .Lx86_bit_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_bit_loaded\@
@@ -117,9 +115,7 @@ gadget \operation\()_\width\()_m\form
 	retire_and_next
 	.else
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_bit_write_cross\@
+	page_cross_check (\width / 8), .Lx86_bit_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_bit_written\@
@@ -272,9 +268,7 @@ gadget \operation\()_\width\()_rr
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_bit_count_read_cross\@
+	page_cross_check (\width / 8), .Lx86_bit_count_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_bit_count_loaded\@

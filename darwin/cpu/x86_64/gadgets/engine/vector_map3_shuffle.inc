@@ -309,9 +309,7 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rm
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
 	vector_map3_shuffle_input_size \opcode, \width
-	add x9, x7, #(.Lx86_vector_map3_shuffle_input_size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_shuffle_cross\@
+	page_cross_check (.Lx86_vector_map3_shuffle_input_size), .Lx86_vector_map3_shuffle_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_map3_shuffle_input_size
 	.if .Lx86_vector_map3_shuffle_input_size == 8
 	ldr d1, [x7]

@@ -139,9 +139,7 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	add x9, x7, #(\input_size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_map3_round_cross\@
+	page_cross_check (\input_size), .Lx86_vector_map3_round_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 4
 	ldr s1, [x7]

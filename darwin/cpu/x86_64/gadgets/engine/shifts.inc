@@ -378,9 +378,7 @@ gadget \operation\()_\width\()_m\form
 	.else
 	ldr x26, [_stream], #8
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_shift_memory_read_cross\@
+	page_cross_check (\width / 8), .Lx86_shift_memory_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_shift_memory_loaded\@
@@ -425,9 +423,7 @@ gadget \operation\()_\width\()_m\form
 	mov \host_register\()27, \host_register\()24
 .Lx86_shift_memory_write\@:
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_shift_memory_write_cross\@
+	page_cross_check (\width / 8), .Lx86_shift_memory_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_shift_memory_written\@
@@ -546,9 +542,7 @@ gadget \operation\()_\width\()_mr\form
 	effective_address
 	mov x25, x7
 	ldr x26, [_stream], #8
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_double_shift_read_cross\@
+	page_cross_check (\width / 8), .Lx86_double_shift_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_double_shift_loaded\@
@@ -573,9 +567,7 @@ gadget \operation\()_\width\()_mr\form
 	cbz w26, .Lx86_double_shift_memory_zero\@
 	double_shift_compute \operation, \width, \host_register
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_double_shift_write_cross\@
+	page_cross_check (\width / 8), .Lx86_double_shift_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_double_shift_written\@

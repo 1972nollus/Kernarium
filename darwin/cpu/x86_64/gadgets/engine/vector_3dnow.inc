@@ -133,9 +133,7 @@ gadget vector_3dnow_\opcode\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #7
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_3dnow_cross\@
+	page_cross_check 8, .Lx86_vector_3dnow_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr d1, [x7]
 	b .Lx86_vector_3dnow_loaded\@

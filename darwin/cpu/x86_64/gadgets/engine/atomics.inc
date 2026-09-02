@@ -70,9 +70,7 @@ gadget cmpxchg_\width\()_mr
 	atomic_record_deferred 2, \width
 	retire_and_next
 .Lx86_cmpxchg_split\@:
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_read_cross\@
+	page_cross_check (\width / 8), .Lx86_cmpxchg_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_cmpxchg_loaded\@
@@ -88,9 +86,7 @@ gadget cmpxchg_\width\()_mr
 	cmp \host_register\()27, \host_register\()24
 	b.ne .Lx86_cmpxchg_memory_unequal\@
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_write_cross\@
+	page_cross_check (\width / 8), .Lx86_cmpxchg_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()26, [x7]
 	b .Lx86_cmpxchg_memory_written\@
@@ -172,9 +168,7 @@ gadget xadd_\width\()_mr
 	atomic_record_deferred 1, \width
 	finish_store (\width / 8)
 .Lx86_xadd_split\@:
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_xadd_read_cross\@
+	page_cross_check (\width / 8), .Lx86_xadd_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_xadd_loaded\@
@@ -189,9 +183,7 @@ gadget xadd_\width\()_mr
 	add \host_register\()27, \host_register\()24, \host_register\()26
 	normalize_result \width, \host_register\()27
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_xadd_write_cross\@
+	page_cross_check (\width / 8), .Lx86_xadd_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_xadd_written\@
@@ -269,9 +261,7 @@ gadget cmpxchg_pair_8
 	compare_exchange_pair_flags
 	retire_and_next
 .Lx86_cmpxchg_pair_8_split:
-	add x9, x7, #7
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_pair_8_read_cross
+	page_cross_check 8, .Lx86_cmpxchg_pair_8_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr x24, [x7]
 	b .Lx86_cmpxchg_pair_8_loaded
@@ -295,9 +285,7 @@ gadget cmpxchg_pair_8
 	ldr w16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	orr x27, x27, x16, lsl #32
 	mov x7, x25
-	add x9, x7, #7
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_pair_8_write_cross
+	page_cross_check 8, .Lx86_cmpxchg_pair_8_write_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
 	str x27, [x7]
 	b .Lx86_cmpxchg_pair_8_written
@@ -350,9 +338,7 @@ gadget cmpxchg_pair_16
 	compare_exchange_pair_flags
 	retire_and_next
 .Lx86_cmpxchg_pair_16_split:
-	add x9, x7, #15
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_pair_16_read_cross
+	page_cross_check 16, .Lx86_cmpxchg_pair_16_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldp x24, x26, [x7]
 	b .Lx86_cmpxchg_pair_16_loaded
@@ -380,9 +366,7 @@ gadget cmpxchg_pair_16
 	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldr x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	mov x7, x25
-	add x9, x7, #15
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmpxchg_pair_16_write_cross
+	page_cross_check 16, .Lx86_cmpxchg_pair_16_write_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	stp x27, x16, [x7]
 	b .Lx86_cmpxchg_pair_16_written

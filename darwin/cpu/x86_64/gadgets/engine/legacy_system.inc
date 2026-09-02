@@ -219,9 +219,7 @@ gadget arpl_16_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	ldrh w24, [_cpu, x8]
-	add x9, x7, #1
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_arpl_read_cross
+	page_cross_check 2, .Lx86_arpl_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 2
 	ldrh w26, [x7]
 	b .Lx86_arpl_memory_loaded
@@ -239,9 +237,7 @@ gadget arpl_16_mr
 	b.hs .Lx86_arpl_memory_unchanged
 	bfi w26, w24, #0, #2
 	mov x7, x25
-	add x9, x7, #1
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_arpl_write_cross
+	page_cross_check 2, .Lx86_arpl_write_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 2
 	strh w26, [x7]
 	b .Lx86_arpl_memory_written
@@ -267,9 +263,7 @@ gadget push_all_\width
 	ldr x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub w25, w26, #(8 * (\width / 8))
 	mov x7, x25
-	add x9, x7, #(8 * (\width / 8) - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_all_cross\@
+	page_cross_check (8 * (\width / 8)), .Lx86_push_all_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (8 * (\width / 8))
 	.if \width == 32
 	ldr w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
@@ -373,9 +367,7 @@ gadget pop_all_\width
 	ldr x22, [_stream], #8
 	ldr w25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x7, x25
-	add x9, x7, #(8 * (\width / 8) - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_all_cross\@
+	page_cross_check (8 * (\width / 8)), .Lx86_pop_all_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (8 * (\width / 8))
 	.if \width == 32
 	ldp w8, w9, [x7]
@@ -482,9 +474,7 @@ gadget push_segment_32
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub w25, w25, #4
 	mov x7, x25
-	add x9, x7, #3
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_segment_32_cross
+	page_cross_check 4, .Lx86_push_segment_32_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 4
 	str w24, [x7]
 .Lx86_push_segment_32_done:
@@ -510,9 +500,7 @@ gadget push_segment_64
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #8
 	mov x7, x25
-	add x9, x7, #7
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_push_segment_64_cross
+	page_cross_check 8, .Lx86_push_segment_64_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
 	str x24, [x7]
 .Lx86_push_segment_64_done:
@@ -532,9 +520,7 @@ gadget pop_segment_32
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov w25, w25
 	mov x7, x25
-	add x9, x7, #3
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_segment_32_cross
+	page_cross_check 4, .Lx86_pop_segment_32_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
 .Lx86_pop_segment_32_done:
@@ -556,9 +542,7 @@ gadget pop_segment_64
 	ldp x23, x22, [_stream], #16
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x7, x25
-	add x9, x7, #7
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_pop_segment_64_cross
+	page_cross_check 8, .Lx86_pop_segment_64_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr x24, [x7]
 .Lx86_pop_segment_64_done:
@@ -645,9 +629,7 @@ gadget store_gdtr
 	effective_address
 	mov x25, x7
 	mov x24, #0xfffffffffffe0000
-	add x9, x7, #9
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_store_gdtr_cross
+	page_cross_check 10, .Lx86_store_gdtr_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 10
 	strh wzr, [x7]
 	stur x24, [x7, #2]

@@ -214,9 +214,7 @@ unary_width 64, ldr, str, x, x
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_arithmetic_rm_cross\@
+	page_cross_check (\width / 8), .Lx86_arithmetic_rm_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()12, [x7]
 .Lx86_arithmetic_rm_loaded\@:
@@ -271,9 +269,7 @@ gadget \operation\()_\width\()_m\form
 	finish_store (\width / 8)
 .Lx86_arithmetic_msource_split\@:
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_arithmetic_msource_read_cross\@
+	page_cross_check (\width / 8), .Lx86_arithmetic_msource_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 .Lx86_arithmetic_msource_read\@:
@@ -288,9 +284,7 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	.if \writes
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_arithmetic_msource_write_cross\@
+	page_cross_check (\width / 8), .Lx86_arithmetic_msource_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 .Lx86_arithmetic_msource_written\@:
@@ -350,9 +344,7 @@ gadget \name\()_\width\()_rm
 	and w19, w19, #1
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_carry_rm_cross\@
+	page_cross_check (\width / 8), .Lx86_carry_rm_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()12, [x7]
 	b .Lx86_carry_rm_loaded\@
@@ -412,9 +404,7 @@ gadget \name\()_\width\()_m\form
 	finish_store (\width / 8)
 .Lx86_carry_msource_split\@:
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_carry_msource_read_cross\@
+	page_cross_check (\width / 8), .Lx86_carry_msource_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_carry_msource_read\@
@@ -430,9 +420,7 @@ gadget \name\()_\width\()_m\form
 	\instruction \host_register\()27, \host_register\()27, \host_register\()19
 	normalize_result \width, \host_register\()27
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_carry_msource_write_cross\@
+	page_cross_check (\width / 8), .Lx86_carry_msource_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_carry_msource_written\@
@@ -492,9 +480,7 @@ gadget exchange_\width\()_mr
 	\register_store \register_store_register\()24, [_cpu, x8]
 	finish_store (\width / 8)
 .Lx86_exchange_split\@:
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_exchange_read_cross\@
+	page_cross_check (\width / 8), .Lx86_exchange_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_exchange_loaded\@
@@ -507,9 +493,7 @@ gadget exchange_\width\()_mr
 	mov x24, x0
 .Lx86_exchange_loaded\@:
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_exchange_write_cross\@
+	page_cross_check (\width / 8), .Lx86_exchange_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()26, [x7]
 	b .Lx86_exchange_written\@
@@ -579,9 +563,7 @@ gadget \operation\()_\width\()_m
 	finish_store (\width / 8)
 .Lx86_unary_split\@:
 	.endif
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_unary_read_cross\@
+	page_cross_check (\width / 8), .Lx86_unary_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_unary_loaded\@
@@ -610,9 +592,7 @@ gadget \operation\()_\width\()_m
 	.endif
 	normalize_result \width, \host_register\()27
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_unary_write_cross\@
+	page_cross_check (\width / 8), .Lx86_unary_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 	b .Lx86_unary_written\@

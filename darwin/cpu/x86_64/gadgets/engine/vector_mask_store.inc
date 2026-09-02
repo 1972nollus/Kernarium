@@ -6,9 +6,7 @@ gadget vector_mask_store_\width
 	ldp x23, x22, [_stream], #16
 	ldr x25, [_cpu, #(7 * 8)]
 	mov x7, x25
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_mask_store_cross\@
+	page_cross_check (\width / 8), .Lx86_vector_mask_store_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	.if \width == 64
 	ldr d2, [x7]

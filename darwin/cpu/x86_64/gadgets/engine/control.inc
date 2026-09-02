@@ -149,9 +149,7 @@ gadget cmov_\condition\()_\width\()_rr
 gadget cmov_\condition\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	add x9, x7, #(\width / 8 - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_cmov_memory_cross\@
+	page_cross_check (\width / 8), .Lx86_cmov_memory_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
 	b .Lx86_cmov_memory_loaded\@

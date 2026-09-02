@@ -172,9 +172,7 @@ gadget vector_convert_\name\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x9, x7, #(\input_size - 1)
-	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_vector_convert_cross\@
+	page_cross_check (\input_size), .Lx86_vector_convert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 4
 	ldr s1, [x7]
