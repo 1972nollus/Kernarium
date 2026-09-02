@@ -81,6 +81,11 @@ struct CpuState final {
 	std::uint8_t compat_tls_present{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
+	/* Address generation indexes {segment_zero, fs_base, gs_base} with the
+	 * stream descriptor's segment selector, and names segment_zero for an
+	 * absent base or index register. It must always read as zero.
+	 */
+	std::uint64_t segment_zero{};
 	std::uint64_t fs_base{};
 	std::uint64_t gs_base{};
 	std::uint32_t mxcsr{0x1f80};

@@ -2,6 +2,7 @@
 #include "native_builder.hpp"
 
 #include "native_symbols.hpp"
+#include "cpu/x86_64/layout/assembly_offsets.h"
 
 #include <array>
 #include <bit>
@@ -895,9 +896,14 @@ struct EncodedMemory final {
 	if (operand.kind != OperandKind::memory || operand.memory.vector_index)
 		return std::nullopt;
 	const auto &memory = operand.memory;
-	const auto base = memory.base == MemoryOperand::no_register ? 0xffffU :
+	/* An absent base or index names the always-zero CpuState slot, so address
+	 * generation adds it unconditionally instead of branching on a sentinel.
+	 */
+	const auto base = memory.base == MemoryOperand::no_register ?
+		unsigned{UML_X86_64_CPU_SEGMENT_ZERO} :
 		static_cast<unsigned>(memory.base * sizeof(std::uint64_t));
-	const auto index = memory.index == MemoryOperand::no_register ? 0xffffU :
+	const auto index = memory.index == MemoryOperand::no_register ?
+		unsigned{UML_X86_64_CPU_SEGMENT_ZERO} :
 		static_cast<unsigned>(memory.index * sizeof(std::uint64_t));
 	const auto scale_shift = std::countr_zero(
 		static_cast<unsigned>(memory.scale));
@@ -911,19 +917,18 @@ struct EncodedMemory final {
 		(static_cast<std::uintptr_t>(memory.address_16) << 53U) |
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
+	constexpr auto absent_registers =
+		(std::uintptr_t{0xffff} << 16U) | (std::uintptr_t{0xffff} << 32U);
+	constexpr auto zero_registers =
+		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 16U) |
+		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 32U);
 	if (memory.absolute_address) {
 		displacement = memory.absolute;
-		descriptor &= ~((std::uintptr_t{0xffff} << 16U) |
-			(std::uintptr_t{0xffff} << 32U));
-		descriptor |= (std::uintptr_t{0xffff} << 16U) |
-			(std::uintptr_t{0xffff} << 32U);
+		descriptor = (descriptor & ~absent_registers) | zero_registers;
 	} else if (memory.rip_relative) {
 		displacement = gadget.address + gadget.instruction.length +
 			static_cast<std::int64_t>(memory.displacement);
-		descriptor &= ~((std::uintptr_t{0xffff} << 16U) |
-			(std::uintptr_t{0xffff} << 32U));
-		descriptor |= (std::uintptr_t{0xffff} << 16U) |
-			(std::uintptr_t{0xffff} << 32U);
+		descriptor = (descriptor & ~absent_registers) | zero_registers;
 	} else {
 		displacement = static_cast<std::uintptr_t>(
 			static_cast<std::int64_t>(memory.displacement));

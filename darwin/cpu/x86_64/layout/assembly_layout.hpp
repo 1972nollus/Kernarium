@@ -20,6 +20,11 @@ static_assert(offsetof(CpuState, compat_tls_present) ==
 	UML_X86_64_CPU_COMPAT_TLS_PRESENT);
 static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
 static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
+static_assert(
+	offsetof(CpuState, segment_zero) ==
+	UML_X86_64_CPU_SEGMENT_ZERO);
+static_assert(offsetof(CpuState, fs_base) - offsetof(CpuState, segment_zero) == 8);
+static_assert(offsetof(CpuState, gs_base) - offsetof(CpuState, fs_base) == 8);
 static_assert(offsetof(CpuState, fs_base) == UML_X86_64_CPU_FS_BASE);
 static_assert(offsetof(CpuState, gs_base) == UML_X86_64_CPU_GS_BASE);
 static_assert(offsetof(CpuState, mxcsr) == UML_X86_64_CPU_MXCSR);

@@ -1301,6 +1301,125 @@ read_test_code_sequences(void *opaque) noexcept
 			"FS base was not applied to memory operands");
 }
 
+/* Address generation resolves base, index, scale, segment and address size
+ * from one stream descriptor with no branch on which of them are present, so
+ * every shape the builder can encode needs its own case. The instruction
+ * corpus is keyed by operand form rather than addressing shape and cannot
+ * cover this.
+ */
+[[nodiscard]] bool execute_addressing_shapes()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t data = 0x800;
+	constexpr std::uint64_t marker = 0x0123'4567'89ab'cdefULL;
+
+	struct Shape final {
+		const char *name;
+		std::initializer_list<std::uint8_t> encoding;
+		std::uint64_t rbx;
+		std::uint64_t rcx;
+		std::uint64_t fs;
+		std::uint64_t gs;
+	};
+	/* Every shape below resolves to the same effective address, so a wrong
+	 * result names the shape that mis-resolved.
+	 */
+	const std::initializer_list<Shape> shapes{
+		{"(base)", {0x48, 0x8b, 0x03}, data, 0, 0, 0},
+		{"disp(base)", {0x48, 0x8b, 0x43, 0x10}, data - 16, 0, 0, 0},
+		{"(base,index,8)", {0x48, 0x8b, 0x04, 0xcb}, 0x400, 0x80, 0, 0},
+		{"disp(base,index,8)", {0x48, 0x8b, 0x44, 0xcb, 0x10},
+			0x3f0, 0x80, 0, 0},
+		{"(,index,8)", {0x48, 0x8b, 0x04, 0xcd, 0x00, 0x00, 0x00, 0x00},
+			0, 0x100, 0, 0},
+		{"fs:disp", {0x64, 0x48, 0x8b, 0x04, 0x25, 0x10, 0x00, 0x00, 0x00},
+			0, 0, data - 16, 0},
+		{"gs:disp", {0x65, 0x48, 0x8b, 0x04, 0x25, 0x10, 0x00, 0x00, 0x00},
+			0, 0, 0, data - 16},
+		{"absolute", {0x48, 0x8b, 0x04, 0x25, 0x00, 0x08, 0x00, 0x00},
+			0, 0, 0, 0},
+		{"addr32 disp(base)", {0x67, 0x48, 0x8b, 0x43, 0x10},
+			data - 16, 0, 0, 0},
+		{"addr32 (base,index,8)", {0x67, 0x48, 0x8b, 0x04, 0xcb},
+			0x400, 0x80, 0, 0},
+	};
+
+	std::uint64_t code = 0x100;
+	for (const auto &shape : shapes) {
+		TestMemory memory;
+		memory.load(data, {0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01});
+		memory.load(code, shape.encoding);
+		CpuState cpu{};
+		cpu.rip = code;
+		cpu.gpr(Register::rbx) = shape.rbx;
+		cpu.gpr(Register::rcx) = shape.rcx;
+		cpu.fs_base = shape.fs;
+		cpu.gs_base = shape.gs;
+		const auto built = gadgets::build(memory, code, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built, shape.name) ||
+			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
+				uml::cpu::EngineEvent::continued, shape.name) ||
+			!expect(cpu.gpr(Register::rax) == marker, shape.name))
+			return false;
+		code += 16;
+	}
+
+	/* RIP-relative folds the displacement against the instruction end, so it
+	 * must be built where it is actually placed.
+	 */
+	{
+		TestMemory memory;
+		memory.load(data, {0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01});
+		const std::uint64_t rip_code = 0x200;
+		const auto displacement = static_cast<std::uint32_t>(
+			data - (rip_code + 7));
+		memory.load(rip_code, {0x48, 0x8b, 0x05,
+			static_cast<std::uint8_t>(displacement),
+			static_cast<std::uint8_t>(displacement >> 8),
+			static_cast<std::uint8_t>(displacement >> 16),
+			static_cast<std::uint8_t>(displacement >> 24)});
+		CpuState cpu{};
+		cpu.rip = rip_code;
+		const auto built = gadgets::build(memory, rip_code, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+				"rip-relative did not build") ||
+			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
+				uml::cpu::EngineEvent::continued,
+				"rip-relative did not execute") ||
+			!expect(cpu.gpr(Register::rax) == marker,
+				"rip-relative resolved the wrong address"))
+			return false;
+	}
+
+	/* A load that spans a page boundary leaves the inline fast path, so the
+	 * shape has to stay correct on the slow path too.
+	 */
+	{
+		TestMemory memory;
+		memory.load(0xffc, {0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01});
+		memory.load(0x100, {0x48, 0x8b, 0x43, 0x10});
+		CpuState cpu{};
+		cpu.rip = 0x100;
+		cpu.gpr(Register::rbx) = 0xffc - 16;
+		const auto built = gadgets::build(memory, 0x100, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+				"page-crossing load did not build") ||
+			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
+				uml::cpu::EngineEvent::continued,
+				"page-crossing load did not execute") ||
+			!expect(cpu.gpr(Register::rax) == marker,
+				"page-crossing load resolved the wrong address"))
+			return false;
+	}
+
+	/* The always-zero slot the absent-register encoding names must stay zero:
+	 * a stray write to it would silently offset every such operand.
+	 */
+	CpuState fresh{};
+	return expect(fresh.segment_zero == 0,
+		"the address-generation zero slot is not zero");
+}
+
 [[nodiscard]] bool execute_call_and_return()
 {
 	using namespace uml::cpu::x86_64;
@@ -2268,6 +2387,7 @@ int main()
 		execute_compat32_futex_result_validator() &&
 		shifts_overlay_lazy_arithmetic_flags() &&
 		execute_segment_memory() &&
+		execute_addressing_shapes() &&
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
 		execute_compat32_stack_and_int80() &&

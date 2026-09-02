@@ -82,36 +82,17 @@ NAME(uml_x86_64_gadget_\name):
 .macro effective_address
 	ldp x23, x14, [_stream], #16
 	ldr x22, [_stream], #8
-	mov x7, x14
-	mov w15, #0xffff
-	ubfx w9, w23, #16, #16
-	cmp w9, w15
-	b.eq .Lx86_no_base\@
+	ubfx x9, x23, #16, #16
+	ubfx x11, x23, #32, #16
+	ubfx x12, x23, #48, #2
 	ldr x10, [_cpu, x9]
-	tbnz x23, #53, .Lx86_base_16\@
-	tbz x23, #52, .Lx86_base_ready\@
-	mov w10, w10
-	b .Lx86_base_ready\@
-.Lx86_base_16\@:
-	uxth w10, w10
-.Lx86_base_ready\@:
-	add x7, x7, x10
-.Lx86_no_base\@:
-	ubfx x9, x23, #32, #16
-	cmp w9, w15
-	b.eq .Lx86_no_index\@
-	ldr x10, [_cpu, x9]
-	tbnz x23, #53, .Lx86_index_16\@
-	tbz x23, #52, .Lx86_index_ready\@
-	mov w10, w10
-	b .Lx86_index_ready\@
-.Lx86_index_16\@:
-	uxth w10, w10
-.Lx86_index_ready\@:
-	ubfx x11, x23, #48, #2
-	lsl x10, x10, x11
-	add x7, x7, x10
-.Lx86_no_index\@:
+	ldr x13, [_cpu, x11]
+	lsl x13, x13, x12
+	add x7, x14, x10
+	add x7, x7, x13
+	/* Truncation distributes over addition and shifting, so masking the sum
+	 * once is equivalent to masking every component and the sum.
+	 */
 	tbnz x23, #53, .Lx86_address_16\@
 	tbz x23, #52, .Lx86_address_ready\@
 	mov w7, w7
@@ -119,23 +100,22 @@ NAME(uml_x86_64_gadget_\name):
 .Lx86_address_16\@:
 	uxth w7, w7
 .Lx86_address_ready\@:
+	/* The selector indexes {segment_zero, fs_base, gs_base}, so no segment is
+	 * an addition of zero rather than a pair of branches.
+	 */
 	ubfx x9, x23, #50, #2
-	cmp w9, #1
-	b.ne .Lx86_not_fs\@
-	ldr x10, [_cpu, #UML_X86_64_CPU_FS_BASE]
+	add x11, _cpu, x9, lsl #3
+	ldr x10, [x11, #UML_X86_64_CPU_SEGMENT_ZERO]
 	add x7, x7, x10
-	b .Lx86_segment_linear\@
-.Lx86_not_fs\@:
-	cmp w9, #2
-	b.ne .Lx86_segment_ready\@
-	ldr x10, [_cpu, #UML_X86_64_CPU_GS_BASE]
-	add x7, x7, x10
-.Lx86_segment_linear\@:
-	/* Legacy protected mode has a 32-bit linear-address space.  Linux's
-	 * i386 TLS sequences rely on a high FS/GS base plus an effective offset
-	 * wrapping through zero; long mode keeps its full-width FS/GS base. */
-	ldrb w9, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
-	cmp w9, #1
+	/* Legacy protected mode has a 32-bit linear-address space. Linux's i386
+	 * TLS sequences rely on a high FS/GS base plus an effective offset
+	 * wrapping through zero; long mode keeps its full-width FS/GS base. The
+	 * wrap follows the selector, not the base value, so a zero FS base in
+	 * compat32 still wraps exactly as before.
+	 */
+	cbz x9, .Lx86_segment_ready\@
+	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w11, #1
 	b.ne .Lx86_segment_ready\@
 	mov w7, w7
 .Lx86_segment_ready\@:
