@@ -1,13 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Scalar BMI1/BMI2 operations. */
 
-.macro bmi_normalize width, destination, source
-	.if \width == 32
-	mov \destination, \source
-	.else
-	mov \destination, \source
-	.endif
-.endm
 
 .macro bmi_flags width, host_register
 	bl uml_x86_64_gadget_materialize_flags
@@ -46,7 +39,6 @@
 	cmp \host_register\()24, #0
 	cset w19, ne
 	.endif
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 .endm
 
 .macro bmi_unary_register operation, width, load, host_register, store_register
@@ -114,7 +106,6 @@ bmi_unary_family blsi
 	.ifc \operation,andn
 	bic \host_register\()27, \host_register\()26, \host_register\()24
 	mov w19, wzr
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	bmi_flags \width, \host_register
 	.endif
 
@@ -137,7 +128,6 @@ bmi_unary_family blsi
 	eor \host_register\()27, \host_register\()27, \host_register\()27
 	mov w19, wzr
 .Lx86_bzhi_ready\@:
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	bmi_flags \width, \host_register
 	.endif
 
@@ -161,24 +151,20 @@ bmi_unary_family blsi
 	eor \host_register\()27, \host_register\()27, \host_register\()27
 .Lx86_bextr_ready\@:
 	mov w19, wzr
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	bmi_flags \width, \host_register
 	.endif
 
 	.ifc \operation,shlx
 	and w8, w24, #(\width - 1)
 	lslv \host_register\()27, \host_register\()26, \host_register\()8
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	.endif
 	.ifc \operation,sarx
 	and w8, w24, #(\width - 1)
 	asrv \host_register\()27, \host_register\()26, \host_register\()8
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	.endif
 	.ifc \operation,shrx
 	and w8, w24, #(\width - 1)
 	lsrv \host_register\()27, \host_register\()26, \host_register\()8
-	bmi_normalize \width, \host_register\()27, \host_register\()27
 	.endif
 
 	.ifc \operation,pdep
@@ -342,4 +328,3 @@ rorx_memory 64, ldr, x, x
 .purgem rorx_memory
 .purgem rorx_register
 .purgem bmi_flags
-.purgem bmi_normalize

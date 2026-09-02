@@ -30,6 +30,19 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
+/* A host W-form instruction writes the whole 64-bit register, so a result
+ * computed at 32 or 64 bits already is the guest value. Only the narrow widths
+ * still need masking. Sites whose producer is a narrow load or the zero-extending
+ * cross-page helper need nothing at all and call neither macro.
+ */
+.macro normalize_result width, register
+	.if \width == 8
+	and \register, \register, #0xff
+	.elseif \width == 16
+	uxth \register, \register
+	.endif
+.endm
+
 /* Stream descriptor:
  *   15:0   value-register byte offset
  *   31:16  base-register byte offset or 0xffff

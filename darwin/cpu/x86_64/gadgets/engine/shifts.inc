@@ -1,17 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Scalar shifts and rotates. */
 
-.macro shift_normalize width, destination, source
-	.if \width == 8
-	and \destination, \source, #0xff
-	.elseif \width == 16
-	uxth \destination, \source
-	.elseif \width == 32
-	mov \destination, \source
-	.elseif \width == 64
-	mov \destination, \source
-	.endif
-.endm
 
 /* x24 is the normalized input, w26 is a nonzero masked count. The rotate
  * count is reduced here because arm64 shifts do not wrap within byte and word
@@ -59,7 +48,7 @@
 	mov w19, wzr
 .Lx86_shift_carry_ready\@:
 	lslv \host_register\()27, \host_register\()24, \host_register\()26
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	.endif
 
 	.ifc \operation,shr
@@ -73,7 +62,7 @@
 	mov w19, wzr
 .Lx86_shift_carry_ready\@:
 	lsrv \host_register\()27, \host_register\()24, \host_register\()26
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	.endif
 
 	.ifc \operation,sar
@@ -97,7 +86,7 @@
 	mov x27, x24
 	.endif
 	asrv \host_register\()27, \host_register\()27, \host_register\()26
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	.endif
 
 	.ifc \operation,rol
@@ -106,7 +95,7 @@
 	lslv \host_register\()27, \host_register\()24, \host_register\()26
 	lsrv \host_register\()9, \host_register\()24, \host_register\()8
 	orr \host_register\()27, \host_register\()27, \host_register\()9
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	and w19, w27, #1
 	.endif
 
@@ -122,7 +111,7 @@
 	lslv \host_register\()9, \host_register\()24, \host_register\()8
 	orr \host_register\()27, \host_register\()27, \host_register\()9
 	.endif
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	lsr \host_register\()19, \host_register\()27, #(\width - 1)
 	and w19, w19, #1
 	.endif
@@ -136,7 +125,7 @@
 	lsr \host_register\()8, \host_register\()27, #(\width - 1)
 	lsl \host_register\()27, \host_register\()27, #1
 	orr \host_register\()27, \host_register\()27, \host_register\()19
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	and w19, w8, #1
 	subs w16, w16, #1
 	b.ne .Lx86_rotate_carry_loop\@
@@ -152,7 +141,7 @@
 	lsr \host_register\()27, \host_register\()27, #1
 	lsl \host_register\()9, \host_register\()19, #(\width - 1)
 	orr \host_register\()27, \host_register\()27, \host_register\()9
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	mov w19, w8
 	subs w16, w16, #1
 	b.ne .Lx86_rotate_carry_loop\@
@@ -332,7 +321,6 @@ gadget \operation\()_\width\()_r\form
 	ldrb w26, [_cpu, x9]
 	.endif
 	\load \host_register\()24, [_cpu, x25]
-	shift_normalize \width, \host_register\()24, \host_register\()24
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
@@ -404,7 +392,6 @@ gadget \operation\()_\width\()_m\form
 	cbz x1, .Lx86_memory_fault
 	mov x24, x0
 .Lx86_shift_memory_loaded\@:
-	shift_normalize \width, \host_register\()24, \host_register\()24
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
@@ -525,7 +512,7 @@ shift_family rcr
 	lsrv \host_register\()19, \host_register\()15, \host_register\()8
 	.endif
 .Lx86_double_shift_computed\@:
-	shift_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	and w19, w19, #1
 .endm
 
@@ -539,8 +526,6 @@ gadget \operation\()_\width\()_rr\form
 	.ifc \form,r
 	ldrb w26, [_cpu, x26]
 	.endif
-	shift_normalize \width, \host_register\()24, \host_register\()24
-	shift_normalize \width, \host_register\()15, \host_register\()15
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
@@ -580,8 +565,6 @@ gadget \operation\()_\width\()_mr\form
 	.ifc \form,r
 	ldrb w26, [_cpu, x26]
 	.endif
-	shift_normalize \width, \host_register\()24, \host_register\()24
-	shift_normalize \width, \host_register\()15, \host_register\()15
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
@@ -641,4 +624,3 @@ double_shift_family shrd
 .purgem shift_set_szp
 .purgem shift_compute
 .purgem shift_prepare_count
-.purgem shift_normalize

@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Scalar arithmetic, logical, unary, byte-order, and flag operations. */
-.macro normalize width, destination, source
+/* Stream immediates arrive as a full 64-bit word, so they still need an
+ * explicit narrowing to the guest operand width.
+ */
+.macro normalize_immediate width, destination, source
 	.if \width == 8
 	and \destination, \source, #0xff
 	.elseif \width == 16
@@ -35,7 +38,7 @@ gadget \name
 	\load \host_register\()11, [_cpu, x9]
 	\load \host_register\()12, [_cpu, x10]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	.if \writes
 	\store \store_register\()13, [_cpu, x9]
 	.endif
@@ -48,9 +51,9 @@ gadget \name
 	ldp x8, x12, [_stream], #16
 	and x9, x8, #0xffff
 	\load \host_register\()11, [_cpu, x9]
-	normalize \width, \host_register\()12, \host_register\()12
+	normalize_immediate \width, \host_register\()12, \host_register\()12
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	.if \writes
 	\store \store_register\()13, [_cpu, x9]
 	.endif
@@ -91,7 +94,7 @@ gadget \name\()_\width\()_rr
 	and w16, w16, #1
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	\instruction \host_register\()13, \host_register\()13, \host_register\()16
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	\store \store_register\()13, [_cpu, x9]
 	record_deferred \flag_operation, \width
 	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
@@ -104,12 +107,12 @@ gadget \name\()_\width\()_ri
 	ldp x8, x12, [_stream], #16
 	and x9, x8, #0xffff
 	\load \host_register\()11, [_cpu, x9]
-	normalize \width, \host_register\()12, \host_register\()12
+	normalize_immediate \width, \host_register\()12, \host_register\()12
 	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w16, w16, #1
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	\instruction \host_register\()13, \host_register\()13, \host_register\()16
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	\store \store_register\()13, [_cpu, x9]
 	record_deferred \flag_operation, \width
 	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
@@ -180,7 +183,7 @@ gadget \name\()_\width\()_r
 	mov x12, x11
 	mov x11, xzr
 	.endif
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	\store \store_register\()13, [_cpu, x8]
 	record_deferred \flag_operation, \width
 	retire_and_next
@@ -220,7 +223,7 @@ gadget \operation\()_\width\()_rm
 	and x8, x23, #0xffff
 	\load \host_register\()11, [_cpu, x8]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	.if \writes
 	\store \store_register\()13, [_cpu, x8]
 	.endif
@@ -250,7 +253,7 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	.ifc \form,i
 	ldr x26, [_stream], #8
-	normalize \width, \host_register\()26, \host_register\()26
+	normalize_immediate \width, \host_register\()26, \host_register\()26
 	.endif
 	.if \locked
 	locked_aligned \width, .Lx86_arithmetic_msource_split\@
@@ -258,7 +261,7 @@ gadget \operation\()_\width\()_m\form
 1:
 	load_exclusive \width, 24, x7
 	\instruction \host_register\()27, \host_register\()24, \host_register\()26
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
 	mov x11, x24
@@ -275,7 +278,7 @@ gadget \operation\()_\width\()_m\form
 	\load \host_register\()24, [x7]
 .Lx86_arithmetic_msource_read\@:
 	\instruction \host_register\()27, \host_register\()24, \host_register\()26
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	.if !\writes
 	mov x11, x24
 	mov x12, x26
@@ -365,7 +368,7 @@ gadget \name\()_\width\()_rm
 	\load \host_register\()11, [_cpu, x8]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	\instruction \host_register\()13, \host_register\()13, \host_register\()19
-	normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	\store \store_register\()13, [_cpu, x8]
 	record_deferred \flag_operation, \width
 	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
@@ -389,7 +392,7 @@ gadget \name\()_\width\()_m\form
 	.endif
 	.ifc \form,i
 	ldr x26, [_stream], #8
-	normalize \width, \host_register\()26, \host_register\()26
+	normalize_immediate \width, \host_register\()26, \host_register\()26
 	.endif
 	.if \locked
 	locked_aligned \width, .Lx86_carry_msource_split\@
@@ -398,7 +401,7 @@ gadget \name\()_\width\()_m\form
 	load_exclusive \width, 24, x7
 	\instruction \host_register\()27, \host_register\()24, \host_register\()26
 	\instruction \host_register\()27, \host_register\()27, \host_register\()19
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
 	mov x11, x24
@@ -425,7 +428,7 @@ gadget \name\()_\width\()_m\form
 .Lx86_carry_msource_read\@:
 	\instruction \host_register\()27, \host_register\()24, \host_register\()26
 	\instruction \host_register\()27, \host_register\()27, \host_register\()19
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -559,7 +562,7 @@ gadget \operation\()_\width\()_m
 	.ifc \instruction,not
 	mvn \host_register\()27, \host_register\()24
 	.endif
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
 	.if \flag_operation
@@ -605,7 +608,7 @@ gadget \operation\()_\width\()_m
 	.ifc \instruction,not
 	mvn \host_register\()27, \host_register\()24
 	.endif
-	normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -663,7 +666,7 @@ memory_unary_width 64, ldr, str, x
 .purgem scalar_not
 .purgem scalar_unary
 .purgem record_deferred
-.purgem normalize
+.purgem normalize_immediate
 
 gadget byte_swap_32
 	ldr x8, [_stream], #8

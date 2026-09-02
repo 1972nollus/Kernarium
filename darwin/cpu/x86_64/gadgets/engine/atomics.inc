@@ -1,17 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Compare/exchange and exchange/add scalar operations. */
 
-.macro atomic_normalize width, destination, source
-	.if \width == 8
-	and \destination, \source, #0xff
-	.elseif \width == 16
-	uxth \destination, \source
-	.elseif \width == 32
-	mov \destination, \source
-	.else
-	mov \destination, \source
-	.endif
-.endm
 
 .macro atomic_record_deferred operation, width
 	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
@@ -45,7 +34,7 @@ gadget cmpxchg_\width\()_rr
 .Lx86_cmpxchg_register_flags\@:
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
-	atomic_normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	atomic_record_deferred 2, \width
 	retire_and_next
 .endm
@@ -68,7 +57,7 @@ gadget cmpxchg_\width\()_mr
 	mov x11, x27
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
-	atomic_normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	atomic_record_deferred 2, \width
 	finish_store (\width / 8)
 2:
@@ -77,7 +66,7 @@ gadget cmpxchg_\width\()_mr
 	mov x11, x27
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
-	atomic_normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	atomic_record_deferred 2, \width
 	retire_and_next
 .Lx86_cmpxchg_split\@:
@@ -116,7 +105,7 @@ gadget cmpxchg_\width\()_mr
 	mov x11, x27
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
-	atomic_normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	atomic_record_deferred 2, \width
 	finish_store (\width / 8)
 .Lx86_cmpxchg_memory_unequal\@:
@@ -124,7 +113,7 @@ gadget cmpxchg_\width\()_mr
 	mov x11, x27
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
-	atomic_normalize \width, \host_register\()13, \host_register\()13
+	normalize_result \width, \host_register\()13
 	atomic_record_deferred 2, \width
 	retire_and_next
 .endm
@@ -151,7 +140,7 @@ gadget xadd_\width\()_rr
 	\load \host_register\()24, [_cpu, x9]
 	\load \host_register\()26, [_cpu, x10]
 	add \host_register\()27, \host_register\()24, \host_register\()26
-	atomic_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	\store \store_register\()24, [_cpu, x10]
 	\store \store_register\()27, [_cpu, x9]
 	mov x11, x24
@@ -172,7 +161,7 @@ gadget xadd_\width\()_mr
 1:
 	load_exclusive \width, 24, x7
 	add \host_register\()27, \host_register\()24, \host_register\()26
-	atomic_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
 	and x8, x23, #0xffff
@@ -198,7 +187,7 @@ gadget xadd_\width\()_mr
 	mov x24, x0
 .Lx86_xadd_loaded\@:
 	add \host_register\()27, \host_register\()24, \host_register\()26
-	atomic_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -422,4 +411,3 @@ gadget cmpxchg_pair_16
 
 .purgem compare_exchange_pair_flags
 .purgem atomic_record_deferred
-.purgem atomic_normalize

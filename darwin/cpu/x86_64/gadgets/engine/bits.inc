@@ -1,15 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Bit test/update and scalar bit count operations. */
 
-.macro bit_normalize width, destination, source
-	.if \width == 16
-	uxth \destination, \source
-	.elseif \width == 32
-	mov \destination, \source
-	.else
-	mov \destination, \source
-	.endif
-.endm
 
 .macro bit_update_carry
 	bl uml_x86_64_gadget_materialize_flags
@@ -38,7 +29,7 @@
 	.ifc \operation,btc
 	eor \host_register\()27, \host_register\()24, \host_register\()8
 	.endif
-	bit_normalize \width, \host_register\()27, \host_register\()27
+	normalize_result \width, \host_register\()27
 .endm
 
 .macro bit_register operation, width, load, store, host_register, store_register, form
@@ -273,7 +264,6 @@ gadget \operation\()_\width\()_rr
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
 	\load \host_register\()24, [_cpu, x9]
-	bit_normalize \width, \host_register\()24, \host_register\()24
 	bit_count_compute \operation, \width, \host_register
 	bit_count_finish \operation, \width, \store, \host_register, \store_register
 .endm
@@ -297,7 +287,6 @@ gadget \operation\()_\width\()_rm
 	mov x24, x0
 .Lx86_bit_count_loaded\@:
 	and x25, x23, #0xffff
-	bit_normalize \width, \host_register\()24, \host_register\()24
 	bit_count_compute \operation, \width, \host_register
 	bit_count_finish \operation, \width, \store, \host_register, \store_register
 .endm
@@ -326,4 +315,3 @@ bit_count_family popcnt
 .purgem bit_count_finish
 .purgem bit_count_flags
 .purgem bit_count_compute
-.purgem bit_normalize
