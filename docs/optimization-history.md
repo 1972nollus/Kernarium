@@ -249,6 +249,30 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Publish store eligibility from read-only JIT chain entries | Rejected. Focused checks passed in both page profiles after excluding reservation-establishing helpers, but alternating photo trials showed no reliable scaling gain. Broader chains also require explicit handling of a successor's deferred reservation exit; retain the existing publication boundary. |
 | Shorten JIT dispatches from 64K to 4K guest instructions | Rejected. Chromium still missed its ordinary startup deadline, and paired photo subtests lost multicore throughput. |
 | Enable linked x8/x9 carry or isolate the MMU execution counter further | Rejected. Linked register carry regressed paired photo subtests. Separating MMU sequence fields from its execution counter produced mixed paired results, so the original layout remains. |
+## x86-64 gadget engine campaign
+
+Measured on macOS with matched ABBA runs: focused static x86-64 probes in the
+guest for the mechanism, then Geekbench 6.7.1 single-core for the workload.
+`--iterations 1` reproduces the default run's per-workload rate at roughly a
+fifth of the wall time and is what these entries used.
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| X1 | Declare the ARMv8.5-A host baseline | Accepted as an enabler with no performance claim. The engine is macOS-only, so every host implements LSE, FlagM, FlagM2 and FRINTTS; the assembled object is byte-identical. |
+| X2 | Drop result normalization the host already performed | Accepted. A W-form host instruction writes the whole 64-bit register, so width normalization was a no-op at 32 and 64 bits. 32-bit register arithmetic improved 12%. |
+| X3 | Fold away the page-crossing test for single-byte accesses | Accepted. A one-byte access cannot cross a page. Byte memory operations improved 4%, and forcing the check to emit reproduced the previous engine instruction for instruction. |
+| X4 | Write the deferred-flag tail as one constant | Accepted. Operation and width are macro parameters and the rest of the tail is zero, so eight bytes are one link-time constant. Compare, set-condition and locked paths improved 4%. |
+| X5 | Interprocedural optimization for the translation path | Accepted on workload evidence against probe evidence. Steady-state execution is 0.5% to 2.3% slower, but four Geekbench workloads gained up to 2.75% with none regressing. Probes cannot see a change that only affects translation. |
+| X6 | Resolve effective addresses without branching on the descriptor | Accepted. Every address field is a translation-time constant. An always-zero state slot lets an absent base or index be added unconditionally and lets the segment selector index a table; truncation distributes over addition, so the narrow-address mask applies once to the sum. Eight branches become none, the bank loses 13%, and memory operations improved 2% to 12%. |
+| X7 | Extract byte sign masks with NEON | Accepted. Four shift-and-accumulate steps replace a loop that ran once per lane. The instruction is 78% faster; it is the core of glibc's SSE2 string routines, which a static histogram of a dynamically linked benchmark cannot see. |
+| X8 | Skip the store-side publication and overlap check | Rejected as built, but it located the largest single cost in the engine. Publication, not the range check, is 54% of every guest store, because it calls into C++ whenever the write-code flag is set rather than the two instructions it appears to be. Hoisting the check before the store, gating it on the write-code flag, and gating it on the translation-lookaside code bit all measured no gain; only skipping the work entirely does. An accurate "this page holds translated code" predicate would recover it. |
+| X9 | Evaluate branch conditions from the deferred record | Rejected. The premise was that a conditional branch pays full flag materialization, but that routine exits early and is already cheap; adding a pre-check ahead of it made conditional branches 57% slower in two independent implementations. |
+
+Two lessons generalize. Instruction count inside a gadget is a weak predictor:
+the changes that paid removed a loop, a call, or a branch, and those that only
+shortened a straight-line body did not. And a probe measures the mechanism it
+names and nothing else, so a candidate that only affects translation, or that
+trades throughput for latency, needs a workload to judge it.
 
 ## Graphics backend investigations
 
