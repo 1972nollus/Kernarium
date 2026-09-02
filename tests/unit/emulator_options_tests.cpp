@@ -124,6 +124,24 @@ void test_explicit_defaults_are_preserved()
 		"explicit EROFS mapping was rejected");
 }
 
+void test_x86_64_kernel_memory_accounting_policy()
+{
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	const char *defaults[]{"uml-test"};
+	const auto options = uml::emulator::prepare_emulator_options(
+		1, defaults, "/tmp/rootfs.erofs", false);
+	require(contains(options, "cgroup.memory=nokmem"),
+		"x86_64 userspace slice enabled kernel-object memory charging");
+
+	const char *explicit_policy[]{"uml-test", "cgroup.memory=default"};
+	const auto explicit_options = uml::emulator::prepare_emulator_options(
+		2, explicit_policy, "/tmp/rootfs.erofs", false);
+	require(contains(explicit_options, "cgroup.memory=default") &&
+		count_prefixed(explicit_options, "cgroup.memory=") == 1,
+		"explicit cgroup memory policy was replaced or duplicated");
+#endif
+}
+
 void test_guest_memory_budget_matches_kernel_memparse()
 {
 	constexpr std::size_t kib = 1024U;
@@ -393,6 +411,7 @@ int main()
 	try {
 		test_defaults_and_engine_selection();
 		test_explicit_defaults_are_preserved();
+		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_scalable_native_kernel_layout_geometry();
 		test_guest_cpu_count_matches_kernel_policy();

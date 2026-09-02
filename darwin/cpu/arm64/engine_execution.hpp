@@ -128,6 +128,9 @@ template<bool PollCallback, typename Executor>
 				return finish(ExitReason::pc_alignment, retired,
 					request.cpu.pc,
 					::uml::memory::MemoryAccess::execute);
+			case EngineEvent::overflow:
+				/* x86 INTO is not an arm64 engine event. */
+				return finish(ExitReason::fatal, retired);
 			case EngineEvent::fatal:
 				return finish(ExitReason::fatal, retired);
 			case EngineEvent::continued:

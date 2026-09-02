@@ -15,6 +15,11 @@ target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 # userspace requires that page profile and its exact math dependencies are in
 # the verified desktop prefix.
 if(UML_BUILD_X86_64_GUEST)
+    set(UML_X86_64_GADGET_CACHE_SLOTS "65536" CACHE STRING
+        "Slots in the x86-64 gadget program cache; power of two")
+    set(UML_X86_64_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
+        "x86-64 address spaces that may retain gadget programs")
+
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
         x86_64/decoder.cpp
@@ -33,6 +38,9 @@ if(UML_BUILD_X86_64_GUEST)
     target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)
+    target_compile_definitions(uml_x86_64_gadgets PRIVATE
+        UML_X86_64_GADGET_CACHE_SLOTS=${UML_X86_64_GADGET_CACHE_SLOTS}
+        UML_X86_64_GADGET_RESIDENT_GENERATIONS=${UML_X86_64_GADGET_RESIDENT_GENERATIONS})
     set_target_properties(uml_x86_64_gadgets PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()

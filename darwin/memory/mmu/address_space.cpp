@@ -660,8 +660,12 @@ public:
 		if (destination == nullptr)
 			return -1;
 		std::memcpy(destination, buffer, length);
-		if (iterator->second.guest_code)
+		if (iterator->second.guest_code) {
+			MappedBacking::invalidate_code_page(
+				iterator->second.backing->code_page_handle(
+					iterator->second.offset));
 			publish_code_change(*reference.state);
+		}
 		return 0;
 	}
 
@@ -695,6 +699,32 @@ public:
 		if (base == nullptr)
 			return DARWIN_UML_STATIC_HOST_ERROR;
 		*result = base;
+		return DARWIN_UML_STATIC_TRANSLATED;
+	}
+
+	int code_page(std::uint64_t generation, std::uint64_t address,
+		void **handle, darwin_uml_static_code_page_stamp *stamp)
+	{
+		if (handle == nullptr || stamp == nullptr)
+			return DARWIN_UML_STATIC_HOST_ERROR;
+		*handle = nullptr;
+		*stamp = {};
+		const auto page = address & ~(page_size - 1);
+		const auto resolved_generation = generation_for(page, generation);
+		auto reference = reference_for(resolved_generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		const auto iterator = reference.state->mappings.find(page);
+		if (iterator == reference.state->mappings.end())
+			return DARWIN_UML_STATIC_UNMAPPED;
+		const auto &mapping = iterator->second;
+		if (!mapping.guest_code || (mapping.protection & PROT_EXEC) == 0)
+			return DARWIN_UML_STATIC_PERMISSION;
+		auto *code_page = mapping.backing->code_page_handle(mapping.offset);
+		if (code_page == nullptr ||
+		    !MappedBacking::load_code_page_stamp(
+			    code_page, stamp->identity, stamp->version))
+			return DARWIN_UML_STATIC_HOST_ERROR;
+		*handle = code_page;
 		return DARWIN_UML_STATIC_TRANSLATED;
 	}
 
@@ -790,12 +820,23 @@ public:
 	void invalidate_code(std::uint64_t address)
 	{
 		const auto &active = active_thread_generation();
+		/* Translated execution normally publishes through its cached context.
+		 * Keep this routed fallback coherent with the same physical-page stamp,
+		 * including callers which invalidate code outside translated execution.
+		 */
+		if (AddressLayout::is_guest(address) &&
+		    active.address_space == this && active.state &&
+		    !active.state->retired.load(std::memory_order_acquire)) {
+			invalidate_code_page(*active.state, address);
+			publish_code_change(*active.state);
+			return;
+		}
 		const auto generation = generation_for(address,
 			active.address_space == this && active.state &&
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
 		auto state = state_for(generation);
-		std::shared_lock lock{state->mappings_mutex};
+		invalidate_code_page(*state, address);
 		publish_code_change(*state);
 	}
 
@@ -1374,6 +1415,19 @@ private:
 		return true;
 	}
 
+	static void invalidate_code_page(
+		GenerationState &state, std::uint64_t address)
+	{
+		const auto page = address & ~(page_size - 1);
+		std::shared_lock lock{state.mappings_mutex};
+		const auto mapping = state.mappings.find(page);
+		if (mapping == state.mappings.end() || !mapping->second.guest_code)
+			return;
+		MappedBacking::invalidate_code_page(
+			mapping->second.backing->code_page_handle(
+				mapping->second.offset));
+	}
+
 	static void publish_code_change(GenerationState &state)
 	{
 		state.code_changes.fetch_add(1, std::memory_order_release);
@@ -1949,6 +2003,30 @@ extern "C" int darwin_uml_static_vm_translate(
 	return with_address_space([&](auto &space) {
 		return space.translate(generation, address, access, host_address);
 	});
+}
+
+extern "C" int darwin_uml_static_vm_code_page(
+	unsigned long generation, unsigned long address, void **handle,
+	struct darwin_uml_static_code_page_stamp *stamp)
+{
+	return with_address_space([&](auto &space) {
+		return space.code_page(generation, address, handle, stamp);
+	});
+}
+
+extern "C" int darwin_uml_static_vm_code_page_stamp(
+	const void *handle, struct darwin_uml_static_code_page_stamp *stamp)
+{
+	if (stamp == nullptr)
+		return -1;
+	*stamp = {};
+	return uml::memory::MappedBacking::load_code_page_stamp(
+		handle, stamp->identity, stamp->version) ? 0 : -1;
+}
+
+extern "C" void darwin_uml_static_vm_invalidate_code_page(void *handle)
+{
+	uml::memory::MappedBacking::invalidate_code_page(handle);
 }
 
 extern "C" int darwin_uml_static_vm_load_allocation_tag(

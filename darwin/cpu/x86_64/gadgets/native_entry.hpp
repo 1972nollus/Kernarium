@@ -11,6 +11,8 @@
 
 namespace uml::cpu::x86_64::gadgets {
 
+struct IndirectLink;
+
 struct alignas(32) NativeTlbEntry final {
 	std::uint64_t read_page{1};
 	std::uintptr_t read_data_minus_address{};
@@ -24,6 +26,14 @@ struct NativeExecutionContext final {
 	std::uint64_t program_begin{};
 	std::uint64_t program_end{};
 	::uml::cpu::FaultInfo fault{};
+	std::uint8_t write_code{};
+	std::size_t instruction_limit{};
+	IndirectLink *indirect_miss{};
+	void *execution_context{};
+	void *sequence_context{};
+	std::uint64_t (*code_change_reader)(void *) noexcept{};
+	std::uint64_t code_changes{};
+	std::uint64_t code_publications{};
 };
 
 static_assert(sizeof(NativeTlbEntry) == 32);
@@ -45,6 +55,12 @@ static_assert(offsetof(NativeExecutionContext, program_end) ==
 	UML_X86_64_CONTEXT_PROGRAM_END);
 static_assert(offsetof(NativeExecutionContext, fault) ==
 	UML_X86_64_CONTEXT_FAULT_ADDRESS);
+static_assert(offsetof(NativeExecutionContext, write_code) ==
+	UML_X86_64_CONTEXT_WRITE_CODE);
+static_assert(offsetof(NativeExecutionContext, instruction_limit) ==
+	UML_X86_64_CONTEXT_INSTRUCTION_LIMIT);
+static_assert(offsetof(NativeExecutionContext, indirect_miss) ==
+	UML_X86_64_CONTEXT_INDIRECT_MISS);
 
 struct NativeEngineResult final {
 	std::int32_t event;
@@ -65,8 +81,13 @@ extern "C" unsigned __int128 uml_x86_64_gadget_cross_page_load(
 extern "C" std::uint32_t uml_x86_64_gadget_cross_page_store(
 	NativeExecutionContext *context, std::uint64_t address,
 	std::uint64_t value, std::uint32_t size) noexcept;
+extern "C" void uml_x86_64_gadget_publish_code_write(
+	NativeExecutionContext *context, std::uint64_t address,
+	std::uint32_t size) noexcept;
 extern "C" void uml_x86_64_gadget_invalidate_code(
 	NativeExecutionContext *context, std::uint64_t address) noexcept;
+extern "C" std::uint32_t uml_x86_64_gadget_code_link_safe(
+	NativeExecutionContext *context) noexcept;
 extern "C" std::uint32_t uml_x86_64_gadget_cross_page_vector_load(
 	NativeExecutionContext *context, std::uint64_t address,
 	void *destination, std::uint32_t size) noexcept;

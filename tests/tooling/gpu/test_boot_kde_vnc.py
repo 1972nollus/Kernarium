@@ -84,6 +84,39 @@ class KdeVncLauncherTests(unittest.TestCase):
             command[command.index("--serial-socket") : separator],
             ["--serial-socket", "/tmp/uml-serial.sock"],
         )
+        self.assertIn(
+            "systemd.wants=serial-getty@ttyS0.service",
+            command[separator + 1 :],
+        )
+
+    def test_virtio_console_socket_attaches_hvc0_getty(self) -> None:
+        options = boot_kde_vnc.parse_arguments(
+            ["--virtio-console-socket", "/tmp/uml-hvc0.sock"]
+        )
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        self.assertEqual(
+            command[command.index("--virtio-console-socket") : separator],
+            ["--virtio-console-socket", "/tmp/uml-hvc0.sock"],
+        )
+        kernel_arguments = command[separator + 1 :]
+        self.assertIn(
+            "systemd.wants=serial-getty@hvc0.service", kernel_arguments
+        )
+        self.assertNotIn(
+            "systemd.mask=serial-getty@hvc0.service", kernel_arguments
+        )
+
+    def test_console_socket_paths_must_be_distinct(self) -> None:
+        with self.assertRaises(SystemExit):
+            boot_kde_vnc.parse_arguments(
+                [
+                    "--serial-socket",
+                    "/tmp/uml-console.sock",
+                    "--virtio-console-socket",
+                    "/tmp/uml-console.sock",
+                ]
+            )
 
     def test_iso_is_attached_read_only_and_mounted_at_cdrom(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -218,8 +251,32 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("systemctl", commands)
         self.assertNotIn("sddm", commands.lower())
         self.assertNotIn("serial-getty@", commands)
+        self.assertNotIn("systemctl start getty@", commands)
         self.assertNotIn("agetty", commands)
         self.assertNotIn("chpasswd", commands)
+
+    def test_conflicting_getties_are_masked_before_sddm(self) -> None:
+        commands = "\n".join(
+            boot_kde_vnc.LEGACY_EROFS_KDE_OVERLAY_COMMANDS
+        )
+        self.assertIn(
+            "systemctl mask --now getty@tty0.service getty@tty1.service",
+            commands,
+        )
+        self.assertNotIn("serial-getty@", commands)
+        self.assertNotIn("systemctl start getty@", commands)
+        self.assertNotIn("agetty", commands)
+        self.assertNotIn("chpasswd", commands)
+
+    def test_default_kernel_arguments_control_getties(self) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        kernel_arguments = command[separator + 1 :]
+        self.assertIn("systemd.mask=serial-getty@hvc0.service", kernel_arguments)
+        self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
+        self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
 
     def test_legacy_erofs_override_retains_uml_compatibility(self) -> None:
         options = boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])

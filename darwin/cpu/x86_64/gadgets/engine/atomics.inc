@@ -22,6 +22,10 @@
 	mov w14, #(\width / 8)
 	strb w14, [x15, #25]
 	strb wzr, [x15, #26]
+	/* CMPXCHG/XADD replace every arithmetic flag. Do not let a preceding
+	 * shift or rotate override their freshly recorded ZF/CF/OF state.
+	 */
+	str wzr, [x15, #28]
 .endm
 
 .macro compare_exchange_register width, load, store, host_register, store_register
@@ -52,6 +56,31 @@ gadget cmpxchg_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
+	locked_aligned \width, .Lx86_cmpxchg_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+1:
+	load_exclusive \width, 24, x7
+	cmp \host_register\()27, \host_register\()24
+	b.ne 2f
+	store_exclusive \width, 9, 26, x7
+	cbnz w9, 1b
+	mov x11, x27
+	mov x12, x24
+	sub \host_register\()13, \host_register\()11, \host_register\()12
+	atomic_normalize \width, \host_register\()13, \host_register\()13
+	atomic_record_deferred 2, \width
+	finish_store (\width / 8)
+2:
+	clrex
+	\store \accumulator_store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	mov x11, x27
+	mov x12, x24
+	sub \host_register\()13, \host_register\()11, \host_register\()12
+	atomic_normalize \width, \host_register\()13, \host_register\()13
+	atomic_record_deferred 2, \width
+	retire_and_next
+.Lx86_cmpxchg_split\@:
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_cmpxchg_read_cross\@
@@ -138,6 +167,22 @@ gadget xadd_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
+	locked_aligned \width, .Lx86_xadd_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	add \host_register\()27, \host_register\()24, \host_register\()26
+	atomic_normalize \width, \host_register\()27, \host_register\()27
+	store_exclusive \width, 9, 27, x7
+	cbnz w9, 1b
+	and x8, x23, #0xffff
+	\store \source_store_register\()24, [_cpu, x8]
+	mov x11, x24
+	mov x12, x26
+	mov x13, x27
+	atomic_record_deferred 1, \width
+	finish_store (\width / 8)
+.Lx86_xadd_split\@:
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_xadd_read_cross\@
@@ -206,6 +251,35 @@ exchange_add_width 64, ldr, str, x, x
 gadget cmpxchg_pair_8
 	effective_address
 	mov x25, x7
+	tst x7, #7
+	b.ne .Lx86_cmpxchg_pair_8_split
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
+	ldr w10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	orr x10, x10, x11, lsl #32
+	ldr w27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	ldr w16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	orr x27, x27, x16, lsl #32
+1:
+	ldaxr x24, [x7]
+	cmp x24, x10
+	b.ne 2f
+	stlxr w12, x27, [x7]
+	cbnz w12, 1b
+	mov w19, #1
+	compare_exchange_pair_flags
+	finish_store 8
+2:
+	clrex
+	mov w19, wzr
+	mov w8, w24
+	lsr x9, x24, #32
+	mov w9, w9
+	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	compare_exchange_pair_flags
+	retire_and_next
+.Lx86_cmpxchg_pair_8_split:
 	add x9, x7, #7
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_cmpxchg_pair_8_read_cross
@@ -261,6 +335,32 @@ gadget cmpxchg_pair_8
 gadget cmpxchg_pair_16
 	effective_address
 	mov x25, x7
+	tst x7, #15
+	b.ne .Lx86_cmpxchg_pair_16_split
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
+	ldr x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	ldr x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+1:
+	ldaxp x24, x26, [x7]
+	cmp x24, x10
+	b.ne 2f
+	cmp x26, x11
+	b.ne 2f
+	stlxp w12, x27, x16, [x7]
+	cbnz w12, 1b
+	mov w19, #1
+	compare_exchange_pair_flags
+	finish_store 16
+2:
+	clrex
+	mov w19, wzr
+	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	compare_exchange_pair_flags
+	retire_and_next
+.Lx86_cmpxchg_pair_16_split:
 	add x9, x7, #15
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_cmpxchg_pair_16_read_cross

@@ -24,6 +24,7 @@
 	mov w14, #(\width / 8)
 	strb w14, [x15, #25]
 	strb wzr, [x15, #26]
+	str wzr, [x15, #28]
 .endm
 
 .macro scalar_arithmetic_rr name, instruction, flag_operation, writes, load, store, host_register, store_register, width
@@ -235,8 +236,12 @@ gadget \operation\()_\width\()_rm
 	b .Lx86_arithmetic_rm_loaded\@
 .endm
 
-.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register
+.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register, locked
+	.if \locked
+gadget \operation\()_\width\()_m\form\()_locked
+	.else
 gadget \operation\()_\width\()_m\form
+	.endif
 	effective_address
 	mov x25, x7
 	.ifc \form,r
@@ -246,6 +251,22 @@ gadget \operation\()_\width\()_m\form
 	.ifc \form,i
 	ldr x26, [_stream], #8
 	normalize \width, \host_register\()26, \host_register\()26
+	.endif
+	.if \locked
+	locked_aligned \width, .Lx86_arithmetic_msource_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	\instruction \host_register\()27, \host_register\()24, \host_register\()26
+	normalize \width, \host_register\()27, \host_register\()27
+	store_exclusive \width, 9, 27, x7
+	cbnz w9, 1b
+	mov x11, x24
+	mov x12, x26
+	mov x13, x27
+	record_deferred \flag_operation, \width
+	finish_store (\width / 8)
+.Lx86_arithmetic_msource_split\@:
 	.endif
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -296,8 +317,12 @@ gadget \operation\()_\width\()_m\form
 
 .macro memory_arithmetic_width operation, instruction, flag_operation, writes, width, load, store, host_register, store_register
 memory_arithmetic_rm \operation, \instruction, \flag_operation, \writes, \width, \load, \store, \host_register, \store_register
-memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, r, \width, \load, \store, \host_register
-memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, i, \width, \load, \store, \host_register
+memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, r, \width, \load, \store, \host_register, 0
+memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, i, \width, \load, \store, \host_register, 0
+.if \writes
+memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, r, \width, \load, \store, \host_register, 1
+memory_arithmetic_msource \operation, \instruction, \flag_operation, \writes, i, \width, \load, \store, \host_register, 1
+.endif
 .endm
 
 .macro memory_arithmetic_family operation, instruction, flag_operation, writes
@@ -347,8 +372,12 @@ gadget \name\()_\width\()_rm
 	retire_and_next
 .endm
 
-.macro memory_carry_msource name, instruction, flag_operation, form, width, load, store, host_register
+.macro memory_carry_msource name, instruction, flag_operation, form, width, load, store, host_register, locked
+	.if \locked
+gadget \name\()_\width\()_m\form\()_locked
+	.else
 gadget \name\()_\width\()_m\form
+	.endif
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x19, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w19, #1
@@ -361,6 +390,24 @@ gadget \name\()_\width\()_m\form
 	.ifc \form,i
 	ldr x26, [_stream], #8
 	normalize \width, \host_register\()26, \host_register\()26
+	.endif
+	.if \locked
+	locked_aligned \width, .Lx86_carry_msource_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	\instruction \host_register\()27, \host_register\()24, \host_register\()26
+	\instruction \host_register\()27, \host_register\()27, \host_register\()19
+	normalize \width, \host_register\()27, \host_register\()27
+	store_exclusive \width, 9, 27, x7
+	cbnz w9, 1b
+	mov x11, x24
+	mov x12, x26
+	mov x13, x27
+	record_deferred \flag_operation, \width
+	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
+	finish_store (\width / 8)
+.Lx86_carry_msource_split\@:
 	.endif
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -404,8 +451,10 @@ gadget \name\()_\width\()_m\form
 
 .macro memory_carry_width name, instruction, flag_operation, width, load, store, host_register, store_register
 	memory_carry_rm \name, \instruction, \flag_operation, \width, \load, \store, \host_register, \store_register
-	memory_carry_msource \name, \instruction, \flag_operation, r, \width, \load, \store, \host_register
-	memory_carry_msource \name, \instruction, \flag_operation, i, \width, \load, \store, \host_register
+	memory_carry_msource \name, \instruction, \flag_operation, r, \width, \load, \store, \host_register, 0
+	memory_carry_msource \name, \instruction, \flag_operation, i, \width, \load, \store, \host_register, 0
+	memory_carry_msource \name, \instruction, \flag_operation, r, \width, \load, \store, \host_register, 1
+	memory_carry_msource \name, \instruction, \flag_operation, i, \width, \load, \store, \host_register, 1
 .endm
 
 .macro memory_carry_family name, instruction, flag_operation
@@ -429,6 +478,17 @@ gadget exchange_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
+	/* XCHG against memory is atomic on x86 with no LOCK prefix present. */
+	locked_aligned \width, .Lx86_exchange_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	store_exclusive \width, 9, 26, x7
+	cbnz w9, 1b
+	and x8, x23, #0xffff
+	\register_store \register_store_register\()24, [_cpu, x8]
+	finish_store (\width / 8)
+.Lx86_exchange_split\@:
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_exchange_read_cross\@
@@ -470,10 +530,52 @@ memory_exchange 64, ldr, str, x, str, x
 
 .purgem memory_exchange
 
-.macro memory_unary operation, instruction, flag_operation, materialize, width, load, store, host_register
+.macro memory_unary operation, instruction, flag_operation, materialize, width, load, store, host_register, locked
+	.if \locked
+gadget \operation\()_\width\()_m_locked
+	.else
 gadget \operation\()_\width\()_m
+	.endif
 	effective_address
 	mov x25, x7
+	.if \locked
+	locked_aligned \width, .Lx86_unary_split\@
+	.if \materialize
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	mov x7, x25
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	.ifc \instruction,add
+	add \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,sub
+	sub \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,neg
+	neg \host_register\()27, \host_register\()24
+	.endif
+	.ifc \instruction,not
+	mvn \host_register\()27, \host_register\()24
+	.endif
+	normalize \width, \host_register\()27, \host_register\()27
+	store_exclusive \width, 9, 27, x7
+	cbnz w9, 1b
+	.if \flag_operation
+	.ifc \instruction,neg
+	mov x11, xzr
+	mov x12, x24
+	.else
+	mov x11, x24
+	mov x12, #1
+	.endif
+	mov x13, x27
+	record_deferred \flag_operation, \width
+	.endif
+	finish_store (\width / 8)
+.Lx86_unary_split\@:
+	.endif
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_unary_read_cross\@
@@ -534,10 +636,14 @@ gadget \operation\()_\width\()_m
 .endm
 
 .macro memory_unary_width width, load, store, host_register
-	memory_unary increment, add, 4, 1, \width, \load, \store, \host_register
-	memory_unary decrement, sub, 5, 1, \width, \load, \store, \host_register
-	memory_unary negate, neg, 2, 0, \width, \load, \store, \host_register
-	memory_unary not, not, 0, 0, \width, \load, \store, \host_register
+	memory_unary increment, add, 4, 1, \width, \load, \store, \host_register, 0
+	memory_unary decrement, sub, 5, 1, \width, \load, \store, \host_register, 0
+	memory_unary negate, neg, 2, 0, \width, \load, \store, \host_register, 0
+	memory_unary not, not, 0, 0, \width, \load, \store, \host_register, 0
+	memory_unary increment, add, 4, 1, \width, \load, \store, \host_register, 1
+	memory_unary decrement, sub, 5, 1, \width, \load, \store, \host_register, 1
+	memory_unary negate, neg, 2, 0, \width, \load, \store, \host_register, 1
+	memory_unary not, not, 0, 0, \width, \load, \store, \host_register, 1
 .endm
 
 memory_unary_width 8, ldrb, strb, w

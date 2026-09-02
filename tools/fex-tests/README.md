@@ -1,8 +1,9 @@
 # FEX instruction conformance corpus
 
-The x86 gadget conformance campaign consumes the handwritten 64-bit assembly
-tests from the pinned `x86-conformance` dependency. FEX is a test input only;
-no FEX source or runtime library is linked into an emulator product.
+The x86 gadget conformance campaign consumes the handwritten x86-64 and i386
+assembly tests from the pinned `x86-conformance` dependency. FEX is a test
+input only; no FEX source or runtime library is linked into an emulator
+product.
 
 Prepare the exact upstream source with:
 
@@ -19,12 +20,14 @@ tools/fex-tests/build-nasm.sh \
   "$PWD/.build/fex-tests/nasm"
 ```
 
-On an x86-64 Linux host with NASM, materialize the raw test binaries and FEX
+With NASM available, materialize both raw test corpora and their FEX
 configuration records with:
 
 ```sh
 python3 tools/fex-tests/build-asm-corpus.py \
-  external/sources/fex OUTPUT_DIRECTORY
+  external/sources/fex OUTPUT_X86_64_DIRECTORY --mode x86-64
+python3 tools/fex-tests/build-asm-corpus.py \
+  external/sources/fex OUTPUT_I386_DIRECTORY --mode i386
 ```
 
 Set `UML_FEX_NASM` to the absolute producer path when it is not on `PATH`.
@@ -47,13 +50,16 @@ FEX checkout and publishes the output directory only after every source has
 assembled successfully.
 
 Build the test-only gadgets adapter from a 4 KiB unit configuration, then run
-the complete corpus with:
+both complete corpora with:
 
 ```sh
 cmake --build BUILD_DIRECTORY --target uml_x86_64_fex_asm_runner
 python3 tools/fex-tests/run-asm-corpus.py \
   BUILD_DIRECTORY/bin/uml_x86_64_fex_asm_runner \
-  OUTPUT_DIRECTORY REPORT.json
+  OUTPUT_X86_64_DIRECTORY REPORT_X86_64.json
+python3 tools/fex-tests/run-asm-corpus.py \
+  BUILD_DIRECTORY/bin/uml_x86_64_fex_asm_runner \
+  OUTPUT_I386_DIRECTORY REPORT_I386.json
 ```
 
 The campaign executes every selected binary, including upstream-disabled

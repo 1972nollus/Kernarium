@@ -232,8 +232,8 @@ public:
 		address_ = uml::testing::reserve_native_test_window(size_);
 		require(address_ != 0,
 			"could not reserve native-shadow host slot");
-		require(address_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
-			address_ <= DARWIN_UML_NATIVE_ADDRESS_END - size_,
+		require(address_ >= uml::testing::native_test_window_start &&
+			address_ <= uml::testing::native_test_window_end - size_,
 			"native-shadow slot escaped the shared native window");
 	}
 
@@ -1041,13 +1041,6 @@ void test_injected_user_network_requests_dhcp()
 int main()
 {
 	try {
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-		/* Preserve one compatibility-window slot before the JIT allocator can
-		 * retain broad low-address reservation bands. Embedded macOS kernels
-		 * use the separate high native window.
-		 */
-		ReservedNativeSlot native_shadow_slot;
-	#endif
 		test_c_api_rejects_inconsistent_creation_inputs();
 		test_memory_bridge_rejects_split_address_space_ranges();
 		test_native_entry();
@@ -1056,8 +1049,14 @@ int main()
 		test_concurrent_handles_have_distinct_software_mmu_domains();
 	#endif
 	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-		test_native_shadow_domains_retire_on_every_handle_exit(
-			native_shadow_slot);
+		{
+			uml::testing::NativeTestWindowScope native_window;
+			require(native_window.entered(),
+				"could not configure emulator API native test window");
+			ReservedNativeSlot native_shadow_slot;
+			test_native_shadow_domains_retire_on_every_handle_exit(
+				native_shadow_slot);
+		}
 	#endif
 		test_active_registries_are_allocation_free_and_transactional();
 #if UML_EMULATOR_TEST_HAS_SLIRP

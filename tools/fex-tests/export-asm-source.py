@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export only the pinned FEX files needed to assemble its ASM corpus."""
+"""Export only the pinned FEX files needed to assemble its ASM corpora."""
 
 from __future__ import annotations
 
@@ -65,9 +65,17 @@ def export(source: pathlib.Path, output: pathlib.Path) -> None:
         fail(f"output already exists: {output}")
 
     asm_files = sorted((source / "unittests" / "ASM").rglob("*"))
+    compat_asm_files = sorted(
+        (source / "unittests" / "32Bit_ASM").rglob("*")
+    )
     relative_files = list(FIXED_FILES)
     relative_files.extend(
         path.relative_to(source) for path in asm_files if path.is_file()
+    )
+    relative_files.extend(
+        path.relative_to(source)
+        for path in compat_asm_files
+        if path.is_file()
     )
     if len(relative_files) < 2000:
         fail("the pinned FEX ASM source inventory is unexpectedly small")

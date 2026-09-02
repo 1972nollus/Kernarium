@@ -72,17 +72,24 @@ The separate x86_64-userspace slice is 4 KiB only. It composes
 `slices/x86_64/config/userspace.fragment` after the shared common and 4 KiB
 fragments and applies only the patches in `slices/x86_64/patches`. The kernel
 still executes its UML kernel mode as native arm64, but its userspace ABI is
-fixed to x86_64: it does not load arm64 userspace and has no per-task ISA
-switch. Signal delivery exposes the native x86 XSAVE layout for x87, SSE, and
-AVX state and restores user edits through `rt_sigreturn`. Host instruction
+fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
+userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
+and AVX state and restores user edits through the matching ABI's signal-return
+path. Host instruction
 execution is qualified against the pinned FEX handwritten x86-64 corpus;
 distribution and complete Linux syscall compatibility require separate guest
 qualification. Both normal arm64 profiles accept `EM_AARCH64` only. Android
 does not consume the x86_64 overlay.
 
-The x86_64 slice keeps the networking-selected classic BPF interpreter but
-does not expose the `bpf(2)` syscall or cgroup eBPF attachment. System services
-must treat eBPF as unavailable on this compatibility product.
+The x86-family syscall dispatch is generated from the pinned Linux 6.18
+`syscall_64.tbl` and `syscall_32.tbl` files. Both ABIs retain every table slot
+through 469, including upstream `sys_ni_syscall` holes; generic compat handlers
+and slice-owned adapters provide the i386 structure, argument-order, TLS, and
+signal-frame ABIs. The UML entry path also provides syscall-user-dispatch so
+Wine can interpose its NT syscall range before Linux syscall dispatch. Guest
+qualification remains separate from structural table coverage. The slice
+inherits the shared eBPF syscall, verifier, and cgroup BPF policy without a
+product-specific configuration override.
 
 Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only

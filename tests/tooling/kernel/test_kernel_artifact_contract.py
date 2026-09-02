@@ -141,8 +141,8 @@ def config_values(kernel_slice: str) -> dict[str, str]:
             "y" if kernel_slice == "x86_64" else "n"
         ),
         "CONFIG_BPF": "y",
-        "CONFIG_BPF_SYSCALL": "n" if kernel_slice == "x86_64" else "y",
-        "CONFIG_CGROUP_BPF": "n" if kernel_slice == "x86_64" else "y",
+        "CONFIG_BPF_SYSCALL": "y",
+        "CONFIG_CGROUP_BPF": "y",
     }
 
 

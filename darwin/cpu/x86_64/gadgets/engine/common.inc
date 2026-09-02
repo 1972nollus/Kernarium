@@ -37,6 +37,7 @@ NAME(uml_x86_64_gadget_\name):
  *   49:48  index scale shift
  *   51:50  segment (0 none, 1 FS, 2 GS)
  *   52     32-bit effective-address arithmetic
+ *   53     16-bit effective-address arithmetic
  *   59:56  instruction length
  * Followed by the folded displacement/absolute address and current RIP.
  */
@@ -49,8 +50,12 @@ NAME(uml_x86_64_gadget_\name):
 	cmp w9, w15
 	b.eq .Lx86_no_base\@
 	ldr x10, [_cpu, x9]
+	tbnz x23, #53, .Lx86_base_16\@
 	tbz x23, #52, .Lx86_base_ready\@
 	mov w10, w10
+	b .Lx86_base_ready\@
+.Lx86_base_16\@:
+	uxth w10, w10
 .Lx86_base_ready\@:
 	add x7, x7, x10
 .Lx86_no_base\@:
@@ -58,27 +63,43 @@ NAME(uml_x86_64_gadget_\name):
 	cmp w9, w15
 	b.eq .Lx86_no_index\@
 	ldr x10, [_cpu, x9]
+	tbnz x23, #53, .Lx86_index_16\@
 	tbz x23, #52, .Lx86_index_ready\@
 	mov w10, w10
+	b .Lx86_index_ready\@
+.Lx86_index_16\@:
+	uxth w10, w10
 .Lx86_index_ready\@:
 	ubfx x11, x23, #48, #2
 	lsl x10, x10, x11
 	add x7, x7, x10
 .Lx86_no_index\@:
+	tbnz x23, #53, .Lx86_address_16\@
 	tbz x23, #52, .Lx86_address_ready\@
 	mov w7, w7
+	b .Lx86_address_ready\@
+.Lx86_address_16\@:
+	uxth w7, w7
 .Lx86_address_ready\@:
 	ubfx x9, x23, #50, #2
 	cmp w9, #1
 	b.ne .Lx86_not_fs\@
 	ldr x10, [_cpu, #UML_X86_64_CPU_FS_BASE]
 	add x7, x7, x10
-	b .Lx86_segment_ready\@
+	b .Lx86_segment_linear\@
 .Lx86_not_fs\@:
 	cmp w9, #2
 	b.ne .Lx86_segment_ready\@
 	ldr x10, [_cpu, #UML_X86_64_CPU_GS_BASE]
 	add x7, x7, x10
+.Lx86_segment_linear\@:
+	/* Legacy protected mode has a 32-bit linear-address space.  Linux's
+	 * i386 TLS sequences rely on a high FS/GS base plus an effective offset
+	 * wrapping through zero; long mode keeps its full-width FS/GS base. */
+	ldrb w9, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w9, #1
+	b.ne .Lx86_segment_ready\@
+	mov w7, w7
 .Lx86_segment_ready\@:
 .endm
 
@@ -90,7 +111,12 @@ NAME(uml_x86_64_gadget_\name):
 	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
 	add x11, x11, x10, lsl #5
 	ldp x12, x13, [x11, #\entry_offset]
+	.if \access == 1
+	bic x14, x12, #UML_X86_64_TLB_WRITE_CODE
+	cmp x9, x14
+	.else
 	cmp x9, x12
+	.endif
 	b.eq .Lx86_tlb_hit\@
 	mov x0, _context
 	mov x1, x7
@@ -101,11 +127,77 @@ NAME(uml_x86_64_gadget_\name):
 	mov x7, x0
 	b .Lx86_tlb_done\@
 .Lx86_tlb_hit\@:
+	.if \access == 1
+	tbz x12, #1, .Lx86_tlb_write_code_ready\@
+	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cmp w14, #UML_X86_64_WRITE_CODE_PUBLISHED
+	b.eq .Lx86_tlb_write_code_ready\@
+	mov w14, #UML_X86_64_WRITE_CODE_PENDING
+	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+.Lx86_tlb_write_code_ready\@:
+	.endif
 	add x7, x13, x7
 .Lx86_tlb_done\@:
 .endm
 
+/* x86 LOCK-prefixed read-modify-write.
+ *
+ * A locked gadget must be atomic against the other vCPU threads that execute
+ * guest code concurrently, so it performs its update with an ARM64 exclusive
+ * loop instead of a plain load and store.  Exclusive access requires natural
+ * alignment; x86 permits an unaligned locked operand, so a locked gadget
+ * routes an unaligned address to its ordinary non-atomic sequence.  Natural
+ * alignment also keeps the operand inside one page, which is why the exclusive
+ * path needs no page-crossing check.
+ *
+ * Nothing may touch memory between the exclusive load and store or the monitor
+ * clears and the loop cannot make progress, so operands are read into
+ * registers before the loop and flags are recorded after it.
+ */
+.macro locked_aligned width, fallback
+	.if \width != 8
+	tst x7, #(\width / 8 - 1)
+	b.ne \fallback
+	.endif
+.endm
+
+.macro load_exclusive width, number, address
+	.if \width == 8
+	ldaxrb w\number, [\address]
+	.elseif \width == 16
+	ldaxrh w\number, [\address]
+	.elseif \width == 32
+	ldaxr w\number, [\address]
+	.else
+	ldaxr x\number, [\address]
+	.endif
+.endm
+
+.macro store_exclusive width, status, number, address
+	.if \width == 8
+	stlxrb w\status, w\number, [\address]
+	.elseif \width == 16
+	stlxrh w\status, w\number, [\address]
+	.elseif \width == 32
+	stlxr w\status, w\number, [\address]
+	.else
+	stlxr w\status, x\number, [\address]
+	.endif
+.endm
+
+.macro publish_pending_code address, size
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbz w8, .Lx86_code_published\@
+	mov x0, _context
+	mov x1, \address
+	mov w2, #\size
+	bl NAME(uml_x86_64_gadget_publish_code_write)
+.Lx86_code_published\@:
+.endm
+
 .macro finish_store size
+	publish_pending_code x25, \size
+.Lx86_store_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
 	b.hs .Lx86_store_done\@
@@ -113,9 +205,12 @@ NAME(uml_x86_64_gadget_\name):
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
 	b.ls .Lx86_store_done\@
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbnz w8, .Lx86_store_code_exit\@
 	mov x0, _context
 	mov x1, x25
 	bl NAME(uml_x86_64_gadget_invalidate_code)
+.Lx86_store_code_exit\@:
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
@@ -124,6 +219,69 @@ NAME(uml_x86_64_gadget_\name):
 	b uml_x86_64_gadget_leave
 .Lx86_store_done\@:
 	retire_and_next
+.endm
+
+/* A BlockLink contains {stream, instruction_count, guest RIP, begin, end}.
+ * Refuse a target whose complete translated block would cross this native
+ * run's exact budget. Every executable store resets cached targets whose
+ * saved instruction bytes overlap the write. At the next branch, retain the
+ * native chain only when the global code sequence contains exactly this run's
+ * own publication, then accept that sequence without cooling the unrelated
+ * links. An overwritten target already points at its link_exit fallback.
+ * A reset record therefore needs no active-state branch and translated code
+ * remains immutable.
+ *
+ * Keep this common to the load/store and control families: a direct CALL has
+ * to finish its architectural stack write before it can enter its callee.
+ */
+.macro follow_block_link link
+	mov x19, \link
+	ldrb w9, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbz w9, .Lx86_link_code_ready\@
+	mov x0, _context
+	bl NAME(uml_x86_64_gadget_code_link_safe)
+	cbz w0, .Lx86_link_code_exit\@
+	strb wzr, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+.Lx86_link_code_exit\@:
+	cbnz w0, .Lx86_link_code_ready\@
+	ldr x9, [x19, #16]
+	str x9, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+.Lx86_link_code_ready\@:
+	ldp _stream, x11, [x19]
+	add x12, _executed, x11
+	ldr x13, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
+	cmp x12, x13
+	b.ls .Lx86_link_follow\@
+	ldr x9, [x19, #16]
+	str x9, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+.Lx86_link_follow\@:
+	ldp x12, x13, [x19, #24]
+	stp x12, x13, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
+	next_gadget
+.endm
+
+/* An IndirectLink holds two {guest RIP, BlockLink pointer} pairs. On a miss,
+ * preserve the resolved target and identify this exact data-only site for
+ * cold C++ training. A hit enters the same budget-checked BlockLink path as a
+ * direct edge. */
+.macro follow_indirect_link target, site
+	ldp x11, x12, [\site]
+	cmp \target, x11
+	b.eq .Lx86_indirect_follow\@
+	ldp x11, x12, [\site, #16]
+	cmp \target, x11
+	b.eq .Lx86_indirect_follow\@
+	str \site, [_context, #UML_X86_64_CONTEXT_INDIRECT_MISS]
+	str \target, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+.Lx86_indirect_follow\@:
+	mov x8, x12
+	follow_block_link x8
 .endm
 
 .text
@@ -165,7 +323,12 @@ uml_x86_64_gadget_leave:
 .p2align 4
 uml_x86_64_gadget_materialize_flags:
 	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	cbz w5, 9f
+	cbnz w5, .Lx86_flags_materialize_deferred
+	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	cbz w13, 9f
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	b .Lx86_flags_apply_overrides
+.Lx86_flags_materialize_deferred:
 	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
 	ldp x7, x8, [x6]
 	ldr x10, [x6, #16]
@@ -305,9 +468,18 @@ uml_x86_64_gadget_materialize_flags:
 	orr x9, x9, #0x10
 
 .Lx86_flags_done:
+.Lx86_flags_apply_overrides:
+	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	cbz w13, .Lx86_flags_store
+	ldrh w14, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	bic x9, x9, x13
+	and x14, x14, x13
+	orr x9, x9, x14
+.Lx86_flags_store:
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 9:
 	ret
 

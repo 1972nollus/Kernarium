@@ -41,6 +41,8 @@ gadget cpuid
 	b.eq .Lx86_cpuid_one
 	cmp w5, #7
 	b.eq .Lx86_cpuid_seven
+	cmp w5, #13
+	b.eq .Lx86_cpuid_extended_state
 	mov w11, #0x8000
 	lsl w11, w11, #16
 	cmp w5, w11
@@ -56,7 +58,7 @@ gadget cpuid
 	b.eq .Lx86_cpuid_brand_three
 	b .Lx86_cpuid_done
 .Lx86_cpuid_zero:
-	mov w6, #7
+	mov w6, #13
 	mov w7, #0x6547
 	movk w7, #0x756e, lsl #16
 	mov w9, #0x6e69
@@ -68,15 +70,41 @@ gadget cpuid
 	mov w6, #0x06c3
 	movk w6, #0x0003, lsl #16
 	mov w7, #0x0800
-	mov w8, wzr
-	movk w8, #0x4c80, lsl #16
+	/* SSE3, PCLMUL, SSSE3, FMA, CMPXCHG16B, SSE4.1/4.2, MOVBE,
+	 * POPCNT, AES, XSAVE/OSXSAVE, AVX, F16C, and RDRAND.
+	 */
+	mov w8, #0x3203
+	movk w8, #0x7ed8, lsl #16
 	mov w9, #0x8111
-	movk w9, #0x0780, lsl #16
+	/* x87, TSC, CMPXCHG8B, CMOV, CLFLUSH, MMX, FXSR, SSE, SSE2. */
+	movk w9, #0x0788, lsl #16
 	b .Lx86_cpuid_done
 .Lx86_cpuid_seven:
 	cbnz w10, .Lx86_cpuid_done
-	mov w7, #0x4
-	lsl w7, w7, #16
+	/* FSGSBASE, BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT,
+	 * CLWB, and SHA. RTM/HLE and MPX remain deliberately absent.
+	 */
+	mov w7, #0x0329
+	movk w7, #0x218c, lsl #16
+	/* RDPID. */
+	mov w8, wzr
+	movk w8, #0x0040, lsl #16
+	b .Lx86_cpuid_done
+.Lx86_cpuid_extended_state:
+	cbz w10, .Lx86_cpuid_extended_state_zero
+	cmp w10, #2
+	b.ne .Lx86_cpuid_done
+	/* AVX contributes 256 bytes of YMM_Hi128 state at offset 576. */
+	mov w6, #256
+	mov w7, #576
+	b .Lx86_cpuid_done
+.Lx86_cpuid_extended_state_zero:
+	/* XCR0 enables x87, SSE, and AVX.  The standard XSAVE image is 832
+	 * bytes for both the enabled and complete supported feature sets.
+	 */
+	mov w6, #7
+	mov w7, #832
+	mov w8, #832
 	b .Lx86_cpuid_done
 .Lx86_cpuid_extended_zero:
 	mov w6, #0x8000
@@ -115,7 +143,7 @@ gadget cpuid
 gadget xgetbv
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	cmp x8, #0
-	mov w9, #3
+	mov w9, #7
 	csel w8, w9, wzr, eq
 	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	str xzr, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -278,9 +306,7 @@ gadget cache_zero
 	movi v0.16b, #0
 	stp q0, q0, [x7]
 	stp q0, q0, [x7, #32]
-	mov x0, _context
-	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	publish_pending_code x25, 64
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]

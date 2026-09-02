@@ -13,19 +13,23 @@ namespace {
 class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t address) noexcept
-		: memory_{memory}, address_{address}
+		std::uint64_t address, ExecutionMode mode) noexcept
+		: memory_{memory}, address_{normalize_instruction_pointer(mode, address)},
+		  mode_{mode}
 	{}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
 		if (position_ == maximum_instruction_bytes) {
-			fault_address_ = address_ + position_;
+			fault_address_ = advance_instruction_pointer(
+				mode_, address_, position_);
 			return false;
 		}
 		std::byte byte{};
-		if (!memory_.fetch(address_ + position_, std::span{&byte, 1})) {
-			fault_address_ = address_ + position_;
+		const auto fetch_address = advance_instruction_pointer(
+			mode_, address_, position_);
+		if (!memory_.fetch(fetch_address, std::span{&byte, 1})) {
+			fault_address_ = fetch_address;
 			return false;
 		}
 		value = std::to_integer<std::uint8_t>(byte);
@@ -56,11 +60,13 @@ private:
 	static constexpr std::uint8_t maximum_instruction_bytes = 15;
 	::uml::memory::GuestAddressSpace &memory_;
 	std::uint64_t address_;
+	ExecutionMode mode_;
 	std::uint64_t fault_address_{};
 	std::uint8_t position_{};
 };
 
 struct Prefixes final {
+	ExecutionMode mode{ExecutionMode::long64};
 	Segment segment{Segment::none};
 	std::uint8_t rex{};
 	std::uint8_t repeat{};
@@ -88,7 +94,8 @@ struct Prefixes final {
 [[nodiscard]] constexpr OperandWidth ordinary_width(
 	const Prefixes &prefixes) noexcept
 {
-	if ((prefixes.rex & 8U) != 0)
+	if (prefixes.mode == ExecutionMode::long64 &&
+		(prefixes.rex & 8U) != 0)
 		return OperandWidth::qword;
 	return prefixes.operand_size ? OperandWidth::word : OperandWidth::dword;
 }
@@ -96,7 +103,24 @@ struct Prefixes final {
 [[nodiscard]] constexpr OperandWidth stack_width(
 	const Prefixes &prefixes) noexcept
 {
-	return prefixes.operand_size ? OperandWidth::word : OperandWidth::qword;
+	if (prefixes.operand_size)
+		return OperandWidth::word;
+	return prefixes.mode == ExecutionMode::compat32 ?
+		OperandWidth::dword : OperandWidth::qword;
+}
+
+[[nodiscard]] constexpr bool address_32(
+	const Prefixes &prefixes) noexcept
+{
+	return prefixes.mode == ExecutionMode::compat32 ?
+		!prefixes.address_size : prefixes.address_size;
+}
+
+[[nodiscard]] constexpr bool address_16(
+	const Prefixes &prefixes) noexcept
+{
+	return prefixes.mode == ExecutionMode::compat32 &&
+		prefixes.address_size;
 }
 
 [[nodiscard]] constexpr Operand register_operand(std::uint8_t low,
@@ -128,8 +152,8 @@ struct Prefixes final {
 class InstructionDecoder final {
 public:
 	InstructionDecoder(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t rip) noexcept
-		: reader_{memory, rip}
+		std::uint64_t rip, ExecutionMode mode) noexcept
+		: reader_{memory, rip, mode}, prefixes_{.mode = mode}
 	{}
 
 	[[nodiscard]] DecodeResult run()
@@ -137,7 +161,6 @@ public:
 		std::uint8_t opcode{};
 		if (!read_opcode(opcode))
 			return fetch_fault();
-
 		Instruction instruction{};
 		instruction.locked = prefixes_.locked;
 		instruction.repeat = prefixes_.repeat;
@@ -251,7 +274,8 @@ private:
 				prefixes_.rex_present = false;
 				continue;
 			default:
-				if (opcode >= 0x40 && opcode <= 0x4f) {
+				if (prefixes_.mode == ExecutionMode::long64 &&
+					opcode >= 0x40 && opcode <= 0x4f) {
 					prefixes_.rex = opcode;
 					prefixes_.rex_present = true;
 					continue;
@@ -332,7 +356,40 @@ private:
 		operand.kind = OperandKind::memory;
 		operand.width = width;
 		operand.memory.segment = prefixes_.segment;
-		operand.memory.address_32 = prefixes_.address_size;
+		if (address_16(prefixes_)) {
+			constexpr std::array<std::uint8_t, 8> bases{
+				3, 3, 5, 5, 6, 7, 5, 3};
+			constexpr std::array<std::uint8_t, 8> indices{
+				6, 7, 6, 7,
+				MemoryOperand::no_register, MemoryOperand::no_register,
+				MemoryOperand::no_register, MemoryOperand::no_register};
+			operand.memory.address_16 = true;
+			if (mod == 0 && rm == 6) {
+				std::uint64_t absolute{};
+				if (!read_unsigned(2, absolute))
+					return false;
+				operand.memory.absolute_address = true;
+				operand.memory.absolute = static_cast<std::uint16_t>(absolute);
+				return true;
+			}
+			operand.memory.base = bases[rm];
+			operand.memory.index = indices[rm];
+			if (mod == 1) {
+				std::uint64_t displacement{};
+				if (!read_unsigned(1, displacement))
+					return false;
+				operand.memory.displacement =
+					static_cast<std::int8_t>(displacement);
+			} else if (mod == 2) {
+				std::uint64_t displacement{};
+				if (!read_unsigned(2, displacement))
+					return false;
+				operand.memory.displacement =
+					static_cast<std::int16_t>(displacement);
+			}
+			return true;
+		}
+		operand.memory.address_32 = address_32(prefixes_);
 		if (rm == 4) {
 			std::uint8_t sib{};
 			if (!read(sib))
@@ -358,9 +415,14 @@ private:
 			std::uint64_t displacement{};
 			if (!read_unsigned(4, displacement))
 				return false;
-			operand.memory.rip_relative = !prefixes_.address_size;
-			operand.memory.displacement = static_cast<std::int32_t>(
-				static_cast<std::uint32_t>(displacement));
+			if (address_32(prefixes_)) {
+				operand.memory.absolute_address = true;
+				operand.memory.absolute = static_cast<std::uint32_t>(displacement);
+			} else {
+				operand.memory.rip_relative = true;
+				operand.memory.displacement = static_cast<std::int32_t>(
+					static_cast<std::uint32_t>(displacement));
+			}
 		} else {
 			operand.memory.base = static_cast<std::uint8_t>(rm |
 				((prefixes_.rex & 1U) != 0 ? 8U : 0U));
@@ -542,7 +604,10 @@ private:
 			return true;
 		case 2:
 		case 4:
-			if (!rm_operand(modrm, OperandWidth::qword, operand))
+			if (!rm_operand(modrm,
+				prefixes_.mode == ExecutionMode::compat32 ?
+					OperandWidth::dword : OperandWidth::qword,
+				operand))
 				return false;
 			instruction.operation = group == 2 ?
 				Operation::call_indirect : Operation::jump_indirect;
@@ -596,16 +661,20 @@ private:
 		std::uint8_t opcode, OperandWidth width)
 	{
 		std::uint64_t address{};
-		if (!read_unsigned(prefixes_.address_size ? 4U : 8U, address))
+		const auto address_bytes = address_16(prefixes_) ? 2U :
+			address_32(prefixes_) ? 4U : 8U;
+		if (!read_unsigned(address_bytes, address))
 			return false;
 		Operand memory{};
 		memory.kind = OperandKind::memory;
 		memory.width = (opcode == 0xa0 || opcode == 0xa2) ?
 			OperandWidth::byte : width;
 		memory.memory.segment = prefixes_.segment;
-		memory.memory.address_32 = prefixes_.address_size;
+		memory.memory.address_16 = address_16(prefixes_);
+		memory.memory.address_32 = address_32(prefixes_);
 		memory.memory.absolute_address = true;
-		memory.memory.absolute = prefixes_.address_size ?
+		memory.memory.absolute = address_16(prefixes_) ?
+			static_cast<std::uint16_t>(address) : address_32(prefixes_) ?
 			static_cast<std::uint32_t>(address) : address;
 		const auto accumulator = register_operand(
 			0, false, memory.width, prefixes_.rex_present);
@@ -639,7 +708,8 @@ private:
 		operand.width = width;
 		operand.memory.base = base;
 		operand.memory.segment = segment;
-		operand.memory.address_32 = prefixes_.address_size;
+		operand.memory.address_16 = address_16(prefixes_);
+		operand.memory.address_32 = address_32(prefixes_);
 		return operand;
 	}
 
@@ -1378,12 +1448,13 @@ private:
 	}
 
 	[[nodiscard]] bool decode_segment_stack(Instruction &instruction,
-		std::uint8_t opcode)
+		std::uint8_t opcode, std::uint8_t segment, bool pushing)
 	{
 		instruction.operation = Operation::segment_stack;
 		instruction.vector_opcode = opcode;
-		instruction.vector_group = opcode >= 0xa8 ? 5U : 4U;
-		if (opcode == 0xa0 || opcode == 0xa8)
+		instruction.vector_group = segment;
+		instruction.vector_control = pushing ? 1U : 0U;
+		if (pushing)
 			instruction.source.width = stack_width(prefixes_);
 		else
 			instruction.destination.width = stack_width(prefixes_);
@@ -2364,6 +2435,8 @@ private:
 		case 0x01:
 			return decode_0f01(instruction);
 		case 0x05:
+			if (prefixes_.mode == ExecutionMode::compat32)
+				return false;
 			instruction.operation = Operation::system_call;
 			return true;
 		case 0x0d:
@@ -2427,7 +2500,9 @@ private:
 		case 0xa1:
 		case 0xa8:
 		case 0xa9:
-			return decode_segment_stack(instruction, opcode);
+			return decode_segment_stack(instruction, opcode,
+				opcode >= 0xa8 ? 5U : 4U,
+				opcode == 0xa0 || opcode == 0xa8);
 		case 0xa3:
 			return decode_bit_register(instruction, Operation::bit_test,
 				ordinary_width(prefixes_));
@@ -2522,6 +2597,15 @@ private:
 		std::uint8_t opcode, Instruction &instruction)
 	{
 		const auto width = ordinary_width(prefixes_);
+		if (prefixes_.mode == ExecutionMode::compat32 &&
+			opcode >= 0x40 && opcode <= 0x4f) {
+			instruction.operation = opcode < 0x48 ?
+				Operation::increment : Operation::decrement;
+			instruction.destination = register_operand(
+				static_cast<std::uint8_t>(opcode & 7U), false,
+				width, false);
+			return true;
+		}
 		if (opcode >= 0x50 && opcode <= 0x57) {
 			instruction.operation = Operation::push;
 			instruction.source = register_operand(
@@ -2582,6 +2666,41 @@ private:
 		}
 
 		switch (opcode) {
+		case 0x06:
+		case 0x07:
+		case 0x0e:
+		case 0x16:
+		case 0x17:
+		case 0x1e:
+		case 0x1f: {
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			const bool pushing = opcode == 0x06 || opcode == 0x0e ||
+				opcode == 0x16 || opcode == 0x1e;
+			const auto segment = opcode <= 0x07 ? 0U :
+				opcode == 0x0e ? 1U :
+				opcode <= 0x17 ? 2U : 3U;
+			return decode_segment_stack(
+				instruction, opcode, segment, pushing);
+		}
+		case 0x27:
+		case 0x2f:
+		case 0x37:
+		case 0x3f:
+		case 0xd6:
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			instruction.operation = Operation::legacy_adjust;
+			instruction.vector_opcode = opcode;
+			return true;
+		case 0x60:
+		case 0x61:
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			instruction.operation = opcode == 0x60 ?
+				Operation::push_all : Operation::pop_all;
+			instruction.destination.width = stack_width(prefixes_);
+			return true;
 		case 0x00: return decode_binary(instruction, Operation::add,
 			OperandWidth::byte, false);
 		case 0x01: return decode_binary(instruction, Operation::add, width, false);
@@ -2662,6 +2781,12 @@ private:
 			std::uint8_t modrm{};
 			if (!read(modrm))
 				return false;
+			if (prefixes_.mode == ExecutionMode::compat32) {
+				instruction.operation = Operation::adjust_rpl;
+				instruction.source = reg_field(modrm, OperandWidth::word);
+				return rm_operand(modrm, OperandWidth::word,
+					instruction.destination);
+			}
 			Operand source{};
 			if (!rm_operand(modrm, OperandWidth::dword, source))
 				return false;
@@ -2848,9 +2973,14 @@ private:
 			instruction.vector_opcode = opcode;
 			return true;
 		}
+		case 0xce:
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			instruction.operation = Operation::interrupt_overflow;
+			return true;
 		case 0xcf:
 			instruction.operation = Operation::interrupt_ret;
-			instruction.destination.width = ordinary_width(prefixes_);
+			instruction.destination.width = stack_width(prefixes_);
 			return true;
 		case 0xd7:
 			instruction.operation = Operation::xlat;
@@ -2858,8 +2988,22 @@ private:
 			instruction.source.width = OperandWidth::byte;
 			instruction.source.memory.base = 3;
 			instruction.source.memory.segment = prefixes_.segment;
-			instruction.source.memory.address_32 = prefixes_.address_size;
+			instruction.source.memory.address_16 = address_16(prefixes_);
+			instruction.source.memory.address_32 = address_32(prefixes_);
 			return true;
+		case 0xd4:
+		case 0xd5: {
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			std::uint64_t base{};
+			if (!read_unsigned(1, base))
+				return false;
+			instruction.operation = Operation::legacy_adjust;
+			instruction.vector_opcode = opcode;
+			instruction.auxiliary = immediate_operand(
+				base, OperandWidth::byte);
+			return true;
+		}
 		case 0xd8:
 		case 0xd9:
 		case 0xda:
@@ -2879,7 +3023,8 @@ private:
 			if (!decode_relative(instruction, Operation::loop, 1))
 				return false;
 			instruction.vector_opcode = opcode;
-			instruction.vector_control = prefixes_.address_size ? 1U : 0U;
+			instruction.vector_control = address_16(prefixes_) ? 2U :
+				address_32(prefixes_) ? 1U : 0U;
 			return true;
 		case 0xf5:
 			instruction.operation = Operation::carry_complement;
@@ -2949,13 +3094,14 @@ bool Instruction::terminal() const noexcept
 	}
 }
 
-DecodeResult decode(
-	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip) noexcept
+DecodeResult decode(::uml::memory::GuestAddressSpace &memory,
+	std::uint64_t rip, ExecutionMode mode) noexcept
 {
 	try {
-		return InstructionDecoder{memory, rip}.run();
+		return InstructionDecoder{memory, rip, mode}.run();
 	} catch (...) {
-		return {DecodeStatus::fetch_fault, {}, rip};
+		return {DecodeStatus::fetch_fault, {},
+			normalize_instruction_pointer(mode, rip)};
 	}
 }
 

@@ -1,5 +1,38 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Scalar transfers, effective addresses, stack operations, and memory control transfers. */
+
+.macro refresh_compat_tls_segment selector_offset, selector_value
+	ldrb w12, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w12, #1
+	b.ne .Lx86_tls_done\@
+	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 8)
+	b.ne .Lx86_tls_check_gs\@
+	mov x14, #UML_X86_64_CPU_FS_BASE
+	b .Lx86_tls_selected\@
+.Lx86_tls_check_gs\@:
+	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 10)
+	b.ne .Lx86_tls_done\@
+	mov x14, #UML_X86_64_CPU_GS_BASE
+.Lx86_tls_selected\@:
+	and w12, \selector_value, #7
+	cmp w12, #3
+	b.ne .Lx86_tls_clear\@
+	lsr w12, \selector_value, #3
+	sub w12, w12, #6
+	cmp w12, #2
+	b.hi .Lx86_tls_clear\@
+	ldrb w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
+	lsr w13, w13, w12
+	tbz w13, #0, .Lx86_tls_clear\@
+	add x13, _cpu, #UML_X86_64_CPU_COMPAT_TLS_BASES
+	ldr w12, [x13, w12, uxtw #2]
+	str x12, [_cpu, x14]
+	b .Lx86_tls_done\@
+.Lx86_tls_clear\@:
+	str xzr, [_cpu, x14]
+.Lx86_tls_done\@:
+.endm
+
 .macro scalar_move_rr name, load, store, load_register, store_register
 gadget \name
 	ldr x8, [_stream], #8
@@ -7,6 +40,9 @@ gadget \name
 	ubfx x10, x8, #16, #16
 	\load \load_register\()11, [_cpu, x10]
 	\store \store_register\()11, [_cpu, x9]
+	.ifc \name,move_16_rr
+	refresh_compat_tls_segment w9, w11
+	.endif
 	retire_and_next
 .endm
 
@@ -42,6 +78,9 @@ gadget move_\width\()_rm
 .Lx86_load_write\@:
 	and x8, x23, #0xffff
 	\store \store_register\()11, [_cpu, x8]
+	.if \width == 16
+	refresh_compat_tls_segment w8, w11
+	.endif
 	retire_and_next
 .Lx86_load_cross\@:
 	mov x0, _context
@@ -95,6 +134,7 @@ memory_move_store i, 64, ldr, x, str
 
 .purgem memory_move_store
 .purgem memory_move_load
+.purgem refresh_compat_tls_segment
 
 gadget lea_16
 	effective_address
@@ -122,6 +162,9 @@ gadget push_\width\()_r
 	\load \host_register\()24, [_cpu, x8]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -147,6 +190,9 @@ gadget push_\width\()_i
 	ldr x22, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -170,6 +216,9 @@ gadget push_\width\()_i
 gadget pop_\width\()_r
 	ldp x23, x22, [_stream], #16
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -178,6 +227,9 @@ gadget pop_\width\()_r
 	\load \host_register\()24, [x7]
 .Lx86_pop_done\@:
 	add x9, x25, #(\width / 8)
+	.if \width == 32
+	mov w9, w9
+	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	and x8, x23, #0xffff
 	\store \store_register\()24, [_cpu, x8]
@@ -193,10 +245,13 @@ gadget pop_\width\()_r
 .endm
 
 push_register 16, ldrh, w, strh
+push_register 32, ldr, w, str
 push_register 64, ldr, x, str
 push_immediate 16, w, strh
+push_immediate 32, w, str
 push_immediate 64, x, str
 pop_register 16, ldrh, w, strh, w
+pop_register 32, ldr, w, str, x
 pop_register 64, ldr, x, str, x
 
 .purgem pop_register
@@ -210,6 +265,9 @@ gadget push_flags_\width
 	ldp x23, x22, [_stream], #16
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -230,6 +288,7 @@ gadget push_flags_\width
 .endm
 
 push_flags 16, strh, w
+push_flags 32, str, w
 push_flags 64, str, x
 
 .purgem push_flags
@@ -238,6 +297,9 @@ push_flags 64, str, x
 gadget pop_flags_\width
 	ldr x22, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -257,6 +319,9 @@ gadget pop_flags_\width
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	add x9, x25, #(\width / 8)
+	.if \width == 32
+	mov w9, w9
+	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	retire_and_next
 .Lx86_pop_flags_cross\@:
@@ -270,6 +335,7 @@ gadget pop_flags_\width
 .endm
 
 pop_flags 16, ldrh, w
+pop_flags 32, ldr, w
 pop_flags 64, ldr, x
 
 .purgem pop_flags
@@ -278,6 +344,9 @@ pop_flags 64, ldr, x
 gadget leave_\width
 	ldr x22, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -286,6 +355,9 @@ gadget leave_\width
 	\load \host_register\()24, [x7]
 .Lx86_leave_done\@:
 	add x9, x25, #(\width / 8)
+	.if \width == 32
+	mov w9, w9
+	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	\store \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	retire_and_next
@@ -300,6 +372,7 @@ gadget leave_\width
 .endm
 
 leave 16, ldrh, strh, w
+leave 32, ldr, str, x
 leave 64, ldr, str, x
 
 .purgem leave
@@ -324,6 +397,9 @@ gadget push_\width\()_m
 .Lx86_push_memory_source_done\@:
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -344,6 +420,7 @@ gadget push_\width\()_m
 .endm
 
 push_memory 16, ldrh, w, strh, w
+push_memory 32, ldr, w, str, w
 push_memory 64, ldr, x, str, x
 
 .purgem push_memory
@@ -352,6 +429,9 @@ push_memory 64, ldr, x, str, x
 gadget pop_\width\()_m
 	ldr x22, [_stream, #16]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
@@ -368,6 +448,9 @@ gadget pop_\width\()_m
 	mov x24, x0
 .Lx86_pop_memory_stack_done\@:
 	add x26, x25, #(\width / 8)
+	.if \width == 32
+	mov w26, w26
+	.endif
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	effective_address
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -392,45 +475,67 @@ gadget pop_\width\()_m
 .endm
 
 pop_memory 16, ldrh, w, strh, w
+pop_memory 32, ldr, w, str, w
 pop_memory 64, ldr, x, str, x
 
 .purgem pop_memory
 
-.macro invalidate_stack_write
+.macro invalidate_stack_write size
+	mov w23, #0
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbz w8, .Lx86_stack_write_check_overlap\@
+	publish_pending_code x25, \size
+	mov w23, #1
+	b .Lx86_stack_write_ready\@
+.Lx86_stack_write_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
 	b.hs .Lx86_stack_write_ready\@
-	add x9, x25, #8
+	add x9, x25, #\size
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
 	b.ls .Lx86_stack_write_ready\@
 	mov x0, _context
 	mov x1, x25
 	bl NAME(uml_x86_64_gadget_invalidate_code)
+	mov w23, #1
 .Lx86_stack_write_ready\@:
 .endm
 
-.macro call_push_and_exit
+.macro call_push_and_exit width, store, host_register, linked=0, indirect=0
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #8
+	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
-	add x9, x7, #7
+	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_call_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
-	str x24, [x7]
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	\store \host_register\()24, [x7]
 .Lx86_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	invalidate_stack_write
-	str x26, [_cpu, #UML_X86_64_CPU_RIP]
+	invalidate_stack_write (\width / 8)
 	add _executed, _executed, #1
+	.if \indirect
+	cbnz w23, .Lx86_call_exit\@
+	follow_indirect_link x26, x27
+	.else
+	.if \linked
+	cbnz w23, .Lx86_call_exit\@
+	follow_block_link x27
+	.endif
+	.endif
+.Lx86_call_exit\@:
+	str x26, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .Lx86_call_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
-	mov w3, #8
+	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 	b .Lx86_call_done\@
@@ -439,92 +544,181 @@ pop_memory 64, ldr, x, str, x
 gadget call
 	ldp x26, x24, [_stream], #16
 	ldr x22, [_stream], #8
-	call_push_and_exit
+	call_push_and_exit 64, str, x
 
-gadget call_indirect_r
+gadget call_linked
+	ldp x27, x24, [_stream], #16
+	ldr x22, [_stream], #8
+	ldr x26, [x27, #16]
+	call_push_and_exit 64, str, x, 1
+
+.macro call_indirect_register name, width, load, host_register, store, store_register, cached=0
+gadget \name
 	ldp x8, x24, [_stream], #16
 	ldr x22, [_stream], #8
-	ldr x26, [_cpu, x8]
-	call_push_and_exit
+	.if \cached
+	ldr x27, [_stream], #8
+	.endif
+	\load \host_register\()26, [_cpu, x8]
+	call_push_and_exit \width, \store, \store_register, 0, \cached
+.endm
 
-gadget call_indirect_m
+.macro call_indirect_memory name, width, load, load_register, store, store_register, cached=0
+gadget \name
 	effective_address
 	mov x25, x7
-	add x9, x7, #7
+	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_call_indirect_source_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x26, [x7]
-	b .Lx86_call_indirect_source_done
-.Lx86_call_indirect_source_cross:
+	tbnz x9, #12, .Lx86_call_indirect_source_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	\load \load_register\()26, [x7]
+	b .Lx86_call_indirect_source_done\@
+.Lx86_call_indirect_source_cross\@:
 	mov x0, _context
 	mov x1, x25
-	mov w2, #8
+	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
 	cbz x1, .Lx86_memory_fault
 	mov x26, x0
-.Lx86_call_indirect_source_done:
+.Lx86_call_indirect_source_done\@:
 	ldr x24, [_stream], #8
-	call_push_and_exit
+	.if \cached
+	ldr x27, [_stream], #8
+	.endif
+	call_push_and_exit \width, \store, \store_register, 0, \cached
+.endm
 
+gadget call_32
+	ldp x26, x24, [_stream], #16
+	ldr x22, [_stream], #8
+	call_push_and_exit 32, str, w
+
+gadget call_32_linked
+	ldp x27, x24, [_stream], #16
+	ldr x22, [_stream], #8
+	ldr x26, [x27, #16]
+	call_push_and_exit 32, str, w, 1
+
+call_indirect_register call_indirect_r, 64, ldr, x, str, x
+call_indirect_register call_indirect_32_r, 32, ldr, w, str, w
+call_indirect_register call_indirect_r_cached, 64, ldr, x, str, x, 1
+call_indirect_register call_indirect_32_r_cached, 32, ldr, w, str, w, 1
+call_indirect_memory call_indirect_m, 64, ldr, x, str, x
+call_indirect_memory call_indirect_32_m, 32, ldr, w, str, w
+call_indirect_memory call_indirect_m_cached, 64, ldr, x, str, x, 1
+call_indirect_memory call_indirect_32_m_cached, 32, ldr, w, str, w, 1
+
+.purgem call_indirect_memory
+.purgem call_indirect_register
 .purgem call_push_and_exit
 .purgem invalidate_stack_write
 
-gadget return
+.macro return_gadget name, width, load, host_register, cached=0
+gadget \name
 	ldp x23, x22, [_stream], #16
+	.if \cached
+	ldr x27, [_stream], #8
+	.endif
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
-	add x9, x7, #7
+	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_return_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-.Lx86_return_done:
-	add x9, x25, #8
+	tbnz x9, #12, .Lx86_return_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	\load \host_register\()24, [x7]
+.Lx86_return_done\@:
+	add x9, x25, #(\width / 8)
 	add x9, x9, x23
+	.if \width == 32
+	mov w9, w9
+	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	str x24, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	.if \cached
+	follow_indirect_link x24, x27
+	.else
+	str x24, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_return_cross:
+	.endif
+.Lx86_return_cross\@:
 	mov x0, _context
 	mov x1, x25
-	mov w2, #8
+	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
 	cbz x1, .Lx86_memory_fault
 	mov x24, x0
-	b .Lx86_return_done
+	b .Lx86_return_done\@
+.endm
 
-gadget jump_indirect_r
+.macro jump_indirect_register name, load, host_register, cached=0
+gadget \name
+	.if \cached
+	ldp x8, x27, [_stream]
+	.else
 	ldr x8, [_stream]
-	ldr x8, [_cpu, x8]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	.endif
+	\load \host_register\()8, [_cpu, x8]
 	add _executed, _executed, #1
+	.if \cached
+	follow_indirect_link x8, x27
+	.else
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
+	.endif
+.endm
 
-gadget jump_indirect_m
+.macro jump_indirect_memory name, width, load, host_register, cached=0
+gadget \name
 	effective_address
 	mov x25, x7
-	add x9, x7, #7
+	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
-	tbnz x9, #12, .Lx86_jump_indirect_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-	b .Lx86_jump_indirect_done
-.Lx86_jump_indirect_cross:
+	tbnz x9, #12, .Lx86_jump_indirect_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	\load \host_register\()24, [x7]
+	b .Lx86_jump_indirect_done\@
+.Lx86_jump_indirect_cross\@:
 	mov x0, _context
 	mov x1, x25
-	mov w2, #8
+	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
 	cbz x1, .Lx86_memory_fault
 	mov x24, x0
-.Lx86_jump_indirect_done:
-	str x24, [_cpu, #UML_X86_64_CPU_RIP]
+.Lx86_jump_indirect_done\@:
+	.if \cached
+	ldr x27, [_stream]
+	.endif
 	add _executed, _executed, #1
+	.if \cached
+	follow_indirect_link x24, x27
+	.else
+	str x24, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
+	.endif
+.endm
+
+return_gadget return, 64, ldr, x
+return_gadget return_32, 32, ldr, w
+return_gadget return_cached, 64, ldr, x, 1
+return_gadget return_32_cached, 32, ldr, w, 1
+jump_indirect_register jump_indirect_r, ldr, x
+jump_indirect_register jump_indirect_32_r, ldr, w
+jump_indirect_register jump_indirect_r_cached, ldr, x, 1
+jump_indirect_register jump_indirect_32_r_cached, ldr, w, 1
+jump_indirect_memory jump_indirect_m, 64, ldr, x
+jump_indirect_memory jump_indirect_32_m, 32, ldr, w
+jump_indirect_memory jump_indirect_m_cached, 64, ldr, x, 1
+jump_indirect_memory jump_indirect_32_m_cached, 32, ldr, w, 1
+
+.purgem jump_indirect_memory
+.purgem jump_indirect_register
+.purgem return_gadget
 
 .macro scalar_extend name, load, load_register, store, store_register
 gadget \name

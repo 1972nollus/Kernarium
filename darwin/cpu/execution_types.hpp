@@ -21,6 +21,7 @@ enum class EngineEvent : int {
 	gcs_fault = 6,
 	floating_point_trap = 7,
 	pc_alignment = 8,
+	overflow = 9,
 };
 
 enum class ExitReason {

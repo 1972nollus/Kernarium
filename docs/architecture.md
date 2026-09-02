@@ -92,18 +92,24 @@ precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines.
 
-The macOS 4 KiB x86_64 compatibility slice keeps native arm64 UML kernel-mode
-execution but exposes only the x86_64 userspace ABI. It cannot load arm64
-userspace, and there is no per-task ISA selection. The host routes userspace
-instruction execution through immutable, data-only streams of pointers to
-precompiled handwritten arm64 assembly gadgets. There is no semantic C++
-execution fallback. Exact x87 formats and transcendentals use bounded
-software-math primitives called by those native gadgets. The backend covers the pinned FEX handwritten
-x86-64 instruction corpus, including x87, MMX, SSE, AVX, AES, SHA, atomic, and
-extended-state operations. That external corpus is the instruction acceptance
-boundary, not proof of an arbitrary distribution or complete Linux syscall
-compatibility. The normal mainline slices and Android remain
-arm64-userspace-only and contain none of the x86_64 kernel overlay.
+The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
+execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
+arm64 userspace; per-task mode selects only an x86-family operand and address
+width. The host routes userspace instruction execution through immutable,
+data-only streams of pointers to precompiled handwritten arm64 assembly
+gadgets. There is no semantic C++ execution fallback. Exact x87 formats and
+transcendentals use bounded software-math primitives called by those native
+gadgets. The userspace ISA
+boundary includes scalar x86 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
+F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
+long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
+are the external instruction acceptance gate. AVX-512 and later encodings,
+RTM/MPX, obsolete protected-mode bounds and far-pointer-load families, and
+privileged, real-mode, virtual-machine, enclave, and system-management
+instructions are outside this Linux userspace profile. That gate is not proof
+of an arbitrary distribution or complete Linux syscall compatibility. The
+normal mainline slices and Android remain arm64-userspace-only and contain
+none of the x86_64 kernel overlay.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable

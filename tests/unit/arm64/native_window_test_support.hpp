@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "memory/mmu/address_layout.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <mach/mach.h>
@@ -8,11 +10,51 @@
 
 namespace uml::testing {
 
+/* Match the product placement: macOS avoids crowded low host VM bands. */
+#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+inline constexpr std::uint64_t native_test_window_start =
+	DARWIN_UML_MACOS_NATIVE_ADDRESS;
+inline constexpr std::uint64_t native_test_window_end =
+	native_test_window_start +
+	(DARWIN_UML_NATIVE_ADDRESS_END - DARWIN_UML_NATIVE_ADDRESS_START);
+#else
+inline constexpr std::uint64_t native_test_window_start =
+	DARWIN_UML_NATIVE_ADDRESS_START;
+inline constexpr std::uint64_t native_test_window_end =
+	DARWIN_UML_NATIVE_ADDRESS_END;
+#endif
+
+static_assert(native_test_window_start >= DARWIN_UML_NATIVE_ADDRESS_START);
+static_assert(native_test_window_end <= DARWIN_UML_GUEST_ADDRESS_LIMIT);
+
+class NativeTestWindowScope final {
+public:
+	NativeTestWindowScope() noexcept
+		: entered_{::uml::memory::configure_native_address_window(
+			native_test_window_start, native_test_window_end)}
+	{
+	}
+
+	~NativeTestWindowScope()
+	{
+		if (entered_)
+			::uml::memory::reset_native_address_window();
+	}
+
+	NativeTestWindowScope(const NativeTestWindowScope &) = delete;
+	NativeTestWindowScope &operator=(const NativeTestWindowScope &) = delete;
+
+	[[nodiscard]] bool entered() const noexcept { return entered_; }
+
+private:
+	bool entered_{};
+};
+
 [[nodiscard]] inline std::uintptr_t reserve_native_test_window(
 	std::size_t length) noexcept
 {
-	constexpr std::uint64_t start = DARWIN_UML_NATIVE_ADDRESS_START;
-	constexpr std::uint64_t end = DARWIN_UML_NATIVE_ADDRESS_END;
+	constexpr auto start = native_test_window_start;
+	constexpr auto end = native_test_window_end;
 	if (length == 0 || length > end - start)
 		return 0;
 

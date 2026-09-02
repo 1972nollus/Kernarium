@@ -14,6 +14,10 @@ static_assert(offsetof(CpuState, mmx) == UML_X86_64_CPU_MMX);
 static_assert(offsetof(CpuState, x87) == UML_X86_64_CPU_X87);
 static_assert(offsetof(CpuState, segment_selectors) ==
 	UML_X86_64_CPU_SEGMENT_SELECTORS);
+static_assert(offsetof(CpuState, compat_tls_bases) ==
+	UML_X86_64_CPU_COMPAT_TLS_BASES);
+static_assert(offsetof(CpuState, compat_tls_present) ==
+	UML_X86_64_CPU_COMPAT_TLS_PRESENT);
 static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
 static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
 static_assert(offsetof(CpuState, fs_base) == UML_X86_64_CPU_FS_BASE);
@@ -27,6 +31,8 @@ static_assert(offsetof(CpuState, x87_reduced_precision) ==
 	UML_X86_64_CPU_X87_REDUCED_PRECISION);
 static_assert(offsetof(CpuState, system_call_32bit) ==
 	UML_X86_64_CPU_SYSTEM_CALL_32BIT);
+static_assert(offsetof(CpuState, execution_mode) ==
+	UML_X86_64_CPU_EXECUTION_MODE);
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, left) == UML_X86_64_CPU_DEFERRED_LEFT);
 static_assert(offsetof(CpuState, deferred_flags) +
@@ -39,5 +45,11 @@ static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, width) == UML_X86_64_CPU_DEFERRED_WIDTH);
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, carry) == UML_X86_64_CPU_DEFERRED_CARRY);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, override_mask) ==
+	UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK);
+static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, override_value) ==
+	UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE);
 
 } // namespace uml::cpu::x86_64::layout

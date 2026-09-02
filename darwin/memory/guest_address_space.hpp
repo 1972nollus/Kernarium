@@ -18,6 +18,14 @@ struct MemoryFault final {
 	MemoryAccess access{MemoryAccess::read};
 };
 
+struct CodePageStamp final {
+	std::uint64_t identity{};
+	std::uint64_t version{};
+
+	friend bool operator==(const CodePageStamp &, const CodePageStamp &) =
+		default;
+};
+
 class GuestAddressSpace {
 public:
 	virtual ~GuestAddressSpace() = default;
@@ -58,7 +66,28 @@ public:
 	{
 		return false;
 	}
+	[[nodiscard]] virtual bool is_executable(std::uint64_t) noexcept
+	{
+		return false;
+	}
+	/* A stable stamp lets a translated-code cache reject unrelated global code
+	 * publications without rereading its source bytes. Implementations which
+	 * cannot retain page identity return false and keep exact byte validation.
+	 */
+	[[nodiscard]] virtual bool code_page_stamp(
+		std::uint64_t, void *, CodePageStamp &) noexcept
+	{
+		return false;
+	}
 	virtual void invalidate_code(std::uint64_t) {}
+	/* A translated executor may carry an already-entered memory execution
+	 * context. Static memory uses it to publish directly to the owning
+	 * generation; other memory implementations retain the ordinary hook.
+	 */
+	virtual void invalidate_code(std::uint64_t address, void *)
+	{
+		invalidate_code(address);
+	}
 	[[nodiscard]] virtual MemoryFault last_fault() const noexcept
 	{
 		return {};

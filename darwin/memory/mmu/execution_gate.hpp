@@ -21,6 +21,8 @@ namespace uml::memory {
 	GenerationState &state, std::uint64_t generation,
 	std::uint64_t guest_pc) noexcept;
 void execution_reader_end(GenerationState &state) noexcept;
+[[nodiscard]] bool execution_context_publish_code_change(
+	void *context) noexcept;
 
 class ExecutionQuiesce final {
 public:

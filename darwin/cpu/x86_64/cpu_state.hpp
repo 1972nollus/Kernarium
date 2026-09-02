@@ -7,6 +7,24 @@
 
 namespace uml::cpu::x86_64 {
 
+enum class ExecutionMode : std::uint8_t {
+	long64,
+	compat32,
+};
+
+[[nodiscard]] constexpr std::uint64_t normalize_instruction_pointer(
+	ExecutionMode mode, std::uint64_t value) noexcept
+{
+	return mode == ExecutionMode::compat32 ?
+		static_cast<std::uint32_t>(value) : value;
+}
+
+[[nodiscard]] constexpr std::uint64_t advance_instruction_pointer(
+	ExecutionMode mode, std::uint64_t value, std::uint64_t amount) noexcept
+{
+	return normalize_instruction_pointer(mode, value + amount);
+}
+
 enum class Register : std::uint8_t {
 	rax,
 	rcx,
@@ -44,6 +62,8 @@ struct DeferredFlags final {
 	DeferredFlagOperation operation{DeferredFlagOperation::none};
 	std::uint8_t width{};
 	std::uint8_t carry{};
+	std::uint16_t override_mask{};
+	std::uint16_t override_value{};
 };
 
 struct X87Register final {
@@ -57,6 +77,8 @@ struct CpuState final {
 	std::array<std::uint64_t, 8> mmx{};
 	std::array<X87Register, 8> x87{};
 	std::array<std::uint16_t, 6> segment_selectors{};
+	std::array<std::uint32_t, 3> compat_tls_bases{};
+	std::uint8_t compat_tls_present{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	std::uint64_t fs_base{};
@@ -68,6 +90,7 @@ struct CpuState final {
 	std::uint8_t x87_top{};
 	bool x87_reduced_precision{};
 	bool system_call_32bit{};
+	ExecutionMode execution_mode{ExecutionMode::long64};
 	DeferredFlags deferred_flags{};
 
 	[[nodiscard]] std::uint64_t &gpr(Register reg) noexcept

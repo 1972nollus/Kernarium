@@ -15,8 +15,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #ifndef UML_RUNTIME_PROFILING
@@ -52,7 +56,9 @@ constexpr std::size_t x86_64_fs_base_slot = 17;
 constexpr std::size_t x86_64_gs_base_slot = 18;
 constexpr std::size_t x86_64_x87_significand_slot = 19;
 constexpr std::size_t x86_64_x87_exponent_slot = 27;
+constexpr std::size_t x86_32_tls_entry_count = 3;
 constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
+constexpr std::uint64_t x86_64_compat32_execution = 1ULL << 33U;
 #endif
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
@@ -308,16 +314,239 @@ void save_cpu(arm64::CpuState &cpu,
 	}
 }
 
+class StaticExecutionScope final {
+public:
+	StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
+		: generation_{generation},
+		  context_{
+			darwin_uml_static_vm_execution_context_create(generation)}
+	{
+		entered_ = context_ != nullptr &&
+			darwin_uml_static_vm_execution_context_begin(
+				context_, guest_pc) == 0;
+	}
+
+	~StaticExecutionScope()
+	{
+		if (entered_)
+			(void)darwin_uml_static_vm_execution_context_end(context_);
+		darwin_uml_static_vm_execution_context_destroy(context_);
+	}
+
+	StaticExecutionScope(const StaticExecutionScope &) = delete;
+	StaticExecutionScope &operator=(const StaticExecutionScope &) = delete;
+
+	[[nodiscard]] bool entered() const noexcept { return entered_; }
+	[[nodiscard]] void *context() const noexcept { return context_; }
+	[[nodiscard]] darwin_uml_static_sequences sequences() const noexcept
+	{
+		return darwin_uml_static_vm_execution_context_sequences(context_);
+	}
+	[[nodiscard]] unsigned long generation() const noexcept
+	{
+		return generation_;
+	}
+
+private:
+	unsigned long generation_;
+	void *context_{};
+	bool entered_{};
+};
+
+bool execution_interrupt_boundary(void *context) noexcept
+{
+	const auto *execution = static_cast<const StaticExecutionScope *>(context);
+	return execution != nullptr &&
+		execution->sequences().execution_interrupt != 0;
+}
+
 #if DARWIN_UML_X86_64_GUEST
+[[nodiscard]] x86_64::gadgets::ProgramCacheSequences
+x86_cache_sequences(void *context) noexcept
+{
+	const auto sequences =
+		darwin_uml_static_vm_execution_context_sequences(context);
+	return {
+		.mapping_changes = sequences.mapping_changes,
+		.code_changes = sequences.code_changes,
+		.interrupted = sequences.execution_interrupt != 0,
+	};
+}
+
+[[nodiscard]] bool x86_compat_syscall_trace_enabled() noexcept
+{
+	static const bool enabled = [] {
+		const auto *value = std::getenv("UML_X86_COMPAT_SYSCALL_TRACE");
+		return value != nullptr && value[0] != '\0' && value[0] != '0';
+	}();
+	return enabled;
+}
+
+[[nodiscard]] bool x86_fatal_trace_enabled() noexcept
+{
+	const auto *value = std::getenv("UML_X86_FATAL_TRACE");
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+[[nodiscard]] bool x86_write_trace_enabled() noexcept
+{
+	static const bool enabled = [] {
+		const auto *value = std::getenv("UML_X86_WRITE_TRACE");
+		return value != nullptr && value[0] != '\0' && value[0] != '0';
+	}();
+	return enabled;
+}
+
+struct X86Iovec final {
+	std::uint64_t base;
+	std::uint64_t length;
+};
+
+void trace_x86_write(const x86_64::CpuState &cpu,
+	StaticGuestMemory &memory, unsigned long generation) noexcept
+{
+	const auto number = cpu.gpr(x86_64::Register::rax);
+	if (cpu.execution_mode == x86_64::ExecutionMode::compat32 &&
+		cpu.system_call_32bit && (x86_compat_syscall_trace_enabled() ||
+			x86_write_trace_enabled())) {
+		static std::atomic_uint64_t compat_sequence{};
+		const auto current = compat_sequence.fetch_add(
+			1, std::memory_order_relaxed) + 1;
+		std::fprintf(stderr,
+			"Darwin i386 syscall trace sequence=%llu generation=%lu "
+			"nr=%u rip=%#llx args=%#x,%#x,%#x,%#x,%#x,%#x\n",
+			static_cast<unsigned long long>(current), generation,
+			static_cast<unsigned>(number),
+			static_cast<unsigned long long>(cpu.rip),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rbx)),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rcx)),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rdx)),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rsi)),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rdi)),
+			static_cast<unsigned>(cpu.gpr(x86_64::Register::rbp)));
+		std::fflush(stderr);
+		return;
+	}
+	if (!x86_write_trace_enabled())
+		return;
+	if (number != 1 && number != 20)
+		return;
+	static std::atomic_uint64_t sequence{};
+	const auto current = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
+	const auto descriptor = cpu.gpr(x86_64::Register::rdi);
+	const auto address = cpu.gpr(x86_64::Register::rsi);
+	const auto third = cpu.gpr(x86_64::Register::rdx);
+	std::fprintf(stderr,
+		"Darwin x86 write trace sequence=%llu generation=%lu nr=%llu "
+		"fd=%llu address=%#llx third=%llu rip=%#llx",
+		static_cast<unsigned long long>(current), generation,
+		static_cast<unsigned long long>(number),
+		static_cast<unsigned long long>(descriptor),
+		static_cast<unsigned long long>(address),
+		static_cast<unsigned long long>(third),
+		static_cast<unsigned long long>(cpu.rip));
+	if (number == 1) {
+		std::array<std::byte, 256> sample{};
+		const auto sample_size = std::min<std::uint64_t>(third, sample.size());
+		const bool readable = sample_size == 0 || memory.read(
+			address, std::span{sample}.first(
+				static_cast<std::size_t>(sample_size)));
+		const auto zeros = readable ? std::count(
+			sample.begin(), sample.begin() + static_cast<std::ptrdiff_t>(sample_size),
+			std::byte{}) : 0;
+		std::fprintf(stderr, " sample=%llu zeros=%zu readable=%u",
+			static_cast<unsigned long long>(sample_size),
+			static_cast<std::size_t>(zeros), readable ? 1U : 0U);
+	} else {
+		constexpr std::size_t maximum_iovecs = 16;
+		std::array<X86Iovec, maximum_iovecs> vectors{};
+		const auto count = std::min<std::uint64_t>(third, vectors.size());
+		const bool readable = count == 0 || memory.read(address,
+			std::as_writable_bytes(std::span{vectors}.first(
+				static_cast<std::size_t>(count))));
+		std::uint64_t total{};
+		std::uint64_t sampled{};
+		std::size_t zeros{};
+		if (readable) {
+			for (std::size_t index = 0; index < count; ++index) {
+				total += vectors[index].length;
+				std::array<std::byte, 64> sample{};
+				const auto sample_size = std::min<std::uint64_t>(
+					vectors[index].length, sample.size());
+				if (sample_size != 0 && memory.read(vectors[index].base,
+					std::span{sample}.first(static_cast<std::size_t>(sample_size)))) {
+					sampled += sample_size;
+					zeros += static_cast<std::size_t>(std::count(
+						sample.begin(),
+						sample.begin() + static_cast<std::ptrdiff_t>(sample_size),
+						std::byte{}));
+				}
+			}
+		}
+		std::fprintf(stderr,
+			" iovecs=%llu inspected=%llu total=%llu sample=%llu zeros=%zu readable=%u",
+			static_cast<unsigned long long>(third),
+			static_cast<unsigned long long>(count),
+			static_cast<unsigned long long>(total),
+			static_cast<unsigned long long>(sampled), zeros,
+			readable ? 1U : 0U);
+	}
+	std::fputc('\n', stderr);
+	std::fflush(stderr);
+}
+
+void trace_x86_fatal(const char *stage, const x86_64::CpuState &cpu,
+	unsigned long generation, int error = 0,
+	std::size_t retired = 0, StaticGuestMemory *memory = nullptr) noexcept
+{
+	if (!x86_fatal_trace_enabled())
+		return;
+	std::fprintf(stderr,
+		"Darwin x86 runtime fatal stage=%s rip=%#llx mode=%u "
+		"generation=%lu errno=%d retired=%zu",
+		stage, static_cast<unsigned long long>(cpu.rip),
+		static_cast<unsigned>(cpu.execution_mode), generation, error,
+		retired);
+	if (memory != nullptr) {
+		std::array<std::byte, 15> bytes{};
+		if (memory->fetch(cpu.rip, bytes)) {
+			std::fputs(" bytes=", stderr);
+			for (const auto byte : bytes)
+				std::fprintf(stderr, "%02x",
+					std::to_integer<unsigned>(byte));
+		} else {
+			std::fputs(" bytes=<unreadable>", stderr);
+		}
+	}
+	std::fputc('\n', stderr);
+	std::fflush(stderr);
+}
+
 void load_x86_cpu(x86_64::CpuState &cpu,
 	const darwin_uml_guest_registers &registers,
 	const darwin_uml_guest_fp_registers &fp) noexcept
 {
 	std::copy_n(std::begin(registers.x), x86_64_register_count,
 		cpu.registers.begin());
-	cpu.rip = registers.pc;
+	cpu.execution_mode =
+		(registers.svcr & x86_64_compat32_execution) != 0 ?
+			x86_64::ExecutionMode::compat32 : x86_64::ExecutionMode::long64;
+	cpu.rip = x86_64::normalize_instruction_pointer(
+		cpu.execution_mode, registers.pc);
 	cpu.rflags = registers.x[x86_64_rflags_slot] |
 		x86_64::rflags_reserved;
+	cpu.compat_tls_bases = {};
+	cpu.compat_tls_present = 0;
+	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
+		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
+			const auto head = registers.pointer_auth_keys[index][0];
+			const auto tail = registers.pointer_auth_keys[index][1];
+			if ((head | tail) == 0)
+				continue;
+			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);
+			cpu.compat_tls_present |= static_cast<std::uint8_t>(1U << index);
+		}
+	}
 	cpu.fs_base = registers.x[x86_64_fs_base_slot];
 	cpu.gs_base = registers.x[x86_64_gs_base_slot];
 	cpu.deferred_flags = {};
@@ -355,7 +584,9 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		cpu.x87_status = 0;
 		cpu.x87_tag = 0xffff;
 		cpu.x87_top = 0;
-		cpu.segment_selectors = {0, 0x33, 0x2b, 0, 0, 0};
+		cpu.segment_selectors = {0, static_cast<std::uint16_t>(
+			cpu.execution_mode == x86_64::ExecutionMode::compat32 ? 0x23 : 0x33),
+			0x2b, 0, 0, 0};
 		cpu.system_call_32bit = false;
 	}
 }
@@ -367,7 +598,8 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	x86_64::materialize_flags(cpu);
 	std::copy(cpu.registers.begin(), cpu.registers.end(),
 		std::begin(registers.x));
-	registers.pc = cpu.rip;
+	registers.pc = x86_64::normalize_instruction_pointer(
+		cpu.execution_mode, cpu.rip);
 	registers.x[x86_64_rflags_slot] = cpu.rflags;
 	registers.x[x86_64_fs_base_slot] = cpu.fs_base;
 	registers.x[x86_64_gs_base_slot] = cpu.gs_base;
@@ -388,7 +620,9 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			cpu.segment_selectors[index]) << (index * 16U);
 	registers.svcr = static_cast<std::uint64_t>(cpu.segment_selectors[4]) |
 		(static_cast<std::uint64_t>(cpu.segment_selectors[5]) << 16U) |
-		(cpu.system_call_32bit ? x86_64_compatibility_syscall : 0U);
+		(cpu.system_call_32bit ? x86_64_compatibility_syscall : 0U) |
+		(cpu.execution_mode == x86_64::ExecutionMode::compat32 ?
+			x86_64_compat32_execution : 0U);
 	static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 	std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
 	fp.fpsr = cpu.mxcsr;
@@ -404,12 +638,36 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	x86_64::gadgets::Executor &executor,
 	unsigned long generation, const uml::cpu::InterruptToken &interrupt) noexcept
 {
-	memory.set_generation(generation);
-	executor.prepare(memory, generation,
-		darwin_uml_static_vm_changes(generation));
 	uml::cpu::ExecutionResult result{};
 	result.reason = uml::cpu::ExitReason::fatal;
+	StaticExecutionScope execution{generation, cpu.rip};
+	if (!execution.entered()) {
+		trace_x86_fatal("execution-scope", cpu, generation, errno);
+		return result;
+	}
+	auto guarded_interrupt = interrupt;
+	guarded_interrupt.poll = execution_interrupt_boundary;
+	guarded_interrupt.poll_context = &execution;
+	bool executor_prepared = false;
+	std::uint64_t prepared_mapping_changes{};
+	std::uint64_t prepared_code_changes{};
 	while (result.retired_instructions < dispatch_budget) {
+		const auto sequences = execution.sequences();
+		if (sequences.execution_interrupt != 0) {
+			result.reason = uml::cpu::ExitReason::interrupt;
+			return result;
+		}
+		memory.prepare(generation, sequences.mapping_changes);
+		if (!executor_prepared ||
+			prepared_mapping_changes != sequences.mapping_changes ||
+			prepared_code_changes != sequences.code_changes) {
+			executor.prepare(memory, generation, sequences.mapping_changes,
+				sequences.code_changes, execution.context(),
+				x86_cache_sequences);
+			prepared_mapping_changes = sequences.mapping_changes;
+			prepared_code_changes = sequences.code_changes;
+			executor_prepared = true;
+		}
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
 			cpu.gpr(x86_64::Register::rax) =
 				x86_64_rt_sigreturn;
@@ -418,24 +676,36 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			return result;
 		}
 		const auto available = dispatch_budget - result.retired_instructions;
-		const auto built = x86_64::gadgets::build(
-			memory, cpu.rip, std::min<std::size_t>(64, available));
-		switch (built.status) {
+		const auto selected = executor.select_program(
+			memory, cpu.rip, cpu.execution_mode,
+			std::min<std::size_t>(64, available));
+		switch (selected.status) {
 		case x86_64::gadgets::BuildStatus::fetch_fault:
 			result.reason = uml::cpu::ExitReason::memory_fault;
 			result.fault = {
-				built.fault_address, uml::memory::MemoryAccess::execute};
+				selected.fault_address,
+				uml::memory::MemoryAccess::execute};
 			return result;
 		case x86_64::gadgets::BuildStatus::illegal_instruction:
 			result.reason = uml::cpu::ExitReason::illegal_instruction;
+			trace_x86_fatal("build-illegal", cpu, generation, 0,
+				result.retired_instructions, &memory);
 			return result;
 		case x86_64::gadgets::BuildStatus::allocation_failure:
+			trace_x86_fatal("build-allocation", cpu, generation, errno,
+				result.retired_instructions);
 			return result;
 		case x86_64::gadgets::BuildStatus::built:
 			break;
 		}
+		if (selected.program == nullptr) {
+			trace_x86_fatal("select-program", cpu, generation, errno,
+				result.retired_instructions);
+			return result;
+		}
 		const auto executed = x86_64::gadgets::execute(
-			built.program, cpu, memory, executor, available, interrupt);
+			*selected.program, cpu, memory, executor, available,
+			guarded_interrupt);
 		result.retired_instructions += executed.retired_instructions;
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
@@ -456,13 +726,26 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			return result;
 		case uml::cpu::EngineEvent::illegal_instruction:
 			result.reason = uml::cpu::ExitReason::illegal_instruction;
+			trace_x86_fatal("execute-illegal", cpu, generation, 0,
+				result.retired_instructions, &memory);
 			return result;
 		case uml::cpu::EngineEvent::breakpoint:
 			result.reason = uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 3;
+			return result;
+		case uml::cpu::EngineEvent::overflow:
+			result.reason = uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 4;
 			return result;
 		case uml::cpu::EngineEvent::fatal:
-		case uml::cpu::EngineEvent::gcs_fault:
+			trace_x86_fatal("execute", cpu, generation, 0,
+				result.retired_instructions);
+			return result;
 		case uml::cpu::EngineEvent::floating_point_trap:
+			result.reason = uml::cpu::ExitReason::floating_point_trap;
+			result.syndrome = 0;
+			return result;
+		case uml::cpu::EngineEvent::gcs_fault:
 		case uml::cpu::EngineEvent::pc_alignment:
 			return result;
 		}
@@ -487,6 +770,8 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
 	});
+	if (result.reason == uml::cpu::ExitReason::system_call)
+		trace_x86_write(cpu, runtime.memory, generation);
 	save_x86_cpu(cpu, registers, fp);
 	int event = DARWIN_UML_EVENT_FATAL;
 	switch (result.reason) {
@@ -511,10 +796,19 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
+		registers.fault.error_code = 0;
+		registers.fault.address = cpu.rip;
+		registers.fault.trap_number = static_cast<std::int32_t>(
+			result.syndrome);
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
-	case uml::cpu::ExitReason::gcs_fault:
 	case uml::cpu::ExitReason::floating_point_trap:
+		registers.fault.error_code = 0;
+		registers.fault.address = cpu.rip;
+		registers.fault.trap_number = 0;
+		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
+		break;
+	case uml::cpu::ExitReason::gcs_fault:
 	case uml::cpu::ExitReason::pc_alignment:
 	case uml::cpu::ExitReason::fatal:
 		break;
@@ -541,45 +835,6 @@ void save_floating_point_trap(
 	return true;
 }
 
-class InterpreterExecutionScope final {
-public:
-	InterpreterExecutionScope(unsigned long generation, std::uint64_t guest_pc)
-		: generation_{generation},
-		  context_{
-			darwin_uml_static_vm_execution_context_create(generation)}
-	{
-		entered_ = context_ != nullptr &&
-			darwin_uml_static_vm_execution_context_begin(
-				context_, guest_pc) == 0;
-	}
-
-	~InterpreterExecutionScope()
-	{
-		if (entered_)
-			(void)darwin_uml_static_vm_execution_context_end(context_);
-		darwin_uml_static_vm_execution_context_destroy(context_);
-	}
-
-	InterpreterExecutionScope(const InterpreterExecutionScope &) = delete;
-	InterpreterExecutionScope &operator=(const InterpreterExecutionScope &) =
-		delete;
-
-	[[nodiscard]] bool entered() const noexcept { return entered_; }
-	[[nodiscard]] darwin_uml_static_sequences sequences() const noexcept
-	{
-		return darwin_uml_static_vm_execution_context_sequences(context_);
-	}
-	[[nodiscard]] unsigned long generation() const noexcept
-	{
-		return generation_;
-	}
-
-private:
-	unsigned long generation_;
-	void *context_{};
-	bool entered_{};
-};
-
 template<uml::cpu::EngineKind Kind>
 std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
 	::uml::runtime::ThreadExecutionState &runtime)
@@ -601,14 +856,6 @@ uml::cpu::CpuEngine *common_engine(
 					::uml::platform::apple::probed_host_capabilities(),
 			});
 	return slot.get();
-}
-
-bool execution_interrupt_boundary(void *context) noexcept
-{
-	const auto *execution =
-		static_cast<const InterpreterExecutionScope *>(context);
-	return execution != nullptr &&
-		execution->sequences().execution_interrupt != 0;
 }
 
 bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
@@ -712,7 +959,7 @@ int run_common_guest(
 	int event = DARWIN_UML_EVENT_FATAL;
 	uml::cpu::ExecutionResult result{};
 	if constexpr (Kind == uml::cpu::EngineKind::interpreter) {
-		InterpreterExecutionScope execution{generation, cpu.pc};
+		StaticExecutionScope execution{generation, cpu.pc};
 		if (!execution.entered())
 			return DARWIN_UML_EVENT_FATAL;
 		const auto sequences = execution.sequences();

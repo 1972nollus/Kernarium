@@ -15,6 +15,21 @@ namespace {
 
 using NativeEntry = void (*)();
 
+[[nodiscard]] constexpr std::uint64_t next_instruction_pointer(
+	const Gadget &gadget, ExecutionMode mode) noexcept
+{
+	return advance_instruction_pointer(
+		mode, gadget.address, gadget.instruction.length);
+}
+
+[[nodiscard]] constexpr std::uint64_t relative_target(
+	const Gadget &gadget, ExecutionMode mode) noexcept
+{
+	return normalize_instruction_pointer(mode,
+		next_instruction_pointer(gadget, mode) +
+		gadget.instruction.source.immediate);
+}
+
 [[nodiscard]] std::uintptr_t entry_address(NativeEntry entry) noexcept
 {
 	return reinterpret_cast<std::uintptr_t>(entry);
@@ -161,6 +176,30 @@ UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(negate)
 UML_X86_DEFINE_MEMORY_UNARY_SELECTOR(not)
 
 #undef UML_X86_DEFINE_MEMORY_UNARY_SELECTOR
+
+#define UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_memory_##operation##_locked( \
+		OperandWidth width) noexcept \
+	{ \
+		switch (width) { \
+		case OperandWidth::byte: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_8_m_locked); \
+		case OperandWidth::word: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_16_m_locked); \
+		case OperandWidth::dword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_32_m_locked); \
+		case OperandWidth::qword: return entry_address( \
+			native::uml_x86_64_gadget_##operation##_64_m_locked); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR(increment)
+UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR(decrement)
+UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR(negate)
+UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR(not)
+
+#undef UML_X86_DEFINE_LOCKED_MEMORY_UNARY_SELECTOR
 
 [[nodiscard]] std::uintptr_t arithmetic_entry(
 	Operation operation, OperandWidth width, bool immediate) noexcept
@@ -455,9 +494,55 @@ UML_X86_DEFINE_BIT_OPERATION_SELECTOR(btc)
 
 #undef UML_X86_DEFINE_BIT_OPERATION_SELECTOR
 
+/* A LOCK prefix needs the memory destination form, which updates the operand
+ * with an exclusive loop instead of a plain load and store.
+ */
+#define UML_X86_DEFINE_LOCKED_BIT_OPERATION_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_##operation##_locked( \
+		OperandWidth width, ShiftForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry mr, NativeEntry mi) { \
+			return entry_address(form == ShiftForm::memory_register ? \
+				mr : mi); \
+		}; \
+		switch (width) { \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_16_mi_locked); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_32_mi_locked); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_64_mi_locked); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_LOCKED_BIT_OPERATION_SELECTOR(bts)
+UML_X86_DEFINE_LOCKED_BIT_OPERATION_SELECTOR(btr)
+UML_X86_DEFINE_LOCKED_BIT_OPERATION_SELECTOR(btc)
+
+#undef UML_X86_DEFINE_LOCKED_BIT_OPERATION_SELECTOR
+
 [[nodiscard]] std::uintptr_t bit_operation_entry(Operation operation,
-	OperandWidth width, ShiftForm form) noexcept
+	OperandWidth width, ShiftForm form, bool locked) noexcept
 {
+	if (locked) {
+		/* BT only reads, so it cannot carry the prefix, and a register
+		 * destination is not shared memory.
+		 */
+		if (form != ShiftForm::memory_register &&
+			form != ShiftForm::memory_immediate)
+			return 0;
+		switch (operation) {
+		case Operation::bit_set: return select_bts_locked(width, form);
+		case Operation::bit_reset: return select_btr_locked(width, form);
+		case Operation::bit_complement:
+			return select_btc_locked(width, form);
+		default: return 0;
+		}
+	}
 	switch (operation) {
 	case Operation::bit_test: return select_bt(width, form);
 	case Operation::bit_set: return select_bts(width, form);
@@ -696,9 +781,71 @@ UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR(sbb)
 
 #undef UML_X86_DEFINE_MEMORY_ARITHMETIC_SELECTOR
 
+/* Only the memory-destination forms write the operand, so only they can carry
+ * a LOCK prefix and need the exclusive-loop gadget.
+ */
+#define UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(operation) \
+	[[nodiscard]] std::uintptr_t select_memory_##operation##_locked( \
+		OperandWidth width, MemoryArithmeticForm form) noexcept \
+	{ \
+		const auto select = [form](NativeEntry mr, NativeEntry mi) { \
+			return entry_address(form == \
+				MemoryArithmeticForm::memory_register ? mr : mi); \
+		}; \
+		switch (width) { \
+		case OperandWidth::byte: return select( \
+			native::uml_x86_64_gadget_##operation##_8_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_8_mi_locked); \
+		case OperandWidth::word: return select( \
+			native::uml_x86_64_gadget_##operation##_16_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_16_mi_locked); \
+		case OperandWidth::dword: return select( \
+			native::uml_x86_64_gadget_##operation##_32_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_32_mi_locked); \
+		case OperandWidth::qword: return select( \
+			native::uml_x86_64_gadget_##operation##_64_mr_locked, \
+			native::uml_x86_64_gadget_##operation##_64_mi_locked); \
+		default: return 0; \
+		} \
+	}
+
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(add)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(sub)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(and)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(or)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(xor)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(adc)
+UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(sbb)
+
+#undef UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR
+
 [[nodiscard]] std::uintptr_t memory_arithmetic_entry(Operation operation,
-	OperandWidth width, MemoryArithmeticForm form) noexcept
+	OperandWidth width, MemoryArithmeticForm form, bool locked) noexcept
 {
+	if (locked) {
+		/* The register-destination form leaves memory unmodified, so it
+		 * cannot carry the prefix.
+		 */
+		if (form == MemoryArithmeticForm::register_memory)
+			return 0;
+		switch (operation) {
+		case Operation::add:
+			return select_memory_add_locked(width, form);
+		case Operation::subtract:
+			return select_memory_sub_locked(width, form);
+		case Operation::bit_and:
+			return select_memory_and_locked(width, form);
+		case Operation::bit_or:
+			return select_memory_or_locked(width, form);
+		case Operation::bit_xor:
+			return select_memory_xor_locked(width, form);
+		case Operation::add_carry:
+			return select_memory_adc_locked(width, form);
+		case Operation::subtract_borrow:
+			return select_memory_sbb_locked(width, form);
+		default: return 0;
+		}
+	}
 	switch (operation) {
 	case Operation::add: return select_memory_add(width, form);
 	case Operation::subtract: return select_memory_sub(width, form);
@@ -761,6 +908,7 @@ struct EncodedMemory final {
 		(static_cast<std::uintptr_t>(apply_segment ? memory.segment :
 			Segment::none) << 50U) |
 		(static_cast<std::uintptr_t>(memory.address_32) << 52U) |
+		(static_cast<std::uintptr_t>(memory.address_16) << 53U) |
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
 	if (memory.absolute_address) {
@@ -865,7 +1013,8 @@ struct EncodedMemory final {
 	}
 	const auto encoded = encode_memory(gadget, memory_operand, value_offset);
 	const auto entry = memory_arithmetic_entry(
-		instruction.operation, memory_operand.width, form);
+		instruction.operation, memory_operand.width, form,
+		instruction.locked);
 	if (!encoded || entry == 0)
 		return false;
 	stream.push_back(entry);
@@ -1112,7 +1261,7 @@ struct EncodedMemory final {
 		(immediate ? ShiftForm::register_immediate :
 			ShiftForm::register_register);
 	const auto entry = bit_operation_entry(instruction.operation,
-		instruction.destination.width, form);
+		instruction.destination.width, form, instruction.locked);
 	if (entry == 0)
 		return false;
 	if (!memory) {
@@ -4404,12 +4553,15 @@ enum class VectorFloatKind {
 	return 0;
 }
 
-[[nodiscard]] std::uintptr_t jump_condition_entry(Condition condition) noexcept
+[[nodiscard]] std::uintptr_t jump_condition_entry(
+	Condition condition, bool linked) noexcept
 {
 	switch (condition) {
 #define UML_X86_JUMP_CASE(enumerator, name) \
 	case Condition::enumerator: \
-		return entry_address(native::uml_x86_64_gadget_jump_##name);
+		return entry_address(linked ? \
+			native::uml_x86_64_gadget_jump_##name##_linked : \
+			native::uml_x86_64_gadget_jump_##name);
 	UML_X86_CONDITION_CASES(UML_X86_JUMP_CASE)
 #undef UML_X86_JUMP_CASE
 	}
@@ -4577,22 +4729,26 @@ enum class VectorFloatKind {
 {
 	const auto &instruction = gadget.instruction;
 	const auto selector = segment_selector_offset(instruction.vector_group);
-	const bool pushing = instruction.vector_opcode == 0xa0 ||
-		instruction.vector_opcode == 0xa8;
+	const bool pushing = instruction.vector_control != 0;
 	const auto width = pushing ? instruction.source.width :
 		instruction.destination.width;
 	if (!selector || (width != OperandWidth::word &&
-		width != OperandWidth::qword))
+		width != OperandWidth::dword && width != OperandWidth::qword))
 		return false;
 	NativeEntry entry{};
-	if (pushing)
+	if (pushing) {
 		entry = width == OperandWidth::word ?
 			native::uml_x86_64_gadget_push_16_r :
-			native::uml_x86_64_gadget_push_segment_64;
-	else
+			width == OperandWidth::dword ?
+				native::uml_x86_64_gadget_push_segment_32 :
+				native::uml_x86_64_gadget_push_segment_64;
+	} else {
 		entry = width == OperandWidth::word ?
 			native::uml_x86_64_gadget_pop_16_r :
-			native::uml_x86_64_gadget_pop_segment_64;
+			width == OperandWidth::dword ?
+				native::uml_x86_64_gadget_pop_segment_32 :
+				native::uml_x86_64_gadget_pop_segment_64;
+	}
 	stream.push_back(entry_address(entry));
 	stream.push_back(static_cast<std::uintptr_t>(*selector) |
 		(static_cast<std::uintptr_t>(instruction.length) << 56U));
@@ -4729,6 +4885,7 @@ enum class VectorFloatKind {
 	const auto descriptor =
 		static_cast<std::uintptr_t>(memory->memory.address_32) |
 		(static_cast<std::uintptr_t>(source_segment) << 1U) |
+		(static_cast<std::uintptr_t>(memory->memory.address_16) << 3U) |
 		(static_cast<std::uintptr_t>(instruction.repeat) << 8U) |
 		(static_cast<std::uintptr_t>(instruction.length) << 56U);
 	stream.push_back(entry_address(entry));
@@ -5045,7 +5202,8 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_native(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
+	ExecutionMode mode, ProgramLinkResolver links)
 {
 	const auto &instruction = gadget.instruction;
 	const bool native_locked_scalar =
@@ -5100,6 +5258,30 @@ enum class VectorFloatKind {
 	case Operation::nop:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_nop));
 		return true;
+	case Operation::legacy_adjust: {
+		NativeEntry entry{};
+		switch (instruction.vector_opcode) {
+		case 0x27: entry = native::uml_x86_64_gadget_daa; break;
+		case 0x2f: entry = native::uml_x86_64_gadget_das; break;
+		case 0x37: entry = native::uml_x86_64_gadget_aaa; break;
+		case 0x3f: entry = native::uml_x86_64_gadget_aas; break;
+		case 0xd4: entry = native::uml_x86_64_gadget_aam; break;
+		case 0xd5: entry = native::uml_x86_64_gadget_aad; break;
+		case 0xd6: entry = native::uml_x86_64_gadget_salc; break;
+		default: return false;
+		}
+		stream.push_back(entry_address(entry));
+		if (instruction.vector_opcode == 0xd4 ||
+			instruction.vector_opcode == 0xd5) {
+			stream.push_back(instruction.auxiliary.immediate);
+			stream.push_back(gadget.address);
+		}
+		return true;
+	}
+	case Operation::interrupt_overflow:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_into));
+		stream.push_back(next_instruction_pointer(gadget, mode));
+		return true;
 	case Operation::move: {
 		if (instruction.destination.kind == OperandKind::memory ||
 			instruction.source.kind == OperandKind::memory)
@@ -5117,6 +5299,23 @@ enum class VectorFloatKind {
 			extension_entry(
 				instruction.operation == Operation::move_sign_extend,
 				instruction.source.width, instruction.destination.width),
+			instruction.destination, instruction.source);
+	case Operation::adjust_rpl:
+		if (instruction.destination.kind == OperandKind::memory) {
+			const auto source = register_offset(instruction.source);
+			const auto encoded = source ? encode_memory(
+				gadget, instruction.destination, *source) : std::nullopt;
+			if (!encoded)
+				return false;
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_arpl_16_mr));
+			stream.push_back(encoded->descriptor);
+			stream.push_back(encoded->displacement);
+			stream.push_back(gadget.address);
+			return true;
+		}
+		return append_register_pair(stream,
+			entry_address(native::uml_x86_64_gadget_arpl_16_rr),
 			instruction.destination, instruction.source);
 	case Operation::lea: {
 		const auto destination = register_offset(instruction.destination);
@@ -5210,18 +5409,26 @@ enum class VectorFloatKind {
 		if (instruction.destination.kind == OperandKind::memory) {
 			const auto encoded = encode_memory(gadget, instruction.destination, 0);
 			std::uintptr_t entry{};
+			const auto unary_width = instruction.destination.width;
+			const bool locked = instruction.locked;
 			switch (instruction.operation) {
 			case Operation::increment:
-				entry = select_memory_increment(instruction.destination.width);
+				entry = locked ?
+					select_memory_increment_locked(unary_width) :
+					select_memory_increment(unary_width);
 				break;
 			case Operation::decrement:
-				entry = select_memory_decrement(instruction.destination.width);
+				entry = locked ?
+					select_memory_decrement_locked(unary_width) :
+					select_memory_decrement(unary_width);
 				break;
 			case Operation::negate:
-				entry = select_memory_negate(instruction.destination.width);
+				entry = locked ? select_memory_negate_locked(unary_width) :
+					select_memory_negate(unary_width);
 				break;
 			case Operation::bit_not:
-				entry = select_memory_not(instruction.destination.width);
+				entry = locked ? select_memory_not_locked(unary_width) :
+					select_memory_not(unary_width);
 				break;
 			default: break;
 			}
@@ -5406,27 +5613,47 @@ enum class VectorFloatKind {
 				instruction.condition, instruction.destination.width),
 			instruction.destination, instruction.source);
 	case Operation::jump: {
-		const auto next = gadget.address + instruction.length;
+		const auto target = relative_target(gadget, mode);
+		if (links.resolve != nullptr) {
+			const auto *link = links.resolve(links.context, target, mode);
+			if (link != nullptr) {
+				stream.push_back(entry_address(
+					native::uml_x86_64_gadget_jump_linked));
+				stream.push_back(reinterpret_cast<std::uintptr_t>(link));
+				return true;
+			}
+		}
 		stream.push_back(entry_address(native::uml_x86_64_gadget_jump));
-		stream.push_back(next + instruction.source.immediate);
+		stream.push_back(target);
 		return true;
 	}
 	case Operation::jump_conditional: {
-		const auto entry = jump_condition_entry(instruction.condition);
+		const auto target = relative_target(gadget, mode);
+		const auto next = next_instruction_pointer(gadget, mode);
+		const auto *taken = links.resolve == nullptr ? nullptr :
+			links.resolve(links.context, target, mode);
+		const auto *fallthrough = links.resolve == nullptr ? nullptr :
+			links.resolve(links.context, next, mode);
+		const bool linked = taken != nullptr && fallthrough != nullptr;
+		const auto entry = jump_condition_entry(
+			instruction.condition, linked);
 		if (entry == 0)
 			return false;
-		const auto next = gadget.address + instruction.length;
 		stream.push_back(entry);
-		stream.push_back(next + instruction.source.immediate);
-		stream.push_back(next);
+		stream.push_back(linked ? reinterpret_cast<std::uintptr_t>(taken) :
+			target);
+		stream.push_back(linked ?
+			reinterpret_cast<std::uintptr_t>(fallthrough) : next);
 		return true;
 	}
 	case Operation::loop: {
 		NativeEntry entry{};
 #define UML_X86_SELECT_LOOP(opcode) \
-		entry = instruction.vector_control != 0 ? \
-			native::uml_x86_64_gadget_loop_##opcode##_32 : \
-			native::uml_x86_64_gadget_loop_##opcode##_64
+		entry = instruction.vector_control == 2 ? \
+			native::uml_x86_64_gadget_loop_##opcode##_16 : \
+			instruction.vector_control == 1 ? \
+				native::uml_x86_64_gadget_loop_##opcode##_32 : \
+				native::uml_x86_64_gadget_loop_##opcode##_64
 		switch (instruction.vector_opcode) {
 		case 0xe0: UML_X86_SELECT_LOOP(e0); break;
 		case 0xe1: UML_X86_SELECT_LOOP(e1); break;
@@ -5435,30 +5662,44 @@ enum class VectorFloatKind {
 		default: return false;
 		}
 #undef UML_X86_SELECT_LOOP
-		const auto next = gadget.address + instruction.length;
+		const auto next = next_instruction_pointer(gadget, mode);
 		stream.push_back(entry_address(entry));
-		stream.push_back(next + instruction.source.immediate);
+		stream.push_back(relative_target(gadget, mode));
 		stream.push_back(next);
 		return true;
 	}
 	case Operation::jump_indirect: {
+		auto *site = links.resolve_indirect == nullptr ? nullptr :
+			links.resolve_indirect(links.context, gadget.address, mode);
 		if (instruction.source.kind == OperandKind::memory) {
 			const auto encoded = encode_memory(gadget, instruction.source, 0);
 			if (!encoded)
 				return false;
 			stream.push_back(entry_address(
-				native::uml_x86_64_gadget_jump_indirect_m));
+				mode == ExecutionMode::compat32 ?
+					(site ? native::uml_x86_64_gadget_jump_indirect_32_m_cached :
+						native::uml_x86_64_gadget_jump_indirect_32_m) :
+					(site ? native::uml_x86_64_gadget_jump_indirect_m_cached :
+						native::uml_x86_64_gadget_jump_indirect_m)));
 			stream.push_back(encoded->descriptor);
 			stream.push_back(encoded->displacement);
 			stream.push_back(gadget.address);
+			if (site)
+				stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 			return true;
 		}
 		const auto source = register_offset(instruction.source);
 		if (!source)
 			return false;
 		stream.push_back(entry_address(
-			native::uml_x86_64_gadget_jump_indirect_r));
+			mode == ExecutionMode::compat32 ?
+				(site ? native::uml_x86_64_gadget_jump_indirect_32_r_cached :
+					native::uml_x86_64_gadget_jump_indirect_32_r) :
+				(site ? native::uml_x86_64_gadget_jump_indirect_r_cached :
+					native::uml_x86_64_gadget_jump_indirect_r)));
 		stream.push_back(*source);
+		if (site)
+			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
 	}
 	case Operation::push: {
@@ -5468,6 +5709,8 @@ enum class VectorFloatKind {
 			const auto encoded = encode_memory(gadget, instruction.source, 0);
 			const auto entry = instruction.source.width == OperandWidth::word ?
 				entry_address(native::uml_x86_64_gadget_push_16_m) :
+				instruction.source.width == OperandWidth::dword ?
+				entry_address(native::uml_x86_64_gadget_push_32_m) :
 				instruction.source.width == OperandWidth::qword ?
 				entry_address(native::uml_x86_64_gadget_push_64_m) : 0;
 			if (!encoded || entry == 0)
@@ -5487,6 +5730,10 @@ enum class VectorFloatKind {
 			entry = entry_address(immediate ?
 				native::uml_x86_64_gadget_push_16_i :
 				native::uml_x86_64_gadget_push_16_r);
+		else if (instruction.source.width == OperandWidth::dword)
+			entry = entry_address(immediate ?
+				native::uml_x86_64_gadget_push_32_i :
+				native::uml_x86_64_gadget_push_32_r);
 		else if (instruction.source.width == OperandWidth::qword)
 			entry = entry_address(immediate ?
 				native::uml_x86_64_gadget_push_64_i :
@@ -5508,6 +5755,8 @@ enum class VectorFloatKind {
 				gadget, instruction.destination, 0);
 			const auto entry = instruction.destination.width == OperandWidth::word ?
 				entry_address(native::uml_x86_64_gadget_pop_16_m) :
+				instruction.destination.width == OperandWidth::dword ?
+				entry_address(native::uml_x86_64_gadget_pop_32_m) :
 				instruction.destination.width == OperandWidth::qword ?
 				entry_address(native::uml_x86_64_gadget_pop_64_m) : 0;
 			if (!encoded || entry == 0)
@@ -5524,6 +5773,8 @@ enum class VectorFloatKind {
 		std::uintptr_t entry{};
 		if (instruction.destination.width == OperandWidth::word)
 			entry = entry_address(native::uml_x86_64_gadget_pop_16_r);
+		else if (instruction.destination.width == OperandWidth::dword)
+			entry = entry_address(native::uml_x86_64_gadget_pop_32_r);
 		else if (instruction.destination.width == OperandWidth::qword)
 			entry = entry_address(native::uml_x86_64_gadget_pop_64_r);
 		else
@@ -5534,9 +5785,35 @@ enum class VectorFloatKind {
 		stream.push_back(gadget.address);
 		return true;
 	}
+	case Operation::push_all: {
+		const auto entry = instruction.destination.width == OperandWidth::word ?
+			entry_address(native::uml_x86_64_gadget_push_all_16) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_push_all_32) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(
+			static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.push_back(gadget.address);
+		return true;
+	}
+	case Operation::pop_all: {
+		const auto entry = instruction.destination.width == OperandWidth::word ?
+			entry_address(native::uml_x86_64_gadget_pop_all_16) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_pop_all_32) : 0;
+		if (entry == 0)
+			return false;
+		stream.push_back(entry);
+		stream.push_back(gadget.address);
+		return true;
+	}
 	case Operation::push_flags: {
 		const auto entry = instruction.source.width == OperandWidth::word ?
 			entry_address(native::uml_x86_64_gadget_push_flags_16) :
+			instruction.source.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_push_flags_32) :
 			instruction.source.width == OperandWidth::qword ?
 			entry_address(native::uml_x86_64_gadget_push_flags_64) : 0;
 		if (entry == 0)
@@ -5549,6 +5826,8 @@ enum class VectorFloatKind {
 	case Operation::pop_flags: {
 		const auto entry = instruction.destination.width == OperandWidth::word ?
 			entry_address(native::uml_x86_64_gadget_pop_flags_16) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_pop_flags_32) :
 			instruction.destination.width == OperandWidth::qword ?
 			entry_address(native::uml_x86_64_gadget_pop_flags_64) : 0;
 		if (entry == 0)
@@ -5560,6 +5839,8 @@ enum class VectorFloatKind {
 	case Operation::leave: {
 		const auto entry = instruction.destination.width == OperandWidth::word ?
 			entry_address(native::uml_x86_64_gadget_leave_16) :
+			instruction.destination.width == OperandWidth::dword ?
+			entry_address(native::uml_x86_64_gadget_leave_32) :
 			instruction.destination.width == OperandWidth::qword ?
 			entry_address(native::uml_x86_64_gadget_leave_64) : 0;
 		if (entry == 0)
@@ -5577,46 +5858,79 @@ enum class VectorFloatKind {
 	case Operation::string_scan:
 		return append_string(stream, gadget);
 	case Operation::call: {
-		const auto next = gadget.address + instruction.length;
-		stream.push_back(entry_address(native::uml_x86_64_gadget_call));
-		stream.push_back(next + instruction.source.immediate);
+		const auto target = relative_target(gadget, mode);
+		const auto *link = links.resolve == nullptr ? nullptr :
+			links.resolve(links.context, target, mode);
+		const bool linked = link != nullptr;
+		const auto next = next_instruction_pointer(gadget, mode);
+		stream.push_back(entry_address(
+			mode == ExecutionMode::compat32 ?
+				(linked ? native::uml_x86_64_gadget_call_32_linked :
+					native::uml_x86_64_gadget_call_32) :
+				(linked ? native::uml_x86_64_gadget_call_linked :
+					native::uml_x86_64_gadget_call)));
+		stream.push_back(linked ? reinterpret_cast<std::uintptr_t>(link) :
+			target);
 		stream.push_back(next);
 		stream.push_back(gadget.address);
 		return true;
 	}
 	case Operation::call_indirect: {
+		auto *site = links.resolve_indirect == nullptr ? nullptr :
+			links.resolve_indirect(links.context, gadget.address, mode);
 		if (instruction.source.kind == OperandKind::memory) {
 			const auto encoded = encode_memory(gadget, instruction.source, 0);
 			if (!encoded)
 				return false;
-			const auto next = gadget.address + instruction.length;
+			const auto next = next_instruction_pointer(gadget, mode);
 			stream.push_back(entry_address(
-				native::uml_x86_64_gadget_call_indirect_m));
+				mode == ExecutionMode::compat32 ?
+					(site ? native::uml_x86_64_gadget_call_indirect_32_m_cached :
+						native::uml_x86_64_gadget_call_indirect_32_m) :
+					(site ? native::uml_x86_64_gadget_call_indirect_m_cached :
+						native::uml_x86_64_gadget_call_indirect_m)));
 			stream.push_back(encoded->descriptor);
 			stream.push_back(encoded->displacement);
 			stream.push_back(gadget.address);
 			stream.push_back(next);
+			if (site)
+				stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 			return true;
 		}
 		const auto source = register_offset(instruction.source);
 		if (!source)
 			return false;
-		const auto next = gadget.address + instruction.length;
+		const auto next = next_instruction_pointer(gadget, mode);
 		stream.push_back(entry_address(
-			native::uml_x86_64_gadget_call_indirect_r));
+			mode == ExecutionMode::compat32 ?
+				(site ? native::uml_x86_64_gadget_call_indirect_32_r_cached :
+					native::uml_x86_64_gadget_call_indirect_32_r) :
+				(site ? native::uml_x86_64_gadget_call_indirect_r_cached :
+					native::uml_x86_64_gadget_call_indirect_r)));
 		stream.push_back(*source);
 		stream.push_back(next);
 		stream.push_back(gadget.address);
+		if (site)
+			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
 	}
 	case Operation::far_call:
 	case Operation::far_jump:
 		return append_far_transfer(stream, gadget);
-	case Operation::ret:
-		stream.push_back(entry_address(native::uml_x86_64_gadget_return));
+	case Operation::ret: {
+		auto *site = links.resolve_indirect == nullptr ? nullptr :
+			links.resolve_indirect(links.context, gadget.address, mode);
+		stream.push_back(entry_address(mode == ExecutionMode::compat32 ?
+			(site ? native::uml_x86_64_gadget_return_32_cached :
+				native::uml_x86_64_gadget_return_32) :
+			(site ? native::uml_x86_64_gadget_return_cached :
+				native::uml_x86_64_gadget_return)));
 		stream.push_back(instruction.source.immediate);
 		stream.push_back(gadget.address);
+		if (site)
+			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
+	}
 	case Operation::far_ret: {
 		const auto entry = far_return_entry(instruction.destination.width);
 		if (entry == nullptr)
@@ -5640,11 +5954,11 @@ enum class VectorFloatKind {
 		stream.push_back(entry_address(instruction.vector_opcode == 0xcd ?
 			native::uml_x86_64_gadget_int80 :
 			native::uml_x86_64_gadget_syscall));
-		stream.push_back(gadget.address + instruction.length);
+		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	case Operation::breakpoint:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_breakpoint));
-		stream.push_back(gadget.address + instruction.length);
+		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	case Operation::cpuid:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_cpuid));
@@ -5677,7 +5991,9 @@ enum class VectorFloatKind {
 			return false;
 		const auto config =
 			static_cast<std::uintptr_t>(instruction.source.memory.address_32) |
-			(static_cast<std::uintptr_t>(instruction.source.memory.segment) << 1U);
+			(static_cast<std::uintptr_t>(instruction.source.memory.segment) << 1U) |
+			(static_cast<std::uintptr_t>(
+				instruction.source.memory.address_16) << 3U);
 		stream.push_back(entry_address(native::uml_x86_64_gadget_xlat));
 		stream.push_back(config);
 		stream.push_back(gadget.address);
@@ -5870,18 +6186,19 @@ enum class VectorFloatKind {
 } // namespace
 
 std::vector<std::uintptr_t> build_native_stream(
-	std::span<const Gadget> gadgets, std::uint64_t final_rip)
+	std::span<const Gadget> gadgets, std::uint64_t final_rip,
+	ExecutionMode mode, ProgramLinkResolver links)
 {
 	std::vector<std::uintptr_t> stream;
 	stream.reserve(gadgets.size() * 3U + 2U);
 	for (const auto &gadget : gadgets) {
-		if (append_native(stream, gadget))
+		if (append_native(stream, gadget, mode, links))
 			continue;
 		throw std::logic_error{
 			"x86-64 operation has no native assembly gadget"};
 	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
-	stream.push_back(final_rip);
+	stream.push_back(normalize_instruction_pointer(mode, final_rip));
 	return stream;
 }
 

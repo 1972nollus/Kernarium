@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pinned FEX 64-bit handwritten assembly test corpus."""
+"""Build a pinned FEX handwritten assembly test corpus."""
 
 from __future__ import annotations
 
@@ -123,9 +123,19 @@ def assemble(
     destination: pathlib.Path,
     include_directory: pathlib.Path,
     nasm: str,
+    mode: str,
 ) -> None:
     temporary = destination.with_suffix(".tmp.asm")
-    temporary.write_text("BITS 64\n" + source.read_text() + "\nret\n")
+    prelude = "BITS 64\n"
+    if mode == "i386":
+        prelude = (
+            "BITS 32\n"
+            "org 10000h\n"
+            "mov eax, 0x17\n"
+            "mov ds, ax\n"
+            "mov es, ax\n"
+        )
+    temporary.write_text(prelude + source.read_text() + "\nret\n")
     try:
         subprocess.run(
             [
@@ -142,7 +152,7 @@ def assemble(
         temporary.unlink(missing_ok=True)
 
 
-def build(source: pathlib.Path, output: pathlib.Path) -> None:
+def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
     version, expected_commit = fex_identity()
     verify_source(source, expected_commit)
     if output.exists() or output.is_symlink():
@@ -152,8 +162,13 @@ def build(source: pathlib.Path, output: pathlib.Path) -> None:
     if nasm_path is None:
         fail("NASM is required")
 
-    asm_root = source / "unittests" / "ASM"
-    include_directory = asm_root / "Includes"
+    if mode == "x86-64":
+        asm_root = source / "unittests" / "ASM"
+        test_prefix = "Test_"
+    else:
+        asm_root = source / "unittests" / "32Bit_ASM"
+        test_prefix = "Test_32Bit_"
+    include_directory = source / "unittests" / "ASM" / "Includes"
     parser_directory = source / "Scripts"
     sys.path.insert(0, str(parser_directory))
     from json_config_parse import parse_json  # type: ignore[import-not-found]
@@ -161,7 +176,7 @@ def build(source: pathlib.Path, output: pathlib.Path) -> None:
     disabled = listed_tests(asm_root / "Disabled_Tests")
     sources = sorted(asm_root.rglob("*.asm"))
     if not sources:
-        fail("the pinned FEX checkout has no 64-bit ASM tests")
+        fail(f"the pinned FEX checkout has no {mode} ASM tests")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary_root = pathlib.Path(
@@ -172,14 +187,14 @@ def build(source: pathlib.Path, output: pathlib.Path) -> None:
         records: list[dict[str, object]] = []
         for asm_source in sources:
             relative = asm_source.relative_to(asm_root)
-            test_name = f"Test_{relative.as_posix()}"
+            test_name = f"{test_prefix}{relative.as_posix()}"
             destination = tests_directory / relative
             binary = destination.with_suffix(destination.suffix + ".bin")
             config = destination.with_suffix(destination.suffix + ".config.bin")
             binary.parent.mkdir(parents=True, exist_ok=True)
 
             config_text, parsed = embedded_config(asm_source)
-            assemble(asm_source, binary, include_directory, nasm_path)
+            assemble(asm_source, binary, include_directory, nasm_path, mode)
             parse_json(config_text, str(config))
             records.append(
                 {
@@ -199,7 +214,7 @@ def build(source: pathlib.Path, output: pathlib.Path) -> None:
             "source": "https://github.com/FEX-Emu/FEX.git",
             "version": version,
             "commit": expected_commit,
-            "mode": "x86-64",
+            "mode": mode,
             "test_count": len(records),
             "disabled_count": sum(
                 bool(record["disabled_upstream"]) for record in records
@@ -215,7 +230,7 @@ def build(source: pathlib.Path, output: pathlib.Path) -> None:
         raise
 
     print(
-        f"built {len(sources)} FEX {version} x86-64 ASM tests at {output}",
+        f"built {len(sources)} FEX {version} {mode} ASM tests at {output}",
         flush=True,
     )
 
@@ -224,8 +239,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("fex_source", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
+    parser.add_argument(
+        "--mode", choices=("x86-64", "i386"), default="x86-64"
+    )
     arguments = parser.parse_args()
-    build(arguments.fex_source.resolve(), arguments.output.resolve())
+    build(
+        arguments.fex_source.resolve(),
+        arguments.output.resolve(),
+        arguments.mode,
+    )
     return 0
 
 

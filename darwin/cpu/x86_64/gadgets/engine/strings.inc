@@ -3,8 +3,12 @@
 
 .macro string_source_address
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
+	tbnz x23, #3, .Lx86_string_source_16\@
 	tbz x23, #0, .Lx86_string_source_64\@
 	mov w25, w25
+	b .Lx86_string_source_64\@
+.Lx86_string_source_16\@:
+	uxth w25, w25
 .Lx86_string_source_64\@:
 	ubfx w8, w23, #1, #2
 	cmp w8, #1
@@ -22,8 +26,12 @@
 
 .macro string_destination_address
 	ldr x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
+	tbnz x23, #3, .Lx86_string_destination_16\@
 	tbz x23, #0, .Lx86_string_destination_64\@
 	mov w26, w26
+	b .Lx86_string_destination_64\@
+.Lx86_string_destination_16\@:
+	uxth w26, w26
 .Lx86_string_destination_64\@:
 .endm
 
@@ -61,6 +69,12 @@
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_string_store_done\@:
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbz w8, .Lx86_string_store_check_overlap\@
+	publish_pending_code x26, (\width / 8)
+	orr x23, x23, #0x100000000
+	b .Lx86_string_store_ready\@
+.Lx86_string_store_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x26, x8
 	b.hs .Lx86_string_store_ready\@
@@ -79,17 +93,27 @@
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	tbnz x9, #10, .Lx86_string_pointer_decrement\@
+	tbnz x23, #3, .Lx86_string_pointer_increment_16\@
 	tbz x23, #0, .Lx86_string_pointer_increment_64\@
 	add w8, w8, #(\width / 8)
 	mov w8, w8
+	b .Lx86_string_pointer_store\@
+.Lx86_string_pointer_increment_16\@:
+	add w10, w8, #(\width / 8)
+	bfi x8, x10, #0, #16
 	b .Lx86_string_pointer_store\@
 .Lx86_string_pointer_increment_64\@:
 	add x8, x8, #(\width / 8)
 	b .Lx86_string_pointer_store\@
 .Lx86_string_pointer_decrement\@:
+	tbnz x23, #3, .Lx86_string_pointer_decrement_16\@
 	tbz x23, #0, .Lx86_string_pointer_decrement_64\@
 	sub w8, w8, #(\width / 8)
 	mov w8, w8
+	b .Lx86_string_pointer_store\@
+.Lx86_string_pointer_decrement_16\@:
+	sub w10, w8, #(\width / 8)
+	bfi x8, x10, #0, #16
 	b .Lx86_string_pointer_store\@
 .Lx86_string_pointer_decrement_64\@:
 	sub x8, x8, #(\width / 8)
@@ -116,6 +140,7 @@
 	mov w14, #(\width / 8)
 	strb w14, [x15, #25]
 	strb wzr, [x15, #26]
+	str wzr, [x15, #28]
 .endm
 
 .macro string_compare_flags width, host_register
@@ -133,8 +158,16 @@ gadget string_\operation\()_\width
 	ldp x23, x22, [_stream], #16
 	ubfx w8, w23, #8, #8
 	cbz w8, .Lx86_string_nonrepeating\@
+	/* Long REP operations must periodically return to the executor so an
+	 * MMU mapping-change interrupt can release its execution read gate. */
+	mov w9, #4096
+	str w9, [sp, #0x68]
+	tbnz x23, #3, .Lx86_string_count_16\@
 	tbz x23, #0, .Lx86_string_count_64\@
 	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	b .Lx86_string_count_ready\@
+.Lx86_string_count_16\@:
+	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b .Lx86_string_count_ready\@
 .Lx86_string_count_64\@:
 	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
@@ -183,16 +216,23 @@ gadget string_\operation\()_\width
 	ubfx w8, w23, #8, #8
 	cbz w8, .Lx86_string_finish\@
 	sub x24, x24, #1
+	tbnz x23, #3, .Lx86_string_store_count_16\@
 	tbz x23, #0, .Lx86_string_store_count_64\@
 	mov w24, w24
 .Lx86_string_store_count_64\@:
 	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	b .Lx86_string_count_stored\@
+.Lx86_string_store_count_16\@:
+	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	bfi x8, x24, #0, #16
+	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+.Lx86_string_count_stored\@:
 	cbz x24, .Lx86_string_finish\@
 	.ifc \operation,compare
 	cmp w8, #0xf3
 	b.eq .Lx86_string_repeat_equal\@
 	cbnz w19, .Lx86_string_finish\@
-	b .Lx86_string_iteration\@
+	b .Lx86_string_repeat_continue\@
 .Lx86_string_repeat_equal\@:
 	cbz w19, .Lx86_string_finish\@
 	.endif
@@ -200,11 +240,18 @@ gadget string_\operation\()_\width
 	cmp w8, #0xf3
 	b.eq .Lx86_string_repeat_equal\@
 	cbnz w19, .Lx86_string_finish\@
-	b .Lx86_string_iteration\@
+	b .Lx86_string_repeat_continue\@
 .Lx86_string_repeat_equal\@:
 	cbz w19, .Lx86_string_finish\@
 	.endif
-	b .Lx86_string_iteration\@
+	.Lx86_string_repeat_continue\@:
+	ldr w9, [sp, #0x68]
+	subs w9, w9, #1
+	str w9, [sp, #0x68]
+	b.ne .Lx86_string_iteration\@
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
 .Lx86_string_finish\@:
 	tbz x23, #32, .Lx86_string_continue\@
 	ubfx x8, x23, #56, #4

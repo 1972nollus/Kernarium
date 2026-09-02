@@ -19,9 +19,7 @@
 	cbz w0, .Lx86_memory_fault
 .Lx86_enter_push_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	mov x0, _context
-	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	publish_pending_code x25, (\width / 8)
 .endm
 
 .macro enter_load width, load, host_register
@@ -169,9 +167,7 @@ gadget far_\kind\()_\width
 	cbz w0, .Lx86_memory_fault
 .Lx86_far_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	mov x0, _context
-	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	publish_pending_code x25, (\width / 4)
 	.endif
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x26, [_cpu, #UML_X86_64_CPU_RIP]
@@ -235,11 +231,35 @@ far_return 64, ldr, x
 .macro interrupt_return width, load, host_register
 gadget interrupt_return_\width
 	ldr x22, [_stream], #8
+	ldr x23, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	iret_load \width, \load, \host_register, 19, 0
 	iret_load \width, \load, \host_register, 24, 1
 	iret_load \width, \load, \host_register, 25, 2
+	.if \width == 64
+	/* Long-mode IRETQ always restores the five-word machine frame.  Wine
+	 * relies on this to switch from its syscall stack to the initial user
+	 * stack even though both selectors have ring-three privilege. */
 	iret_load \width, \load, \host_register, 26, 3
 	iret_load \width, \load, \host_register, 27, 4
+	mov w15, #1
+	.else
+	ldrh w8, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
+	and w8, w8, #3
+	and w9, w24, #3
+	cmp w9, w8
+	b.hi .Lx86_iret_outer_privilege\@
+	mov w15, wzr
+	add x26, x23, #((\width / 8) * 3)
+	.if \width == 32
+	mov w26, w26
+	.endif
+	b .Lx86_iret_state_ready\@
+.Lx86_iret_outer_privilege\@:
+	iret_load \width, \load, \host_register, 26, 3
+	iret_load \width, \load, \host_register, 27, 4
+	mov w15, #1
+.Lx86_iret_state_ready\@:
+	.endif
 	.if \width == 16
 	uxth w25, w25
 	.endif
@@ -251,8 +271,11 @@ gadget interrupt_return_\width
 	strh w24, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x25, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	cbz w15, .Lx86_iret_keep_stack_segment\@
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 4)]
+.Lx86_iret_keep_stack_segment\@:
 	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	add _executed, _executed, #1
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave

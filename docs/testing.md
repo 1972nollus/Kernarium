@@ -218,18 +218,18 @@ campaign can run for days and is not ordinary acceptance.
 
 ## x86 instruction conformance
 
-The 4 KiB x86-64 gadget backend uses the handwritten 64-bit ASM suite from the
-pinned FEX `x86-conformance` dependency as its external instruction campaign.
-FEX remains a test input and is not linked into the runtime. Materialize its
-raw binaries with the pinned NASM producer and
+The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
+from the pinned FEX `x86-conformance` dependency as its external instruction
+campaign. FEX remains a test input and is not linked into the runtime.
+Materialize each mode with the pinned NASM producer and
 `tools/fex-tests/build-asm-corpus.py`; generated corpus data stays outside the
 repository. Run every binary through the test-only gadgets adapter with
 `tools/fex-tests/run-asm-corpus.py`. Generic upstream-disabled cases remain
 explicit exclusions, while FEX backend- and host-specific exclusions do not
-apply to gadgets. Acceptance requires every applicable materialized case to
-pass with no decoder or semantic failures; the JSON report records the pinned
-source identity, applicable count, upstream-disabled cases, and per-test
-result.
+apply to gadgets. Acceptance requires every applicable materialized case in
+both modes to pass with no decoder or semantic failures; each JSON report
+records the pinned source identity, mode, applicable count,
+upstream-disabled cases, and per-test result.
 
 ## Performance and external campaigns
 

@@ -440,8 +440,21 @@ void uml_x86_64_gadget_direction_clear();
 void uml_x86_64_gadget_direction_set();
 void uml_x86_64_gadget_lahf();
 void uml_x86_64_gadget_sahf();
+void uml_x86_64_gadget_daa();
+void uml_x86_64_gadget_das();
+void uml_x86_64_gadget_aaa();
+void uml_x86_64_gadget_aas();
+void uml_x86_64_gadget_aam();
+void uml_x86_64_gadget_aad();
+void uml_x86_64_gadget_salc();
+void uml_x86_64_gadget_into();
+void uml_x86_64_gadget_arpl_16_rr();
+void uml_x86_64_gadget_arpl_16_mr();
 void uml_x86_64_gadget_jump();
+void uml_x86_64_gadget_jump_linked();
+void uml_x86_64_gadget_link_exit();
 #define UML_X86_DECLARE_LOOP(opcode) \
+	void uml_x86_64_gadget_loop_##opcode##_16(); \
 	void uml_x86_64_gadget_loop_##opcode##_32(); \
 	void uml_x86_64_gadget_loop_##opcode##_64();
 UML_X86_DECLARE_LOOP(e0)
@@ -455,29 +468,61 @@ void uml_x86_64_gadget_lea_64();
 void uml_x86_64_gadget_push_16_r();
 void uml_x86_64_gadget_push_16_i();
 void uml_x86_64_gadget_push_16_m();
+void uml_x86_64_gadget_push_32_r();
+void uml_x86_64_gadget_push_32_i();
+void uml_x86_64_gadget_push_32_m();
 void uml_x86_64_gadget_push_64_r();
 void uml_x86_64_gadget_push_64_i();
 void uml_x86_64_gadget_push_64_m();
 void uml_x86_64_gadget_pop_16_r();
 void uml_x86_64_gadget_pop_16_m();
+void uml_x86_64_gadget_pop_32_r();
+void uml_x86_64_gadget_pop_32_m();
 void uml_x86_64_gadget_pop_64_r();
 void uml_x86_64_gadget_pop_64_m();
+void uml_x86_64_gadget_push_all_16();
+void uml_x86_64_gadget_push_all_32();
+void uml_x86_64_gadget_pop_all_16();
+void uml_x86_64_gadget_pop_all_32();
 void uml_x86_64_gadget_push_flags_16();
+void uml_x86_64_gadget_push_flags_32();
 void uml_x86_64_gadget_push_flags_64();
 void uml_x86_64_gadget_pop_flags_16();
+void uml_x86_64_gadget_pop_flags_32();
 void uml_x86_64_gadget_pop_flags_64();
 void uml_x86_64_gadget_leave_16();
+void uml_x86_64_gadget_leave_32();
 void uml_x86_64_gadget_leave_64();
 void uml_x86_64_gadget_enter_16();
 void uml_x86_64_gadget_enter_64();
+void uml_x86_64_gadget_push_segment_32();
 void uml_x86_64_gadget_push_segment_64();
+void uml_x86_64_gadget_pop_segment_32();
 void uml_x86_64_gadget_pop_segment_64();
 void uml_x86_64_gadget_call();
+void uml_x86_64_gadget_call_linked();
+void uml_x86_64_gadget_call_32();
+void uml_x86_64_gadget_call_32_linked();
 void uml_x86_64_gadget_call_indirect_r();
 void uml_x86_64_gadget_call_indirect_m();
+void uml_x86_64_gadget_call_indirect_r_cached();
+void uml_x86_64_gadget_call_indirect_m_cached();
+void uml_x86_64_gadget_call_indirect_32_r();
+void uml_x86_64_gadget_call_indirect_32_m();
+void uml_x86_64_gadget_call_indirect_32_r_cached();
+void uml_x86_64_gadget_call_indirect_32_m_cached();
 void uml_x86_64_gadget_return();
+void uml_x86_64_gadget_return_32();
+void uml_x86_64_gadget_return_cached();
+void uml_x86_64_gadget_return_32_cached();
 void uml_x86_64_gadget_jump_indirect_r();
 void uml_x86_64_gadget_jump_indirect_m();
+void uml_x86_64_gadget_jump_indirect_r_cached();
+void uml_x86_64_gadget_jump_indirect_m_cached();
+void uml_x86_64_gadget_jump_indirect_32_r();
+void uml_x86_64_gadget_jump_indirect_32_m();
+void uml_x86_64_gadget_jump_indirect_32_r_cached();
+void uml_x86_64_gadget_jump_indirect_32_m_cached();
 void uml_x86_64_gadget_far_call_16();
 void uml_x86_64_gadget_far_call_32();
 void uml_x86_64_gadget_far_call_64();
@@ -1131,7 +1176,8 @@ UML_X86_DECLARE_VECTOR_BITWISE(xor)
 	void uml_x86_64_gadget_cmov_##condition##_16_rm(); \
 	void uml_x86_64_gadget_cmov_##condition##_32_rm(); \
 	void uml_x86_64_gadget_cmov_##condition##_64_rm(); \
-	void uml_x86_64_gadget_jump_##condition();
+	void uml_x86_64_gadget_jump_##condition(); \
+	void uml_x86_64_gadget_jump_##condition##_linked();
 UML_X86_DECLARE_CONDITION(o)
 UML_X86_DECLARE_CONDITION(no)
 UML_X86_DECLARE_CONDITION(b)
@@ -1150,6 +1196,50 @@ UML_X86_DECLARE_CONDITION(le)
 UML_X86_DECLARE_CONDITION(g)
 #undef UML_X86_DECLARE_CONDITION
 
+/* LOCK-prefixed memory destinations resolve to exclusive-loop gadgets so a
+ * guest atomic stays atomic against the other vCPU threads.
+ */
+#define UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, width) \
+	void uml_x86_64_gadget_##operation##_##width##_mr_locked(); \
+	void uml_x86_64_gadget_##operation##_##width##_mi_locked();
+#define UML_X86_DECLARE_LOCKED_MEMORY(operation) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 8) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 16) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 32) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 64)
+
+UML_X86_DECLARE_LOCKED_MEMORY(add)
+UML_X86_DECLARE_LOCKED_MEMORY(sub)
+UML_X86_DECLARE_LOCKED_MEMORY(and)
+UML_X86_DECLARE_LOCKED_MEMORY(or)
+UML_X86_DECLARE_LOCKED_MEMORY(xor)
+UML_X86_DECLARE_LOCKED_MEMORY(adc)
+UML_X86_DECLARE_LOCKED_MEMORY(sbb)
+
+#define UML_X86_DECLARE_LOCKED_BIT(operation) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 16) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 32) \
+	UML_X86_DECLARE_LOCKED_MEMORY_WIDTH(operation, 64)
+
+UML_X86_DECLARE_LOCKED_BIT(bts)
+UML_X86_DECLARE_LOCKED_BIT(btr)
+UML_X86_DECLARE_LOCKED_BIT(btc)
+
+#define UML_X86_DECLARE_LOCKED_UNARY(operation) \
+	void uml_x86_64_gadget_##operation##_8_m_locked(); \
+	void uml_x86_64_gadget_##operation##_16_m_locked(); \
+	void uml_x86_64_gadget_##operation##_32_m_locked(); \
+	void uml_x86_64_gadget_##operation##_64_m_locked();
+
+UML_X86_DECLARE_LOCKED_UNARY(increment)
+UML_X86_DECLARE_LOCKED_UNARY(decrement)
+UML_X86_DECLARE_LOCKED_UNARY(negate)
+UML_X86_DECLARE_LOCKED_UNARY(not)
+
+#undef UML_X86_DECLARE_LOCKED_UNARY
+#undef UML_X86_DECLARE_LOCKED_BIT
+#undef UML_X86_DECLARE_LOCKED_MEMORY
+#undef UML_X86_DECLARE_LOCKED_MEMORY_WIDTH
 #undef UML_X86_DECLARE_WIDTHS
 #undef UML_X86_DECLARE_WIDTH_FORMS
 }

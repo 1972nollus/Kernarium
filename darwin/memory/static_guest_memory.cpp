@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "static_guest_memory.hpp"
 
+#include "memory/mmu/execution_gate.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -97,10 +98,38 @@ bool StaticGuestMemory::write_allocation_tag(
 		::uml::memory::MemoryAccess::write);
 }
 
+bool StaticGuestMemory::is_executable(std::uint64_t address) noexcept
+{
+	/* This no-fault probe also primes the physical code-page handle used by
+	 * executable-store publication and stale-block validation. */
+	return code_page_handle(address) != nullptr;
+}
+
+bool StaticGuestMemory::code_page_stamp(std::uint64_t address,
+	void *execution_context,
+	::uml::memory::CodePageStamp &stamp) noexcept
+{
+	(void)execution_context;
+	return code_page_handle(address, &stamp) != nullptr;
+}
+
 void StaticGuestMemory::invalidate_code(std::uint64_t address)
 {
 	darwin_uml_static_vm_invalidate_code(
 		static_cast<unsigned long>(address));
+}
+
+void StaticGuestMemory::invalidate_code(
+	std::uint64_t address, void *execution_context)
+{
+	if (execution_context != nullptr) {
+		if (auto *code_page = code_page_handle(address);
+		    code_page != nullptr)
+			darwin_uml_static_vm_invalidate_code_page(code_page);
+		if (execution_context_publish_code_change(execution_context))
+			return;
+	}
+	invalidate_code(address);
 }
 
 bool StaticGuestMemory::validate_write(
@@ -188,6 +217,38 @@ std::byte *StaticGuestMemory::translate(
 	}
 	base = static_cast<std::byte *>(translated);
 	return base + (address & (page_size - 1));
+}
+
+void *StaticGuestMemory::code_page_handle(
+	std::uint64_t address, ::uml::memory::CodePageStamp *stamp) noexcept
+{
+	const auto page = address & ~(page_size - 1);
+	auto &entry = tlb_[index_for(address)];
+	darwin_uml_static_code_page_stamp observed{};
+	if (entry.page == page && entry.generation == generation_ &&
+	    entry.changes == changes_ && entry.code_page != nullptr) {
+		if (darwin_uml_static_vm_code_page_stamp(
+			entry.code_page, &observed) != 0)
+			return nullptr;
+	} else {
+		void *handle = nullptr;
+		if (darwin_uml_static_vm_code_page(
+			generation_, static_cast<unsigned long>(page), &handle,
+			&observed) != DARWIN_UML_STATIC_TRANSLATED ||
+		    handle == nullptr)
+			return nullptr;
+		if (entry.page != page || entry.generation != generation_ ||
+		    entry.changes != changes_) {
+			entry = {};
+			entry.page = page;
+			entry.generation = generation_;
+			entry.changes = changes_;
+		}
+		entry.code_page = handle;
+	}
+	if (stamp != nullptr)
+		*stamp = {observed.identity, observed.version};
+	return entry.code_page;
 }
 
 bool StaticGuestMemory::copy_from_guest(

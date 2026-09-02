@@ -50,7 +50,7 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
     tests = metadata.get("tests")
     if (
         metadata.get("schema") != 1
-        or metadata.get("mode") != "x86-64"
+        or metadata.get("mode") not in ("x86-64", "i386")
         or not isinstance(tests, list)
         or metadata.get("test_count") != len(tests)
     ):
@@ -279,7 +279,7 @@ def main() -> int:
     }
     atomic_json(arguments.output.resolve(), report)
     print(
-        f"FEX {metadata.get('version')} x86-64: "
+        f"FEX {metadata.get('version')} {metadata.get('mode')}: "
         f"{passed}/{len(applicable)} applicable tests passed; "
         f"ran {len(disabled)} upstream-disabled tests; "
         f"report: {arguments.output.resolve()}"

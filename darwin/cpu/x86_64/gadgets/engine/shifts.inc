@@ -111,11 +111,17 @@
 	.endif
 
 	.ifc \operation,ror
+	.if \width == 32
+	rorv w27, w24, w26
+	.elseif \width == 64
+	rorv x27, x24, x26
+	.else
 	mov \host_register\()8, #\width
 	sub \host_register\()8, \host_register\()8, \host_register\()26
 	lsrv \host_register\()27, \host_register\()24, \host_register\()26
 	lslv \host_register\()9, \host_register\()24, \host_register\()8
 	orr \host_register\()27, \host_register\()27, \host_register\()9
+	.endif
 	shift_normalize \width, \host_register\()27, \host_register\()27
 	lsr \host_register\()19, \host_register\()27, #(\width - 1)
 	and w19, w19, #1
@@ -241,6 +247,80 @@
 	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
+/* Shifts and rotates usually feed another arithmetic operation before any
+ * flag consumer. Preserve the prior lazy flag producer and overlay only the
+ * flags this instruction defines; a later full arithmetic producer can then
+ * discard both without materializing either one.
+ */
+.macro shift_record_flags operation, width, host_register
+	.ifc \operation,rol
+	mov w8, #1
+	and w9, w19, #1
+	.else
+	.ifc \operation,ror
+	mov w8, #1
+	and w9, w19, #1
+	.else
+	mov w8, #0xc5
+	and w9, w19, #1
+	cbnz \host_register\()27, .Lx86_shift_override_nonzero\@
+	orr w9, w9, #0x40
+.Lx86_shift_override_nonzero\@:
+	tbz \host_register\()27, #(\width - 1), .Lx86_shift_override_not_sign\@
+	orr w9, w9, #0x80
+.Lx86_shift_override_not_sign\@:
+	and w10, w27, #0xff
+	eor w10, w10, w10, lsr #4
+	eor w10, w10, w10, lsr #2
+	eor w10, w10, w10, lsr #1
+	tbnz w10, #0, .Lx86_shift_override_szp_done\@
+	orr w9, w9, #0x4
+.Lx86_shift_override_szp_done\@:
+	.endif
+	.endif
+	cmp w26, #1
+	b.ne .Lx86_shift_override_ready\@
+	orr w8, w8, #0x800
+	.ifc \operation,shl
+	lsr \host_register\()10, \host_register\()27, #(\width - 1)
+	eor w10, w10, w19
+	.endif
+	.ifc \operation,shr
+	lsr \host_register\()10, \host_register\()24, #(\width - 1)
+	.endif
+	.ifc \operation,sar
+	mov w10, wzr
+	.endif
+	.ifc \operation,shld
+	lsr \host_register\()10, \host_register\()27, #(\width - 1)
+	eor w10, w10, w19
+	.endif
+	.ifc \operation,shrd
+	lsr \host_register\()10, \host_register\()24, #(\width - 1)
+	lsr \host_register\()12, \host_register\()27, #(\width - 1)
+	eor w10, w10, w12
+	.endif
+	.ifc \operation,rol
+	lsr \host_register\()10, \host_register\()27, #(\width - 1)
+	eor w10, w10, w19
+	.endif
+	.ifc \operation,ror
+	lsr \host_register\()10, \host_register\()27, #(\width - 1)
+	lsr \host_register\()12, \host_register\()27, #(\width - 2)
+	eor w10, w10, w12
+	.endif
+	tbz w10, #0, .Lx86_shift_override_ready\@
+	orr w9, w9, #0x800
+.Lx86_shift_override_ready\@:
+	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	bic w11, w11, w8
+	orr w11, w11, w9
+	orr w10, w10, w8
+	strh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+.endm
+
 .macro shift_register operation, width, load, store, host_register, store_register, form
 gadget \operation\()_\width\()_r\form
 	.ifc \form,i
@@ -259,7 +339,12 @@ gadget \operation\()_\width\()_r\form
 	and w26, w26, #0x1f
 	.endif
 	cbz w26, .Lx86_shift_register_store\@
+	.ifc \operation,rcl
 	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	.ifc \operation,rcr
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
 	shift_prepare_count \operation, \width
 	.ifc \operation,rcl
 	cbz w26, .Lx86_shift_register_store\@
@@ -282,7 +367,15 @@ gadget \operation\()_\width\()_r\form
 .Lx86_shift_register_write\@:
 	\store \store_register\()27, [_cpu, x25]
 	cbz w26, .Lx86_shift_register_done\@
+	.ifc \operation,rcl
 	shift_update_flags \operation, \width, \host_register
+	.else
+	.ifc \operation,rcr
+	shift_update_flags \operation, \width, \host_register
+	.else
+	shift_record_flags \operation, \width, \host_register
+	.endif
+	.endif
 .Lx86_shift_register_done\@:
 	retire_and_next
 .endm
@@ -318,7 +411,12 @@ gadget \operation\()_\width\()_m\form
 	and w26, w26, #0x1f
 	.endif
 	cbz w26, .Lx86_shift_memory_store\@
+	.ifc \operation,rcl
 	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	.ifc \operation,rcr
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
 	shift_prepare_count \operation, \width
 	.ifc \operation,rcl
 	cbz w26, .Lx86_shift_memory_store\@
@@ -355,7 +453,15 @@ gadget \operation\()_\width\()_m\form
 	cbz w0, .Lx86_memory_fault
 .Lx86_shift_memory_written\@:
 	cbz w26, .Lx86_shift_memory_done\@
+	.ifc \operation,rcl
 	shift_update_flags \operation, \width, \host_register
+	.else
+	.ifc \operation,rcr
+	shift_update_flags \operation, \width, \host_register
+	.else
+	shift_record_flags \operation, \width, \host_register
+	.endif
+	.endif
 .Lx86_shift_memory_done\@:
 	finish_store (\width / 8)
 .endm
@@ -443,8 +549,7 @@ gadget \operation\()_\width\()_rr\form
 	cbz w26, .Lx86_double_shift_register_zero\@
 	double_shift_compute \operation, \width, \host_register
 	\store \store_register\()27, [_cpu, x25]
-	bl uml_x86_64_gadget_materialize_flags
-	shift_update_flags \operation, \width, \host_register
+	shift_record_flags \operation, \width, \host_register
 	retire_and_next
 .Lx86_double_shift_register_zero\@:
 	\store \store_register\()24, [_cpu, x25]
@@ -499,8 +604,7 @@ gadget \operation\()_\width\()_mr\form
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_double_shift_written\@:
-	bl uml_x86_64_gadget_materialize_flags
-	shift_update_flags \operation, \width, \host_register
+	shift_record_flags \operation, \width, \host_register
 	finish_store (\width / 8)
 .Lx86_double_shift_memory_zero\@:
 	retire_and_next
@@ -532,6 +636,7 @@ double_shift_family shrd
 .purgem shift_width
 .purgem shift_memory
 .purgem shift_register
+.purgem shift_record_flags
 .purgem shift_update_flags
 .purgem shift_set_szp
 .purgem shift_compute

@@ -78,8 +78,8 @@ public:
 		base_ = uml::testing::reserve_native_test_window(size_);
 		require(base_ != 0,
 			"could not reserve native admission slot");
-		require(base_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
-			base_ <= DARWIN_UML_NATIVE_ADDRESS_END - size_,
+		require(base_ >= uml::testing::native_test_window_start &&
+			base_ <= uml::testing::native_test_window_end - size_,
 			"native admission slot escaped the shared native window");
 		require(uml::testing::release_native_test_window(base_, size_),
 			"could not release native admission reservation");
@@ -418,6 +418,9 @@ int main()
 {
 	try {
 		static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
+		uml::testing::NativeTestWindowScope native_window;
+		require(native_window.entered(),
+			"could not configure native admission test window");
 		require(uml::memory::testing::native_domain_count() == 0,
 			"native admission test started with a retained domain");
 		NativeSlot slot;

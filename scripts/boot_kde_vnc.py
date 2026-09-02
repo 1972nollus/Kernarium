@@ -75,14 +75,11 @@ STARTER_KDE_OVERLAY_COMMANDS = (
 LEGACY_EROFS_KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
     "usermod -a -G video,render,input uml",
-    # The image enables getty@tty0. /dev/tty0 is the *active* VT alias rather
-    # than a fixed console, so once SDDM logs "Jumping to VT 2" that getty
-    # follows the compositor onto VT 2 and both claim the same VT. The Wayland
-    # session then dies immediately with no output. Move the prompt to a fixed
-    # VT instead: tty1 keeps the pre-desktop text console that boot leaves on
-    # VT 1 without ever colliding with SDDM's VT.
-    "systemctl mask --now getty@tty0.service",
-    "systemctl start getty@tty1.service || true",
+    # /dev/tty0 is the active-VT alias, while tty1 is the VT SDDM initially
+    # claims before starting the Wayland session. A getty on either device can
+    # cancel display-manager activation or follow the compositor onto its VT.
+    # The attachable ttyS0 socket remains the interactive recovery console.
+    "systemctl mask --now getty@tty0.service getty@tty1.service",
     "install -d -m 0755 -o uml -g uml "
     "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
     "/home/uml/Music /home/uml/Pictures /home/uml/Public "
@@ -264,6 +261,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         ),
     )
     parser.add_argument(
+        "--virtio-console-socket",
+        type=Path,
+        help=(
+            "attach guest hvc0 at this reconnectable Unix-domain socket"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the emulator command without booting",
@@ -280,6 +284,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         options.port = 5900
     if options.root_device is None:
         options.root_device = DEFAULT_ROOT_DEVICE_BY_TYPE[options.rootfs_type]
+    if (
+        options.serial_socket is not None
+        and options.virtio_console_socket is not None
+        and options.serial_socket.resolve()
+        == options.virtio_console_socket.resolve()
+    ):
+        parser.error("serial and Virtio console sockets must be different")
     return options
 
 
@@ -314,17 +325,29 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         command.extend(("--command", ISO_MOUNT_COMMAND))
     if options.serial_socket is not None:
         command.extend(("--serial-socket", str(options.serial_socket)))
+    if options.virtio_console_socket is not None:
+        command.extend(
+            ("--virtio-console-socket", str(options.virtio_console_socket))
+        )
     if options.dry_run:
         command.append("--dry-run")
     command.extend((
         "--",
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
+        "systemd.mask=getty@tty0.service",
+        "systemd.mask=getty@tty1.service",
     ))
     if options.rootfs_type == "ext4":
         # Starter images own DHCP/DNS. This later argument overrides the GPU
         # harness's legacy kernel-DHCP default.
         command.append("ip=off")
+    if options.serial_socket is not None:
+        command.append("systemd.wants=serial-getty@ttyS0.service")
+    if options.virtio_console_socket is None:
+        command.append("systemd.mask=serial-getty@hvc0.service")
+    else:
+        command.append("systemd.wants=serial-getty@hvc0.service")
     if options.iso is not None:
         command.append(f"ubd1r={options.iso}")
     command.extend(("--audio", "--gpu", f"--gpu-display={options.display}"))
@@ -378,6 +401,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if options.serial_socket is not None:
         print(
             f"Serial console will listen on {options.serial_socket}.",
+            file=sys.stderr,
+        )
+    if options.virtio_console_socket is not None:
+        print(
+            "Virtio console will expose hvc0 on "
+            f"{options.virtio_console_socket}.",
             file=sys.stderr,
         )
     if options.iso is not None:

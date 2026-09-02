@@ -117,12 +117,8 @@
 	add sp, sp, #.Lx86_extended_size
 	b .Lx86_memory_fault
 .Lx86_extended_write_done\@:
+	publish_pending_code x25, \size
 	add sp, sp, #.Lx86_extended_size
-	/* The old state image may contain translated code. Force dispatch after
-	 * publication so no stream can continue through a stale overlap. */
-	mov x0, _context
-	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]

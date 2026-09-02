@@ -23,7 +23,11 @@ kernel with 16 KiB or 4 KiB guest pages and the separate x86_64-userspace
 kernel with 4 KiB pages. When omitted, `mem=` defaults to 8 GiB and `ncpus=`
 to 10; explicit kernel arguments override either value independently.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
-gadget backend; ordinary 4 KiB presets continue to select arm64 userspace.
+gadget backend; ordinary 4 KiB presets continue to select arm64 userspace. The
+x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
+accounting remains available, while kernel-object charging is outside this
+compatibility slice. An explicit `cgroup.memory=` argument overrides the
+default.
 
 Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
 Linux, and 16 KiB Android. Framework names remain stable across patch releases
@@ -90,12 +94,15 @@ publishes native code only through `cpu/arm64/jit/jit_arena.cpp`.
 The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
 while UML kernel-mode execution remains arm64. The kernel slice cannot load
 arm64 userspace and does not switch ISA per task. Integer, vector, x87/MMX,
-TLS, atomic, and extended-state execution is qualified against the pinned FEX
-handwritten x86-64 corpus. Register, YMM, MMX, and x87 state is serialized in
-the task-owned bridge frame across carrier scheduling. Passing that
-instruction corpus does not by itself establish general distribution or
-complete Linux syscall compatibility. Other host products and page profiles
-retain arm64 userspace execution.
+TLS, atomic, and extended-state execution is qualified in both long64 and
+compat32 modes against the pinned FEX handwritten ASM corpora. The ordinary
+userspace feature profile covers scalar x86, x87, MMX, SSE through SSE4.2,
+AVX, AVX2, F16C, FMA, AES/PCLMUL, BMI1/2, and their 32-bit operand/address
+forms; CPUID advertises that profile. Register, YMM, MMX, and x87 state is
+serialized in the task-owned bridge frame across carrier scheduling. Passing
+those corpora does not by itself establish arbitrary distribution or complete
+Linux syscall compatibility. Other host products and page profiles retain
+arm64 userspace execution.
 
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs

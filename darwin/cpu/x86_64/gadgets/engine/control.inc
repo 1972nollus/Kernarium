@@ -76,6 +76,41 @@
 	.endif
 .endm
 
+.macro evaluate_deferred_zero condition
+	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	tbz w10, #6, .Lx86_zero_from_deferred\@
+	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ubfx w11, w10, #6, #1
+	.ifc \condition,ne
+	eor w11, w11, #1
+	.endif
+	b .Lx86_zero_ready\@
+.Lx86_zero_from_deferred\@:
+	ldrb w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	cbz w10, .Lx86_zero_from_flags\@
+	ldr x10, [_cpu, #UML_X86_64_CPU_DEFERRED_RESULT]
+	cmp x10, #0
+	.ifc \condition,e
+	cset w11, eq
+	.else
+	cset w11, ne
+	.endif
+	b .Lx86_zero_ready\@
+.Lx86_zero_from_flags\@:
+	ldr x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ubfx w11, w10, #6, #1
+	.ifc \condition,ne
+	eor w11, w11, #1
+	.endif
+.Lx86_zero_ready\@:
+.endm
+
+gadget link_exit
+	ldr x9, [_stream]
+	str x9, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+
 .macro set_condition condition
 gadget set_\condition
 	bl uml_x86_64_gadget_materialize_flags
@@ -139,8 +174,16 @@ gadget cmov_\condition\()_\width\()_rm
 
 .macro jump_condition condition
 gadget jump_\condition
+	.ifc \condition,e
+	evaluate_deferred_zero \condition
+	.else
+	.ifc \condition,ne
+	evaluate_deferred_zero \condition
+	.else
 	bl uml_x86_64_gadget_materialize_flags
 	evaluate_condition \condition
+	.endif
+	.endif
 	ldp x12, x13, [_stream], #16
 	cmp w11, #0
 	csel x8, x12, x13, ne
@@ -148,6 +191,25 @@ gadget jump_\condition
 	add _executed, _executed, #1
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
+.endm
+
+.macro jump_condition_linked condition
+gadget jump_\condition\()_linked
+	.ifc \condition,e
+	evaluate_deferred_zero \condition
+	.else
+	.ifc \condition,ne
+	evaluate_deferred_zero \condition
+	.else
+	bl uml_x86_64_gadget_materialize_flags
+	evaluate_condition \condition
+	.endif
+	.endif
+	ldp x12, x13, [_stream], #16
+	cmp w11, #0
+	csel x8, x12, x13, ne
+	add _executed, _executed, #1
+	follow_block_link x8
 .endm
 
 .macro condition_family condition
@@ -160,6 +222,7 @@ conditional_move_memory \condition, 16, ldrh, w, strh, w
 conditional_move_memory \condition, 32, ldr, w, str, x
 conditional_move_memory \condition, 64, ldr, x, str, x
 jump_condition \condition
+jump_condition_linked \condition
 .endm
 
 condition_family o
@@ -180,11 +243,13 @@ condition_family le
 condition_family g
 
 .purgem condition_family
+.purgem jump_condition_linked
 .purgem jump_condition
 .purgem conditional_move_memory
 .purgem conditional_move
 .purgem set_condition_memory
 .purgem set_condition
+.purgem evaluate_deferred_zero
 .purgem evaluate_condition
 
 gadget jump
@@ -194,16 +259,34 @@ gadget jump
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 
+gadget jump_linked
+	ldr x8, [_stream]
+	add _executed, _executed, #1
+	follow_block_link x8
+
+.purgem follow_block_link
+.purgem follow_indirect_link
+
 .macro loop_gadget opcode, width, host_register
 gadget loop_\opcode\()_\width
 	ldp x26, x27, [_stream]
+	.if \width == 16
+	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	.else
 	ldr \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	.endif
 	.ifc \opcode,e3
 	cbz \host_register\()24, .Lx86_loop_taken\@
 	b .Lx86_loop_fallthrough\@
 	.else
 	sub \host_register\()24, \host_register\()24, #1
+	.if \width == 16
+	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	bfi x8, x24, #0, #16
+	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	.else
 	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	.endif
 	.ifc \opcode,e2
 	cbnz \host_register\()24, .Lx86_loop_taken\@
 	b .Lx86_loop_fallthrough\@
@@ -231,6 +314,7 @@ gadget loop_\opcode\()_\width
 .endm
 
 .macro loop_family opcode
+	loop_gadget \opcode, 16, w
 	loop_gadget \opcode, 32, w
 	loop_gadget \opcode, 64, x
 .endm

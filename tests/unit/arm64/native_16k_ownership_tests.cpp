@@ -102,8 +102,8 @@ public:
 		base_ = uml::testing::reserve_native_test_window(length_);
 		require(base_ != 0,
 			"could not reserve native-window ownership arena");
-		require(base_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
-			base_ <= DARWIN_UML_NATIVE_ADDRESS_END - length_ &&
+		require(base_ >= uml::testing::native_test_window_start &&
+			base_ <= uml::testing::native_test_window_end - length_ &&
 			(base_ & (page_size - 1)) == 0,
 			"native ownership arena escaped the shared native window");
 		require(uml::testing::release_native_test_window(base_, length_),
@@ -1197,6 +1197,9 @@ int main(int argc, char **argv)
 {
 	try {
 		static_assert(page_size == 16384);
+		uml::testing::NativeTestWindowScope native_window;
+		require(native_window.entered(),
+			"could not configure native ownership test window");
 		if (argc == 2 &&
 		    (std::string_view{argv[1]} ==
 			"--native-domain-registry-oom-child" ||

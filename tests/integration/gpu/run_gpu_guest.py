@@ -36,6 +36,8 @@ DOCKER_HELLO_WORLD_IMAGE = "uml/hello-world:local"
 MAX_DOCKER_HELLO_WORLD_SIZE = 1024 * 1024
 MAX_SERIAL_CLIENT_BACKLOG = 1024 * 1024
 MAX_SERIAL_INPUT_BACKLOG = 1024 * 1024
+SERIAL_WRITE_CHUNK_BYTES = 128
+SERIAL_WRITE_INTERVAL_SECONDS = 0.01
 PROTECTED_ARGUMENTS = (
     "ubd0",
     "root=",
@@ -44,6 +46,8 @@ PROTECTED_ARGUMENTS = (
     "mem=",
     "console=",
     "systemd.unit=",
+    "--virtio-console-socket=",
+    "--virtio-serial-socket=",
 )
 ROOTFS_TYPES = ("erofs", "ext4")
 
@@ -73,6 +77,7 @@ class SerialConsoleSocket:
             self.listener.bind(str(path))
             details = path.lstat()
             self._identity = (details.st_dev, details.st_ino)
+            path.chmod(0o600)
             self.listener.listen(1)
             self.listener.setblocking(False)
         except OSError as error:
@@ -172,6 +177,18 @@ def validate_rootfs_path(path: Path, rootfs_type: str) -> None:
         )
 
 
+def validate_console_socket_paths(
+    serial_socket: Path | None,
+    virtio_console_socket: Path | None,
+) -> None:
+    if (
+        serial_socket is not None
+        and virtio_console_socket is not None
+        and serial_socket == virtio_console_socket
+    ):
+        raise SafetyError("serial and Virtio console sockets must be different")
+
+
 def load_docker_hello_world(path: Path) -> bytes:
     try:
         payload = path.read_bytes()
@@ -256,6 +273,7 @@ def build_command(
     systemd_unit: str,
     extra_arguments: Sequence[str],
     rootfs_type: str = "erofs",
+    virtio_console_socket: Path | None = None,
 ) -> list[str]:
     validate_extra_arguments(extra_arguments)
     if rootfs_type not in ROOTFS_TYPES:
@@ -273,6 +291,11 @@ def build_command(
         "ip=dhcp",
         f"systemd.unit={systemd_unit}",
         *extra_arguments,
+        *(
+            [f"--virtio-console-socket={virtio_console_socket.resolve()}"]
+            if virtio_console_socket is not None
+            else []
+        ),
     ]
 
 
@@ -454,11 +477,17 @@ def terminate_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=5)
 
 
-def write_pending(stream: BinaryIO, pending: bytearray) -> None:
-    """Drain as much queued console input as a nonblocking tty accepts."""
-    while pending:
+def write_pending(
+    stream: BinaryIO,
+    pending: bytearray,
+    maximum_bytes: int | None = None,
+) -> None:
+    """Drain a bounded amount of queued input into a nonblocking tty."""
+    remaining = maximum_bytes
+    while pending and (remaining is None or remaining > 0):
+        payload = pending if remaining is None else pending[:remaining]
         try:
-            written = stream.write(pending)
+            written = stream.write(payload)
         except InterruptedError:
             continue
         except BlockingIOError:
@@ -468,6 +497,15 @@ def write_pending(stream: BinaryIO, pending: bytearray) -> None:
         if written <= 0:
             raise RuntimeError("guest console stopped accepting input")
         del pending[:written]
+        if remaining is not None:
+            remaining -= written
+
+
+BOOTSTRAP_READY_MARKER = b"UML_GPU_BOOTSTRAP_INPUT_READY"
+BOOTSTRAP_CONSOLE_PRELUDE = (
+    b"stty -echo || exit 1\n"
+    b"printf '%s%s\\n' UML_GPU_BOOTSTRAP_ INPUT_READY\n"
+)
 
 
 def run_guest(
@@ -517,8 +555,11 @@ def run_guest(
     saw_fail = False
     deadline = time.monotonic() + timeout if timeout > 0 else None
     pending = bytearray()
-    guest_input = bytearray(bootstrap + b"\n")
+    guest_input = bytearray(BOOTSTRAP_CONSOLE_PRELUDE)
+    bootstrap_input = bytearray(bootstrap + b"\n")
     console_input_enabled = False
+    bootstrap_input_enabled = False
+    next_guest_write = 0.0
     if serial is not None:
         print(f"Serial console socket: {serial.path}", file=sys.stderr)
 
@@ -527,9 +568,15 @@ def run_guest(
             while process.poll() is None:
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"guest did not finish within {timeout:.0f}s")
+                now = time.monotonic()
+                guest_write_ready = (
+                    console_input_enabled
+                    and bool(guest_input)
+                    and now >= next_guest_write
+                )
                 read_descriptors: list[Any] = [console]
                 write_descriptors: list[Any] = (
-                    [console] if console_input_enabled and guest_input else []
+                    [console] if guest_write_ready else []
                 )
                 if serial is not None:
                     read_descriptors.append(serial.listener)
@@ -537,8 +584,14 @@ def run_guest(
                         read_descriptors.append(serial.client)
                         if serial.output:
                             write_descriptors.append(serial.client)
+                select_timeout = 0.25
+                if console_input_enabled and guest_input and not guest_write_ready:
+                    select_timeout = min(
+                        select_timeout,
+                        max(0.0, next_guest_write - now),
+                    )
                 readable, writable, _ = select.select(
-                    read_descriptors, write_descriptors, [], 0.25
+                    read_descriptors, write_descriptors, [], select_timeout
                 )
                 if serial is not None and serial.listener in readable:
                     serial.accept(bytes(pending))
@@ -560,7 +613,14 @@ def run_guest(
                 ):
                     serial.flush_output()
                 if console in writable:
-                    write_pending(console, guest_input)
+                    write_pending(
+                        console,
+                        guest_input,
+                        maximum_bytes=SERIAL_WRITE_CHUNK_BYTES,
+                    )
+                    next_guest_write = (
+                        time.monotonic() + SERIAL_WRITE_INTERVAL_SECONDS
+                    )
                 if console not in readable:
                     continue
                 try:
@@ -578,9 +638,17 @@ def run_guest(
                 pending.extend(data)
                 if len(pending) > 8192:
                     del pending[:-8192]
+                normalized = bytes(pending).replace(b"\r", b"")
                 if not console_input_enabled:
-                    normalized = bytes(pending).replace(b"\r", b"")
                     console_input_enabled = b"\n# " in normalized
+                if (
+                    console_input_enabled
+                    and not bootstrap_input_enabled
+                    and BOOTSTRAP_READY_MARKER + b"\n" in normalized
+                ):
+                    guest_input.extend(bootstrap_input)
+                    bootstrap_input.clear()
+                    bootstrap_input_enabled = True
                 decoded = pending.decode("utf-8", errors="replace")
                 saw_pass = saw_pass or PASS_MARKER in decoded
                 saw_fail = saw_fail or FAIL_MARKER in decoded
@@ -649,6 +717,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "socket while retaining the normal log/stdout copy"
         ),
     )
+    parser.add_argument(
+        "--virtio-console-socket",
+        type=Path,
+        help=(
+            "attach a Virtio console and expose guest hvc0 at this "
+            "reconnectable Unix-domain socket"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "kernel_arguments",
@@ -666,6 +742,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise SafetyError(f"emulator is not executable: {emulator}")
     validate_rootfs_path(rootfs, options.rootfs_type)
 
+    serial_socket = (
+        options.serial_socket.resolve()
+        if options.serial_socket is not None
+        else None
+    )
+    virtio_console_socket = (
+        options.virtio_console_socket.resolve()
+        if options.virtio_console_socket is not None
+        else None
+    )
+    validate_console_socket_paths(serial_socket, virtio_console_socket)
+
     docker_hello_world = None
     if options.docker_hello_world_binary is not None:
         docker_hello_world = load_docker_hello_world(
@@ -679,6 +767,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         options.unit,
         options.kernel_arguments,
         rootfs_type=options.rootfs_type,
+        virtio_console_socket=virtio_console_socket,
     )
     test_script = make_test_script(
         options.command,
@@ -694,11 +783,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs_type": options.rootfs_type,
         "auto_poweroff": not options.no_auto_poweroff,
     }
-    serial_socket = (
-        options.serial_socket.resolve() if options.serial_socket is not None else None
-    )
     if serial_socket is not None:
         result["serial_socket"] = str(serial_socket)
+    if virtio_console_socket is not None:
+        result["virtio_console_socket"] = str(virtio_console_socket)
     if options.docker_hello_world_binary is not None:
         result["docker_hello_world"] = str(
             options.docker_hello_world_binary.resolve()

@@ -18,6 +18,7 @@ namespace uml::memory {
 namespace {
 
 constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
+std::atomic_uint64_t next_code_page_identity{1};
 
 } // namespace
 
@@ -29,6 +30,17 @@ struct MappedBacking::TagPage final {
 	}
 
 	std::array<std::atomic_uint8_t, page_size / 16> tags;
+};
+
+struct MappedBacking::CodePage final {
+	CodePage() noexcept
+		: identity{next_code_page_identity.fetch_add(
+			1, std::memory_order_relaxed)}
+	{
+	}
+
+	const std::uint64_t identity;
+	std::atomic_uint64_t version{1};
 };
 
 std::shared_ptr<MappedBacking> MappedBacking::create(
@@ -114,6 +126,47 @@ bool MappedBacking::store_allocation_tag(
 	}
 	tags->tags[index].store(tag & 15U, std::memory_order_release);
 	return true;
+}
+
+void *MappedBacking::code_page_handle(std::uint64_t offset) noexcept
+{
+	const auto page = offset / page_size;
+	CodePage *code_page = nullptr;
+	{
+		std::shared_lock lock{code_pages_mutex_};
+		const auto found = code_pages_.find(page);
+		if (found != code_pages_.end())
+			code_page = found->second.get();
+	}
+	if (code_page != nullptr)
+		return code_page;
+	try {
+		std::lock_guard lock{code_pages_mutex_};
+		auto &slot = code_pages_[page];
+		if (!slot)
+			slot = std::make_unique<CodePage>();
+		return slot.get();
+	} catch (...) {
+		return nullptr;
+	}
+}
+
+bool MappedBacking::load_code_page_stamp(const void *handle,
+	std::uint64_t &identity, std::uint64_t &version) noexcept
+{
+	const auto *page = static_cast<const CodePage *>(handle);
+	if (page == nullptr)
+		return false;
+	identity = page->identity;
+	version = page->version.load(std::memory_order_acquire);
+	return true;
+}
+
+void MappedBacking::invalidate_code_page(void *handle) noexcept
+{
+	auto *page = static_cast<CodePage *>(handle);
+	if (page != nullptr)
+		page->version.fetch_add(1, std::memory_order_release);
 }
 
 } // namespace uml::memory

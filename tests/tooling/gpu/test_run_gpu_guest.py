@@ -67,6 +67,31 @@ class GpuGuestSafetyTests(unittest.TestCase):
         bootstrap = run_gpu_guest.make_bootstrap(script, "ext4").decode()
         self.assertIn("lower=ext4, upper=tmpfs", bootstrap)
 
+    def test_virtio_console_socket_is_forwarded_to_the_emulator(self) -> None:
+        command = run_gpu_guest.build_command(
+            Path("/bin/echo"),
+            Path("/tmp/rootfs.erofs"),
+            "/dev/ubda",
+            "8G",
+            "multi-user.target",
+            [],
+            virtio_console_socket=Path("/tmp/uml-hvc0.sock"),
+        )
+        self.assertIn(
+            "--virtio-console-socket="
+            f"{Path('/tmp/uml-hvc0.sock').resolve()}",
+            command,
+        )
+
+    def test_console_socket_paths_must_be_distinct(self) -> None:
+        with self.assertRaisesRegex(
+            run_gpu_guest.SafetyError, "must be different"
+        ):
+            run_gpu_guest.validate_console_socket_paths(
+                Path("/tmp/uml-console.sock"),
+                Path("/tmp/uml-console.sock"),
+            )
+
     def test_ext4_lower_requires_immutable_host_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             rootfs = Path(temporary) / "rootfs.ext4"
@@ -106,6 +131,8 @@ class GpuGuestSafetyTests(unittest.TestCase):
             "mem=2G",
             "console=ttyS0",
             "systemd.unit=graphical.target",
+            "--virtio-console-socket=/tmp/other.sock",
+            "--virtio-serial-socket=/tmp/other.sock",
         )
         for argument in forbidden:
             with self.subTest(argument=argument):
@@ -272,6 +299,13 @@ class GpuGuestSafetyTests(unittest.TestCase):
                     expect_poweroff=False,
                 )
 
+    def test_console_write_budget_preserves_backlog(self) -> None:
+        stream = io.BytesIO()
+        pending = bytearray(b"0123456789")
+        run_gpu_guest.write_pending(stream, pending, maximum_bytes=4)
+        self.assertEqual(stream.getvalue(), b"0123")
+        self.assertEqual(pending, b"456789")
+
     def test_serial_socket_relays_console_output_and_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -318,7 +352,13 @@ class GpuGuestSafetyTests(unittest.TestCase):
             fake_emulator = (
                 "import sys,time;"
                 "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
+                "first=sys.stdin.buffer.readline();"
+                "second=sys.stdin.buffer.readline();"
+                "assert first == b'stty -echo || exit 1\\n';"
+                "assert b'UML_GPU_BOOTSTRAP_' in second;"
+                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_READY_MARKER!r}+b'\\n');"
+                "sys.stdout.buffer.flush();"
+                "assert sys.stdin.buffer.readline() == b'BOOT\\n';"
                 f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+"
                 "'\\nTTY:'+str(int(sys.stdin.isatty()))+'\\nREADY\\n');"
                 "sys.stdout.flush();"
@@ -361,6 +401,7 @@ class GpuGuestSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "serial.sock"
             serial = run_gpu_guest.SerialConsoleSocket(path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             path.unlink()
             path.write_text("replacement", encoding="utf-8")
             serial.close()

@@ -109,12 +109,17 @@ fi
 grep -F 'CONFIG_UML_X86_64_USERSPACE_ONLY=y' \
 	"$SLICE_ROOT/config/userspace.fragment" >/dev/null ||
 	fail "x86_64 userspace fragment does not select its fixed-ABI kernel mode"
-grep -Fxq '# CONFIG_BPF_SYSCALL is not set' \
+grep -Fxq 'CONFIG_SYSCALL_USER_DISPATCH=y' \
 	"$SLICE_ROOT/config/userspace.fragment" ||
-	fail "x86_64 userspace slice still exposes the eBPF syscall"
-grep -Fxq '# CONFIG_CGROUP_BPF is not set' \
-	"$SLICE_ROOT/config/userspace.fragment" ||
-	fail "x86_64 userspace slice still exposes cgroup eBPF attachment"
+	fail "x86_64 userspace fragment does not require syscall-user-dispatch"
+if grep -E 'CONFIG_(BPF_SYSCALL|CGROUP_BPF)' \
+	"$SLICE_ROOT/config/userspace.fragment" >/dev/null; then
+	fail "x86_64 userspace slice overrides the shared BPF policy"
+fi
+grep -Fxq 'CONFIG_BPF_SYSCALL=y' "$LINE_ROOT/config/common.fragment" ||
+	fail "shared kernel policy does not expose the eBPF syscall"
+grep -Fxq 'CONFIG_CGROUP_BPF=y' "$LINE_ROOT/config/common.fragment" ||
+	fail "shared kernel policy does not expose cgroup eBPF attachment"
 [ ! -e "$SLICE_ROOT/config/common.fragment" ] ||
 	fail "x86_64 slice duplicates the shared common config fragment"
 [ ! -e "$SLICE_ROOT/config/page-4k.fragment" ] ||
@@ -149,6 +154,49 @@ if grep -E 'UML_GUEST_ISA_X86_64|padding = UML_GUEST' \
 fi
 grep -F '#define ELF_ARCH EM_X86_64' "$SLICE_SERIES"/*.patch >/dev/null ||
 	fail "x86_64 overlay does not replace the userspace ELF architecture"
+grep -F 'arch/x86/entry/syscalls/syscall_64.tbl' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 overlay does not generate its native syscall table"
+grep -F 'arch/x86/entry/syscalls/syscall_32.tbl' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 overlay does not generate its i386 syscall table"
+grep -F '#define UML_X86_64_NR_SYSCALLS 470' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 syscall table bound does not cover Linux 6.18"
+grep -F '#define UML_X86_32_NR_SYSCALLS 470' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "i386 syscall table bound does not cover Linux 6.18"
+grep -F 'uml_x86_64_sys_call_table[UML_X86_64_NR_SYSCALLS]' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 generated syscall dispatch table is missing"
+grep -F 'uml_x86_32_sys_call_table[UML_X86_32_NR_SYSCALLS]' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "i386 generated syscall dispatch table is missing"
+grep -F 'select SYSCALL_USER_DISPATCH' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 slice does not select syscall-user-dispatch"
+grep -F 'syscall_user_dispatch(regs)' \
+	"$SLICE_SERIES"/*.patch >/dev/null ||
+	fail "x86_64 UML syscall entry does not apply syscall-user-dispatch"
+if awk '
+/^\+[^+]/ {
+	line = substr($0, 2)
+	if (line ~ /uml_x86_(32|64)_syscall_number/)
+		balance[line]++
+}
+/^-[^-]/ {
+	line = substr($0, 2)
+	if (line ~ /uml_x86_(32|64)_syscall_number/)
+		balance[line]--
+}
+END {
+	for (line in balance)
+		if (balance[line] > 0)
+			exit 0
+	exit 1
+}' "$SLICE_SERIES"/*.patch; then
+	fail "x86 syscall dispatch still uses a sparse number switch"
+fi
 
 "$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
 "$SERIES_POLICY" --line-root "$SLICE_ROOT" manifest >/dev/null

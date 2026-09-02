@@ -192,6 +192,18 @@ void execution_reader_end(GenerationState &state) noexcept
 		state.execution_gate.notify_all();
 }
 
+bool execution_context_publish_code_change(void *opaque) noexcept
+{
+	auto *context = static_cast<ExecutionContext *>(opaque);
+	if (context == nullptr || !context->entered || !context->state ||
+	    context->state->retired.load(std::memory_order_acquire))
+		return false;
+	/* The entered execution context owns the generation state for the entire
+	 * translated run, so publication needs no domain lookup or mapping lock. */
+	context->state->code_changes.fetch_add(1, std::memory_order_release);
+	return true;
+}
+
 ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,
 	std::uint64_t generation)
 	: state_{std::move(state)}

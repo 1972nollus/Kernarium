@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu_state.hpp"
 #include "memory/guest_address_space.hpp"
 
 #include <cstdint>
@@ -46,6 +47,7 @@ struct MemoryOperand final {
 	std::uint64_t absolute{};
 	Segment segment{Segment::none};
 	bool rip_relative{};
+	bool address_16{};
 	bool address_32{};
 	bool absolute_address{};
 	bool vector_index{};
@@ -101,6 +103,7 @@ enum class Operation : std::uint8_t {
 	count_trailing_zeros,
 	count_leading_zeros,
 	population_count,
+	adjust_rpl,
 	compare_exchange,
 	compare_exchange_pair,
 	exchange_add,
@@ -115,6 +118,8 @@ enum class Operation : std::uint8_t {
 	sign_extend_data,
 	push,
 	pop,
+	push_all,
+	pop_all,
 	push_flags,
 	pop_flags,
 	leave,
@@ -131,6 +136,8 @@ enum class Operation : std::uint8_t {
 	direction_set,
 	lahf,
 	sahf,
+	legacy_adjust,
+	interrupt_overflow,
 	segment_move,
 	segment_stack,
 	jump,
@@ -240,6 +247,7 @@ struct DecodeResult final {
 };
 
 [[nodiscard]] DecodeResult decode(
-	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip) noexcept;
+	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
+	ExecutionMode mode = ExecutionMode::long64) noexcept;
 
 } // namespace uml::cpu::x86_64

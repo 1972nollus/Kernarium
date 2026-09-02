@@ -33,7 +33,13 @@ public:
 		std::uint64_t address, std::uint8_t &tag) override;
 	[[nodiscard]] bool write_allocation_tag(
 		std::uint64_t address, std::uint8_t tag) override;
+	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override;
+	[[nodiscard]] bool code_page_stamp(std::uint64_t address,
+		void *execution_context,
+		::uml::memory::CodePageStamp &stamp) noexcept override;
 	void invalidate_code(std::uint64_t address) override;
+	void invalidate_code(
+		std::uint64_t address, void *execution_context) override;
 	[[nodiscard]] bool validate_write(
 		std::uint64_t address, std::size_t size);
 	[[nodiscard]] ::uml::memory::MemoryFault last_fault() const noexcept override;
@@ -50,6 +56,7 @@ private:
 		std::uint64_t generation{};
 		std::uint64_t changes{};
 		std::array<std::byte *, 3> bases{};
+		void *code_page{};
 	};
 
 	[[nodiscard]] static constexpr std::size_t index_for(
@@ -60,6 +67,9 @@ private:
 		::uml::memory::MemoryAccess access) noexcept;
 	[[nodiscard]] std::byte *translate(
 		std::uint64_t address, ::uml::memory::MemoryAccess access);
+	[[nodiscard]] void *code_page_handle(
+		std::uint64_t address,
+		::uml::memory::CodePageStamp *stamp = nullptr) noexcept;
 	[[nodiscard]] bool copy_from_guest(
 		std::uint64_t address, std::span<std::byte> destination,
 		::uml::memory::MemoryAccess access);

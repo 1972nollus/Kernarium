@@ -14,10 +14,12 @@
 #include <functional>
 #include <limits>
 #include <mach/mach.h>
+#include <mach/arm/thread_status.h>
 #include <mutex>
 #include <memory>
 #include <new>
 #include <optional>
+#include <pthread.h>
 #include <shared_mutex>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -42,6 +44,184 @@ namespace {
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 constexpr std::uintptr_t guest_page_size = 4096;
+constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
+
+[[nodiscard]] std::uintptr_t current_carrier_id() noexcept
+{
+	return static_cast<std::uintptr_t>(
+		pthread_mach_thread_np(pthread_self()));
+}
+
+[[nodiscard]] bool mmu_trace_enabled() noexcept
+{
+	const auto *value = std::getenv("UML_MMU_TRACE");
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+[[nodiscard]] bool mmu_conflict_trace_enabled() noexcept
+{
+	const auto *value = std::getenv("UML_MMU_CONFLICT_TRACE");
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+[[nodiscard]] bool mmu_live_stack_trace_enabled() noexcept
+{
+	const auto *value = std::getenv("UML_MMU_LIVE_STACK_TRACE");
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void mmu_trace_live_stacks(const char *operation, std::uintptr_t address,
+	std::uint64_t length) noexcept
+{
+	if (!mmu_live_stack_trace_enabled() || length == 0 ||
+	    address + length < address)
+		return;
+	thread_act_array_t threads = nullptr;
+	mach_msg_type_number_t thread_count = 0;
+	if (task_threads(mach_task_self(), &threads, &thread_count) !=
+	    KERN_SUCCESS)
+		return;
+	const auto first = host_slot_for(address);
+	const auto end = host_slot_for(address + length - 1) + host_page_size();
+	for (mach_msg_type_number_t index = 0; index < thread_count; ++index) {
+		arm_thread_state64_t state{};
+		mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
+		if (thread_get_state(threads[index], ARM_THREAD_STATE64,
+			reinterpret_cast<thread_state_t>(&state), &state_count) ==
+		    KERN_SUCCESS) {
+			const auto stack = static_cast<std::uintptr_t>(
+				__darwin_arm_thread_state64_get_sp(state));
+			const auto slot = host_slot_for(stack);
+			if (slot >= first && slot < end)
+				dprintf(STDERR_FILENO,
+					"Darwin native live-stack operation=%s "
+					"address=%#lx length=%#llx slot=%#lx sp=%#lx "
+					"thread=%#x frame=%p\n",
+					operation, static_cast<unsigned long>(address),
+					static_cast<unsigned long long>(length),
+					static_cast<unsigned long>(slot),
+					static_cast<unsigned long>(stack), threads[index],
+					__builtin_frame_address(0));
+		}
+		(void)mach_port_deallocate(mach_task_self(), threads[index]);
+	}
+	(void)vm_deallocate(mach_task_self(),
+		reinterpret_cast<vm_address_t>(threads),
+		static_cast<vm_size_t>(thread_count * sizeof(*threads)));
+}
+
+[[nodiscard]] std::uintptr_t mmu_trace_address() noexcept
+{
+	const auto *value = std::getenv("UML_MMU_TRACE_DYNAMIC_ADDRESS");
+	if (value == nullptr || value[0] == '\0')
+		value = std::getenv("UML_MMU_TRACE_ADDRESS");
+	if (value == nullptr || value[0] == '\0')
+		return 0;
+	char *end = nullptr;
+	const auto parsed = std::strtoull(value, &end, 0);
+	if (end == value || *end != '\0')
+		return 0;
+	return static_cast<std::uintptr_t>(parsed);
+}
+
+[[nodiscard]] std::uintptr_t mmu_trace_page() noexcept
+{
+	return mmu_trace_address() & ~(guest_page_size - 1);
+}
+
+[[nodiscard]] bool mmu_trace_target(std::uintptr_t page) noexcept
+{
+	const auto target = mmu_trace_page();
+	return mmu_trace_enabled() && target != 0 &&
+		host_slot_for(page) == host_slot_for(target);
+}
+
+[[nodiscard]] std::uint64_t mmu_trace_word(
+	const std::byte *page, std::size_t offset) noexcept
+{
+	/* The three trace sites historically bracketed one fixed diagnostic word.
+	 * Retarget that bracket to the exact address supplied for the current run
+	 * without duplicating address parsing across every log site. */
+	const auto address = mmu_trace_address();
+	const auto target_offset = address == 0 ? std::size_t{0x278} :
+		static_cast<std::size_t>(address & (guest_page_size - 1)) &
+			~(sizeof(std::uint64_t) - 1);
+	if (offset >= 0x270 && offset <= 0x280) {
+		const auto relative = static_cast<std::ptrdiff_t>(offset) - 0x278;
+		const auto adjusted = static_cast<std::ptrdiff_t>(target_offset) +
+			relative;
+		if (adjusted >= 0 &&
+		    adjusted + static_cast<std::ptrdiff_t>(sizeof(std::uint64_t)) <=
+			    static_cast<std::ptrdiff_t>(guest_page_size))
+			offset = static_cast<std::size_t>(adjusted);
+	}
+	std::uint64_t value{};
+	std::memcpy(&value, page + offset, sizeof(value));
+	return value;
+}
+
+void snapshot_shadow_page(std::uintptr_t page,
+	std::array<std::byte, guest_page_size> &snapshot) noexcept
+{
+	static_assert(guest_page_size % sizeof(std::uint64_t) == 0);
+	const auto *source = reinterpret_cast<const std::uint64_t *>(page);
+	for (std::size_t position = 0; position < guest_page_size;
+	     position += sizeof(std::uint64_t)) {
+		const auto value = __atomic_load_n(
+			source + position / sizeof(std::uint64_t), __ATOMIC_RELAXED);
+		std::memcpy(snapshot.data() + position, &value, sizeof(value));
+	}
+}
+
+void merge_shadow_page(std::uintptr_t page,
+	const std::array<std::byte, guest_page_size> &expected,
+	const std::array<std::byte, guest_page_size> &replacement,
+	const char *operation) noexcept
+{
+	static_assert(guest_page_size % sizeof(std::uint64_t) == 0);
+	auto *destination = reinterpret_cast<std::uint64_t *>(page);
+	for (std::size_t position = 0; position < guest_page_size;
+	     position += sizeof(std::uint64_t)) {
+		std::uint64_t expected_word{};
+		std::uint64_t replacement_word{};
+		std::memcpy(&expected_word, expected.data() + position,
+			sizeof(expected_word));
+		std::memcpy(&replacement_word, replacement.data() + position,
+			sizeof(replacement_word));
+		auto observed = __atomic_load_n(
+			destination + position / sizeof(std::uint64_t),
+			__ATOMIC_RELAXED);
+		bool conflict_logged = false;
+		for (;;) {
+			if (!conflict_logged && mmu_conflict_trace_enabled() &&
+			    observed != expected_word &&
+			    replacement_word != expected_word &&
+			    observed != replacement_word) {
+				dprintf(STDERR_FILENO,
+					"Darwin native word conflict operation=%s "
+					"page=%#lx offset=%#zx expected=%#llx "
+					"replacement=%#llx observed=%#llx\n",
+					operation, static_cast<unsigned long>(page),
+					position,
+					static_cast<unsigned long long>(expected_word),
+					static_cast<unsigned long long>(replacement_word),
+					static_cast<unsigned long long>(observed));
+				conflict_logged = true;
+			}
+			std::array<std::byte, sizeof(observed)> bytes{};
+			std::memcpy(bytes.data(), &observed, sizeof(observed));
+			for (std::size_t byte = 0; byte < bytes.size(); ++byte)
+				if (bytes[byte] == expected[position + byte])
+					bytes[byte] = replacement[position + byte];
+			std::uint64_t desired{};
+			std::memcpy(&desired, bytes.data(), sizeof(desired));
+			if (desired == observed || __atomic_compare_exchange_n(
+				destination + position / sizeof(observed), &observed,
+				desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+				break;
+		}
+	}
+}
 
 [[nodiscard]] std::uintptr_t slot_for(std::uintptr_t address) noexcept
 {
@@ -59,9 +239,63 @@ constexpr std::uintptr_t guest_page_size = 4096;
 	return protection & ~PROT_EXEC;
 }
 
+[[nodiscard]] int direct_data_protection(int protection) noexcept
+{
+	if ((protection & (PROT_WRITE | PROT_EXEC)) ==
+	    (PROT_WRITE | PROT_EXEC))
+		protection &= ~PROT_EXEC;
+	return protection;
+}
+
 int read_exact(int fd, std::uint64_t offset, std::byte *destination,
 	       std::size_t length)
 {
+	if (length == 0)
+		return 0;
+	if (is_anonymous_shared_backing(fd)) {
+		struct stat status {};
+		if (fstat(fd, &status) != 0)
+			return -1;
+		if (status.st_size <= 0 ||
+		    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX) {
+			errno = EINVAL;
+			return -1;
+		}
+		const auto backing_size = static_cast<std::size_t>(status.st_size);
+		if (offset > backing_size || length > backing_size - offset) {
+			errno = EINVAL;
+			return -1;
+		}
+		auto view = acquire_shared_backing_view(fd, 0, backing_size,
+			PROT_READ | PROT_WRITE);
+		if (!view)
+			return -1;
+		const auto *source = static_cast<const std::byte *>(view.data()) +
+			static_cast<std::size_t>(offset);
+		std::size_t completed = 0;
+		while (completed < length &&
+		       (reinterpret_cast<std::uintptr_t>(source + completed) &
+			(sizeof(std::uint64_t) - 1)) != 0) {
+			const auto value = __atomic_load_n(
+				reinterpret_cast<const unsigned char *>(source + completed),
+				__ATOMIC_RELAXED);
+			destination[completed++] = static_cast<std::byte>(value);
+		}
+		while (length - completed >= sizeof(std::uint64_t)) {
+			const auto value = __atomic_load_n(
+				reinterpret_cast<const std::uint64_t *>(source + completed),
+				__ATOMIC_RELAXED);
+			std::memcpy(destination + completed, &value, sizeof(value));
+			completed += sizeof(value);
+		}
+		while (completed < length) {
+			const auto value = __atomic_load_n(
+				reinterpret_cast<const unsigned char *>(source + completed),
+				__ATOMIC_RELAXED);
+			destination[completed++] = static_cast<std::byte>(value);
+		}
+		return 0;
+	}
 	std::size_t completed = 0;
 	while (completed < length) {
 		const auto result = pread(fd, destination + completed,
@@ -81,6 +315,55 @@ int read_exact(int fd, std::uint64_t offset, std::byte *destination,
 int write_exact(int fd, std::uint64_t offset, const std::byte *source,
 		std::size_t length)
 {
+	if (length == 0)
+		return 0;
+	if (is_anonymous_shared_backing(fd)) {
+		struct stat status {};
+		if (fstat(fd, &status) != 0)
+			return -1;
+		if (status.st_size <= 0 ||
+		    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX) {
+			errno = EINVAL;
+			return -1;
+		}
+		const auto backing_size = static_cast<std::size_t>(status.st_size);
+		if (offset > backing_size || length > backing_size - offset) {
+			errno = EINVAL;
+			return -1;
+		}
+		auto view = acquire_shared_backing_view(fd, 0, backing_size,
+			PROT_READ | PROT_WRITE);
+		if (!view)
+			return -1;
+		auto *destination = static_cast<std::byte *>(view.data()) +
+			static_cast<std::size_t>(offset);
+		std::size_t completed = 0;
+		while (completed < length &&
+		       (reinterpret_cast<std::uintptr_t>(destination + completed) &
+			(sizeof(std::uint64_t) - 1)) != 0) {
+			__atomic_store_n(
+				reinterpret_cast<unsigned char *>(destination + completed),
+				std::to_integer<unsigned char>(source[completed]),
+				__ATOMIC_RELAXED);
+			++completed;
+		}
+		while (length - completed >= sizeof(std::uint64_t)) {
+			std::uint64_t value{};
+			std::memcpy(&value, source + completed, sizeof(value));
+			__atomic_store_n(
+				reinterpret_cast<std::uint64_t *>(destination + completed),
+				value, __ATOMIC_RELAXED);
+			completed += sizeof(value);
+		}
+		while (completed < length) {
+			__atomic_store_n(
+				reinterpret_cast<unsigned char *>(destination + completed),
+				std::to_integer<unsigned char>(source[completed]),
+				__ATOMIC_RELAXED);
+			++completed;
+		}
+		return 0;
+	}
 	std::size_t completed = 0;
 	while (completed < length) {
 		const auto result = pwrite(fd, source + completed,
@@ -95,6 +378,13 @@ int write_exact(int fd, std::uint64_t offset, const std::byte *source,
 		completed += static_cast<std::size_t>(result);
 	}
 	return 0;
+}
+#endif
+
+#if DARWIN_UML_GUEST_PAGE_SIZE != 4096
+void mmu_trace_live_stacks(const char *, std::uintptr_t,
+	std::uint64_t) noexcept
+{
 }
 #endif
 
@@ -235,6 +525,7 @@ public:
 			throw;
 		}
 
+		mmu_trace_live_stacks("map-direct", address, length);
 		void *mapped = map_shared_backing(
 			reinterpret_cast<void *>(address), length, protection,
 			MAP_FIXED | MAP_SHARED, fd, offset);
@@ -275,6 +566,7 @@ public:
 			owners_.erase(slot);
 			throw;
 		}
+		mmu_trace_live_stacks("map-shadow", slot, host_page_size());
 		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
 			protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
 		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
@@ -301,6 +593,8 @@ public:
 		vm_address_t target = static_cast<vm_address_t>(slot);
 		vm_prot_t current = VM_PROT_NONE;
 		vm_prot_t maximum = VM_PROT_NONE;
+		mmu_trace_live_stacks(
+			"direct-to-shadow", slot, host_page_size());
 		const auto result = vm_remap(
 			mach_task_self(), &target, host_page_size(), 0,
 			VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
@@ -325,6 +619,8 @@ public:
 			errno = found == owners_.end() ? ENOMEM : EBUSY;
 			return -1;
 		}
+		mmu_trace_live_stacks(
+			"shadow-to-direct", slot, host_page_size());
 		void *mapped = map_shared_backing(
 			reinterpret_cast<void *>(slot), host_page_size(), protection,
 			MAP_FIXED | MAP_SHARED, fd, offset);
@@ -358,6 +654,7 @@ public:
 				return -1;
 			}
 		}
+		mmu_trace_live_stacks("protect-direct", address, length);
 		return mprotect(reinterpret_cast<void *>(address), length,
 			protection);
 	}
@@ -388,6 +685,7 @@ public:
 			do {
 				page += host_page_size();
 			} while (page < end && owners_.contains(page));
+			mmu_trace_live_stacks("unmap-direct", run, page - run);
 			if (munmap(reinterpret_cast<void *>(run), page - run) != 0)
 				return -1;
 			for (auto erased = run; erased < page;
@@ -542,6 +840,7 @@ public:
 			errno = EBUSY;
 			return -1;
 		}
+		mmu_trace_live_stacks("release-shadow", slot, host_page_size());
 		if (munmap(reinterpret_cast<void *>(slot), host_page_size()) != 0)
 			return -1;
 		owners_.erase(found);
@@ -971,6 +1270,14 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 	const auto direct = direct_mappings_.find(slot);
 	if (direct == direct_mappings_.end())
 		return 0;
+	if (mmu_trace_enabled())
+		dprintf(STDERR_FILENO,
+			"Darwin native direct-to-shadow slot=%#lx frame=%p "
+			"fd=%d offset=%#llx protection=%#x\n",
+			static_cast<unsigned long>(slot), __builtin_frame_address(0),
+			direct->second.fd,
+			static_cast<unsigned long long>(direct->second.offset),
+			direct->second.protection);
 	if (!direct_slots_.contains(slot) || materialized_slots_.contains(slot)) {
 		errno = EBUSY;
 		return -1;
@@ -1137,6 +1444,106 @@ int NativeAddressSpace::identify_backing(
 	return 0;
 }
 
+bool NativeAddressSpace::live_kernel_stack_slot_locked(
+	std::uintptr_t slot) const noexcept
+{
+	const auto contains = [slot](std::uintptr_t address) noexcept {
+		return address != 0 && slot >= address &&
+			slot - address < kernel_stack_size;
+	};
+	return std::ranges::any_of(active_kernel_stacks_,
+		[&](const auto &entry) noexcept {
+			return contains(entry.second.current) ||
+				(entry.second.transition &&
+				 contains(entry.second.staged));
+		});
+}
+
+int NativeAddressSpace::restore_inactive_stack_protections_locked(
+	std::uintptr_t address)
+{
+	if (address == 0)
+		return 0;
+	int saved_errno = 0;
+	for (auto slot = address; slot < address + kernel_stack_size;
+	     slot += host_page_size())
+		if (!live_kernel_stack_slot_locked(slot) &&
+		    update_slot_protection_locked(slot) < 0 && saved_errno == 0)
+			saved_errno = errno;
+	if (saved_errno == 0)
+		return 0;
+	errno = saved_errno;
+	return -1;
+}
+
+int NativeAddressSpace::stage_kernel_stack(std::uintptr_t address)
+{
+	if (address != 0 && (address & (kernel_stack_size - 1)) != 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	const auto carrier = current_carrier_id();
+	auto [found, inserted] = active_kernel_stacks_.try_emplace(carrier);
+	(void)inserted;
+	if (found->second.transition) {
+		errno = EBUSY;
+		return -1;
+	}
+	found->second.staged = address;
+	found->second.transition = true;
+	if (address == 0)
+		return 0;
+	for (auto slot = address; slot < address + kernel_stack_size;
+	     slot += host_page_size())
+		if (materialized_slots_.contains(slot) &&
+		    set_slot_protection_locked(
+			    slot, PROT_READ | PROT_WRITE) < 0) {
+			const int saved_errno = errno;
+			found->second.staged = 0;
+			found->second.transition = false;
+			(void)restore_inactive_stack_protections_locked(address);
+			if (found->second.current == 0)
+				active_kernel_stacks_.erase(found);
+			errno = saved_errno;
+			return -1;
+		}
+	return 0;
+}
+
+int NativeAddressSpace::finish_kernel_stack(std::uintptr_t address)
+{
+	if (address != 0 && (address & (kernel_stack_size - 1)) != 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	const auto carrier = current_carrier_id();
+	const auto found = active_kernel_stacks_.find(carrier);
+	if (found == active_kernel_stacks_.end() ||
+	    !found->second.transition || found->second.staged != address) {
+		errno = EINVAL;
+		return -1;
+	}
+	const auto previous = found->second.current;
+	found->second.current = address;
+	found->second.staged = 0;
+	found->second.transition = false;
+	const int result = previous == address ? 0 :
+		restore_inactive_stack_protections_locked(previous);
+	if (address == 0)
+		active_kernel_stacks_.erase(found);
+	return result;
+}
+
 int NativeAddressSpace::ensure_backing_index_locked()
 {
 	if (backing_index_ready_)
@@ -1169,6 +1576,8 @@ void NativeAddressSpace::erase_backing_index_entry_locked(
 
 int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 {
+	if (live_kernel_stack_slot_locked(slot_for(page)))
+		return 0;
 	auto found = mappings_.find(page);
 	if (found == mappings_.end() || !found->second.loaded)
 		return 0;
@@ -1181,13 +1590,15 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 	}
 	const int original_protection = protection->second;
 	/* An unyoung kernel PTE can leave dirty shadow bytes behind PROT_NONE.
-	 * Publishing those bytes must not recursively fault in the host. Add only
-	 * the read permission needed by this copy and restore the exact tracked
-	 * protection on both success and failure; never add write or execute here.
-	 */
-	const bool lifted = (original_protection & PROT_READ) == 0;
+	 * Publishing those bytes must not recursively fault in the host. The final
+	 * compare/exchange also needs write access to reconcile shared changes, so
+	 * temporarily add both data permissions and restore the exact tracked
+	 * protection on every path; never add execute here. */
+	const int synchronization_protection = original_protection |
+		PROT_READ | PROT_WRITE;
+	const bool lifted = synchronization_protection != original_protection;
 	if (lifted && mprotect(reinterpret_cast<void *>(slot), host_page_size(),
-		original_protection | PROT_READ) != 0)
+		synchronization_protection) != 0)
 		return -1;
 	const auto finish = [&](int result) noexcept {
 		const int saved_errno = errno;
@@ -1198,41 +1609,121 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 			errno = saved_errno;
 		return result;
 	};
+	std::array<std::byte, guest_page_size> shadow{};
+	snapshot_shadow_page(page, shadow);
 	std::array<std::byte, guest_page_size> backing{};
-	const auto *current = reinterpret_cast<const std::byte *>(page);
-	if (std::memcmp(current, found->second.original.data(),
-		guest_page_size) == 0)
+	const bool trace = mmu_trace_target(page);
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target flush begin page=%#lx fd=%d "
+			"offset=%#llx loaded=%d current=%#llx/%#llx/%#llx "
+			"original=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page), found->second.fd,
+			static_cast<unsigned long long>(found->second.offset),
+			found->second.loaded,
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x280)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x280)));
+	if (shadow == found->second.original) {
+		if (trace)
+			dprintf(STDERR_FILENO,
+				"Darwin native target flush clean page=%#lx\n",
+				static_cast<unsigned long>(page));
 		return finish(0);
+	}
+	mmu_trace_live_stacks("flush-shadow-page", page, guest_page_size);
 	if (read_exact(found->second.fd, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return finish(-1);
 	const bool backing_changed = backing != found->second.original;
+	if (mmu_conflict_trace_enabled())
+		for (std::size_t word_offset = 0; word_offset < guest_page_size;
+		     word_offset += sizeof(std::uint64_t)) {
+			std::uint64_t shadow_word{};
+			std::uint64_t backing_word{};
+			std::uint64_t original_word{};
+			std::memcpy(&shadow_word, shadow.data() + word_offset,
+				sizeof(shadow_word));
+			std::memcpy(&backing_word, backing.data() + word_offset,
+				sizeof(backing_word));
+			std::memcpy(&original_word,
+				found->second.original.data() + word_offset,
+				sizeof(original_word));
+			if (shadow_word == original_word ||
+			    backing_word == original_word ||
+			    shadow_word == backing_word)
+				continue;
+			dprintf(STDERR_FILENO,
+				"Darwin native word conflict operation=flush-sources "
+				"page=%#lx offset=%#zx original=%#llx "
+				"shadow=%#llx backing=%#llx fd=%d file-offset=%#llx\n",
+				static_cast<unsigned long>(page), word_offset,
+				static_cast<unsigned long long>(original_word),
+				static_cast<unsigned long long>(shadow_word),
+				static_cast<unsigned long long>(backing_word),
+				found->second.fd,
+				static_cast<unsigned long long>(found->second.offset));
+		}
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target flush backing page=%#lx changed=%d "
+			"backing=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page), backing_changed,
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x280)));
 	/* Merge disjoint native-shadow and shared-backing writes byte-for-byte.
 	 * A whole-page pwrite would lose a sibling CPU's update to an unrelated
 	 * byte.  If both sides changed the same byte, the already-shared value is
 	 * authoritative because another translated task can have observed it. */
 	std::size_t position = 0;
 	while (position < guest_page_size) {
-		if (current[position] == found->second.original[position] ||
+		if (shadow[position] == found->second.original[position] ||
 		    backing[position] != found->second.original[position]) {
 			++position;
 			continue;
 		}
 		const auto first = position;
 		do {
-			backing[position] = current[position];
+			backing[position] = shadow[position];
 			++position;
 		} while (position < guest_page_size &&
-			 current[position] != found->second.original[position] &&
+			 shadow[position] != found->second.original[position] &&
 			 backing[position] == found->second.original[position]);
 		if (write_exact(found->second.fd, found->second.offset + first,
-			current + first, position - first) < 0)
+			backing.data() + first, position - first) < 0)
 			return finish(-1);
 	}
+	/* The page can remain live on another native carrier throughout this
+	 * publication. Replace only bytes that still match the stable snapshot;
+	 * a newer native write wins the compare/exchange and remains dirty against
+	 * the newly published baseline. */
+	merge_shadow_page(page, shadow, backing, "flush-live");
 	found->second.original = backing;
-	/* A later reconcile reloads shared bytes that changed independently while
-	 * retaining every disjoint native write merged above. */
-	found->second.loaded = !backing_changed;
+	found->second.loaded = true;
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target flush end page=%#lx loaded=%d "
+			"original=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page), found->second.loaded,
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x280)));
 	return finish(0);
 }
 
@@ -1249,19 +1740,54 @@ int NativeAddressSpace::flush_slot_locked(std::uintptr_t slot)
 
 int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
 {
+	if (live_kernel_stack_slot_locked(slot_for(page)))
+		return 0;
 	auto found = mappings_.find(page);
 	if (found == mappings_.end())
 		return 0;
+	const bool trace = mmu_trace_target(page);
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target reconcile begin page=%#lx fd=%d "
+			"offset=%#llx loaded=%d current=%#llx/%#llx/%#llx "
+			"original=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page), found->second.fd,
+			static_cast<unsigned long long>(found->second.offset),
+			found->second.loaded,
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x270)),
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x278)),
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x280)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x280)));
 	if (!found->second.loaded)
 		return load_page_locked(page);
 	std::array<std::byte, guest_page_size> backing{};
 	if (read_exact(found->second.fd, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return -1;
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target reconcile backing page=%#lx "
+			"backing=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page),
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(backing.data(), 0x280)));
 	if (backing == found->second.original)
 		return 0;
-	const auto *current = reinterpret_cast<const std::byte *>(page);
-	if (std::memcmp(current, found->second.original.data(), guest_page_size) != 0) {
+	std::array<std::byte, guest_page_size> shadow{};
+	snapshot_shadow_page(page, shadow);
+	if (shadow != found->second.original) {
 		if (flush_page_locked(page) < 0)
 			return -1;
 		if (found->second.loaded)
@@ -1272,15 +1798,91 @@ int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
 
 int NativeAddressSpace::load_page_locked(std::uintptr_t page)
 {
+	if (live_kernel_stack_slot_locked(slot_for(page)))
+		return 0;
 	auto found = mappings_.find(page);
 
 	if (found == mappings_.end())
 		return 0;
+	std::array<std::byte, guest_page_size> shadow{};
+	snapshot_shadow_page(page, shadow);
+	if (mmu_trace_enabled()) {
+		const auto frame = reinterpret_cast<std::uintptr_t>(
+			__builtin_frame_address(0));
+		if (slot_for(page) == slot_for(frame))
+			dprintf(STDERR_FILENO,
+				"Darwin native load-active page=%#lx frame=%#lx "
+				"fd=%d offset=%#llx\n",
+				static_cast<unsigned long>(page),
+				static_cast<unsigned long>(frame), found->second.fd,
+				static_cast<unsigned long long>(found->second.offset));
+	}
+	const bool trace = mmu_trace_target(page);
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target load begin page=%#lx fd=%d "
+			"offset=%#llx loaded=%d current=%#llx/%#llx/%#llx "
+			"original=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page), found->second.fd,
+			static_cast<unsigned long long>(found->second.offset),
+			found->second.loaded,
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(shadow.data(), 0x280)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x270)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x278)),
+			static_cast<unsigned long long>(
+				mmu_trace_word(found->second.original.data(), 0x280)));
+	mmu_trace_live_stacks("load-shadow-page", page, guest_page_size);
+	std::array<std::byte, guest_page_size> backing{};
 	if (read_exact(found->second.fd, found->second.offset,
-		reinterpret_cast<std::byte *>(page), guest_page_size) < 0)
+		backing.data(), backing.size()) < 0)
 		return -1;
-	std::copy_n(reinterpret_cast<const std::byte *>(page), guest_page_size,
-		found->second.original.begin());
+	/* A new mapping replaces the quarter captured above. For an established
+	 * mapping, retain bytes changed from its published baseline while the
+	 * backing read was in flight. */
+	const auto &expected = found->second.loaded ?
+		found->second.original : shadow;
+	merge_shadow_page(page, expected, backing, "load");
+	found->second.original = backing;
+	found->second.loaded = true;
+	if (trace)
+		dprintf(STDERR_FILENO,
+			"Darwin native target load end page=%#lx current=%#llx/%#llx/%#llx\n",
+			static_cast<unsigned long>(page),
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x270)),
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x278)),
+			static_cast<unsigned long long>(mmu_trace_word(
+				reinterpret_cast<const std::byte *>(page), 0x280)));
+	return 0;
+}
+
+int NativeAddressSpace::reload_page_from_backing_locked(std::uintptr_t page)
+{
+	if (live_kernel_stack_slot_locked(slot_for(page)))
+		return 0;
+	auto found = mappings_.find(page);
+	if (found == mappings_.end())
+		return 0;
+	std::array<std::byte, guest_page_size> shadow{};
+	snapshot_shadow_page(page, shadow);
+	std::array<std::byte, guest_page_size> backing{};
+	if (read_exact(found->second.fd, found->second.offset,
+		backing.data(), backing.size()) < 0)
+		return -1;
+	/* Translated x86 userspace writes the shared physical backing directly.
+	 * Its kernel-side physical alias is only a cache for uaccess, so discard
+	 * changes which predate this snapshot instead of publishing them over the
+	 * userspace bytes. Preserve native writes which race the backing read. */
+	merge_shadow_page(page, shadow, backing, "reload-from-backing");
+	found->second.original = backing;
 	found->second.loaded = true;
 	return 0;
 }
@@ -1330,6 +1932,8 @@ int NativeAddressSpace::materialize_slot_locked(std::uintptr_t slot)
 int NativeAddressSpace::set_slot_protection_locked(
 	std::uintptr_t slot, int protection)
 {
+	if (live_kernel_stack_slot_locked(slot))
+		protection = PROT_READ | PROT_WRITE;
 	/* This is the sole protection transition for every tracked host slot.
 	 * Refuse W+X even if a future caller bypasses the normal RX/RW selection.
 	 */
@@ -1345,6 +1949,7 @@ int NativeAddressSpace::set_slot_protection_locked(
 	}
 	if (current->second == protection)
 		return 0;
+	mmu_trace_live_stacks("protect-shadow", slot, host_page_size());
 	if (mprotect(reinterpret_cast<void *>(slot), host_page_size(),
 		     protection) != 0)
 		return -1;
@@ -1387,7 +1992,18 @@ int NativeAddressSpace::update_slot_protection_locked(std::uintptr_t slot)
 	/* Darwin applies VM permissions to the complete host slot.  Every tracked
 	 * mapping was made data-only above, so this transition can never add
 	 * execute permission or become an iOS-incompatible RW-to-RX publication.
+	 *
+	 * Never publish a write-only slot.  vmalloc hands out 4 KiB pages, so a
+	 * quarter this space does not track shares the transition, and a UML
+	 * kernel stack a carrier is executing on is the common case: withdrawing
+	 * read access faults that carrier on its own frame, which manifests far
+	 * away as a corrupted pointer or a wild branch.  Guest read permission is
+	 * enforced by translate() rather than by these host protections, so a
+	 * readable slot costs the guest nothing, and flush_page_locked() needs the
+	 * quarter readable to publish it anyway.
 	 */
+	if (protection != PROT_NONE)
+		protection |= PROT_READ;
 	return set_slot_protection_locked(slot, protection);
 }
 
@@ -1412,6 +2028,86 @@ int NativeAddressSpace::map(
 		errno = ESHUTDOWN;
 		return -1;
 	}
+	const auto traced_page = mmu_trace_page();
+	const bool trace = mmu_trace_enabled() && traced_page >= address &&
+		traced_page - address < length;
+	if (trace) {
+		const auto existing = mappings_.find(traced_page);
+		dprintf(STDERR_FILENO,
+			"Darwin native target map request page=%#lx address=%#lx "
+			"length=%#llx fd=%d offset=%#llx page-offset=%#llx "
+			"protection=%#x existing=%d direct=%d\n",
+			static_cast<unsigned long>(traced_page),
+			static_cast<unsigned long>(address),
+			static_cast<unsigned long long>(length), fd,
+			static_cast<unsigned long long>(offset),
+			static_cast<unsigned long long>(
+				offset + traced_page - address), protection,
+			existing != mappings_.end(),
+			direct_mappings_.contains(slot_for(traced_page)));
+	}
+	/* Linux can repeat one 4 KiB PTE from an already-published, contiguous
+	 * 16 KiB native alias. Keep that mapping shared when the backing page and
+	 * permissions are unchanged. Converting the complete Darwin slot would be
+	 * both unnecessary and unsafe when a sibling quarter carries this call's
+	 * live kernel stack. */
+	const int required_protection = direct_data_protection(protection);
+	for (std::uint64_t position = 0; position < length;
+	     position += guest_page_size) {
+		const auto page = address + position;
+		if (!live_kernel_stack_slot_locked(slot_for(page)))
+			continue;
+		const auto direct = direct_mappings_.find(slot_for(page));
+		const auto existing = mappings_.find(page);
+		bool same_direct = false;
+		if (direct != direct_mappings_.end()) {
+			BackingIdentity direct_identity{};
+			same_direct =
+				identify_backing(direct->second.fd, direct_identity) == 0 &&
+				direct_identity == identity &&
+				direct->second.offset + (page - slot_for(page)) ==
+					offset + position &&
+				direct_data_protection(direct->second.protection) ==
+					required_protection;
+		}
+		const bool same_shadow = existing != mappings_.end() &&
+			existing->second.identity == identity &&
+			existing->second.offset == offset + position;
+		if (!same_shadow && !same_direct) {
+			errno = EBUSY;
+			return -1;
+		}
+	}
+	bool compatible_direct = true;
+	for (std::uint64_t position = 0; position < length;
+	     position += guest_page_size) {
+		const auto page = address + position;
+		const auto direct = direct_mappings_.find(slot_for(page));
+		if (direct == direct_mappings_.end()) {
+			compatible_direct = false;
+			break;
+		}
+		BackingIdentity direct_identity{};
+		if (identify_backing(direct->second.fd, direct_identity) < 0 ||
+		    direct_identity != identity ||
+		    direct->second.offset + (page - slot_for(page)) !=
+			offset + position ||
+		    direct_data_protection(direct->second.protection) !=
+			required_protection) {
+			compatible_direct = false;
+			break;
+		}
+	}
+	if (compatible_direct)
+		return 0;
+	const auto active_stack_slot = slot_for(reinterpret_cast<std::uintptr_t>(
+		__builtin_frame_address(0)));
+	for (auto slot = slot_for(address); slot < address + length;
+	     slot += host_page_size())
+		if (slot == active_stack_slot && direct_mappings_.contains(slot)) {
+			errno = EBUSY;
+			return -1;
+		}
 	DirectTransitionGuard transitions{*this,
 		static_cast<std::size_t>(
 			(slot_for(address + length - 1) - slot_for(address)) /
@@ -1559,17 +2255,25 @@ int NativeAddressSpace::map(
 			const bool same_backing = existing != mappings_.end() &&
 				existing->second.identity == identity &&
 				existing->second.offset == page_offset;
-			if (existing != mappings_.end() && existing->second.loaded &&
-			    same_backing &&
-			    existing->second.protection == protection) {
-				existing->second.fd = fd;
-				continue;
-			}
 			if (same_backing) {
 				existing->second.fd = fd;
 				existing->second.protection = protection;
-				if (existing->second.loaded)
+				/* A physical page can be freed, zeroed through its shared
+				 * alias, and then installed at the same virtual address with
+				 * the same backing offset. Its effective PTE protection can
+				 * either remain unchanged or be republished with new access
+				 * bits. In both cases the private 4 KiB shadow and baseline
+				 * can still describe the previous object. Compare backing
+				 * before treating an already-loaded remap as a no-op;
+				 * reconcile_page_locked() preserves unflushed native writes
+				 * when the backing itself has not changed. */
+				if (existing->second.loaded) {
+					if (reconcile_page_locked(page) < 0) {
+						rollback();
+						return -1;
+					}
 					continue;
+				}
 			} else {
 				if (existing != mappings_.end() &&
 				    flush_page_locked(page) < 0) {
@@ -1611,6 +2315,63 @@ int NativeAddressSpace::map(
 					page.mapping->offset}, page.page);
 		}
 	transitions.commit();
+	if (trace) {
+		const auto mapped = mappings_.find(traced_page);
+		if (mapped != mappings_.end()) {
+			dprintf(STDERR_FILENO,
+				"Darwin native target map end page=%#lx fd=%d "
+				"offset=%#llx loaded=%d current=%#llx/%#llx/%#llx\n",
+				static_cast<unsigned long>(traced_page),
+				mapped->second.fd,
+				static_cast<unsigned long long>(mapped->second.offset),
+				mapped->second.loaded,
+				static_cast<unsigned long long>(mmu_trace_word(
+					reinterpret_cast<const std::byte *>(traced_page),
+					0x270)),
+				static_cast<unsigned long long>(mmu_trace_word(
+					reinterpret_cast<const std::byte *>(traced_page),
+					0x278)),
+				static_cast<unsigned long long>(mmu_trace_word(
+					reinterpret_cast<const std::byte *>(traced_page),
+					0x280)));
+			std::size_t aliases = 0;
+			for (const auto &[alias_page, alias] : mappings_)
+				if (alias.identity == mapped->second.identity &&
+				    alias.offset == mapped->second.offset) {
+					++aliases;
+					dprintf(STDERR_FILENO,
+						"Darwin native target shadow alias page=%#lx "
+						"loaded=%d protection=%#x\n",
+						static_cast<unsigned long>(alias_page),
+						alias.loaded, alias.protection);
+				}
+			std::size_t direct_aliases = 0;
+			for (const auto &[alias_slot, alias] : direct_mappings_) {
+				BackingIdentity alias_identity{};
+				if (alias.fd != mapped->second.fd ||
+				    mapped->second.offset < alias.offset ||
+				    mapped->second.offset - alias.offset >= host_page_size() ||
+				    identify_backing(alias.fd, alias_identity) < 0 ||
+				    alias_identity != mapped->second.identity)
+					continue;
+				++direct_aliases;
+				dprintf(STDERR_FILENO,
+					"Darwin native target direct alias slot=%#lx "
+					"address=%#lx offset=%#llx protection=%#x\n",
+					static_cast<unsigned long>(alias_slot),
+					static_cast<unsigned long>(alias_slot +
+						(mapped->second.offset - alias.offset)),
+					static_cast<unsigned long long>(alias.offset),
+					alias.protection);
+			}
+			dprintf(STDERR_FILENO,
+				"Darwin native target aliases shadow=%zu direct=%zu\n",
+				aliases, direct_aliases);
+		}
+	}
+	if (std::getenv("UML_MMU_WATCH") != nullptr &&
+	    traced_page >= address && traced_page - address < length)
+		__builtin_debugtrap();
 	return 0;
 }
 
@@ -1633,6 +2394,22 @@ int NativeAddressSpace::publish_backing(
 		errno = ESHUTDOWN;
 		return -1;
 	}
+	const auto active_frame = reinterpret_cast<std::uintptr_t>(
+		__builtin_frame_address(0));
+	const auto active_page = active_frame & ~(guest_page_size - 1);
+	const auto active_mapping = mappings_.find(active_page);
+	if (mmu_trace_enabled() && active_mapping != mappings_.end() &&
+	    active_mapping->second.identity == identity &&
+	    active_mapping->second.offset >= offset &&
+	    active_mapping->second.offset - offset < length)
+		dprintf(STDERR_FILENO,
+			"Darwin native publish-active frame=%#lx page=%#lx "
+			"backing-offset=%#llx request-offset=%#llx length=%#llx\n",
+			static_cast<unsigned long>(active_frame),
+			static_cast<unsigned long>(active_page),
+			static_cast<unsigned long long>(active_mapping->second.offset),
+			static_cast<unsigned long long>(offset),
+			static_cast<unsigned long long>(length));
 	/* Keep every potentially throwing bookkeeping operation ahead of the first
 	 * write to shared backing.  A failed software-map publication can therefore
 	 * be retried without a half-built index or partially visible mapping. */
@@ -1811,6 +2588,12 @@ int NativeAddressSpace::unmap(
 		errno = ESHUTDOWN;
 		return -1;
 	}
+	for (auto slot = slot_for(address); slot < address + length;
+	     slot += host_page_size())
+		if (live_kernel_stack_slot_locked(slot)) {
+			errno = EBUSY;
+			return -1;
+		}
 	DirectTransitionGuard transitions{*this,
 		static_cast<std::size_t>(
 			(slot_for(address + length - 1) - slot_for(address)) /
@@ -1917,6 +2700,44 @@ int NativeAddressSpace::refresh(
 	return 0;
 }
 
+int NativeAddressSpace::reload_from_backing(
+	std::uintptr_t address, std::uint64_t length)
+{
+	if (length == 0)
+		return 0;
+	if (address + length < address) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	std::vector<std::uintptr_t> pages;
+	std::vector<std::uintptr_t> slots;
+	const auto first = address & ~(guest_page_size - 1);
+	const auto end = address + length;
+	for (auto page = first; page < end; page += guest_page_size) {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_operation);
+		if (!mappings_.contains(page))
+			continue;
+		pages.push_back(page);
+		const auto slot = slot_for(page);
+		if (std::ranges::find(slots, slot) == slots.end())
+			slots.push_back(slot);
+	}
+	for (const auto page : pages)
+		if (materialize_slot_locked(slot_for(page)) < 0 ||
+		    reload_page_from_backing_locked(page) < 0)
+			return -1;
+	for (const auto slot : slots)
+		if (update_slot_protection_locked(slot) < 0)
+			return -1;
+	return 0;
+}
+
 int NativeAddressSpace::retry(
 	std::uintptr_t address, bool execute, bool write)
 {
@@ -1977,6 +2798,7 @@ void NativeAddressSpace::retire() noexcept
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	active_kernel_stacks_.clear();
 	for (const auto slot : materialized_slots_)
 		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
 			PROT_READ | PROT_WRITE);

@@ -287,6 +287,7 @@
 	orr x9, x9, #2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	.if (\opcode & 1) == 0
 	add x9, _cpu, #UML_X86_64_CPU_VECTORS
 	movi v4.16b, #0

@@ -185,17 +185,17 @@ EmulatorOptions prepare_emulator_options(
 	bool default_user_network)
 {
 	EmulatorOptions prepared;
-	/* Policy can append at most eight kernel arguments. Keep the final argc
+	/* Policy can append at most ten kernel arguments. Keep the final argc
 	 * representable by the fixed-width kernel entry ABI before allocating or
 	 * inspecting a caller-supplied vector. */
-	constexpr int maximum_appended_arguments = 8;
+	constexpr int maximum_appended_arguments = 10;
 	if (argc < 0 ||
 	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
 	    (argc != 0 && argv == nullptr)) {
 		prepared.valid = false;
 		return prepared;
 	}
-	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 8U);
+	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 10U);
 	for (int index = 0; index < argc; ++index) {
 		if (argv[index] == nullptr) {
 			prepared.valid = false;
@@ -300,6 +300,13 @@ EmulatorOptions prepare_emulator_options(
 	if (default_user_network && !rootfs.empty() &&
 	    !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	/* The compatibility slice does not support object-cgroup charging of
+	 * kernel allocations. Keep ordinary userspace memory accounting enabled,
+	 * and let an explicit kernel command-line policy take precedence. */
+	if (!has_prefix(prepared.arguments, "cgroup.memory="))
+		prepared.arguments.emplace_back("cgroup.memory=nokmem");
+#endif
 	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
 	prepared.guest_memory_bytes =
 		configured_guest_memory_bytes(prepared.arguments);

@@ -138,7 +138,25 @@ public:
 	}
 
 private:
-	using Page = std::array<std::byte, page_size>;
+	struct alignas(page_size) Page final {
+		[[nodiscard]] std::byte *data() noexcept { return bytes.data(); }
+		[[nodiscard]] const std::byte *data() const noexcept
+		{
+			return bytes.data();
+		}
+		[[nodiscard]] std::byte &operator[](std::size_t index) noexcept
+		{
+			return bytes[index];
+		}
+		[[nodiscard]] const std::byte &operator[](
+			std::size_t index) const noexcept
+		{
+			return bytes[index];
+		}
+		void fill(std::byte value) noexcept { bytes.fill(value); }
+
+		std::array<std::byte, page_size> bytes{};
+	};
 
 	[[nodiscard]] bool mapped(std::uint64_t address,
 		std::size_t size) const noexcept
@@ -209,6 +227,8 @@ struct Configuration final {
 	std::vector<Region> memory_regions;
 	std::vector<RegisterExpectation> registers;
 	std::vector<MemoryData> memory_data;
+	uml::cpu::x86_64::ExecutionMode mode{
+		uml::cpu::x86_64::ExecutionMode::long64};
 	bool x87_reduced_precision{};
 };
 
@@ -272,10 +292,13 @@ struct Configuration final {
 		error = "configuration header fields are truncated";
 		return false;
 	}
-	if (mode != 1) {
-		error = "configuration is not a 64-bit FEX test";
+	if (mode > 1) {
+		error = "configuration has an unsupported FEX execution mode";
 		return false;
 	}
+	configuration.mode = mode == 0 ?
+		uml::cpu::x86_64::ExecutionMode::compat32 :
+		uml::cpu::x86_64::ExecutionMode::long64;
 
 	auto cursor = static_cast<std::size_t>(region_offset);
 	for (std::uint32_t index = 0; index < region_count; ++index) {
@@ -514,6 +537,7 @@ void print_result(std::string_view status, std::size_t retired,
 	case uml::cpu::EngineEvent::floating_point_trap:
 		return "floating_point_trap";
 	case uml::cpu::EngineEvent::pc_alignment: return "pc_alignment";
+	case uml::cpu::EngineEvent::overflow: return "overflow";
 	}
 	return "unknown";
 }
@@ -575,6 +599,12 @@ int main(int argc, char **argv)
 	executor.prepare(memory);
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
+	cpu.execution_mode = configuration.mode;
+	if (configuration.mode ==
+		uml::cpu::x86_64::ExecutionMode::compat32) {
+		cpu.segment_selectors[1] = 0x23;
+		cpu.segment_selectors[2] = 0x2b;
+	}
 	cpu.x87_reduced_precision = configuration.x87_reduced_precision;
 	std::size_t retired{};
 	while (retired < instruction_limit) {
@@ -588,7 +618,8 @@ int main(int argc, char **argv)
 			return passed ? 0 : 1;
 		}
 
-		const auto built = uml::cpu::x86_64::gadgets::build(memory, cpu.rip);
+		const auto built = uml::cpu::x86_64::gadgets::build(
+			memory, cpu.rip, cpu.execution_mode);
 		if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built) {
 			std::string_view status = "illegal_instruction";
 			std::string_view detail = "decoder rejected opcode";
@@ -628,6 +659,23 @@ int main(int argc, char **argv)
 				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 265U &&
 			static_cast<std::uint32_t>(
 				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
+			continue;
+		}
+		/* FEX's inline-syscall decoder regression issues getrandom(2) with a
+		 * zero-length buffer. It needs only the architecturally successful
+		 * boundary; Linux syscall emulation remains outside this adapter.
+		 */
+		if (result.event == uml::cpu::EngineEvent::system_call &&
+			cpu.system_call_32bit &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 355U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rcx)) == 0U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rdx)) == 0U) {
 			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
 			continue;
 		}

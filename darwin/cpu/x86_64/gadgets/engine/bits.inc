@@ -61,8 +61,12 @@ gadget \operation\()_\width\()_r\form
 	retire_and_next
 .endm
 
-.macro bit_memory operation, width, load, store, host_register, form
+.macro bit_memory operation, width, load, store, host_register, form, locked
+	.if \locked
+gadget \operation\()_\width\()_m\form\()_locked
+	.else
 gadget \operation\()_\width\()_m\form
+	.endif
 	effective_address
 	.ifc \form,i
 	ldr x26, [_stream], #8
@@ -90,6 +94,18 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	.endif
 	mov x25, x7
+	.if \locked
+	locked_aligned \width, .Lx86_bit_split\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+1:
+	load_exclusive \width, 24, x7
+	bit_compute \operation, \width, \host_register
+	store_exclusive \width, 9, 27, x7
+	cbnz w9, 1b
+	bit_update_carry
+	finish_store (\width / 8)
+.Lx86_bit_split\@:
+	.endif
 	add x9, x7, #(\width / 8 - 1)
 	eor x9, x9, x7
 	tbnz x9, #12, .Lx86_bit_read_cross\@
@@ -132,8 +148,12 @@ gadget \operation\()_\width\()_m\form
 .macro bit_width operation, width, load, store, host_register, store_register
 	bit_register \operation, \width, \load, \store, \host_register, \store_register, r
 	bit_register \operation, \width, \load, \store, \host_register, \store_register, i
-	bit_memory \operation, \width, \load, \store, \host_register, r
-	bit_memory \operation, \width, \load, \store, \host_register, i
+	bit_memory \operation, \width, \load, \store, \host_register, r, 0
+	bit_memory \operation, \width, \load, \store, \host_register, i, 0
+	.ifnc \operation,bt
+	bit_memory \operation, \width, \load, \store, \host_register, r, 1
+	bit_memory \operation, \width, \load, \store, \host_register, i, 1
+	.endif
 .endm
 
 .macro bit_family operation

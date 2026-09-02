@@ -33,6 +33,11 @@ struct darwin_uml_static_sequences {
 	uint64_t execution_interrupt;
 };
 
+struct darwin_uml_static_code_page_stamp {
+	uint64_t identity;
+	uint64_t version;
+};
+
 int darwin_uml_static_vm_map(void *address, int fd,
 			     unsigned long long offset, unsigned long length,
 			     int protection, int guest_code,
@@ -76,6 +81,15 @@ int darwin_uml_static_vm_translate(unsigned long generation,
 				   unsigned long address,
 				   enum darwin_uml_static_access access,
 				   void **host_address);
+/* Returns an opaque, mapping-lifetime handle for an executable physical page.
+ * Callers may retain it only while their cached mapping sequence is current.
+ */
+int darwin_uml_static_vm_code_page(
+	unsigned long generation, unsigned long address, void **handle,
+	struct darwin_uml_static_code_page_stamp *stamp);
+int darwin_uml_static_vm_code_page_stamp(
+	const void *handle, struct darwin_uml_static_code_page_stamp *stamp);
+void darwin_uml_static_vm_invalidate_code_page(void *handle);
 /* Allocation tags are attached to the shared physical backing rather than a
  * virtual mapping, so aliases in one or more generations observe one tag.
  * Return values use enum darwin_uml_static_translation_result. */

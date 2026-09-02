@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 path	topic_orders	rationale
-arch/arm64/um/Kconfig	0001,0002	The dedicated slice selects its fixed x86-64 ABI in topic 0001, while topic 0002 enables i386 compat tasks within that x86-family product.
-arch/arm64/um/Makefile	0001,0002	Topic 0001 builds the x86-64 syscall adapter, and topic 0002 adds the isolated sparse i386 syscall table.
+arch/arm64/um/Kconfig	0001,0002	The dedicated slice selects its fixed x86-64 ABI in topic 0001, while topic 0002 enables i386 tasks, complete syscall dispatch, and syscall-user-dispatch.
+arch/arm64/um/Makefile	0001,0002	Topic 0001 builds the x86-64 adapter, while topic 0002 adds i386 task support and both generated syscall tables.
 arch/arm64/um/asm/elf.h	0001,0002	Topic 0001 owns the fixed x86-64 ELF identity, while topic 0002 adds the ELF32 task mode without admitting arm64 userspace.
-arch/arm64/um/asm/syscall.h	0001,0002	Topic 0001 declares x86-64 syscall translation, while topic 0002 declares i386 audit identity and sparse dispatch.
+arch/arm64/um/asm/ptrace.h	0001,0002	Topic 0001 defines the fixed x86 register bridge, while topic 0002 selects the ABI-correct restart syscall number for i386 and x86-64 tasks.
+arch/arm64/um/asm/syscall.h	0001,0002	Topic 0001 declares x86-64 syscall translation, while topic 0002 adds i386 audit identity, generated dispatch tables, and the syscall-user-dispatch sigreturn hook.
+arch/arm64/um/asm/user.h	0001,0002	Topic 0001 defines the x86-64 ptrace layout, while topic 0002 adds the matching i386 register layout.
 arch/arm64/um/mmap.c	0001,0002	Topic 0001 implements x86-64 mapping flags, while topic 0002 constrains compat mappings to the i386 address ceiling.
+arch/arm64/um/ptrace.c	0001,0002	Topic 0001 exposes x86-64 regsets, while topic 0002 adds the i386 general-register view.
 arch/arm64/um/shared/sysdep/ptrace.h	0001,0002	Topic 0001 defines x86 register and int80 state, while topic 0002 adds the persistent compat-task bridge marker.
-arch/um/kernel/skas/syscall.c	0001,0002	Topic 0001 dispatches the fixed x86-64 ABI, while topic 0002 separates true i386 int80 calls from long-mode compatibility.
+arch/arm64/um/signal.c	0001,0002	Topic 0001 implements the x86-64 signal ABI, while topic 0002 adds i386 frames, floating-point state, and signal-return paths.
+arch/arm64/um/tls.c	0001,0002	Topic 0001 owns x86-64 TLS state, while topic 0002 applies the i386 task-mode defaults needed by set_thread_area.
+arch/arm64/um/x86_64_syscalls.c	0001,0002	Topic 0001 implements x86-64 syscall translation, while topic 0002 replaces its provisional number map with generated dispatch and retains ABI-specific adapters.
+arch/um/kernel/skas/syscall.c	0001,0002	Topic 0001 dispatches the fixed x86-64 ABI, while topic 0002 separates true i386 int80 calls and applies syscall-user-dispatch before both complete generated tables.
 arch/um/os-Darwin/skas/process.c	0001,0002	Topic 0001 transports fixed x86 task state, while topic 0002 publishes the persistent compat decoding mode to the host bridge.

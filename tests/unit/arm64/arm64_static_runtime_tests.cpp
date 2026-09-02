@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "memory/mmu/execution_gate.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_host.h"
@@ -159,6 +160,123 @@ static void uml_static_x86_64_entry_bridge()
 	require(registers.x[2] == 5); // rdx
 	require(registers.pc == base + 24);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+static void uml_static_x86_compat32_entry_bridge()
+{
+	constexpr unsigned long generation = 134;
+	constexpr std::uint64_t base = 0x2'4000;
+	constexpr std::uint64_t stack = base + 0x800;
+	constexpr std::uint64_t compat32_execution = std::uint64_t{1} << 33;
+	constexpr std::uint64_t compatibility_syscall = std::uint64_t{1} << 32;
+	constexpr std::array program{
+		std::byte{0x40},             // inc eax, not a REX prefix
+		std::byte{0x8b}, std::byte{0x15},
+		std::byte{0x00}, std::byte{0x41}, std::byte{0x02}, std::byte{0x00},
+									 // mov edx, dword ptr [0x24100]
+		std::byte{0x53},             // push ebx
+		std::byte{0x59},             // pop ecx
+		std::byte{0xe8}, std::byte{0x02}, std::byte{0x00},
+		std::byte{0x00}, std::byte{0x00}, // call the trailing function
+		std::byte{0xcd}, std::byte{0x80}, // int 80h
+		std::byte{0x40},             // inc eax
+		std::byte{0xc3},             // ret
+	};
+	constexpr std::size_t syscall_return_offset = 16;
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put_bytes(0, program);
+	backing.put32(0x100, 0x5566'7788);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+		1, 1) == 0);
+
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.padding = 2;
+	registers.pc = base;
+	registers.x[0] = 41;
+	registers.x[3] = 0x1122'3344;
+	registers.x[4] = stack;
+	registers.x[16] = 2;
+	registers.svcr = compat32_execution;
+	unsigned long tls = 0;
+	const int event = darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.x[0] == 43);
+	require(registers.x[1] == 0x1122'3344);
+	require(registers.x[2] == 0x5566'7788);
+	require(registers.x[4] == stack);
+	require(registers.pc == base + syscall_return_offset);
+	require(((registers.fpmr >> 16U) & 0xffffU) == 0x23);
+	require(((registers.fpmr >> 32U) & 0xffffU) == 0x2b);
+	require((registers.svcr & compat32_execution) != 0);
+	require((registers.svcr & compatibility_syscall) != 0);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+static void uml_static_x86_exception_bridge()
+{
+	constexpr std::uint64_t base = 0x2'8000;
+	constexpr std::uint64_t compat32_execution = std::uint64_t{1} << 33;
+	{
+		constexpr unsigned long generation = 135;
+		constexpr std::array program{
+			std::byte{0x48}, std::byte{0xf7}, std::byte{0xf1}, // div rcx
+		};
+		TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+		backing.put_bytes(0, program);
+		require(darwin_uml_static_vm_activate(generation) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(base), backing.fd(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
+			1, 0) == 0);
+		darwin_uml_guest_registers registers{};
+		darwin_uml_guest_fp_registers fp{};
+		registers.padding = 2;
+		registers.pc = base;
+		registers.x[0] = 42;
+		registers.x[1] = 0;
+		registers.x[2] = 0;
+		registers.x[16] = 2;
+		unsigned long tls = 0;
+		const int event = darwin_uml_static_enter_guest(
+			&registers, &fp, sizeof(fp), generation, &tls);
+		require(event == DARWIN_UML_EVENT_FLOATING_POINT_TRAP);
+		require(registers.pc == base);
+		require(registers.fault.address == base);
+		require(registers.fault.error_code == 0);
+		require(registers.fault.trap_number == 0);
+		require(darwin_uml_static_vm_destroy(generation) == 0);
+	}
+	{
+		constexpr unsigned long generation = 136;
+		constexpr std::array program{std::byte{0xce}}; // into
+		TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+		backing.put_bytes(0, program);
+		require(darwin_uml_static_vm_activate(generation) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(base), backing.fd(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
+			1, 0) == 0);
+		darwin_uml_guest_registers registers{};
+		darwin_uml_guest_fp_registers fp{};
+		registers.padding = 2;
+		registers.pc = base;
+		registers.x[16] = 2 | (std::uint64_t{1} << 11);
+		registers.svcr = compat32_execution;
+		unsigned long tls = 0;
+		const int event = darwin_uml_static_enter_guest(
+			&registers, &fp, sizeof(fp), generation, &tls);
+		require(event == DARWIN_UML_EVENT_BREAKPOINT);
+		require(registers.pc == base + 1);
+		require(registers.fault.address == base + 1);
+		require(registers.fault.error_code == 0);
+		require(registers.fault.trap_number == 4);
+		require(darwin_uml_static_vm_destroy(generation) == 0);
+	}
 }
 
 static void uml_static_x86_64_signal_return_bridge()
@@ -499,6 +617,41 @@ static void uml_static_partial_uaccess_copy_preserves_sibling_writes()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+static void uml_static_code_page_stamps_follow_physical_aliases()
+{
+	constexpr unsigned long generation = 131;
+	constexpr std::uint64_t first = 0x2'c000;
+	constexpr std::uint64_t second = first + DARWIN_UML_GUEST_PAGE_SIZE;
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	for (const auto address : {first, second})
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(address), backing.fd(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE,
+			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
+
+	void *first_handle = nullptr;
+	void *second_handle = nullptr;
+	darwin_uml_static_code_page_stamp first_stamp{};
+	darwin_uml_static_code_page_stamp second_stamp{};
+	require(darwin_uml_static_vm_code_page(
+		generation, first, &first_handle, &first_stamp) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(darwin_uml_static_vm_code_page(
+		generation, second, &second_handle, &second_stamp) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(first_handle == second_handle);
+	require(first_stamp.identity == second_stamp.identity);
+	require(first_stamp.version == second_stamp.version);
+
+	darwin_uml_static_vm_invalidate_code_page(first_handle);
+	require(darwin_uml_static_vm_code_page_stamp(
+		second_handle, &second_stamp) == 0);
+	require(second_stamp.identity == first_stamp.identity);
+	require(second_stamp.version == first_stamp.version + 1);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 static void uml_static_thread_local_generations()
 {
 	constexpr unsigned long first_generation = 101;
@@ -708,6 +861,35 @@ static void uml_static_tlb_shootdown_quiesces_execution()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+static void uml_static_execution_context_code_publication()
+{
+	constexpr unsigned long generation = 107;
+	constexpr std::uint64_t base = 0x3'6000;
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	void *context =
+		darwin_uml_static_vm_execution_context_create(generation);
+	require(context != nullptr);
+	require(darwin_uml_static_vm_execution_context_begin(context, base) == 0);
+	const auto before =
+		darwin_uml_static_vm_execution_context_sequences(context);
+	require(uml::memory::execution_context_publish_code_change(context));
+	const auto after =
+		darwin_uml_static_vm_execution_context_sequences(context);
+	require(after.mapping_changes == before.mapping_changes);
+	require(after.code_changes == before.code_changes + 1);
+	require(after.execution_interrupt == before.execution_interrupt);
+	require(darwin_uml_static_vm_execution_context_end(context) == 0);
+	/* A stale token must fall back to the routed invalidation path instead of
+	 * mutating a generation after its read-side execution lease has ended.
+	 */
+	require(!uml::memory::execution_context_publish_code_change(context));
+	const auto ended =
+		darwin_uml_static_vm_execution_context_sequences(context);
+	require(ended.code_changes == after.code_changes);
+	darwin_uml_static_vm_execution_context_destroy(context);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 static void uml_static_batch_targets_explicit_generation()
 {
 	constexpr unsigned long active_generation = 104;
@@ -803,6 +985,8 @@ int main()
 	uml_static_entry_bridge();
 #if DARWIN_UML_X86_64_GUEST
 	uml_static_x86_64_entry_bridge();
+	uml_static_x86_compat32_entry_bridge();
+	uml_static_x86_exception_bridge();
 	uml_static_x86_64_signal_return_bridge();
 	uml_static_x86_64_x87_task_state();
 #endif
@@ -813,9 +997,11 @@ int main()
 	uml_static_illegal_instruction();
 	uml_static_mapping_change_ranges();
 	uml_static_partial_uaccess_copy_preserves_sibling_writes();
+	uml_static_code_page_stamps_follow_physical_aliases();
 	uml_static_thread_local_generations();
 	uml_static_concurrent_translation_readers();
 	uml_static_tlb_shootdown_quiesces_execution();
+	uml_static_execution_context_code_publication();
 	uml_static_batch_targets_explicit_generation();
 	uml_static_walker_turnstile_blocks_host_thread();
 	return 0;
