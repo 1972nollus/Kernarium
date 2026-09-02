@@ -1929,13 +1929,20 @@ read_test_code_sequences(void *opaque) noexcept
 	result = run_cpuid(7, 0, cpu);
 	constexpr std::uint64_t through_avx2_leaf_seven_ebx =
 		(1ULL << 0) | (1ULL << 3) | (1ULL << 5) | (1ULL << 8) |
-		(1ULL << 9) | (1ULL << 18) | (1ULL << 19) | (1ULL << 23) |
+		(1ULL << 18) | (1ULL << 19) | (1ULL << 23) |
 		(1ULL << 24) | (1ULL << 29);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 			(cpu.gpr(Register::rbx) & through_avx2_leaf_seven_ebx) ==
 				through_avx2_leaf_seven_ebx &&
 			(cpu.gpr(Register::rcx) & (1ULL << 22)) != 0,
 		"CPUID leaf 7 omitted a qualified AVX2-era extension"))
+		return false;
+	/* ERMS is a claim that REP MOVSB is the fast way to copy, not an
+	 * instruction the engine either has or lacks. It is withheld on purpose
+	 * so glibc's ifunc resolver selects its vector routines instead.
+	 */
+	if (!expect((cpu.gpr(Register::rbx) & (1ULL << 9)) == 0,
+		"CPUID leaf 7 advertised ERMS"))
 		return false;
 	result = run_cpuid(13, 0, cpu);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
