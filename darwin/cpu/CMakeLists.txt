@@ -255,6 +255,12 @@ check_ipo_supported(RESULT _uml_gadget_ipo_supported
 if(_uml_gadget_ipo_supported)
     set_target_properties(uml_arm64_gadgets PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION ON)
+    # The x86-64 backend splits the same way: its decoder, builder, program
+    # cache and TLB miss handler are separate units on the translation path.
+    if(TARGET uml_x86_64_gadgets)
+        set_target_properties(uml_x86_64_gadgets PROPERTIES
+            INTERPROCEDURAL_OPTIMIZATION ON)
+    endif()
 else()
     message(STATUS
         "gadget translation IPO unavailable: ${_uml_gadget_ipo_error}")
