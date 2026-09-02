@@ -12,17 +12,12 @@ namespace uml::cpu::x86_64::gadgets {
 namespace {
 
 constexpr std::uint64_t page_mask = ~std::uint64_t{4095};
-constexpr std::size_t tlb_mask = (1U << 13U) - 1U;
 constexpr std::uint32_t maximum_bulk_size = 832;
 constexpr std::uint64_t write_code_tag = UML_X86_64_TLB_WRITE_CODE;
+constexpr std::uint64_t write_cached_code_tag =
+	UML_X86_64_TLB_WRITE_CACHED_CODE;
 constexpr std::uint8_t write_code_published = UML_X86_64_WRITE_CODE_PUBLISHED;
 
-[[nodiscard]] constexpr std::size_t tlb_index(
-	std::uint64_t address) noexcept
-{
-	const auto page = address >> 12U;
-	return static_cast<std::size_t>((page ^ (page >> 13U)) & tlb_mask);
-}
 
 void record_fault(NativeExecutionContext &context, std::uint64_t address,
 	::uml::memory::MemoryAccess access) noexcept
@@ -89,12 +84,21 @@ extern "C" std::byte *uml_x86_64_gadget_tlb_miss(
 		record_fault(*context, address, memory_access);
 		return nullptr;
 	}
-	auto &entry = context->tlb_entries[tlb_index(address)];
+	auto &entry = context->tlb_entries[native_tlb_index(address)];
 	const bool writes_code = access != 0 &&
 		context->memory->is_executable(address);
 	if (writes_code &&
 		context->write_code != UML_X86_64_WRITE_CODE_PUBLISHED)
 		context->write_code = UML_X86_64_WRITE_CODE_PENDING;
+	/* Publication only has work to do when this executor holds a translation
+	 * covering the page. Recording that here lets an ordinary store skip the
+	 * call entirely; the executor retires this entry when the page later gains
+	 * cached code.
+	 */
+	const bool caches_code = writes_code &&
+		context->sequence_context != nullptr &&
+		static_cast<Executor *>(context->sequence_context)
+			->page_holds_cached_code(address);
 	const auto page = address & page_mask;
 	const auto delta = reinterpret_cast<std::uintptr_t>(pointer) - address;
 	if (access == 0) {
@@ -102,7 +106,8 @@ extern "C" std::byte *uml_x86_64_gadget_tlb_miss(
 		entry.read_page = page;
 	} else {
 		entry.write_data_minus_address = delta;
-		entry.write_page = page | (writes_code ? write_code_tag : 0);
+		entry.write_page = page | (writes_code ? write_code_tag : 0) |
+			(caches_code ? write_cached_code_tag : 0);
 	}
 	return pointer;
 }

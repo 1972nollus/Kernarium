@@ -77,6 +77,8 @@ NAME(uml_x86_64_gadget_\name):
  *   52     32-bit effective-address arithmetic
  *   53     16-bit effective-address arithmetic
  *   59:56  instruction length
+ *   60     a write translation proved this store publishes nothing:
+ *          its page holds no cached code and no publication is pending
  * Followed by the folded displacement/absolute address and current RIP.
  */
 .macro effective_address
@@ -122,6 +124,12 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 .macro translate access, entry_offset, size
+	.if \access == 1
+	/* Only a translation that reaches the decision below may skip the store's
+	 * publication; the miss and page-crossing paths leave this clear.
+	 */
+	and x23, x23, #~(1 << 60)
+	.endif
 	and x9, x7, #0xfffffffffffff000
 	lsr x10, x7, #12
 	eor x10, x10, x10, lsr #13
@@ -130,7 +138,7 @@ NAME(uml_x86_64_gadget_\name):
 	add x11, x11, x10, lsl #5
 	ldp x12, x13, [x11, #\entry_offset]
 	.if \access == 1
-	bic x14, x12, #UML_X86_64_TLB_WRITE_CODE
+	bic x14, x12, #(UML_X86_64_TLB_WRITE_CODE | UML_X86_64_TLB_WRITE_CACHED_CODE)
 	cmp x9, x14
 	.else
 	cmp x9, x12
@@ -153,6 +161,17 @@ NAME(uml_x86_64_gadget_\name):
 	mov w14, #UML_X86_64_WRITE_CODE_PENDING
 	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 .Lx86_tlb_write_code_ready\@:
+	/* Reading the context after the guest store costs a memory-disambiguation
+	 * stall, and calling out to publication costs far more. Publication has
+	 * work only when a publish is still pending or this page holds cached
+	 * code, and neither depends on what the store writes, so settle it here.
+	 */
+	tbnz x12, #2, .Lx86_store_publishes\@
+	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cmp w14, #UML_X86_64_WRITE_CODE_PENDING
+	b.eq .Lx86_store_publishes\@
+	orr x23, x23, #(1 << 60)
+.Lx86_store_publishes\@:
 	.endif
 	add x7, x13, x7
 .Lx86_tlb_done\@:
@@ -204,6 +223,7 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 .macro publish_pending_code address, size
+	tbnz x23, #60, .Lx86_code_published\@
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 	cbz w8, .Lx86_code_published\@
 	mov x0, _context

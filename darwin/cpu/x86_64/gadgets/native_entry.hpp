@@ -20,6 +20,19 @@ struct alignas(32) NativeTlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
+inline constexpr std::size_t native_tlb_entry_count = 1U << 13U;
+
+/* The executor retires a write translation when a page gains cached code, so
+ * it needs the same index the miss handler fills.
+ */
+[[nodiscard]] inline constexpr std::size_t native_tlb_index(
+	std::uint64_t address) noexcept
+{
+	const auto page = address >> 12U;
+	return static_cast<std::size_t>(
+		(page ^ (page >> 13U)) & (native_tlb_entry_count - 1U));
+}
+
 struct NativeExecutionContext final {
 	::uml::memory::GuestAddressSpace *memory{};
 	NativeTlbEntry *tlb_entries{};

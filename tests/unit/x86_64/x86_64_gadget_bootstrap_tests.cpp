@@ -856,6 +856,68 @@ read_test_code_sequences(void *opaque) noexcept
 		run(0x800, false, true);
 }
 
+/* A store into a cached block far outside the running program is caught by
+ * publication, not by the program-range check, which only sees the block being
+ * executed. Reselecting a block revalidates it against its source bytes, so the
+ * stale case needs an already-linked edge that is followed without reselection:
+ * run once with a store that changes nothing so the link forms, then again with
+ * a store that rewrites the target.
+ */
+[[nodiscard]] bool distant_code_write_cools_its_linked_block()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t target = 0x800;
+	TestMemory memory;
+	/* MOV [RBX], AL; JMP target. */
+	memory.load(0, {0x88, 0x03, 0xe9, 0xf9, 0x07, 0x00, 0x00});
+	/* MOV EAX, 1; SYSCALL. The second run rewrites the immediate to 2. */
+	memory.load(target, {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	memory.set_executable_page(0);
+	TestCodeSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	if (!expect(executor.select_program(memory, target,
+			ExecutionMode::long64).program != nullptr &&
+		executor.select_program(memory, 0,
+			ExecutionMode::long64).program != nullptr,
+		"distant code-write setup did not cache both programs"))
+		return false;
+
+	const auto run = [&](std::uint8_t value) {
+		const auto source = executor.select_program(
+			memory, 0, ExecutionMode::long64);
+		if (source.program == nullptr)
+			return CpuState{};
+		CpuState cpu{};
+		cpu.gpr(Register::rbx) = target + 1;
+		cpu.gpr(Register::rax) = value;
+		(void)gadgets::execute(*source.program, cpu, memory, executor, 64);
+		return cpu;
+	};
+
+	/* Writing back the byte already there leaves the target unchanged, so the
+	 * edge is safe to keep and the link is established.
+	 */
+	const auto warm = run(0x01);
+	if (!expect(memory.byte(target + 1) == 0x01,
+			"link-forming run did not perform its store") ||
+		!expect(warm.gpr(Register::rax) == 1,
+			"link-forming run did not reach the cached target"))
+		return false;
+
+	const auto after = run(0x02);
+	if (!expect(memory.byte(target + 1) == 0x02,
+		"distant code write was not committed"))
+		return false;
+	if (after.rip == target)
+		/* Stopping at the boundary is correct: the next selection rebuilds. */
+		return true;
+	return expect(after.gpr(Register::rax) == 2,
+		"a linked edge entered a stale translation of a written block");
+}
+
 [[nodiscard]] bool code_write_resets_unvalidated_successors()
 {
 	using namespace uml::cpu::x86_64;
@@ -2428,6 +2490,7 @@ int main()
 		executable_store_publishes_code_change() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&
+		distant_code_write_cools_its_linked_block() &&
 		code_write_resets_unvalidated_successors() &&
 		slow_executable_writes_publish_once_per_native_run() &&
 		execute_scalar_control_flow() &&

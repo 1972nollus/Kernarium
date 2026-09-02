@@ -54,6 +54,10 @@ public:
 		void *execution_context = nullptr,
 		ProgramCacheSequenceReader sequence_reader = nullptr) noexcept;
 	[[nodiscard]] NativeTlbEntry *tlb_entries() noexcept;
+	/* True when this executor holds a translation whose source covers the
+	 * page. A store to a page without one cannot invalidate any cached block.
+	 */
+	[[nodiscard]] bool page_holds_cached_code(std::uint64_t address) noexcept;
 	[[nodiscard]] void *execution_context() const noexcept;
 	[[nodiscard]] std::uint64_t prepared_code_changes() const noexcept;
 	[[nodiscard]] std::uint64_t current_code_changes() const noexcept;

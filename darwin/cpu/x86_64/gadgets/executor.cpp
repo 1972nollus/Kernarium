@@ -19,7 +19,7 @@ namespace {
 
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096,
 	"x86-64 gadgets are a 4 KiB guest product");
-inline constexpr std::size_t tlb_entry_count = 1U << 13U;
+inline constexpr std::size_t tlb_entry_count = native_tlb_entry_count;
 #ifndef UML_X86_64_GADGET_CACHE_SLOTS
 #define UML_X86_64_GADGET_CACHE_SLOTS 65536
 #endif
@@ -368,6 +368,22 @@ public:
 		current_->changes = changes;
 	}
 
+	/* The write translations this cache retires when a page gains code, and
+	 * the query the miss handler uses to record whether a page has any.
+	 */
+	void set_write_translations(NativeTlbEntry *entries) noexcept
+	{
+		write_translations_ = entries;
+	}
+
+	[[nodiscard]] bool page_holds_code(std::uint64_t address) const noexcept
+	{
+		if (current_ == nullptr)
+			return false;
+		return current_->code_pages.find(address & code_page_mask) !=
+			current_->code_pages.end();
+	}
+
 	/* A write made by this executor already names its exact guest range.
 	 * Reset only translations whose saved instruction bytes overlap it;
 	 * unrelated links can remain live when this executor accepts its own
@@ -636,6 +652,15 @@ private:
 		if (!slot.program)
 			return;
 		const auto pages = program_pages(*slot.program);
+		if (write_translations_ != nullptr)
+			for (std::size_t entry = 0; entry < pages.count; ++entry) {
+				auto &translation = write_translations_[
+					native_tlb_index(pages.pages[entry])];
+				/* One is the unmatchable empty tag: guest pages are aligned,
+				 * so no real page compares equal to it.
+				 */
+				translation.write_page = 1;
+			}
 		auto &index = current().code_pages;
 		std::size_t completed = 0;
 		try {
@@ -996,6 +1021,7 @@ private:
 	std::array<std::uint8_t, program_cache_sets> next_replacement_{};
 	SuccessorSet *preceding_{};
 	std::uint64_t epoch_{1};
+	NativeTlbEntry *write_translations_{};
 };
 
 } // namespace
@@ -1015,7 +1041,10 @@ struct Executor::Storage final {
 	bool cache_ready{};
 };
 
-Executor::Executor() : storage_{std::make_unique<Storage>()} {}
+Executor::Executor() : storage_{std::make_unique<Storage>()}
+{
+	storage_->programs.set_write_translations(storage_->entries.data());
+}
 Executor::~Executor() = default;
 Executor::Executor(Executor &&) noexcept = default;
 Executor &Executor::operator=(Executor &&) noexcept = default;
@@ -1057,6 +1086,12 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 NativeTlbEntry *Executor::tlb_entries() noexcept
 {
 	return storage_->entries.data();
+}
+
+bool Executor::page_holds_cached_code(std::uint64_t address) noexcept
+{
+	return storage_->prepared && storage_->cache_ready &&
+		storage_->programs.page_holds_code(address);
 }
 
 void *Executor::execution_context() const noexcept
