@@ -356,22 +356,77 @@ uml_x86_64_gadget_leave:
 
 /* Materialize the lazy x86 arithmetic flags without entering C++. Common
  * arithmetic gadgets record byte width plus masked inputs/result; consumers
- * pay this branchy work only when they actually inspect flags.
+ * pay this work only when they actually inspect flags.
+ *
+ * Operation and width are both constants at the recording site, so the two
+ * run-time dispatch chains they used to drive are replaced by one bounded
+ * table branch into a body that has them folded in. `flags_body` is the single
+ * definition of the semantics: passing zero for either parameter selects the
+ * run-time form, which is what the generic table slots use for a width the
+ * table does not enumerate.
  */
-.p2align 4
-uml_x86_64_gadget_materialize_flags:
-	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	cbnz w5, .Lx86_flags_materialize_deferred
-	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	cbz w13, 9f
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	b .Lx86_flags_apply_overrides
-.Lx86_flags_materialize_deferred:
+
+/* Carry-flag input for the two operations that fold in an incoming carry. */
+.macro flags_adjusted_carry width, compare_left
+	.if (\width) == 0
+	lsl x13, x12, #1
+	sub x13, x13, #1
+	add x14, x8, x16
+	and x14, x14, x13
+	.elseif (\width) == 8
+	add x14, x8, x16
+	.else
+	add x14, x8, x16
+	and x14, x14, #((1 << ((\width) * 8)) - 1)
+	.endif
+	cmp x14, x8
+	cset w15, lo
+	.ifc \compare_left,result
+	cmp x10, x7
+	.else
+	cmp x7, x14
+	.endif
+	cset w17, lo
+	orr w15, w15, w17
+.endm
+
+/* Test the width's sign bit in \reg and set OF when it is set. The caller
+ * places \label, so the same macro serves named and numeric local labels.
+ */
+.macro flags_overflow_from width, reg, label
+	.if (\width) == 0
+	tst \reg, x12
+	b.eq \label
+	.else
+	tbz \reg, #((\width) * 8 - 1), \label
+	.endif
+	orr x9, x9, #0x800
+.endm
+
+.macro flags_body operation, width
 	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
 	ldp x7, x8, [x6]
 	ldr x10, [x6, #16]
-	ldrb w11, [x6, #25]
+	.if (\operation) == 0
 	ldrb w16, [x6, #26]
+	.elseif ((\operation) == 6) || ((\operation) == 7)
+	ldrb w16, [x6, #26]
+	.endif
+	/* Narrow the recorded operands to the width that produced them. */
+	.if (\width) == 1
+	and x7, x7, #0xff
+	and x8, x8, #0xff
+	and x10, x10, #0xff
+	.elseif (\width) == 2
+	uxth w7, w7
+	uxth w8, w8
+	uxth w10, w10
+	.elseif (\width) == 4
+	mov w7, w7
+	mov w8, w8
+	mov w10, w10
+	.elseif (\width) == 0
+	ldrb w11, [x6, #25]
 	cmp w11, #1
 	b.ne 1f
 	and x7, x7, #0xff
@@ -399,7 +454,10 @@ uml_x86_64_gadget_materialize_flags:
 	mov x12, #1
 	lsl x12, x12, #63
 4:
+	.endif
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	/* INC and DEC preserve CF; every other recorded operation defines it. */
+	.if (\operation) == 0
 	cmp w5, #4
 	b.lo 41f
 	cmp w5, #5
@@ -409,12 +467,21 @@ uml_x86_64_gadget_materialize_flags:
 41:
 	mov x13, #0x8d5
 42:
+	.elseif ((\operation) == 4) || ((\operation) == 5)
+	mov x13, #0x8d4
+	.else
+	mov x13, #0x8d5
+	.endif
 	bic x9, x9, x13
 	cbnz x10, 5f
 	orr x9, x9, #0x40
 5:
+	.if (\width) == 0
 	tst x10, x12
 	b.eq 6f
+	.else
+	tbz x10, #((\width) * 8 - 1), 6f
+	.endif
 	orr x9, x9, #0x80
 6:
 	and w13, w10, #0xff
@@ -424,6 +491,7 @@ uml_x86_64_gadget_materialize_flags:
 	tbnz w13, #0, 7f
 	orr x9, x9, #0x4
 7:
+	.if (\operation) == 0
 	cmp w5, #1
 	b.eq .Lx86_flags_add
 	cmp w5, #4
@@ -436,76 +504,137 @@ uml_x86_64_gadget_materialize_flags:
 	b.eq .Lx86_flags_sub_preserve_carry
 	cmp w5, #7
 	b.eq .Lx86_flags_sub_borrow
-	b .Lx86_flags_done
+	b .Lx86_flags_apply_overrides
 
 .Lx86_flags_add:
 	cmp x10, x7
-	b.hs 71f
+	b.hs .Lx86_flags_add_preserve_carry
 	orr x9, x9, #0x1
-71:
 .Lx86_flags_add_preserve_carry:
 	eor x13, x7, x8
 	mvn x13, x13
 	eor x14, x7, x10
 	and x13, x13, x14
-	tst x13, x12
-	b.eq 72f
-	orr x9, x9, #0x800
-72:
+	flags_overflow_from 0, x13, .Lx86_flags_add_aux
+.Lx86_flags_add_aux:
 	b .Lx86_flags_auxiliary
 
 .Lx86_flags_add_carry:
-	lsl x13, x12, #1
-	sub x13, x13, #1
-	add x14, x8, x16
-	and x14, x14, x13
-	cmp x14, x8
-	cset w15, lo
-	cmp x10, x7
-	cset w17, lo
-	orr w15, w15, w17
-	cbz w15, 75f
+	flags_adjusted_carry 0, result
+	cbz w15, .Lx86_flags_add_preserve_carry
 	orr x9, x9, #0x1
-75:
 	b .Lx86_flags_add_preserve_carry
 
 .Lx86_flags_sub:
 	cmp x7, x8
-	b.hs 73f
+	b.hs .Lx86_flags_sub_preserve_carry
 	orr x9, x9, #0x1
-73:
 .Lx86_flags_sub_preserve_carry:
 	eor x13, x7, x8
 	eor x14, x7, x10
 	and x13, x13, x14
-	tst x13, x12
-	b.eq 74f
-	orr x9, x9, #0x800
-74:
+	flags_overflow_from 0, x13, .Lx86_flags_sub_aux
+.Lx86_flags_sub_aux:
 	b .Lx86_flags_auxiliary
 
 .Lx86_flags_sub_borrow:
-	lsl x13, x12, #1
-	sub x13, x13, #1
-	add x14, x8, x16
-	and x14, x14, x13
-	cmp x14, x8
-	cset w15, lo
-	cmp x7, x14
-	cset w17, lo
-	orr w15, w15, w17
-	cbz w15, 76f
+	flags_adjusted_carry 0, right
+	cbz w15, .Lx86_flags_sub_preserve_carry
 	orr x9, x9, #0x1
-76:
 	b .Lx86_flags_sub_preserve_carry
 
 .Lx86_flags_auxiliary:
 	eor x13, x7, x8
 	eor x13, x13, x10
-	tbz x13, #4, .Lx86_flags_done
+	tbz x13, #4, .Lx86_flags_apply_overrides
 	orr x9, x9, #0x10
+	b .Lx86_flags_apply_overrides
+	.else
+	/* Carry, overflow and auxiliary for one known operation. */
+	.if (\operation) == 1
+	cmp x10, x7
+	b.hs 81f
+	orr x9, x9, #0x1
+81:
+	.elseif (\operation) == 2
+	cmp x7, x8
+	b.hs 81f
+	orr x9, x9, #0x1
+81:
+	.elseif (\operation) == 6
+	flags_adjusted_carry \width, result
+	cbz w15, 81f
+	orr x9, x9, #0x1
+81:
+	.elseif (\operation) == 7
+	flags_adjusted_carry \width, right
+	cbz w15, 81f
+	orr x9, x9, #0x1
+81:
+	.endif
+	.if (\operation) != 3
+	.if ((\operation) == 1) || ((\operation) == 4) || ((\operation) == 6)
+	eor x13, x7, x8
+	mvn x13, x13
+	.else
+	eor x13, x7, x8
+	.endif
+	eor x14, x7, x10
+	and x13, x13, x14
+	flags_overflow_from \width, x13, 82f
+82:
+	eor x13, x7, x8
+	eor x13, x13, x10
+	tbz x13, #4, 83f
+	orr x9, x9, #0x10
+83:
+	.endif
+	b .Lx86_flags_apply_overrides
+	.endif
+.endm
 
-.Lx86_flags_done:
+.p2align 4
+uml_x86_64_gadget_materialize_flags:
+	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	cbnz w5, .Lx86_flags_dispatch
+	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	cbz w13, 9f
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	b .Lx86_flags_apply_overrides
+.Lx86_flags_dispatch:
+	/* Masking both keys keeps the branch inside the table whatever the
+	 * recorded bytes hold; the slots those values reach are the generic body.
+	 */
+	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
+	adr x14, .Lx86_flags_table
+	and w12, w5, #7
+	and w13, w11, #0xf
+	add x14, x14, x12, lsl #6
+	add x14, x14, x13, lsl #2
+	br x14
+
+.p2align 2
+.Lx86_flags_table:
+.irp op,0,1,2,3,4,5,6,7
+.irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+	.if ((\op) >= 1) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
+	b .Lx86_flags_o\op\()_w\w
+	.else
+	b .Lx86_flags_generic
+	.endif
+.endr
+.endr
+
+.irp op,1,2,3,4,5,6,7
+.irp w,1,2,4,8
+.Lx86_flags_o\op\()_w\w:
+	flags_body \op, \w
+.endr
+.endr
+
+.Lx86_flags_generic:
+	flags_body 0, 0
+
 .Lx86_flags_apply_overrides:
 	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	cbz w13, .Lx86_flags_store

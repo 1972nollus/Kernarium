@@ -1177,6 +1177,163 @@ read_test_code_sequences(void *opaque) noexcept
  * 64-bit backing slot, so retain upper garbage here and prove that compat32
  * flags and the signed branch use only the architectural EAX value.
  */
+[[nodiscard]] bool materialized_flags_match_the_reference()
+{
+	using namespace uml::cpu::x86_64;
+	/* The engine folds the recorded operation and width into one body per
+	 * pair, so every pair has to agree with the independent C++
+	 * implementation rather than only with the pairs a corpus happens to
+	 * reach. PUSHFQ is the one instruction that exposes the whole result.
+	 */
+	TestMemory memory;
+	memory.load(0, {0x9c});
+	const auto block = gadgets::build(memory, 0);
+	if (!expect(block.status == gadgets::BuildStatus::built,
+		"PUSHFQ block did not build"))
+		return false;
+
+	constexpr std::uint64_t stack = 0x800;
+	constexpr std::array<DeferredFlagOperation, 7> operations{
+		DeferredFlagOperation::add,
+		DeferredFlagOperation::subtract,
+		DeferredFlagOperation::logical,
+		DeferredFlagOperation::increment,
+		DeferredFlagOperation::decrement,
+		DeferredFlagOperation::add_carry,
+		DeferredFlagOperation::subtract_borrow,
+	};
+	constexpr std::array<std::uint8_t, 4> widths{1, 2, 4, 8};
+	constexpr std::array<std::uint64_t, 8> values{
+		0, 1, 0x7f, 0x80, 0xff, 0x7fffffff,
+		0x8000000000000000ULL, 0xffffffffffffffffULL,
+	};
+	constexpr std::array<std::uint64_t, 2> entry_flags{0x2, 0xfff};
+
+	for (const auto operation : operations)
+		for (const auto width : widths)
+			for (const auto left : values)
+				for (const auto right : values)
+					for (const std::uint8_t carry : {0, 1})
+						/* Only ADC and SBB record an incoming carry; the
+						 * recording macro zeroes the byte for every other
+						 * operation, so a carry there is not a reachable state.
+						 */
+						if (carry == 0 ||
+							operation == DeferredFlagOperation::add_carry ||
+							operation ==
+								DeferredFlagOperation::subtract_borrow)
+						for (const auto entry : entry_flags)
+							for (const int sense : {0, 1}) {
+		CpuState cpu{};
+		cpu.rip = 0;
+		cpu.rflags = entry;
+		cpu.gpr(Register::rsp) = stack;
+		cpu.deferred_flags.left = left;
+		cpu.deferred_flags.right = right;
+		cpu.deferred_flags.result =
+			sense == 0 ? left + right + carry : left - right - carry;
+		cpu.deferred_flags.operation = operation;
+		cpu.deferred_flags.width = width;
+		cpu.deferred_flags.carry = carry;
+
+		CpuState reference = cpu;
+		materialize_flags(reference);
+
+		const auto run = gadgets::execute(block.program, cpu, memory, 1);
+		if (!expect(run.event == uml::cpu::EngineEvent::continued &&
+			run.retired_instructions == 1,
+			"PUSHFQ did not retire"))
+			return false;
+		std::uint64_t pushed = 0;
+		std::byte raw[sizeof(pushed)]{};
+		if (!expect(memory.read(stack - sizeof(pushed),
+				std::span<std::byte>{raw, sizeof(raw)}),
+			"PUSHFQ destination was not readable"))
+			return false;
+		std::memcpy(&pushed, raw, sizeof(pushed));
+		if (!expect(pushed == reference.rflags &&
+			cpu.rflags == reference.rflags,
+			"materialized flags disagree with the reference"))
+			return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool carry_branches_match_the_reference()
+{
+	using namespace uml::cpu::x86_64;
+	/* The four carry-based conditions read CF and ZF straight out of the
+	 * deferred record. Every recorded operation and width has to reach the
+	 * same decision the materialized flags would.
+	 */
+	TestMemory memory;
+	struct Branch final {
+		std::uint64_t address;
+		std::uint8_t opcode;
+		const char *name;
+	};
+	constexpr std::array<Branch, 4> branches{{
+		{0, 0x72, "JB"}, {16, 0x73, "JAE"}, {32, 0x76, "JBE"}, {48, 0x77, "JA"},
+	}};
+	constexpr std::array<DeferredFlagOperation, 8> operations{
+		DeferredFlagOperation::none,
+		DeferredFlagOperation::add,
+		DeferredFlagOperation::subtract,
+		DeferredFlagOperation::logical,
+		DeferredFlagOperation::increment,
+		DeferredFlagOperation::decrement,
+		DeferredFlagOperation::add_carry,
+		DeferredFlagOperation::subtract_borrow,
+	};
+	constexpr std::array<std::uint8_t, 4> widths{1, 2, 4, 8};
+	constexpr std::array<std::uint64_t, 6> values{
+		0, 1, 0x80, 0xff, 0x8000000000000000ULL, 0xffffffffffffffffULL,
+	};
+
+	for (const auto branch : branches) {
+		memory.load(branch.address, {branch.opcode, 0x05});
+		const auto built = gadgets::build(memory, branch.address);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"carry-condition branch did not build"))
+			return false;
+
+		for (const auto operation : operations)
+			for (const auto width : widths)
+				for (const auto left : values)
+					for (const auto right : values)
+						for (const std::uint16_t override_mask : {0, 1}) {
+			CpuState cpu{};
+			cpu.rip = branch.address;
+			cpu.rflags = 0x2;
+			cpu.deferred_flags.left = left;
+			cpu.deferred_flags.right = right;
+			cpu.deferred_flags.result = left - right;
+			cpu.deferred_flags.operation = operation;
+			cpu.deferred_flags.width = width;
+			cpu.deferred_flags.override_mask = override_mask;
+			cpu.deferred_flags.override_value = override_mask;
+
+			CpuState reference = cpu;
+			materialize_flags(reference);
+			const bool carry = (reference.rflags & 0x1) != 0;
+			const bool zero = (reference.rflags & 0x40) != 0;
+			const bool taken =
+				branch.opcode == 0x72 ? carry :
+				branch.opcode == 0x73 ? !carry :
+				branch.opcode == 0x76 ? (carry || zero) : !(carry || zero);
+			const auto expected =
+				branch.address + (taken ? 7 : 2);
+
+			const auto run = gadgets::execute(built.program, cpu, memory, 1);
+			if (!expect(run.event == uml::cpu::EngineEvent::continued &&
+					run.retired_instructions == 1 && cpu.rip == expected,
+				"a carry-condition branch disagrees with the reference"))
+				return false;
+		}
+	}
+	return true;
+}
+
 [[nodiscard]] bool execute_compat32_test_greater_after_syscall()
 {
 	using namespace uml::cpu::x86_64;
@@ -2494,6 +2651,8 @@ int main()
 		code_write_resets_unvalidated_successors() &&
 		slow_executable_writes_publish_once_per_native_run() &&
 		execute_scalar_control_flow() &&
+		materialized_flags_match_the_reference() &&
+		carry_branches_match_the_reference() &&
 		execute_absolute_memory_test_branch() &&
 		execute_lazy_zero_branches() &&
 		execute_compat32_test_greater_after_syscall() &&
