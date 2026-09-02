@@ -30,6 +30,19 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
+/* Bytes 24..31 of the record hold operation, width, carry, one padding byte,
+ * and the two override halves. Both varying fields are macro parameters, so
+ * that whole tail is a single link-time constant and the record costs three
+ * stores instead of six. Consumers that need a carry or an override write it
+ * after this macro.
+ */
+.macro record_deferred operation, width
+	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	stp x11, x12, [x15]
+	mov x14, #((\operation) | ((\width / 8) << 8))
+	stp x13, x14, [x15, #16]
+.endm
+
 /* A guest access no wider than one byte lies inside one page by construction,
  * so the boundary test folds away entirely at assembly time. `size` is the
  * access width in bytes and must be an absolute expression.

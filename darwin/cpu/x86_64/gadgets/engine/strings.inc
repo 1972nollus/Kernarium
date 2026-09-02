@@ -118,24 +118,13 @@
 .endm
 
 
-.macro string_record_deferred width
-	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
-	stp x11, x12, [x15]
-	str x13, [x15, #16]
-	mov w14, #2
-	strb w14, [x15, #24]
-	mov w14, #(\width / 8)
-	strb w14, [x15, #25]
-	strb wzr, [x15, #26]
-	str wzr, [x15, #28]
-.endm
 
 .macro string_compare_flags width, host_register
 	mov x11, x27
 	mov x12, x19
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	string_record_deferred \width
+	record_deferred 2, \width
 	cmp \host_register\()13, #0
 	cset w19, eq
 .endm
@@ -272,7 +261,6 @@ string_family scan
 .purgem string_width
 .purgem string_gadget
 .purgem string_compare_flags
-.purgem string_record_deferred
 .purgem string_update_pointer
 .purgem string_store
 .purgem string_load

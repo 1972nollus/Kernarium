@@ -15,20 +15,6 @@
 	.endif
 .endm
 
-.macro record_deferred operation, width
-	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
-	stp x11, x12, [x15]
-	str x13, [x15, #16]
-	mov w14, #\operation
-	strb w14, [x15, #24]
-	/* DeferredFlags stores operand bytes, while assembly specialization names
-	 * widths in bits.
-	 */
-	mov w14, #(\width / 8)
-	strb w14, [x15, #25]
-	strb wzr, [x15, #26]
-	str wzr, [x15, #28]
-.endm
 
 .macro scalar_arithmetic_rr name, instruction, flag_operation, writes, load, store, host_register, store_register, width
 gadget \name
@@ -645,7 +631,6 @@ memory_unary_width 64, ldr, str, x
 .purgem unary_width
 .purgem scalar_not
 .purgem scalar_unary
-.purgem record_deferred
 .purgem normalize_immediate
 
 gadget byte_swap_32

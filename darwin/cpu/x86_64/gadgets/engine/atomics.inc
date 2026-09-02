@@ -2,20 +2,6 @@
 /* Compare/exchange and exchange/add scalar operations. */
 
 
-.macro atomic_record_deferred operation, width
-	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
-	stp x11, x12, [x15]
-	str x13, [x15, #16]
-	mov w14, #\operation
-	strb w14, [x15, #24]
-	mov w14, #(\width / 8)
-	strb w14, [x15, #25]
-	strb wzr, [x15, #26]
-	/* CMPXCHG/XADD replace every arithmetic flag. Do not let a preceding
-	 * shift or rotate override their freshly recorded ZF/CF/OF state.
-	 */
-	str wzr, [x15, #28]
-.endm
 
 .macro compare_exchange_register width, load, store, host_register, store_register
 gadget cmpxchg_\width\()_rr
@@ -35,7 +21,7 @@ gadget cmpxchg_\width\()_rr
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	atomic_record_deferred 2, \width
+	record_deferred 2, \width
 	retire_and_next
 .endm
 
@@ -58,7 +44,7 @@ gadget cmpxchg_\width\()_mr
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	atomic_record_deferred 2, \width
+	record_deferred 2, \width
 	finish_store (\width / 8)
 2:
 	clrex
@@ -67,7 +53,7 @@ gadget cmpxchg_\width\()_mr
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	atomic_record_deferred 2, \width
+	record_deferred 2, \width
 	retire_and_next
 .Lx86_cmpxchg_split\@:
 	page_cross_check (\width / 8), .Lx86_cmpxchg_read_cross\@
@@ -102,7 +88,7 @@ gadget cmpxchg_\width\()_mr
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	atomic_record_deferred 2, \width
+	record_deferred 2, \width
 	finish_store (\width / 8)
 .Lx86_cmpxchg_memory_unequal\@:
 	\store \accumulator_store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
@@ -110,7 +96,7 @@ gadget cmpxchg_\width\()_mr
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	atomic_record_deferred 2, \width
+	record_deferred 2, \width
 	retire_and_next
 .endm
 
@@ -142,7 +128,7 @@ gadget xadd_\width\()_rr
 	mov x11, x24
 	mov x12, x26
 	mov x13, x27
-	atomic_record_deferred 1, \width
+	record_deferred 1, \width
 	retire_and_next
 .endm
 
@@ -165,7 +151,7 @@ gadget xadd_\width\()_mr
 	mov x11, x24
 	mov x12, x26
 	mov x13, x27
-	atomic_record_deferred 1, \width
+	record_deferred 1, \width
 	finish_store (\width / 8)
 .Lx86_xadd_split\@:
 	page_cross_check (\width / 8), .Lx86_xadd_read_cross\@
@@ -200,7 +186,7 @@ gadget xadd_\width\()_mr
 	mov x11, x24
 	mov x12, x26
 	mov x13, x27
-	atomic_record_deferred 1, \width
+	record_deferred 1, \width
 	finish_store (\width / 8)
 .endm
 
@@ -394,4 +380,3 @@ gadget cmpxchg_pair_16
 	retire_and_next
 
 .purgem compare_exchange_pair_flags
-.purgem atomic_record_deferred
