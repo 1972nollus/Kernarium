@@ -1420,6 +1420,56 @@ read_test_code_sequences(void *opaque) noexcept
 		"the address-generation zero slot is not zero");
 }
 
+/* PMOVMSKB collapses one sign bit per byte into a bit mask. The corpus carries
+ * only one or two cases per width, which a lane-ordering mistake can survive,
+ * so walk a single set bit through every position instead.
+ */
+[[nodiscard]] bool execute_byte_sign_masks()
+{
+	using namespace uml::cpu::x86_64;
+	const auto run = [](std::initializer_list<std::uint8_t> encoding,
+		std::size_t lanes, std::size_t set_lane) -> std::uint64_t {
+		TestMemory memory;
+		memory.load(0, encoding);
+		CpuState cpu{};
+		for (std::size_t lane = 0; lane < lanes; ++lane)
+			cpu.vectors[1][lane] = static_cast<std::byte>(
+				lane == set_lane ? 0x80 : 0x7f);
+		const auto built = gadgets::build(memory, 0, 1);
+		if (built.status != gadgets::BuildStatus::built)
+			return ~std::uint64_t{0};
+		if (gadgets::execute(built.program, cpu, memory, 1).event !=
+			uml::cpu::EngineEvent::continued)
+			return ~std::uint64_t{0};
+		return cpu.gpr(Register::rax);
+	};
+
+	for (std::size_t lane = 0; lane < 16; ++lane)
+		if (!expect(run({0x66, 0x0f, 0xd7, 0xc1}, 16, lane) ==
+			(std::uint64_t{1} << lane), "PMOVMSKB xmm lane"))
+			return false;
+	for (std::size_t lane = 0; lane < 32; ++lane)
+		if (!expect(run({0xc5, 0xfd, 0xd7, 0xc1}, 32, lane) ==
+			(std::uint64_t{1} << lane), "VPMOVMSKB ymm lane"))
+			return false;
+
+	/* All sign bits set, and none, bound the walk at both ends. */
+	TestMemory memory;
+	memory.load(0, {0x66, 0x0f, 0xd7, 0xc1});
+	CpuState cpu{};
+	for (auto &lane : cpu.vectors[1])
+		lane = std::byte{0xff};
+	const auto built = gadgets::build(memory, 0, 1);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+			"PMOVMSKB saturated case did not build") ||
+		!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
+			uml::cpu::EngineEvent::continued,
+			"PMOVMSKB saturated case did not execute"))
+		return false;
+	return expect(cpu.gpr(Register::rax) == 0xffff,
+		"PMOVMSKB did not set every mask bit");
+}
+
 [[nodiscard]] bool execute_call_and_return()
 {
 	using namespace uml::cpu::x86_64;
@@ -2388,6 +2438,7 @@ int main()
 		shifts_overlay_lazy_arithmetic_flags() &&
 		execute_segment_memory() &&
 		execute_addressing_shapes() &&
+		execute_byte_sign_masks() &&
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
 		execute_compat32_stack_and_int80() &&

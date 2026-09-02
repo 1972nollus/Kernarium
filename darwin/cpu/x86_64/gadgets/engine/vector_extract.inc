@@ -39,16 +39,39 @@ gadget vector_pmovmskb_\width
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	add x10, _cpu, x10
-	mov x11, xzr
-	mov x12, xzr
-.Lx86_vector_pmovmskb_loop\@:
-	ldrb w14, [x10, x12]
-	lsr w14, w14, #7
-	lsl x14, x14, x12
-	orr x11, x11, x14
-	add x12, x12, #1
-	cmp x12, #(\width / 8)
-	b.lo .Lx86_vector_pmovmskb_loop\@
+	/* Collapse one sign bit per byte into a bit mask by folding pairs of
+	 * lanes at doubling widths: each shift-and-accumulate step packs the bits
+	 * of two neighbouring lanes into the lower one, so after four steps byte 0
+	 * holds the low eight bits and byte 8 the high eight.
+	 */
+	.if \width == 64
+	ldr d0, [x10]
+	ushr v0.8b, v0.8b, #7
+	usra v0.4h, v0.4h, #7
+	usra v0.2s, v0.2s, #14
+	usra d0, d0, #28
+	umov w11, v0.b[0]
+	.else
+	ldr q0, [x10]
+	ushr v0.16b, v0.16b, #7
+	usra v0.8h, v0.8h, #7
+	usra v0.4s, v0.4s, #14
+	usra v0.2d, v0.2d, #28
+	umov w11, v0.b[0]
+	umov w12, v0.b[8]
+	orr w11, w11, w12, lsl #8
+	.endif
+	.if \width == 256
+	ldr q1, [x10, #16]
+	ushr v1.16b, v1.16b, #7
+	usra v1.8h, v1.8h, #7
+	usra v1.4s, v1.4s, #14
+	usra v1.2d, v1.2d, #28
+	umov w13, v1.b[0]
+	umov w14, v1.b[8]
+	orr w13, w13, w14, lsl #8
+	orr w11, w11, w13, lsl #16
+	.endif
 	str x11, [_cpu, x9]
 	retire_and_next
 .endm
