@@ -22,7 +22,14 @@ namespace {
 
 class TestMemory final : public uml::memory::GuestAddressSpace {
 public:
-	explicit TestMemory(std::uint64_t base = 0) noexcept : base_{base} {}
+	/* Most tests need a few pages. The repeat-budget tests need enough to
+	 * run past a whole executor entry's worth of copying, which is far more
+	 * than is worth giving every other test, so the span is a parameter and
+	 * the storage is on the heap.
+	 */
+	explicit TestMemory(std::uint64_t base = 0, std::size_t span = 16384)
+		: base_{base}, bytes_(span),
+		  code_stamp_versions_(span / 4096U + 1U, 1) {}
 
 	void load(std::uint64_t address,
 		std::initializer_list<std::uint8_t> bytes) noexcept
@@ -31,6 +38,14 @@ public:
 		for (const auto byte : bytes)
 			bytes_[address++ - base_] = static_cast<std::byte>(byte);
 		bump_code_stamps(first, bytes.size());
+	}
+
+	void fill(std::uint64_t address,
+		std::span<const std::byte> source) noexcept
+	{
+		std::memcpy(bytes_.data() + (address - base_), source.data(),
+			source.size());
+		bump_code_stamps(address, source.size());
 	}
 
 	[[nodiscard]] bool read(std::uint64_t address,
@@ -191,7 +206,7 @@ private:
 	}
 
 	std::uint64_t base_{};
-	std::array<std::byte, 16384> bytes_{};
+	std::vector<std::byte> bytes_;
 	uml::memory::MemoryFault fault_{};
 	bool faulted_{};
 	std::size_t fetches_{};
@@ -200,7 +215,7 @@ private:
 	bool atomic_pointer_available_{true};
 	std::atomic<std::size_t> executable_queries_{};
 	std::size_t code_stamp_queries_{};
-	std::array<std::uint64_t, 4> code_stamp_versions_{1, 1, 1, 1};
+	std::vector<std::uint64_t> code_stamp_versions_;
 	bool code_stamps_available_{};
 	std::uint64_t executable_page_{~std::uint64_t{}};
 	std::uint64_t *code_changes_{};
@@ -1929,20 +1944,13 @@ read_test_code_sequences(void *opaque) noexcept
 	result = run_cpuid(7, 0, cpu);
 	constexpr std::uint64_t through_avx2_leaf_seven_ebx =
 		(1ULL << 0) | (1ULL << 3) | (1ULL << 5) | (1ULL << 8) |
-		(1ULL << 18) | (1ULL << 19) | (1ULL << 23) |
+		(1ULL << 9) | (1ULL << 18) | (1ULL << 19) | (1ULL << 23) |
 		(1ULL << 24) | (1ULL << 29);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 			(cpu.gpr(Register::rbx) & through_avx2_leaf_seven_ebx) ==
 				through_avx2_leaf_seven_ebx &&
 			(cpu.gpr(Register::rcx) & (1ULL << 22)) != 0,
 		"CPUID leaf 7 omitted a qualified AVX2-era extension"))
-		return false;
-	/* ERMS is a claim that REP MOVSB is the fast way to copy, not an
-	 * instruction the engine either has or lacks. It is withheld on purpose
-	 * so glibc's ifunc resolver selects its vector routines instead.
-	 */
-	if (!expect((cpu.gpr(Register::rbx) & (1ULL << 9)) == 0,
-		"CPUID leaf 7 advertised ERMS"))
 		return false;
 	result = run_cpuid(13, 0, cpu);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
@@ -2049,11 +2057,38 @@ read_test_code_sequences(void *opaque) noexcept
 [[nodiscard]] bool chunk_repeating_string_for_interrupt()
 {
 	using namespace uml::cpu::x86_64;
-	TestMemory memory;
+	/* A repeated string operation has to hand the executor a boundary so a
+	 * mapping change can take the execution read gate. The element loop
+	 * counts elements. The run loop counts the bytes it moves instead: one
+	 * run stands for thousands of elements, so counting runs would let a long
+	 * copy hold the gate far longer than the element loop ever did.
+	 */
+	TestMemory descending;
+	descending.load(0, {0xf3, 0xaa}); // rep stosb
+	CpuState down{};
+	down.gpr(Register::rax) = 0x5a;
+	down.gpr(Register::rcx) = 4097;
+	down.gpr(Register::rdi) = 8192;
+	down.rflags |= rflags_direction;
+	const auto element_built = gadgets::build(descending, 0, 1);
+	if (!expect(element_built.status == gadgets::BuildStatus::built,
+		"descending REP STOSB did not build"))
+		return false;
+	const auto element = gadgets::execute(
+		element_built.program, down, descending, 1);
+	if (!expect(element.event == uml::cpu::EngineEvent::continued &&
+		element.retired_instructions == 0 && down.rip == 0 &&
+		down.gpr(Register::rcx) == 1 &&
+		down.gpr(Register::rdi) == 4096 &&
+		descending.byte(8192) == 0x5a && descending.byte(4097) == 0x5a,
+		"descending REP STOSB did not yield after its element budget"))
+		return false;
+
+	TestMemory memory{0, 270336};
 	memory.load(0, {0xf3, 0xaa}); // rep stosb
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x5a;
-	cpu.gpr(Register::rcx) = 4097;
+	cpu.gpr(Register::rcx) = 262145;
 	cpu.gpr(Register::rdi) = 4096;
 	const auto built = gadgets::build(memory, 0, 1);
 	if (!expect(built.status == gadgets::BuildStatus::built,
@@ -2064,10 +2099,33 @@ read_test_code_sequences(void *opaque) noexcept
 		first.retired_instructions == 0 && cpu.rip == 0,
 		"long REP STOSB did not yield before retiring") ||
 		!expect(cpu.gpr(Register::rcx) == 1 &&
-			cpu.gpr(Register::rdi) == 8192 &&
-			memory.byte(4096) == 0x5a && memory.byte(8191) == 0x5a,
+			cpu.gpr(Register::rdi) == 266240 &&
+			memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
 			"REP STOSB chunk did not preserve its partial state"))
 		return false;
+	/* 32-bit address arithmetic reaches the same run loop. Its yield
+	 * boundary is the cheapest proof: the element loop would have stopped
+	 * after 4096 elements rather than 256 KiB of them.
+	 */
+	TestMemory narrow{0, 270336};
+	narrow.load(0, {0xf3, 0x67, 0xaa}); // addr32 rep stosb
+	CpuState small{};
+	small.gpr(Register::rax) = 0x5a;
+	small.gpr(Register::rcx) = 262145;
+	small.gpr(Register::rdi) = 4096;
+	const auto narrow_built = gadgets::build(narrow, 0, 1);
+	if (!expect(narrow_built.status == gadgets::BuildStatus::built,
+		"32-bit REP STOSB did not build"))
+		return false;
+	const auto narrow_first = gadgets::execute(
+		narrow_built.program, small, narrow, 1);
+	if (!expect(narrow_first.event == uml::cpu::EngineEvent::continued &&
+		small.gpr(Register::rcx) == 1 &&
+		small.gpr(Register::rdi) == 266240 &&
+		narrow.byte(266239) == 0x5a,
+		"32-bit REP STOSB did not move its bytes in runs"))
+		return false;
+
 	unsigned int sequence = 1;
 	const uml::cpu::InterruptToken interrupt{
 		.sequence = &sequence,
@@ -2085,10 +2143,267 @@ read_test_code_sequences(void *opaque) noexcept
 		finished.retired_instructions == 1 && cpu.rip == 2,
 		"REP STOSB did not retire after resuming") &&
 		expect(cpu.gpr(Register::rcx) == 0 &&
-			cpu.gpr(Register::rdi) == 8193 && memory.byte(8192) == 0x5a,
+			cpu.gpr(Register::rdi) == 266241 &&
+			memory.byte(266240) == 0x5a,
 			"REP STOSB did not complete from its partial state");
 }
 
+[[nodiscard]] bool repeated_store_into_executable_page_publishes_its_run()
+{
+	using namespace uml::cpu::x86_64;
+	/* A repeated store whose destination page can hold code is the one shape
+	 * where a run has to do more than move bytes: it publishes the change and
+	 * leaves through the instruction's own exit instead of chaining onward.
+	 * Publishing once for a run rather than once per element is the only
+	 * reason such a destination is worth running at all, so the result has to
+	 * be the element loop's result -- every byte written, one code change
+	 * published, and the block ended.
+	 */
+	TestMemory memory;
+	memory.load(0, {0xf3, 0xaa}); // rep stosb
+	memory.set_executable_page(0);
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x5a;
+	cpu.gpr(Register::rcx) = 256;
+	cpu.gpr(Register::rdi) = 0x800;
+	const auto built = gadgets::build(memory, 0, 1);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"executable-destination REP STOSB did not build"))
+		return false;
+	gadgets::Executor executor;
+	executor.prepare(memory, 1, 1, 1);
+	const auto result = gadgets::execute(
+		built.program, cpu, memory, executor, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 1 && cpu.rip == 2 &&
+		cpu.gpr(Register::rcx) == 0 && cpu.gpr(Register::rdi) == 0x900,
+		"executable-destination REP STOSB did not end its block"))
+		return false;
+	bool written = true;
+	for (std::uint64_t address = 0x800; address < 0x900; ++address)
+		written = written && memory.byte(address) == 0x5a;
+	return expect(written,
+		"executable-destination REP STOSB did not write its run") &&
+		expect(memory.byte(0x7ff) == 0 && memory.byte(0x900) == 0,
+			"executable-destination REP STOSB wrote past its run") &&
+		expect(memory.invalidations() == 1,
+			"executable-destination REP STOSB did not publish once");
+}
+
+[[nodiscard]] bool repeated_move_faults_on_a_run_boundary()
+{
+	using namespace uml::cpu::x86_64;
+	/* A run writes its architectural state back before starting the next
+	 * one, so a translation that faults leaves the instruction resumable at
+	 * exactly the byte it reached. Nothing else in the engine can check that:
+	 * the element loop kept the same invariant one element at a time, and a
+	 * run advances thousands of elements between writebacks.
+	 */
+	TestMemory memory;
+	memory.load(0, {0xf3, 0xa4}); // rep movsb
+	for (std::uint64_t address = 4096; address < 8192; ++address)
+		memory.load(address, {static_cast<std::uint8_t>(address & 0xff)});
+	CpuState cpu{};
+	cpu.gpr(Register::rcx) = 8192;
+	cpu.gpr(Register::rsi) = 4096;
+	cpu.gpr(Register::rdi) = 12288;
+	const auto built = gadgets::build(memory, 0, 1);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"faulting REP MOVSB did not build"))
+		return false;
+	const auto result = gadgets::execute(built.program, cpu, memory, 1);
+	/* The first run fills the last mapped page; the second cannot translate
+	 * its destination at all. */
+	if (!expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+		cpu.rip == 0 && cpu.gpr(Register::rcx) == 4096 &&
+		cpu.gpr(Register::rsi) == 8192 &&
+		cpu.gpr(Register::rdi) == 16384,
+		"faulting REP MOVSB did not stop on its run boundary"))
+		return false;
+	bool copied = true;
+	for (std::uint64_t offset = 0; offset < 4096; ++offset)
+		copied = copied && memory.byte(12288 + offset) ==
+			memory.byte(4096 + offset);
+	return expect(copied,
+		"faulting REP MOVSB did not keep the bytes it had moved");
+}
+
+[[nodiscard]] bool bulk_string_runs_match_the_element_definition()
+{
+	using namespace uml::cpu::x86_64;
+	/* The run loop is only a faster spelling of the element loop, so the two
+	 * have to agree byte for byte and register for register across every
+	 * shape that decides between them: a page boundary falling inside a run
+	 * or inside one element, a destination overlapping its source in either
+	 * direction, a descending direction, and counts on both sides of the
+	 * length below which a run is not worth starting.
+	 *
+	 * Both are compared against the architectural definition rather than
+	 * against each other, so a shape neither one handles is still caught.
+	 */
+	struct Case final {
+		std::uint8_t prefix;
+		std::uint8_t opcode;
+		unsigned width;
+		bool move;
+		bool address32;
+		const char *name;
+	};
+	static constexpr Case cases[] = {
+		{0x00, 0xa4, 1, true, false, "rep movsb"},
+		{0x66, 0xa5, 2, true, false, "rep movsw"},
+		{0x00, 0xa5, 4, true, false, "rep movsd"},
+		{0x48, 0xa5, 8, true, false, "rep movsq"},
+		{0x00, 0xaa, 1, false, false, "rep stosb"},
+		{0x66, 0xab, 2, false, false, "rep stosw"},
+		{0x00, 0xab, 4, false, false, "rep stosd"},
+		{0x48, 0xab, 8, false, false, "rep stosq"},
+		/* 32-bit address arithmetic reaches the same bytes here but keeps
+		 * its pointers narrow, which is a separate advance. */
+		{0x00, 0xa4, 1, true, true, "a32 rep movsb"},
+		{0x48, 0xa5, 8, true, true, "a32 rep movsq"},
+		{0x00, 0xaa, 1, false, true, "a32 rep stosb"},
+		{0x48, 0xab, 8, false, true, "a32 rep stosq"},
+	};
+	/* Distances from a page boundary that put a run's first byte, its last
+	 * byte, or one whole element across it. */
+	static constexpr std::int64_t offsets[] = {0, 1, 7, -1, -7, -9, -64};
+	static constexpr std::int64_t leads[] = {
+		-4096, -70, -33, -16, -8, -1, 0, 1, 8, 16, 33, 70, 4096};
+	static constexpr std::uint64_t counts[] = {
+		1, 4, 15, 16, 31, 32, 33, 63, 64, 65, 130, 520};
+
+	constexpr std::uint64_t span = 65536;
+	constexpr std::uint64_t low = 8192;
+	constexpr std::uint64_t high = 57344;
+	constexpr std::uint64_t anchor = 32768;
+	constexpr std::uint64_t value = 0x0123'4567'89ab'cdefULL;
+	std::vector<std::byte> pattern(span);
+	for (std::uint64_t address = 0; address < span; ++address)
+		pattern[address] = static_cast<std::byte>(
+			(address * 7U) ^ (address >> 5U));
+	std::vector<std::byte> model(span);
+	char message[192];
+
+	for (const auto &item : cases) {
+		TestMemory memory{0, span};
+		std::uint64_t length = 2;
+		if (item.address32 && item.prefix != 0) {
+			memory.load(0, {0xf3, 0x67, item.prefix, item.opcode});
+			length = 4;
+		} else if (item.address32) {
+			memory.load(0, {0xf3, 0x67, item.opcode});
+			length = 3;
+		} else if (item.prefix != 0) {
+			memory.load(0, {0xf3, item.prefix, item.opcode});
+			length = 3;
+		} else {
+			memory.load(0, {0xf3, item.opcode});
+		}
+		const auto built = gadgets::build(memory, 0, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built, item.name))
+			return false;
+
+		for (const auto descending : {false, true})
+		for (const auto offset : offsets)
+		for (const auto lead : leads)
+		for (const auto count : counts) {
+			const auto reach = static_cast<std::int64_t>(
+				count * item.width);
+			const auto source =
+				static_cast<std::int64_t>(anchor) + offset;
+			const auto destination = source + lead;
+			/* Ends of the two ranges, whichever way they run. */
+			const auto source_first = descending ?
+				source - reach + static_cast<std::int64_t>(item.width) :
+				source;
+			const auto destination_first = descending ?
+				destination - reach +
+					static_cast<std::int64_t>(item.width) :
+				destination;
+			const auto first = source_first < destination_first ?
+				source_first : destination_first;
+			const auto last =
+				(source_first > destination_first ?
+					source_first : destination_first) + reach;
+			if (first < static_cast<std::int64_t>(low) ||
+				last > static_cast<std::int64_t>(high))
+				continue;
+
+			/* Restore only the window the case can touch, plus a guard
+			 * band a run that overshoots would land in. */
+			const auto begin = static_cast<std::uint64_t>(first) - 64;
+			const auto end = static_cast<std::uint64_t>(last) + 64;
+			memory.fill(begin, std::span{pattern}.subspan(
+				begin, end - begin));
+			std::memcpy(model.data() + begin, pattern.data() + begin,
+				end - begin);
+
+			CpuState cpu{};
+			cpu.gpr(Register::rax) = value;
+			cpu.gpr(Register::rcx) = count;
+			cpu.gpr(Register::rsi) = static_cast<std::uint64_t>(source);
+			cpu.gpr(Register::rdi) =
+				static_cast<std::uint64_t>(destination);
+			if (descending)
+				cpu.rflags |= rflags_direction;
+
+			/* The architectural definition: one element at a time in
+			 * address order, each read whole before it is written, so a
+			 * later element sees what earlier ones wrote but no element
+			 * overwrites its own source.
+			 */
+			auto si = source;
+			auto di = destination;
+			const auto step = descending ?
+				-static_cast<std::int64_t>(item.width) :
+				static_cast<std::int64_t>(item.width);
+			for (auto left = count; left != 0; --left) {
+				std::array<std::byte, 8> element{};
+				for (unsigned index = 0; index < item.width; ++index)
+					element[index] = item.move ?
+						model[static_cast<std::size_t>(si) + index] :
+						static_cast<std::byte>(
+							(value >> (8U * index)) & 0xffU);
+				for (unsigned index = 0; index < item.width; ++index)
+					model[static_cast<std::size_t>(di) + index] =
+						element[index];
+				si += step;
+				di += step;
+			}
+
+			unsigned entries = 0;
+			bool ran = true;
+			while (ran && cpu.rip != length) {
+				const auto result = gadgets::execute(
+					built.program, cpu, memory, 1);
+				ran = result.event ==
+					uml::cpu::EngineEvent::continued &&
+					++entries <= 8192;
+			}
+
+			bool same = ran && cpu.gpr(Register::rcx) == 0 &&
+				cpu.gpr(Register::rdi) ==
+					static_cast<std::uint64_t>(di) &&
+				(!item.move || cpu.gpr(Register::rsi) ==
+					static_cast<std::uint64_t>(si));
+			for (auto address = begin; same && address < end; ++address)
+				same = memory.byte(address) ==
+					static_cast<std::uint8_t>(model[address]);
+			if (!same) {
+				std::snprintf(message, sizeof(message),
+					"%s%s diverged from the element definition "
+					"(offset %lld lead %lld count %llu)",
+					item.name, descending ? " down" : "",
+					static_cast<long long>(offset),
+					static_cast<long long>(lead),
+					static_cast<unsigned long long>(count));
+				return expect(false, message);
+			}
+		}
+	}
+	return true;
+}
 [[nodiscard]] bool preserve_precise_memory_fault()
 {
 	using namespace uml::cpu::x86_64;
@@ -2678,6 +2993,9 @@ int main()
 		execute_compat32_tls_segment() &&
 		reject_program_mode_mismatch() &&
 		chunk_repeating_string_for_interrupt() &&
+		bulk_string_runs_match_the_element_definition() &&
+		repeated_store_into_executable_page_publishes_its_run() &&
+		repeated_move_faults_on_a_run_boundary() &&
 		preserve_precise_memory_fault() &&
 		retire_valid_prefix_before_decode_fault() &&
 		migrated_gadgets_are_native_only() &&
