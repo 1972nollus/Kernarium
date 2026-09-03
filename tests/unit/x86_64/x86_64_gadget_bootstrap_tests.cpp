@@ -732,15 +732,44 @@ read_test_code_sequences(void *opaque) noexcept
 			"trained indirect CALL lost its architectural stack write");
 }
 
-[[nodiscard]] bool linked_call_stops_after_executable_stack_write()
+/* No other test here binds an execution context, so `code_link_safe` has never
+ * been reachable: without one it refuses every link and the engine leaves the
+ * stream. The two call tests below are about exactly that decision, so they
+ * supply the sequence contract a real address space provides.
+ */
+struct TestSequences final {
+	std::uint64_t mapping_changes{1};
+	std::uint64_t code_changes{1};
+};
+
+[[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
+read_test_sequences(void *context) noexcept
+{
+	const auto &state = *static_cast<const TestSequences *>(context);
+	return {state.mapping_changes, state.code_changes, false};
+}
+
+/* A call whose return-address push lands on an executable page publishes that
+ * write like any other store, and then follows its link. What makes that safe
+ * is not the page but the bytes: publication deactivates every cached block the
+ * write actually overlapped and resets its link, and the link itself still has
+ * to pass `code_link_safe`. Leaving the stream merely because some executable
+ * page was written is what an ordinary store already declines to do, and a call
+ * that did it anyway left the engine paying a C++ round trip for the majority
+ * of the control transfers a real program performs.
+ */
+[[nodiscard]] bool linked_call_crosses_a_disjoint_executable_stack_write()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
 	memory.set_executable_page(0);
+	TestSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
-	executor.prepare(memory, 42, 1, 1);
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_sequences);
 	const auto target = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	const auto call = executor.select_program(
@@ -753,12 +782,52 @@ read_test_code_sequences(void *opaque) noexcept
 	cpu.gpr(Register::rsp) = 0x800;
 	const auto result = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
-			result.retired_instructions == 1 && cpu.rip == 16,
-		"direct CALL crossed a code-changing stack write") &&
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2 && cpu.rip == 18,
+		"direct CALL left the stream for a stack write that changed "
+		"no instruction it was about to run") &&
 		expect(cpu.gpr(Register::rsp) == 0x7f8 &&
 			memory.qword(0x7f8) == 5 && memory.invalidations() == 1,
 			"code-changing CALL lost its architectural stack write");
+}
+
+/* The same call, with the push aimed at the callee's own instructions. Nothing
+ * about the call gadget stops this one; publication deactivates the block the
+ * write overlapped and resets the link it was reached through, so following
+ * that link finds the fallback and returns to have the callee retranslated.
+ */
+[[nodiscard]] bool linked_call_stops_when_the_stack_write_hits_its_target()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
+	memory.load(16, {0x0f, 0x05});
+	memory.set_executable_page(0);
+	TestSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_sequences);
+	const auto target = executor.select_program(
+		memory, 16, ExecutionMode::long64);
+	const auto call = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(target.program != nullptr && call.program != nullptr,
+		"overlapping-stack CALL did not populate its direct link"))
+		return false;
+
+	CpuState cpu{};
+	/* The eight-byte push lands on 16, which is the callee. */
+	cpu.gpr(Register::rsp) = 24;
+	const auto result = gadgets::execute(
+		*call.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 && cpu.rip == 16,
+		"direct CALL entered a callee its own stack write had just "
+		"overwritten") &&
+		expect(cpu.gpr(Register::rsp) == 16 &&
+			memory.qword(16) == 5 && memory.invalidations() == 1,
+			"overlapping-stack CALL lost its architectural stack write");
 }
 
 [[nodiscard]] bool executable_store_publishes_code_change()
@@ -3324,7 +3393,8 @@ int main()
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&
-		linked_call_stops_after_executable_stack_write() &&
+		linked_call_crosses_a_disjoint_executable_stack_write() &&
+		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		executable_store_publishes_code_change() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&

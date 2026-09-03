@@ -456,14 +456,20 @@ pop_memory 64, ldr, x, str, x
 
 .purgem pop_memory
 
+/* A call's return-address push is an ordinary store, so it settles a pending
+ * code write on exactly the terms `finish_store` uses for one: publish it, and
+ * leave the stream only when the write landed inside the block that is running,
+ * because that is the case where the instructions still ahead of us may have
+ * changed. Publishing alone is not a reason to leave. The link the call is
+ * about to follow tests `code_link_safe` for itself, which is the same test a
+ * jump out of a publishing block already relies on, so a call that stays in the
+ * stream is no less careful than a jump -- it was only less lucky.
+ *
+ * `w23` reports that decision to `call_push_and_exit`.
+ */
 .macro invalidate_stack_write size
 	mov w23, #0
-	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbz w8, .Lx86_stack_write_check_overlap\@
 	publish_pending_code x25, \size
-	mov w23, #1
-	b .Lx86_stack_write_ready\@
-.Lx86_stack_write_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
 	b.hs .Lx86_stack_write_ready\@
@@ -471,9 +477,12 @@ pop_memory 64, ldr, x, str, x
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
 	b.ls .Lx86_stack_write_ready\@
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	cbnz w8, .Lx86_stack_write_overlap\@
 	mov x0, _context
 	mov x1, x25
 	bl NAME(uml_x86_64_gadget_invalidate_code)
+.Lx86_stack_write_overlap\@:
 	mov w23, #1
 .Lx86_stack_write_ready\@:
 .endm
