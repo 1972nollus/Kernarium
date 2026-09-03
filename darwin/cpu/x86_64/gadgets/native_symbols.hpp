@@ -5,6 +5,7 @@ namespace uml::cpu::x86_64::gadgets::native {
 
 extern "C" {
 void uml_x86_64_gadget_block_exit();
+void uml_x86_64_gadget_block_exit_linked();
 void uml_x86_64_gadget_nop();
 void uml_x86_64_gadget_extended_state_fxsave();
 void uml_x86_64_gadget_extended_state_fxrstor();

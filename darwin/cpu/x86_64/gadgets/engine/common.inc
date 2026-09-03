@@ -847,5 +847,15 @@ gadget block_exit
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 
+/* The same block end, for a block the fetch window cut short rather than a
+ * branch. Its successor is the next address, which is as statically known as a
+ * direct jump's target, so it is followed the same way. Falling off the end of
+ * a block retires no instruction, which is why this does not advance the
+ * retirement count the way `jump_linked` does for the jump it executes.
+ */
+gadget block_exit_linked
+	ldr x8, [_stream]
+	follow_block_link x8
+
 gadget nop
 	retire_and_next

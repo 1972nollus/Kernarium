@@ -6334,8 +6334,24 @@ std::vector<std::uintptr_t> build_native_stream(
 				"x86-64 operation has no native assembly gadget"};
 		host_flags = host_flags_of(gadget.instruction);
 	}
+	/* A block that ended at a branch never reaches this terminator, so only
+	 * one cut short by the fetch window can use a link -- and asking for a
+	 * link record for an address the block never falls through to would
+	 * allocate one per branch-ended block for nothing.
+	 */
+	const auto next = normalize_instruction_pointer(mode, final_rip);
+	const bool falls_through = !gadgets.empty() &&
+		!gadgets.back().instruction.terminal();
+	const auto *link = falls_through && links.resolve != nullptr ?
+		links.resolve(links.context, next, mode) : nullptr;
+	if (link != nullptr) {
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_block_exit_linked));
+		stream.push_back(reinterpret_cast<std::uintptr_t>(link));
+		return stream;
+	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
-	stream.push_back(normalize_instruction_pointer(mode, final_rip));
+	stream.push_back(next);
 	return stream;
 }
 
