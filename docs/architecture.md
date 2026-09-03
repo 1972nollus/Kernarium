@@ -67,9 +67,10 @@ unsigned embedded-loader path.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
-artifact on macOS, Simulator, and device. The macOS x86_64 userspace product
-uses a separately identified 4 KiB mainline slice. Android uses a separate
-accepted 16 KiB ACK artifact.
+artifact on macOS, Simulator, and device. The ARM64EC Wine appliance uses a
+separate accepted 4 KiB arm64 profile on all three Apple platforms. The macOS
+x86_64 userspace product uses a separately identified 4 KiB mainline slice.
+Android uses a separate accepted 16 KiB ACK artifact.
 
 ## CPU execution and scheduling
 
@@ -78,9 +79,10 @@ Linux task contexts remain on guest kernel stacks and migrate between carriers;
 guest task creation does not create host threads. CPU hotplug reuses carriers,
 and shutdown returns to a native carrier stack before thread teardown.
 
-Carriers are named `uml-vcpu-N-carrier`. The shipped kernels use a 100 Hz tick
-with `NO_HZ_IDLE`. Darwin signals wake carriers but do not execute Linux IPIs
-asynchronously; IRQ-enabled spin checkpoints service pending IPIs.
+Carriers are named `uml-vcpu-N-carrier`. The normal kernels use a 100 Hz tick;
+the latency-oriented Wine profile uses 250 Hz. Both use `NO_HZ_IDLE`. Darwin
+signals wake carriers but do not execute Linux IPIs asynchronously; IRQ-enabled
+spin checkpoints service pending IPIs.
 
 Early UML calibration uses process-directed `SIGALRM`. Application and launcher
 threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
@@ -110,6 +112,24 @@ instructions are outside this Linux userspace profile. That gate is not proof
 of an arbitrary distribution or complete Linux syscall compatibility. The
 normal mainline slices and Android remain arm64-userspace-only and contain
 none of the x86_64 kernel overlay.
+
+The separate ARM64EC Wine product also keeps an arm64 Linux kernel and an
+ARM64-only Debian/XFCE rootfs, but embeds the x86 gadget engine as a private CPU
+service. Wine's ARM64EC `xtajit64.dll` transition module issues a reserved arm64
+breakpoint carrying an x86-64 register context. Its native ARM64 `xtajit.dll`
+WoW64 module uses the same service with an i386 context and returns system and
+Unix calls to native ARM64 Wine. The runtime consumes both calls before Linux
+signal delivery, runs x86 instructions against the same guest address space,
+and uses Wine's EC-code bitmap to return x86-64 execution directly to native
+ARM64EC/ARM64X code. This target places a conservative inner-shareable barrier
+at every x86 retirement and at native/x86 boundaries; both bridges refuse the
+service unless that strict-ordering capability is advertised. Linux continues
+to own processes, filesystems, memory, devices, and windowing; the i386 Wine
+modules are PE-only, and no x86 Linux ABI, second kernel, or nested emulator is
+present. The dedicated
+`uml_wine_arm64ec_emulator` archive, `uml-darwin-wine-arm64ec` macOS executable,
+and `KRuntime_Wine_6_18_4K` iOS framework keep it distinct from ordinary 4 KiB
+products.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable

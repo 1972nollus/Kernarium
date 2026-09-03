@@ -19,9 +19,8 @@ struct EmulatorSettingsView: View {
     private let rootfsFilenames: [String]
     private let documentsDirectory: URL
 
-    /// A bundle whose kernel exists in only one page profile decides the
-    /// profile; the picker then shows that profile and stops offering the other
-    /// rather than letting a selection be saved that cannot boot.
+    /// A specialized selection decides its profile; the picker then shows that
+    /// profile and stops offering one its runtime cannot boot.
     private var requiredPageSize: KernelPageSize? {
         RootfsImage.requiredPageSize(
             forSelectionNamed: rootfsFilename,
@@ -44,6 +43,13 @@ struct EmulatorSettingsView: View {
             named: rootfsFilename,
             in: documentsDirectory
         )?.flavor == .android
+    }
+
+    private var wineARM64ECSelected: Bool {
+        RootfsImage.selection(
+            named: rootfsFilename,
+            in: documentsDirectory
+        )?.flavor == .wineARM64EC
     }
 
     init(
@@ -159,10 +165,21 @@ struct EmulatorSettingsView: View {
                     }
 
                     if let required = requiredPageSize {
-                        Text(
-                            "\(rootfsFilename) carries its own kernel and " +
-                            "boots with \(required.title) pages."
-                        )
+                        Group {
+                            if wineARM64ECSelected {
+                                Text(
+                                    "\(rootfsFilename) uses the dedicated " +
+                                    "ARM64EC Wine runtime with " +
+                                    "\(required.title) pages."
+                                )
+                            } else {
+                                Text(
+                                    "\(rootfsFilename) carries its own " +
+                                    "kernel and boots with \(required.title) " +
+                                    "pages."
+                                )
+                            }
+                        }
                         .accessibilityIdentifier("guestBundleNote")
                     } else {
                         Text(

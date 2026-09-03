@@ -96,7 +96,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 }
 
 /* The flavour leads the framework name. Linux additionally requires a numeric
- * release after its prefix because the ACK name shares the KRuntime_ stem. */
+ * release after its prefix because the specialized names share its stem. */
 [[nodiscard]] NSString* flavorPrefix(uint32_t guestFlavor)
 {
     switch (guestFlavor) {
@@ -104,6 +104,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         return @"KRuntime_";
     case KERNARIUM_RUNTIME_GUEST_ANDROID:
         return @"KRuntime_ACK_";
+    case KERNARIUM_RUNTIME_GUEST_WINE_ARM64EC:
+        return @"KRuntime_Wine_";
     default:
         return nil;
     }

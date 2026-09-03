@@ -8,6 +8,16 @@ include("${UML_KERNEL_COMMON_ROOT}/artifacts/KernelArtifact.cmake")
 set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
     "Prebuilt kernel product consumed by the selected Apple executable/runtime")
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS mainline-6.18 android-17)
+set(UML_MAINLINE_KERNEL_PROFILE "standard" CACHE STRING
+    "Mainline arm64 kernel profile: standard or wine-arm64ec")
+set_property(CACHE UML_MAINLINE_KERNEL_PROFILE PROPERTY STRINGS
+    standard wine-arm64ec)
+
+if(UML_BUILD_WINE_ARM64EC AND
+   NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
+    message(FATAL_ERROR
+        "The ARM64EC Wine emulator requires the mainline-6.18 kernel product")
+endif()
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     # Apple targets consume the ACK artifact only. Rootfs bundles are selected
@@ -39,8 +49,18 @@ if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
     message(FATAL_ERROR
         "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
 endif()
+if(NOT UML_MAINLINE_KERNEL_PROFILE MATCHES "^(standard|wine-arm64ec)$")
+    message(FATAL_ERROR
+        "UML_MAINLINE_KERNEL_PROFILE must be standard or wine-arm64ec")
+endif()
+if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec" AND
+   (NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" OR UML_GUEST_16K_PAGES))
+    message(FATAL_ERROR
+        "The wine-arm64ec kernel profile requires the arm64 4 KiB slice")
+endif()
 
 set(_uml_mainline_artifact_cache_arguments)
+set(_uml_mainline_profile_fragment)
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
@@ -56,8 +76,15 @@ elseif(UML_GUEST_16K_PAGES)
     list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
         "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4")
 else()
-    set(_uml_mainline_acceptance
-        "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
+    if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec")
+        set(_uml_mainline_acceptance
+            "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/artifacts/accepted-4k.env")
+        set(_uml_mainline_profile_fragment
+            "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/config.fragment")
+    else()
+        set(_uml_mainline_acceptance
+            "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
+    endif()
     set(_uml_expected_page_size 4096)
     list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
         "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4")
@@ -93,7 +120,8 @@ uml_import_kernel_artifact(
     EXPECTED_FAMILY mainline-6.18
     EXPECTED_SLICE "${UML_MAINLINE_KERNEL_SLICE}"
     EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE "${_uml_expected_page_size}")
+    EXPECTED_PAGE_SIZE "${_uml_expected_page_size}"
+    EXPECTED_CONFIG_FRAGMENT "${_uml_mainline_profile_fragment}")
 
 set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET uml_mainline_kernel_artifact
     CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)

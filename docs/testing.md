@@ -128,6 +128,21 @@ Build it on an x86-64 Linux host and run the bounded
 `tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check; it is not a
 replacement for the accepted general-purpose rootfs.
 
+`tools/rootfs/wine-arm64ec` owns the separate ARM64-only Debian/XFCE appliance
+containing source-built ARM64EC/ARM64X Wine, PE-only i386 WoW64 modules, and
+AMD64 and i386 execution probes. Its producer emits package, ELF, PE, and
+provenance inventories and rejects any x86 ELF payload. Build it on native
+AArch64 Linux with the pinned Wine source and checksum-verified ARM64EC
+compiler described in its
+[producer README](../tools/rootfs/wine-arm64ec/README.md).
+
+The fast full-stack gate is
+`cmake --workflow --preset check-wine-arm64ec-macos`. It boots the dedicated
+4 KiB kernel and emulator, starts Xvfb and the XFCE window manager, and requires
+Wine to return exit code 42 from the AMD64 PE probe and 43 from the i386 WoW64
+probe. iOS Simulator and physical-device packaging and launch validation
+follow only after this macOS gate passes.
+
 ## Apple builds and Kernarium
 
 Build the general Apple libraries with:
@@ -141,9 +156,12 @@ scripts/build-xcframework.sh
 ```
 
 Kernarium has separate runtime presets for device and Simulator, 16 KiB and
-4 KiB Linux, and 16 KiB Android. `Kernarium/scripts/package-ios-frameworks.sh`
-packages all selected runtime and graphics slices plus the static GPT fdisk
-and decode-only zstd XCFrameworks for Xcode.
+4 KiB Linux, 16 KiB Android, and the dedicated 4 KiB ARM64EC Wine profile.
+`Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
+graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
+Xcode. A `wine-arm64ec-*.erofs` filename selects
+`KRuntime_Wine_6_18_4K`; this reserved identity prevents the ordinary Linux
+runtime from opening the Wine appliance with no x86 CPU service.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
@@ -155,9 +173,9 @@ are launch inputs, not emulator build inputs.
 
 Kernarium defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on physical
 devices, and the processor count reported by `NSProcessInfo`. Android fixes the
-page profile at 16 KiB. A `.kern` bundle contains the selected rootfs release
-and its persistent writable state; rebuilding the app or kernel framework must
-not erase it.
+page profile at 16 KiB; the ARM64EC Wine image fixes it at 4 KiB. A `.kern`
+bundle contains the selected rootfs release and its persistent writable state;
+rebuilding the app or kernel framework must not erase it.
 
 Simulator launch and bundle assembly are owned by
 `Kernarium/scripts/run-ios-simulator.sh` and

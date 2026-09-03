@@ -68,6 +68,7 @@ gadget enter_\width
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm
@@ -164,6 +165,7 @@ gadget far_\kind\()_\width
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x26, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm
@@ -190,6 +192,7 @@ gadget far_return_\width
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x26, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm
@@ -267,6 +270,7 @@ gadget interrupt_return_\width
 	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm

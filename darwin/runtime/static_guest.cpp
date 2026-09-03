@@ -2,7 +2,10 @@
 #include "memory/static_guest_memory.hpp"
 #include "cpu/engine_factory.hpp"
 #if DARWIN_UML_X86_64_GUEST
-#include "cpu/x86_64/gadgets/program.hpp"
+#include "runtime/x86_gadget_runtime.hpp"
+#endif
+#if DARWIN_UML_WINE_CPU_SERVICE
+#include "runtime/wine_cpu_service.hpp"
 #endif
 #include "platform/apple/host_features.hpp"
 #include "cpu/engine.hpp"
@@ -16,7 +19,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -48,7 +50,6 @@ namespace {
 constexpr std::int32_t x86_64_guest_isa = 2;
 #endif
 #if DARWIN_UML_X86_64_GUEST
-constexpr std::uint64_t x86_64_rt_sigreturn = 15;
 constexpr std::uint32_t x86_64_fp_marker = 0x5838'3634U;
 constexpr std::size_t x86_64_register_count = 16;
 constexpr std::size_t x86_64_rflags_slot = 16;
@@ -361,33 +362,6 @@ bool execution_interrupt_boundary(void *context) noexcept
 }
 
 #if DARWIN_UML_X86_64_GUEST
-[[nodiscard]] x86_64::gadgets::ProgramCacheSequences
-x86_cache_sequences(void *context) noexcept
-{
-	const auto sequences =
-		darwin_uml_static_vm_execution_context_sequences(context);
-	return {
-		.mapping_changes = sequences.mapping_changes,
-		.code_changes = sequences.code_changes,
-		.interrupted = sequences.execution_interrupt != 0,
-	};
-}
-
-/* The address space keeps a short history of the ranges its code changes
- * touched, which is what lets the cache retire the translations covering them
- * instead of every link it holds. */
-[[nodiscard]] int x86_cache_code_changes(void *context, std::uint64_t sequence,
-	x86_64::gadgets::ProgramCodeChange *changes, std::size_t capacity,
-	std::uint64_t *current_sequence) noexcept
-{
-	static_assert(sizeof(x86_64::gadgets::ProgramCodeChange) ==
-		sizeof(darwin_uml_static_code_change));
-	return darwin_uml_static_vm_execution_context_code_change_ranges(
-		context, sequence,
-		reinterpret_cast<darwin_uml_static_code_change *>(changes),
-		capacity, current_sequence);
-}
-
 [[nodiscard]] bool x86_compat_syscall_trace_enabled() noexcept
 {
 	static const bool enabled = [] {
@@ -395,12 +369,6 @@ x86_cache_sequences(void *context) noexcept
 		return value != nullptr && value[0] != '\0' && value[0] != '0';
 	}();
 	return enabled;
-}
-
-[[nodiscard]] bool x86_fatal_trace_enabled() noexcept
-{
-	const auto *value = std::getenv("UML_X86_FATAL_TRACE");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
 }
 
 [[nodiscard]] bool x86_write_trace_enabled() noexcept
@@ -505,33 +473,6 @@ void trace_x86_write(const x86_64::CpuState &cpu,
 			static_cast<unsigned long long>(total),
 			static_cast<unsigned long long>(sampled), zeros,
 			readable ? 1U : 0U);
-	}
-	std::fputc('\n', stderr);
-	std::fflush(stderr);
-}
-
-void trace_x86_fatal(const char *stage, const x86_64::CpuState &cpu,
-	unsigned long generation, int error = 0,
-	std::size_t retired = 0, StaticGuestMemory *memory = nullptr) noexcept
-{
-	if (!x86_fatal_trace_enabled())
-		return;
-	std::fprintf(stderr,
-		"Darwin x86 runtime fatal stage=%s rip=%#llx mode=%u "
-		"generation=%lu errno=%d retired=%zu",
-		stage, static_cast<unsigned long long>(cpu.rip),
-		static_cast<unsigned>(cpu.execution_mode), generation, error,
-		retired);
-	if (memory != nullptr) {
-		std::array<std::byte, 15> bytes{};
-		if (memory->fetch(cpu.rip, bytes)) {
-			std::fputs(" bytes=", stderr);
-			for (const auto byte : bytes)
-				std::fprintf(stderr, "%02x",
-					std::to_integer<unsigned>(byte));
-		} else {
-			std::fputs(" bytes=<unreadable>", stderr);
-		}
 	}
 	std::fputc('\n', stderr);
 	std::fflush(stderr);
@@ -648,128 +589,6 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	fp.reserved[1] = x86_64_fp_marker;
 }
 
-[[nodiscard]] uml::cpu::ExecutionResult run_x86_gadgets(
-	x86_64::CpuState &cpu, StaticGuestMemory &memory,
-	x86_64::gadgets::Executor &executor,
-	unsigned long generation, const uml::cpu::InterruptToken &interrupt) noexcept
-{
-	uml::cpu::ExecutionResult result{};
-	result.reason = uml::cpu::ExitReason::fatal;
-	StaticExecutionScope execution{generation, cpu.rip};
-	if (!execution.entered()) {
-		trace_x86_fatal("execution-scope", cpu, generation, errno);
-		return result;
-	}
-	auto guarded_interrupt = interrupt;
-	guarded_interrupt.poll = execution_interrupt_boundary;
-	guarded_interrupt.poll_context = &execution;
-	bool executor_prepared = false;
-	std::uint64_t prepared_mapping_changes{};
-	std::uint64_t prepared_code_changes{};
-	while (result.retired_instructions < dispatch_budget) {
-		const auto sequences = execution.sequences();
-		if (sequences.execution_interrupt != 0) {
-			result.reason = uml::cpu::ExitReason::interrupt;
-			return result;
-		}
-		memory.prepare(generation, sequences.mapping_changes);
-		if (!executor_prepared ||
-			prepared_mapping_changes != sequences.mapping_changes ||
-			prepared_code_changes != sequences.code_changes) {
-			executor.prepare(memory, generation, sequences.mapping_changes,
-				sequences.code_changes, execution.context(),
-				x86_cache_sequences, x86_cache_code_changes);
-			prepared_mapping_changes = sequences.mapping_changes;
-			prepared_code_changes = sequences.code_changes;
-			executor_prepared = true;
-		}
-		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
-			cpu.gpr(x86_64::Register::rax) =
-				x86_64_rt_sigreturn;
-			cpu.system_call_32bit = false;
-			result.reason = uml::cpu::ExitReason::system_call;
-			return result;
-		}
-		const auto available = dispatch_budget - result.retired_instructions;
-		const auto selected = executor.select_program(
-			memory, cpu.rip, cpu.execution_mode,
-			std::min<std::size_t>(64, available));
-		switch (selected.status) {
-		case x86_64::gadgets::BuildStatus::fetch_fault:
-			result.reason = uml::cpu::ExitReason::memory_fault;
-			result.fault = {
-				selected.fault_address,
-				uml::memory::MemoryAccess::execute};
-			return result;
-		case x86_64::gadgets::BuildStatus::illegal_instruction:
-			result.reason = uml::cpu::ExitReason::illegal_instruction;
-			trace_x86_fatal("build-illegal", cpu, generation, 0,
-				result.retired_instructions, &memory);
-			return result;
-		case x86_64::gadgets::BuildStatus::allocation_failure:
-			trace_x86_fatal("build-allocation", cpu, generation, errno,
-				result.retired_instructions);
-			return result;
-		case x86_64::gadgets::BuildStatus::built:
-			break;
-		}
-		if (selected.program == nullptr) {
-			trace_x86_fatal("select-program", cpu, generation, errno,
-				result.retired_instructions);
-			return result;
-		}
-		const auto executed = x86_64::gadgets::execute(
-			*selected.program, cpu, memory, executor, available,
-			guarded_interrupt);
-		result.retired_instructions += executed.retired_instructions;
-		prepared_code_changes = executor.prepared_code_changes();
-		result.fault = executed.fault;
-		if (executed.instruction_budget_exhausted) {
-			result.reason = uml::cpu::ExitReason::instruction_budget;
-			return result;
-		}
-		switch (executed.event) {
-		case uml::cpu::EngineEvent::continued:
-			continue;
-		case uml::cpu::EngineEvent::system_call:
-			result.reason = uml::cpu::ExitReason::system_call;
-			return result;
-		case uml::cpu::EngineEvent::memory_fault:
-			result.reason = uml::cpu::ExitReason::memory_fault;
-			return result;
-		case uml::cpu::EngineEvent::interrupt:
-			result.reason = uml::cpu::ExitReason::interrupt;
-			return result;
-		case uml::cpu::EngineEvent::illegal_instruction:
-			result.reason = uml::cpu::ExitReason::illegal_instruction;
-			trace_x86_fatal("execute-illegal", cpu, generation, 0,
-				result.retired_instructions, &memory);
-			return result;
-		case uml::cpu::EngineEvent::breakpoint:
-			result.reason = uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 3;
-			return result;
-		case uml::cpu::EngineEvent::overflow:
-			result.reason = uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 4;
-			return result;
-		case uml::cpu::EngineEvent::fatal:
-			trace_x86_fatal("execute", cpu, generation, 0,
-				result.retired_instructions);
-			return result;
-		case uml::cpu::EngineEvent::floating_point_trap:
-			result.reason = uml::cpu::ExitReason::floating_point_trap;
-			result.syndrome = 0;
-			return result;
-		case uml::cpu::EngineEvent::gcs_fault:
-		case uml::cpu::EngineEvent::pc_alignment:
-			return result;
-		}
-	}
-	result.reason = uml::cpu::ExitReason::instruction_budget;
-	return result;
-}
-
 template<uml::cpu::EngineKind Kind>
 int run_x86_guest(darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp,
@@ -780,12 +599,14 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
 	const auto &registered_interrupt = runtime.interrupt;
-	const auto result = run_x86_gadgets(
-		cpu, runtime.memory, runtime.x86_executor, generation, {
+	const auto run = ::uml::runtime::run_x86_gadgets(
+		cpu, runtime.memory, runtime.x86_executor, generation,
+		dispatch_budget, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
 	});
+	const auto &result = run.execution;
 	if (result.reason == uml::cpu::ExitReason::system_call)
 		trace_x86_write(cpu, runtime.memory, generation);
 	save_x86_cpu(cpu, registers, fp);
@@ -959,34 +780,62 @@ int run_common_guest(
 	const auto started = DispatchClock::now();
 #endif
 	const auto &interrupt = runtime->interrupt;
-	uml::cpu::ExecutionRequest request{
-		.cpu = cpu,
-		.memory = memory,
-		.translated_memory = &memory,
-		.generation = generation,
-		.instruction_budget = dispatch_budget,
-		.interrupt = {
-			.sequence = interrupt.sequence,
-			.snapshot = interrupt.snapshot,
-			.stop = context->stop_token(),
-		},
-		.boundary = signal_return_boundary,
+	const uml::cpu::InterruptToken dispatch_interrupt{
+		.sequence = interrupt.sequence,
+		.snapshot = interrupt.snapshot,
+		.stop = context->stop_token(),
 	};
 	int event = DARWIN_UML_EVENT_FATAL;
 	uml::cpu::ExecutionResult result{};
-	if constexpr (Kind == uml::cpu::EngineKind::interpreter) {
-		StaticExecutionScope execution{generation, cpu.pc};
-		if (!execution.entered())
-			return DARWIN_UML_EVENT_FATAL;
-		const auto sequences = execution.sequences();
-		memory.prepare(generation, sequences.mapping_changes);
-		request.boundary_context = &execution;
-		request.interrupt.poll = execution_interrupt_boundary;
-		request.interrupt.poll_context = &execution;
-		result = engine->run(request);
-	} else {
-		result = engine->run(request);
+	std::size_t retired_instructions{};
+	for (;;) {
+		uml::cpu::ExecutionRequest request{
+			.cpu = cpu,
+			.memory = memory,
+			.translated_memory = &memory,
+			.generation = generation,
+			.instruction_budget = dispatch_budget - retired_instructions,
+			.interrupt = dispatch_interrupt,
+			.boundary = signal_return_boundary,
+		};
+		if constexpr (Kind == uml::cpu::EngineKind::interpreter) {
+			StaticExecutionScope execution{generation, cpu.pc};
+			if (!execution.entered())
+				return DARWIN_UML_EVENT_FATAL;
+			const auto sequences = execution.sequences();
+			memory.prepare(generation, sequences.mapping_changes);
+			request.boundary_context = &execution;
+			request.interrupt.poll = execution_interrupt_boundary;
+			request.interrupt.poll_context = &execution;
+			result = engine->run(request);
+		} else {
+			result = engine->run(request);
+		}
+		retired_instructions += result.retired_instructions;
+		if (result.reason != uml::cpu::ExitReason::breakpoint)
+			break;
+#if DARWIN_UML_WINE_CPU_SERVICE
+		const auto hostcall = ::uml::runtime::handle_wine_cpu_hostcall(
+			cpu, *runtime, generation,
+			dispatch_budget - retired_instructions, dispatch_interrupt);
+		switch (hostcall.disposition) {
+		case ::uml::runtime::WineCpuHostcallDisposition::not_handled:
+			break;
+		case ::uml::runtime::WineCpuHostcallDisposition::memory_fault:
+			result.reason = uml::cpu::ExitReason::memory_fault;
+			result.fault = hostcall.fault;
+			break;
+		case ::uml::runtime::WineCpuHostcallDisposition::resume:
+			retired_instructions += hostcall.retired_instructions;
+			if (retired_instructions < dispatch_budget)
+				continue;
+			result.reason = uml::cpu::ExitReason::instruction_budget;
+			break;
+		}
+#endif
+		break;
 	}
+	result.retired_instructions = retired_instructions;
 	save_cpu(cpu, mutable_registers, fp, *tls);
 
 	switch (result.reason) {

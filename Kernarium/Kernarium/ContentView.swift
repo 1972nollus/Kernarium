@@ -1213,7 +1213,7 @@ private final class EmulatorLauncher {
         }
         let boot: PreparedBoot
         switch selection {
-        case let .image(rootfs):
+        case let .image(rootfs, _):
             guard let prepared = prepareImageBoot(rootfs: rootfs) else { return }
             boot = prepared
         case let .bundle(bundle):

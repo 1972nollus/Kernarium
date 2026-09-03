@@ -6,6 +6,7 @@ import Foundation
 enum GuestFlavor: UInt32 {
     case linux = 0
     case android = 1
+    case wineARM64EC = 2
 }
 
 /// A guest bundle is a directory in Documents holding everything one guest
@@ -48,6 +49,8 @@ struct GuestBundle: Equatable {
         switch flavor {
         case .android:
             .sixteenKiB
+        case .wineARM64EC:
+            .fourKiB
         case .linux:
             nil
         }

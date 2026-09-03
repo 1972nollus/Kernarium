@@ -9,6 +9,7 @@ gadget syscall
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 11 * 8)]
 	strb wzr, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_SYSCALL
 	b uml_x86_64_gadget_leave
 
@@ -19,6 +20,7 @@ gadget int80
 	mov w9, #1
 	strb w9, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_SYSCALL
 	b uml_x86_64_gadget_leave
 
@@ -26,6 +28,7 @@ gadget breakpoint
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_BREAKPOINT
 	b uml_x86_64_gadget_leave
 
@@ -321,6 +324,7 @@ gadget cache_zero
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 

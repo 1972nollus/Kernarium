@@ -10,10 +10,9 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::JitProfileConfiguration)
 target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
-# x86-64 guests are translated to immutable streams of precompiled host
-# gadgets. The backend is a 4 KiB macOS product because ordinary x86-64 Linux
-# userspace requires that page profile and its exact math dependencies are in
-# the verified desktop prefix.
+# x86-64 code is translated to immutable streams of precompiled host gadgets.
+# The fixed x86 Linux slice and the ARM64EC Wine service both use a 4 KiB guest
+# profile; Apple-platform-specific imports provide their exact math archives.
 if(UML_BUILD_X86_64_GUEST)
     set(UML_X86_64_GADGET_CACHE_SLOTS "65536" CACHE STRING
         "Slots in the x86-64 gadget program cache; power of two")
@@ -40,7 +39,8 @@ if(UML_BUILD_X86_64_GUEST)
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
         UML_X86_64_GADGET_CACHE_SLOTS=${UML_X86_64_GADGET_CACHE_SLOTS}
-        UML_X86_64_GADGET_RESIDENT_GENERATIONS=${UML_X86_64_GADGET_RESIDENT_GENERATIONS})
+        UML_X86_64_GADGET_RESIDENT_GENERATIONS=${UML_X86_64_GADGET_RESIDENT_GENERATIONS}
+        UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
     set_target_properties(uml_x86_64_gadgets PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()

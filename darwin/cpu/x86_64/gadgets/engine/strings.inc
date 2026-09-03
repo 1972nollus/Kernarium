@@ -532,6 +532,7 @@ gadget string_\operation\()_\width
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .Lx86_string_continue\@:

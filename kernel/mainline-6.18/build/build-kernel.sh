@@ -23,7 +23,8 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
-       --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
+       --build PATH --page-size 16k|4k [--slice arm64|x86_64]
+       [--profile standard|wine-arm64ec] [--jobs N]
        [--source CONFIGURED_PATH]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
@@ -31,7 +32,9 @@ configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
 OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
 The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
 4 KiB only and composes its own config fragment after the shared common and
-page fragments. The output directory must be outside
+page fragments. The wine-arm64ec profile is an arm64-userspace, 4 KiB-only
+profile with the Linux facilities and timer policy used by the Wine appliance.
+The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
 kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
 the same constrained native address-space profile. An omitted jobs value uses
@@ -45,6 +48,7 @@ REQUESTED_SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
 SLICE=arm64
+PROFILE=standard
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--slice)
@@ -55,6 +59,11 @@ while [ "$#" -gt 0 ]; do
 	--source)
 		[ "$#" -ge 2 ] || fail "--source requires a path"
 		REQUESTED_SOURCE_DIR=$2
+		shift 2
+		;;
+	--profile)
+		[ "$#" -ge 2 ] || fail "--profile requires standard or wine-arm64ec"
+		PROFILE=$2
 		shift 2
 		;;
 	--build)
@@ -104,6 +113,15 @@ case "$PAGE_SIZE" in
 esac
 [ "$UML_KERNEL_SLICE" != x86_64 ] || [ "$PAGE_SIZE" = 4k ] ||
 	fail "the x86_64 userspace slice supports only the 4k page profile"
+case "$PROFILE" in
+standard) PROFILE_FRAGMENT= ;;
+wine-arm64ec)
+	[ "$UML_KERNEL_SLICE" = arm64 ] && [ "$PAGE_SIZE" = 4k ] ||
+		fail "the wine-arm64ec profile requires the arm64 4k slice"
+	PROFILE_FRAGMENT="$LINE_ROOT/profiles/wine-arm64ec/config.fragment"
+	;;
+*) fail "--profile must be standard or wine-arm64ec" ;;
+esac
 case "$UML_KERNEL_JOBS" in
 *[!0-9]*|'') fail "UML_KERNEL_JOBS must be a positive integer" ;;
 esac
@@ -326,10 +344,18 @@ if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 		fail "missing slice config fragment: $UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 	apply_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
+if [ -n "$PROFILE_FRAGMENT" ]; then
+	[ -f "$PROFILE_FRAGMENT" ] ||
+		fail "missing kernel profile config fragment: $PROFILE_FRAGMENT"
+	apply_config_fragment "$PROFILE_FRAGMENT"
+fi
 run_make olddefconfig
 set -- "$CONFIG_DIR/common.fragment" "$CONFIG_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+fi
+if [ -n "$PROFILE_FRAGMENT" ]; then
+	set -- "$@" "$PROFILE_FRAGMENT"
 fi
 verify_composed_config "$@"
 run_make -j"$UML_KERNEL_JOBS"
@@ -344,4 +370,4 @@ else
 		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
 		--slice "$UML_KERNEL_SLICE"
 fi
-printf '%s\n' "built $UML_KERNEL_SLICE $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"
+printf '%s\n' "built $UML_KERNEL_SLICE $PAGE_SIZE $PROFILE Darwin UML kernel: $BUILD_DIR/vmlinux"

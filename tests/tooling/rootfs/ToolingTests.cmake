@@ -30,3 +30,14 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/kernel/android-6.18/config/android.fragment
     LABELS rootfs;audit
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME rootfs-wine-arm64ec-pe-audit
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_wine_arm64ec_pe.py
+        --verifier
+        ${PROJECT_SOURCE_DIR}/tools/rootfs/wine-arm64ec/verify-pe.py
+        --builder
+        ${PROJECT_SOURCE_DIR}/tools/rootfs/wine-arm64ec/build.sh
+    LABELS rootfs;audit
+    TIMEOUT 30)

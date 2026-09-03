@@ -18,6 +18,7 @@ libvncserver	0.9.15	macos	https://github.com/LibVNC/libvncserver.git	9b54b1ec327
 utm-webkit	ed78ab6	apple-gpu	https://github.com/utmapp/WebKit.git	ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10	Source/ThirdParty/ANGLE,Configurations,Tools/ccache	patches/utm-webkit/series.tsv
 utm-libepoxy	bf98587	apple-gpu	https://github.com/utmapp/libepoxy.git	bf98587477fe68d07b93319ece7b40a7d0e2eabe	.	patches/utm-libepoxy/series.tsv
 utm-virglrenderer	65cc14e	apple-gpu	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.	patches/utm-virglrenderer/series.tsv
-fex	FEX-2608	macos,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
+fex	FEX-2608	macos,ios-x86,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
+wine	10.0	wine-arm64ec-rootfs	https://github.com/wine-mirror/wine.git	b073859675060c9211fcbccfd90e4e87520dc2c2	.	-
 nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-
 x86-k-semantics	2020-03-04	x86-conformance	https://github.com/kframework/X86-64-semantics.git	592380aea04820ea11cfa5475b343f0257f2474e	.	-

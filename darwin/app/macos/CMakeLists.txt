@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-function(uml_add_macos_embedded_kernel_app TARGET_NAME MAIN_SOURCE ARTIFACT_TARGET)
+function(uml_add_macos_embedded_kernel_app
+        TARGET_NAME MAIN_SOURCE ARTIFACT_TARGET
+        EMULATOR_TARGET EMULATOR_ARCHIVE_TARGET)
     if(NOT TARGET "${ARTIFACT_TARGET}")
         message(FATAL_ERROR
             "${TARGET_NAME} requires the artifact target ${ARTIFACT_TARGET}")
@@ -30,7 +32,7 @@ function(uml_add_macos_embedded_kernel_app TARGET_NAME MAIN_SOURCE ARTIFACT_TARG
         "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/GLESv2"
         "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/Info.plist")
     target_link_libraries("${TARGET_NAME}" PRIVATE
-        UML::Emulator
+        "${EMULATOR_TARGET}"
         UML::AudioDevice
         UML::BatteryDevice
         UML::ConsoleDevice
@@ -47,7 +49,7 @@ function(uml_add_macos_embedded_kernel_app TARGET_NAME MAIN_SOURCE ARTIFACT_TARG
         # The embedded ELF resolves this fixed-arity ABI with dlsym(). These
         # symbols have no native Mach-O callers, so force-load the deliberately
         # aggregated emulator product at the application boundary.
-        "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
+        "LINKER:-force_load,$<TARGET_FILE:${EMULATOR_ARCHIVE_TARGET}>"
         "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}")
 
     set_target_properties("${TARGET_NAME}" PROPERTIES
@@ -78,8 +80,20 @@ if(UML_BUILD_CLI)
     if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
         message(FATAL_ERROR "uml-darwin requires a selected mainline artifact")
     endif()
-    uml_add_macos_embedded_kernel_app(
-        uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+    if(UML_BUILD_WINE_ARM64EC)
+        if(NOT TARGET UML::WineArm64ECEmulator)
+            message(FATAL_ERROR
+                "The ARM64EC Wine macOS app requires its emulator archive")
+        endif()
+        uml_add_macos_embedded_kernel_app(
+            uml-darwin-wine-arm64ec linux_main.cpp
+            "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+            UML::WineArm64ECEmulator uml_wine_arm64ec_emulator)
+    else()
+        uml_add_macos_embedded_kernel_app(
+            uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+            UML::Emulator uml_emulator)
+    endif()
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)
@@ -91,6 +105,7 @@ if(UML_BUILD_ANDROID17_CLI)
 
     uml_add_macos_embedded_kernel_app(
         uml-darwin-android17 android17_main.cpp
-        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+        UML::Emulator uml_emulator)
     target_link_libraries(uml-darwin-android17 PRIVATE UML::AndroidBoot)
 endif()

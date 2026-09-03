@@ -19,7 +19,7 @@
 	b.ne .Lx86_tls_clear\@
 	lsr w12, \selector_value, #3
 	sub w12, w12, #6
-	cmp w12, #2
+	cmp w12, #4
 	b.hi .Lx86_tls_clear\@
 	ldrb w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
 	lsr w13, w13, w12
@@ -501,6 +501,7 @@ pop_memory 64, ldr, x, str, x
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	invalidate_stack_write (\width / 8)
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	.if \indirect
 	cbnz w23, .Lx86_call_exit\@
 	follow_indirect_link x26, x27
@@ -619,6 +620,7 @@ gadget \name
 	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	.if \cached
 	follow_target_link x24, .Lx86_return_miss\@
 .Lx86_return_miss\@:
@@ -645,6 +647,7 @@ gadget \name
 	.endif
 	\load \host_register\()8, [_cpu, x8]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	.if \cached
 	follow_indirect_link x8, x27
 	.else
@@ -674,6 +677,7 @@ gadget \name
 	ldr x27, [_stream]
 	.endif
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	.if \cached
 	follow_indirect_link x24, x27
 	.else

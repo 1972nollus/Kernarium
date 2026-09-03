@@ -123,6 +123,38 @@
       }
     },
     {
+      "name": "wine-arm64ec-macos",
+      "displayName": "ARM64EC Wine macOS emulator (4 KiB)",
+      "inherits": "macos-unit-4k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "UML_BUILD_CLI": true,
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_AUDIO": true,
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": true,
+        "UML_GUEST_16K_PAGES": false,
+        "UML_BUILD_WINE_ARM64EC": true,
+        "UML_KERNEL_PRODUCT": "mainline-6.18",
+        "UML_MAINLINE_KERNEL_SLICE": "arm64",
+        "UML_MAINLINE_KERNEL_PROFILE": "wine-arm64ec"
+      }
+    },
+    {
+      "name": "wine-arm64ec-macos-stack",
+      "displayName": "ARM64EC Wine macOS full-stack validation",
+      "inherits": "wine-arm64ec-macos",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_INTEGRATION_TESTS": true,
+        "UML_INTEGRATION_ROOTFS": "${sourceDir}/.build/rootfs/wine-arm64ec-xfce.erofs"
+      }
+    },
+    {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
       "inherits": "macos-unit-16k",
@@ -233,6 +265,17 @@
       }
     },
     {
+      "name": "wine-arm64ec-ios-device",
+      "displayName": "ARM64EC Wine iOS device runtime (4 KiB)",
+      "inherits": "kernarium-ios-device-4k",
+      "binaryDir": "${sourceDir}/.build/wine-arm64ec-runtime-ios-device-4k",
+      "cacheVariables": {
+        "UML_BUILD_WINE_ARM64EC": true,
+        "UML_MAINLINE_KERNEL_PROFILE": "wine-arm64ec",
+        "UML_IOS_X86_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/x86"
+      }
+    },
+    {
       "name": "kernarium-ios-device-android",
       "displayName": "Kernarium iOS device Android runtime (16 KiB)",
       "inherits": "kernarium-ios-device",
@@ -265,6 +308,17 @@
       "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-4k",
       "cacheVariables": {
         "UML_GUEST_16K_PAGES": false
+      }
+    },
+    {
+      "name": "wine-arm64ec-ios-simulator",
+      "displayName": "ARM64EC Wine iOS Simulator runtime (4 KiB)",
+      "inherits": "kernarium-ios-simulator-4k",
+      "binaryDir": "${sourceDir}/.build/wine-arm64ec-runtime-ios-simulator-4k",
+      "cacheVariables": {
+        "UML_BUILD_WINE_ARM64EC": true,
+        "UML_MAINLINE_KERNEL_PROFILE": "wine-arm64ec",
+        "UML_IOS_X86_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/x86"
       }
     },
     {
@@ -324,6 +378,16 @@
       "targets": ["tooling-test-binaries", "architecture-audit"]
     },
     {
+      "name": "wine-arm64ec-macos",
+      "configurePreset": "wine-arm64ec-macos",
+      "targets": ["uml-darwin-wine-arm64ec", "tooling-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "wine-arm64ec-macos-stack",
+      "configurePreset": "wine-arm64ec-macos-stack",
+      "targets": ["integration-test-binaries", "tooling-test-binaries", "architecture-audit"]
+    },
+    {
       "name": "macos-android17",
       "configurePreset": "macos-android17",
       "targets": ["uml-darwin-android17", "tooling-test-binaries", "architecture-audit"]
@@ -369,6 +433,11 @@
       "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {
+      "name": "wine-arm64ec-ios-device",
+      "configurePreset": "wine-arm64ec-ios-device",
+      "targets": ["wine-arm64ec-ios-runtime", "architecture-audit"]
+    },
+    {
       "name": "kernarium-ios-device-android",
       "configurePreset": "kernarium-ios-device-android",
       "targets": ["KernariumRuntime", "architecture-audit"]
@@ -382,6 +451,11 @@
       "name": "kernarium-ios-simulator-4k",
       "configurePreset": "kernarium-ios-simulator-4k",
       "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "wine-arm64ec-ios-simulator",
+      "configurePreset": "wine-arm64ec-ios-simulator",
+      "targets": ["wine-arm64ec-ios-runtime", "architecture-audit"]
     },
     {
       "name": "kernarium-ios-simulator-android",
@@ -507,6 +581,22 @@
       "name": "integration-full-4k",
       "inherits": "integration-full",
       "configurePreset": "macos-integration-4k"
+    },
+    {
+      "name": "wine-arm64ec-macos-stack",
+      "configurePreset": "wine-arm64ec-macos-stack",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^guest-wine-arm64ec-smoke$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
     },
     {
       "name": "tooling",
@@ -705,6 +795,14 @@
         {"type": "build", "name": "macos-integration-4k"},
         {"type": "test", "name": "tooling-integration-4k"},
         {"type": "test", "name": "integration-fast-4k"}
+      ]
+    },
+    {
+      "name": "check-wine-arm64ec-macos",
+      "steps": [
+        {"type": "configure", "name": "wine-arm64ec-macos-stack"},
+        {"type": "build", "name": "wine-arm64ec-macos-stack"},
+        {"type": "test", "name": "wine-arm64ec-macos-stack"}
       ]
     },
     {

@@ -187,6 +187,7 @@ gadget jump_\condition
 	csel x8, x12, x13, ne
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm
@@ -207,6 +208,7 @@ gadget jump_\condition\()_linked
 	cmp w11, #0
 	csel x8, x12, x13, ne
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	follow_block_link x8
 .endm
 
@@ -283,6 +285,7 @@ gadget jump_\condition\()_nzcv
 	csel x8, x12, x13, \host
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm
@@ -292,6 +295,7 @@ gadget jump_\condition\()_linked_nzcv
 	ldp x12, x13, [_stream], #16
 	csel x8, x12, x13, \host
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	follow_block_link x8
 .endm
 
@@ -339,12 +343,14 @@ gadget jump
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 
 gadget jump_linked
 	ldr x8, [_stream]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	follow_block_link x8
 
 .purgem follow_block_link
@@ -393,6 +399,7 @@ gadget loop_\opcode\()_\width
 	str x27, [_cpu, #UML_X86_64_CPU_RIP]
 .Lx86_loop_leave\@:
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .endm

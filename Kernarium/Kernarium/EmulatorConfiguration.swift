@@ -287,26 +287,31 @@ struct EmulatorConfiguration: Equatable {
 /// What the launcher was asked to boot, once the stored name has been resolved
 /// against Documents.
 enum GuestSelection {
-    /// A single root filesystem image the Linux runtime boots.
-    case image(URL)
+    /// A single root filesystem image and the runtime profile it requires.
+    case image(URL, flavor: GuestFlavor)
     /// A self-contained bundle carrying its own payload and writable disk.
     case bundle(GuestBundle)
 
     var flavor: GuestFlavor {
         switch self {
-        case .image:
-            .linux
+        case let .image(_, flavor):
+            flavor
         case let .bundle(bundle):
             bundle.flavor
         }
     }
 
-    /// A bundle whose kernel exists in only one page profile pins that profile;
-    /// a plain image leaves the choice to the setting.
+    /// Specialized guests pin the page profile carried by their runtime;
+    /// ordinary Linux images leave the choice to the setting.
     var requiredPageSize: KernelPageSize? {
         switch self {
-        case .image:
-            nil
+        case let .image(_, flavor):
+            switch flavor {
+            case .wineARM64EC:
+                .fourKiB
+            case .linux, .android:
+                nil
+            }
         case let .bundle(bundle):
             bundle.requiredPageSize
         }
@@ -316,6 +321,7 @@ enum GuestSelection {
 enum RootfsImage {
     static let defaultFilename = "rootfs.erofs"
     static let environmentKey = "KERNARIUM_ROOTFS"
+    static let wineARM64ECFilenamePrefix = "wine-arm64ec-"
 
     static var documentsDirectory: URL {
         FileManager.default.urls(
@@ -352,7 +358,10 @@ enum RootfsImage {
                 .map(GuestSelection.bundle)
         }
         guard fileManager.fileExists(atPath: url.path) else { return nil }
-        return .image(url)
+        let flavor: GuestFlavor = validated.hasPrefix(
+            wineARM64ECFilenamePrefix
+        ) ? .wineARM64EC : .linux
+        return .image(url, flavor: flavor)
     }
 
     /// The page profile a stored selection forces, if any. Settings and the

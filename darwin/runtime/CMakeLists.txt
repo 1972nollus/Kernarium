@@ -12,7 +12,9 @@ target_include_directories(uml_runtime_contract INTERFACE
 target_compile_features(uml_runtime_contract INTERFACE cxx_std_20)
 
 add_library(uml_static_runtime OBJECT
-    ${CMAKE_CURRENT_SOURCE_DIR}/static_guest.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/static_guest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/x86_gadget_runtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/wine_cpu_service.cpp)
 uml_declare_architecture_target(uml_static_runtime runtime)
 target_link_libraries(uml_static_runtime PRIVATE
     UML::RuntimeContract

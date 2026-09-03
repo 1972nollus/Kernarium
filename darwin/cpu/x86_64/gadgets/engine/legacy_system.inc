@@ -177,6 +177,7 @@ gadget into
 	tbz x8, #11, .Lx86_into_not_taken
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_OVERFLOW
 	b uml_x86_64_gadget_leave
 .Lx86_into_not_taken:

@@ -90,7 +90,11 @@ if(UML_BUILD_INTEGRATION_TESTS)
     # required by the registered suite, not only the emulator app.
     add_custom_target(integration-test-binaries)
     add_subdirectory(integration)
-    set(_integration_targets uml-darwin)
+    if(UML_BUILD_WINE_ARM64EC)
+        set(_integration_targets uml-darwin-wine-arm64ec)
+    else()
+        set(_integration_targets uml-darwin)
+    endif()
     if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
         list(APPEND _integration_targets
             uml-virtio-gpu uml-vnc-smoke-client)
@@ -146,6 +150,9 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_X86_64_GUEST)
         emulator-native-4k-admission
         x86-64-gadget-bootstrap
         x86-64-instruction-corpus)
+endif()
+if(UML_BUILD_INTEGRATION_TESTS AND UML_BUILD_WINE_ARM64EC)
+    list(APPEND _uml_required_conditional_tests guest-wine-arm64ec-smoke)
 endif()
 if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES)
     list(APPEND _uml_required_conditional_tests

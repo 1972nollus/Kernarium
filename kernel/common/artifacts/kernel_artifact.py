@@ -416,6 +416,19 @@ def parse_config(path: Path) -> dict[str, str]:
     return values
 
 
+def verify_config_fragment(path: Path, fragment: Path) -> None:
+    config = parse_config(path)
+    requested = parse_config(fragment)
+    if not requested:
+        fail(f"kernel profile fragment has no configuration: {fragment}")
+    for symbol, wanted in requested.items():
+        observed = config.get(symbol, "n")
+        if observed != wanted:
+            fail(
+                f"kernel profile config {symbol}={observed}, expected {wanted}"
+            )
+
+
 def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
     if kernel_slice not in ("arm64", "x86_64"):
         fail("kernel config slice is unsupported")
@@ -785,6 +798,7 @@ def verify_compatible_artifact(
     expected_slice: str,
     expected_release_series: str,
     expected_page_size: int,
+    expected_config_fragment: Path | None = None,
 ) -> dict:
     if not artifact_root.is_absolute():
         fail("artifact root must be an absolute local path")
@@ -812,6 +826,10 @@ def verify_compatible_artifact(
         manifest["page_size"],
         manifest["slice"],
     )
+    if expected_config_fragment is not None:
+        verify_config_fragment(
+            artifact_root / "kernel/config", expected_config_fragment
+        )
     verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],

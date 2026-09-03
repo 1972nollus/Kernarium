@@ -11,6 +11,16 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+if(UML_BUILD_WINE_ARM64EC)
+    set(_uml_integration_emulator uml-darwin-wine-arm64ec)
+else()
+    set(_uml_integration_emulator uml-darwin)
+endif()
+if(NOT TARGET "${_uml_integration_emulator}")
+    message(FATAL_ERROR
+        "Integration emulator target is unavailable: ${_uml_integration_emulator}")
+endif()
+
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
    NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     message(FATAL_ERROR "Integration tests require a selected kernel artifact")
@@ -32,7 +42,7 @@ add_custom_target(guest-smp-parallel
     COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
-        --emulator $<TARGET_FILE:uml-darwin>
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
         --root-device /dev/ubda
         --overlay-shell
@@ -48,7 +58,7 @@ function(uml_add_ltp_engine_campaign ENGINE)
         COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
             ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/ltp/run_guest_ltp.py
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --manifest ${PROJECT_SOURCE_DIR}/tests/integration/ltp/verified-tests.tsv
             --modules-builtin ${_uml_integration_modules_builtin}
@@ -95,7 +105,7 @@ uml_add_guest_integration_test(
     NAME guest-overlay-systemd-smoke
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
-        --emulator $<TARGET_FILE:uml-darwin>
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
         --timeout 240
         --docker-hello-world-binary ${UML_DOCKER_HELLO_WORLD}
@@ -145,7 +155,7 @@ function(uml_add_guest_engine_smoke ENGINE)
         NAME guest-${ENGINE}-smoke
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/jit/run_guest_jit_smoke.py
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --engine ${ENGINE}
         LABELS ${_labels}
@@ -162,7 +172,7 @@ uml_add_guest_integration_test(
     NAME guest-slirp-network
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
-        --emulator $<TARGET_FILE:uml-darwin>
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
     LABELS guest;network;slirp;smoke
     TIMEOUT 240
@@ -195,7 +205,7 @@ uml_add_guest_integration_test(
     NAME guest-mmu-stress
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_mmu_stress.py
-        --emulator $<TARGET_FILE:uml-darwin>
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
         --root-device /dev/ubda
         --overlay-shell
@@ -211,7 +221,7 @@ if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
         NAME guest-external-network
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --external
             --external-host ${UML_EXTERNAL_NETWORK_TEST_HOST}
@@ -232,7 +242,7 @@ if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
         NAME guest-docker-hello-world
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --timeout 600
             --command "timeout 180 sh -c 'until systemctl is-active --quiet docker.service
@@ -251,7 +261,7 @@ done'"
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py
             --client $<TARGET_FILE:uml-vnc-smoke-client>
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
         LABELS guest;gpu;vnc;webgl;external;full
         TIMEOUT 720
@@ -263,10 +273,23 @@ done'"
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_webgl_samples.py
             --client $<TARGET_FILE:uml-vnc-smoke-client>
-            --emulator $<TARGET_FILE:uml-darwin>
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
         LABELS guest;gpu;webgl;external;full;pressure
         TIMEOUT 1800
         PROCESSORS 10
         RESOURCE_GROUPS cpus:10,gpus:1)
+endif()
+
+if(UML_BUILD_WINE_ARM64EC)
+    uml_add_guest_integration_test(
+        NAME guest-wine-arm64ec-smoke
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/wine_arm64ec/run_guest_wine_smoke.py
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+        LABELS guest;wine;arm64ec;x86_64;xfce;smoke
+        TIMEOUT 600
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4)
 endif()

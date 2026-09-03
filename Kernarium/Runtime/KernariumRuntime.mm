@@ -1438,9 +1438,7 @@ const kernarium_runtime_api runtimeApi {
     .abi_version = KERNARIUM_RUNTIME_API_VERSION,
     .struct_size = sizeof(kernarium_runtime_api),
     .guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE,
-    .guest_flavor = KERNARIUM_RUNTIME_ANDROID_GUEST
-        ? KERNARIUM_RUNTIME_GUEST_ANDROID
-        : KERNARIUM_RUNTIME_GUEST_LINUX,
+    .guest_flavor = KERNARIUM_RUNTIME_GUEST_FLAVOR,
     .kernel_release = KERNARIUM_KERNEL_RELEASE_SERIES,
     .framework_name = KERNARIUM_RUNTIME_FRAMEWORK_NAME,
     .run = runtimeRun,

@@ -451,15 +451,24 @@ def main() -> int:
         "DARWIN_UML_X86_64_USERSPACE_ONLY",
         "The fixed x86_64 userspace product does not use the arm64 unit or ",
         "The fixed x86_64 userspace slice requires the x86_64 gadget backend",
+        "The ARM64EC Wine emulator requires the wine-arm64ec kernel profile",
+        "The wine-arm64ec kernel profile requires the ARM64EC Wine emulator",
     ):
         require(contract in root_cmake, f"root product selection lacks {contract}")
-    backend_selection = root_cmake.split(
-        "if(UML_TARGET_MACOS AND NOT UML_GUEST_16K_PAGES", 1
-    )[1].split("set(UML_BUILD_X86_64_GUEST ON)", 1)[0]
+    backend_selection_start = "if(NOT UML_GUEST_16K_PAGES AND"
     require(
-        "UML_BUILD_UNIT_TESTS" in backend_selection
+        backend_selection_start in root_cmake,
+        "root product selection lacks the 4 KiB x86_64 backend gate",
+    )
+    backend_selection = root_cmake.split(backend_selection_start, 1)[1].split(
+        "set(UML_BUILD_X86_64_GUEST ON)", 1
+    )[0]
+    require(
+        'UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64"' in backend_selection
+        and "UML_BUILD_UNIT_TESTS" in backend_selection
+        and "UML_BUILD_WINE_ARM64EC" in backend_selection
         and "UML_BUILD_INTEGRATION_TESTS" not in backend_selection,
-        "arm64 integration still enables the x86_64 gadget backend",
+        "x86_64 backend selection no longer isolates regular arm64 integration",
     )
     static_guest_source = read(arguments.static_guest_source)
     fixed_dispatch = static_guest_source.split(
@@ -482,9 +491,12 @@ def main() -> int:
         "accepted-16k.env",
         "accepted-4k.env",
         "slices/x86_64/artifacts/accepted-4k.env",
+        "profiles/wine-arm64ec/artifacts/accepted-4k.env",
+        "profiles/wine-arm64ec/config.fragment",
         "mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4",
         "mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4",
         "The x86_64 mainline kernel slice supports only 4 KiB guest pages",
+        "The ARM64EC Wine emulator requires the mainline-6.18 kernel product",
         "Accepted mainline kernel slice",
     ):
         require(contract in kernel_cmake, f"kernel importer lacks {contract}")
@@ -598,6 +610,9 @@ def main() -> int:
         "verify-signed-kernel-carrier.py",
         "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
         'LINK_DEPENDS "${_kernarium_kernel_image}"',
+        "BUILD_WITH_INSTALL_RPATH TRUE",
+        'INSTALL_RPATH "@loader_path/.."',
+        "INSTALL_RPATH_USE_LINK_PATH FALSE",
     ):
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
     for forbidden in (
@@ -710,6 +725,8 @@ def main() -> int:
         'create_xcframework "$RUNTIME_4K"',
         'create_xcframework "$RUNTIME_16K"',
         'create_xcframework "$RUNTIME_ANDROID_16K"',
+        "LC_RPATH",
+        "@loader_path/..",
         'build-ios-zstd.sh',
         'GPTFDisk.xcframework',
         'LibZstd.xcframework',

@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "../../layout/assembly_offsets.h"
 
-.arch armv8.5-a
+.arch armv8.2-a
+
+#ifndef UML_X86_64_STRICT_TSO
+#define UML_X86_64_STRICT_TSO 0
+#endif
 
 #if __APPLE__
 #define NAME(value) _##value
@@ -25,8 +29,18 @@ NAME(uml_x86_64_gadget_\name):
 	br x8
 .endm
 
+.macro x86_memory_order_boundary
+#if UML_X86_64_STRICT_TSO
+	/* A full boundary is intentionally conservative. It is stronger than
+	 * x86 TSO and covers every ordinary, vector, string and cross-page memory
+	 * ordering path without classifying each gadget as a load or store. */
+	dmb ish
+#endif
+.endm
+
 .macro retire_and_next
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	next_gadget
 .endm
 
@@ -253,6 +267,7 @@ NAME(uml_x86_64_gadget_\name):
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
+	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 .Lx86_store_done\@:
@@ -361,10 +376,12 @@ NAME(uml_x86_64_gadget_enter):
 	mov _cpu, x1
 	mov _context, x2
 	mov _executed, xzr
+	x86_memory_order_boundary
 	next_gadget
 
 .p2align 4
 uml_x86_64_gadget_leave:
+	x86_memory_order_boundary
 	mov x1, _executed
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
