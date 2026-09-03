@@ -275,6 +275,8 @@ fifth of the wall time and is what these entries used.
 | X14 | Move a repeated string operation in page-bounded runs | Accepted. REP MOVS and REP STOS resolved an address, probed the software TLB and settled a store's publication once per element, which for the MOVSB and STOSB a libc reaches for is once per byte. Those costs belong to the page, so a run confined to one source page and one destination page now pays them once and moves its bytes in 64-byte blocks; the element loop keeps everything a forward block cannot express and the two rejoin each other freely. REP MOVSB is 71x faster at a 4 KiB call size and 112x at 32 KiB, REP STOSB 58x and 98x, REP MOVSQ 9.8x, and 32-bit-addressed REP MOVSB 44x. The first version instead fell back to the element loop whenever the destination page could hold code, and gained nothing whatsoever. |
 | X15 | Advertise ERMS again | Accepted, superseding X13. ERMS tells glibc's ifunc resolver that REP MOVSB is the fastest way to copy, which runs make true here: at a 4 KiB call size REP MOVSB is 7.7x the SSE2 copy routine and 6.0x the AVX2 one, REP STOSB is 7.1x and 5.9x their fill counterparts, and REP still leads both at a 256-byte call size where per-instruction setup dominates. Over the three workloads X13 moved -- ABBA, four runs per arm, withheld against advertised -- File Compression is -0.97 percent, PDF Renderer -0.33 and Horizon Detection +0.41, a geometric mean of -0.30 with every pair of distributions interleaving. Withholding no longer buys anything measurable, so the bit goes back for the guests that assume it exists. |
 
+| X16 | Keep the native chain alive across a code publication | Accepted, and the largest result of the campaign. Counting stream entries against retired instructions showed the engine leaving the translated stream every 5.8 guest instructions in Text Processing, 6.7 in Clang and 8.5 in HTML5 Browser -- the three lowest-scoring workloads -- with the block it returned for already resident 99.7 to 99.98 percent of the time. A link record is reset for the whole address space whenever the code sequence moves, and came back only on translation or on the one branch of a cache hit that revalidated, so after a single publication the links stayed dead. That closed a cycle: the path that settles a run's own publication without cooling unrelated links only runs when a block follows a link. Re-arming a record whenever its slot is returned, and settling a publication when the run leaves the stream as well as when it follows a link, opens both ends. Instructions per stream entry 5.8 to 38.5, 6.7 to 40.3 and 8.5 to 43.5; Text Processing +133.8 percent, HTML5 Browser +87.1, Clang +77.1, File Compression +16.3, Horizon Detection +12.9, a geometric mean of +59.0 with no overlap on any workload. |
+
 The campaign closed with a matched ABBA over the full single-core suite,
 sixteen workloads per run, warm-up discarded, four runs per arm. Every workload
 improved or held and none regressed: the geometric mean of per-workload rates
@@ -292,12 +294,15 @@ so specializing shifts on a constant count and fusing adjacent stack operations
 are each worth well under one percent. Narrow-width flag extraction was
 overtaken by X10, which removed the width dispatch it targeted.
 
-What remains large is the 37 percent in stream re-entry, which the plan already
-classified as study-before-building: inlining the conditional fall-through, a
-return-address stack for RET, and a linear host window. The indirect-link
-trainer a return-address stack would relieve is 0.26 percent by itself, so that
-case rests on the C++ round trips each miss causes rather than on gadget cost,
-and needs its own measurement before it is built.
+The 37 percent in stream re-entry was the campaign's largest remaining item,
+and the plan classified it as study-before-building: inlining the conditional
+fall-through, a return-address stack for RET, and a linear host window. None of
+those was the answer. Counting exits by cause first, rather than building any
+of them, found instead that the chain machinery already present was being
+switched off wholesale by an unrelated event and never switched back on, which
+X16 fixed without adding a structure. Sampling could not have found this: it
+attributes time to symbols, and every symbol involved was doing legitimate
+work. What it could not show was how often the work ran.
 
 Five lessons generalize. Whether a page might hold code is not a condition this
 engine can branch on to save work. An executable-stack declaration has Linux
@@ -315,7 +320,9 @@ only affects translation, or that trades throughput for latency, needs a
 workload to judge it. And laziness is worth paying for only where retrieving
 the deferred value is cheaper than computing it: X9 and X12 failed at the same
 boundary from opposite directions, while X10 succeeded by making the deferred
-path itself cheaper rather than trying to avoid it.
+path itself cheaper rather than trying to avoid it. Finally, a profile ranks
+what runs but not how often a structure is bypassed; where a fast path exists,
+count how often it is taken before assuming its cost is the thing to reduce.
 
 Host sampling profiles this engine without instrumenting it. The bank publishes
 a symbol per gadget, so a sampled host PC attributes straight to the gadget that
