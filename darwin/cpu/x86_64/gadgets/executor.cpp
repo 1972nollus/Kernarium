@@ -748,8 +748,14 @@ private:
 			if (!validate(slot, changes, mapping_changes, memory,
 				execution_context, sequence_reader, diagnostics))
 				return nullptr;
-			activate_link(slot);
 		}
+		/* Whatever reset this record -- a replaced slot, or a code change
+		 * that cooled the whole address space -- the program in this slot is
+		 * valid for the current sequence by the time it is returned, so it is
+		 * a legitimate link target again. Re-arming here is what lets a chain
+		 * rebuild as blocks run, rather than only when one needs revalidating.
+		 */
+		activate_link(slot);
 		return &*slot.program;
 	}
 

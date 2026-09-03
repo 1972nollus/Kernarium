@@ -707,6 +707,7 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			*selected.program, cpu, memory, executor, available,
 			guarded_interrupt);
 		result.retired_instructions += executed.retired_instructions;
+		prepared_code_changes = executor.prepared_code_changes();
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
 			result.reason = uml::cpu::ExitReason::instruction_budget;

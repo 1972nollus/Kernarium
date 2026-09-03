@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -176,6 +177,20 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 	};
 	const auto result = uml_x86_64_gadget_enter(
 		native_stream.data(), &cpu, &context);
+	/* A block that published a code write and then left the stream never
+	 * reached the link-following test that settles its own publication, so
+	 * the sequence it leaves behind reads as somebody else's change and cools
+	 * every link in the address space. Settle it here on the same terms: the
+	 * global sequence advanced by exactly this run's own publications, each of
+	 * which already cooled the blocks it actually overlapped.
+	 */
+	if (context.code_publications != 0 &&
+		context.code_publications <=
+			std::numeric_limits<std::uint64_t>::max() - context.code_changes) {
+		const auto settled = context.code_changes + context.code_publications;
+		if (executor.current_code_changes() == settled)
+			(void)executor.accept_code_changes(settled);
+	}
 	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
 	if (event == ::uml::cpu::EngineEvent::continued &&
 		context.indirect_miss != nullptr)
