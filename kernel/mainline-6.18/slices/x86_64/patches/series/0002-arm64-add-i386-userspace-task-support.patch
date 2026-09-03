@@ -1,7 +1,7 @@
 From 50420cfd9c3569d5aab8d2af7c7f20fab91f0937 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
-Subject: [PATCH 2/2] arm64: add i386 userspace task support
+Subject: [PATCH 2/3] arm64: add i386 userspace task support
 
 Add the complete i386 process ABI to the dedicated x86-family UML slice: ELF loading, task and register mode, signal frames, TLS, ptrace register layout, restart handling, and compat structure translation.
 
