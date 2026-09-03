@@ -92,6 +92,12 @@ gadget cpuid
 	/* RDPID. */
 	mov w8, wzr
 	movk w8, #0x0040, lsl #16
+	/* FSRM. ERMS says REP MOVSB is the fastest copy; FSRM says so at the
+	 * short sizes where per-instruction setup dominates, and a guest probe
+	 * moving 256 MB in 256-byte calls has REP MOVSB ahead of both the AVX2
+	 * and SSE2 routines a resolver would pick instead.
+	 */
+	mov w9, #0x0010
 	b .Lx86_cpuid_done
 .Lx86_cpuid_extended_state:
 	cbz w10, .Lx86_cpuid_extended_state_zero
