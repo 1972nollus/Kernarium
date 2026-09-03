@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/native_entry.hpp"
@@ -16,6 +17,7 @@
 #include <initializer_list>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -2692,6 +2694,73 @@ read_test_code_sequences(void *opaque) noexcept
 	return true;
 }
 
+/* The host reports the emulated CPU to the guest kernel from cpuid.hpp, and
+ * the guest reads the same CPU by executing CPUID. Both answers must be the
+ * same answer: whatever /proc/cpuinfo says a program may use, CPUID has to
+ * agree, or a feature resolver and a capability script reach opposite
+ * conclusions about the same machine. Nothing keeps the table and the gadget
+ * together except this test, so it walks every leaf either one claims.
+ */
+[[nodiscard]] bool cpuid_table_matches_the_gadget()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0xa2}); // cpuid
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 1);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"CPUID did not build"))
+		return false;
+
+	/* Every leaf the table answers, the leaf above each maximum, and a
+	 * subleaf of each enumerating leaf that must read as zero. */
+	static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 14>
+		probed{{
+			{0U, 0U}, {1U, 0U}, {7U, 0U}, {7U, 1U},
+			{13U, 0U}, {13U, 1U}, {13U, 2U}, {13U, 3U},
+			{2U, 0U}, {14U, 0U},
+			{0x8000'0000U, 0U}, {0x8000'0001U, 0U},
+			{0x8000'0002U, 0U}, {0x8000'0003U, 0U},
+		}};
+	for (const auto &[leaf, subleaf] : probed) {
+		CpuState cpu{};
+		cpu.gpr(Register::rax) = leaf;
+		cpu.gpr(Register::rcx) = subleaf;
+		const auto result =
+			gadgets::execute(built.program, cpu, memory, 1);
+		const auto table = cpuid(leaf, subleaf);
+		char message[128];
+		std::snprintf(message, sizeof message,
+			"CPUID leaf 0x%08x subleaf %u disagrees with cpuid.hpp",
+			leaf, subleaf);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+				static_cast<std::uint32_t>(
+					cpu.gpr(Register::rax)) == table.eax &&
+				static_cast<std::uint32_t>(
+					cpu.gpr(Register::rbx)) == table.ebx &&
+				static_cast<std::uint32_t>(
+					cpu.gpr(Register::rcx)) == table.ecx &&
+				static_cast<std::uint32_t>(
+					cpu.gpr(Register::rdx)) == table.edx,
+			message))
+			return false;
+	}
+
+	/* The brand string is what a guest prints as the model name, so it is
+	 * read the way a guest reads it: little-endian bytes, EAX through EDX,
+	 * across the three brand leaves. */
+	char brand[49] = {};
+	std::size_t at = 0;
+	for (std::uint32_t leaf = 0x8000'0002U; leaf <= 0x8000'0004U; ++leaf) {
+		const auto part = cpuid(leaf, 0U);
+		for (const auto word : {part.eax, part.ebx, part.ecx, part.edx})
+			for (unsigned byte = 0; byte < 4U; ++byte)
+				brand[at++] = static_cast<char>(
+					(word >> (8U * byte)) & 0xffU);
+	}
+	return expect(std::strcmp(brand, "UML x86_64 gadgets emulator") == 0,
+		"the CPUID brand string is not the emulator's own name");
+}
+
 [[nodiscard]] bool preserve_precise_memory_fault()
 {
 	using namespace uml::cpu::x86_64;
@@ -3287,6 +3356,7 @@ int main()
 		fused_conditions_match_the_deferred_evaluation() &&
 		fused_conditions_cover_exactly_the_legal_pairs() &&
 		fused_conditional_jumps_take_the_same_edge() &&
+		cpuid_table_matches_the_gadget() &&
 		preserve_precise_memory_fault() &&
 		retire_valid_prefix_before_decode_fault() &&
 		migrated_gadgets_are_native_only() &&

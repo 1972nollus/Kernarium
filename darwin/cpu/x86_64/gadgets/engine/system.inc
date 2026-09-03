@@ -126,8 +126,10 @@ gadget cpuid
 	movk w9, #0x2010, lsl #16
 	b .Lx86_cpuid_done
 .Lx86_cpuid_brand_two:
-	mov w6, #0x4d4c
-	movk w6, #0x2055, lsl #16
+	/* "UML " -- the brand string is read as little-endian bytes out of each
+	 * register, so the first word is 'U','M','L',' ' from the low byte up. */
+	mov w6, #0x4d55
+	movk w6, #0x204c, lsl #16
 	mov w7, #0x3878
 	movk w7, #0x5f36, lsl #16
 	mov w8, #0x3436
