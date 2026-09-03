@@ -8,3 +8,4 @@ version	fingerprint	declaration_sha256	rationale
 6	0x6524b65f20239ea1	6524b65f20239ea1ee8085f3bf2d5e0b0ba1a09b7bc964dad13517271fe80b11	Report guest PC-alignment exceptions without terminating the host emulator
 7	0xefcbbdbbf473686e	efcbbdbbf473686ecd8c3678e14fee867791e3fc7b18009ba1825b8d4257b41c	Allow each supported address-space profile to place the synthetic signal-return trampoline at its task ceiling
 8	0x3871ad612337ea76	3871ad612337ea76d80bc1efa43da1e04dc0d8b3913b19ee5dac54b0ecebf88a	Wake active and tickless-idle fixed vCPU carriers for a public host stop
+9	0xd17ab76bfc9adf0c	d17ab76bfc9adf0c825f58af7b0edd7157aea9409ebdac5e0bec5ef2267a265e	Name the virtual CPU from the emulator so every guest architecture reports one model

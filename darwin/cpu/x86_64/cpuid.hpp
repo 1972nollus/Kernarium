@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
+#include "cpu/guest_identity.hpp"
+
+#include <cstddef>
 #include <cstdint>
 
 namespace uml::cpu::x86_64 {
@@ -28,6 +31,31 @@ struct CpuidResult final {
  * reports for an unimplemented leaf below the maximum. */
 inline constexpr std::uint32_t cpuid_maximum_basic_leaf = 13U;
 inline constexpr std::uint32_t cpuid_maximum_extended_leaf = 0x8000'0008U;
+
+namespace detail {
+
+/* One register of the CPUID brand string, packed from `guest_cpu_model_name`.
+ * The architecture spells the brand as plain little-endian bytes, so byte
+ * `offset` is the low byte of its register and the tail past the name reads as
+ * the NUL padding CPUID requires. Deriving the words rather than transcribing
+ * them keeps the name in exactly one place: the transposition this replaces
+ * had leaf 0x80000002 spelling its first four bytes backwards.
+ */
+[[nodiscard]] constexpr std::uint32_t brand_word(std::size_t offset) noexcept
+{
+	std::uint32_t word = 0U;
+	for (std::size_t index = 0U; index < 4U; ++index) {
+		const std::size_t at = offset + index;
+		if (at >= guest_cpu_model_name.size())
+			break;
+		const auto byte = static_cast<unsigned char>(
+			guest_cpu_model_name[at]);
+		word |= static_cast<std::uint32_t>(byte) << (8U * index);
+	}
+	return word;
+}
+
+} // namespace detail
 
 [[nodiscard]] constexpr CpuidResult cpuid(
 	std::uint32_t leaf, std::uint32_t subleaf) noexcept
@@ -65,12 +93,15 @@ inline constexpr std::uint32_t cpuid_maximum_extended_leaf = 0x8000'0008U;
 		/* LZCNT, and SYSCALL, NX and long mode. */
 		return {0U, 0U, 0x0000'0020U, 0x2010'0800U};
 	case 0x8000'0002U:
-		/* "UML x86_64 gadgets emulator", little-endian bytes per
-		 * register across leaves 2 and 3; leaf 4 is the NUL tail. */
-		return {0x204c'4d55U, 0x5f36'3878U, 0x6720'3436U,
-			0x6567'6461U};
 	case 0x8000'0003U:
-		return {0x6520'7374U, 0x616c'756dU, 0x0072'6f74U, 0U};
+	case 0x8000'0004U: {
+		/* Sixteen brand bytes per leaf, in EAX, EBX, ECX, EDX order. */
+		const std::size_t offset = (leaf - 0x8000'0002U) * 16U;
+		return {detail::brand_word(offset),
+			detail::brand_word(offset + 4U),
+			detail::brand_word(offset + 8U),
+			detail::brand_word(offset + 12U)};
+	}
 	default:
 		return {};
 	}

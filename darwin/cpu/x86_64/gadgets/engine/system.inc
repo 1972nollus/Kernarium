@@ -126,24 +126,29 @@ gadget cpuid
 	movk w9, #0x2010, lsl #16
 	b .Lx86_cpuid_done
 .Lx86_cpuid_brand_two:
-	/* "UML " -- the brand string is read as little-endian bytes out of each
-	 * register, so the first word is 'U','M','L',' ' from the low byte up. */
-	mov w6, #0x4d55
-	movk w6, #0x204c, lsl #16
-	mov w7, #0x3878
-	movk w7, #0x5f36, lsl #16
-	mov w8, #0x3436
-	movk w8, #0x6720, lsl #16
-	mov w9, #0x6461
-	movk w9, #0x6567, lsl #16
+	/* The brand string is plain little-endian bytes, so the first
+	 * word is 'K','e','r','n' from the low byte up. Registers
+	 * were zeroed at entry, so a word that is entirely brand
+	 * padding is simply left alone. */
+	/* "Kern" */
+	mov w6, #0x654b
+	movk w6, #0x6e72, lsl #16
+	/* "ariu" */
+	mov w7, #0x7261
+	movk w7, #0x7569, lsl #16
+	/* "m vi" */
+	mov w8, #0x206d
+	movk w8, #0x6976, lsl #16
+	/* "rtua" */
+	mov w9, #0x7472
+	movk w9, #0x6175, lsl #16
 	b .Lx86_cpuid_done
 .Lx86_cpuid_brand_three:
-	mov w6, #0x7374
-	movk w6, #0x6520, lsl #16
-	mov w7, #0x756d
-	movk w7, #0x616c, lsl #16
-	mov w8, #0x6f74
-	movk w8, #0x0072, lsl #16
+	/* "l CP" */
+	mov w6, #0x206c
+	movk w6, #0x5043, lsl #16
+	/* "U\0\0\0" */
+	mov w7, #0x0055
 .Lx86_cpuid_done:
 	str x6, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]

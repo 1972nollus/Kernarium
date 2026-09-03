@@ -1,4 +1,4 @@
-From 50420cfd9c3569d5aab8d2af7c7f20fab91f0937 Mon Sep 17 00:00:00 2001
+From 611b812cd2fce78675bdde8fc3e674beb52e9c4b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
 Subject: [PATCH 2/3] arm64: add i386 userspace task support
@@ -3075,7 +3075,7 @@ index aefa0b506..e6f21580e 100644
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index cd7b988e3..2c34771c6 100644
+index ca811821c..33787437e 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -448,6 +448,10 @@ void userspace(struct uml_pt_regs *registers)

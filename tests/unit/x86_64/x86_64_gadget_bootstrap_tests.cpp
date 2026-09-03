@@ -16,6 +16,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <span>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -2713,13 +2714,14 @@ read_test_code_sequences(void *opaque) noexcept
 
 	/* Every leaf the table answers, the leaf above each maximum, and a
 	 * subleaf of each enumerating leaf that must read as zero. */
-	static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 14>
+	static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 15>
 		probed{{
 			{0U, 0U}, {1U, 0U}, {7U, 0U}, {7U, 1U},
 			{13U, 0U}, {13U, 1U}, {13U, 2U}, {13U, 3U},
 			{2U, 0U}, {14U, 0U},
 			{0x8000'0000U, 0U}, {0x8000'0001U, 0U},
 			{0x8000'0002U, 0U}, {0x8000'0003U, 0U},
+			{0x8000'0004U, 0U},
 		}};
 	for (const auto &[leaf, subleaf] : probed) {
 		CpuState cpu{};
@@ -2757,8 +2759,8 @@ read_test_code_sequences(void *opaque) noexcept
 				brand[at++] = static_cast<char>(
 					(word >> (8U * byte)) & 0xffU);
 	}
-	return expect(std::strcmp(brand, "UML x86_64 gadgets emulator") == 0,
-		"the CPUID brand string is not the emulator's own name");
+	return expect(std::string_view(brand) == uml::cpu::guest_cpu_model_name,
+		"the CPUID brand string is not this virtual CPU's own name");
 }
 
 [[nodiscard]] bool preserve_precise_memory_fault()

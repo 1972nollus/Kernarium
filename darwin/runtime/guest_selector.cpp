@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_cpu.h"
 
+#include "cpu/guest_identity.hpp"
 #include "platform/apple/host_features.hpp"
 #include "runtime/context.hpp"
 
@@ -142,6 +143,17 @@ extern "C" unsigned long darwin_uml_guest_hwcap(void)
 	 * the gadget or JIT engine.
 	 */
 	return virtual_hwcap();
+}
+
+extern "C" const char *darwin_uml_guest_cpu_model_name(void)
+{
+	/*
+	 * The kernel prints what the emulator decides this CPU is, rather than
+	 * naming a CPU of its own. An arm64 slice and the x86-64 userspace
+	 * slice therefore report the same machine, and on x86-64 this is the
+	 * same name the CPUID brand string carries.
+	 */
+	return ::uml::cpu::guest_cpu_model_name_storage;
 }
 
 extern "C" unsigned long darwin_uml_guest_hwcap2(void)
