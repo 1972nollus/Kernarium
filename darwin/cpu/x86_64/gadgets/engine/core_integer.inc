@@ -52,21 +52,31 @@ scalar_arithmetic_rr \operation\()_\width\()_rr, \instruction, \flag_operation, 
 scalar_arithmetic_ri \operation\()_\width\()_ri, \instruction, \flag_operation, \writes, \load, \store, \host_register, \store_register, \width
 .endm
 
-.macro arithmetic_family operation, instruction, flag_operation, writes
+/* At 8 and 16 bits the operands arrive zero-extended, so a host subtract
+ * of them carries the flags of a 32-bit operation rather than the guest's.
+ * Only 32 and 64 use the flag-setting host form, and only those two widths
+ * are fusable producers.
+ */
+.macro arithmetic_family operation, instruction, flag_operation, writes, host_flags=0
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 8, ldrb, strb, w, w
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 16, ldrh, strh, w, w
+.if \host_flags
+arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 32, ldr, str, w, x
+arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 64, ldr, str, x, x
+.else
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 32, ldr, str, w, x
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 64, ldr, str, x, x
+.endif
 .endm
 
 /* DeferredFlagOperation: add=1, subtract=2, logical=3. */
 arithmetic_family add, add, 1, 1
-arithmetic_family sub, sub, 2, 1
-arithmetic_family and, and, 3, 1
+arithmetic_family sub, sub, 2, 1, 1
+arithmetic_family and, and, 3, 1, 1
 arithmetic_family or, orr, 3, 1
 arithmetic_family xor, eor, 3, 1
-arithmetic_family cmp, sub, 2, 0
-arithmetic_family test, and, 3, 0
+arithmetic_family cmp, sub, 2, 0, 1
+arithmetic_family test, and, 3, 0, 1
 
 .macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_rr

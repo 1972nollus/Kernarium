@@ -240,6 +240,91 @@ condition_family ge
 condition_family le
 condition_family g
 
+/* A 32- or 64-bit CMP, SUB, TEST or AND leaves the host NZCV holding exactly
+ * the x86 flags it just defined. Recording the deferred flags does not disturb
+ * them -- the record is three stores and an address -- and neither does
+ * threaded dispatch, so a consumer in the next stream slot can read the
+ * condition straight off the host rather than materializing RFLAGS to extract
+ * one bit. The builder names these variants only where it has just emitted
+ * such a producer.
+ *
+ * ARM's carry is the inverted borrow of a subtraction, which is what makes the
+ * unsigned conditions line up with x86's. Parity has no NZCV form at all, so
+ * `p` and `np` have no fused variant. A logical producer clears both C and V,
+ * matching x86 clearing CF and OF, so the sign and zero conditions carry over
+ * unchanged; the four conditions that read CF do not, because ARM reads a
+ * cleared C as "borrowed" where x86 reads a cleared CF as "no borrow", and the
+ * builder withholds fusion for those after a logical.
+ */
+.macro set_condition_nzcv condition, host
+gadget set_\condition\()_nzcv
+	ldr x8, [_stream], #8
+	cset w11, \host
+	strb w11, [_cpu, x8]
+	retire_and_next
+.endm
+
+.macro conditional_move_nzcv condition, host, width, load, store, load_register, store_register
+gadget cmov_\condition\()_\width\()_rr_nzcv
+	ldr x8, [_stream], #8
+	cset w11, \host
+	and x9, x8, #0xffff
+	ubfx x13, x8, #16, #16
+	cbz w11, .Lx86_cmov_nzcv_done\@
+	\load \load_register\()12, [_cpu, x13]
+	\store \store_register\()12, [_cpu, x9]
+.Lx86_cmov_nzcv_done\@:
+	retire_and_next
+.endm
+
+.macro jump_condition_nzcv condition, host
+gadget jump_\condition\()_nzcv
+	ldp x12, x13, [_stream], #16
+	csel x8, x12, x13, \host
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+.endm
+
+.macro jump_condition_linked_nzcv condition, host
+gadget jump_\condition\()_linked_nzcv
+	ldp x12, x13, [_stream], #16
+	csel x8, x12, x13, \host
+	add _executed, _executed, #1
+	follow_block_link x8
+.endm
+
+.macro condition_family_nzcv condition, host
+set_condition_nzcv \condition, \host
+conditional_move_nzcv \condition, \host, 16, ldrh, strh, w, w
+conditional_move_nzcv \condition, \host, 32, ldr, str, w, x
+conditional_move_nzcv \condition, \host, 64, ldr, str, x, x
+jump_condition_nzcv \condition, \host
+jump_condition_linked_nzcv \condition, \host
+.endm
+
+condition_family_nzcv o, vs
+condition_family_nzcv no, vc
+condition_family_nzcv b, lo
+condition_family_nzcv ae, hs
+condition_family_nzcv e, eq
+condition_family_nzcv ne, ne
+condition_family_nzcv be, ls
+condition_family_nzcv a, hi
+condition_family_nzcv s, mi
+condition_family_nzcv ns, pl
+condition_family_nzcv l, lt
+condition_family_nzcv ge, ge
+condition_family_nzcv le, le
+condition_family_nzcv g, gt
+
+.purgem condition_family_nzcv
+.purgem jump_condition_linked_nzcv
+.purgem jump_condition_nzcv
+.purgem conditional_move_nzcv
+.purgem set_condition_nzcv
+
 .purgem condition_family
 .purgem jump_condition_linked
 .purgem jump_condition

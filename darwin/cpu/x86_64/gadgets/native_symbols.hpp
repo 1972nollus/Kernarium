@@ -1178,6 +1178,13 @@ UML_X86_DECLARE_VECTOR_BITWISE(xor)
 	void uml_x86_64_gadget_cmov_##condition##_64_rm(); \
 	void uml_x86_64_gadget_jump_##condition(); \
 	void uml_x86_64_gadget_jump_##condition##_linked();
+#define UML_X86_DECLARE_FUSED_CONDITION(condition) \
+	void uml_x86_64_gadget_set_##condition##_nzcv(); \
+	void uml_x86_64_gadget_cmov_##condition##_16_rr_nzcv(); \
+	void uml_x86_64_gadget_cmov_##condition##_32_rr_nzcv(); \
+	void uml_x86_64_gadget_cmov_##condition##_64_rr_nzcv(); \
+	void uml_x86_64_gadget_jump_##condition##_nzcv(); \
+	void uml_x86_64_gadget_jump_##condition##_linked_nzcv();
 UML_X86_DECLARE_CONDITION(o)
 UML_X86_DECLARE_CONDITION(no)
 UML_X86_DECLARE_CONDITION(b)
@@ -1195,6 +1202,21 @@ UML_X86_DECLARE_CONDITION(ge)
 UML_X86_DECLARE_CONDITION(le)
 UML_X86_DECLARE_CONDITION(g)
 #undef UML_X86_DECLARE_CONDITION
+UML_X86_DECLARE_FUSED_CONDITION(o)
+UML_X86_DECLARE_FUSED_CONDITION(no)
+UML_X86_DECLARE_FUSED_CONDITION(b)
+UML_X86_DECLARE_FUSED_CONDITION(ae)
+UML_X86_DECLARE_FUSED_CONDITION(e)
+UML_X86_DECLARE_FUSED_CONDITION(ne)
+UML_X86_DECLARE_FUSED_CONDITION(be)
+UML_X86_DECLARE_FUSED_CONDITION(a)
+UML_X86_DECLARE_FUSED_CONDITION(s)
+UML_X86_DECLARE_FUSED_CONDITION(ns)
+UML_X86_DECLARE_FUSED_CONDITION(l)
+UML_X86_DECLARE_FUSED_CONDITION(ge)
+UML_X86_DECLARE_FUSED_CONDITION(le)
+UML_X86_DECLARE_FUSED_CONDITION(g)
+#undef UML_X86_DECLARE_FUSED_CONDITION
 
 /* LOCK-prefixed memory destinations resolve to exclusive-loop gadgets so a
  * guest atomic stays atomic against the other vCPU threads.

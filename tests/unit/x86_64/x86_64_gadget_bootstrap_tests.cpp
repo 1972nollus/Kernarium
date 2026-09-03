@@ -2404,6 +2404,294 @@ read_test_code_sequences(void *opaque) noexcept
 	}
 	return true;
 }
+/* A 32- or 64-bit CMP, SUB, TEST or AND leaves host flags that describe the
+ * x86 flags it defined, and the builder lets the very next condition read them
+ * directly. The slot after that reads the same flags through the deferred
+ * record instead, so the two bytes a pair of identical SETcc write must agree
+ * for every producer, width, operand pair and condition. That equality is the
+ * whole correctness claim of the fused path, and it needs no reference model:
+ * the established path is the reference.
+ */
+[[nodiscard]] bool fused_conditions_match_the_deferred_evaluation()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<unsigned, 4> producers{
+		0x39, 0x29, 0x85, 0x21};
+	static constexpr std::array<std::uint64_t, 12> values{
+		0U, 1U, 2U, 0xffU, 0x7fff'ffffULL, 0x8000'0000ULL,
+		0xffff'ffffULL, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
+		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
+	};
+	for (const auto &producer : producers) {
+		for (const unsigned width : {32U, 64U}) {
+			for (unsigned condition = 0; condition < 16U; ++condition) {
+				for (const auto left : values) {
+					for (const auto right : values) {
+						std::vector<std::byte> code;
+						const auto push = [&code](unsigned byte) {
+							code.push_back(static_cast<std::byte>(byte));
+						};
+						if (width == 64U)
+							push(0x48);
+						push(producer);
+						push(0xd8);
+						/* SYSCALL writes its return address to RCX and
+						 * the flags to R11, so the two results live in RDX
+						 * and RBX. */
+						push(0x0f);
+						push(0x90U + condition);
+						push(0xc2);
+						push(0x0f);
+						push(0x90U + condition);
+						push(0xc3);
+						push(0x0f);
+						push(0x05);
+						TestMemory memory;
+						memory.fill(0, code);
+						const auto built = gadgets::build(memory, 0);
+						if (!expect(built.status ==
+							gadgets::BuildStatus::built,
+							"fused condition program did not build"))
+							return false;
+						CpuState cpu{};
+						cpu.gpr(Register::rax) = left;
+						cpu.gpr(Register::rbx) = right;
+						gadgets::Executor executor;
+						executor.prepare(memory, 1, 1, 1);
+						const auto result = gadgets::execute(
+							built.program, cpu, memory, executor, 64);
+						if (!expect(result.event ==
+							uml::cpu::EngineEvent::system_call,
+							"fused condition program did not reach SYSCALL"))
+							return false;
+						const auto fused =
+							cpu.gpr(Register::rdx) & 0xffU;
+						const auto deferred =
+							cpu.gpr(Register::rbx) & 0xffU;
+						if (!expect(fused == deferred,
+							"a fused condition disagreed with the deferred "
+							"evaluation of the same flags"))
+							return false;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* The equality above holds whether or not the builder actually fuses, so pin
+ * which pairs it fuses. A NOP between the producer and the consumer resets the
+ * host flags the builder tracks, so the same consumer keeps the deferred
+ * gadget; the entry it names differs exactly where fusion is legal. Parity has
+ * no host-flag form, and after a logical operation neither do the four
+ * conditions that read the carry.
+ */
+[[nodiscard]] bool fused_conditions_cover_exactly_the_legal_pairs()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<unsigned, 4> opcodes{0x39, 0x29, 0x85, 0x21};
+	for (std::size_t index = 0; index < opcodes.size(); ++index) {
+		const bool logical = index >= 2;
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
+			for (unsigned condition = 0; condition < 16U; ++condition) {
+				const bool carry_condition = condition >= 2U && condition <= 3U;
+				const bool ordered_carry =
+					condition >= 6U && condition <= 7U;
+				const bool parity = condition >= 10U && condition <= 11U;
+				const bool wide = width >= 32U;
+				const bool expected_fusion = wide && !parity &&
+					!(logical && (carry_condition || ordered_carry));
+				std::vector<std::byte> fused;
+				std::vector<std::byte> plain;
+				const auto emit = [&](std::vector<std::byte> &code,
+					bool barrier) {
+					const auto push = [&code](unsigned byte) {
+						code.push_back(static_cast<std::byte>(byte));
+					};
+					if (width == 16U)
+						push(0x66);
+					if (width == 64U)
+						push(0x48);
+					push(width == 8U ? opcodes[index] - 1U : opcodes[index]);
+					push(0xd8);
+					if (barrier)
+						push(0x90);
+					push(0x0f);
+					push(0x90U + condition);
+					push(0xc1);
+					push(0x0f);
+					push(0x05);
+				};
+				emit(fused, false);
+				emit(plain, true);
+				TestMemory fused_memory;
+				TestMemory plain_memory;
+				fused_memory.fill(0, fused);
+				plain_memory.fill(0, plain);
+				const auto built = gadgets::build(fused_memory, 0);
+				const auto separated = gadgets::build(plain_memory, 0);
+				if (!expect(built.status == gadgets::BuildStatus::built &&
+					separated.status == gadgets::BuildStatus::built,
+					"condition pairing program did not build"))
+					return false;
+				const auto fused_stream = built.program.native_stream();
+				const auto plain_stream = separated.program.native_stream();
+				if (!expect(fused_stream.size() + 1U == plain_stream.size() &&
+					fused_stream.size() > 3U,
+					"condition pairing changed the stream layout"))
+					return false;
+				const bool differs = fused_stream[2] != plain_stream[3];
+				if (!expect(differs == expected_fusion,
+					"the builder fused a condition it should not have, or "
+					"declined one it should have fused"))
+					return false;
+				/* The same pairing, with a conditional jump as the consumer
+				 * rather than a SETcc. */
+				std::vector<std::byte> fused_jump;
+				std::vector<std::byte> plain_jump;
+				const auto emit_jump = [&](std::vector<std::byte> &code,
+					bool barrier) {
+					const auto push = [&code](unsigned byte) {
+						code.push_back(static_cast<std::byte>(byte));
+					};
+					if (width == 16U)
+						push(0x66);
+					if (width == 64U)
+						push(0x48);
+					push(width == 8U ? opcodes[index] - 1U : opcodes[index]);
+					push(0xd8);
+					if (barrier)
+						push(0x90);
+					push(0x70U + condition);
+					push(0x05);
+					push(0xba);
+					push(0x01);
+					push(0x00);
+					push(0x00);
+					push(0x00);
+					push(0x0f);
+					push(0x05);
+				};
+				emit_jump(fused_jump, false);
+				emit_jump(plain_jump, true);
+				TestMemory fused_jump_memory;
+				TestMemory plain_jump_memory;
+				fused_jump_memory.fill(0, fused_jump);
+				plain_jump_memory.fill(0, plain_jump);
+				const auto jump_built = gadgets::build(fused_jump_memory, 0);
+				const auto jump_separated =
+					gadgets::build(plain_jump_memory, 0);
+				if (!expect(jump_built.status == gadgets::BuildStatus::built &&
+					jump_separated.status == gadgets::BuildStatus::built,
+					"jump pairing program did not build"))
+					return false;
+				const auto jump_fused = jump_built.program.native_stream();
+				const auto jump_plain =
+					jump_separated.program.native_stream();
+				if (!expect(jump_fused.size() + 1U == jump_plain.size() &&
+					jump_fused.size() > 4U,
+					"jump pairing changed the stream layout"))
+					return false;
+				if (!expect((jump_fused[2] != jump_plain[3]) ==
+					expected_fusion,
+					"the builder fused a conditional jump it should not have, "
+					"or declined one it should have fused"))
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
+/* The SETcc equality pins the condition mapping, which the conditional jump
+ * shares. What it does not pin is the jump's own plumbing: a fused jump
+ * selects between two stream words with the host condition instead of a
+ * materialized bit, and selecting the wrong one would send control to the
+ * wrong successor rather than produce a wrong byte. Run the pair for real,
+ * across block boundaries, with the two edges leading to different results.
+ */
+[[nodiscard]] bool fused_conditional_jumps_take_the_same_edge()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<unsigned, 4> producers{0x39, 0x29, 0x85, 0x21};
+	static constexpr std::array<std::uint64_t, 6> values{
+		0U, 1U, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
+		~std::uint64_t{}, 0x5555'5555'5555'5555ULL};
+	for (const auto producer : producers) {
+		for (const unsigned width : {32U, 64U}) {
+			for (unsigned condition = 0; condition < 16U; ++condition) {
+				for (const auto left : values) {
+					for (const auto right : values) {
+						std::array<std::uint64_t, 2> taken{};
+						for (unsigned barrier = 0; barrier < 2U; ++barrier) {
+							std::vector<std::byte> code;
+							const auto push = [&code](unsigned byte) {
+								code.push_back(
+									static_cast<std::byte>(byte));
+							};
+							if (width == 64U)
+								push(0x48);
+							push(producer);
+							push(0xd8);
+							if (barrier != 0U)
+								push(0x90);
+							/* j<cc> over a five-byte MOV. */
+							push(0x70U + condition);
+							push(0x05);
+							push(0xba);
+							push(0x01);
+							push(0x00);
+							push(0x00);
+							push(0x00);
+							push(0x0f);
+							push(0x05);
+							TestMemory memory;
+							memory.fill(0, code);
+							CpuState cpu{};
+							cpu.gpr(Register::rax) = left;
+							cpu.gpr(Register::rbx) = right;
+							gadgets::Executor executor;
+							executor.prepare(memory, 1, 1, 1);
+							bool reached = false;
+							for (unsigned step = 0; step < 8U; ++step) {
+								const auto selected = executor.select_program(
+									memory, cpu.rip, ExecutionMode::long64);
+								if (!expect(selected.status ==
+									gadgets::BuildStatus::built &&
+									selected.program != nullptr,
+									"fused jump program did not build"))
+									return false;
+								const auto result = gadgets::execute(
+									*selected.program, cpu, memory, executor,
+									64);
+								if (result.event ==
+									uml::cpu::EngineEvent::system_call) {
+									reached = true;
+									break;
+								}
+								if (!expect(result.event ==
+									uml::cpu::EngineEvent::continued,
+									"fused jump program left unexpectedly"))
+									return false;
+							}
+							if (!expect(reached,
+								"fused jump program did not reach SYSCALL"))
+								return false;
+							taken[barrier] = cpu.gpr(Register::rdx) & 0xffU;
+						}
+						if (!expect(taken[0] == taken[1],
+							"a fused conditional jump took a different edge "
+							"than the deferred evaluation of the same flags"))
+							return false;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
 [[nodiscard]] bool preserve_precise_memory_fault()
 {
 	using namespace uml::cpu::x86_64;
@@ -2996,6 +3284,9 @@ int main()
 		bulk_string_runs_match_the_element_definition() &&
 		repeated_store_into_executable_page_publishes_its_run() &&
 		repeated_move_faults_on_a_run_boundary() &&
+		fused_conditions_match_the_deferred_evaluation() &&
+		fused_conditions_cover_exactly_the_legal_pairs() &&
+		fused_conditional_jumps_take_the_same_edge() &&
 		preserve_precise_memory_fault() &&
 		retire_valid_prefix_before_decode_fault() &&
 		migrated_gadgets_are_native_only() &&

@@ -4533,6 +4533,131 @@ enum class VectorFloatKind {
 	select(less_or_equal, le) \
 	select(greater, g)
 
+
+/* Which host flags a gadget leaves behind for the next slot to read.
+ * A logical operation clears C and V exactly as x86 clears CF and OF, so its
+ * sign, zero and signed-order conditions transfer unchanged; the conditions
+ * that read CF do not, because a cleared ARM C reads as "borrowed".
+ * The narrow widths arrive zero-extended into a host register, so their host
+ * flags describe a 32-bit operation rather than the guest's, and only 32 and
+ * 64 qualify.
+ */
+enum class HostFlags : std::uint8_t {
+	none,
+	subtract,
+	logical,
+};
+
+[[nodiscard]] HostFlags host_flags_of(const Instruction &instruction) noexcept
+{
+	if (instruction.destination.kind == OperandKind::memory ||
+		instruction.source.kind == OperandKind::memory)
+		return HostFlags::none;
+	if (instruction.destination.width != OperandWidth::dword &&
+		instruction.destination.width != OperandWidth::qword)
+		return HostFlags::none;
+	switch (instruction.operation) {
+	case Operation::subtract:
+	case Operation::compare:
+		return HostFlags::subtract;
+	case Operation::bit_and:
+	case Operation::test:
+		return HostFlags::logical;
+	default:
+		return HostFlags::none;
+	}
+}
+
+[[nodiscard]] bool fused_condition(
+	Condition condition, HostFlags flags) noexcept
+{
+	if (flags == HostFlags::none)
+		return false;
+	switch (condition) {
+	/* Parity has no representation in NZCV. */
+	case Condition::parity:
+	case Condition::not_parity:
+		return false;
+	case Condition::below:
+	case Condition::above_or_equal:
+	case Condition::below_or_equal:
+	case Condition::above:
+		return flags == HostFlags::subtract;
+	default:
+		return true;
+	}
+}
+
+#define UML_X86_FUSED_CONDITION_CASES(select) \
+	select(overflow, o) \
+	select(not_overflow, no) \
+	select(below, b) \
+	select(above_or_equal, ae) \
+	select(equal, e) \
+	select(not_equal, ne) \
+	select(below_or_equal, be) \
+	select(above, a) \
+	select(sign, s) \
+	select(not_sign, ns) \
+	select(less, l) \
+	select(greater_or_equal, ge) \
+	select(less_or_equal, le) \
+	select(greater, g)
+
+[[nodiscard]] std::uintptr_t set_condition_fused_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_SET_FUSED_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address(native::uml_x86_64_gadget_set_##name##_nzcv);
+	UML_X86_FUSED_CONDITION_CASES(UML_X86_SET_FUSED_CASE)
+#undef UML_X86_SET_FUSED_CASE
+	default: return 0;
+	}
+}
+
+[[nodiscard]] std::uintptr_t jump_condition_fused_entry(
+	Condition condition, bool linked) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_FUSED_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address(linked ? \
+			native::uml_x86_64_gadget_jump_##name##_linked_nzcv : \
+			native::uml_x86_64_gadget_jump_##name##_nzcv);
+	UML_X86_FUSED_CONDITION_CASES(UML_X86_JUMP_FUSED_CASE)
+#undef UML_X86_JUMP_FUSED_CASE
+	default: return 0;
+	}
+}
+
+[[nodiscard]] std::uintptr_t conditional_move_fused_entry(
+	Condition condition, OperandWidth width) noexcept
+{
+#define UML_X86_CMOV_FUSED_WIDTH(name) \
+	switch (width) { \
+	case OperandWidth::word: \
+		return entry_address( \
+			native::uml_x86_64_gadget_cmov_##name##_16_rr_nzcv); \
+	case OperandWidth::dword: \
+		return entry_address( \
+			native::uml_x86_64_gadget_cmov_##name##_32_rr_nzcv); \
+	case OperandWidth::qword: \
+		return entry_address( \
+			native::uml_x86_64_gadget_cmov_##name##_64_rr_nzcv); \
+	default: return 0; \
+	}
+	switch (condition) {
+#define UML_X86_CMOV_FUSED_CASE(enumerator, name) \
+	case Condition::enumerator: UML_X86_CMOV_FUSED_WIDTH(name);
+	UML_X86_FUSED_CONDITION_CASES(UML_X86_CMOV_FUSED_CASE)
+#undef UML_X86_CMOV_FUSED_CASE
+	default: return 0;
+	}
+#undef UML_X86_CMOV_FUSED_WIDTH
+}
+
 [[nodiscard]] std::uintptr_t set_condition_entry(Condition condition) noexcept
 {
 	switch (condition) {
@@ -5208,7 +5333,7 @@ enum class VectorFloatKind {
 
 [[nodiscard]] bool append_native(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
-	ExecutionMode mode, ProgramLinkResolver links)
+	ExecutionMode mode, ProgramLinkResolver links, HostFlags host_flags)
 {
 	const auto &instruction = gadget.instruction;
 	const bool native_locked_scalar =
@@ -5591,7 +5716,9 @@ enum class VectorFloatKind {
 			return true;
 		}
 		const auto destination = register_offset(instruction.destination);
-		const auto entry = set_condition_entry(instruction.condition);
+		const auto entry = fused_condition(instruction.condition, host_flags) ?
+			set_condition_fused_entry(instruction.condition) :
+			set_condition_entry(instruction.condition);
 		if (!destination || entry == 0)
 			return false;
 		stream.push_back(entry);
@@ -5614,8 +5741,11 @@ enum class VectorFloatKind {
 			return true;
 		}
 		return append_register_pair(stream,
-			conditional_move_entry(
-				instruction.condition, instruction.destination.width),
+			fused_condition(instruction.condition, host_flags) ?
+				conditional_move_fused_entry(instruction.condition,
+					instruction.destination.width) :
+				conditional_move_entry(
+					instruction.condition, instruction.destination.width),
 			instruction.destination, instruction.source);
 	case Operation::jump: {
 		const auto target = relative_target(gadget, mode);
@@ -5640,8 +5770,9 @@ enum class VectorFloatKind {
 		const auto *fallthrough = links.resolve == nullptr ? nullptr :
 			links.resolve(links.context, next, mode);
 		const bool linked = taken != nullptr && fallthrough != nullptr;
-		const auto entry = jump_condition_entry(
-			instruction.condition, linked);
+		const auto entry = fused_condition(instruction.condition, host_flags) ?
+			jump_condition_fused_entry(instruction.condition, linked) :
+			jump_condition_entry(instruction.condition, linked);
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
@@ -6196,11 +6327,12 @@ std::vector<std::uintptr_t> build_native_stream(
 {
 	std::vector<std::uintptr_t> stream;
 	stream.reserve(gadgets.size() * 3U + 2U);
+	auto host_flags = HostFlags::none;
 	for (const auto &gadget : gadgets) {
-		if (append_native(stream, gadget, mode, links))
-			continue;
-		throw std::logic_error{
-			"x86-64 operation has no native assembly gadget"};
+		if (!append_native(stream, gadget, mode, links, host_flags))
+			throw std::logic_error{
+				"x86-64 operation has no native assembly gadget"};
+		host_flags = host_flags_of(gadget.instruction);
 	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
 	stream.push_back(normalize_instruction_pointer(mode, final_rip));
