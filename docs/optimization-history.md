@@ -271,7 +271,9 @@ fifth of the wall time and is what these entries used.
 | X10 | Fold the recorded operation and width into flag materialization | Accepted. Both keys are constants at the recording site, but the materializer rediscovered them through two run-time chains that reached the commonest cases last. One bounded table branch now selects a body with both folded in, so the width masks, the sign-bit index and the clear mask are immediates. INC 22% faster, SETcc and ADC 18%, CMP/Jcc 15%; File Compression +3.1%, PDF Renderer +3.1%, Horizon Detection +2.9%. |
 | X11 | Discard the deferred record in the bit-count family | Accepted. TZCNT, LZCNT and POPCNT define every arithmetic flag and cleared all six immediately after paying to materialize them, and every override any gadget records lies inside that same clear mask. Two stores replace the call, and a TZCNT after an ADD is 69% faster. |
 | X12 | Evaluate carry conditions from the deferred record | Rejected, reproducing X9 from the opposite direction. This version replaced the call instead of adding a check in front of it, and carry-condition branches were still 70% slower. The zero-condition shortcut it imitates works because a recorded result is already width-masked and one compare answers it; carry needs the recorded operation, so the shortcut reintroduces the dispatch it exists to avoid, in a gadget rather than in a shared routine. |
-| X13 | Stop advertising ERMS | Accepted. CPUID leaf 7 set the bit that tells glibc's ifunc resolver REP MOVSB is the fast way to copy, while this engine implements REP as a per-element loop. Withholding it moves string work onto the vector gadgets: PDF Renderer +8.6%, Horizon Detection +8.4%, File Compression +1.5%, every distribution non-overlapping. A capability claim is a scheduling hint to the guest's own dispatchers, so it is a performance decision, not only a compatibility one. |
+| X13 | Stop advertising ERMS | Accepted at the time, superseded by X15. CPUID leaf 7 set the bit that tells glibc's ifunc resolver REP MOVSB is the fast way to copy, while this engine implements REP as a per-element loop. Withholding it moves string work onto the vector gadgets: PDF Renderer +8.6%, Horizon Detection +8.4%, File Compression +1.5%, every distribution non-overlapping. A capability claim is a scheduling hint to the guest's own dispatchers, so it is a performance decision, not only a compatibility one -- and withdrawing a false claim is only one of the two ways to settle it. |
+| X14 | Move a repeated string operation in page-bounded runs | Accepted. REP MOVS and REP STOS resolved an address, probed the software TLB and settled a store's publication once per element, which for the MOVSB and STOSB a libc reaches for is once per byte. Those costs belong to the page, so a run confined to one source page and one destination page now pays them once and moves its bytes in 64-byte blocks; the element loop keeps everything a forward block cannot express and the two rejoin each other freely. REP MOVSB is 71x faster at a 4 KiB call size and 112x at 32 KiB, REP STOSB 58x and 98x, REP MOVSQ 9.8x, and 32-bit-addressed REP MOVSB 44x. The first version instead fell back to the element loop whenever the destination page could hold code, and gained nothing whatsoever. |
+| X15 | Advertise ERMS again | Accepted, superseding X13. ERMS tells glibc's ifunc resolver that REP MOVSB is the fastest way to copy, which runs make true here: at a 4 KiB call size REP MOVSB is 7.7x the SSE2 copy routine and 6.0x the AVX2 one, REP STOSB is 7.1x and 5.9x their fill counterparts, and REP still leads both at a 256-byte call size where per-instruction setup dominates. Over the three workloads X13 moved -- ABBA, four runs per arm, withheld against advertised -- File Compression is -0.97 percent, PDF Renderer -0.33 and Horizon Detection +0.41, a geometric mean of -0.30 with every pair of distributions interleaving. Withholding no longer buys anything measurable, so the bit goes back for the guests that assume it exists. |
 
 The campaign closed with a matched ABBA over the full single-core suite,
 sixteen workloads per run, warm-up discarded, four runs per arm. Every workload
@@ -297,17 +299,23 @@ trainer a return-address stack would relieve is 0.26 percent by itself, so that
 case rests on the C++ round trips each miss causes rather than on gadget cost,
 and needs its own measurement before it is built.
 
-Four lessons generalize. A guest binary's own ELF markings change which engine
-paths run at all: an executable-stack declaration makes every data page
-executable and turned a rare call into a per-store one. Instruction count inside
-a gadget is a weak predictor: the changes that paid removed a loop, a call, or a
-branch, and those that only shortened a straight-line body did not. A probe
-measures the mechanism it names and nothing else, so a candidate that only
-affects translation, or that trades throughput for latency, needs a workload to
-judge it. And laziness is worth paying for only where retrieving the deferred
-value is cheaper than computing it: X9 and X12 failed at the same boundary from
-opposite directions, while X10 succeeded by making the deferred path itself
-cheaper rather than trying to avoid it.
+Five lessons generalize. Whether a page might hold code is not a condition this
+engine can branch on to save work. An executable-stack declaration has Linux
+mark every data page executable, and a probe whose data segment is plain
+read-write with a non-executable stack still reported code-capable on every run,
+while across the workloads publication actually fires on well under one percent
+of self time. The predicate is true far more often than publication is needed
+and cannot be predicted from the guest's own markings, so X8's first attempts
+and X14's first version both measured nothing by skipping work when it was set.
+The work has to become cheaper rather than conditional. Instruction count
+inside a gadget is a weak predictor: the changes that paid removed a loop, a
+call, or a branch, and those that only shortened a straight-line body did not.
+A probe measures the mechanism it names and nothing else, so a candidate that
+only affects translation, or that trades throughput for latency, needs a
+workload to judge it. And laziness is worth paying for only where retrieving
+the deferred value is cheaper than computing it: X9 and X12 failed at the same
+boundary from opposite directions, while X10 succeeded by making the deferred
+path itself cheaper rather than trying to avoid it.
 
 Host sampling profiles this engine without instrumenting it. The bank publishes
 a symbol per gadget, so a sampled host PC attributes straight to the gadget that
