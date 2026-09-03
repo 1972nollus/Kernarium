@@ -281,13 +281,17 @@ fifth of the wall time and is what these entries used.
 | X19 | Advertise fast short REP MOVSB | Accepted. ERMS claims REP MOVSB is the fastest copy; FSRM narrows the claim to the short sizes where per-instruction setup rather than throughput decides, and glibc reads the two bits separately, so a resolver seeing only ERMS still sends short copies to a vector routine. Both claims hold once X14 made a page-bounded run a block move: REP MOVSB leads the SSE2 copy 7.7x and the AVX2 copy 6.0x at 4 KiB, and still leads both at 256 bytes. The workloads neither gain nor lose -- PDF Renderer +1.35 percent, File Compression -0.12, Horizon Detection -0.19, a geometric mean of +0.35 with two of three pairs interleaving. As in X15, the burden falls on withholding: a neutral measurement is no reason to route the guest around a path that is not slow. |
 | X20 | Widen the indirect-branch site cache from two targets to four | Rejected. A RET is an indirect branch whose site belongs to the callee, so every caller of a shared function competes for the same ways, and after X16 indirect misses were the largest single remaining exit cause at 14 to 30 percent. Four ways cost 32 bytes per site and four instructions on the path to a miss, and the mechanism does respond: a probe calling one callee from four distinct sites runs about 2.4x faster, while one calling from eight -- beyond either capacity -- does not move. The workloads do not. On the three call-heavy ones, where a shared callee's site should be widest, Clang +2.22 percent, HTML5 Browser 0.00 and Text Processing -0.23, a geometric mean of +0.65 with every distribution overlapping; on the flag-axis three, +0.32. Sites that miss with two ways and hit with four are rare enough in real code that the mechanism working is not the same as the change paying, which is the same gap X17 crossed in the other direction. |
 
-The campaign closed with a matched ABBA over the full single-core suite,
-sixteen workloads per run, warm-up discarded, four runs per arm. Every workload
-improved or held and none regressed: the geometric mean of per-workload rates
-rose 3.94 percent, with Photo Filter +13.5, Structure from Motion +12.9,
-Horizon Detection +10.1, PDF Renderer +10.0 and File Compression +5.9 percent.
+X1 through X13 were settled together with a matched ABBA over the full
+single-core suite, sixteen workloads per run, warm-up discarded, four runs per
+arm. Every workload improved or held and none regressed: the geometric mean of
+per-workload rates rose 3.94 percent, with Photo Filter +13.5, Structure from
+Motion +12.9, Horizon Detection +10.1, PDF Renderer +10.0 and File Compression
++5.9 percent. X14 onward were each measured against their own parent on the
+workloads their mechanism reaches rather than by repeating that suite-wide
+campaign, so the entries above carry the evidence for each and there is no
+combined figure for them.
 
-The same profile retires most of what the plan still had open, because it ranks
+The opening profile retired most of what the plan still had open, because it ranks
 candidates by what executes rather than by what a static instruction histogram
 counts. Truncating FP conversion and scalar FP compare -- the `frint32z` and
 `axflag` candidates -- appear nowhere in any workload's profile. Locked
@@ -336,18 +340,28 @@ chain -- x29 is the retired-instruction counter, not a frame pointer -- but the
 deepest frame is the real PC, which is all a gadget profile needs, and a 5 ms
 interval left the scored rate unchanged.
 
-Profiling all sixteen Geekbench 6.7.1 single-core workloads this way, weighting
-each workload equally because the score is a geometric mean, splits emulator
-time about evenly between the gadget bank and its C++ support. Roughly 37
-percent goes to leaving and re-entering the stream -- block selection, cache
-validation, link activation and the surrounding loop -- against about 0.9
-percent for the assembly entry and exit sequences those C++ round trips wrap.
-Flag materialization is the largest single symbol at 9.8 percent and is
-top-four in every workload, peaking at 23 percent in Horizon Detection.
-Self-modifying-code bookkeeping is 6.1 percent, and no individual gadget exceeds
-about 2 percent. The three lowest-scoring workloads -- Text Processing, Clang
-and HTML5 Browser -- are exactly the ones spending over 40 percent on stream
-re-entry, so block-transition cost, not gadget quality, is what bounds them.
+The profile that opened this campaign covered Geekbench 6.7.1 alone and put
+roughly 37 percent of emulator time in leaving and re-entering the stream --
+block selection, cache validation, link activation and the surrounding loop --
+with flag materialization the largest single symbol at 9.8 percent, top-four in
+every workload and peaking at 23 percent in Horizon Detection, and
+self-modifying-code bookkeeping at 6.1 percent.
+
+The current profile spans a wider set: Geekbench 5.5.1, 6.7.1 and 7.0.0
+single-core, a headless Chromium rendering a local page whose script is the
+timed work, and Wine, each workload set weighted equally and each sampled
+across one boot running its whole suite. Stream re-entry is 21.7 percent, all
+flag work together -- the materializer, its tables and the carry-only entry
+point -- is 5.3 percent, address translation is 5.9, and self-modifying-code
+bookkeeping is 6.9. No individual gadget exceeds about 2 percent.
+
+So the two items this campaign attacked are the two that moved, and
+bookkeeping for guest code writes did not: publishing a write, invalidating the
+cached programs that overlap it and resolving the written page are now the
+largest cluster after stream re-entry. That path calls into C++ on every guest
+store whose page could hold code, and X8's lesson is that the predicate is true
+too often to branch on, so the work has to become cheaper rather than
+conditional.
 
 ## Graphics backend investigations
 
