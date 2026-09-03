@@ -70,7 +70,7 @@ arithmetic_family test, and, 3, 0
 
 .macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_rr
-	bl uml_x86_64_gadget_materialize_flags
+	bl uml_x86_64_gadget_materialize_carry
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
@@ -89,7 +89,7 @@ gadget \name\()_\width\()_rr
 
 .macro scalar_carry_ri name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_ri
-	bl uml_x86_64_gadget_materialize_flags
+	bl uml_x86_64_gadget_materialize_carry
 	ldp x8, x12, [_stream], #16
 	and x9, x8, #0xffff
 	\load \host_register\()11, [_cpu, x9]
@@ -152,7 +152,7 @@ scalar_exchange 64, ldr, str, x, x
 .macro scalar_unary name, instruction, flag_operation, materialize, width, load, store, host_register, store_register
 gadget \name\()_\width\()_r
 	.if \materialize
-	bl uml_x86_64_gadget_materialize_flags
+	bl uml_x86_64_gadget_materialize_carry
 	.endif
 	ldr x8, [_stream], #8
 	\load \host_register\()11, [_cpu, x8]

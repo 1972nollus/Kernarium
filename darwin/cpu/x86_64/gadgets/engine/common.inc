@@ -650,6 +650,197 @@ uml_x86_64_gadget_materialize_flags:
 9:
 	ret
 
+/* Carry-only materialization. INC and DEC preserve CF and define the other
+ * five arithmetic flags from their own record; ADC and SBB read CF as an
+ * operand and then define all six from theirs. Every one of them therefore
+ * needs exactly one correct bit out of RFLAGS, and the full routine's zero,
+ * sign, parity, auxiliary and overflow work is overwritten the moment the
+ * caller records. This entry point computes carry alone from the same
+ * pending record, through the same operation-and-width table, and leaves the
+ * five dead bits as they are.
+ *
+ * It is only for callers that record before any guest memory access can
+ * fault. Between this routine and the caller's own record the five stale bits
+ * are architecturally visible, so a gadget that can leave in that window --
+ * every read-modify-write form -- keeps the full routine.
+ */
+.macro carry_body operation, width
+	.if ((\operation) == 4) || ((\operation) == 5)
+	/* INC and DEC preserve carry. */
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	b .Lx86_carry_apply_overrides
+	.elseif (\operation) == 3
+	/* Logical operations clear carry. */
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	bic x9, x9, #0x1
+	b .Lx86_carry_apply_overrides
+	.else
+	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	ldp x7, x8, [x6]
+	ldr x10, [x6, #16]
+	.if ((\operation) == 0) || ((\operation) == 6) || ((\operation) == 7)
+	ldrb w16, [x6, #26]
+	.endif
+	.if (\width) == 1
+	and x7, x7, #0xff
+	and x8, x8, #0xff
+	and x10, x10, #0xff
+	.elseif (\width) == 2
+	uxth w7, w7
+	uxth w8, w8
+	uxth w10, w10
+	.elseif (\width) == 4
+	mov w7, w7
+	mov w8, w8
+	mov w10, w10
+	.elseif (\width) == 0
+	ldrb w11, [x6, #25]
+	cmp w11, #1
+	b.ne 11f
+	and x7, x7, #0xff
+	and x8, x8, #0xff
+	and x10, x10, #0xff
+	mov x12, #0x80
+	b 14f
+11:
+	cmp w11, #2
+	b.ne 12f
+	uxth w7, w7
+	uxth w8, w8
+	uxth w10, w10
+	mov x12, #0x8000
+	b 14f
+12:
+	cmp w11, #4
+	b.ne 13f
+	mov w7, w7
+	mov w8, w8
+	mov w10, w10
+	mov x12, #0x80000000
+	b 14f
+13:
+	mov x12, #1
+	lsl x12, x12, #63
+14:
+	.endif
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	.if (\operation) == 0
+	/* INC, DEC and an unrecognized operation reach this body with a
+	 * run-time key; only the four defining operations clear carry. */
+	cmp w5, #4
+	b.lo 15f
+	cmp w5, #5
+	b.ls .Lx86_carry_apply_overrides
+15:
+	bic x9, x9, #0x1
+	cmp w5, #1
+	b.eq 16f
+	cmp w5, #2
+	b.eq 17f
+	cmp w5, #6
+	b.eq 18f
+	cmp w5, #7
+	b.eq 19f
+	b .Lx86_carry_apply_overrides
+16:
+	cmp x10, x7
+	b.hs .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	b .Lx86_carry_apply_overrides
+17:
+	cmp x7, x8
+	b.hs .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	b .Lx86_carry_apply_overrides
+18:
+	flags_adjusted_carry 0, result
+	cbz w15, .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	b .Lx86_carry_apply_overrides
+19:
+	flags_adjusted_carry 0, right
+	cbz w15, .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	b .Lx86_carry_apply_overrides
+	.else
+	bic x9, x9, #0x1
+	.if (\operation) == 1
+	cmp x10, x7
+	b.hs .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	.elseif (\operation) == 2
+	cmp x7, x8
+	b.hs .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	.elseif (\operation) == 6
+	flags_adjusted_carry \width, result
+	cbz w15, .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	.elseif (\operation) == 7
+	flags_adjusted_carry \width, right
+	cbz w15, .Lx86_carry_apply_overrides
+	orr x9, x9, #0x1
+	.endif
+	b .Lx86_carry_apply_overrides
+	.endif
+	.endif
+.endm
+
+.p2align 4
+uml_x86_64_gadget_materialize_carry:
+	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	cbnz w5, .Lx86_carry_dispatch
+	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	cbz w13, 9f
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	b .Lx86_carry_apply_overrides
+.Lx86_carry_dispatch:
+	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
+	adr x14, .Lx86_carry_table
+	and w12, w5, #7
+	and w13, w11, #0xf
+	add x14, x14, x12, lsl #6
+	add x14, x14, x13, lsl #2
+	br x14
+
+.p2align 2
+.Lx86_carry_table:
+.irp op,0,1,2,3,4,5,6,7
+.irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+	.if ((\op) >= 1) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
+	b .Lx86_carry_o\op\()_w\w
+	.else
+	b .Lx86_carry_generic
+	.endif
+.endr
+.endr
+
+.irp op,1,2,3,4,5,6,7
+.irp w,1,2,4,8
+.Lx86_carry_o\op\()_w\w:
+	carry_body \op, \w
+.endr
+.endr
+
+.Lx86_carry_generic:
+	carry_body 0, 0
+
+.Lx86_carry_apply_overrides:
+	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	cbz w13, .Lx86_carry_store
+	ldrh w14, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	bic x9, x9, x13
+	and x14, x14, x13
+	orr x9, x9, x14
+.Lx86_carry_store:
+	orr x9, x9, #0x2
+	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+9:
+	ret
+
+
 gadget block_exit
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
