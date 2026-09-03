@@ -98,13 +98,13 @@ TLS, atomic, and extended-state execution is qualified in both long64 and
 compat32 modes against the pinned FEX handwritten ASM corpora. The ordinary
 userspace feature profile covers scalar x86, x87, MMX, SSE through SSE4.2,
 AVX, AVX2, F16C, FMA, AES/PCLMUL, BMI1/2, and their 32-bit operand/address
-forms; CPUID advertises that profile. It withholds ERMS: REP is implemented
-per element here, so advertising it would steer libc's string routines onto
-this engine's slowest path instead of its vector gadgets. Register, YMM, MMX, and x87 state is
-serialized in the task-owned bridge frame across carrier scheduling. Passing
-those corpora does not by itself establish arbitrary distribution or complete
-Linux syscall compatibility. Other host products and page profiles retain
-arm64 userspace execution.
+forms; CPUID advertises that profile, ERMS included: a repeated string
+operation moves whole page-bounded blocks, so the REP MOVSB that ERMS steers
+libc onto is this engine's fastest copy rather than its slowest. Register,
+YMM, MMX, and x87 state is serialized in the task-owned bridge frame across
+carrier scheduling. Passing those corpora does not by itself establish
+arbitrary distribution or complete Linux syscall compatibility. Other host
+products and page profiles retain arm64 userspace execution.
 
 The x86_64 gadget engine assembles against ARMv8.5-A, so it lowers guest
 semantics onto LSE atomics, FlagM/FlagM2 condition transfer, and FRINTTS

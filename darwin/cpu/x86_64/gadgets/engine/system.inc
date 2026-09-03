@@ -81,13 +81,13 @@ gadget cpuid
 	b .Lx86_cpuid_done
 .Lx86_cpuid_seven:
 	cbnz w10, .Lx86_cpuid_done
-	/* FSGSBASE, BMI1, AVX2, BMI2, RDSEED, ADX, CLFLUSHOPT, CLWB, and SHA.
-	 * RTM/HLE and MPX remain deliberately absent. ERMS is withheld: it tells
-	 * glibc's ifunc resolver that REP MOVSB is the fast path, and this
-	 * engine's REP is a per-element loop, so the vector routines it selects
-	 * instead lower onto gadgets that move a register at a time.
+	/* FSGSBASE, BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT,
+	 * CLWB, and SHA. RTM/HLE and MPX remain deliberately absent.
+	 * ERMS claims REP MOVSB is the fastest way to copy, which holds here:
+	 * a repeated string operation runs page-bounded block moves, and no
+	 * vector routine a resolver would pick instead comes close.
 	 */
-	mov w7, #0x0129
+	mov w7, #0x0329
 	movk w7, #0x218c, lsl #16
 	/* RDPID. */
 	mov w8, wzr
