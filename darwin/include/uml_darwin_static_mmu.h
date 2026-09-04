@@ -27,6 +27,11 @@ struct darwin_uml_static_mapping_change {
 	uint64_t length;
 };
 
+struct darwin_uml_static_code_change {
+	uint64_t address;
+	uint64_t length;
+};
+
 struct darwin_uml_static_sequences {
 	uint64_t mapping_changes;
 	uint64_t code_changes;
@@ -123,6 +128,18 @@ int darwin_uml_static_vm_execution_context_end(void *context);
 struct darwin_uml_static_sequences darwin_uml_static_vm_execution_context_sequences(
 	void *context);
 uint64_t darwin_uml_static_vm_code_changes(unsigned long generation);
+/* Copies the guest ranges whose code changed after `sequence` and returns
+ * their count.  A negative result means the caller must retire every
+ * translation it holds for the address space.
+ */
+int darwin_uml_static_vm_code_change_ranges(
+	unsigned long generation, uint64_t sequence,
+	struct darwin_uml_static_code_change *changes, size_t capacity,
+	uint64_t *current_sequence);
+int darwin_uml_static_vm_execution_context_code_change_ranges(
+	void *context, uint64_t sequence,
+	struct darwin_uml_static_code_change *changes, size_t capacity,
+	uint64_t *current_sequence);
 void darwin_uml_static_vm_invalidate_code(unsigned long address);
 
 #ifdef __cplusplus

@@ -22,7 +22,12 @@ namespace uml::memory {
 	std::uint64_t guest_pc) noexcept;
 void execution_reader_end(GenerationState &state) noexcept;
 [[nodiscard]] bool execution_context_publish_code_change(
-	void *context) noexcept;
+	void *context, std::uint64_t address) noexcept;
+/* The ranges an entered context's address space changed after `sequence`, or
+ * -1 when the caller has to retire every translation it holds. */
+[[nodiscard]] int execution_context_code_changes(void *context,
+	std::uint64_t sequence, CodeChangeRange *output, std::size_t capacity,
+	std::uint64_t *current_sequence) noexcept;
 
 class ExecutionQuiesce final {
 public:

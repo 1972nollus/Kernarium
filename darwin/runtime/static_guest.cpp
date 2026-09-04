@@ -373,6 +373,21 @@ x86_cache_sequences(void *context) noexcept
 	};
 }
 
+/* The address space keeps a short history of the ranges its code changes
+ * touched, which is what lets the cache retire the translations covering them
+ * instead of every link it holds. */
+[[nodiscard]] int x86_cache_code_changes(void *context, std::uint64_t sequence,
+	x86_64::gadgets::ProgramCodeChange *changes, std::size_t capacity,
+	std::uint64_t *current_sequence) noexcept
+{
+	static_assert(sizeof(x86_64::gadgets::ProgramCodeChange) ==
+		sizeof(darwin_uml_static_code_change));
+	return darwin_uml_static_vm_execution_context_code_change_ranges(
+		context, sequence,
+		reinterpret_cast<darwin_uml_static_code_change *>(changes),
+		capacity, current_sequence);
+}
+
 [[nodiscard]] bool x86_compat_syscall_trace_enabled() noexcept
 {
 	static const bool enabled = [] {
@@ -663,7 +678,7 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 			prepared_code_changes != sequences.code_changes) {
 			executor.prepare(memory, generation, sequences.mapping_changes,
 				sequences.code_changes, execution.context(),
-				x86_cache_sequences);
+				x86_cache_sequences, x86_cache_code_changes);
 			prepared_mapping_changes = sequences.mapping_changes;
 			prepared_code_changes = sequences.code_changes;
 			executor_prepared = true;

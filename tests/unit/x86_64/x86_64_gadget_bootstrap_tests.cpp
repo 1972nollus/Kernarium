@@ -755,6 +755,16 @@ read_test_code_sequences(void *opaque) noexcept
 struct TestSequences final {
 	std::uint64_t mapping_changes{1};
 	std::uint64_t code_changes{1};
+	std::array<uml::cpu::x86_64::gadgets::ProgramCodeChange, 8> history{};
+	std::size_t recorded{};
+
+	void change(std::uint64_t address, std::uint64_t length) noexcept
+	{
+		if (recorded < history.size())
+			history[recorded] = {address, length};
+		++recorded;
+		++code_changes;
+	}
 };
 
 [[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
@@ -762,6 +772,28 @@ read_test_sequences(void *context) noexcept
 {
 	const auto &state = *static_cast<const TestSequences *>(context);
 	return {state.mapping_changes, state.code_changes, false};
+}
+
+/* Stands in for the address space's own history: the ranges published after
+ * `sequence`, or a refusal when it cannot describe the whole span. */
+[[nodiscard]] int read_test_code_changes(void *context, std::uint64_t sequence,
+	uml::cpu::x86_64::gadgets::ProgramCodeChange *changes,
+	std::size_t capacity, std::uint64_t *current_sequence) noexcept
+{
+	const auto &state = *static_cast<const TestSequences *>(context);
+	*current_sequence = state.code_changes;
+	if (sequence >= state.code_changes)
+		return 0;
+	if (state.recorded > state.history.size() ||
+		sequence + state.recorded < state.code_changes)
+		return -1;
+	const auto count = state.code_changes - sequence;
+	if (count > capacity)
+		return -1;
+	for (std::uint64_t index = 0; index < count; ++index)
+		changes[index] = state.history[static_cast<std::size_t>(
+			state.recorded - count + index)];
+	return static_cast<int>(count);
 }
 
 /* A call whose return-address push lands on an executable page publishes that
@@ -773,6 +805,85 @@ read_test_sequences(void *context) noexcept
  * that did it anyway left the engine paying a C++ round trip for the majority
  * of the control transfers a real program performs.
  */
+/* A guest code write says nothing on its own about the blocks this cache
+ * holds. Cooling every link in the address space for one is what made a JIT or
+ * a fresh executable mapping cost a C++ round trip for every edge afterwards,
+ * however far the write was from anything translated. The address space knows
+ * which bytes moved, and retiring exactly the translations covering them is
+ * the same selective retirement the cache already performs for a write it made
+ * itself.
+ */
+[[nodiscard]] bool an_unrelated_code_change_leaves_a_link_armed()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xe9, 0x0b, 0x00, 0x00, 0x00});
+	memory.load(16, {0x0f, 0x05});
+	TestSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	const auto prepare = [&](gadgets::Executor &executor) {
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			sequences.code_changes, &sequences, read_test_sequences,
+			read_test_code_changes);
+	};
+	/* Only the jump is selected before each run. Selecting the target would
+	 * re-arm its link, which is what the dispatch loop does and what would
+	 * hide the difference this test is about. */
+	const auto seed = [&](gadgets::Executor &executor) {
+		return executor.select_program(memory, 16,
+			ExecutionMode::long64).program != nullptr;
+	};
+	const auto run = [&](gadgets::Executor &executor) {
+		const auto jump = executor.select_program(
+			memory, 0, ExecutionMode::long64);
+		if (jump.program == nullptr)
+			return gadgets::ExecuteResult{};
+		CpuState cpu{};
+		return gadgets::execute(*jump.program, cpu, memory, executor, 64);
+	};
+
+	gadgets::Executor executor;
+	prepare(executor);
+	if (!expect(seed(executor), "linked jump target did not cache"))
+		return false;
+	const auto armed = run(executor);
+	if (!expect(armed.event == uml::cpu::EngineEvent::system_call &&
+			armed.retired_instructions == 2,
+		"linked jump did not enter its target"))
+		return false;
+
+	/* A page neither block was translated from. */
+	sequences.change(0x2000, 4096);
+	prepare(executor);
+	const auto unrelated = run(executor);
+	if (!expect(unrelated.event == uml::cpu::EngineEvent::system_call &&
+			unrelated.retired_instructions == 2,
+		"a code change on an untranslated page retired a link"))
+		return false;
+
+	/* The page the target was translated from. */
+	sequences.change(0, 4096);
+	prepare(executor);
+	const auto covered = run(executor);
+	if (!expect(covered.event == uml::cpu::EngineEvent::continued &&
+			covered.retired_instructions == 1,
+		"a code change covering the target left its link armed"))
+		return false;
+
+	/* And a history that cannot describe the span retires everything. */
+	gadgets::Executor blind;
+	prepare(blind);
+	if (!expect(seed(blind) &&
+			run(blind).event == uml::cpu::EngineEvent::system_call,
+		"linked jump did not enter its target for the second executor"))
+		return false;
+	sequences.recorded = sequences.history.size() + 1;
+	sequences.change(0x2000, 4096);
+	prepare(blind);
+	return expect(run(blind).event == uml::cpu::EngineEvent::continued,
+		"an undescribed code change left a link armed");
+}
+
 [[nodiscard]] bool linked_call_crosses_a_disjoint_executable_stack_write()
 {
 	using namespace uml::cpu::x86_64;
@@ -3408,6 +3519,7 @@ int main()
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&
+		an_unrelated_code_change_leaves_a_link_armed() &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		executable_store_publishes_code_change() &&

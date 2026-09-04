@@ -126,7 +126,8 @@ void StaticGuestMemory::invalidate_code(
 		if (auto *code_page = code_page_handle(address);
 		    code_page != nullptr)
 			darwin_uml_static_vm_invalidate_code_page(code_page);
-		if (execution_context_publish_code_change(execution_context))
+		if (execution_context_publish_code_change(
+			    execution_context, address))
 			return;
 	}
 	invalidate_code(address);

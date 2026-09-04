@@ -872,17 +872,32 @@ static void uml_static_execution_context_code_publication()
 	require(darwin_uml_static_vm_execution_context_begin(context, base) == 0);
 	const auto before =
 		darwin_uml_static_vm_execution_context_sequences(context);
-	require(uml::memory::execution_context_publish_code_change(context));
+	require(uml::memory::execution_context_publish_code_change(
+		context, base));
 	const auto after =
 		darwin_uml_static_vm_execution_context_sequences(context);
 	require(after.mapping_changes == before.mapping_changes);
 	require(after.code_changes == before.code_changes + 1);
 	require(after.execution_interrupt == before.execution_interrupt);
+	/* A reader still holding the earlier sequence is told which page moved,
+	 * so it can retire the translations covering it rather than all of them.
+	 */
+	struct darwin_uml_static_code_change changed[4] = {};
+	std::uint64_t current = 0;
+	require(darwin_uml_static_vm_execution_context_code_change_ranges(
+		context, before.code_changes, changed, 4, &current) == 1);
+	require(current == after.code_changes);
+	require(changed[0].address ==
+		(base & ~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U}));
+	require(changed[0].length == DARWIN_UML_GUEST_PAGE_SIZE);
+	require(darwin_uml_static_vm_execution_context_code_change_ranges(
+		context, after.code_changes, changed, 4, &current) == 0);
 	require(darwin_uml_static_vm_execution_context_end(context) == 0);
 	/* A stale token must fall back to the routed invalidation path instead of
 	 * mutating a generation after its read-side execution lease has ended.
 	 */
-	require(!uml::memory::execution_context_publish_code_change(context));
+	require(!uml::memory::execution_context_publish_code_change(
+		context, base));
 	const auto ended =
 		darwin_uml_static_vm_execution_context_sequences(context);
 	require(ended.code_changes == after.code_changes);

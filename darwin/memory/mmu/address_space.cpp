@@ -117,7 +117,13 @@ public:
 				state.mapping_history.push_back({first + index,
 					changes[index].address, changes[index].length});
 				++added_;
-				code_changes_ += changes[index].changes_code ? 1U : 0U;
+				if (!changes[index].changes_code)
+					continue;
+				if (code_changes_ < code_ranges_.size())
+					code_ranges_[code_changes_] = {
+						changes[index].address,
+						changes[index].length};
+				++code_changes_;
 			}
 		} catch (...) {
 			rollback_history();
@@ -139,9 +145,11 @@ public:
 		if (added_ != 0)
 			state_.mapping_changes.fetch_add(
 				added_, std::memory_order_release);
-		if (code_changes_ != 0)
-			state_.code_changes.fetch_add(
-				code_changes_, std::memory_order_release);
+		if (code_changes_ > code_ranges_.size())
+			publish_untracked_code_changes(state_, code_changes_);
+		else
+			publish_code_changes(state_,
+				{code_ranges_.data(), code_changes_});
 		while (state_.mapping_history.size() > maximum_mapping_history)
 			state_.mapping_history.pop_front();
 		committed_ = true;
@@ -157,6 +165,10 @@ private:
 	}
 
 	GenerationState &state_;
+	/* One batch rarely changes code in more than a few of its ranges; a wider
+	 * one is published without a history rather than allocating here, where a
+	 * throw would have to unwind a partly recorded mapping change. */
+	std::array<CodeChangeRange, 16> code_ranges_{};
 	std::size_t added_{};
 	std::size_t code_changes_{};
 	bool committed_{};
@@ -664,7 +676,7 @@ public:
 			MappedBacking::invalidate_code_page(
 				iterator->second.backing->code_page_handle(
 					iterator->second.offset));
-			publish_code_change(*reference.state);
+			publish_code_change(*reference.state, page);
 		}
 		return 0;
 	}
@@ -817,6 +829,19 @@ public:
 		return static_cast<int>(count);
 	}
 
+	int code_changes(std::uint64_t generation, std::uint64_t sequence,
+		struct darwin_uml_static_code_change *output,
+		std::size_t capacity, std::uint64_t *current_sequence)
+	{
+		if (current_sequence == nullptr || (capacity != 0 && output == nullptr))
+			return -1;
+		static_assert(sizeof(darwin_uml_static_code_change) ==
+			sizeof(CodeChangeRange));
+		return code_changes_since(*state_for(generation), sequence,
+			reinterpret_cast<CodeChangeRange *>(output), capacity,
+			current_sequence);
+	}
+
 	void invalidate_code(std::uint64_t address)
 	{
 		const auto &active = active_thread_generation();
@@ -828,7 +853,7 @@ public:
 		    active.address_space == this && active.state &&
 		    !active.state->retired.load(std::memory_order_acquire)) {
 			invalidate_code_page(*active.state, address);
-			publish_code_change(*active.state);
+			publish_code_change(*active.state, address);
 			return;
 		}
 		const auto generation = generation_for(address,
@@ -837,7 +862,7 @@ public:
 				active.generation : 0);
 		auto state = state_for(generation);
 		invalidate_code_page(*state, address);
-		publish_code_change(*state);
+		publish_code_change(*state, address);
 	}
 
 	[[nodiscard]] std::uint64_t active_generation() const noexcept
@@ -1428,9 +1453,11 @@ private:
 				mapping->second.offset));
 	}
 
-	static void publish_code_change(GenerationState &state)
+	static void publish_code_change(
+		GenerationState &state, std::uint64_t address)
 	{
-		state.code_changes.fetch_add(1, std::memory_order_release);
+		::uml::memory::publish_code_change(
+			state, address & ~(page_size - 1), page_size);
 	}
 
 	mutable std::shared_mutex states_mutex_;
@@ -2072,6 +2099,29 @@ extern "C" int darwin_uml_static_vm_mapping_changes(
 		return space.mapping_changes(
 			generation, sequence, changes, capacity, current_sequence);
 	});
+}
+
+extern "C" int darwin_uml_static_vm_code_change_ranges(
+	unsigned long generation, uint64_t sequence,
+	struct darwin_uml_static_code_change *changes, size_t capacity,
+	uint64_t *current_sequence)
+{
+	return with_address_space([&](auto &space) {
+		return space.code_changes(
+			generation, sequence, changes, capacity, current_sequence);
+	});
+}
+
+extern "C" int darwin_uml_static_vm_execution_context_code_change_ranges(
+	void *context, uint64_t sequence,
+	struct darwin_uml_static_code_change *changes, size_t capacity,
+	uint64_t *current_sequence)
+{
+	static_assert(sizeof(darwin_uml_static_code_change) ==
+		sizeof(uml::memory::CodeChangeRange));
+	return uml::memory::execution_context_code_changes(context, sequence,
+		reinterpret_cast<uml::memory::CodeChangeRange *>(changes),
+		capacity, current_sequence);
 }
 
 extern "C" int darwin_uml_static_vm_execution_begin(

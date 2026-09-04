@@ -192,7 +192,8 @@ void execution_reader_end(GenerationState &state) noexcept
 		state.execution_gate.notify_all();
 }
 
-bool execution_context_publish_code_change(void *opaque) noexcept
+bool execution_context_publish_code_change(
+	void *opaque, std::uint64_t address) noexcept
 {
 	auto *context = static_cast<ExecutionContext *>(opaque);
 	if (context == nullptr || !context->entered || !context->state ||
@@ -200,8 +201,23 @@ bool execution_context_publish_code_change(void *opaque) noexcept
 		return false;
 	/* The entered execution context owns the generation state for the entire
 	 * translated run, so publication needs no domain lookup or mapping lock. */
-	context->state->code_changes.fetch_add(1, std::memory_order_release);
+	publish_code_change(*context->state,
+		address & ~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U},
+		DARWIN_UML_GUEST_PAGE_SIZE);
 	return true;
+}
+
+int execution_context_code_changes(void *opaque, std::uint64_t sequence,
+	CodeChangeRange *output, std::size_t capacity,
+	std::uint64_t *current_sequence) noexcept
+{
+	auto *context = static_cast<ExecutionContext *>(opaque);
+	if (context == nullptr || !context->state || current_sequence == nullptr ||
+	    (capacity != 0 && output == nullptr) ||
+	    context->state->retired.load(std::memory_order_acquire))
+		return -1;
+	return code_changes_since(*context->state, sequence, output, capacity,
+		current_sequence);
 }
 
 ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,

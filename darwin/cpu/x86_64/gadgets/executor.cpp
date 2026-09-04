@@ -37,6 +37,10 @@ inline constexpr std::size_t program_cache_slab_count =
 inline constexpr std::size_t resident_generation_limit =
 	UML_X86_64_GADGET_RESIDENT_GENERATIONS;
 inline constexpr std::size_t maximum_cached_source_bytes = 64U * 15U;
+/* A prepare that would walk more than this replays nothing and retires the
+ * whole address space instead, which is cheaper than the walk. */
+inline constexpr std::size_t code_change_replay_limit = 64;
+inline constexpr std::uint64_t code_change_replay_pages = 128;
 static_assert(maximum_cached_source_bytes <= DARWIN_UML_GUEST_PAGE_SIZE,
 	"one cached x86 program may span at most two code pages");
 static_assert((program_cache_slots & (program_cache_slots - 1U)) == 0,
@@ -388,8 +392,16 @@ public:
 		if (current_->changes == changes)
 			return;
 		preceding_ = nullptr;
-		invalidate_links(*current_);
+		if (!retire_changed_code(*current_))
+			invalidate_links(*current_);
 		current_->changes = changes;
+	}
+
+	void set_code_change_reader(
+		ProgramCacheCodeChangeReader reader, void *context) noexcept
+	{
+		code_change_reader_ = reader;
+		code_change_context_ = context;
 	}
 
 	/* The write translations this cache retires when a page gains code, and
@@ -861,6 +873,38 @@ private:
 		return owned.get();
 	}
 
+	/* A code change somewhere in the address space says nothing about the
+	 * blocks this cache holds: a fresh executable mapping, or a write to a
+	 * page nothing has been translated from, overlaps none of them. Ask what
+	 * actually changed and retire only the translations covering it, which is
+	 * the same selective retirement this cache already performs for a write
+	 * it made itself. Retiring everything stays the answer whenever the
+	 * address space cannot describe the whole span -- the history is short,
+	 * or the span is wider than one prepare should walk -- because a link
+	 * left armed over changed bytes would run them.
+	 */
+	[[nodiscard]] bool retire_changed_code(Generation &state) noexcept
+	{
+		if (code_change_reader_ == nullptr || code_change_context_ == nullptr)
+			return false;
+		std::array<ProgramCodeChange, code_change_replay_limit> changes;
+		std::uint64_t current = 0;
+		const auto count = code_change_reader_(code_change_context_,
+			state.changes, changes.data(), changes.size(), &current);
+		if (count < 0)
+			return false;
+		std::uint64_t pages = 0;
+		for (int index = 0; index < count; ++index) {
+			pages += changes[index].length / DARWIN_UML_GUEST_PAGE_SIZE + 1U;
+			if (pages > code_change_replay_pages)
+				return false;
+		}
+		for (int index = 0; index < count; ++index)
+			invalidate_code(changes[index].address,
+				static_cast<std::size_t>(changes[index].length));
+		return true;
+	}
+
 	void invalidate_links(Generation &state) noexcept
 	{
 		auto *record = state.live_links;
@@ -1088,6 +1132,8 @@ private:
 	SuccessorSet *preceding_{};
 	std::uint64_t epoch_{1};
 	NativeTlbEntry *write_translations_{};
+	ProgramCacheCodeChangeReader code_change_reader_{};
+	void *code_change_context_{};
 };
 
 } // namespace
@@ -1118,7 +1164,8 @@ Executor &Executor::operator=(Executor &&) noexcept = default;
 void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t generation, std::uint64_t mapping_changes,
 	std::uint64_t code_changes, void *execution_context,
-	ProgramCacheSequenceReader sequence_reader) noexcept
+	ProgramCacheSequenceReader sequence_reader,
+	ProgramCacheCodeChangeReader code_change_reader) noexcept
 {
 	const bool memory_changed = storage_->memory != &memory;
 	const bool mapping_changed = memory_changed || !storage_->prepared ||
@@ -1137,6 +1184,8 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 	storage_->code_changes = code_changes;
 	storage_->execution_context = execution_context;
 	storage_->sequence_reader = sequence_reader;
+	storage_->programs.set_code_change_reader(
+		code_change_reader, execution_context);
 	storage_->prepared = true;
 	if (!cache_binding_changed && storage_->cache_ready)
 		return;

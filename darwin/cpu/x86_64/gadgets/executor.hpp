@@ -37,6 +37,17 @@ struct ProgramCacheSequences final {
 using ProgramCacheSequenceReader = ProgramCacheSequences (*)(
 	void *context) noexcept;
 
+struct ProgramCodeChange final {
+	std::uint64_t address{};
+	std::uint64_t length{};
+};
+
+/* The guest ranges whose code changed after `sequence`, or a negative result
+ * when the caller has to retire every cached link. */
+using ProgramCacheCodeChangeReader = int (*)(void *context,
+	std::uint64_t sequence, ProgramCodeChange *changes,
+	std::size_t capacity, std::uint64_t *current_sequence) noexcept;
+
 class Executor final {
 public:
 	Executor();
@@ -52,7 +63,8 @@ public:
 		std::uint64_t mapping_changes = 0,
 		std::uint64_t code_changes = 0,
 		void *execution_context = nullptr,
-		ProgramCacheSequenceReader sequence_reader = nullptr) noexcept;
+		ProgramCacheSequenceReader sequence_reader = nullptr,
+		ProgramCacheCodeChangeReader code_change_reader = nullptr) noexcept;
 	[[nodiscard]] NativeTlbEntry *tlb_entries() noexcept;
 	/* True when this executor holds a translation whose source covers the
 	 * page. A store to a page without one cannot invalidate any cached block.
