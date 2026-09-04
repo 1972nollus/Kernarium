@@ -5,13 +5,30 @@
     .def main; .scl 2; .type 32; .endef
     .seh_proc main
 main:
+    /* InitOnceExecuteOnce enters this AMD64 callback from native ARM64EC and
+     * returns to the native continuation following its `blr x16` exit thunk.
+     * This catches a bridge that can call native APIs but corrupts a native
+     * caller while returning from emulated code. */
+    subq $56, %rsp
+    .seh_stackalloc 56
+    .seh_endprologue
+    leaq uml_once(%rip), %rcx
+    leaq uml_once_callback(%rip), %rdx
+    leaq uml_callback_parameter(%rip), %r8
+    leaq uml_callback_context(%rip), %r9
+    callq *__imp_InitOnceExecuteOnce(%rip)
+    testl %eax, %eax
+    je 1f
+    cmpl $1, uml_callback_seen(%rip)
+    jne 1f
+    leaq uml_callback_parameter(%rip), %rax
+    cmpq %rax, uml_callback_context(%rip)
+    jne 1f
+
     /* The first four arguments fit in registers, while CreateFileA's final
      * three arguments force its ARM64EC entry thunk to read the x64 stack
      * through x4.  This catches a bridge that can run trivial AMD64 code but
      * does not establish the entry-thunk transition ABI. */
-    subq $56, %rsp
-    .seh_stackalloc 56
-    .seh_endprologue
     leaq uml_stack_argument_path(%rip), %rcx
     movl $0x40000000, %edx
     xorl %r8d, %r8d
@@ -39,6 +56,28 @@ main:
     ret
     .seh_endproc
 
+    .globl uml_once_callback
+    .def uml_once_callback; .scl 2; .type 32; .endef
+    .seh_proc uml_once_callback
+uml_once_callback:
+    .seh_endprologue
+    movq %rdx, (%r8)
+    movl $1, uml_callback_seen(%rip)
+    movl $1, %eax
+    ret
+    .seh_endproc
+
     .section .rdata,"dr"
 uml_stack_argument_path:
     .asciz "Z:\\\\tmp\\\\uml-arm64ec-x64-stack-args.tmp"
+uml_callback_parameter:
+    .quad 0x554d4c43414c4c42
+
+    .data
+    .p2align 3
+uml_once:
+    .quad 0
+uml_callback_context:
+    .quad 0
+uml_callback_seen:
+    .long 0

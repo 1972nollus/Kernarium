@@ -155,16 +155,17 @@ uml_arm64ec_leave_native:
     mov sp, x6
     mov x9, x17
 
-    /* Resolve an ARM64EC entry-thunk displacement when the x86 target did
-     * not point at an exit-thunk return following `blr x16`. */
+    /* A target immediately following `blr x16` is the native continuation
+     * of an exit thunk.  Its LR, SP, and x4 are already live ARM64EC state;
+     * resume it without applying entry-thunk stack conversion.  Otherwise
+     * resolve the entry-thunk displacement stored before the target. */
     mov w7, #0x0200
     movk w7, #0xd63f, lsl #16
     ldursw x6, [x17, #-4]
     cmp w6, w7
-    b.eq 5f
+    b.eq 7f
     and x6, x6, #-4
     add x17, x17, x6
-5:
     mov x6, sp
     tbz x6, #3, 6f
     ldr x30, [x6], #8
@@ -177,6 +178,7 @@ uml_arm64ec_leave_native:
     mov x4, x6
     adrp x30, uml_arm64ec_x86_return
     ldr x30, [x30, #:lo12:uml_arm64ec_x86_return]
+7:
     br x17
 
 .globl uml_arm64ec_hostcall
