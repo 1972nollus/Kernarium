@@ -6054,17 +6054,14 @@ enum class HostFlags : std::uint8_t {
 	case Operation::far_jump:
 		return append_far_transfer(stream, gadget);
 	case Operation::ret: {
-		auto *site = links.resolve_indirect == nullptr ? nullptr :
-			links.resolve_indirect(links.context, gadget.address, mode);
+		const bool linked = links.resolve != nullptr;
 		stream.push_back(entry_address(mode == ExecutionMode::compat32 ?
-			(site ? native::uml_x86_64_gadget_return_32_cached :
+			(linked ? native::uml_x86_64_gadget_return_32_cached :
 				native::uml_x86_64_gadget_return_32) :
-			(site ? native::uml_x86_64_gadget_return_cached :
+			(linked ? native::uml_x86_64_gadget_return_cached :
 				native::uml_x86_64_gadget_return)));
 		stream.push_back(instruction.source.immediate);
 		stream.push_back(gadget.address);
-		if (site)
-			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
 	}
 	case Operation::far_ret: {

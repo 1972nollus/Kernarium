@@ -167,6 +167,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		.program_end = program.address() + program.byte_count(),
 		.instruction_limit =
 			std::min<std::size_t>(instruction_budget, 4096),
+		.target_links = executor.target_links(program.execution_mode()),
 		.execution_context = executor.execution_context(),
 		.sequence_context = &executor,
 		.code_change_reader = [](void *opaque) noexcept {

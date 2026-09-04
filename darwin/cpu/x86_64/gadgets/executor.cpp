@@ -236,6 +236,29 @@ struct ProgramCodeStamps final {
 	return ProgramSourceComparison::match;
 }
 
+/* Entries no block has claimed name an address no block begins at and carry
+ * that address's own fallback, so the translated tier can load the pointer
+ * before it has compared the address, and a guest that really does branch
+ * there still leaves with the right RIP.
+ */
+[[nodiscard]] const TargetLinkTable &vacant_target_links() noexcept
+{
+	static const std::uintptr_t fallback[2] = {
+		reinterpret_cast<std::uintptr_t>(
+			native::uml_x86_64_gadget_link_exit),
+		static_cast<std::uintptr_t>(~std::uint64_t{}),
+	};
+	static const BlockLink vacant{fallback, 0, ~std::uint64_t{},
+		~std::uint64_t{}, ~std::uint64_t{}};
+	static const TargetLinkTable table = [] {
+		TargetLinkTable initial{};
+		for (auto &entry : initial)
+			entry = {~std::uint64_t{}, &vacant};
+		return initial;
+	}();
+	return table;
+}
+
 class ProgramCache final {
 private:
 	struct LinkRecord;
@@ -319,6 +342,7 @@ private:
 		std::array<std::unordered_map<std::uint64_t, IndirectLink>, 2>
 			indirect;
 		LinkRecord *live_links{};
+		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
 		std::array<std::vector<IndirectLink *>, 2> live_indirect;
 		std::vector<std::uint32_t> slots;
 		std::unordered_map<std::uint64_t, PageLink *> code_pages;
@@ -427,6 +451,18 @@ public:
 		std::uint64_t address, ExecutionMode mode)
 	{
 		return &link_record(current(), address, mode).link;
+	}
+
+	/* The tier an entering block probes. It belongs to the address space, so
+	 * retiring a generation retires its tier with it and no entry can name a
+	 * record that has been destroyed. */
+	[[nodiscard]] const TargetLinkEntry *target_links(
+		ExecutionMode mode) noexcept
+	{
+		auto *table = current_ == nullptr ? nullptr :
+			target_table(*current_, mode);
+		return table == nullptr ? vacant_target_links().data() :
+			table->data();
 	}
 
 	[[nodiscard]] IndirectLink *indirect_link(
@@ -810,6 +846,21 @@ private:
 		site.listed = false;
 	}
 
+	[[nodiscard]] TargetLinkTable *target_table(
+		Generation &state, ExecutionMode mode) noexcept
+	{
+		auto &owned = state.target_links[mode_index(mode)];
+		if (!owned) {
+			try {
+				owned = std::make_unique<TargetLinkTable>(
+					vacant_target_links());
+			} catch (...) {
+				return nullptr;
+			}
+		}
+		return owned.get();
+	}
+
 	void invalidate_links(Generation &state) noexcept
 	{
 		auto *record = state.live_links;
@@ -865,6 +916,15 @@ private:
 		record.link.guest_rip = program.address();
 		record.link.program_begin = program.address();
 		record.link.program_end = program.address() + program.byte_count();
+		/* Publishing here, rather than at a branch that asked for this
+		 * address, is what lets a RET reach a return site it has never
+		 * reached before: the block that runs there announces itself. */
+		if (slot.generation != current_generation_)
+			return;
+		auto *table = target_table(current(), slot.mode);
+		if (table != nullptr)
+			(*table)[target_link_index(slot.address)] = {
+				slot.address, &record.link};
 	}
 
 	void deactivate(Slot &slot) noexcept
@@ -1133,6 +1193,11 @@ bool Executor::accept_code_changes(std::uint64_t code_changes) noexcept
 	storage_->programs.accept_code_changes(code_changes);
 	storage_->code_changes = code_changes;
 	return true;
+}
+
+const TargetLinkEntry *Executor::target_links(ExecutionMode mode) noexcept
+{
+	return storage_->programs.target_links(mode);
 }
 
 ProgramSelection Executor::select_program(

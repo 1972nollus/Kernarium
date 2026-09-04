@@ -66,6 +66,44 @@ static_assert(offsetof(IndirectLink, next_replacement) == 32);
 static_assert(offsetof(IndirectLink, listed) == 33);
 static_assert(sizeof(IndirectLink) == 40);
 
+/* A return site belongs to the call that reached it, not to the RET that
+ * leaves it, so a function called from three places overruns a two-way tier
+ * keyed on the branch. One direct-mapped tier keyed on the target instead is
+ * shared by every indirect branch in an address space: whatever block ran
+ * most recently at that guest RIP is reachable from all of them.
+ *
+ * An entry is only a prediction. The follower compares the guest RIP it has
+ * already computed against the recorded one and enters the link only on a
+ * match, so a stale or evicted entry costs a fallback and never a wrong
+ * branch. Unused entries name an address no block starts at and carry that
+ * address's own record, which keeps `link` dereferenceable without a null
+ * test on the translated path.
+ */
+struct TargetLinkEntry final {
+	std::uint64_t guest_rip{};
+	const BlockLink *link{};
+};
+static_assert(offsetof(TargetLinkEntry, guest_rip) == 0);
+static_assert(offsetof(TargetLinkEntry, link) == 8);
+static_assert(sizeof(TargetLinkEntry) == 16);
+
+inline constexpr std::size_t target_link_entries = 4096;
+inline constexpr unsigned target_link_fold = 12;
+static_assert((target_link_entries & (target_link_entries - 1U)) == 0,
+	"the translated tier masks the guest RIP fold");
+
+/* Block starts cluster inside a page, so fold the page number back over the
+ * offset before masking. */
+[[nodiscard]] inline constexpr std::size_t target_link_index(
+	std::uint64_t guest_rip) noexcept
+{
+	return static_cast<std::size_t>(
+		(guest_rip ^ (guest_rip >> target_link_fold)) &
+		(target_link_entries - 1U));
+}
+
+using TargetLinkTable = std::array<TargetLinkEntry, target_link_entries>;
+
 struct ProgramLinkResolver final {
 	void *context{};
 	const BlockLink *(*resolve)(void *, std::uint64_t, ExecutionMode){};

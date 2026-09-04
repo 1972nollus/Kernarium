@@ -594,12 +594,15 @@ call_indirect_memory call_indirect_32_m_cached, 32, ldr, w, str, w, 1
 .purgem call_push_and_exit
 .purgem invalidate_stack_write
 
+/* A RET has no site tier: the addresses a function returns to belong to its
+ * callers, so the set grows with the call sites and a two-way tier keyed on
+ * the RET holds none of it for long. Reach the shared guest-RIP tier straight
+ * away, and leave on a miss without training anything -- the tier learns the
+ * return site from the block that runs there, not from this branch.
+ */
 .macro return_gadget name, width, load, host_register, cached=0
 gadget \name
 	ldp x23, x22, [_stream], #16
-	.if \cached
-	ldr x27, [_stream], #8
-	.endif
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -617,12 +620,12 @@ gadget \name
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add _executed, _executed, #1
 	.if \cached
-	follow_indirect_link x24, x27
-	.else
+	follow_target_link x24, .Lx86_return_miss\@
+.Lx86_return_miss\@:
+	.endif
 	str x24, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-	.endif
 .Lx86_return_cross\@:
 	mov x0, _context
 	mov x1, x25

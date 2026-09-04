@@ -601,6 +601,15 @@ read_test_code_sequences(void *opaque) noexcept
 			"validated native target was not reactivated");
 }
 
+/* Every indirect branch in an address space shares one tier keyed on the
+ * target, and a block publishes itself into that tier when the cache hands it
+ * out. So a RET enters a return site it has never returned to, and a site that
+ * has already spent both of its private entries still reaches a third target
+ * without leaving the stream -- neither of which a tier keyed on the branch
+ * can do, because the addresses a function returns to belong to its callers.
+ * The private entries stay the first tier and still carry a site's own targets
+ * when the shared one evicts them.
+ */
 [[nodiscard]] bool cache_chains_indirect_transfers()
 {
 	using namespace uml::cpu::x86_64;
@@ -615,63 +624,86 @@ read_test_code_sequences(void *opaque) noexcept
 		0x0f, 0x05,
 	});
 	memory.load(32, {0xc3});
+	memory.load(40, {
+		0xb8, 0x2c, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
 	memory.load(48, {0xff, 0xd0});
+	/* Folds onto the same shared-tier entry as 16. */
+	memory.load(0x1011, {
+		0xb8, 0x2d, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
 	memory.load(512, {0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
 
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, 1, 1);
-	const auto target_a = executor.select_program(
-		memory, 16, ExecutionMode::long64);
-	const auto target_b = executor.select_program(
-		memory, 24, ExecutionMode::long64);
 	const auto jump = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	const auto ret = executor.select_program(
 		memory, 32, ExecutionMode::long64);
 	const auto call = executor.select_program(
 		memory, 48, ExecutionMode::long64);
-	if (!expect(target_a.program != nullptr && target_b.program != nullptr &&
-			jump.program != nullptr && ret.program != nullptr &&
+	if (!expect(jump.program != nullptr && ret.program != nullptr &&
 			call.program != nullptr,
-		"indirect-link setup did not cache all programs"))
+		"indirect-link setup did not cache its branch programs"))
 		return false;
 
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 16;
-	const auto jump_cold_a = gadgets::execute(
+	const auto cold = gadgets::execute(
 		*jump.program, cpu, memory, executor, 64);
-	if (!expect(jump_cold_a.event == uml::cpu::EngineEvent::continued &&
-			jump_cold_a.retired_instructions == 1 && cpu.rip == 16,
-		"cold indirect JMP did not stop and train its target"))
+	if (!expect(cold.event == uml::cpu::EngineEvent::continued &&
+			cold.retired_instructions == 1 && cpu.rip == 16,
+		"indirect JMP entered a target no block had run at"))
 		return false;
 
-	cpu = CpuState{};
-	cpu.gpr(Register::rax) = 24;
-	const auto jump_cold_b = gadgets::execute(
-		*jump.program, cpu, memory, executor, 64);
-	if (!expect(jump_cold_b.event == uml::cpu::EngineEvent::continued &&
-			jump_cold_b.retired_instructions == 1 && cpu.rip == 24,
-		"second indirect JMP target did not train the bimorphic cell"))
+	const auto target_a = executor.select_program(
+		memory, 16, ExecutionMode::long64);
+	const auto target_b = executor.select_program(
+		memory, 24, ExecutionMode::long64);
+	const auto target_c = executor.select_program(
+		memory, 40, ExecutionMode::long64);
+	if (!expect(target_a.program != nullptr && target_b.program != nullptr &&
+			target_c.program != nullptr,
+		"indirect-link setup did not cache all three targets"))
 		return false;
 
-	cpu = CpuState{};
-	cpu.gpr(Register::rax) = 16;
-	const auto jump_hot_a = gadgets::execute(
-		*jump.program, cpu, memory, executor, 64);
-	if (!expect(jump_hot_a.event == uml::cpu::EngineEvent::system_call &&
-			jump_hot_a.retired_instructions == 3 &&
-			cpu.gpr(Register::rax) == 42 && cpu.rip == 23,
-		"first indirect JMP target was not retained by the two-entry cell"))
-		return false;
+	/* Three targets through a two-entry site, revisited: the third would have
+	 * evicted one of the first two from the site alone. */
+	struct Visit final {
+		std::uint64_t target;
+		std::uint64_t result;
+		std::uint64_t next;
+	};
+	static constexpr Visit visits[] = {
+		{16, 42, 23}, {24, 43, 31}, {40, 44, 47}, {16, 42, 23},
+		{24, 43, 31},
+	};
+	for (const auto &visit : visits) {
+		cpu = CpuState{};
+		cpu.gpr(Register::rax) = visit.target;
+		const auto entered = gadgets::execute(
+			*jump.program, cpu, memory, executor, 64);
+		if (!expect(entered.event == uml::cpu::EngineEvent::system_call &&
+				entered.retired_instructions == 3 &&
+				cpu.gpr(Register::rax) == visit.result &&
+				cpu.rip == visit.next,
+			"indirect JMP left the stream for a target that had run"))
+			return false;
+	}
 
+	/* This RET has never returned anywhere, and it still enters its return
+	 * site, because the site announced itself when the cache handed it out. */
 	cpu = CpuState{};
-	cpu.gpr(Register::rax) = 24;
-	const auto jump_hot_b = gadgets::execute(
-		*jump.program, cpu, memory, executor, 64);
-	if (!expect(jump_hot_b.event == uml::cpu::EngineEvent::system_call &&
-			jump_hot_b.retired_instructions == 3 &&
-			cpu.gpr(Register::rax) == 43 && cpu.rip == 31,
-		"second indirect JMP target was not retained by the two-entry cell"))
+	cpu.rip = 32;
+	cpu.gpr(Register::rsp) = 512;
+	const auto returned = gadgets::execute(
+		*ret.program, cpu, memory, executor, 64);
+	if (!expect(returned.event == uml::cpu::EngineEvent::system_call &&
+			returned.retired_instructions == 3 && cpu.rip == 23 &&
+			cpu.gpr(Register::rsp) == 520,
+		"RET left the stream for a return site that had run"))
 		return false;
 
 	cpu = CpuState{};
@@ -685,51 +717,34 @@ read_test_code_sequences(void *opaque) noexcept
 		return false;
 
 	cpu = CpuState{};
-	cpu.rip = 32;
-	cpu.gpr(Register::rsp) = 512;
-	const auto ret_cold = gadgets::execute(
-		*ret.program, cpu, memory, executor, 64);
-	if (!expect(ret_cold.event == uml::cpu::EngineEvent::continued &&
-			ret_cold.retired_instructions == 1 && cpu.rip == 16 &&
-			cpu.gpr(Register::rsp) == 520,
-		"cold RET did not update RSP and train its target"))
-		return false;
-
-	cpu = CpuState{};
-	cpu.rip = 32;
-	cpu.gpr(Register::rsp) = 512;
-	const auto ret_hot = gadgets::execute(
-		*ret.program, cpu, memory, executor, 64);
-	if (!expect(ret_hot.event == uml::cpu::EngineEvent::system_call &&
-			ret_hot.retired_instructions == 3 && cpu.rip == 23 &&
-			cpu.gpr(Register::rsp) == 520,
-		"trained RET did not enter its native successor"))
-		return false;
-
-	cpu = CpuState{};
 	cpu.rip = 48;
 	cpu.gpr(Register::rax) = 16;
 	cpu.gpr(Register::rsp) = 1024;
-	const auto call_cold = gadgets::execute(
+	const auto called = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	if (!expect(call_cold.event == uml::cpu::EngineEvent::continued &&
-			call_cold.retired_instructions == 1 && cpu.rip == 16 &&
-			cpu.gpr(Register::rsp) == 1016 && memory.qword(1016) == 50,
-		"cold indirect CALL did not push its return and train its target"))
-		return false;
-
-	cpu = CpuState{};
-	cpu.rip = 48;
-	cpu.gpr(Register::rax) = 16;
-	cpu.gpr(Register::rsp) = 1024;
-	const auto call_hot = gadgets::execute(
-		*call.program, cpu, memory, executor, 64);
-	return expect(call_hot.event == uml::cpu::EngineEvent::system_call &&
-			call_hot.retired_instructions == 3 && cpu.rip == 23,
-		"trained indirect CALL did not enter its native successor") &&
-		expect(cpu.gpr(Register::rsp) == 1016 &&
+	if (!expect(called.event == uml::cpu::EngineEvent::system_call &&
+			called.retired_instructions == 3 && cpu.rip == 23,
+		"indirect CALL left the stream for a target that had run") ||
+		!expect(cpu.gpr(Register::rsp) == 1016 &&
 			memory.qword(1016) == 50,
-			"trained indirect CALL lost its architectural stack write");
+			"indirect CALL lost its architectural stack write"))
+		return false;
+
+	/* Evict the shared entry 16 answers to. The JMP trained its own site on
+	 * the cold miss above, so its private tier still carries the target. */
+	const auto conflicting = executor.select_program(
+		memory, 0x1011, ExecutionMode::long64);
+	if (!expect(conflicting.program != nullptr,
+		"conflicting target did not cache"))
+		return false;
+	cpu = CpuState{};
+	cpu.gpr(Register::rax) = 16;
+	const auto retained = gadgets::execute(
+		*jump.program, cpu, memory, executor, 64);
+	return expect(retained.event == uml::cpu::EngineEvent::system_call &&
+			retained.retired_instructions == 3 &&
+			cpu.gpr(Register::rax) == 42 && cpu.rip == 23,
+		"a shared-tier eviction cost a site its own trained target");
 }
 
 /* No other test here binds an execution context, so `code_link_safe` has never

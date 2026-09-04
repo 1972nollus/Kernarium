@@ -12,6 +12,7 @@
 namespace uml::cpu::x86_64::gadgets {
 
 struct IndirectLink;
+struct TargetLinkEntry;
 
 struct alignas(32) NativeTlbEntry final {
 	std::uint64_t read_page{1};
@@ -42,6 +43,7 @@ struct NativeExecutionContext final {
 	std::uint8_t write_code{};
 	std::size_t instruction_limit{};
 	IndirectLink *indirect_miss{};
+	const TargetLinkEntry *target_links{};
 	void *execution_context{};
 	void *sequence_context{};
 	std::uint64_t (*code_change_reader)(void *) noexcept{};
@@ -74,6 +76,8 @@ static_assert(offsetof(NativeExecutionContext, instruction_limit) ==
 	UML_X86_64_CONTEXT_INSTRUCTION_LIMIT);
 static_assert(offsetof(NativeExecutionContext, indirect_miss) ==
 	UML_X86_64_CONTEXT_INDIRECT_MISS);
+static_assert(offsetof(NativeExecutionContext, target_links) ==
+	UML_X86_64_CONTEXT_TARGET_LINKS);
 
 struct NativeEngineResult final {
 	std::int32_t event;

@@ -71,6 +71,8 @@ public:
 		std::size_t maximum_instructions = 64) noexcept;
 	void train_indirect(IndirectLink *site, std::uint64_t target,
 		ExecutionMode mode) noexcept;
+	[[nodiscard]] const TargetLinkEntry *target_links(
+		ExecutionMode mode) noexcept;
 	[[nodiscard]] const ProgramCacheDiagnostics &cache_diagnostics()
 		const noexcept;
 	[[nodiscard]] std::size_t resident_generations() const noexcept;

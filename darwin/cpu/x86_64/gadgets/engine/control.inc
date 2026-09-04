@@ -349,6 +349,7 @@ gadget jump_linked
 
 .purgem follow_block_link
 .purgem follow_indirect_link
+.purgem follow_target_link
 
 .macro loop_gadget opcode, width, host_register
 gadget loop_\opcode\()_\width

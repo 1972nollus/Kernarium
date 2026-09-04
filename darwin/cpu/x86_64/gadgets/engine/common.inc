@@ -302,9 +302,28 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
-/* An IndirectLink holds two {guest RIP, BlockLink pointer} pairs. On a miss,
- * preserve the resolved target and identify this exact data-only site for
- * cold C++ training. A hit enters the same budget-checked BlockLink path as a
+/* Probe the address space's shared guest-RIP tier. The entry names the block
+ * that last ran at that RIP; enter it only when the recorded RIP is the one
+ * just computed, so an evicted or stale entry costs a fallback. `target` must
+ * not be x11, x12 or x13.
+ */
+.macro follow_target_link target, miss
+	ldr x11, [_context, #UML_X86_64_CONTEXT_TARGET_LINKS]
+	eor x12, \target, \target, lsr #UML_X86_64_TARGET_LINK_FOLD
+	and x12, x12, #UML_X86_64_TARGET_LINK_MASK
+	add x11, x11, x12, lsl #4
+	ldp x12, x13, [x11]
+	cmp x12, \target
+	b.ne \miss
+	follow_block_link x13
+.endm
+
+/* An IndirectLink holds two {guest RIP, BlockLink pointer} pairs. A site that
+ * stays monomorphic or bimorphic settles here in two compares. Beyond that the
+ * shared tier still knows the target whenever its block has run recently, so
+ * only a target neither tier holds is worth a C++ round trip; that exit
+ * preserves the resolved target and identifies this exact data-only site for
+ * cold training. Every hit enters the same budget-checked BlockLink path as a
  * direct edge. */
 .macro follow_indirect_link target, site
 	ldp x11, x12, [\site]
@@ -313,6 +332,8 @@ NAME(uml_x86_64_gadget_\name):
 	ldp x11, x12, [\site, #16]
 	cmp \target, x11
 	b.eq .Lx86_indirect_follow\@
+	follow_target_link \target, .Lx86_indirect_train\@
+.Lx86_indirect_train\@:
 	str \site, [_context, #UML_X86_64_CONTEXT_INDIRECT_MISS]
 	str \target, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
