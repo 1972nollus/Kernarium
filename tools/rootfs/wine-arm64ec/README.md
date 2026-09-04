@@ -34,8 +34,10 @@ The adjacent package, ELF, PE, and provenance inventories are part of the
 artifact. ELF verification permits only AArch64. PE verification recognizes
 ARM64EC images from their validated CHPE metadata, permits native ARM64,
 ARM64EC, ARM64X, and Wine-owned i386 PE images, and requires both CPU bridge
-DLLs. The only pure AMD64 image is the installed exit-code-42 probe; the
-installed i386 exit-code-43 probe independently qualifies WoW64. LightDM
+DLLs. The only pure AMD64 image is the installed exit-code-42 probe; it also
+calls a seven-argument WinAPI so the ARM64EC entry-thunk stack contract is
+mandatory. The installed i386 exit-code-43 probe independently qualifies
+WoW64. LightDM
 automatically starts the `uml` account's XFCE session, and the UML serial
 console automatically opens the same appliance-owned account. The account has
 no password and has passwordless sudo for qualification.

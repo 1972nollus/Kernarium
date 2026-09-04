@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the ARM64EC Wine appliance and execute AMD64 and i386 PE probes."""
+"""Boot Wine and execute its AMD64 entry-thunk and i386 WoW64 PE probes."""
 
 from __future__ import annotations
 
@@ -65,6 +65,7 @@ def run_wine_probe(
     command = (
         "env DISPLAY=:99 "
         f"WINEDEBUG={shlex.quote(wine_debug)} "
+        "WINEDLLOVERRIDES=winedbg.exe=d "
         "WINEPREFIX=/home/uml/.wine-smoke /usr/local/bin/wine "
         f"{shlex.quote(executable)} >{shlex.quote(log_path)} 2>&1; "
         "status=$?; "

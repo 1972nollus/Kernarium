@@ -168,9 +168,13 @@ uml_arm64ec_leave_native:
     mov x6, sp
     tbz x6, #3, 6f
     ldr x30, [x6], #8
+    /* ARM64EC entry thunks receive the post-pop x64 stack pointer in x4.
+     * It is not the ordinary ARM64EC mapping of the volatile x86 r10. */
+    mov x4, x6
     mov sp, x6
     br x17
 6:
+    mov x4, x6
     adrp x30, uml_arm64ec_x86_return
     ldr x30, [x30, #:lo12:uml_arm64ec_x86_return]
     br x17
