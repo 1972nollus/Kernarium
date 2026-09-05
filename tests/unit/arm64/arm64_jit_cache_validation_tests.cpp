@@ -457,6 +457,66 @@ void sequence_change_deactivates_unvalidated_successor_link()
 	require(diagnostics.validation_hits == 2);
 }
 
+void process_switches_retain_only_their_own_validated_links()
+{
+	constexpr unsigned long first_generation = 8300;
+	constexpr std::uint64_t base = 0xec'0000;
+	constexpr auto target = base + 8;
+	// Exceed the bounded context directory as well as exercising a warm return.
+	constexpr std::size_t contexts = 66;
+	std::array<std::unique_ptr<JitBacking>, contexts> backings;
+	std::array<std::unique_ptr<JitMapping>, contexts> mappings;
+	for (std::size_t index = 0; index < contexts; ++index) {
+		backings[index] = std::make_unique<JitBacking>(1);
+		backings[index]->put32(0, branch(base, target));
+		backings[index]->put32(8, move_immediate(0, index + 1));
+		backings[index]->put32(12, system_call);
+		mappings[index] = std::make_unique<JitMapping>(
+			first_generation + index, base, *backings[index], 1);
+	}
+	JitExecutor executor;
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+	const auto run = [&](std::size_t index, bool linked, unsigned expected) {
+		const auto generation = first_generation + index;
+		require(darwin_uml_static_vm_activate(generation) == 0);
+		cpu.pc = base;
+		cpu.registers[0] = 0;
+		auto result = run_once(executor, memory, generation, cpu);
+		if (linked) {
+			require(result.event == ::uml::cpu::EngineEvent::system_call);
+			require(result.executed == 3);
+		} else {
+			require(result.event == ::uml::cpu::EngineEvent::continued);
+			require(result.executed == 1);
+			require(cpu.pc == target);
+			result = run_once(executor, memory, generation, cpu);
+			require(result.event == ::uml::cpu::EngineEvent::system_call);
+			require(result.executed == 2);
+		}
+		require(cpu.registers[0] == expected);
+	};
+	run(0, false, 1);
+	run(1, false, 2);
+	run(0, true, 1);
+	run(1, true, 2);
+
+	// Publishing to an inactive context must revoke its old successor before
+	// that context can be entered again. The other context remains intact.
+	require(darwin_uml_static_vm_activate(first_generation) == 0);
+	write_mapped32(first_generation, target, move_immediate(0, 99));
+	darwin_uml_static_vm_invalidate_code(target);
+	run(1, true, 2);
+	run(0, false, 99);
+	run(0, true, 99);
+	for (std::size_t index = 2; index < contexts; ++index)
+		run(index, false, index + 1);
+	// Evicted context anchors must be inactive, even while their native code
+	// remains resident in the larger block cache.
+	run(0, false, 99);
+	run(0, true, 99);
+}
+
 void cache_replacement_keeps_validation_metadata_bounded()
 {
 	constexpr unsigned long generation = 8106;
@@ -1426,6 +1486,7 @@ int main()
 	remapped_code_is_refetched_from_the_current_mapping();
 	cross_page_block_is_validated_completely();
 	sequence_change_deactivates_unvalidated_successor_link();
+	process_switches_retain_only_their_own_validated_links();
 	cache_replacement_keeps_validation_metadata_bounded();
 	arena_reset_discards_saved_validation_words();
 	arena_reset_recompiles_link_descriptors();

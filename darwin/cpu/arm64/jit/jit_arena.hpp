@@ -35,12 +35,12 @@ public:
 	[[nodiscard]] bool valid() const noexcept;
 	[[nodiscard]] void *store(
 		std::span<const std::uint32_t> words) noexcept;
-	/* Stores an ordinary cached translation followed by cacheline-sized anchors
-	 * for target PCs not already represented in this arena. Direct literals
-	 * point at the unique anchor for their guest target; indirect literals
+	/* Stores an ordinary cached translation. Direct literals point at the
+	 * link table's unique anchor for their address space and guest target;
+	 * indirect literals
 	 * retain their compiler value for a local translation or use the supplied
-	 * executor-private value for a shared translation. Patching and anchor
-	 * insertion happen in the same JIT write window as publication.
+	 * executor-private value for a shared translation. Literal patching happens
+	 * in the same JIT write window as code publication.
 	 */
 	[[nodiscard]] StoredBlock store_block(
 		std::uint64_t pc,
@@ -48,7 +48,8 @@ public:
 		std::span<const JitRelocation> relocations,
 		std::span<const std::uintptr_t> values,
 		JitBlockLinkTable &links,
-		JitBlockLink &empty_link) noexcept;
+		JitBlockLink &empty_link,
+		unsigned long generation = 0) noexcept;
 	void activate_link(JitBlockLink &link,
 		const JitBlockLinkActivation &activation) noexcept;
 	void deactivate_links(

@@ -29,42 +29,6 @@ using ::uml::memory::Access;
 using ::uml::memory::StaticGuestMemory;
 using ::uml::memory::Tlb;
 
-template <typename Pointer>
-class FixedPointerList final {
-public:
-  explicit FixedPointerList(std::size_t capacity)
-      : entries_{capacity == 0
-                     ? nullptr
-                     : std::make_unique_for_overwrite<Pointer[]>(capacity)},
-        capacity_{capacity} {}
-
-  void push_back(Pointer pointer) noexcept {
-    /* Every stable record can become active at most once per epoch. The
-     * corresponding fixed link table has the same capacity, so exhaustion is
-     * an internal invariant violation rather than a reason to allocate.
-     */
-    if (size_ >= capacity_)
-      std::terminate();
-    entries_[size_++] = pointer;
-  }
-
-  void clear() noexcept { size_ = 0; }
-  [[nodiscard]] std::size_t size() const noexcept { return size_; }
-  [[nodiscard]] Pointer *begin() noexcept { return entries_.get(); }
-  [[nodiscard]] Pointer *end() noexcept {
-    return size_ == 0 ? entries_.get() : entries_.get() + size_;
-  }
-  [[nodiscard]] const Pointer *begin() const noexcept { return entries_.get(); }
-  [[nodiscard]] const Pointer *end() const noexcept {
-    return size_ == 0 ? entries_.get() : entries_.get() + size_;
-  }
-
-private:
-  std::unique_ptr<Pointer[]> entries_;
-  std::size_t capacity_{};
-  std::size_t size_{};
-};
-
 class JitExecutor::Implementation final {
 public:
   explicit Implementation(
@@ -206,6 +170,18 @@ private:
   );
   void clear_cache() noexcept;
 
+  struct LinkContext final {
+    unsigned long generation{};
+    std::uint64_t code_changes{};
+    std::uint64_t epoch{};
+    std::uint64_t stamp{};
+    JitBlockLink *active_links{};
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    JitBlockLink *active_profile_links{};
+#endif
+    JitIndirectLink *active_indirect_links{};
+  };
+
   JitCacheExecutorLease cache_lease_;
   JitCacheGeometry geometry_;
   std::unique_ptr<BlockCache> block_cache_;
@@ -220,11 +196,12 @@ private:
   JitProfileBlockLinkTable profile_links_;
 #endif
   JitIndirectLinkTable indirect_links_;
-  FixedPointerList<JitBlockLink *> active_links_;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  FixedPointerList<JitBlockLink *> active_profile_links_;
-#endif
-  FixedPointerList<JitIndirectLink *> active_indirect_links_;
+  // The inline context directory is included in the fixed executor charge.
+  // Records remain bounded by the existing link-table capacities.
+  std::array<LinkContext, 64> link_contexts_{};
+  LinkContext *link_context_{};
+  std::uint64_t next_link_epoch_{};
+  std::uint64_t link_context_stamp_{};
   jit::detail::ExecutableArena arena_;
   jit::detail::ExecutableArena tracked_store_arena_;
   jit::detail::ExecutableArena floating_transaction_arena_;

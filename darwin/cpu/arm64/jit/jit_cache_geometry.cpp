@@ -46,13 +46,13 @@ constexpr std::size_t minimum_arena_bytes = 16U * 1024U;
 constexpr std::size_t maximum_arena_bytes = 512U * 1024U * 1024U;
 constexpr std::size_t minimum_tracked_store_bytes = 16U * 1024U;
 constexpr std::size_t maximum_tracked_store_bytes = 32U * 1024U * 1024U;
-/* Each registered record is 64 bytes, while a useful linked source also
- * consumes code and alignment. This practical two-cacheline stride keeps the
- * reverse index from consuming an excessive fraction of a small private
- * budget. If an unusually footer-dense workload reaches it first, bounded
+/* Each registered target consumes a stable data record and reverse-index
+ * storage, while a useful linked source also consumes code and alignment.
+ * This stride funds both within the private budget. If an unusually
+ * link-dense workload reaches the table capacity first, bounded
  * refusal retains the semantic unlinked path.
  */
-constexpr std::size_t direct_link_record_budget_stride = 128U;
+constexpr std::size_t direct_link_record_budget_stride = 256U;
 
 /* Darwin supports 4 KiB and 16 KiB host pages. Charging every mapping at the
  * larger granule plus one granule of VM/allocation metadata keeps the policy
@@ -188,27 +188,16 @@ std::size_t JitCacheGeometry::total_bytes() const noexcept
 	/* The saved-word slab has one combined array/control allocation. */
 	checked_add_product(total, cache_sets, sizeof(SavedGuestWordSet));
 	checked_add(total, saved_guest_word_slab_allocation_allowance);
-	/* Unique direct-target anchors occupy the executable arena immediately after
-	 * the first code block that names them; reverse-index bucket heads and the
-	 * bounded active-target list are the only separate eager storage.
+	/* Direct and indirect records and their indexes occupy writable data.
+	 * Activation lists are intrusive; their context heads are inline state.
 	 */
 	checked_add(total, JitBlockLinkTable::allocation_bytes(block_links));
-	checked_add_product(total, block_links, sizeof(JitBlockLink *));
-	checked_add(total, allocation_allowance);
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 	checked_add(total, JitProfileBlockLinkTable::allocation_bytes(
 		cache_sets * cache_ways));
 #endif
 	checked_add(total,
 		JitIndirectLinkTable::allocation_bytes(indirect_links));
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-	checked_add_product(total, cache_sets * cache_ways,
-		sizeof(JitBlockLink *));
-	checked_add(total, allocation_allowance);
-#endif
-	checked_add_product(total, indirect_links,
-		sizeof(JitIndirectLink *));
-	checked_add(total, allocation_allowance);
 	/* Shared materialization retains this bounded pointer scratch capacity. */
 	checked_add_product(total, maximum_relocated_link_pointers,
 		sizeof(std::uintptr_t));
@@ -268,9 +257,8 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 
 	auto geometry = JitCacheGeometry{
 		.cache_sets = sets,
-		/* Size the reverse index for the measured code/footer mix rather than
-		 * the theoretical footer-only arena. Capacity refusal remains a
-		 * supported semantic fallback.
+		/* Bound stable records in proportion to code capacity. Exhaustion
+		 * retains the supported unlinked fallback.
 		 */
 		.block_links = arena / direct_link_record_budget_stride,
 		.indirect_links = sets * cache_ways,
@@ -322,8 +310,8 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 
 	/* The fixed shares choose the relative lookup and tracked-store sizes.
 	 * Give every remaining byte in the selected private cap to the ordinary
-	 * code/link-footer arena: unused budget cannot help either tier, while an
-	 * early arena reset discards the complete private block cache.
+	 * code arena and its link records. An early arena reset discards the
+	 * complete private block cache.
 	 */
 	auto low = geometry.arena_bytes;
 	auto high = maximum_arena_bytes;

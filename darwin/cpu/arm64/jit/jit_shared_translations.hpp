@@ -42,7 +42,7 @@ inline constexpr std::size_t maximum_shared_translation_relocations = 2;
  * The host code still belongs to the executor that runs it. Canonical words
  * retain zero in every executor-owned pointer cell, and relocations contain
  * only neutral guest keys. A reusing executor copies that template into its
- * own arena, regenerates the small mutable link footer, and resolves indirect
+ * own arena, resolves its private direct-link records, and resolves indirect
  * sites against its own tables. No executable memory, activation state, link
  * record or arena is shared, and the compile path gains no lock that execution
  * can see. What is shared is the decode and emit work.

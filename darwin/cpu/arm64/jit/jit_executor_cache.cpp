@@ -215,7 +215,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   block.internal_entry = internal_entry;
   block.link = target_link;
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  block.profile_link = profile_links_.find_or_create(pc);
+  block.profile_link = profile_links_.find_or_create(pc, generation);
 #endif
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_target_link_refusal(block.link == nullptr);
@@ -263,8 +263,16 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
 void JitExecutor::Implementation::clear_cache() noexcept {
   for (auto &set : *block_cache_)
     set = {};
-  deactivate_indirect_links();
-  discard_links();
+  const auto generation = link_generation_;
+  const auto changes = link_code_changes_;
+  const auto initialized = link_sequence_initialized_;
+  for (auto &context : link_contexts_) {
+    link_context_ = &context;
+    deactivate_indirect_links();
+    discard_links();
+  }
+  link_contexts_ = {};
+  link_context_ = nullptr;
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   gpr_link_profile_.clear_code();
 #endif
@@ -279,6 +287,8 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   link_code_changes_ = 0;
   compiled_in_link_sequence_ = 0;
   link_sequence_initialized_ = false;
+  if (initialized)
+    prepare_links(generation, changes);
 }
 
 
@@ -303,8 +313,8 @@ JitExecutor::Implementation::materialize_shared_translation(
     const void *pointer = nullptr;
     switch (relocation.kind) {
     case JitRelocationKind::direct_link: {
-      /* The arena allocates this source's descriptor immediately after its
-       * code and patches the literal to that private footer record.
+      /* The arena resolves the target in the private writable link table
+       * before patching the literal and publishing executable code.
        */
       pointer = nullptr;
       break;
@@ -318,8 +328,8 @@ JitExecutor::Implementation::materialize_shared_translation(
       return SharedTranslationMaterializationFailure::invalid_metadata;
     }
     /* Only indirect sites require preallocated executor state here. Direct
-     * state is regenerated in the arena footer even when its reverse-index
-     * registration later degrades to the semantic fallback.
+     * state is resolved during code publication, with a bounded refusal
+     * retaining the unlinked fallback when the table is full.
      */
     relocated_link_pointers_.push_back(
         reinterpret_cast<std::uintptr_t>(pointer));
@@ -352,7 +362,7 @@ JitExecutor::Implementation::install_shared_translation(
   }
   const auto stored = arena_.store_block(
       pc, translation->words, translation->relocations,
-      relocated_link_pointers_, links_, empty_link_);
+      relocated_link_pointers_, links_, empty_link_, generation);
   if (!stored) {
     cache.record_materialization_failure(
         SharedTranslationMaterializationFailure::arena_exhaustion);
@@ -423,7 +433,7 @@ JitExecutor::Implementation::publish_shared_translation(
                                     compiled.relocations.end());
     /* The compiler's literal cells name its executor-local link records.
      * They are never canonical state: every installer resolves the neutral
-     * relocation key and regenerates its own small mutable link footer. Keep
+     * relocation key and resolves its own mutable link records. Keep
      * the shared template free of publisher addresses so identical source and
      * codegen inputs retain identical canonical bytes.
      */

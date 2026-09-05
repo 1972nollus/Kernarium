@@ -107,7 +107,7 @@ struct alignas(64) JitBlockLink final {
    *
    * All accepted setup combinations enter the same native address. A compact
    * bit mask says which of the ten host-owned selectors may use it, avoiding
-   * ten duplicate pointers in every arena-adjacent target anchor.
+   * ten duplicate pointers in every target anchor.
    */
   std::uint64_t guest_pc{};
   std::uint64_t instruction_count{};
@@ -119,6 +119,8 @@ struct alignas(64) JitBlockLink final {
   std::uint32_t profile_read_before_write{};
   bool profile_mask_valid{};
 #endif
+  unsigned long generation{};
+  JitBlockLink *next_active{};
 };
 
 struct JitBlockLinkActivation final {
@@ -149,13 +151,14 @@ struct JitIndirectLink final {
    */
   std::array<const JitBlockLink *, 2> profile_targets{};
 #endif
+  unsigned long generation{};
+  JitIndirectLink *next_active{};
 };
 
-/* Generated code embeds pointers to records stored immediately after the first
- * arena block that names a target PC. This table is only a fixed reverse
- * index: target PC -> its one arena-owned activation anchor. Later blocks use
- * that same anchor instead of duplicating mutable state per source. It never
- * owns or moves a record.
+/* Generated code embeds pointers to stable records in this table's writable
+ * data slab. An address-space generation and target PC identify one activation
+ * anchor, shared by that executor's source blocks. Updating an anchor does
+ * not open a JIT write window or modify executable memory.
  */
 class JitBlockLinkTable final {
 public:
@@ -165,23 +168,27 @@ public:
   };
 
   explicit JitBlockLinkTable(std::size_t capacity);
+  ~JitBlockLinkTable();
+
+  [[nodiscard]] JitBlockLink *find_or_create(
+      std::uint64_t pc, unsigned long generation = 0) noexcept;
 
   JitBlockLinkTable(const JitBlockLinkTable &) = delete;
   JitBlockLinkTable &operator=(const JitBlockLinkTable &) = delete;
 
-  /* The caller owns record and writes previous into record.next_target while
-   * the arena is writable. A duplicate PC returns the existing anchor without
+  /* The caller owns record and writes previous into record.next_target.
+   * A duplicate generation/PC returns the existing anchor without
    * inserting record. Publishing the bucket first is safe because one
    * executor is used by only one host thread at a time.
    */
   [[nodiscard]] Insertion insert(JitBlockLink &record) noexcept;
-  [[nodiscard]] JitBlockLink *find(std::uint64_t pc) const noexcept;
+  [[nodiscard]] JitBlockLink *find(
+      std::uint64_t pc, unsigned long generation = 0) const noexcept;
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
   [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
 
-  /* Only fixed bucket heads are allocated here. Record bytes are charged as
-   * part of the arena that stores code and its link footer together.
+  /* Charges both the stable record slab and fixed reverse-index bucket heads.
    */
   [[nodiscard]] static std::size_t
   allocation_bytes(std::size_t capacity) noexcept;
@@ -191,11 +198,13 @@ private:
   std::size_t size_{};
   std::size_t index_capacity_{};
   std::unique_ptr<JitBlockLink *[]> index_;
+  JitBlockLink *records_{};
+  std::size_t owned_size_{};
 };
 
 /* GPR-link profiling resolves targets before arena publication so it can
  * attach stable counter ownership to the compilation. Keep that opt-in
- * diagnostic storage separate from the production arena-adjacent records.
+ * diagnostic storage separate from the production link records.
  */
 class JitProfileBlockLinkTable final {
 public:
@@ -206,7 +215,8 @@ public:
   JitProfileBlockLinkTable &operator=(const JitProfileBlockLinkTable &) =
       delete;
 
-  [[nodiscard]] JitBlockLink *find_or_create(std::uint64_t pc);
+  [[nodiscard]] JitBlockLink *find_or_create(
+      std::uint64_t pc, unsigned long generation = 0);
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
   [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
@@ -226,7 +236,7 @@ private:
  * Generated indirect exits embed pointers to these cells. Keep every cell
  * stable for the code arena's lifetime and bound their total number. Guest
  * targets are comparison data only; entries point exclusively to host-owned
- * arena-adjacent JitBlockLink records, never to native code supplied by the
+ * JitBlockLink records, never to native code supplied by the
  * guest.
  */
 class JitIndirectLinkTable final {
@@ -238,9 +248,10 @@ public:
   JitIndirectLinkTable(const JitIndirectLinkTable &) = delete;
   JitIndirectLinkTable &operator=(const JitIndirectLinkTable &) = delete;
 
-  [[nodiscard]] JitIndirectLink *find_or_create(std::uint64_t source_pc);
+  [[nodiscard]] JitIndirectLink *find_or_create(
+      std::uint64_t source_pc, unsigned long generation = 0);
   [[nodiscard]] JitIndirectLink *find(
-      std::uint64_t source_pc) const noexcept;
+      std::uint64_t source_pc, unsigned long generation = 0) const noexcept;
   void reset(JitIndirectLink &site) const noexcept;
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
@@ -276,7 +287,11 @@ static_assert(link_selector_for_capabilities(15) == 9);
 static_assert(link_selector_for_capabilities(4) ==
               invalid_link_selector);
 static_assert(alignof(JitBlockLink) == 64);
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+static_assert(sizeof(JitBlockLink) == 128);
+#else
 static_assert(sizeof(JitBlockLink) == 64);
+#endif
 static_assert(offsetof(JitBlockLink, guest_pc) == 0);
 static_assert(offsetof(JitBlockLink, instruction_count) == 8);
 static_assert(offsetof(JitBlockLink, internal_entry) == 16);

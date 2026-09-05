@@ -133,6 +133,13 @@ admits new working sets after the shared tier fills, retaining entries whose
 code or validation words are still in use. The shared index retains its
 high-water allocation charge.
 
+Direct and indirect links live in executor-private writable data, outside
+executable mappings. Links are tagged by address space, and each executor
+retains activation contexts for up to 64 address spaces. Switching back to an
+unchanged context preserves trained links; code publication or context
+eviction deactivates that context before reuse. Stale blocks still require
+exact guest-word validation.
+
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 The reservation publication protocol and its memory orders remain unchanged.
 

@@ -109,8 +109,8 @@ saturating_add_array(std::size_t total, std::size_t count,
     }
     /* Relocations address aligned 64-bit literal-pool cells after executable
      * hot code. The shared template deliberately retains zero rather than a
-     * publisher-local pointer; each executor regenerates its mutable link
-     * footer and resolves these neutral keys during installation. Never
+     * publisher-local pointer; each executor resolves these neutral keys
+     * against its private writable link records during installation. Never
      * permit a relocation to rewrite an instruction, straddle the end of the
      * retained words, or alias another relocation.
      */

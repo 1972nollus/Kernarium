@@ -58,7 +58,7 @@ public:
     std::span<const std::uint32_t> words;
     /* Where this translation emitted executor-owned link operands. Shared
      * publication zeros those cells and retains these neutral guest keys so
-     * another executor can regenerate its own adjacent footer and PIC sites.
+     * another executor can resolve its own direct-link records and PIC sites.
      * Only a fully recorded translation may be reused.
      */
     std::span<const JitRelocation> relocations;

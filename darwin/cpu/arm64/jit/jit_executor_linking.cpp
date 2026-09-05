@@ -51,10 +51,10 @@ JitExecutor::Implementation::resolve_indirect_link_profile(void *context, const 
 
 [[nodiscard]] JitBlockLink *JitExecutor::Implementation::link_for(std::uint64_t pc) {
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  return profile_links_.find_or_create(pc);
+  return profile_links_.find_or_create(pc, link_generation_);
 #else
   (void)pc;
-  /* The literal is replaced with the arena's unique target-PC anchor before
+  /* The literal is replaced with the private table's unique target anchor before
    * the code is published. A nonnull sentinel asks the compiler for the
    * linked shape without allocating target-owned storage during lowering.
    */
@@ -64,7 +64,7 @@ JitExecutor::Implementation::resolve_indirect_link_profile(void *context, const 
 
 [[nodiscard]] JitIndirectLink *
 JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
-  auto *site = indirect_links_.find_or_create(source_pc);
+  auto *site = indirect_links_.find_or_create(source_pc, link_generation_);
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_link_table_state(links_.size(), links_.capacity(),
                                indirect_links_.size(),
@@ -80,7 +80,7 @@ JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
 
 void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
                     const CompiledBlock &target) {
-  auto *site = indirect_links_.find(source_pc);
+  auto *site = indirect_links_.find(source_pc, link_generation_);
   if (site == nullptr || target.link == nullptr ||
       target.link_epoch != link_epoch_ || !target.link_target_safe) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -94,7 +94,8 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
 #endif
     indirect_links_.reset(*site);
     site->activation_epoch = link_epoch_;
-    active_indirect_links_.push_back(site);
+    site->next_active = link_context_->active_indirect_links;
+    link_context_->active_indirect_links = site;
   }
   for (std::size_t index = 0; index < site->entries.size(); ++index) {
     auto &entry = site->entries[index];
@@ -131,38 +132,46 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
 }
 
 void JitExecutor::Implementation::discard_links() noexcept {
-  active_links_.clear();
+  if (link_context_ == nullptr)
+    return;
+  link_context_->active_links = nullptr;
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   gpr_link_profile_.drain_direct();
-  for (auto *link : active_profile_links_) {
+  for (auto *link = link_context_->active_profile_links; link != nullptr;
+       link = link->next_active) {
     link->internal_entry = 0;
     link->allowed_selectors = 0;
     link->instruction_count = 0;
     link->activation_epoch = 0;
     link->profile_mask_valid = false;
   }
-  active_profile_links_.clear();
+  link_context_->active_profile_links = nullptr;
 #endif
 }
 
 void JitExecutor::Implementation::deactivate_links() noexcept {
-  arena_.deactivate_links(
-      {active_links_.begin(), active_links_.size()});
+  if (link_context_ == nullptr)
+    return;
+  for (auto *link = link_context_->active_links; link != nullptr;
+       link = link->next_active)
+    arena_.deactivate_links({&link, 1});
   discard_links();
 }
 
 void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
+  if (link_context_ == nullptr)
+    return;
+  for (auto *site = link_context_->active_indirect_links; site != nullptr;
+       site = site->next_active) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
-  indirect_link_diagnostics_.deactivated_sites +=
-      active_indirect_links_.size();
+    ++indirect_link_diagnostics_.deactivated_sites;
 #endif
-  for (auto *site : active_indirect_links_) {
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
     gpr_link_profile_.drain_indirect_site(*site);
 #endif
     indirect_links_.reset(*site);
   }
-  active_indirect_links_.clear();
+  link_context_->active_indirect_links = nullptr;
 }
 
 [[gnu::noinline]] void JitExecutor::Implementation::refresh_link(CompiledBlock &block) {
@@ -198,8 +207,10 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
     activation.internal_entry = block.internal_entry;
   }
   arena_.activate_link(*block.link, activation);
-  if (activation.allowed_selectors != 0 && first_activation)
-    active_links_.push_back(block.link);
+  if (activation.allowed_selectors != 0 && first_activation) {
+    block.link->next_active = link_context_->active_links;
+    link_context_->active_links = block.link;
+  }
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   if (block.profile_link != nullptr) {
     auto &profile_link = *block.profile_link;
@@ -211,7 +222,8 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
     profile_link.profile_mask_valid = activation.profile_mask_valid;
     if (profile_link.activation_epoch != link_epoch_) {
       profile_link.activation_epoch = link_epoch_;
-      active_profile_links_.push_back(&profile_link);
+      profile_link.next_active = link_context_->active_profile_links;
+      link_context_->active_profile_links = &profile_link;
     }
   }
 #endif

@@ -221,6 +221,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Isolate JIT store-publication state at the host cache-line size | Accepted. Adjacent 64-byte vCPU slots shared an Apple arm64 cache line. Using 128-byte slots and separating the shared gate fields improved four-worker HDR throughput without weakening the publication memory orders. |
 | Replace unused shared JIT translations within the process budget | Accepted. Bounded replacement prevents startup code from permanently crowding out later working sets. The shared index retains its high-water allocation charge, and live validation words continue to pin their storage. |
 | Fund larger private JIT working sets within the process budget | Accepted. A 256 MiB private ceiling reduces browser startup cache resets while the total budget remains tied to guest RAM. Smaller process budgets reduce private geometry before allocating the shared remainder. |
+| Retain address-space link activation in writable data | Accepted. Generation-tagged direct and indirect links retain trained targets across unchanged address-space switches, while bounded context eviction and code publication deactivate the affected context. Link updates no longer open executable write windows. |
 
 ## Graphics backend investigations
 

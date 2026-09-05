@@ -291,9 +291,9 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	};
 	require(direct.capacity() == 3 && indirect.capacity() == 3,
 		"fixed link-table capacity changed");
-	require(arm64::JitBlockLinkTable::allocation_bytes(3) <
+	require(arm64::JitBlockLinkTable::allocation_bytes(3) >
 			3 * sizeof(arm64::JitBlockLink),
-		"direct-link records were not moved into the code arena");
+		"direct-link records and index were not charged");
 	require(arm64::JitIndirectLinkTable::allocation_bytes(3) >
 			3 * sizeof(arm64::JitIndirectLink),
 		"indirect-link index/allocation bytes were not charged");
@@ -303,7 +303,7 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 		"direct-link table did not stop at fixed capacity");
 	auto *first = direct.find(0x1000);
 	require(first == &direct_records[0],
-		"direct-link reverse index lost its arena-owned record");
+		"direct-link reverse index lost its caller-owned record");
 	auto *site = indirect.find_or_create(0x5000);
 	require(site != nullptr && indirect.find(0x5000) == site &&
 		indirect.find_or_create(0x5000) == site,
@@ -320,7 +320,7 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 		"fixed link tables could not reuse storage after clear");
 }
 
-void direct_link_records_follow_their_code_in_the_arena()
+void direct_link_records_are_writable_outside_the_code_arena()
 {
 	constexpr std::uint64_t pc = 0x1000;
 	constexpr std::uint64_t target = 0x2000;
@@ -341,15 +341,19 @@ void direct_link_records_follow_their_code_in_the_arena()
 	auto *direct_link = links.find(target);
 	require(static_cast<bool>(stored) && stored.target_link != nullptr &&
 		direct_link != nullptr,
-		"the arena did not publish a code/link-footer allocation");
-	require(reinterpret_cast<std::byte *>(stored.target_link) >
-			reinterpret_cast<std::byte *>(stored.code) &&
-		direct_link == stored.target_link + 1,
-		"direct-link records are not contiguous after their code block");
+		"code publication did not resolve its private link records");
+	const auto code_address = reinterpret_cast<std::uintptr_t>(stored.code);
+	const auto link_address = reinterpret_cast<std::uintptr_t>(stored.target_link);
+	require(link_address < code_address ||
+		link_address >= code_address + 16U * 1024U,
+		"mutable link state still occupies executable storage");
+	stored.target_link->allowed_selectors = 3;
+	require(stored.target_link->allowed_selectors == 3,
+		"link state could not be updated after executable publication");
 	std::uint64_t patched{};
 	std::memcpy(&patched, stored.code, sizeof(patched));
 	require(patched == reinterpret_cast<std::uintptr_t>(direct_link),
-		"the direct-link literal does not point into its adjacent footer");
+		"the direct-link literal does not point to its private record");
 	arm64::JitBlockLinkActivation activation{
 		.instruction_count = 3,
 		.internal_entry = 0x1234,
@@ -384,7 +388,7 @@ int main()
 		one_jit_run_session_is_admitted_at_a_time();
 		a_standalone_executor_lease_is_excluded_by_a_managed_session();
 		fixed_link_tables_are_stable_bounded_and_reusable();
-		direct_link_records_follow_their_code_in_the_arena();
+		direct_link_records_are_writable_outside_the_code_arena();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
 		return std::fprintf(stderr, "JIT cache geometry test failed: %s\n",

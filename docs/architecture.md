@@ -93,8 +93,11 @@ and feature exposure must agree across engines.
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
 guest identity and relocatable code only; executor-owned link state is rebuilt
-when materialized. A managed run owns at most one persistent executor per guest
-CPU, and no executor survives its runtime memory domain.
+when materialized into writable data outside executable mappings. Links and
+retained activation contexts are scoped to an address space. A managed run
+owns at most one persistent executor per guest CPU, and no executor survives
+its runtime memory domain. Cache and publication contracts are described in
+[`../darwin/README.md`](../darwin/README.md).
 
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and

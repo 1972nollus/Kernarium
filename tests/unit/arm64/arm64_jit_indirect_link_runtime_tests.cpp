@@ -453,6 +453,60 @@ void pending_training_does_not_cross_task_boundary() {
   executor.end_execution();
 }
 
+void trained_sites_remain_scoped_to_their_address_space() {
+  constexpr unsigned long first = 8310;
+  constexpr unsigned long second = 8311;
+  constexpr std::uint64_t base = 0xe8'0000;
+  constexpr auto target = base + 0x100;
+  JitBacking first_backing{1};
+  JitBacking second_backing{1};
+  first_backing.put32(0, branch_register(5));
+  first_backing.put32(target - base, move_immediate(0, 11));
+  first_backing.put32(target - base + 4, system_call);
+  second_backing.put32(0, branch_register(5));
+  second_backing.put32(target - base, move_immediate(0, 22));
+  second_backing.put32(target - base + 4, system_call);
+  JitMapping first_mapping{first, base, first_backing, 1};
+  JitMapping second_mapping{second, base, second_backing, 1};
+  JitExecutor executor;
+  StaticGuestMemory memory;
+  arm64::CpuState cpu{};
+  const auto run = [&](unsigned long generation, bool linked,
+                       unsigned expected) {
+    require(darwin_uml_static_vm_activate(generation) == 0);
+    cpu.pc = base;
+    cpu.registers[5] = target;
+    cpu.registers[0] = 0;
+    require(executor.begin_execution(generation, cpu.pc));
+    auto result = run_block(executor, memory, generation, cpu);
+    if (linked) {
+      require(result.event == ::uml::cpu::EngineEvent::system_call);
+      require(result.executed == 3);
+    } else {
+      require(result.event == ::uml::cpu::EngineEvent::continued);
+      require(result.executed == 1);
+      result = run_block(executor, memory, generation, cpu);
+      require(result.event == ::uml::cpu::EngineEvent::system_call);
+      require(result.executed == 2);
+    }
+    require(cpu.registers[0] == expected);
+    executor.end_execution();
+  };
+  run(first, false, 11);
+  run(second, false, 22);
+  run(first, true, 11);
+  run(second, true, 22);
+  require(executor.indirect_link_diagnostics().deactivated_sites == 0);
+
+  require(darwin_uml_static_vm_activate(first) == 0);
+  write_mapped32(first, target, move_immediate(0, 33));
+  darwin_uml_static_vm_invalidate_code(target);
+  run(second, true, 22);
+  run(first, false, 33);
+  run(first, true, 33);
+  require(executor.indirect_link_diagnostics().deactivated_sites == 1);
+}
+
 void indirect_cycles_obey_fairness_checkpoint() {
   constexpr unsigned long generation = 8207;
   constexpr std::uint64_t base = 0xd8'0000;
@@ -500,6 +554,7 @@ int main() {
   stateful_target_trains_and_links_with_matching_capability();
   trained_target_with_missing_native_environment_falls_back();
   pending_training_does_not_cross_task_boundary();
+  trained_sites_remain_scoped_to_their_address_space();
   indirect_cycles_obey_fairness_checkpoint();
   return 0;
 }

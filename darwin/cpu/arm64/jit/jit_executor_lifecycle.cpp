@@ -48,11 +48,6 @@ JitExecutor::Implementation::Implementation(
 #endif
       indirect_links_{geometry_.indirect_links, &empty_link_},
 #endif
-      active_links_{links_.capacity()},
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-      active_profile_links_{profile_links_.capacity()},
-#endif
-      active_indirect_links_{indirect_links_.capacity()},
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       arena_{diagnostics.code_arena_size == 0
                  ? geometry_.arena_bytes

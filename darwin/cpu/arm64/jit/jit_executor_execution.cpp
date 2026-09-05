@@ -165,7 +165,7 @@ namespace uml::cpu::arm64 {
           return run_semantic_instruction(cpu, memory, executed);
         auto stored = arena_.store_block(
             cpu.pc, compiled.words, compiled.relocations, {}, links_,
-            empty_link_);
+            empty_link_, generation);
         if (stored) {
           auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
           block = install_compilation(compiled, stored, shared);
@@ -181,7 +181,7 @@ namespace uml::cpu::arm64 {
            * Indirect PIC operands are absolute pointers into the descriptor
            * table. clear_cache() invalidates that storage, so the retry must
            * be freshly lowered rather than copying its stale site pointer.
-           * Direct descriptors are regenerated beside the retried code.
+           * Direct descriptors are regenerated in the private link table.
            */
           JitCompiler retry_compiler{
               enable_guarded_control_flow_, this,
@@ -209,7 +209,7 @@ namespace uml::cpu::arm64 {
             return run_semantic_instruction(cpu, memory, executed);
           stored = arena_.store_block(
               cpu.pc, retry_compiled.words, retry_compiled.relocations, {},
-              links_, empty_link_);
+              links_, empty_link_, generation);
           if (!stored)
             return run_semantic_instruction(cpu, memory, executed);
           auto shared =
@@ -583,7 +583,7 @@ void JitExecutor::Implementation::record_pending_indirect(void *pointer, std::ui
     pending_indirect_ = {};
     return;
   }
-  auto *site = indirect_links_.find(source_pc);
+  auto *site = indirect_links_.find(source_pc, generation);
   if (site == nullptr || static_cast<void *>(site) != pointer) {
     pending_indirect_ = {};
     return;
@@ -622,20 +622,39 @@ JitExecutor::Implementation::consume_pending_indirect(CpuState &cpu, unsigned lo
 }
 
 void JitExecutor::Implementation::prepare_links(unsigned long generation, std::uint64_t changes) {
-  if (link_generation_ != generation || link_code_changes_ != changes) {
-    if (link_sequence_initialized_)
-      profile_jit_sequence_transition(link_generation_ != generation,
-                                      compiled_in_link_sequence_);
-    else
-      link_sequence_initialized_ = true;
-    compiled_in_link_sequence_ = 0;
-    pending_indirect_ = {};
+  if (link_generation_ == generation && link_code_changes_ == changes &&
+      link_context_ != nullptr)
+    return;
+  if (link_sequence_initialized_)
+    profile_jit_sequence_transition(link_generation_ != generation,
+                                    compiled_in_link_sequence_);
+  else
+    link_sequence_initialized_ = true;
+  compiled_in_link_sequence_ = 0;
+  pending_indirect_ = {};
+
+  auto *selected = &link_contexts_.front();
+  for (auto &context : link_contexts_) {
+    if (context.epoch != 0 && context.generation == generation) {
+      selected = &context;
+      break;
+    }
+    if (context.stamp < selected->stamp)
+      selected = &context;
+  }
+  link_context_ = selected;
+  if (selected->epoch == 0 || selected->generation != generation ||
+      selected->code_changes != changes) {
     deactivate_indirect_links();
     deactivate_links();
-    ++link_epoch_;
-    link_generation_ = generation;
-    link_code_changes_ = changes;
+    *selected = {.generation = generation,
+                 .code_changes = changes,
+                 .epoch = ++next_link_epoch_};
   }
+  selected->stamp = ++link_context_stamp_;
+  link_epoch_ = selected->epoch;
+  link_generation_ = generation;
+  link_code_changes_ = changes;
 }
 
 } // namespace uml::cpu::arm64

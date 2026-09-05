@@ -99,7 +99,28 @@ JitBlockLinkTable::JitBlockLinkTable(std::size_t capacity)
     index_ =
         std::make_unique_for_overwrite<JitBlockLink *[]>(index_capacity_);
     std::fill_n(index_.get(), index_capacity_, nullptr);
+    records_ = allocate_records<JitBlockLink>(capacity_);
   }
+}
+
+JitBlockLinkTable::~JitBlockLinkTable() {
+  destroy_records(records_, owned_size_);
+  deallocate_records(records_);
+}
+
+JitBlockLink *JitBlockLinkTable::find_or_create(
+    std::uint64_t pc, unsigned long generation) noexcept {
+  if (auto *existing = find(pc, generation); existing != nullptr)
+    return existing;
+  if (size_ >= capacity_)
+    return nullptr;
+  auto *record = std::construct_at(
+      records_ + owned_size_,
+      JitBlockLink{.guest_pc = pc, .generation = generation});
+  const auto insertion = insert(*record);
+  record->next_target = insertion.previous;
+  ++owned_size_;
+  return record;
 }
 
 JitBlockLinkTable::Insertion
@@ -107,11 +128,12 @@ JitBlockLinkTable::insert(JitBlockLink &record) noexcept {
   if (index_capacity_ == 0)
     return {};
   const auto mask = index_capacity_ - 1U;
-  const auto slot = hash_link_key(record.guest_pc, mask);
+  const auto slot = hash_link_key(record.guest_pc ^ record.generation, mask);
   auto *previous = index_[slot];
   for (auto *link = previous; link != nullptr;
        link = link->next_target)
-    if (link->guest_pc == record.guest_pc)
+    if (link->guest_pc == record.guest_pc &&
+        link->generation == record.generation)
       return {.previous = link, .inserted = false};
   if (size_ >= capacity_)
     return {};
@@ -120,17 +142,20 @@ JitBlockLinkTable::insert(JitBlockLink &record) noexcept {
   return {.previous = previous, .inserted = true};
 }
 
-JitBlockLink *JitBlockLinkTable::find(std::uint64_t pc) const noexcept {
+JitBlockLink *JitBlockLinkTable::find(
+    std::uint64_t pc, unsigned long generation) const noexcept {
   if (index_capacity_ == 0)
     return nullptr;
-  for (auto *link = index_[hash_link_key(pc, index_capacity_ - 1U)];
+  for (auto *link = index_[hash_link_key(pc ^ generation, index_capacity_ - 1U)];
        link != nullptr; link = link->next_target)
-    if (link->guest_pc == pc)
+    if (link->guest_pc == pc && link->generation == generation)
       return link;
   return nullptr;
 }
 
 void JitBlockLinkTable::clear() noexcept {
+  destroy_records(records_, owned_size_);
+  owned_size_ = 0;
   size_ = 0;
   if (index_ != nullptr)
     std::fill_n(index_.get(), index_capacity_, nullptr);
@@ -145,10 +170,15 @@ std::size_t JitBlockLinkTable::allocation_bytes(
   const auto buckets = bucket_capacity_for(capacity);
   if (capacity == 0 || buckets == 0 ||
       buckets > (std::numeric_limits<std::size_t>::max() -
-                 allocation_allowance) /
+                 2U * allocation_allowance) /
                     sizeof(JitBlockLink *))
     return 0;
-  return buckets * sizeof(JitBlockLink *) + allocation_allowance;
+  const auto index_bytes = buckets * sizeof(JitBlockLink *);
+  if (capacity > (std::numeric_limits<std::size_t>::max() - index_bytes -
+                  2U * allocation_allowance) / sizeof(JitBlockLink))
+    return 0;
+  return index_bytes + capacity * sizeof(JitBlockLink) +
+         2U * allocation_allowance;
 }
 
 JitProfileBlockLinkTable::JitProfileBlockLinkTable(std::size_t capacity)
@@ -168,14 +198,15 @@ JitProfileBlockLinkTable::~JitProfileBlockLinkTable() {
 }
 
 JitBlockLink *
-JitProfileBlockLinkTable::find_or_create(std::uint64_t pc) {
+JitProfileBlockLinkTable::find_or_create(
+    std::uint64_t pc, unsigned long generation) {
   if (index_capacity_ == 0)
     return nullptr;
   const auto mask = index_capacity_ - 1U;
-  auto slot = hash_link_key(pc, mask);
+  auto slot = hash_link_key(pc ^ generation, mask);
   while (index_[slot] != 0) {
     auto &record = records_[index_[slot] - 1U];
-    if (record.guest_pc == pc)
+    if (record.guest_pc == pc && record.generation == generation)
       return &record;
     slot = (slot + 1U) & mask;
   }
@@ -183,6 +214,7 @@ JitProfileBlockLinkTable::find_or_create(std::uint64_t pc) {
     return nullptr;
   auto *result = std::construct_at(records_ + size_, JitBlockLink{});
   result->guest_pc = pc;
+  result->generation = generation;
   index_[slot] = static_cast<std::uint32_t>(++size_);
   return result;
 }
@@ -222,14 +254,15 @@ JitIndirectLinkTable::~JitIndirectLinkTable() {
 }
 
 JitIndirectLink *
-JitIndirectLinkTable::find_or_create(std::uint64_t source_pc) {
+JitIndirectLinkTable::find_or_create(
+    std::uint64_t source_pc, unsigned long generation) {
   if (index_capacity_ == 0)
     return nullptr;
   const auto mask = index_capacity_ - 1U;
-  auto slot = hash_link_key(source_pc, mask);
+  auto slot = hash_link_key(source_pc ^ generation, mask);
   while (index_[slot] != 0) {
     auto &record = records_[index_[slot] - 1U];
-    if (record.source_pc == source_pc)
+    if (record.source_pc == source_pc && record.generation == generation)
       return &record;
     slot = (slot + 1U) & mask;
   }
@@ -238,19 +271,21 @@ JitIndirectLinkTable::find_or_create(std::uint64_t source_pc) {
   auto *result = std::construct_at(records_ + size_, JitIndirectLink{});
   reset(*result);
   result->source_pc = source_pc;
+  result->generation = generation;
   index_[slot] = static_cast<std::uint32_t>(++size_);
   return result;
 }
 
 JitIndirectLink *
-JitIndirectLinkTable::find(std::uint64_t source_pc) const noexcept {
+JitIndirectLinkTable::find(
+    std::uint64_t source_pc, unsigned long generation) const noexcept {
   if (index_capacity_ == 0)
     return nullptr;
   const auto mask = index_capacity_ - 1U;
-  auto slot = hash_link_key(source_pc, mask);
+  auto slot = hash_link_key(source_pc ^ generation, mask);
   while (index_[slot] != 0) {
     auto &record = records_[index_[slot] - 1U];
-    if (record.source_pc == source_pc)
+    if (record.source_pc == source_pc && record.generation == generation)
       return &record;
     slot = (slot + 1U) & mask;
   }
