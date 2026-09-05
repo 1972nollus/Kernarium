@@ -224,6 +224,9 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Retain address-space link activation in writable data | Accepted. Generation-tagged direct and indirect links retain trained targets across unchanged address-space switches, while bounded context eviction and code publication deactivate the affected context. Link updates no longer open executable write windows. |
 | Lower bounded compare/exchange retry regions natively | Accepted. Native exclusives preserve width, ordering, status, flags, and retired prefixes; read-only mismatches and tagged accesses retain their semantic behavior. Concurrent native and semantic retries share the existing publication protocol. |
 | Remove speculative GPR residency recompilation from runtime misses | Accepted. Cold translation profiles exposed a second lowering pass on runtime misses. Keeping one lowering pass removes this duplicate compilation work. |
+| Admit repeated ordinary blocks to native caches | Accepted. First-use semantic execution inside the JIT avoids filling private and shared native caches with one-shot browser code. Admission hints are bounded and own no guest bytes; atomic and state-changing instructions keep their existing paths. |
+| Shorten JIT dispatches from 64K to 4K guest instructions | Rejected. Chromium still missed its ordinary startup deadline, and paired photo subtests lost multicore throughput. |
+| Enable linked x8/x9 carry or isolate the MMU execution counter further | Rejected. Linked register carry regressed paired photo subtests. Separating MMU sequence fields from its execution counter produced mixed paired results, so the original layout remains. |
 
 ## Graphics backend investigations
 

@@ -24,6 +24,10 @@ namespace uml::cpu::arm64 {
 class JitExecutorPool;
 
 struct JitExecutorOptions final {
+	/* Runtime workloads can execute first-use ordinary blocks through the
+	 * in-engine semantic path before admitting them to native caches.
+	 * Direct executor clients retain eager native compilation by default. */
+	bool defer_cold_translation{};
 	bool enable_guarded_control_flow{};
 	bool enable_pointer_authentication{true};
 	::uml::cpu::HostCapabilities host_capabilities{
@@ -50,6 +54,7 @@ struct JitExecutorDiagnosticsOptions final {
 };
 
 struct JitCacheValidationDiagnostics final {
+	std::uint64_t cold_blocks{};
 	std::uint64_t translations{};
 	std::uint64_t validation_attempts{};
 	std::uint64_t validation_hits{};

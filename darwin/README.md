@@ -126,12 +126,10 @@ The JIT derives private and shared cache geometry from one process budget,
 defaulting to half of guest RAM. A managed run keeps at most one executor per
 guest CPU, with up to 256 MiB of private cache per executor; the shared tier
 receives the remainder. Smaller total budgets reduce private geometry.
-Shared translations own
-immutable code and validation identity, while direct/indirect activation state
-remains private and is regenerated during materialization. Bounded replacement
-admits new working sets after the shared tier fills, retaining entries whose
-code or validation words are still in use. The shared index retains its
-high-water allocation charge.
+Shared translations own immutable code and validation identity. Bounded
+replacement admits new working sets after the shared tier fills, retaining
+entries whose code or validation words are still in use. The shared index
+retains its high-water allocation charge.
 
 Direct and indirect links live in executor-private writable data, outside
 executable mappings. Links are tagged by address space, and each executor
@@ -140,6 +138,14 @@ unchanged context preserves trained links; code publication or context
 eviction deactivates that context before reuse. Stale blocks still require
 exact guest-word validation. Runtime native compilations use one lowering pass,
 avoiding speculative GPR residency recompilation during process startup.
+
+Runtime executors delay native compilation of first-use ordinary, untagged
+blocks. A bounded admission directory records only address-space/PC hints;
+execution always uses freshly fetched instructions. A block seen again while
+its hint is resident enters the native caches. Atomic, system, guarded, and trap-enabled execution retains its
+existing path, and a live software reservation prevents ordinary cold stores
+from bypassing tracking. Direct executor clients default to eager compilation.
+Admission state fits within the fixed executor accounting allowance.
 
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host

@@ -72,6 +72,9 @@ private:
     bool valid{};
   };
 
+  [[nodiscard]] std::optional<Event> try_run_cold_block(
+      CpuState &cpu, unsigned long generation,
+      std::span<const std::uint32_t> instructions, std::size_t &executed);
   [[nodiscard]] JitFunction
   tracked_store_function(CompiledBlock &block, StaticGuestMemory &memory);
   void clear_tracked_store_cache() noexcept;
@@ -182,6 +185,10 @@ private:
     JitIndirectLink *active_indirect_links{};
   };
 
+  // Admission hints own no code or guest bytes. Collisions affect only when
+  // a current, freshly fetched block is compiled. The fixed executor charge
+  // includes this directory; native cache hits never consult it.
+  std::array<std::uint64_t, 4096> cold_tags_{};
   JitCacheExecutorLease cache_lease_;
   JitCacheGeometry geometry_;
   std::unique_ptr<BlockCache> block_cache_;
@@ -237,6 +244,7 @@ private:
 #endif
   PendingIndirect pending_indirect_{};
   bool preempted_{};
+  bool defer_cold_translation_{};
   bool enable_guarded_control_flow_{};
   bool enable_pointer_authentication_{true};
 #if UML_JIT_RUNTIME_DIAGNOSTICS

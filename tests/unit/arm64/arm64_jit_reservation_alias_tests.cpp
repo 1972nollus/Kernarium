@@ -281,10 +281,11 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
   require(backing.get64(page) == workers * iterations);
 }
 
-void same_backing_alias_case(bool overlaps) {
+void same_backing_alias_case(bool overlaps, bool defer_cold = false) {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   const auto generation =
-      static_cast<unsigned long>(overlaps ? 10'100U : 10'101U);
+      static_cast<unsigned long>((overlaps ? 10'100U : 10'101U) +
+                                 (defer_cold ? 20U : 0U));
   const auto base =
       std::uint64_t{0x110'0000} + (overlaps ? 0U : 8U * page);
   const auto data = base + page;
@@ -308,7 +309,9 @@ void same_backing_alias_case(bool overlaps) {
               page, PROT_READ | PROT_WRITE, 0, 1) == 0);
 
   uml::cpu::arm64::JitExecutor first;
-  uml::cpu::arm64::JitExecutor second;
+  uml::cpu::arm64::JitExecutor second{
+      uml::cpu::arm64::JitExecutorOptions{
+          .defer_cold_translation = defer_cold}};
   uml::memory::StaticGuestMemory shared_memory;
   uml::cpu::arm64::CpuState first_cpu{};
   uml::cpu::arm64::CpuState second_cpu{};
@@ -511,6 +514,8 @@ int main() {
   concurrent_compare_retry_case(true);
   same_backing_alias_case(true);
   same_backing_alias_case(false);
+  same_backing_alias_case(true, true);
+  same_backing_alias_case(false, true);
   native_store_invalidates_semantic_reservation_case();
   concurrent_native_cold_paths_leave_publication_before_helper();
   return 0;

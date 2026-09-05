@@ -1463,12 +1463,112 @@ void defensive_install_rejects_mutated_canonical_metadata()
 	require(diagnostics.shared_validation_word_installs == 1);
 }
 
+void cold_admission_refetches_code_and_preserves_fault_prefixes()
+{
+	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long generation = 19'701U;
+	constexpr std::uint64_t base = 0x410'0000U;
+	JitBacking backing{2};
+	backing.put32(0, move_immediate(0, 19));
+	backing.put32(4, system_call);
+	backing.put32(64, move_immediate(0, 23));
+	backing.put32(68, 0xf900'0022U); // str x2, [x1]
+	backing.put32(72, system_call);
+	backing.put32(128, move_immediate(0, 29));
+	backing.put32(132, 0U); // UDF: the faulting instruction does not retire.
+	backing.put32(page - 4U, move_immediate(0, 31));
+	JitMapping mapping{generation, base, backing, 1};
+	JitExecutor executor{JitExecutorOptions{.defer_cold_translation = true}};
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	auto run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 2 && cpu.registers[0] == 19);
+	require(executor.cache_validation_diagnostics().translations == 0);
+	require(executor.cache_validation_diagnostics().cold_blocks == 1);
+
+	// Admission remembers no guest bytes. The first native translation must
+	// use current memory even when the same PC has already been observed.
+	write_mapped32(generation, base, move_immediate(0, 37));
+	cpu.pc = base;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 2 && cpu.registers[0] == 37);
+	require(executor.cache_validation_diagnostics().translations == 1);
+	const auto admitted = executor.cache_validation_diagnostics();
+	cpu.pc = base;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(executor.cache_validation_diagnostics().translations ==
+		admitted.translations);
+	require(executor.cache_validation_diagnostics().cold_blocks ==
+		admitted.cold_blocks);
+
+	cpu.pc = base + 64U;
+	cpu.registers[1] = base + page;
+	cpu.registers[2] = 0x1234U;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::memory_fault);
+	require(run.executed == 1 && cpu.pc == base + 68U);
+	require(cpu.registers[0] == 23);
+	require(executor.fault_address() == base + page);
+	require(executor.fault_access() == uml::memory::Access::write);
+	require(backing.get64(page) == 0);
+
+	cpu.pc = base + 128U;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::illegal_instruction);
+	require(run.executed == 1 && cpu.pc == base + 132U);
+	require(cpu.registers[0] == 29);
+
+	// A speculative fetch of the next page must not suppress its valid prefix.
+	cpu.pc = base + page - 4U;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::continued);
+	require(run.executed == 1 && cpu.pc == base + page);
+	require(cpu.registers[0] == 31);
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::memory_fault);
+	require(run.executed == 0);
+	require(executor.fault_access() == uml::memory::Access::execute);
+}
+
+void cold_admission_keeps_atomic_and_system_blocks_native()
+{
+	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long generation = 19'702U;
+	constexpr std::uint64_t base = 0x420'0000U;
+	JitBacking backing{2};
+	backing.put32(0, 0xc85f'7c23U); // ldxr x3, [x1]
+	backing.put32(4, system_call);
+	backing.put32(64, 0xd503'3fdfU); // isb
+	backing.put32(68, system_call);
+	backing.put64(page, 41);
+	JitMapping mapping{generation, base, backing, 2};
+	JitExecutor executor{JitExecutorOptions{.defer_cold_translation = true}};
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	cpu.registers[1] = base + page;
+	auto run = run_once(executor, memory, generation, cpu);
+	require(run.executed == 1 && cpu.registers[3] == 41);
+	require(executor.cache_validation_diagnostics().translations != 0);
+	require(executor.cache_validation_diagnostics().cold_blocks == 0);
+	cpu.pc = base + 64U;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.executed >= 1);
+	require(executor.cache_validation_diagnostics().cold_blocks == 0);
+}
+
 } // namespace
 
 int main()
 {
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
+	cold_admission_refetches_code_and_preserves_fault_prefixes();
+	cold_admission_keeps_atomic_and_system_blocks_native();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();
 	an_arena_capacity_match_is_not_counted_as_reuse();

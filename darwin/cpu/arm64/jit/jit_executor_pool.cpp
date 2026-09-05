@@ -38,7 +38,8 @@ namespace {
 [[nodiscard]] bool same_configuration(
     const JitExecutorOptions &first,
     const JitExecutorOptions &second) noexcept {
-  return first.enable_guarded_control_flow ==
+  return first.defer_cold_translation == second.defer_cold_translation &&
+         first.enable_guarded_control_flow ==
              second.enable_guarded_control_flow &&
          first.enable_pointer_authentication ==
              second.enable_pointer_authentication &&

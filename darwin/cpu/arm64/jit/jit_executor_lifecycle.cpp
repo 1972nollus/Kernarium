@@ -62,6 +62,7 @@ JitExecutor::Implementation::Implementation(
       shared_publication_context_{diagnostics.shared_publication_context},
       before_shared_publication_{diagnostics.before_shared_publication},
 #endif
+      defer_cold_translation_{options.defer_cold_translation},
       enable_guarded_control_flow_{options.enable_guarded_control_flow},
       enable_pointer_authentication_{
           options.enable_pointer_authentication},
@@ -70,6 +71,9 @@ JitExecutor::Implementation::Implementation(
           diagnostics.reuse_validated_stale_blocks},
 #endif
       host_capabilities_{options.host_capabilities} {
+  // Leave at least 16 KiB of the fixed 64 KiB executor allowance for its
+  // allocation and publication-registry bookkeeping in every build flavor.
+  static_assert(sizeof(Implementation) <= sizeof(Tlb) + 48U * 1024U);
   relocated_link_pointers_.reserve(maximum_block_instructions);
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_link_table_state(links_.size(), links_.capacity(),

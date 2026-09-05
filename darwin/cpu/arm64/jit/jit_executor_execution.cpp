@@ -103,6 +103,9 @@ namespace uml::cpu::arm64 {
       tlb_.fault_access = ::uml::memory::translated_access(fault.access);
       return Event::memory_fault;
     }
+    if (const auto cold = try_run_cold_block(
+            cpu, generation, std::span{instructions}.first(count), executed))
+      return *cold;
     /*
      * Another executor may already have decoded and emitted exactly these
      * guest words at exactly this PC. Reuse that work by copying its
@@ -333,6 +336,65 @@ namespace uml::cpu::arm64 {
       event = run_semantic_instruction(cpu, memory, semantic_executed);
     executed = retired_prefix + semantic_executed;
   }
+  reconcile_reservation(cpu);
+  return event;
+}
+
+[[nodiscard]] std::optional<Event>
+JitExecutor::Implementation::try_run_cold_block(
+    CpuState &cpu, unsigned long generation,
+    std::span<const std::uint32_t> instructions, std::size_t &executed) {
+  if (!defer_cold_translation_ || cpu.exclusive_size != 0 ||
+      !enable_pointer_authentication_ || enable_guarded_control_flow_ ||
+      cpu.gcs_push_enabled || cpu.gcs_store_enabled ||
+      cpu.tagged_addresses_enabled())
+    return std::nullopt;
+  const auto key = ((cpu.pc >> 2U) ^
+      (generation * 0x9e3779b97f4a7c15ULL)) | 1U;
+  auto &tag = cold_tags_[
+      (key ^ (key >> 32U)) & (cold_tags_.size() - 1U)];
+  const bool first_visit = tag != key;
+  tag = key;
+  if (!first_visit)
+    return std::nullopt;
+  for (const auto instruction : instructions) {
+    // Exclusives, atomics, and ordered-memory extensions retain their native
+    // admission and reservation protocol. System instructions can publish
+    // code or change architectural execution state and also stay native.
+    if ((instruction & 0x3e00'0000U) == 0x0800'0000U ||
+        (instruction & 0x3f00'0000U) == 0x1900'0000U ||
+        (instruction & 0x3b20'0c00U) == 0x3820'0000U ||
+        (instruction & 0xff00'0000U) == 0xd500'0000U)
+      return std::nullopt;
+  }
+  std::optional<Event> event;
+  {
+    // Software reservation creation waits for this publication to drain.
+    // If a reservation already exists, use the normal tracked native path.
+    JitBlockPublication publication{store_participant_, cpu};
+    if (publication.needs_tracking())
+      return std::nullopt;
+    event = Event::continued;
+    const auto pc = cpu.pc;
+    for (std::size_t index = 0; index < instructions.size() &&
+         cpu.pc == pc + index * sizeof(std::uint32_t); ++index) {
+      std::uint32_t syndrome = 0;
+      const auto result = uml_arm64_jit_execute_memory_with_syndrome(
+          &cpu, &tlb_, instructions[index], &syndrome);
+      executed += static_cast<std::size_t>(result >> 32U);
+      event = static_cast<Event>(
+          static_cast<std::int32_t>(result & 0xffff'ffffU));
+      if (*event == Event::floating_point_trap)
+        floating_point_syndrome_ = syndrome;
+      if (*event != Event::continued)
+        break;
+    }
+  }
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+  ++cache_validation_diagnostics_.cold_blocks;
+#endif
+  if (*event == Event::memory_fault)
+    tlb_.discard(tlb_.fault_address);
   reconcile_reservation(cpu);
   return event;
 }

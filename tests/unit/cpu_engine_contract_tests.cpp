@@ -725,7 +725,10 @@ void test_production_translated_exception_contract()
 		JitBacking second{1};
 		first.put32(0, 0x1e22'2820U); // fadd s0, s1, s2
 		first.put32(4, branch);        // b target
-		second.put32(0, 0xd400'0001U); // svc #0
+		// A system-state block retains native admission even when ordinary
+		// first-use blocks execute without allocating a translation.
+		second.put32(0, 0xd503'3fdfU); // isb
+		second.put32(4, 0xd400'0001U); // svc #0
 		StaticGeneration state{generation};
 		state.map(base, first, PROT_READ | PROT_EXEC);
 		state.map(target, second, PROT_READ | PROT_EXEC);
@@ -762,7 +765,7 @@ void test_production_translated_exception_contract()
 		request.boundary_context = nullptr;
 		const auto retry = engine->run(request);
 		require(retry.reason == uml::cpu::ExitReason::system_call &&
-			retry.retired_instructions == 1 && cpu.pc == target + 4,
+			retry.retired_instructions == 2 && cpu.pc == target + 8,
 			"translated engine was not reusable after exception cleanup");
 		require(!cpu.gadget_fp_active && native_fpcr() == caller_fpcr,
 			"successful retry did not retain balanced host state");
