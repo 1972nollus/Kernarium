@@ -11,6 +11,9 @@
 #ifndef UML_GADGET_DEPENDENCY_COVERAGE
 #define UML_GADGET_DEPENDENCY_COVERAGE 0
 #endif
+#ifndef UML_GADGET_VECTOR_FORWARDING
+#define UML_GADGET_VECTOR_FORWARDING 0
+#endif
 
 namespace uml::cpu::arm64::gadgets {
 
@@ -60,6 +63,14 @@ struct ScalarAccess final {
 #if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 [[nodiscard]] std::span<const ScalarContract> scalar_contracts() noexcept;
 [[nodiscard]] ScalarAccess scalar_access(std::span<const std::uintptr_t> words);
+#endif
+
+#if UML_GADGET_VECTOR_FORWARDING
+/* Vector contracts use the same immutable descriptor format, with bit 14
+ * encoding a five-bit vector index relative to CpuState::vectors. Results
+ * remain write-through and are live in native v2 only at declared edges. */
+[[nodiscard]] std::span<const ScalarContract> vector_contracts() noexcept;
+[[nodiscard]] ScalarAccess vector_access(std::span<const std::uintptr_t> words);
 #endif
 
 } // namespace uml::cpu::arm64::gadgets

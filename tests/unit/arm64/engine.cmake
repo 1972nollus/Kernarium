@@ -1182,6 +1182,7 @@
     add_executable(uml_arm64_gadget_dependency_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_memory_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_vector_dependency_tests.cpp
         $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
@@ -1192,7 +1193,8 @@
         ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(uml_arm64_gadget_dependency_tests PRIVATE
         UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
+        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
+        UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>)
     target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 

@@ -12,4 +12,5 @@
  * rephase any established gadget. */
 #include "engine/experimental.inc"
 #include "engine/scalar_forwarding.inc"
+#include "engine/vector_forwarding.inc"
 #include "engine/dependency_coverage.inc"

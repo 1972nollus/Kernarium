@@ -311,8 +311,9 @@ struct LinkRelocations final {
 
 struct BuildOptions final {
 	/* Select adjacent write-through forwarding for this program. Has no
-	 * effect when scalar forwarding is excluded from the engine build. */
+	 * effect for a register bank excluded from the engine build. */
 	bool scalar_forwarding{true};
+	bool vector_forwarding{true};
 	/*
 	 * Resolve backward-compatible HINT encodings to NOP and reject the
 	 * non-HINT allocations when the virtual CPU does not expose the base

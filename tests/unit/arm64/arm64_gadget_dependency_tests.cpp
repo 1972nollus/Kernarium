@@ -18,6 +18,7 @@ namespace g = uml::cpu::arm64::gadgets;
 namespace a = uml::cpu::arm64;
 extern "C" void uml_arm64_gadget_interrupt();
 void run_gadget_dependency_memory_tests();
+void run_gadget_vector_dependency_tests();
 
 namespace {
 void require(bool condition,
@@ -412,5 +413,6 @@ int main()
 	linked_counts();
 	taken_prefix();
 	run_gadget_dependency_memory_tests();
+	run_gadget_vector_dependency_tests();
 	std::puts("gadget dependency tests passed");
 }

@@ -79,6 +79,10 @@ option(UML_GADGET_SCALAR_FORWARDING
     "Forward adjacent write-through scalar results within gadget blocks"
     OFF)
 
+option(UML_GADGET_VECTOR_FORWARDING
+    "Forward adjacent write-through SIMD/FP results within gadget blocks"
+    OFF)
+
 # Also off by default, and for the same reason. G-4 needs to know how far a
 # fixed guest-to-host vector bank would reach, and that is decided by how
 # concentrated translated code's vector operand registers are.
@@ -195,6 +199,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
     UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
     UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
+    UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>

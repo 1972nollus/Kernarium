@@ -8,11 +8,12 @@ current behavior; current contracts live in architecture and subsystem docs.
 policy. `Rejected` means the candidate was removed or disabled. `Measured`
 means the work improved understanding without justifying a product change.
 
-## General scalar forwarding
+## General gadget forwarding
 
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Template-owned adjacent scalar result forwarding | Measured; retained as a default-off policy and diagnostic control. Shared assembly operand contracts cover arithmetic, logical, bitfield, select, shift, and ordinary memory inputs without an opcode-pair whitelist. Matched no-helper-exit controls improved dependent scalar throughput by roughly 2–3x, with independent controls neutral; full Geekbench and Aquarium coverage established broad applicability, not a general application speedup. Larger code/data banks and mixed full-workload timings do not justify default enablement. Both code layout and execution-data addresses must match in mechanism controls; disabling forwarding and coverage preserves the original gadget text. |
+| Template-owned adjacent SIMD/FP result forwarding | Measured; retained independently default-off. Natural-v2 contracts extend shared arithmetic, comparison, accumulator, widening/narrowing, reduction, and shape templates without new hot-path producer copies. Default-iteration, four-vCPU Geekbench 6 repeats averaged about 0.4 percent single-core and 1.6 percent multi-core over scalar-only forwarding. Both multi-core pairs were positive, but workload effects were mixed and gains small relative to shared-host variation. Template coverage and correct forwarding do not establish a broad application speedup or justify the extra bank by default. |
 
 ## Early gadget and MMU trials
 

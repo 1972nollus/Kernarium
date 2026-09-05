@@ -26,6 +26,7 @@ NAME(uml_arm64_gadget_\name):
 .endm
 
 #include "scalar_contract.inc"
+#include "vector_contract.inc"
 
 .macro next_gadget
 	ldr x8, [_stream], #8

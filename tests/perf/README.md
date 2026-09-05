@@ -39,7 +39,7 @@ python3 tests/perf/run_ios_device_discard_bench.py \
   --device DEVICE-IDENTIFIER
 ```
 
-## Scalar forwarding controls
+## Gadget forwarding controls
 
 Build the manual `uml_scalar_ceiling_bench` target with
 `UML_GADGET_SCALAR_FORWARDING=ON` and dependency coverage disabled. Its sources
@@ -60,6 +60,14 @@ application/native ratio. The same two sources also compile native-only on
 AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
 
+`UML_GADGET_VECTOR_FORWARDING=ON` independently enables adjacent SIMD/FP
+forwarding. For application-speed comparisons, keep dependency coverage and
+sampling disabled and compare matched builds with neither option, scalar only,
+and scalar plus vector forwarding. `run_guest_geekbench.py --cpus 4` runs both
+single-core and multi-core sets by default; omit an iteration override for
+Geekbench's default workload sizing. Alternate or reverse run order and retain
+individual results rather than interpreting one score as a stable gain.
+
 For execution-weighted coverage, use a separate
 `UML_GADGET_DEPENDENCY_COVERAGE=ON` build. The Geekbench runner's
 `--coverage-file` records counters and workload events; use each installed
@@ -67,11 +75,11 @@ version's full single-core set with `--iterations 1 --no-upload`. Aquarium
 uses `DARWIN_UML_GADGET_DEPENDENCY_COVERAGE` with its ordinary runner. Analyze
 the corresponding files with `analyze_gadget_dependencies.py --help`.
 Counters are per entered decoder group and declared scalar source accessor,
-including memory addresses. Window boundaries have 100-ms snapshot and
-console-observation uncertainty; conditional reads are potential accesses,
-and no cross-block dependency is inferred. Report both all-guest-word coverage
-and the declared-source denominator. Never use instrumented scores as speed
-evidence.
+including memory addresses, not SIMD value dependencies. Window boundaries
+have 100-ms snapshot and console-observation uncertainty; conditional reads
+are potential accesses, and no cross-block dependency is inferred. Report both
+all-guest-word coverage and the declared-source denominator. Never use
+instrumented scores as speed evidence.
 
 ## Focused assembly probes
 

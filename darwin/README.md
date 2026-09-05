@@ -98,13 +98,25 @@ this contract. Store data crosses translation helpers in a callee-saved host
 register. Unsupported entries, fused decoder groups, branches, and block
 boundaries end the chain. Pair results and writeback-load results are not
 exported. There are no runtime register tags or executable-memory writes.
-With both forwarding and coverage disabled, the original gadget text is
-unchanged. Forwarding remains opt-in: a higher scalar dependency-chain ceiling
+
+The independent `UML_GADGET_VECTOR_FORWARDING` option applies the same
+template-owned selection to SIMD/FP results naturally produced in host `v2`.
+Arithmetic, logic, comparisons, widening/narrowing, reductions, and
+accumulator templates declare their source masks. Consumers capture all
+forwarded inputs before overwriting `v2`; narrow reads retain architectural
+upper-bit clearing, and canonical vector stores remain write-through. Declared
+software fallbacks restore the complete result in `v2` on their cold return
+path. Undeclared entries and block/link boundaries invalidate residency. Vector
+memory values and templates producing results in other scratch registers are
+not exported. This is not a persistent guest-vector register cache.
+
+With both forwarding options and coverage disabled, the original gadget text
+is unchanged. Forwarding remains opt-in: a higher dependency-chain ceiling
 does not establish a general application speedup or justify the larger bank
 for every workload.
 
 `UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
-Its entered-group counters describe opportunities in the same contracts;
+Its entered-group counters describe opportunities in the scalar contracts;
 they do not measure retirement, conditional operand use, or speed. The
 measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
 

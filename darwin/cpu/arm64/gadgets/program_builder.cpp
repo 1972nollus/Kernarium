@@ -135,6 +135,9 @@ BuildResult Builder::build(
 #if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
 	std::uint16_t previous_scalar = scalar_no_register;
 #endif
+#if UML_GADGET_VECTOR_FORWARDING
+	std::uint16_t previous_vector = scalar_no_register;
+#endif
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
@@ -162,7 +165,7 @@ BuildResult Builder::build(
 		emit(words, std::uintptr_t{0});
 		emit(words, std::uintptr_t{0});
 #endif
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING
 		const auto compiled_before = compiled;
 #endif
 		DecodeContext context{
@@ -209,6 +212,13 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
+#if UML_GADGET_VECTOR_FORWARDING
+		const auto current_vector = decoded == DecodeResult::decoded &&
+			compiled == compiled_before ?
+			vector_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
+		const auto vector_mask = current_vector.source_mask(previous_vector);
+		previous_vector = current_vector.destination;
+#endif
 #if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
 		// The selected assembly entry owns its access description. Do not
 		// infer it again from opcode bits: aliases and fused groups differ.
@@ -227,6 +237,10 @@ BuildResult Builder::build(
 			words[emitted_start] = current_scalar.contract->entries[source_mask];
 #endif
 		previous_scalar = current_scalar.destination;
+#endif
+#if UML_GADGET_VECTOR_FORWARDING
+		if (vector_mask != 0 && options.vector_forwarding)
+			words[emitted_start] = current_vector.contract->entries[vector_mask];
 #endif
 		/* The first word a decode emits is its gadget pointer, which is
 		 * what makes the adjacent-pair record cheap: no separate pass and
