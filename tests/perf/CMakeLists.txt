@@ -73,3 +73,39 @@ endforeach()
 
 add_custom_target(performance-probe-binaries
     DEPENDS ${_uml_performance_probe_outputs})
+
+# The scalar ceiling is a manual benchmark, not a correctness test. Its native
+# and ideal modes share the exact labeled AArch64 body; the ideal mode feeds
+# those words to the production gadget Builder and never enters the executor.
+add_executable(uml-gadget-ceiling-bench EXCLUDE_FROM_ALL
+    gadget_ceiling_bench.cpp
+    gadget_ceiling_ideal.cpp
+    gadget_ceiling_workload.s
+    $<TARGET_OBJECTS:uml_arm64_dispatch>
+    $<TARGET_OBJECTS:uml_static_mmu>
+    $<TARGET_OBJECTS:uml_arm64_gadgets>
+    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+target_include_directories(uml-gadget-ceiling-bench PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/include)
+target_link_libraries(uml-gadget-ceiling-bench PRIVATE
+    UML::CpuContract)
+target_compile_definitions(uml-gadget-ceiling-bench PRIVATE
+    UML_GADGET_CEILING_WITH_IDEAL=1)
+target_compile_features(uml-gadget-ceiling-bench PRIVATE cxx_std_20)
+target_compile_options(uml-gadget-ceiling-bench PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
+set_target_properties(uml-gadget-ceiling-bench PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
+add_executable(uml-gadget-ceiling-native EXCLUDE_FROM_ALL
+    gadget_ceiling_bench.cpp
+    gadget_ceiling_workload.s)
+target_compile_features(uml-gadget-ceiling-native PRIVATE cxx_std_20)
+target_compile_options(uml-gadget-ceiling-native PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
+set_target_properties(uml-gadget-ceiling-native PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
+add_custom_target(gadget-ceiling-binaries
+    DEPENDS uml-gadget-ceiling-bench uml-gadget-ceiling-native)

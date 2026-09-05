@@ -58,6 +58,46 @@ The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
 assembler support for that extension. Other probes declare any restriction in
 the manifest.
 
+## Ideal gadget ceiling
+
+`gadget-ceiling-binaries` builds a matched native/ideal scalar benchmark. Both
+modes execute the exact labeled instruction words from
+`gadget_ceiling_workload.s`. The ideal mode translates that body once with the
+production gadget Builder, then keeps every timed iteration inside the linked
+gadget stream. It bypasses the UML executor, translation cache, software MMU,
+guest kernel, UML scheduler, and the normal 4,096-instruction fairness exit;
+the single final interrupt returns only after the complete workload. Host
+scheduling and the engine's intrinsic threaded dispatch remain.
+
+After configuring the `macos-unit-16k` preset, build and run the matched control:
+
+```sh
+cmake --build .build/presets/macos-unit-16k \
+  --target gadget-ceiling-binaries performance-probe-binaries
+.build/presets/macos-unit-16k/bin/uml-gadget-ceiling-bench \
+  --iterations 100000000 --repetitions 7
+```
+
+The reported ratio is a best-case dependent ADD-immediate ceiling. It is not a
+general estimate for memory, SIMD, syscall, or whole-guest workloads. The hot
+body is instruction-for-instruction identical to
+`guest_add_immediate_loop.S`. Use that one static Linux ELF unchanged for both
+the arm64 Linux control and `run_guest_link_bench.py` real-guest run; its outer
+wall time is a conservative end-to-end guest rate because it also includes
+command and process boundaries.
+
+```sh
+python3 tests/perf/run_guest_link_bench.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_add_immediate_loop \
+  --engine gadgets --cpus 1 --workers 1 --repetitions 7 \
+  --core-class performance --overlay-shell \
+  --boot-timeout 180 --command-timeout 120
+```
+
+Repeat the guest command with `--engine jit` for the matched JIT control.
+
 Summarize an accepted or rejected trial in
 [`../../docs/optimization-history.md`](../../docs/optimization-history.md).
 Do not add raw profiles, temporary paths, or a separate investigation document

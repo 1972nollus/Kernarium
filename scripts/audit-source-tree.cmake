@@ -488,8 +488,25 @@ endforeach()
 set(PERFORMANCE_PROBE_ROOT "${SOURCE_ROOT}/tests/perf")
 set(PERFORMANCE_PROBE_MANIFEST "${PERFORMANCE_PROBE_ROOT}/probes.tsv")
 set(PERFORMANCE_PROBE_CMAKE "${PERFORMANCE_PROBE_ROOT}/CMakeLists.txt")
-file(GLOB PERFORMANCE_PROBE_SOURCES RELATIVE "${PERFORMANCE_PROBE_ROOT}"
-    "${PERFORMANCE_PROBE_ROOT}/*.S")
+# APFS normally matches the two suffix globs without regard to case, whereas a
+# Linux checkout does not. Classify the preserved filename spelling explicitly
+# so the freestanding guest manifest has the same meaning on both hosts.
+file(GLOB PERFORMANCE_ASSEMBLY_SOURCES RELATIVE "${PERFORMANCE_PROBE_ROOT}"
+    "${PERFORMANCE_PROBE_ROOT}/*.S"
+    "${PERFORMANCE_PROBE_ROOT}/*.s")
+list(REMOVE_DUPLICATES PERFORMANCE_ASSEMBLY_SOURCES)
+set(PERFORMANCE_PROBE_SOURCES)
+set(PERFORMANCE_CEILING_ASSEMBLY gadget_ceiling_workload.s)
+foreach(PERFORMANCE_ASSEMBLY_SOURCE IN LISTS PERFORMANCE_ASSEMBLY_SOURCES)
+    if(PERFORMANCE_ASSEMBLY_SOURCE MATCHES "^guest_[a-z0-9_]+\\.S$")
+        list(APPEND PERFORMANCE_PROBE_SOURCES
+            "${PERFORMANCE_ASSEMBLY_SOURCE}")
+    elseif(NOT PERFORMANCE_ASSEMBLY_SOURCE STREQUAL
+           "${PERFORMANCE_CEILING_ASSEMBLY}")
+        list(APPEND VIOLATIONS
+            "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_ASSEMBLY_SOURCE}: performance assembly has no explicit owner")
+    endif()
+endforeach()
 list(SORT PERFORMANCE_PROBE_SOURCES)
 set(PERFORMANCE_PROBE_MANIFEST_SOURCES)
 if(NOT EXISTS "${PERFORMANCE_PROBE_MANIFEST}")
@@ -581,9 +598,15 @@ if(NOT EXISTS "${PERFORMANCE_PROBE_CMAKE}")
         "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is missing")
 else()
     file(READ "${PERFORMANCE_PROBE_CMAKE}" PERFORMANCE_PROBE_CMAKE_CONTENT)
-    if(NOT PERFORMANCE_PROBE_CMAKE_CONTENT MATCHES
-       "performance-probe-binaries" OR
-       NOT PERFORMANCE_PROBE_CMAKE_CONTENT MATCHES "probes\\.tsv")
+    string(REGEX REPLACE "#[^\n]*" ""
+        PERFORMANCE_PROBE_CMAKE_CODE "${PERFORMANCE_PROBE_CMAKE_CONTENT}")
+    if(NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
+       "add_custom_target\\([ \t\r\n]*performance-probe-binaries" OR
+       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES "probes\\.tsv" OR
+       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
+           "add_custom_target\\([ \t\r\n]*gadget-ceiling-binaries" OR
+       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
+           "gadget_ceiling_workload\\.s")
         list(APPEND VIOLATIONS
             "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is incomplete")
     endif()
