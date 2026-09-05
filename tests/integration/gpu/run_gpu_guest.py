@@ -380,7 +380,8 @@ def make_bootstrap(
         f"    '{encoded_test[offset : offset + 512]}'"
         for offset in range(0, len(encoded_test), 512)
     )
-    bootstrap = f"""set -eu
+    bootstrap = f"""stty -echo
+set -eu
 fail()
 {{
     echo "Unable to construct the tmpfs overlay root: $*" >&2

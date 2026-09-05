@@ -83,6 +83,10 @@ The workflows configure the product, build it, run tooling checks, and execute
 the fast integration suite. `integration-full` and `integration-full-4k` are
 explicit CTest presets when the complete registered guest set is required.
 
+The shared serial harness sends commands through a nonblocking pipe and keeps
+PTY output. This keeps host input pollable when every guest CPU is busy while
+preserving terminal output behavior and bounded writes under backpressure.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.

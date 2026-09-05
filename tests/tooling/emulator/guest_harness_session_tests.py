@@ -105,6 +105,25 @@ class AttachedGuestSessionTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             guest.return_code = 0
 
+    def test_commands_use_pipe_input_and_terminal_output(self) -> None:
+        self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+        for message in ("first command", "second command"):
+            result = guest.run_command(
+                f"test ! -t 0 && test -t 1 && printf '%s' '{message}'"
+            )
+            self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.output, message)
+        guest._write("exit\n")
+        guest._process.wait(timeout=5)
+
     def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
         harness = subprocess.Popen(
             [sys.executable, "-c", HARNESS, str(self.emulator)],

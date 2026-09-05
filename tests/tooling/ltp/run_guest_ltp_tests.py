@@ -27,13 +27,15 @@ class GuestConsoleWriteTests(unittest.TestCase):
     def test_console_write_retries_short_writes_until_complete(self) -> None:
         guest = guest_support.Guest.__new__(guest_support.Guest)
         guest._master = 17
+        guest._input = mock.Mock()
+        guest._input.fileno.return_value = 19
         guest._process = mock.Mock()
         guest._process.poll.return_value = None
         payload = b"overlay-bootstrap\n"
         received = bytearray()
 
         def short_write(descriptor: int, remaining: memoryview) -> int:
-            self.assertEqual(descriptor, 17)
+            self.assertEqual(descriptor, 19)
             count = min(3, len(remaining))
             received.extend(bytes(remaining[:count]))
             return count
@@ -49,6 +51,8 @@ class GuestConsoleWriteTests(unittest.TestCase):
     def test_console_write_waits_after_nonblocking_backpressure(self) -> None:
         guest = guest_support.Guest.__new__(guest_support.Guest)
         guest._master = 23
+        guest._input = mock.Mock()
+        guest._input.fileno.return_value = 29
         guest._process = mock.Mock()
         guest._process.poll.return_value = None
 
@@ -61,13 +65,16 @@ class GuestConsoleWriteTests(unittest.TestCase):
             mock.patch.object(
                 guest_support.select,
                 "select",
-                return_value=([], [23], []),
+                return_value=([23], [29], []),
             ) as select_mock,
+            mock.patch.object(guest, "_drain") as drain_mock,
         ):
             guest._write("command\n")
 
         self.assertEqual(write_mock.call_count, 2)
         select_mock.assert_called_once()
+        self.assertEqual(select_mock.call_args.args[:3], ([23], [29], []))
+        drain_mock.assert_called_once()
 
 
 class ResultParsingTests(unittest.TestCase):

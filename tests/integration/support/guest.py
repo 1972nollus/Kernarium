@@ -272,7 +272,10 @@ class Guest:
                     engine,
                     core_class,
                 ),
-                stdin=slave,
+                # Darwin can miss PTY readiness while all guest CPUs are
+                # busy. A pipe keeps input pollable at guest timer boundaries;
+                # retain the PTY for terminal-shaped, unbuffered output.
+                stdin=subprocess.PIPE,
                 stdout=slave,
                 stderr=slave,
                 close_fds=True,
@@ -283,6 +286,9 @@ class Guest:
             raise
         finally:
             os.close(slave)
+        assert self._process.stdin is not None
+        self._input = self._process.stdin
+        os.set_blocking(self._input.fileno(), False)
         self._transcript = bytearray()
 
     @property
@@ -466,9 +472,12 @@ class Guest:
             raise
         finally:
             try:
-                os.close(self._master)
+                self._input.close()
             finally:
-                self._remove_swap_image()
+                try:
+                    os.close(self._master)
+                finally:
+                    self._remove_swap_image()
 
     def _remove_swap_image(self) -> None:
         if self._swap_path is not None:
@@ -480,6 +489,7 @@ class Guest:
 
     def _write(self, text: str) -> None:
         payload = memoryview(text.encode())
+        input_descriptor = self._input.fileno()
         offset = 0
         deadline = time.monotonic() + CONSOLE_WRITE_TIMEOUT_SECONDS
         while offset < len(payload):
@@ -487,7 +497,7 @@ class Guest:
             if remaining <= 0:
                 raise TimeoutError("guest console write exceeded 30s")
             try:
-                written = os.write(self._master, payload[offset:])
+                written = os.write(input_descriptor, payload[offset:])
             except InterruptedError:
                 continue
             except BlockingIOError:
@@ -498,7 +508,7 @@ class Guest:
             if self._process.poll() is not None:
                 raise BrokenPipeError("guest exited during console write")
             readable, writable, _ = select.select(
-                [self._master], [self._master], [], min(remaining, 0.25)
+                [self._master], [input_descriptor], [], min(remaining, 0.25)
             )
             if readable:
                 self._drain()
