@@ -3,6 +3,8 @@
 add_executable(uml_memory_domain_lifetime_tests
     domain_lifetime_tests.cpp
     $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
+    UML::MemorySharedBacking)
 target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory
