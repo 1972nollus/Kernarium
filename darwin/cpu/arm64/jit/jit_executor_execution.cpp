@@ -103,9 +103,6 @@ namespace uml::cpu::arm64 {
       tlb_.fault_access = ::uml::memory::translated_access(fault.access);
       return Event::memory_fault;
     }
-    if (const auto cold = try_run_cold_block(
-            cpu, generation, std::span{instructions}.first(count), executed))
-      return *cold;
     /*
      * Another executor may already have decoded and emitted exactly these
      * guest words at exactly this PC. Reuse that work by copying its
@@ -118,6 +115,11 @@ namespace uml::cpu::arm64 {
     if (shared != nullptr) {
       block = shared;
     } else {
+      // Reusable translations are already hot in this process. Admission
+      // defers only blocks for which no executor has reusable native code.
+      if (const auto cold = try_run_cold_block(
+              cpu, generation, fetched, executed))
+        return *cold;
       JitCompiler compiler{
           enable_guarded_control_flow_, this,
           &Implementation::resolve_block_link, false,

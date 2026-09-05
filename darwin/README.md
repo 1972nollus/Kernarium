@@ -139,13 +139,15 @@ eviction deactivates that context before reuse. Stale blocks still require
 exact guest-word validation. Runtime native compilations use one lowering pass,
 avoiding speculative GPR residency recompilation during process startup.
 
-Runtime executors delay native compilation of first-use ordinary, untagged
-blocks. A bounded admission directory records only address-space/PC hints;
+On a private miss, runtime executors first try an exact shared translation.
+Only ordinary, untagged blocks without reusable native code defer compilation
+on first use. A bounded admission directory records address-space/PC hints;
 execution always uses freshly fetched instructions. A block seen again while
-its hint is resident enters the native caches. Atomic, system, guarded, and trap-enabled execution retains its
-existing path, and a live software reservation prevents ordinary cold stores
-from bypassing tracking. Direct executor clients default to eager compilation.
-Admission state fits within the fixed executor accounting allowance.
+its hint is resident enters the native caches. Atomic, system, guarded, and
+trap-enabled execution retains its existing path, and a live software
+reservation prevents ordinary cold stores from bypassing tracking. Direct
+executor clients default to eager compilation. Admission state fits within the
+fixed executor accounting allowance.
 
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host

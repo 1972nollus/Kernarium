@@ -1534,6 +1534,52 @@ void cold_admission_refetches_code_and_preserves_fault_prefixes()
 	require(executor.fault_access() == uml::memory::Access::execute);
 }
 
+void cold_admission_reuses_current_peer_translations()
+{
+	if constexpr (!arm64::share_translations_between_executors)
+		return;
+	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long generation = 19'703U;
+	constexpr std::uint64_t base = 0x430'0000U;
+	JitBacking backing{2};
+	backing.put32(0, move_immediate(0, 47));
+	backing.put32(4, 0xf900'0022U); // str x2, [x1]
+	backing.put32(8, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	JitExecutor producer;
+	StaticGuestMemory memory;
+	const auto run_fault = [&](JitExecutor &executor, unsigned expected) {
+		arm64::CpuState cpu{};
+		cpu.pc = base;
+		cpu.registers[1] = base + page;
+		const auto run = run_once(executor, memory, generation, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::memory_fault);
+		require(run.executed == 1 && cpu.pc == base + 4U);
+		require(cpu.registers[0] == expected);
+		require(executor.fault_address() == base + page);
+		require(executor.fault_access() == uml::memory::Access::write);
+	};
+	{
+		JitExecutor consumer{
+			JitExecutorOptions{.defer_cold_translation = true}};
+		run_fault(producer, 47);
+		run_fault(consumer, 47);
+		const auto diagnostics = consumer.cache_validation_diagnostics();
+		require(diagnostics.cold_blocks == 0);
+		require(diagnostics.translations == 1);
+		require(diagnostics.shared_validation_word_installs == 1);
+	}
+
+	// A peer's earlier admission never substitutes for exact current bytes.
+	write_mapped32(generation, base, move_immediate(0, 53));
+	JitExecutor changed_consumer{
+		JitExecutorOptions{.defer_cold_translation = true}};
+	run_fault(changed_consumer, 53);
+	const auto diagnostics = changed_consumer.cache_validation_diagnostics();
+	require(diagnostics.cold_blocks == 1);
+	require(diagnostics.translations == 0);
+}
+
 void cold_admission_keeps_atomic_and_system_blocks_native()
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -1569,6 +1615,7 @@ int main()
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
 	cold_admission_refetches_code_and_preserves_fault_prefixes();
 	cold_admission_keeps_atomic_and_system_blocks_native();
+	cold_admission_reuses_current_peer_translations();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();
 	an_arena_capacity_match_is_not_counted_as_reuse();
