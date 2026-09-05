@@ -48,18 +48,18 @@ inline constexpr unsigned maximum_jit_cache_executors = 64;
 
 /* Private caches are L1 working sets in front of the process-global canonical
  * translation cache. Their complete retained geometry, not merely the block
- * lookup array, is capped at 64 MiB per executor. The shared tier receives all
+ * lookup array, is capped at 256 MiB per executor. The shared tier receives all
  * remaining budget and grows with guest memory.
  */
 inline constexpr std::size_t default_jit_cache_budget_per_executor =
-	64U * 1024U * 1024U;
+	256U * 1024U * 1024U;
 
 /* The host-only override may lower the private working set for diagnosis. It
- * cannot grow one executor beyond the production 64 MiB ceiling; after that
+ * cannot grow one executor beyond the production 256 MiB ceiling; after that
  * ceiling is funded, only the shared tier grows with guest memory.
  */
 inline constexpr std::size_t maximum_jit_cache_budget_per_executor =
-	64U * 1024U * 1024U;
+	256U * 1024U * 1024U;
 
 /* A small fixed accounting reservation covers the lazy shard directory even
  * before the first shard receives an entry.

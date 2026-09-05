@@ -11,9 +11,9 @@
 namespace uml::emulator {
 
 inline constexpr std::size_t default_jit_executor_cache_budget =
-	64U * 1024U * 1024U;
+	256U * 1024U * 1024U;
 inline constexpr std::size_t maximum_jit_executor_cache_budget =
-	64U * 1024U * 1024U;
+	256U * 1024U * 1024U;
 
 /*
  * Kernel command-line policy is shared by every composition root.  Keeping

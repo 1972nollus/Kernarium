@@ -777,10 +777,14 @@ void saved_word_owners_remain_inside_representative_budgets()
 			whole_process_budget, 10);
 		require(geometry.total_bytes() <=
 			arm64::default_jit_cache_budget_per_executor);
-		if (expected_geometry)
-			require(geometry == *expected_geometry);
-		else
-			expected_geometry = geometry;
+		if (whole_process_budget >=
+			10U * arm64::default_jit_cache_budget_per_executor +
+			arm64::minimum_shared_translation_cache_bytes) {
+			if (expected_geometry)
+				require(geometry == *expected_geometry);
+			else
+				expected_geometry = geometry;
+		}
 		require(shared > preceding_shared);
 		require(geometry.total_bytes() * 10U + shared <=
 			whole_process_budget);

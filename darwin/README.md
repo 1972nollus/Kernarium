@@ -122,8 +122,11 @@ one scalar, vector, or unsupported bucket; combined totals do not double-count.
 They do not measure retirement, conditional operand use, or speed. The
 measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
 
-The JIT derives private and shared cache geometry from one process budget. A
-managed run keeps at most one executor per guest CPU. Shared translations own
+The JIT derives private and shared cache geometry from one process budget,
+defaulting to half of guest RAM. A managed run keeps at most one executor per
+guest CPU, with up to 256 MiB of private cache per executor; the shared tier
+receives the remainder. Smaller total budgets reduce private geometry.
+Shared translations own
 immutable code and validation identity, while direct/indirect activation state
 remains private and is regenerated during materialization. Bounded replacement
 admits new working sets after the shared tier fills, retaining entries whose

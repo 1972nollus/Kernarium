@@ -91,33 +91,40 @@ void geometry_respects_every_supported_executor_count()
 void representative_geometry_remains_stable_and_bounded()
 {
 	constexpr std::array guest_sizes{4U * gib, 8U * gib, 16U * gib};
-	std::optional<arm64::JitCacheGeometry> expected_geometry;
-	std::size_t preceding_shared = 0;
-	for (const auto guest_bytes : guest_sizes) {
-		const auto total = guest_bytes / 2U;
-		const auto geometry =
-			arm64::derive_jit_cache_geometry(total, 10);
-		const auto shared =
-			arm64::derive_shared_translation_cache_budget(total, 10);
-		require(geometry.valid(), "representative geometry was rejected");
-		require(geometry.total_bytes() <=
-				arm64::default_jit_cache_budget_per_executor,
-			"private executor geometry exceeded its fixed cap");
-		if (expected_geometry)
-			require(geometry == *expected_geometry,
-				"private geometry grew with guest memory");
-		else
-			expected_geometry = geometry;
-		require(shared > preceding_shared,
-			"shared cache did not grow with guest memory");
-		require(geometry.total_bytes() * 10U + shared <= total,
-			"representative geometry exceeded its executor budget");
-		preceding_shared = shared;
+	for (const auto executors : std::array{4U, 10U}) {
+		std::optional<arm64::JitCacheGeometry> expected_geometry;
+		std::size_t preceding_shared = 0;
+		for (const auto guest_bytes : guest_sizes) {
+			const auto total = guest_bytes / 2U;
+			const auto geometry =
+				arm64::derive_jit_cache_geometry(total, executors);
+			const auto shared =
+				arm64::derive_shared_translation_cache_budget(total, executors);
+			require(geometry.valid(), "representative geometry was rejected");
+			require(geometry.total_bytes() <=
+					arm64::default_jit_cache_budget_per_executor,
+				"private executor geometry exceeded its fixed cap");
+			if (total >= executors *
+					arm64::default_jit_cache_budget_per_executor +
+					arm64::minimum_shared_translation_cache_bytes) {
+				if (expected_geometry)
+					require(geometry == *expected_geometry,
+						"fully funded private geometry grew with guest memory");
+				else
+					expected_geometry = geometry;
+			}
+			require(shared > preceding_shared,
+				"shared cache did not grow with guest memory");
+			require(geometry.total_bytes() * executors + shared <= total,
+				"representative geometry exceeded its executor budget");
+			preceding_shared = shared;
+		}
 	}
 
 	std::optional<arm64::JitCacheGeometry> preceding_geometry;
 	for (const auto cap :
-	     std::array{16U * mib, 32U * mib, 48U * mib, 64U * mib}) {
+	     std::array{16U * mib, 32U * mib, 48U * mib, 64U * mib,
+		128U * mib, 256U * mib}) {
 		const auto geometry = arm64::derive_jit_cache_geometry(
 			4U * gib, 10, cap);
 		require(geometry.valid() && geometry.total_bytes() <= cap,

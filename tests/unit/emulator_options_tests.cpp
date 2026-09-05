@@ -71,8 +71,8 @@ void test_defaults_and_engine_selection()
 		"default memory did not produce the default half-memory JIT budget");
 	require(options.guest_memory_bytes == 256U * 1024U * 1024U,
 		"default guest memory was not retained for kernel placement");
-	require(options.jit_executor_cache_budget == 64U * 1024U * 1024U,
-		"default private JIT cache cap is not 64 MiB");
+	require(options.jit_executor_cache_budget == 256U * 1024U * 1024U,
+		"default private JIT cache cap is not 256 MiB");
 	require(contains(options, "ip=dhcp"), "network default was not added");
 	require(!contains(options, "--execution-engine=interpreter"),
 		"host execution option leaked into the kernel command line");
@@ -192,11 +192,18 @@ void test_guest_memory_budget_matches_kernel_memparse()
 		options.jit_executor_cache_budget == 32U * mib &&
 		!contains(options, private_cap[1]),
 		"private JIT cache cap was not consumed by the host");
+	const char *maximum_private_cap[]{"uml-test",
+		"--jit-executor-cache-budget=256M"};
+	options = uml::emulator::prepare_emulator_options(
+		2, maximum_private_cap, "/tmp/rootfs.erofs", false);
+	require(options.valid &&
+		options.jit_executor_cache_budget == 256U * mib,
+		"maximum private JIT cache cap was rejected");
 	const char *oversized_private_cap[]{"uml-test",
-		"--jit-executor-cache-budget=65M"};
+		"--jit-executor-cache-budget=257M"};
 	require(!uml::emulator::prepare_emulator_options(
 		2, oversized_private_cap, "/tmp/rootfs.erofs", false).valid,
-		"private JIT cache cap above 64 MiB was accepted");
+		"private JIT cache cap above 256 MiB was accepted");
 }
 
 void test_scalable_native_kernel_layout_geometry()
