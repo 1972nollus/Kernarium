@@ -18,7 +18,6 @@ class JitEngine final : public CpuEngine {
 public:
 	explicit JitEngine(EngineConfiguration configuration)
 		: options_{JitExecutorOptions{
-			.defer_cold_translation = true,
 			.enable_guarded_control_flow =
 				configuration.enable_guarded_control_flow,
 			.enable_pointer_authentication =

@@ -1463,11 +1463,12 @@ void defensive_install_rejects_mutated_canonical_metadata()
 	require(diagnostics.shared_validation_word_installs == 1);
 }
 
-void cold_admission_refetches_code_and_preserves_fault_prefixes()
+void cold_admission_refetches_code_and_preserves_fault_prefixes(
+	bool pointer_authentication)
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-	constexpr unsigned long generation = 19'701U;
-	constexpr std::uint64_t base = 0x410'0000U;
+	const unsigned long generation = pointer_authentication ? 19'701U : 19'704U;
+	const std::uint64_t base = pointer_authentication ? 0x410'0000U : 0x440'0000U;
 	JitBacking backing{2};
 	backing.put32(0, move_immediate(0, 19));
 	backing.put32(4, system_call);
@@ -1478,7 +1479,9 @@ void cold_admission_refetches_code_and_preserves_fault_prefixes()
 	backing.put32(132, 0U); // UDF: the faulting instruction does not retire.
 	backing.put32(page - 4U, move_immediate(0, 31));
 	JitMapping mapping{generation, base, backing, 1};
-	JitExecutor executor{JitExecutorOptions{.defer_cold_translation = true}};
+	JitExecutor executor{JitExecutorOptions{
+		.defer_cold_translation = true,
+		.enable_pointer_authentication = pointer_authentication}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 	cpu.pc = base;
@@ -1580,6 +1583,57 @@ void cold_admission_reuses_current_peer_translations()
 	require(diagnostics.translations == 0);
 }
 
+void cold_admission_preserves_disabled_pointer_authentication()
+{
+	constexpr unsigned long generation = 19'705U;
+	constexpr std::uint64_t base = 0x450'0000U;
+	constexpr std::array unavailable{
+		0xdac1'0020U, // pacia x0, x1
+		0xdac1'23e0U, // paciza x0
+		0xdac1'43e0U, // xpaci x0
+		0x9ac2'3020U, // pacga x0, x1, x2
+		0xf820'0420U, // ldraa x0, [x1]
+		0xf8a0'0420U, // ldrab x0, [x1]
+		0xd71f'0801U, // braa x0, x1
+		0xd71f'0c01U, // brab x0, x1
+		0xd73f'0801U, // blraa x0, x1
+		0xd61f'081fU, // braaz x0
+		0xd65f'0bffU, // retaa
+		0xd65f'0fffU, // retab
+	};
+	JitBacking backing{1};
+	for (std::size_t index = 0; index < unavailable.size(); ++index) {
+		backing.put32(index * 16U, move_immediate(9, 61));
+		backing.put32(index * 16U + 4U, unavailable[index]);
+		backing.put32(index * 16U + 8U, system_call);
+	}
+	constexpr auto hint_offset = unavailable.size() * 16U;
+	backing.put32(hint_offset, 0xd503'233fU); // paciasp is a NOP here.
+	backing.put32(hint_offset + 4U, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	JitExecutor executor{JitExecutorOptions{
+		.defer_cold_translation = true,
+		.enable_pointer_authentication = false}};
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+	for (std::size_t index = 0; index < unavailable.size(); ++index) {
+		cpu.pc = base + index * 16U;
+		cpu.registers[0] = base;
+		cpu.registers[1] = base;
+		cpu.registers[9] = 0;
+		const auto run = run_once(executor, memory, generation, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::illegal_instruction);
+		require(run.executed == 1 && cpu.pc == base + index * 16U + 4U);
+		require(cpu.registers[0] == base && cpu.registers[9] == 61);
+	}
+	cpu.pc = base + hint_offset;
+	cpu.registers[30] = base;
+	const auto run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 2 && cpu.registers[30] == base);
+	require(executor.cache_validation_diagnostics().cold_blocks == 0);
+}
+
 void cold_admission_keeps_atomic_and_system_blocks_native()
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -1613,8 +1667,10 @@ int main()
 {
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
-	cold_admission_refetches_code_and_preserves_fault_prefixes();
+	cold_admission_refetches_code_and_preserves_fault_prefixes(true);
+	cold_admission_refetches_code_and_preserves_fault_prefixes(false);
 	cold_admission_keeps_atomic_and_system_blocks_native();
+	cold_admission_preserves_disabled_pointer_authentication();
 	cold_admission_reuses_current_peer_translations();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();

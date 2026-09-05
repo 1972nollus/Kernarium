@@ -24,9 +24,8 @@ namespace uml::cpu::arm64 {
 class JitExecutorPool;
 
 struct JitExecutorOptions final {
-	/* Runtime workloads can execute first-use ordinary blocks through the
-	 * in-engine semantic path before admitting them to native caches.
-	 * Direct executor clients retain eager native compilation by default. */
+	/* Explicitly opt into first-use semantic execution of ordinary blocks.
+	 * Runtime engines and direct clients compile eagerly by default. */
 	bool defer_cold_translation{};
 	bool enable_guarded_control_flow{};
 	bool enable_pointer_authentication{true};

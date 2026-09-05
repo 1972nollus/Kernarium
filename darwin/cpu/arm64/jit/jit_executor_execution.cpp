@@ -347,7 +347,7 @@ JitExecutor::Implementation::try_run_cold_block(
     CpuState &cpu, unsigned long generation,
     std::span<const std::uint32_t> instructions, std::size_t &executed) {
   if (!defer_cold_translation_ || cpu.exclusive_size != 0 ||
-      !enable_pointer_authentication_ || enable_guarded_control_flow_ ||
+      enable_guarded_control_flow_ ||
       cpu.gcs_push_enabled || cpu.gcs_store_enabled ||
       cpu.tagged_addresses_enabled())
     return std::nullopt;
@@ -360,6 +360,16 @@ JitExecutor::Implementation::try_run_cold_block(
   if (!first_visit)
     return std::nullopt;
   for (const auto instruction : instructions) {
+    // Disabling PAuth must not disable admission for ordinary code, but
+    // unavailable PAuth instructions must still reach
+    // the compiler's feature checks instead of the generic semantic helper.
+    if (!enable_pointer_authentication_ &&
+        ((instruction & 0xffff'0000U) == 0xdac1'0000U ||
+         (instruction & 0xffe0'fc00U) == 0x9ac0'3000U ||
+         (instruction & 0xff20'0400U) == 0xf820'0400U ||
+         (instruction & 0xfedf'f800U) == 0xd61f'0800U ||
+         (instruction & 0xffff'fbffU) == 0xd65f'0bffU))
+      return std::nullopt;
     // Exclusives, atomics, and ordered-memory extensions retain their native
     // admission and reservation protocol. System instructions can publish
     // code or change architectural execution state and also stay native.
