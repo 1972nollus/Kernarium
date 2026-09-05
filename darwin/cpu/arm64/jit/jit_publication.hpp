@@ -37,12 +37,14 @@ enum class JitStoreState : unsigned {
  * non-idle participants, because it would put a contended read-modify-write on
  * the lock-free direct-store path to speed up a waiter. Nothing here touches
  * that path: a participant still only stores its own state, at a different
- * address.
+ * address. Match the Apple arm64 cache line so adjacent vCPUs do not
+ * invalidate each other's publication state on every native chain.
  */
-struct alignas(64) JitStoreSlot final {
+struct alignas(128) JitStoreSlot final {
   std::atomic<JitStoreState> state{JitStoreState::idle};
   std::atomic<bool> claimed{false};
 };
+static_assert(alignof(JitStoreSlot) == 128 && sizeof(JitStoreSlot) == 128);
 
 /* Slots are static so the scan never races an allocation. The bound is a
  * capacity, not an assumption: a participant that cannot claim one keeps its
@@ -84,7 +86,7 @@ struct JitStoreParticipant final {
   JitStoreSlot *published_{&local_};
 };
 
-extern std::atomic<unsigned> active_jit_reservations;
+alignas(128) extern std::atomic<unsigned> active_jit_reservations;
 extern std::mutex jit_store_participants_mutex;
 extern std::vector<JitStoreParticipant *> jit_store_participants;
 /*
@@ -98,9 +100,9 @@ extern std::vector<JitStoreParticipant *> jit_store_participants;
  * participant state, reads the phase once, and proceeds. Stores already in
  * flight when a helper announces itself are covered by the participant scan.
  */
-alignas(64) extern std::atomic<unsigned> jit_exclusive_operation_phase;
-alignas(64) extern std::atomic<unsigned> jit_waiting_store_count_value;
-alignas(64) extern std::atomic<bool> jit_exclusive_operation_turn;
+alignas(128) extern std::atomic<unsigned> jit_exclusive_operation_phase;
+alignas(128) extern std::atomic<unsigned> jit_waiting_store_count_value;
+alignas(128) extern std::atomic<bool> jit_exclusive_operation_turn;
 constexpr unsigned jit_exclusive_operation_active = 1U;
 constexpr unsigned jit_gate_spin_iterations = 64U;
 [[nodiscard]] constexpr bool
@@ -118,7 +120,7 @@ template <typename T>
   }
   return value.load(std::memory_order_relaxed) != expected;
 }
-alignas(64) extern std::atomic<unsigned> jit_exclusive_operation_count;
+alignas(128) extern std::atomic<unsigned> jit_exclusive_operation_count;
 [[nodiscard]] inline unsigned
 jit_waiting_store_count(unsigned) noexcept {
   return jit_waiting_store_count_value.load(std::memory_order_seq_cst);

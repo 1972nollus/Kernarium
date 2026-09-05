@@ -8,16 +8,16 @@
 
 namespace uml::cpu::arm64 {
 
-std::atomic<unsigned> active_jit_reservations{};
+alignas(128) std::atomic<unsigned> active_jit_reservations{};
 std::array<JitStoreSlot, jit_store_slot_capacity> jit_store_slots{};
 std::atomic<std::size_t> jit_store_slot_limit{};
 std::atomic<std::size_t> jit_store_overflow_count{};
 std::mutex jit_store_participants_mutex;
 std::vector<JitStoreParticipant *> jit_store_participants;
-alignas(64) std::atomic<unsigned> jit_exclusive_operation_phase{};
-alignas(64) std::atomic<unsigned> jit_waiting_store_count_value{};
-alignas(64) std::atomic<bool> jit_exclusive_operation_turn{};
-alignas(64) std::atomic<unsigned> jit_exclusive_operation_count{};
+alignas(128) std::atomic<unsigned> jit_exclusive_operation_phase{};
+alignas(128) std::atomic<unsigned> jit_waiting_store_count_value{};
+alignas(128) std::atomic<bool> jit_exclusive_operation_turn{};
+alignas(128) std::atomic<unsigned> jit_exclusive_operation_count{};
 std::mutex jit_reservations_mutex;
 std::unordered_set<CpuState *> jit_reservations;
 thread_local JitStoreParticipant *current_jit_store_participant{};

@@ -127,6 +127,9 @@ managed run keeps at most one executor per guest CPU. Shared translations own
 immutable code and validation identity, while direct/indirect activation state
 remains private and is regenerated during materialization.
 
+Native stores publish per-vCPU state on separate 128-byte host cache lines.
+The reservation publication protocol and its memory orders remain unchanged.
+
 ## Devices
 
 The generic vhost-user transport supports independent Virtio-GPU,

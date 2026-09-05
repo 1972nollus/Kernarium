@@ -214,6 +214,12 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Physical-device boot profiling | Measured. After RAM changes, the remaining gap is dominated by host execution and scheduling service for the full gadget/MMU working set. |
 | Batch sparse UBD discard | Accepted in both maintained kernel lines. A 512 MiB raw discard collapsed from 16,384 requests to four; matched controls measured about 19x lower wall time on macOS and 10.6x lower wall time on a physical iPad, while reclaiming the same sparse-file allocation. |
 
+## JIT multicore and browser working sets
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Isolate JIT store-publication state at the host cache-line size | Accepted. Adjacent 64-byte vCPU slots shared an Apple arm64 cache line. Using 128-byte slots and separating the shared gate fields improved four-worker HDR throughput without weakening the publication memory orders. |
+
 ## Graphics backend investigations
 
 | Attempt | Disposition and lesson |
