@@ -337,6 +337,11 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         emit_deferred_exclusive_slow(cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::memory_slow) {
         emit_memory_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
+        emitter_.emit(0xd503'3f5fU); // clrex
+        clear_local_exclusive_monitor();
+        store_pc(cold.pc);
+        emitter_.return_constant(Event::continued, cold.count);
       }
     }
     const auto words = emitter_.finish();

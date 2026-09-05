@@ -150,6 +150,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
       return 0;
 
     std::size_t store_index = 1U;
+    bool compare_retry = false;
     if (!scalar_exclusive(instructions[store_index]) ||
         (instructions[store_index] & 0x0040'0000U) != 0U) {
       if (instructions.size() < 3U)
@@ -166,6 +167,12 @@ void JitCompiler::clear_local_exclusive_monitor() {
       if (!add_sub_immediate && !add_sub_shifted && !logical_shifted)
         return 0;
       store_index = 2U;
+      if (instructions.size() >= 5U &&
+          (middle & 0x7fe0'fc1fU) == 0x6b00'001fU &&
+          (instructions[2] & 0xff00'001fU) == 0x5400'0001U) {
+        compare_retry = true;
+        store_index = 3U;
+      }
     }
 
     const auto store_instruction = instructions[store_index];
@@ -186,7 +193,22 @@ void JitCompiler::clear_local_exclusive_monitor() {
         load_destination == base)
       return 0;
 
-    const bool has_middle = store_index == 2U;
+    if (compare_retry) {
+      const auto compare = instructions[1];
+      const auto mismatch_offset =
+          sign_extend((instructions[2] >> 5) & 0x7ffffU, 19) * 4;
+      const auto retry = instructions[4];
+      const auto retry_offset = sign_extend((retry >> 5) & 0x7ffffU, 19) * 4;
+      if (load_destination == 31U || status == load_destination ||
+          ((compare >> 5) & 31U) != load_destination ||
+          (compare >> 31) != (size == 3U ? 1U : 0U) ||
+          mismatch_offset < 12 ||
+          (retry & 0xff00'001fU) != (0x3500'0000U | status) ||
+          retry_offset != -16)
+        return 0;
+    }
+
+    const bool has_middle = store_index == 2U || compare_retry;
     const auto middle_instruction =
         has_middle ? instructions[1] : std::uint32_t{};
     if (has_middle && (middle_instruction & 31U) == base)
@@ -296,7 +318,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
         (!has_middle || store_source != (middle_instruction & 31U)))
       preload(store_source, false);
     const auto preallocated_status =
-        write_native_gpr(status, false, false, 9);
+        write_native_gpr(status, false, compare_retry, 9);
 
     const auto native_destination =
         write_native_gpr(load_destination, false, false, 9);
@@ -315,6 +337,16 @@ void JitCompiler::clear_local_exclusive_monitor() {
       /* The predecoder above accepts only baseline add/sub or logical forms;
        * each is a nonterminal native lowering. */
       (void)middle_action;
+      ++count_;
+    }
+    if (compare_retry) {
+      const auto mismatch = emitter_.make_label();
+      const auto target = pc + 8U +
+          sign_extend((instructions[2] >> 5) & 0x7ffffU, 19) * 4;
+      cold_.push_back({mismatch, instructions[2], target, count_ + 1U,
+                      ColdPath::Action::exclusive_compare_mismatch});
+      load_flags();
+      emitter_.branch_condition(mismatch, 1); // NE
       ++count_;
     }
     mark_direct_memory_write();

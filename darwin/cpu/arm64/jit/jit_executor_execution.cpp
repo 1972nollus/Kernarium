@@ -80,8 +80,22 @@ namespace uml::cpu::arm64 {
       const auto terminates =
           obvious_translated_block_terminator(instructions[count]);
       ++count;
-      if (terminates)
+      if (terminates) {
+        // A compare/exchange retry has a conditional exit before its store.
+        // Look ahead only far enough to recognize that bounded native region.
+        // A speculative fetch failure leaves the ordinary prefix intact.
+        if (count == 3U &&
+            (instructions[0] & 0x3fe0'0000U) == 0x0840'0000U &&
+            (instructions[1] & 0x7fe0'fc1fU) == 0x6b00'001fU &&
+            (instructions[2] & 0xff00'001fU) == 0x5400'0001U) {
+          for (; count < 5U; ++count) {
+            if (!memory.fetch(cpu.pc + count * 4U, encoded))
+              break;
+            std::memcpy(&instructions[count], encoded.data(), encoded.size());
+          }
+        }
         break;
+      }
     }
     if (count == 0) {
       const auto fault = memory.last_fault();

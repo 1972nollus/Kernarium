@@ -122,6 +122,7 @@ private:
       ordered_slow,
       exclusive_slow,
       deferred_exclusive_slow,
+      exclusive_compare_mismatch,
       memory_slow,
     };
 

@@ -141,7 +141,10 @@ eviction deactivates that context before reuse. Stale blocks still require
 exact guest-word validation.
 
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
-The reservation publication protocol and its memory orders remain unchanged.
+Bounded load/compare/conditional-branch/store-exclusive retry regions use host
+exclusives after checking both mappings and permissions. Unsupported shapes
+and tagged accesses retain the semantic path. Native and semantic stores
+continue to share the reservation publication protocol.
 
 ## Devices
 

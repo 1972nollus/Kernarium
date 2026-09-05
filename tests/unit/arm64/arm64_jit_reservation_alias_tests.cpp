@@ -97,23 +97,31 @@ void native_linked_loop_case() {
   executor.end_execution();
 }
 
-void native_compare_retry_case(bool matches) {
+void native_compare_retry_case(unsigned size, bool acquire_release,
+                               bool matches, bool read_only = false) {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   const auto generation =
-      static_cast<unsigned long>(matches ? 10'096U : 10'097U);
+      static_cast<unsigned long>(read_only ? 10'106U :
+                                matches ? 10'096U : 10'097U) +
+      32U * size + (acquire_release ? 16U : 0U);
   const auto base =
       std::uint64_t{0x10c'0000U} + (matches ? 0U : 4U * page);
   const auto data = base + page;
-  constexpr std::uint32_t compare = 0xeb04'007fU; // cmp x3, x4
+  const std::uint32_t compare =
+      size == 3U ? 0xeb04'007fU : 0x6b04'007fU; // cmp x3/w3, x4/w4
   constexpr std::uint32_t skip = 0x5400'0061U;    // b.ne pc + 12
-  constexpr std::uint32_t store =
-      0xc805'7c22U; // stxr w5, x2, [x1]
+  const auto order = acquire_release ? 0x8000U : 0U;
+  const auto load = 0x085f'7c23U | (size << 30U) | order;
+  const auto store = 0x0805'7c22U | (size << 30U) | order;
   constexpr std::uint32_t retry = 0x35ff'ff85U; // cbnz w5, pc - 16
-  constexpr std::uint64_t initial = 41;
-  constexpr std::uint64_t replacement = 99;
+  constexpr std::uint64_t initial = 0x1020'3040'5060'7011ULL;
+  constexpr std::uint64_t replacement = 0x8877'6655'4433'2222ULL;
+  const auto mask = size == 3U ? ~std::uint64_t{} :
+      (std::uint64_t{1} << (8U << size)) - 1U;
+  const auto loaded = initial & mask;
 
   JitBacking backing{2};
-  backing.put32(0, load_exclusive);
+  backing.put32(0, load);
   backing.put32(4, compare);
   backing.put32(8, skip);
   backing.put32(12, store);
@@ -121,6 +129,9 @@ void native_compare_retry_case(bool matches) {
   backing.put32(20, system_call);
   backing.put64(page, initial);
   JitMapping mapping{generation, base, backing, 2};
+  if (read_only)
+    require(darwin_uml_static_vm_protect(
+        reinterpret_cast<void *>(data), page, PROT_READ) == 0);
 
   uml::cpu::arm64::JitExecutor executor;
   uml::memory::StaticGuestMemory memory;
@@ -128,7 +139,7 @@ void native_compare_retry_case(bool matches) {
   cpu.pc = base;
   cpu.registers[1] = data;
   cpu.registers[2] = replacement;
-  cpu.registers[4] = matches ? initial : initial + 1U;
+  cpu.registers[4] = matches ? loaded : loaded + 1U;
   cpu.registers[5] = 7;
   require(executor.begin_execution(generation, cpu.pc));
   std::size_t total_executed = 0;
@@ -142,13 +153,132 @@ void native_compare_retry_case(bool matches) {
     total_executed += executed;
   }
   require(event == ::uml::cpu::EngineEvent::system_call);
-  require(total_executed == (matches ? 6U : 4U));
-  require(cpu.registers[3] == initial);
+  if (matches) {
+    // A host STXR may fail spuriously, including on its first writable-page
+    // fault. Each complete retry still retires exactly five instructions.
+    require(total_executed >= 6U && (total_executed - 6U) % 5U == 0U);
+  } else {
+    require(total_executed == 4U);
+  }
+  require(cpu.registers[3] == loaded);
   require(cpu.registers[5] == (matches ? 0U : 7U));
-  require(backing.get64(page) == (matches ? replacement : initial));
-  require((cpu.nzcv & 0x4000'0000U) ==
-          (matches ? 0x4000'0000U : 0U));
+  require(backing.get64(page) ==
+          (matches ? (initial & ~mask) | (replacement & mask) : initial));
+  require(cpu.nzcv == (matches ? 0x6000'0000U : 0x8000'0000U));
   executor.end_execution();
+}
+
+void compare_lookahead_preserves_fetch_faults(bool matches) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const unsigned long generation = matches ? 10'108U : 10'107U;
+  constexpr std::uint64_t base = 0x130'0000U;
+  JitBacking backing{1};
+  backing.put64(0, 41);
+  backing.put32(page - 64U, system_call);
+  backing.put32(page - 12U, load_exclusive);
+  backing.put32(page - 8U, 0xeb04'007fU); // cmp x3, x4
+  backing.put32(page - 4U, 0x54ff'fe21U); // b.ne pc - 60
+  JitMapping mapping{generation, base, backing, 1};
+  uml::cpu::arm64::JitExecutor executor;
+  uml::memory::StaticGuestMemory memory;
+  uml::cpu::arm64::CpuState cpu{};
+  cpu.pc = base + page - 12U;
+  cpu.registers[1] = base;
+  cpu.registers[4] = matches ? 41U : 42U;
+  require(executor.begin_execution(generation, cpu.pc));
+  auto event = ::uml::cpu::EngineEvent::continued;
+  std::size_t retired = 0;
+  for (unsigned attempt = 0; attempt < 10U &&
+       event == ::uml::cpu::EngineEvent::continued; ++attempt) {
+    std::size_t executed = 0;
+    event = executor.run_block(cpu, memory, generation, executed);
+    retired += executed;
+  }
+  require(cpu.registers[3] == 41U);
+  if (matches) {
+    require(event == ::uml::cpu::EngineEvent::memory_fault);
+    require(retired == 3U && cpu.pc == base + page);
+    require(executor.fault_address() == base + page);
+    require(executor.fault_access() == uml::memory::Access::execute);
+  } else {
+    require(event == ::uml::cpu::EngineEvent::system_call);
+    require(retired == 4U);
+  }
+  executor.end_execution();
+}
+
+void concurrent_compare_retry_case(bool mixed_semantic) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const unsigned long generation = mixed_semantic ? 10'105U : 10'104U;
+  constexpr std::uint64_t base = 0x124'0000U;
+  constexpr auto data = base + page;
+  constexpr std::size_t workers = 4;
+  constexpr unsigned iterations = 1000;
+  JitBacking backing{2};
+  backing.put32(0, load_exclusive);
+  backing.put32(4, 0xeb04'007fU); // cmp x3, x4
+  backing.put32(8, 0x5400'0061U); // b.ne end
+  backing.put32(12, 0xc805'7c22U); // stxr w5, x2, [x1]
+  backing.put32(16, 0x35ff'ff85U); // cbnz w5, start
+  backing.put32(20, system_call);
+  backing.put64(page, 0);
+  JitMapping mapping{generation, base, backing, 2};
+  auto executors =
+      std::make_unique<std::array<uml::cpu::arm64::JitExecutor, workers>>();
+  auto memories =
+      std::make_unique<std::array<uml::memory::StaticGuestMemory, workers>>();
+  auto cpus = std::make_unique<
+      std::array<uml::cpu::arm64::CpuState, workers>>();
+  std::barrier start{workers};
+  std::vector<std::thread> threads;
+  for (std::size_t index = 0; index < workers; ++index) {
+    threads.emplace_back([&, index] {
+      auto &cpu = (*cpus)[index];
+      auto &executor = (*executors)[index];
+      cpu.registers[1] = data;
+      cpu.mte_enabled = mixed_semantic && index == 0;
+      require(executor.begin_execution(generation, base));
+      start.arrive_and_wait();
+      std::uint64_t expected = 0;
+      unsigned successes = 0;
+      while (successes < iterations) {
+        cpu.pc = base;
+        cpu.registers[2] = expected + 1;
+        cpu.registers[4] = expected;
+        cpu.registers[5] = 7;
+        auto event = ::uml::cpu::EngineEvent::continued;
+        std::size_t retired = 0;
+        for (unsigned attempt = 0; attempt < 10000 &&
+             event == ::uml::cpu::EngineEvent::continued; ++attempt) {
+          std::size_t executed = 0;
+          event = executor.run_block(cpu, (*memories)[index],
+                                     generation, executed);
+          retired += executed;
+        }
+        require(event == ::uml::cpu::EngineEvent::system_call);
+        if (cpu.registers[5] == 0) {
+          require(cpu.registers[3] == expected);
+          require((cpu.nzcv & 0x4000'0000U) != 0);
+          require(retired >= 6 && (retired - 6) % 5 == 0);
+          ++successes;
+          expected = cpu.registers[2];
+        } else {
+          // A mismatch after a failed STXR retains its status of one;
+          // a mismatch on the first load retains the sentinel of seven.
+          // Both outcomes also occur in the same loop on native ARM64.
+          require(cpu.registers[5] == 1 || cpu.registers[5] == 7);
+          require(cpu.registers[3] > expected);
+          require((cpu.nzcv & 0x4000'0000U) == 0);
+          require(retired >= 4 && (retired - 4) % 5 == 0);
+          expected = cpu.registers[3];
+        }
+      }
+      executor.end_execution();
+    });
+  }
+  for (auto &thread : threads)
+    thread.join();
+  require(backing.get64(page) == workers * iterations);
 }
 
 void same_backing_alias_case(bool overlaps) {
@@ -368,8 +498,17 @@ int main() {
       256U * 1024U * 1024U, 10));
   native_single_block_case();
   native_linked_loop_case();
-  native_compare_retry_case(true);
-  native_compare_retry_case(false);
+  for (unsigned size = 0; size < 4U; ++size) {
+    for (bool acquire_release : {false, true}) {
+      native_compare_retry_case(size, acquire_release, true);
+      native_compare_retry_case(size, acquire_release, false);
+      native_compare_retry_case(size, acquire_release, false, true);
+    }
+  }
+  compare_lookahead_preserves_fetch_faults(false);
+  compare_lookahead_preserves_fetch_faults(true);
+  concurrent_compare_retry_case(false);
+  concurrent_compare_retry_case(true);
   same_backing_alias_case(true);
   same_backing_alias_case(false);
   native_store_invalidates_semantic_reservation_case();

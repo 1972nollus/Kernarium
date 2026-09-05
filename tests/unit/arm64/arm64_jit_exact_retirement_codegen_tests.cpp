@@ -250,7 +250,7 @@ void profiled_exclusive_integer_shapes_remain_native() {
   verify(flag_setting, 2, std::uint64_t{1} << 2U);
 }
 
-void compare_retry_region_uses_the_semantic_path() {
+void compare_retry_region_uses_native_exclusives() {
   constexpr std::array guest{
       0xc85f'7c23U, // ldxr x3, [x1]
       0xeb04'007fU, // cmp x3, x4
@@ -260,11 +260,10 @@ void compare_retry_region_uses_the_semantic_path() {
   };
   const auto compiled = jit_test::compile_block(0x5b05'0000U, guest);
   const auto code = hot(compiled);
-  require(compiled.guest_instructions != 0);
-  require(compiled.guest_instructions <= guest.size());
-  require(compiled.direct_memory_write_mask == 0);
-  require(std::ranges::none_of(code, [](std::uint32_t word) {
-    return (word & 0x3fa0'fc00U) == 0x08a0'7c00U;
+  require(compiled.guest_instructions == guest.size());
+  require(compiled.direct_memory_write_mask == (std::uint64_t{1} << 3U));
+  require(std::ranges::any_of(code, [](std::uint32_t word) {
+    return (word & ~((31U << 16) | 31U)) == 0xc800'7ea0U;
   }));
 }
 
@@ -283,7 +282,7 @@ void tracked_compare_retry_region_uses_the_semantic_path() {
   require(compiled.guest_instructions <= guest.size());
   require(compiled.direct_memory_write_mask == 0);
   require(std::ranges::none_of(hot(compiled), [](std::uint32_t word) {
-    return (word & 0x3fa0'fc00U) == 0x08a0'7c00U;
+    return (word & ~((31U << 16) | 31U)) == 0xc800'7ea0U;
   }));
 }
 
@@ -313,7 +312,7 @@ int main() {
   successful_links_do_not_publish_terminal_metadata();
   exclusive_counter_loop_retains_one_translated_address();
   profiled_exclusive_integer_shapes_remain_native();
-  compare_retry_region_uses_the_semantic_path();
+  compare_retry_region_uses_native_exclusives();
   tracked_compare_retry_region_uses_the_semantic_path();
   compare_retry_with_shared_result_and_status_is_not_fused();
   return 0;
