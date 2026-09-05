@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import os
 import pathlib
+import shlex
 import sys
 import time
 
@@ -138,6 +139,16 @@ def main() -> int:
                 f"{utilization:.2f} host cores; expected at least "
                 f"{minimum_utilization:.2f}"
             )
+        wakeup_payload = (
+            pathlib.Path(__file__).with_name("guest_ipi_wakeup.py").read_text()
+        )
+        wakeup_command = shlex.quote(f"exec({wakeup_payload!r})")
+        require_command(
+            guest,
+            f"python3 -c {wakeup_command} {expected_cpus}",
+            f"IPI_WAKEUP_OK {expected_cpus * 2000}\n"
+            f"IPI_WAKEUP_OK {expected_cpus * 8000}",
+        )
         if expected_cpus > 1:
             require_command(
                 guest,
