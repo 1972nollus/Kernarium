@@ -57,6 +57,9 @@ private:
   borrow_jit_executor_after_session_check_for_test(
       JitExecutorPoolSessionToken, unsigned,
       JitExecutorPoolSessionCheckedHook, void *);
+  friend JitExecutorPoolBorrow borrow_jit_executor_before_wait_for_test(
+      JitExecutorPoolSessionToken, unsigned,
+      JitExecutorPoolSessionCheckedHook, void *);
 #endif
 
   JitExecutorPoolBorrow(JitExecutor *executor, unsigned slot,
@@ -119,6 +122,11 @@ jit_executor_pool_diagnostics() noexcept;
  * waiter admission checks but before it touches an availability cell. */
 [[nodiscard]] JitExecutorPoolBorrow
 borrow_jit_executor_after_session_check_for_test(
+    JitExecutorPoolSessionToken session, unsigned preferred_slot,
+    JitExecutorPoolSessionCheckedHook hook, void *context);
+
+/* Pauses once after a false wait predicate, while holding the queue mutex. */
+[[nodiscard]] JitExecutorPoolBorrow borrow_jit_executor_before_wait_for_test(
     JitExecutorPoolSessionToken session, unsigned preferred_slot,
     JitExecutorPoolSessionCheckedHook hook, void *context);
 #endif

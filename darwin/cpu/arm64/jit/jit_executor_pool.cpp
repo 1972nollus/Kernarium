@@ -154,7 +154,9 @@ public:
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       ,
       JitExecutorPoolSessionCheckedHook checked_hook = nullptr,
-      void *checked_hook_context = nullptr
+      void *checked_hook_context = nullptr,
+      JitExecutorPoolSessionCheckedHook wait_hook = nullptr,
+      void *wait_hook_context = nullptr
 #endif
       ) {
 #if UML_ENABLE_JIT_PROFILE
@@ -267,10 +269,17 @@ public:
       try {
         for (;;) {
           changed_.wait(lock, [&] {
-            return active_session_.load(std::memory_order_acquire) !=
-                       session ||
-                   (&waiter == waiter_head_ &&
-                    has_free(std::memory_order_seq_cst));
+            const bool ready =
+                active_session_.load(std::memory_order_acquire) != session ||
+                (&waiter == waiter_head_ &&
+                 has_free(std::memory_order_seq_cst));
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+            if (!ready && wait_hook != nullptr) {
+              const auto hook = std::exchange(wait_hook, nullptr);
+              hook(wait_hook_context);
+            }
+#endif
+            return ready;
           });
 #if UML_ENABLE_JIT_PROFILE
           if (profile != nullptr)
@@ -319,14 +328,18 @@ public:
       return;
     const auto bit = bit_for(slot);
     /* Sequential consistency pairs this publication with enqueue's waiter
-     * count and the wait predicate: either return observes the waiter and
-     * wakes it, or the newly queued waiter observes this session token. It
-     * also orders publication against drain's session revocation and per-slot
-     * exchange. */
+     * count: either return observes the waiter or a newly queued waiter sees
+     * this session token. It also orders publication against drain's session
+     * revocation and per-slot exchange. */
     available_[slot].session.store(session, std::memory_order_seq_cst);
     if (active_session_.load(std::memory_order_seq_cst) == session) {
-      if (waiters_.load(std::memory_order_seq_cst) != 0)
+      if (waiters_.load(std::memory_order_seq_cst) != 0) {
+        /* Pair notification with the queue mutex so it cannot fall between
+         * a false predicate and the condition variable's atomic unlock/wait.
+         * Uncontended returns retain their lock-free publication path. */
+        std::lock_guard lock{mutex_};
         changed_.notify_all();
+      }
       return;
     }
 
@@ -609,6 +622,20 @@ JitExecutorPoolBorrow borrow_jit_executor_after_session_check_for_test(
                              , nullptr
 #endif
                              , hook, context);
+  if (claimed.executor == nullptr)
+    return {};
+  return {claimed.executor, claimed.slot, session};
+}
+
+JitExecutorPoolBorrow borrow_jit_executor_before_wait_for_test(
+    JitExecutorPoolSessionToken session, unsigned preferred_slot,
+    JitExecutorPoolSessionCheckedHook hook, void *context) {
+  const auto claimed =
+      executor_pool().borrow(session, preferred_slot
+#if UML_ENABLE_JIT_PROFILE
+                             , nullptr
+#endif
+                             , nullptr, nullptr, hook, context);
   if (claimed.executor == nullptr)
     return {};
   return {claimed.executor, claimed.slot, session};

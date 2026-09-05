@@ -126,6 +126,9 @@ The JIT derives private and shared cache geometry from one process budget,
 defaulting to half of guest RAM. A managed run keeps at most one executor per
 guest CPU, with up to 256 MiB of private cache per executor; the shared tier
 receives the remainder. Smaller total budgets reduce private geometry.
+Exhausted executor borrowers receive FIFO handoffs. A contended return
+synchronizes notification with the queue mutex so a borrower cannot miss the
+transition to an available executor; uncontended returns remain lock-free.
 Shared translations own immutable code and validation identity. Bounded
 replacement admits new working sets after the shared tier fills, retaining
 entries whose code or validation words are still in use. The shared index

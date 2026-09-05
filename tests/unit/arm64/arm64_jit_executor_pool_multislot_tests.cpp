@@ -216,6 +216,44 @@ void concurrent_slot_transfers_never_duplicate_ownership(
           "concurrent multi-slot transfers changed pool accounting");
 }
 
+void return_cannot_notify_before_a_queued_borrower_waits(
+    arm64::JitExecutorPoolSessionToken session) {
+  std::array<HeldBorrow, pool_capacity> holders;
+  construct_all_slots_lowest_first(session, holders);
+  constexpr unsigned released_slot = 1;
+  ThreadPause pause;
+  std::atomic<bool> borrowed{};
+  std::thread waiter{[&] {
+    auto owner = arm64::borrow_jit_executor_before_wait_for_test(
+        session, released_slot, pause_thread, &pause);
+    require(static_cast<bool>(owner) && owner.slot() == released_slot,
+            "the paused borrower did not receive the returned cell");
+    borrowed.store(true, std::memory_order_release);
+  }};
+  wait_until([&] { return pause.reached.load(std::memory_order_acquire); },
+             "the borrower did not pause between its predicate and wait");
+
+  std::atomic<bool> return_started{};
+  std::atomic<bool> return_finished{};
+  std::thread returning{[&] {
+    return_started.store(true, std::memory_order_release);
+    holders[released_slot].reset();
+    return_finished.store(true, std::memory_order_release);
+  }};
+  wait_until([&] { return return_started.load(std::memory_order_acquire); },
+             "the concurrent executor return did not start");
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  const bool premature = return_finished.load(std::memory_order_acquire);
+  pause.resume.store(true, std::memory_order_release);
+  pause.resume.notify_all();
+  wait_until([&] { return borrowed.load(std::memory_order_acquire); },
+             "an executor return was lost between the predicate and wait");
+  waiter.join();
+  returning.join();
+  require(!premature,
+          "a queued return notified before the borrower could begin waiting");
+}
+
 void drain_destroys_idle_slots_and_defers_active_slots(
     arm64::JitExecutorPoolSessionToken session) {
   auto first = std::make_optional(arm64::borrow_jit_executor(session, 0));
@@ -434,6 +472,7 @@ int main() {
 
   lowest_available_scan_remains_stable(session);
   queued_borrowers_keep_fifo_priority_across_one_free_cell(session);
+  return_cannot_notify_before_a_queued_borrower_waits(session);
   concurrent_slot_transfers_never_duplicate_ownership(session);
   drain_destroys_idle_slots_and_defers_active_slots(session);
   stale_checked_borrow_cannot_claim_a_restarted_session();
