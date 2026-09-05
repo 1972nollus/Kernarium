@@ -71,6 +71,14 @@ option(UML_GADGET_PAIR_HISTOGRAM
     "Count adjacent gadget pairs during translation (diagnostic builds only)"
     OFF)
 
+option(UML_GADGET_DEPENDENCY_COVERAGE
+    "Count executed scalar dependency opportunities (diagnostic builds only)"
+    OFF)
+
+option(UML_GADGET_SCALAR_FORWARDING
+    "Forward adjacent write-through scalar results within gadget blocks"
+    OFF)
+
 # Also off by default, and for the same reason. G-4 needs to know how far a
 # fixed guest-to-host vector bank would reach, and that is decided by how
 # concentrated translated code's vector operand registers are.
@@ -160,6 +168,8 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
     arm64/gadgets/pair_histogram.cpp
+    arm64/gadgets/dependency_coverage.cpp
+    arm64/gadgets/scalar_forwarding.cpp
     arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
     # their *_impl.ipp fragments so the whole per-instruction decode chain
@@ -183,6 +193,8 @@ target_compile_options(uml_arm64_gadgets PRIVATE
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
+    UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
+    UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>

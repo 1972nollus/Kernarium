@@ -5,8 +5,12 @@ gadget nop
  * are the CpuState destination byte offset; bits 63:16 are the signed PC
  * displacement. The following word is the guest PC used for address formation
  * and precise memory faults. */
-.macro literal_integer_fast name, instruction, host_register, bytes, extension, discard
-gadget \name
+.macro literal_integer_fast name, instruction, host_register, bytes, extension, discard, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if \discard
+	.set .Lsd\@, scalar_none
+	.endif
+scalar_entry \name, \forward, (17 - 1), .Lsd\@, scalar_none, scalar_none, scalar_none, 2
 	ldr x8, [_stream]
 	ldr x9, [_stream, #8]
 	and x19, x8, #0xffff
@@ -14,7 +18,7 @@ gadget \name
 	add x7, x9, x10
 	branch_if_cross_page x7, \bytes, x11, .Lliteral_integer_fast_cross\@
 	add _stream, _stream, #8
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	.if !\discard
 	str x0, [_cpu, x19]
@@ -38,6 +42,7 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	scalar_variants \forward, scalar_none, scalar_none, scalar_none, literal_integer_fast, \name, \instruction, \host_register, \bytes, \extension, \discard
 .endm
 
 .macro literal_integer_modes name, instruction, host_register, bytes, extension
@@ -86,19 +91,39 @@ literal_vector_fast literal_load_vector128_fast, ldr, q, 16
  * a distinct entry. Stream: [Rt offset, Rn offset, byte displacement][PC].
  * The only conditional branches left are the runtime cross-page and TLB/fault
  * decisions; valid same-page hits execute no opcode or register-mode tests. */
-.macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix
-gadget \suffix
+.macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if !\load || \transfer_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset0
+	.if \load || \transfer_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 2
+	.if !\load && (\forward & 2)
+	mov x22, x0
+	.endif
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
-	ldr x7, [_cpu, x20]
+	scalar_read \forward, 1, x7, x20
 	.if \base_sp
 	tst x7, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x7, x7, x21
@@ -114,7 +139,7 @@ gadget \suffix
 	branch_if_cross_page x7, 4, x9, .Lscalar_unsigned_cross\@
 	.endif
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 		.if \bits64
 	ldr x0, [x7]
 		.else
@@ -124,16 +149,18 @@ gadget \suffix
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
 		.if \bits64
-	str x0, [x7]
+	scalar_memory_transfer 0, \forward, 2, str, x
 		.else
-	str w0, [x7]
+	scalar_memory_transfer 0, \forward, 2, str, w
 		.endif
 	.endif
 	add _stream, _stream, #8
@@ -155,18 +182,29 @@ gadget \suffix
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
 		.if \bits64
-	fmov d0, x0
+	scalar_store_vector \forward, 2, 1
 	transfer_slow 1, x7, 8
 		.else
-	fmov s0, w0
+	scalar_store_vector \forward, 2, 0
 	transfer_slow 1, x7, 4
 		.endif
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix
 .endm
 
 .macro scalar_unsigned_modes load, bits64, name
@@ -188,16 +226,25 @@ scalar_unsigned_modes 0, 1, store64_unsigned_fast
  * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn
  * and the already-scaled displacement, so the runtime does not inspect an
  * opcode or branch on register 31. */
-.macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero, base_sp
-gadget \name
+.macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero, base_sp, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if \transfer_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+scalar_entry \name, \forward, (17 - 1), .Lsd\@, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
-	ldr x7, [_cpu, x20]
+	scalar_read \forward, 1, x7, x20
 	.if \base_sp
 	tst x7, #0xf
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -209,7 +256,7 @@ gadget \name
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_load_cross\@
 	.endif
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	.if !\transfer_zero
 	str x0, [_cpu, x19]
@@ -242,6 +289,11 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, scalar_unsigned_load_narrow_fast, \name, \instruction, \host_register, \bytes, \extension, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_unsigned_load_narrow_modes name, instruction, host_register, bytes, extension
@@ -262,16 +314,28 @@ scalar_unsigned_load_narrow_modes load32_signed_x_fast, ldrsw, x, 4, 5
 .purgem scalar_unsigned_load_narrow_modes
 .purgem scalar_unsigned_load_narrow_fast
 
-.macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero, base_sp
-gadget \name
+.macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero, base_sp, forward=0
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset0
+	.if \transfer_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry \name, \forward, (17 - 0), scalar_none, .Lsn\@, .Lsm\@, scalar_none, 2
+	.if !0 && (\forward & 2)
+	mov x22, x0
+	.endif
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
-	ldr x7, [_cpu, x20]
+	scalar_read \forward, 1, x7, x20
 	.if \base_sp
 	tst x7, #0xf
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -283,13 +347,15 @@ gadget \name
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_store_cross\@
 	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	.if \transfer_zero
 	mov x0, xzr
 	.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
 	.endif
-	\instruction w0, [x7]
+	.endif
+	scalar_memory_transfer 0, \forward, 2, \instruction, w
 	add _stream, _stream, #8
 	next_gadget
 
@@ -298,13 +364,20 @@ gadget \name
 	.if \transfer_zero
 	mov x0, xzr
 	.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
 	.endif
-	fmov d0, x0
+	.endif
+	scalar_store_vector \forward, 2, 1
 	transfer_slow 1, x7, \bytes
 	add _stream, _stream, #8
 	next_gadget
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_store_narrow_fast, \name, \instruction, \bytes, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_unsigned_store_narrow_modes name, instruction, bytes
@@ -323,19 +396,28 @@ scalar_unsigned_store_narrow_modes store16_unsigned_fast, strh, 2
 /* All SIMD&FP unsigned-offset widths use a translated CpuState vector offset,
  * translated base offset, and scaled displacement. Width and direction are
  * fixed by the selected symbol. */
-.macro vector_unsigned_fast name, load, instruction, host_register, bytes, base_sp
-gadget \name
+.macro vector_unsigned_fast name, load, instruction, host_register, bytes, base_sp, forward=0
+	.set .Lsn\@, scalar_offset16
+scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
-	ldr x7, [_cpu, x20]
+	scalar_read \forward, 1, x7, x20
 	.if \base_sp
 	tst x7, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x7, x7, x21
@@ -345,11 +427,11 @@ gadget \name
 	.endif
 	branch_if_cross_page x7, \bytes, x9, .Lvector_unsigned_cross\@
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
@@ -399,6 +481,15 @@ gadget \name
 	add sp, sp, #32
 	b uml_arm64_gadget_memory_fault
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, vector_unsigned_fast, \name, \load, \instruction, \host_register, \bytes, \base_sp
 .endm
 
 .macro vector_unsigned_modes name, load, instruction, host_register, bytes
@@ -424,19 +515,39 @@ vector_unsigned_modes store128, 0, str, q, 16
  * bits 15:0, Rn offset in 31:16, signed imm9 in 63:32. Mode 0 is adjusted
  * address without writeback, mode 1 pre-index, mode 2 post-index, and mode 3
  * post-index with architecturally suppressed overlapping-load writeback. */
-.macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero, base_sp
-gadget \name
+.macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero, base_sp, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if !\load || \transfer_zero || \mode == 1 || \mode == 2
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset0
+	.if \load || \transfer_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 2
+	.if !\load && (\forward & 2)
+	mov x22, x0
+	.endif
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	asr x21, x8, #32
-	ldr x24, [_cpu, x20]
+	scalar_read \forward, 1, x24, x20
 	.if \base_sp
 	tst x24, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x25, x24, x21
@@ -456,19 +567,21 @@ gadget \name
 	.endif
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	\instruction \host_register\()0, [x7]
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	scalar_memory_transfer \load, \forward, 2, \instruction, \host_register
 		.if !\transfer_zero
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
-	\instruction \host_register\()0, [x7]
+	scalar_memory_transfer \load, \forward, 2, \instruction, \host_register
 	.endif
 	.if \mode == 1 || \mode == 2
 	str x25, [_cpu, x20]
@@ -505,9 +618,11 @@ gadget \name
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 2)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
-	fmov d0, x0
+	scalar_store_vector \forward, 2, 1
 	transfer_slow 1, x26, \bytes
 	.endif
 	.if \mode == 1 || \mode == 2
@@ -516,6 +631,15 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \mode, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_other_immediate_operation name, load, instruction, host_register, bytes, extension
@@ -582,22 +706,43 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 /* Register-offset form. The upper operand half stores the translated Rm
  * CpuState byte offset. Extension (UXTW/X/SXTW) and optional scaling are fixed
  * in the gadget symbol. */
-.macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero, base_sp
-gadget \name
+.macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero, base_sp, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if !\load || \transfer_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset32
+	.set .Lsa\@, scalar_offset0
+	.if \load || \transfer_zero
+	.set .Lsa\@, scalar_none
+	.endif
+scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 2
+	.if !\load && (\forward & 4)
+	mov x22, x0
+	.endif
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	ubfx x21, x8, #32, #16
-	ldr x24, [_cpu, x20]
+	scalar_read \forward, 1, x24, x20
 	.if \base_sp
 	tst x24, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
-	ldr x26, [_cpu, x21]
+	scalar_read \forward, 2, x26, x21
 	.if \address_extension == 0
 	mov w26, w26
 	.elseif \address_extension == 2
@@ -624,19 +769,21 @@ gadget \name
 	.endif
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	\instruction \host_register\()0, [x7]
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	scalar_memory_transfer \load, \forward, 4, \instruction, \host_register
 		.if !\transfer_zero
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 4)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
-	\instruction \host_register\()0, [x7]
+	scalar_memory_transfer \load, \forward, 4, \instruction, \host_register
 	.endif
 	add _stream, _stream, #8
 	next_gadget
@@ -670,14 +817,25 @@ gadget \name
 		.if \transfer_zero
 	mov x0, xzr
 		.else
+	.if !(\forward & 4)
 	ldr x0, [_cpu, x19]
+	.endif
 		.endif
-	fmov d0, x0
+	scalar_store_vector \forward, 4, 1
 	transfer_slow 1, x26, \bytes
 	.endif
 	add _stream, _stream, #8
 	next_gadget
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, .Lsa\@, scalar_other_register_fast, \name, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_other_register_extension name, load, instruction, host_register, bytes, result_extension, address_extension, extension_name, shifted
@@ -719,19 +877,28 @@ scalar_other_register_all load64u, 1, ldr, x, 8, 0
 /* SIMD&FP unscaled/pre/post-indexed and register-offset forms use the same
  * translated address descriptors as scalar memory, with the V-register byte
  * offset in bits 15:0. */
-.macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode, base_sp
-gadget \name
+.macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode, base_sp, forward=0
+	.set .Lsn\@, scalar_offset16
+scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	asr x21, x8, #32
-	ldr x24, [_cpu, x20]
+	scalar_read \forward, 1, x24, x20
 	.if \base_sp
 	tst x24, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x25, x24, x21
@@ -747,11 +914,11 @@ gadget \name
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_immediate_cross\@
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
@@ -810,6 +977,15 @@ gadget \name
 	add sp, sp, #32
 	b uml_arm64_gadget_memory_fault
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, vector_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \base_sp
 .endm
 
 .macro vector_other_immediate_operation name, load, instruction, host_register, bytes
@@ -821,22 +997,32 @@ gadget \name
 	vector_other_immediate_fast vector_other_\name\()_post_sp, \load, \instruction, \host_register, \bytes, 2, 1
 .endm
 
-.macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted, base_sp
-gadget \name
+.macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted, base_sp, forward=0
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset32
+scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	ubfx x21, x8, #32, #16
-	ldr x24, [_cpu, x20]
+	scalar_read \forward, 1, x24, x20
 	.if \base_sp
 	tst x24, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_read\@
+	.else
 	b.ne .Lscalar_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_write\@
+	.else
 	b.ne .Lscalar_alignment_fault_write
+	.endif
 		.endif
 	.endif
-	ldr x26, [_cpu, x21]
+	scalar_read \forward, 2, x26, x21
 	.if \extension == 0
 	mov w26, w26
 	.elseif \extension == 2
@@ -859,11 +1045,11 @@ gadget \name
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_register_cross\@
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
@@ -911,6 +1097,15 @@ gadget \name
 97:
 	add sp, sp, #32
 	b uml_arm64_gadget_memory_fault
+	.if \forward
+.Lscalar_forward_alignment_read\@:
+	b .Lscalar_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_write\@:
+	b .Lscalar_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, vector_other_register_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \shifted, \base_sp
 .endm
 
 .macro vector_other_register_extension name, load, instruction, host_register, bytes, extension, extension_name, shifted
@@ -952,20 +1147,29 @@ vector_other_operation load128, 1, ldr, q, 16
  * fixed by the symbol. Mode 0 is adjusted address without writeback, mode 1
  * pre-index, mode 2 post-index, and mode 3 post-index with suppressed load
  * writeback. */
-.macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero, sp_base
-gadget \name
+.macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero, sp_base, forward=0
+	.set .Lsn\@, scalar_offset32
+scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x22, x8, #0xffff
 	ubfx x23, x8, #16, #16
 	ubfx x24, x8, #32, #16
 	asr x6, x8, #48
-	ldr x16, [_cpu, x24]
+	scalar_read \forward, 1, x16, x24
 	.if \sp_base
 	tst x16, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_pair_read\@
+	.else
 	b.ne uml_arm64_gadget_pair_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_pair_write\@
+	.else
 	b.ne uml_arm64_gadget_pair_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x21, x16, x6
@@ -995,7 +1199,7 @@ gadget \name
 	branch_if_cross_page x19, (2 * \bytes), x9, .Linteger_pair_cross\@
 	.if \load
 	mov x7, x19
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	mov x19, x7
 	\instruction \host_register\()6, \host_register\()7, [x19]
 		.if !\first_zero
@@ -1006,7 +1210,7 @@ gadget \name
 		.endif
 	.else
 	mov x7, x19
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	mov x19, x7
 		.if \first_zero
 	mov x6, xzr
@@ -1133,6 +1337,15 @@ gadget \name
 	add sp, sp, #32
 	b uml_arm64_gadget_memory_fault
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_pair_read\@:
+	b uml_arm64_gadget_pair_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_pair_write\@:
+	b uml_arm64_gadget_pair_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, integer_pair_fast, \name, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, \first_zero, \second_zero, \sp_base
 .endm
 
 .macro integer_pair_mode name, load, instruction, host_register, bytes, sign_extend, mode
@@ -1175,20 +1388,29 @@ integer_pair_load_operation load64, ldp, x, 8, 0
  * pair descriptor, but the first two offsets address VectorRegister slots.
  * Width, direction, address mode, and SP versus GPR base are fixed by the
  * selected symbol. */
-.macro vector_pair_fast name, load, instruction, host_register, bytes, mode, sp_base
-gadget \name
+.macro vector_pair_fast name, load, instruction, host_register, bytes, mode, sp_base, forward=0
+	.set .Lsn\@, scalar_offset32
+scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	and x22, x8, #0xffff
 	ubfx x23, x8, #16, #16
 	ubfx x24, x8, #32, #16
 	asr x6, x8, #48
-	ldr x16, [_cpu, x24]
+	scalar_read \forward, 1, x16, x24
 	.if \sp_base
 	tst x16, #0xf
 		.if \load
+	.if \forward
+	b.ne .Lscalar_forward_alignment_pair_read\@
+	.else
 	b.ne uml_arm64_gadget_pair_alignment_fault_read
+	.endif
 		.else
+	.if \forward
+	b.ne .Lscalar_forward_alignment_pair_write\@
+	.else
 	b.ne uml_arm64_gadget_pair_alignment_fault_write
+	.endif
 		.endif
 	.endif
 	add x21, x16, x6
@@ -1204,14 +1426,14 @@ gadget \name
 	branch_if_cross_page x19, (2 * \bytes), x9, .Lvector_pair_cross\@
 	.if \load
 	mov x7, x19
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	mov x19, x7
 	\instruction \host_register\()0, \host_register\()1, [x19]
 	str q0, [_cpu, x22]
 	str q1, [_cpu, x23]
 	.else
 	mov x7, x19
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
 	mov x19, x7
 	ldr q0, [_cpu, x22]
 	ldr q1, [_cpu, x23]
@@ -1317,6 +1539,15 @@ gadget \name
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
 	.endif
+	.if \forward
+.Lscalar_forward_alignment_pair_read\@:
+	b uml_arm64_gadget_pair_alignment_fault_read
+	.endif
+	.if \forward
+.Lscalar_forward_alignment_pair_write\@:
+	b uml_arm64_gadget_pair_alignment_fault_write
+	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, vector_pair_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \sp_base
 .endm
 
 .macro vector_pair_operation name, load, instruction, host_register, bytes

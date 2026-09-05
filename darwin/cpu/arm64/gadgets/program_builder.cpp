@@ -2,6 +2,8 @@
 #include "program_builder_decode.hpp"
 #include "gadget_selection.hpp"
 #include "pair_histogram.hpp"
+#include "dependency_coverage.hpp"
+#include "scalar_forwarding.hpp"
 
 #include <algorithm>
 #include <array>
@@ -130,6 +132,9 @@ BuildResult Builder::build(
 	};
 	bool program_accesses_fp_state = false;
 	[[maybe_unused]] const void *previous_gadget = nullptr;
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+	std::uint16_t previous_scalar = scalar_no_register;
+#endif
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
@@ -151,6 +156,15 @@ BuildResult Builder::build(
 				true, address, instruction};
 		}
 
+#if UML_GADGET_DEPENDENCY_COVERAGE
+		const auto coverage_word = words.size();
+		emit(words, diagnostics::uml_arm64_gadget_dependency_coverage);
+		emit(words, std::uintptr_t{0});
+		emit(words, std::uintptr_t{0});
+#endif
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+		const auto compiled_before = compiled;
+#endif
 		DecodeContext context{
 			guest_address,
 			address,
@@ -195,6 +209,25 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+		// The selected assembly entry owns its access description. Do not
+		// infer it again from opcode bits: aliases and fused groups differ.
+		const auto current_scalar = decoded == DecodeResult::decoded &&
+			compiled == compiled_before ?
+			scalar_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
+		const auto source_mask = current_scalar.source_mask(previous_scalar);
+#if UML_GADGET_DEPENDENCY_COVERAGE
+		words[coverage_word + 1] = current_scalar.coverage_bucket(source_mask) *
+			sizeof(std::uint64_t);
+		words[coverage_word + 2] = std::max<std::size_t>(1,
+			compiled - compiled_before + (decoded == DecodeResult::decoded));
+#endif
+#if UML_GADGET_SCALAR_FORWARDING
+		if (source_mask != 0 && options.scalar_forwarding)
+			words[emitted_start] = current_scalar.contract->entries[source_mask];
+#endif
+		previous_scalar = current_scalar.destination;
+#endif
 		/* The first word a decode emits is its gadget pointer, which is
 		 * what makes the adjacent-pair record cheap: no separate pass and
 		 * no knowledge of operand shapes. Compiled out entirely unless the

@@ -11,3 +11,5 @@
 /* Experimental entries are appended so adding a candidate cannot move or
  * rephase any established gadget. */
 #include "engine/experimental.inc"
+#include "engine/scalar_forwarding.inc"
+#include "engine/dependency_coverage.inc"

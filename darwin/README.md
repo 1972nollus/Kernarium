@@ -88,6 +88,26 @@ must match every consumed guest word before reuse. Shared gadget translations
 contain no executor-owned link pointers after publication; consumers relocate
 links into their own state.
 
+The opt-in `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
+result in host `x0` between adjacent declared gadgets. Assembly templates emit
+both immutable operand contracts and precompiled source-mask variants; the
+builder selects a variant from the actual decoded entry, not an opcode-pair
+whitelist. Canonical GPR/SP stores remain unchanged. Arithmetic, logical,
+bitfield, select, shift, ordinary scalar loads, and scalar memory inputs share
+this contract. Store data crosses translation helpers in a callee-saved host
+register. Unsupported entries, fused decoder groups, branches, and block
+boundaries end the chain. Pair results and writeback-load results are not
+exported. There are no runtime register tags or executable-memory writes.
+With both forwarding and coverage disabled, the original gadget text is
+unchanged. Forwarding remains opt-in: a higher scalar dependency-chain ceiling
+does not establish a general application speedup or justify the larger bank
+for every workload.
+
+`UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
+Its entered-group counters describe opportunities in the same contracts;
+they do not measure retirement, conditional operand use, or speed. The
+measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
+
 The JIT derives private and shared cache geometry from one process budget. A
 managed run keeps at most one executor per guest CPU. Shared translations own
 immutable code and validation identity, while direct/indirect activation state

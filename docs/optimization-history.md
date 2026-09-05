@@ -8,6 +8,12 @@ current behavior; current contracts live in architecture and subsystem docs.
 policy. `Rejected` means the candidate was removed or disabled. `Measured`
 means the work improved understanding without justifying a product change.
 
+## General scalar forwarding
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Template-owned adjacent scalar result forwarding | Measured; retained as a default-off policy and diagnostic control. Shared assembly operand contracts cover arithmetic, logical, bitfield, select, shift, and ordinary memory inputs without an opcode-pair whitelist. Matched no-helper-exit controls improved dependent scalar throughput by roughly 2–3x, with independent controls neutral; full Geekbench and Aquarium coverage established broad applicability, not a general application speedup. Larger code/data banks and mixed full-workload timings do not justify default enablement. Both code layout and execution-data addresses must match in mechanism controls; disabling forwarding and coverage preserves the original gadget text. |
+
 ## Early gadget and MMU trials
 
 | ID | Attempt | Disposition and lesson |

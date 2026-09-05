@@ -107,6 +107,7 @@ arm64-gadget-hot-path	tests/unit/arm64	unit	retained
 arm64-gadget-nzcv-residency	tests/unit/arm64	unit	retained
 arm64-gadget-fp-environment	tests/unit/arm64	unit	retained
 arm64-gadget-links	tests/unit/arm64	unit	retained
+arm64-gadget-dependencies	tests/unit/arm64/arm64_gadget_dependency_tests.cpp	unit	retained
 arm64-gadget-indirect-links	tests/unit/arm64	unit	retained
 arm64-base-arithmetic-allocation	tests/unit/arm64	unit	retained
 arm64-base-arithmetic-carry	tests/unit/arm64	unit	retained
@@ -626,6 +627,7 @@ ios-simulator-webgl-aquarium-policy	tests/tooling/gpu/test_run_ios_simulator_chr
 ios-device-thermal-lifecycle-policy	tests/tooling/gpu/test_verify_ios_device_thermal_lifecycle.py	tooling	retained
 network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained
 jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
+gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
 performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
 arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
 arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained

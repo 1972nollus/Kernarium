@@ -25,6 +25,8 @@ _stream .req x28
 NAME(uml_arm64_gadget_\name):
 .endm
 
+#include "scalar_contract.inc"
+
 .macro next_gadget
 	ldr x8, [_stream], #8
 	br x8
@@ -75,7 +77,7 @@ NAME(uml_arm64_gadget_\name):
  * one-way folded entries. On success x7 is the host address. The miss helper
  * updates the entry.
  */
-.macro translate access, page_offset
+.macro translate access, page_offset, forward=0
 	and x8, x7, #UML_GADGET_GUEST_PAGE_BASE_MASK
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
@@ -106,7 +108,15 @@ NAME(uml_arm64_gadget_\name):
 	mov w2, #\access
 	bl NAME(uml_arm64_tlb_miss)
 	ldp x1, x2, [sp], #16
+	.if \forward
+	/* Cross-section conditional relocations are not available on Mach-O.
+	 * Only the cold miss path needs this long-branch trampoline. */
+	cbnz x0, 94f
+	b uml_arm64_gadget_memory_fault
+94:
+	.else
 	cbz x0, uml_arm64_gadget_memory_fault
+	.endif
 	mov x7, x0
 	b 92f
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -216,6 +226,9 @@ NAME(uml_arm64_gadget_enter):
 	stp x26, x27, [sp, #0x40]
 	stp x28, x29, [sp, #0x50]
 	str lr, [sp, #0x60]
+#if UML_GADGET_DEPENDENCY_COVERAGE
+	str x4, [sp, #0x70]
+#endif
 	str wzr, [sp, #0x84]
 	mov _stream, x0
 	/* Bias the retirement accumulator by the linked-chain limit. This lets
@@ -246,11 +259,11 @@ uml_arm64_gadget_leave:
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
  * folded to NOP, so the live entry is a three-load straight-line store. */
-gadget move_wide_constant
+scalar_entry move_wide_constant, 0, 0, scalar_offset0, scalar_none, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr _scalar_x11, [_stream], #8
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	str x11, [x13, x8]
+	str _scalar_x11, [x13, x8]
 	next_gadget
 
 /* MOVK keeps only Rd and imm16 in the stream. Width and halfword position are
@@ -267,19 +280,25 @@ gadget move_wide_constant
  * G96 rule, after G17 and G36 were discarded for what turned out to be layout
  * movement. Removing the padding to collect the I-cache saving is a separate
  * trial with its own measurement. */
-.macro move_wide_keep bits64, shift, suffix
-gadget move_wide_keep_\suffix
+.macro move_wide_keep bits64, shift, suffix, forward=0
+	.set .Lsd\@, scalar_register0
+	.set .Lsn\@, scalar_register0
+scalar_entry move_wide_keep_\suffix, \forward, 0, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx x11, x8, #8, #16
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	ldr x14, [x13, x9, lsl #3]
-	.if \bits64
-	bfi x14, x11, #\shift, #16
+	.if \forward & 1
+	mov _scalar_x14, x0
 	.else
-	bfi w14, w11, #\shift, #16
+	ldr _scalar_x14, [x13, x9, lsl #3]
 	.endif
-	str x14, [x13, x9, lsl #3]
+	.if \bits64
+	bfi _scalar_x14, x11, #\shift, #16
+	.else
+	bfi _scalar_w14, w11, #\shift, #16
+	.endif
+	str _scalar_x14, [x13, x9, lsl #3]
 	next_gadget
 	.if \bits64
 		.if \shift
@@ -294,6 +313,7 @@ gadget move_wide_keep_\suffix
 	.space 12
 		.endif
 	.endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, move_wide_keep, \bits64, \shift, \suffix
 .endm
 
 move_wide_keep 0, 0, w0
@@ -309,8 +329,19 @@ move_wide_keep 1, 48, x3
  * both architectural register-31 meanings are fixed by the translator.  The
  * compact operand is Rd[4:0], Rn[12:8], immediate[39:16].  These variants
  * deliberately contain no opcode tests or conditional branches. */
-.macro add_sub_immediate_fast bits64, subtract, flags, source_sp, destination_special, suffix
-gadget add_sub_immediate_\suffix
+.macro add_sub_immediate_fast bits64, subtract, flags, source_sp, destination_special, suffix, forward=0
+	.set .Lsd\@, scalar_register0
+	.if \destination_special && !\flags
+	.set .Lsd\@, scalar_sp
+	.endif
+	.if \destination_special && \flags
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_register8
+	.if \source_sp
+	.set .Lsn\@, scalar_sp
+	.endif
+scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 #if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	/* This family is non-faulting and leaves x14 free. Builder always emits a
 	 * terminal after a translated fallthrough, so the successor word exists
@@ -320,38 +351,37 @@ gadget add_sub_immediate_\suffix
 	ldr x8, [_stream], #8
 #endif
 	.if \source_sp
-	ldr x15, [_cpu, #UML_GADGET_CPU_SP]
+	scalar_load_sp \forward, 1, x15
 	.else
-	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
 	.endif
 	lsr x11, x8, #16
 	.if \bits64
 		.if \subtract
 			.if \flags
-	subs x16, x15, x11
+	subs _scalar_x16, x15, x11
 			.else
-	sub x16, x15, x11
+	sub _scalar_x16, x15, x11
 			.endif
 		.else
 			.if \flags
-	adds x16, x15, x11
+	adds _scalar_x16, x15, x11
 			.else
-	add x16, x15, x11
+	add _scalar_x16, x15, x11
 			.endif
 		.endif
 	.else
 		.if \subtract
 			.if \flags
-	subs w16, w15, w11
+	subs _scalar_w16, w15, w11
 			.else
-	sub w16, w15, w11
+	sub _scalar_w16, w15, w11
 			.endif
 		.else
 			.if \flags
-	adds w16, w15, w11
+	adds _scalar_w16, w15, w11
 			.else
-	add w16, w15, w11
+	add _scalar_w16, w15, w11
 			.endif
 		.endif
 	.endif
@@ -360,11 +390,11 @@ gadget add_sub_immediate_\suffix
 	.endif
 	.if \destination_special
 		.if !\flags
-	str x16, [_cpu, #UML_GADGET_CPU_SP]
+	str _scalar_x16, [_cpu, #UML_GADGET_CPU_SP]
 		.endif
 	.else
 	and w9, w8, #0x1f
-	str x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
 #if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	br x14
@@ -375,6 +405,7 @@ gadget add_sub_immediate_\suffix
 #else
 	next_gadget
 #endif
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
 .endm
 
 .macro add_sub_immediate_modes bits64, subtract, flags, prefix
@@ -404,29 +435,29 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
 	.if \bits64
 		.if \subtract
 			.if \flags
-	subs x7, x15, x16
+	subs _scalar_x7, x15, x16
 			.else
-	sub x7, x15, x16
+	sub _scalar_x7, x15, x16
 			.endif
 		.else
 			.if \flags
-	adds x7, x15, x16
+	adds _scalar_x7, x15, x16
 			.else
-	add x7, x15, x16
+	add _scalar_x7, x15, x16
 			.endif
 		.endif
 	.else
 		.if \subtract
 			.if \flags
-	subs w7, w15, w16
+	subs _scalar_w7, w15, w16
 			.else
-	sub w7, w15, w16
+	sub _scalar_w7, w15, w16
 			.endif
 		.else
 			.if \flags
-	adds w7, w15, w16
+	adds _scalar_w7, w15, w16
 			.else
-	add w7, w15, w16
+	add _scalar_w7, w15, w16
 			.endif
 		.endif
 	.endif
@@ -435,25 +466,35 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
 	.endif
 	.if !\destination_discard
 	and x9, x8, #0xffff
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	.endif
 	next_gadget
 .endm
 
-.macro add_sub_register_shifted_fast bits64, subtract, flags, shift_kind, left_zero, right_zero, destination_discard, suffix
-gadget add_sub_register_\suffix
+.macro add_sub_register_shifted_fast bits64, subtract, flags, shift_kind, left_zero, right_zero, destination_discard, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if \destination_discard
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset32
+	.if \right_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry add_sub_register_\suffix, \forward, 2, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 	.endif
 	.if \shift_kind != 0
 	ubfx x6, x8, #48, #6
@@ -476,18 +517,26 @@ gadget add_sub_register_\suffix
 		.endif
 	.endif
 	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_register_shifted_fast, \bits64, \subtract, \flags, \shift_kind, \left_zero, \right_zero, \destination_discard, \suffix
 .endm
 
-.macro add_sub_register_extended_fast bits64, subtract, flags, extension, shift_nonzero, right_zero, destination_discard, suffix
-gadget add_sub_register_\suffix
+.macro add_sub_register_extended_fast bits64, subtract, flags, extension, shift_nonzero, right_zero, destination_discard, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if \destination_discard
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset32
+	.if \right_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry add_sub_register_\suffix, \forward, 3, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.if \right_zero
 	mov x16, xzr
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 	.endif
 	.if \extension == 0
 	and x16, x16, #0xff
@@ -507,6 +556,7 @@ gadget add_sub_register_\suffix
 	lsl x16, x16, x6
 	.endif
 	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_register_extended_fast, \bits64, \subtract, \flags, \extension, \shift_nonzero, \right_zero, \destination_discard, \suffix
 .endm
 
 .macro add_sub_shifted_destinations bits64, subtract, flags, shift_kind, left_zero, right_zero, prefix
@@ -582,50 +632,60 @@ add_sub_register_all 1, 1, 1, x_sub_s
  * XZR, equal sources, and a discarded destination, are translation-selected.
  * Stream operand: destination byte offset[15:0], left byte offset[31:16],
  * right byte offset[47:32]. */
-.macro add_sub_carry_fast bits64, subtract, flags, left_zero, right_zero, same_source, destination_zero, suffix
-gadget add_sub_carry_\suffix
+.macro add_sub_carry_fast bits64, subtract, flags, left_zero, right_zero, same_source, destination_zero, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.if \destination_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_offset16
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset32
+	.if \right_zero || \same_source
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry add_sub_carry_\suffix, \forward, 4, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 	.endif
 	msr nzcv, x27
 	.if \bits64
 		.if \subtract
 			.if \flags
-	sbcs x7, x15, x16
+	sbcs _scalar_x7, x15, x16
 			.else
-	sbc x7, x15, x16
+	sbc _scalar_x7, x15, x16
 			.endif
 		.else
 			.if \flags
-	adcs x7, x15, x16
+	adcs _scalar_x7, x15, x16
 			.else
-	adc x7, x15, x16
+	adc _scalar_x7, x15, x16
 			.endif
 		.endif
 	.else
 		.if \subtract
 			.if \flags
-	sbcs w7, w15, w16
+	sbcs _scalar_w7, w15, w16
 			.else
-	sbc w7, w15, w16
+	sbc _scalar_w7, w15, w16
 			.endif
 		.else
 			.if \flags
-	adcs w7, w15, w16
+	adcs _scalar_w7, w15, w16
 			.else
-	adc w7, w15, w16
+	adc _scalar_w7, w15, w16
 			.endif
 		.endif
 	.endif
@@ -634,9 +694,10 @@ gadget add_sub_carry_\suffix
 	.endif
 	.if !\destination_zero
 	uxth w9, w8
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	.endif
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_carry_fast, \bits64, \subtract, \flags, \left_zero, \right_zero, \same_source, \destination_zero, \suffix
 .endm
 
 .macro add_sub_carry_destinations bits64, subtract, flags, left_zero, right_zero, same_source, prefix
@@ -1060,87 +1121,97 @@ cpa_multiply_modes msubpt, 1
 /* Production multiply family. The validated operation and every XZR choice
  * are translation-selected; discarded results are removed by Builder. Stream:
  * destination, left, right, addend CpuState byte offsets in 16-bit fields. */
-.macro multiply_add_fast operation, left_zero, right_zero, addend_zero, suffix
-gadget multiply_add_\suffix
+.macro multiply_add_fast operation, left_zero, right_zero, addend_zero, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.if \left_zero || \right_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset32
+	.if \left_zero || \right_zero
+	.set .Lsm\@, scalar_none
+	.endif
+	.set .Lsa\@, scalar_offset48
+	.if \operation >= 8 || \addend_zero
+	.set .Lsa\@, scalar_none
+	.endif
+scalar_entry multiply_add_\suffix, \forward, 5, .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 1
 	ldr x8, [_stream], #8
 	.if \left_zero || \right_zero
 		/* A zero multiplicand makes the product zero. */
 		.if \operation >= 8 || \addend_zero
-	mov x7, xzr
+	mov _scalar_x7, xzr
 		.else
-	ubfx x12, x8, #48, #16
-	ldr x7, [_cpu, x12]
+	scalar_load \forward, 4, _scalar_x7, 12, 8, 48, 16, 0, _cpu
 			/* W-form writes zero-extend the copied addend. */
 			.if \operation == 0 || \operation == 1
-	mov w7, w7
+	mov _scalar_w7, _scalar_w7
 			.endif
 		.endif
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 		.if \operation < 8 && !\addend_zero
-	ubfx x12, x8, #48, #16
-	ldr x17, [_cpu, x12]
+	scalar_load \forward, 4, x17, 12, 8, 48, 16, 0, _cpu
 		.endif
 		.if \operation == 0
 			.if \addend_zero
-	mul w7, w15, w16
+	mul _scalar_w7, w15, w16
 			.else
-	madd w7, w15, w16, w17
+	madd _scalar_w7, w15, w16, w17
 			.endif
 		.elseif \operation == 1
 			.if \addend_zero
-	mneg w7, w15, w16
+	mneg _scalar_w7, w15, w16
 			.else
-	msub w7, w15, w16, w17
+	msub _scalar_w7, w15, w16, w17
 			.endif
 		.elseif \operation == 2
 			.if \addend_zero
-	mul x7, x15, x16
+	mul _scalar_x7, x15, x16
 			.else
-	madd x7, x15, x16, x17
+	madd _scalar_x7, x15, x16, x17
 			.endif
 		.elseif \operation == 3
 			.if \addend_zero
-	mneg x7, x15, x16
+	mneg _scalar_x7, x15, x16
 			.else
-	msub x7, x15, x16, x17
+	msub _scalar_x7, x15, x16, x17
 			.endif
 		.elseif \operation == 4
 			.if \addend_zero
-	smull x7, w15, w16
+	smull _scalar_x7, w15, w16
 			.else
-	smaddl x7, w15, w16, x17
+	smaddl _scalar_x7, w15, w16, x17
 			.endif
 		.elseif \operation == 5
 			.if \addend_zero
-	smnegl x7, w15, w16
+	smnegl _scalar_x7, w15, w16
 			.else
-	smsubl x7, w15, w16, x17
+	smsubl _scalar_x7, w15, w16, x17
 			.endif
 		.elseif \operation == 6
 			.if \addend_zero
-	umull x7, w15, w16
+	umull _scalar_x7, w15, w16
 			.else
-	umaddl x7, w15, w16, x17
+	umaddl _scalar_x7, w15, w16, x17
 			.endif
 		.elseif \operation == 7
 			.if \addend_zero
-	umnegl x7, w15, w16
+	umnegl _scalar_x7, w15, w16
 			.else
-	umsubl x7, w15, w16, x17
+	umsubl _scalar_x7, w15, w16, x17
 			.endif
 		.elseif \operation == 8
-	smulh x7, x15, x16
+	smulh _scalar_x7, x15, x16
 		.else
-	umulh x7, x15, x16
+	umulh _scalar_x7, x15, x16
 		.endif
 	.endif
 	and x9, x8, #0xffff
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, .Lsa\@, multiply_add_fast, \operation, \left_zero, \right_zero, \addend_zero, \suffix
 .endm
 .macro multiply_result operation, left_zero, right_zero, addend_zero, prefix
 multiply_add_fast \operation, \left_zero, \right_zero, \addend_zero, \prefix\()_r
@@ -1177,47 +1248,55 @@ multiply_high_sources 9, umulh
 
 /* Translation-selected LSLV/LSRV/ASRV/RORV. Discarded destinations are
  * folded to NOP, so every remaining entry stores a result. */
-.macro variable_shift_fast operation, bits64, left_zero, right_zero, same_source, suffix
-gadget variable_shift_\suffix
+.macro variable_shift_fast operation, bits64, left_zero, right_zero, same_source, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset32
+	.if \right_zero || \same_source
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry variable_shift_\suffix, \forward, 6, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 	.endif
 	.if \bits64
 		.if \operation == 0
-	lsl x7, x15, x16
+	lsl _scalar_x7, x15, x16
 		.elseif \operation == 1
-	lsr x7, x15, x16
+	lsr _scalar_x7, x15, x16
 		.elseif \operation == 2
-	asr x7, x15, x16
+	asr _scalar_x7, x15, x16
 		.else
-	ror x7, x15, x16
+	ror _scalar_x7, x15, x16
 		.endif
 	.else
 		.if \operation == 0
-	lsl w7, w15, w16
+	lsl _scalar_w7, w15, w16
 		.elseif \operation == 1
-	lsr w7, w15, w16
+	lsr _scalar_w7, w15, w16
 		.elseif \operation == 2
-	asr w7, w15, w16
+	asr _scalar_w7, w15, w16
 		.else
-	ror w7, w15, w16
+	ror _scalar_w7, w15, w16
 		.endif
 	.endif
 	uxth w9, w8
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, variable_shift_fast, \operation, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
 
 .macro variable_shift_sources operation, bits64, prefix
@@ -1243,39 +1322,47 @@ variable_shift_sources 3, 1, x_ror
 /* Translation-selected UDIV/SDIV. Host A64 already implements the guest's
  * zero-divisor and signed-overflow results without a conditional branch.
  * Discarded destinations are folded to NOP. */
-.macro divide_fast signed, bits64, left_zero, right_zero, same_source, suffix
-gadget divide_\suffix
+.macro divide_fast signed, bits64, left_zero, right_zero, same_source, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset32
+	.if \right_zero || \same_source
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry divide_\suffix, \forward, 7, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
 	.endif
 	.if \bits64
 		.if \signed
-	sdiv x7, x15, x16
+	sdiv _scalar_x7, x15, x16
 		.else
-	udiv x7, x15, x16
+	udiv _scalar_x7, x15, x16
 		.endif
 	.else
 		.if \signed
-	sdiv w7, w15, w16
+	sdiv _scalar_w7, w15, w16
 		.else
-	udiv w7, w15, w16
+	udiv _scalar_w7, w15, w16
 		.endif
 	.endif
 	uxth w9, w8
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, divide_fast, \signed, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
 .macro divide_sources signed, bits64, prefix
 divide_fast \signed, \bits64, 0, 0, 0, \prefix\()_rr_r
@@ -1430,21 +1517,31 @@ crc32_sources 7, cx, 8, 0x3b78, 0x82f6
 
 /* Translation-selected EXTR/ROR. Width, zero shift, and all XZR choices are
  * fixed. Stream operand: Rd, Rn, Rm, shift in successive bytes. */
-.macro extract_register_fast bits64, shift_nonzero, left_zero, right_zero, destination_zero, suffix
-gadget extract_register_\suffix
+.macro extract_register_fast bits64, shift_nonzero, left_zero, right_zero, destination_zero, suffix, forward=0
+	.set .Lsd\@, scalar_register0
+	.if \destination_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_register8
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_register16
+	.if \right_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry extract_register_\suffix, \forward, 8, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	add x13, _cpu, #UML_GADGET_CPU_X0
 	.if \left_zero
 	mov x14, xzr
 	.else
-	ubfx w10, w8, #8, #5
-	ldr x14, [x13, x10, lsl #3]
+	scalar_load \forward, 1, x14, 10, 8, 8, 5, 3, x13
 	.endif
 	.if \right_zero
 	mov x15, xzr
 	.else
-	ubfx w11, w8, #16, #5
-	ldr x15, [x13, x11, lsl #3]
+	scalar_load \forward, 2, x15, 11, 8, 16, 5, 3, x13
 	.endif
 	.if \shift_nonzero
 	ubfx w12, w8, #24, #6
@@ -1454,26 +1551,26 @@ gadget extract_register_\suffix
 	 * since 2^32 is a multiple of 64. One instruction instead of two, and
 	 * the chain no longer waits on a constant materialisation. */
 		.if \bits64
-	lsr x16, x15, x12
+	lsr _scalar_x16, x15, x12
 	neg w17, w12
 	lsl x17, x14, x17
-	orr x16, x16, x17
+	orr _scalar_x16, _scalar_x16, x17
 		.else
-	lsr w16, w15, w12
+	lsr _scalar_w16, w15, w12
 	neg w17, w12
 	lsl w17, w14, w17
-	orr w16, w16, w17
+	orr _scalar_w16, _scalar_w16, w17
 		.endif
 	.else
 		.if \bits64
-	mov x16, x15
+	mov _scalar_x16, x15
 		.else
-	mov w16, w15
+	mov _scalar_w16, w15
 		.endif
 	.endif
 	.if !\destination_zero
 	and w9, w8, #0x1f
-	str x16, [x13, x9, lsl #3]
+	str _scalar_x16, [x13, x9, lsl #3]
 	.endif
 	next_gadget
 	/* Hold this entry's length, and so every later entry's address and
@@ -1481,6 +1578,7 @@ gadget extract_register_\suffix
 	.if \shift_nonzero
 	.space 4
 	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, extract_register_fast, \bits64, \shift_nonzero, \left_zero, \right_zero, \destination_zero, \suffix
 .endm
 .macro extract_destinations bits64, shift_nonzero, left_zero, right_zero, prefix
 extract_register_fast \bits64, \shift_nonzero, \left_zero, \right_zero, 0, \prefix\()_r
@@ -1505,38 +1603,47 @@ extract_sources 1, 1, x_s
 /* Production CSEL/CSINC/CSINV/CSNEG use the native conditional-select family
  * directly. Builder maps XZR sources to CpuState::gadget_zero and discards an
  * XZR destination as NOP, so no opcode/register-mode branches remain. */
-.macro conditional_select_fast name, condition, operation, bits64, suffix
-gadget conditional_select_fast_\name\()_\suffix
+.macro conditional_select_fast name, condition, operation, bits64, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset32
+scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
+#if UML_GADGET_SCALAR_FORWARDING
+	scalar_load \forward, 1, x15, 10, 8, 16
+	scalar_load \forward, 2, x16, 11, 8, 32
+#else
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
 	ldr x15, [_cpu, x10]
 	ldr x16, [_cpu, x11]
+#endif
 	msr nzcv, x27
 	.if \bits64
 		.if \operation == 0
-	csel x7, x15, x16, \condition
+	csel _scalar_x7, x15, x16, \condition
 		.elseif \operation == 1
-	csinc x7, x15, x16, \condition
+	csinc _scalar_x7, x15, x16, \condition
 		.elseif \operation == 2
-	csinv x7, x15, x16, \condition
+	csinv _scalar_x7, x15, x16, \condition
 		.else
-	csneg x7, x15, x16, \condition
+	csneg _scalar_x7, x15, x16, \condition
 		.endif
 	.else
 		.if \operation == 0
-	csel w7, w15, w16, \condition
+	csel _scalar_w7, w15, w16, \condition
 		.elseif \operation == 1
-	csinc w7, w15, w16, \condition
+	csinc _scalar_w7, w15, w16, \condition
 		.elseif \operation == 2
-	csinv w7, w15, w16, \condition
+	csinv _scalar_w7, w15, w16, \condition
 		.else
-	csneg w7, w15, w16, \condition
+	csneg _scalar_w7, w15, w16, \condition
 		.endif
 	.endif
-	str x7, [_cpu, x9]
+	str _scalar_x7, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, conditional_select_fast, \name, \condition, \operation, \bits64, \suffix
 .endm
 .macro conditional_select_fast_modes name, condition
 conditional_select_fast \name, \condition, 0, 0, w_sel
@@ -1567,19 +1674,21 @@ conditional_select_fast_modes le, le
 /* AL and NV both select the first operand unconditionally.  Translation
  * shares these two compact copy gadgets across all four opcodes, avoiding an
  * NZCV restore, a second source load, and a conditional-select instruction. */
-.macro conditional_select_always bits64, suffix
-gadget conditional_select_fast_always_\suffix
+.macro conditional_select_always bits64, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+scalar_entry conditional_select_fast_always_\suffix, \forward, 9, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, _scalar_x15, 10, 8, 16, 16, 0, _cpu
 	.if \bits64
-	str x15, [_cpu, x9]
+	str _scalar_x15, [_cpu, x9]
 	.else
-	mov w7, w15
-	str x7, [_cpu, x9]
+	mov _scalar_w7, _scalar_w15
+	str _scalar_x7, [_cpu, x9]
 	.endif
 	next_gadget
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, conditional_select_always, \bits64, \suffix
 .endm
 conditional_select_always 0, w
 conditional_select_always 1, x
@@ -1592,8 +1701,13 @@ conditional_select_always 1, x
  * condition itself; width, add/subtract, immediate/register and XZR selection
  * are fixed at translation. Stream: left offset, right offset/immediate, and
  * the already-positioned alternative NZCV value. */
-.macro conditional_compare_fast name, condition, subtract, bits64, immediate, always_true, suffix
-gadget conditional_compare_fast_\name\()_\suffix
+.macro conditional_compare_fast name, condition, subtract, bits64, immediate, always_true, suffix, forward=0
+	.set .Lsn\@, scalar_offset0
+	.set .Lsm\@, scalar_offset16
+	.if \immediate
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry conditional_compare_fast_\name\()_\suffix, \forward, 10, scalar_none, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \always_true == 0
 	msr nzcv, x27
@@ -1602,13 +1716,11 @@ gadget conditional_compare_fast_\name\()_\suffix
 	next_gadget
 .Lconditional_compare_true\@:
 	.endif
-	ubfx x10, x8, #0, #16
-	ldr x12, [_cpu, x10]
+	scalar_load \forward, 1, x12, 10, 8, 0, 16, 0, _cpu
 	.if \immediate
 	ubfx x13, x8, #16, #5
 	.else
-	ubfx x11, x8, #16, #16
-	ldr x13, [_cpu, x11]
+	scalar_load \forward, 2, x13, 11, 8, 16, 16, 0, _cpu
 	.endif
 	.if \bits64
 		.if \subtract
@@ -1625,6 +1737,7 @@ gadget conditional_compare_fast_\name\()_\suffix
 	.endif
 	mrs x27, nzcv
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, conditional_compare_fast, \name, \condition, \subtract, \bits64, \immediate, \always_true, \suffix
 .endm
 .macro conditional_compare_fast_modes name, condition, always_true
 conditional_compare_fast \name, \condition, 0, 0, 0, \always_true, w_cmn_r
@@ -1659,22 +1772,40 @@ conditional_compare_fast_modes always, al, 1
 /* Production logical shifted-register entries.  Builder specializes width,
  * operation, inversion, shift kind (including the common no-shift form), and
  * every XZR choice. Stream: Rd, Rn, Rm, shift in successive bytes. */
-.macro logical_shifted_fast operation, bits64, invert, shift_kind, left_zero, right_zero, destination_zero, suffix
-gadget logical_shifted_\suffix
+.macro logical_shifted_fast operation, bits64, invert, shift_kind, left_zero, right_zero, destination_zero, suffix, forward=0
+	.set .Lsd\@, scalar_register0
+	.if \destination_zero
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_register8
+	.if \left_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_register16
+	.if \right_zero
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry logical_shifted_\suffix, \forward, 11, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 		.if \operation != 1 || \invert || \shift_kind != 0 || \destination_zero
 	mov x15, xzr
 		.endif
 	.else
-	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
 	.endif
 	.if \right_zero
-	mov x16, xzr
+	.if \operation == 1 && \bits64 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
+	mov _scalar_x16, xzr
 	.else
-	ubfx w11, w8, #16, #5
-	ldr x16, [_cpu, x11, lsl #3]
+	mov x16, xzr
+	.endif
+	.else
+	.if \operation == 1 && \bits64 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
+	scalar_load \forward, 2, _scalar_x16, 11, 8, 16, 5, 3, _cpu
+	.else
+	scalar_load \forward, 2, x16, 11, 8, 16, 5, 3, _cpu
+	.endif
 	.endif
 	.if \shift_kind != 0
 	ubfx w6, w8, #24, #6
@@ -1706,32 +1837,32 @@ gadget logical_shifted_\suffix
 	.if \operation == 1 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
 		.if \bits64
 	and w9, w8, #0x1f
-	str x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_cpu, x9, lsl #3]
 		.else
-	mov w7, w16
+	mov _scalar_w7, w16
 	and w9, w8, #0x1f
-	str x7, [_cpu, x9, lsl #3]
+	str _scalar_x7, [_cpu, x9, lsl #3]
 		.endif
 	.else
 		.if \bits64
 		.if \operation == 0
-	and x7, x15, x16
+	and _scalar_x7, x15, x16
 		.elseif \operation == 1
-	orr x7, x15, x16
+	orr _scalar_x7, x15, x16
 		.elseif \operation == 2
-	eor x7, x15, x16
+	eor _scalar_x7, x15, x16
 		.else
-	ands x7, x15, x16
+	ands _scalar_x7, x15, x16
 		.endif
 	.else
 		.if \operation == 0
-	and w7, w15, w16
+	and _scalar_w7, w15, w16
 		.elseif \operation == 1
-	orr w7, w15, w16
+	orr _scalar_w7, w15, w16
 		.elseif \operation == 2
-	eor w7, w15, w16
+	eor _scalar_w7, w15, w16
 		.else
-	ands w7, w15, w16
+	ands _scalar_w7, w15, w16
 		.endif
 		.endif
 		.if \operation == 3
@@ -1739,7 +1870,7 @@ gadget logical_shifted_\suffix
 		.endif
 		.if !\destination_zero
 	and w9, w8, #0x1f
-	str x7, [_cpu, x9, lsl #3]
+	str _scalar_x7, [_cpu, x9, lsl #3]
 		.endif
 	.endif
 	next_gadget
@@ -1752,6 +1883,7 @@ gadget logical_shifted_\suffix
 	nop
 	nop
 	.endif
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, logical_shifted_fast, \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, \destination_zero, \suffix
 .endm
 .macro logical_shifted_destinations operation, bits64, invert, shift_kind, left_zero, right_zero, prefix
 logical_shifted_fast \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, 0, \prefix\()_r
@@ -1798,41 +1930,51 @@ logical_shifted_shifts 3, 1, 1, x_ands_n
 /* Production logical-immediate entries.  The immediate is decoded once by
  * Builder; width, operation, XZR/SP meanings and flag update are entry-point
  * constants. Stream: [Rd[4:0], Rn[12:8]][decoded immediate]. */
-.macro logical_immediate_fast operation, bits64, source_zero, destination_special, suffix
-gadget logical_immediate_\suffix
+.macro logical_immediate_fast operation, bits64, source_zero, destination_special, suffix, forward=0
+	.set .Lsd\@, scalar_register0
+	.if \destination_special && \operation != 3
+	.set .Lsd\@, scalar_sp
+	.endif
+	.if \destination_special && \operation == 3
+	.set .Lsd\@, scalar_none
+	.endif
+	.set .Lsn\@, scalar_register8
+	.if \source_zero
+	.set .Lsn\@, scalar_none
+	.endif
+scalar_entry logical_immediate_\suffix, \forward, 12, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
 	.if \source_zero
 		.if \operation == 0
-	mov x16, xzr
+	mov _scalar_x16, xzr
 		.elseif \operation == 1 || \operation == 2
-	mov x16, x14
+	mov _scalar_x16, x14
 		.else
-	mov x16, xzr
+	mov _scalar_x16, xzr
 	mov x27, #0x40000000
 		.endif
 	.else
-	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
 		.if \bits64
 			.if \operation == 0
-	and x16, x15, x14
+	and _scalar_x16, x15, x14
 			.elseif \operation == 1
-	orr x16, x15, x14
+	orr _scalar_x16, x15, x14
 			.elseif \operation == 2
-	eor x16, x15, x14
+	eor _scalar_x16, x15, x14
 			.else
-	ands x16, x15, x14
+	ands _scalar_x16, x15, x14
 			.endif
 		.else
 			.if \operation == 0
-	and w16, w15, w14
+	and _scalar_w16, w15, w14
 			.elseif \operation == 1
-	orr w16, w15, w14
+	orr _scalar_w16, w15, w14
 			.elseif \operation == 2
-	eor w16, w15, w14
+	eor _scalar_w16, w15, w14
 			.else
-	ands w16, w15, w14
+	ands _scalar_w16, w15, w14
 			.endif
 		.endif
 		.if \operation == 3
@@ -1841,13 +1983,14 @@ gadget logical_immediate_\suffix
 	.endif
 	.if \destination_special
 		.if \operation != 3
-	str x16, [_cpu, #UML_GADGET_CPU_SP]
+	str _scalar_x16, [_cpu, #UML_GADGET_CPU_SP]
 		.endif
 	.else
 	and w9, w8, #0x1f
-	str x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
 	next_gadget
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, logical_immediate_fast, \operation, \bits64, \source_zero, \destination_special, \suffix
 .endm
 .macro logical_immediate_modes operation, bits64, prefix
 logical_immediate_fast \operation, \bits64, 0, 0, \prefix\()_rr
@@ -1871,53 +2014,70 @@ logical_immediate_modes 3, 1, x_ands
 /* Production SBFM/BFM/UBFM. Builder has already decoded both masks, folds a
  * discarded Rd to NOP, and selects width/operation/XZR/zero-rotate. Stream:
  * [destination/source CpuState offsets, rotate, imms][write mask][test mask]. */
-.macro bitfield_fast operation, bits64, rotate_nonzero, source_zero, suffix
-gadget bitfield_\suffix
+.macro bitfield_fast operation, bits64, rotate_nonzero, source_zero, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.if \source_zero
+	.set .Lsn\@, scalar_none
+	.endif
+	.set .Lsm\@, scalar_offset0
+	.if \operation != 1
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 3
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
 	ldr x17, [_stream], #8
 	.if \source_zero
 	mov x15, xzr
 	.else
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
+#if UML_GADGET_SCALAR_FORWARDING
+	.if \operation == 1
+	/* Capture the old destination before the result overwrites x0. */
+	scalar_load \forward, 2, x6, 9, 8, 0
+	.endif
+#endif
 	.if !\bits64
 	mov w15, w15
 	.endif
 	.if \rotate_nonzero
 	ubfx x12, x8, #32, #6
 		.if \bits64
-	ror x16, x15, x12
+	ror _scalar_x16, x15, x12
 		.else
-	ror w16, w15, w12
+	ror _scalar_w16, w15, w12
 		.endif
 	.else
-	mov x16, x15
+	mov _scalar_x16, x15
 	.endif
-	and x16, x16, x14
+	and _scalar_x16, _scalar_x16, x14
 	.if \operation == 0
 	ubfx x11, x8, #40, #6
 	lsr x6, x15, x11
 	tst x6, #1
 	csetm x6, ne
 	.elseif \operation == 1
+#if !UML_GADGET_SCALAR_FORWARDING
 	and x9, x8, #0xffff
 	ldr x6, [_cpu, x9]
+#endif
 	bic x7, x6, x14
-	orr x16, x16, x7
+	orr _scalar_x16, _scalar_x16, x7
 	.else
 	mov x6, xzr
 	.endif
 	bic x6, x6, x17
-	and x16, x16, x17
-	orr x16, x16, x6
+	and _scalar_x16, _scalar_x16, x17
+	orr _scalar_x16, _scalar_x16, x6
 	.if !\bits64
-	mov w16, w16
+	mov _scalar_w16, _scalar_w16
 	.endif
 	and x9, x8, #0xffff
-	str x16, [_cpu, x9]
+	str _scalar_x16, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, bitfield_fast, \operation, \bits64, \rotate_nonzero, \source_zero, \suffix
 .endm
 .macro bitfield_sources operation, bits64, prefix
 bitfield_fast \operation, \bits64, 0, 0, \prefix\()_n_r
@@ -1939,82 +2099,114 @@ bitfield_sources 2, 1, x_u
 /* Translation-selected data-processing (1 source) operations. Source and
  * destination are direct CpuState byte offsets. The optional native forms are
  * selected only when the running host advertises the matching extension. */
-.macro bit_reverse_count_fast operation, bits64, native, suffix
-gadget bit_reverse_count_\suffix
+.macro bit_reverse_count_fast operation, bits64, native, suffix, forward=0
+	.set .Lsd\@, scalar_offset16
+	.set .Lsn\@, scalar_offset0
+scalar_entry bit_reverse_count_\suffix, \forward, 14, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x9, [_stream], #8
+#if UML_GADGET_SCALAR_FORWARDING
+	lsr x11, x9, #16
+	scalar_load \forward, 1, x12, 10, 9, 0
+#else
 	and x10, x9, #0xffff
 	lsr x11, x9, #16
 	ldr x12, [_cpu, x10]
+#endif
 	.if \native
 		.if \bits64
 			.if \operation == 6
-	.inst 0xdac0198d /* ctz x13, x12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0xdac01980 /* ctz x0, x12 */
+#else
+	.inst 0xdac0198d /* ctz _scalar_x13, x12 */
+#endif
 			.elseif \operation == 7
-	.inst 0xdac01d8d /* cnt x13, x12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0xdac01d80 /* cnt x0, x12 */
+#else
+	.inst 0xdac01d8d /* cnt _scalar_x13, x12 */
+#endif
 			.else
-	.inst 0xdac0218d /* abs x13, x12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0xdac02180 /* abs x0, x12 */
+#else
+	.inst 0xdac0218d /* abs _scalar_x13, x12 */
+#endif
 			.endif
 		.else
 			.if \operation == 6
-	.inst 0x5ac0198d /* ctz w13, w12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0x5ac01980 /* ctz w0, w12 */
+#else
+	.inst 0x5ac0198d /* ctz _scalar_w13, w12 */
+#endif
 			.elseif \operation == 7
-	.inst 0x5ac01d8d /* cnt w13, w12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0x5ac01d80 /* cnt w0, w12 */
+#else
+	.inst 0x5ac01d8d /* cnt _scalar_w13, w12 */
+#endif
 			.else
-	.inst 0x5ac0218d /* abs w13, w12 */
+	#if UML_GADGET_SCALAR_FORWARDING
+	.inst 0x5ac02180 /* abs w0, w12 */
+#else
+	.inst 0x5ac0218d /* abs _scalar_w13, w12 */
+#endif
 			.endif
 		.endif
 	.elseif \bits64
 		.if \operation == 0
-	rbit x13, x12
+	rbit _scalar_x13, x12
 		.elseif \operation == 1
-	rev16 x13, x12
+	rev16 _scalar_x13, x12
 		.elseif \operation == 2
-	rev32 x13, x12
+	rev32 _scalar_x13, x12
 		.elseif \operation == 3
-	rev x13, x12
+	rev _scalar_x13, x12
 		.elseif \operation == 4
-	clz x13, x12
+	clz _scalar_x13, x12
 		.elseif \operation == 5
-	cls x13, x12
+	cls _scalar_x13, x12
 		.elseif \operation == 6
-	rbit x13, x12
-	clz x13, x13
+	rbit _scalar_x13, x12
+	clz _scalar_x13, _scalar_x13
 		.elseif \operation == 7
 	fmov d0, x12
 	cnt v0.8b, v0.8b
 	addv b0, v0.8b
-	umov w13, v0.b[0]
+	umov _scalar_w13, v0.b[0]
 		.else
 	cmp x12, #0
-	cneg x13, x12, mi
+	cneg _scalar_x13, x12, mi
 		.endif
 	.else
 		.if \operation == 0
-	rbit w13, w12
+	rbit _scalar_w13, w12
 		.elseif \operation == 1
-	rev16 w13, w12
+	rev16 _scalar_w13, w12
 		.elseif \operation == 2
-	rev w13, w12
+	rev _scalar_w13, w12
 		.elseif \operation == 4
-	clz w13, w12
+	clz _scalar_w13, w12
 		.elseif \operation == 5
-	cls w13, w12
+	cls _scalar_w13, w12
 		.elseif \operation == 6
-	rbit w13, w12
-	clz w13, w13
+	rbit _scalar_w13, w12
+	clz _scalar_w13, _scalar_w13
 		.elseif \operation == 7
 	mov w12, w12
 	fmov d0, x12
 	cnt v0.8b, v0.8b
 	addv b0, v0.8b
-	umov w13, v0.b[0]
+	umov _scalar_w13, v0.b[0]
 		.else
 	cmp w12, #0
-	cneg w13, w12, mi
+	cneg _scalar_w13, w12, mi
 		.endif
 	.endif
-	str x13, [_cpu, x11]
+	str _scalar_x13, [_cpu, x11]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, bit_reverse_count_fast, \operation, \bits64, \native, \suffix
 .endm
 
 bit_reverse_count_fast 0, 0, 0, w_rbit
@@ -2124,12 +2316,17 @@ gadget pauth_pacga_z
 /* Production FEAT_CSSC min/max. Width, operation and operand form are fixed;
  * source fields are translation-resolved CpuState offsets. For immediates the
  * upper stream word already contains the correctly extended comparison value. */
-.macro integer_min_max_fast name, condition, is_signed, bits64, immediate, suffix
-gadget integer_\name\()_fast_\suffix
+.macro integer_min_max_fast name, condition, is_signed, bits64, immediate, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+	.set .Lsm\@, scalar_offset32
+	.if \immediate
+	.set .Lsm\@, scalar_none
+	.endif
+scalar_entry integer_\name\()_fast_\suffix, \forward, 15, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	ubfx x10, x8, #16, #16
-	ldr x12, [_cpu, x10]
+	scalar_load \forward, 1, x12, 10, 8, 16, 16, 0, _cpu
 	.if \immediate
 		.if \is_signed
 	asr x13, x8, #32
@@ -2137,18 +2334,18 @@ gadget integer_\name\()_fast_\suffix
 	lsr x13, x8, #32
 		.endif
 	.else
-	ubfx x11, x8, #32, #16
-	ldr x13, [_cpu, x11]
+	scalar_load \forward, 2, x13, 11, 8, 32, 16, 0, _cpu
 	.endif
 	.if \bits64
 	cmp x12, x13
-	csel x14, x12, x13, \condition
+	csel _scalar_x14, x12, x13, \condition
 	.else
 	cmp w12, w13
-	csel w14, w12, w13, \condition
+	csel _scalar_w14, w12, w13, \condition
 	.endif
-	str x14, [_cpu, x9]
+	str _scalar_x14, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, integer_min_max_fast, \name, \condition, \is_signed, \bits64, \immediate, \suffix
 .endm
 .macro integer_min_max_fast_modes name, condition, is_signed
 integer_min_max_fast \name, \condition, \is_signed, 0, 0, w_r
@@ -2167,17 +2364,19 @@ integer_min_max_fast_modes umin, ls, 0
 
 /* Equal inputs and unsigned zero identities are recognized by the builder.
  * These shared copy entries remove the second load, compare and select. */
-.macro integer_min_max_copy bits64, suffix
-gadget integer_min_max_copy_\suffix
+.macro integer_min_max_copy bits64, suffix, forward=0
+	.set .Lsd\@, scalar_offset0
+	.set .Lsn\@, scalar_offset16
+scalar_entry integer_min_max_copy_\suffix, \forward, 15, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	ubfx x10, x8, #16, #16
-	ldr x12, [_cpu, x10]
+	scalar_load \forward, 1, _scalar_x12, 10, 8, 16, 16, 0, _cpu
 	.if \bits64 == 0
-	mov w12, w12
+	mov _scalar_w12, _scalar_w12
 	.endif
-	str x12, [_cpu, x9]
+	str _scalar_x12, [_cpu, x9]
 	next_gadget
+	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, integer_min_max_copy, \bits64, \suffix
 .endm
 
 integer_min_max_copy 0, w

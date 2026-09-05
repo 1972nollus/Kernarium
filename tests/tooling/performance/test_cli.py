@@ -280,6 +280,7 @@ def run_geekbench_shutdown_case(
         emulator=pathlib.Path("emulator"),
         rootfs=pathlib.Path("rootfs.erofs"),
         profile_dir=None,
+        coverage_file=None,
         console_log=pathlib.Path("console.log"),
         command="geekbench6 --no-upload",
         root_device="/dev/ubda",

@@ -310,7 +310,8 @@
         ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
-        UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>)
+        UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
+        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
     target_compile_options(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -1177,6 +1178,23 @@
 		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-fp-environment
 		COMMAND uml_arm64_gadget_fp_environment_tests)
+
+    add_executable(uml_arm64_gadget_dependency_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_memory_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+    target_link_libraries(uml_arm64_gadget_dependency_tests PRIVATE
+        UML::CpuContract uml_arm64_engine_test_support)
+    target_include_directories(uml_arm64_gadget_dependency_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_definitions(uml_arm64_gadget_dependency_tests PRIVATE
+        UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
+        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
+    target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 
     add_executable(uml_arm64_gadget_link_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_link_tests.cpp

@@ -109,3 +109,5 @@ set_target_properties(uml-gadget-ceiling-native PROPERTIES
 
 add_custom_target(gadget-ceiling-binaries
     DEPENDS uml-gadget-ceiling-bench uml-gadget-ceiling-native)
+
+add_subdirectory(scalar_ceiling EXCLUDE_FROM_ALL)

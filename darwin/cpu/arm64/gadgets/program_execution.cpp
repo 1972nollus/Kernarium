@@ -58,7 +58,11 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 		cpu.access_fp_state();
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
-			program.instruction_count());
+			program.instruction_count()
+#if UML_GADGET_DEPENDENCY_COVERAGE
+			, diagnostics::dependency_counters()
+#endif
+			);
 	restore_native_fp_environment(cpu);
 	executed = result.executed;
 	return static_cast<::uml::cpu::EngineEvent>(result.event);
@@ -74,7 +78,11 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 		cpu.access_fp_state();
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
-			program.instruction_count());
+			program.instruction_count()
+#if UML_GADGET_DEPENDENCY_COVERAGE
+			, diagnostics::dependency_counters()
+#endif
+			);
 	executed = result.executed;
 	return static_cast<::uml::cpu::EngineEvent>(result.event);
 }
