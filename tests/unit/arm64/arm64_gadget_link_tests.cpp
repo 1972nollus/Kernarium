@@ -6,7 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory_resource>
 #include <source_location>
+#include <utility>
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
@@ -472,6 +474,31 @@ int main()
 			::uml::cpu::EngineEvent::continued);
 		require(cpu.pc == 0x4000);
 		require(executed == 4096);
+	}
+
+	/* A caller that precharges the counter above the chain limit must leave at
+	 * the first linked edge and retain its exact count. This also covers values
+	 * above 8,191, where testing bit 12 alone would wrap back to "below". */
+	{
+		LinkTarget self{0x4000};
+		self.link.instruction_count = 1;
+		const std::array instructions{0x1400'0000U}; // b .
+		auto built = gadgets::Builder{}.build(
+			0x4000, instructions,
+			[&](std::uint64_t) { return &self.link; });
+		gadgets::ProgramWords words{std::pmr::get_default_resource()};
+		for (const auto word : built.program.words())
+			words.push_back(word);
+		gadgets::Program precharged{
+			0x4000, 8192, std::move(words), false};
+		self.link.stream = precharged.words().data();
+		arm64::CpuState cpu{};
+		::uml::memory::Tlb tlb;
+		std::size_t executed = 0;
+		require(gadgets::execute(precharged, cpu, tlb, executed) ==
+			::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == 0x4000);
+		require(executed == 8193);
 	}
 
 	return 0;

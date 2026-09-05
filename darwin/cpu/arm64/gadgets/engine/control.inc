@@ -39,8 +39,10 @@ gadget gcs_fault
 .macro follow_block_link link
 	ldp _stream, x11, [\link]
 	add x29, x29, x11
-	cmp x29, #1, lsl #12
-	b.lo 98f
+	/* x29 is biased by -4,096 at entry, so a negative total remains below
+	 * the retirement limit. Unlike testing bit 12 directly, this stays correct
+	 * when callers enter with counts above 8,191. */
+	tbnz x29, #63, 98f
 	ldr x9, [\link, #16]
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr

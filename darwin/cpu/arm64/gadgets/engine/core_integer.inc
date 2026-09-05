@@ -218,7 +218,10 @@ NAME(uml_arm64_gadget_enter):
 	str lr, [sp, #0x60]
 	str wzr, [sp, #0x84]
 	mov _stream, x0
-	mov x29, x3
+	/* Bias the retirement accumulator by the linked-chain limit. This lets
+	 * follow_block_link test its sign bit in one instruction while preserving
+	 * the exact architectural count at the execution boundary. */
+	sub x29, x3, #1, lsl #12
 	/* Keep the architectural flags in a callee-saved host register. Gadget
 	 * scratch comparisons may clobber native PSTATE, so consumers still issue
 	 * MSR NZCV, but no per-instruction CpuState load/store is required. */
@@ -229,7 +232,7 @@ NAME(uml_arm64_gadget_enter):
 uml_arm64_gadget_leave:
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	restore_fpmr_environment
-	mov x1, x29
+	add x1, x29, #1, lsl #12
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
 	ldp x26, x27, [sp, #0x40]
