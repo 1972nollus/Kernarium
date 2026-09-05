@@ -138,7 +138,8 @@ executable mappings. Links are tagged by address space, and each executor
 retains activation contexts for up to 64 address spaces. Switching back to an
 unchanged context preserves trained links; code publication or context
 eviction deactivates that context before reuse. Stale blocks still require
-exact guest-word validation.
+exact guest-word validation. Runtime native compilations use one lowering pass,
+avoiding speculative GPR residency recompilation during process startup.
 
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host

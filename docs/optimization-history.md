@@ -223,6 +223,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Fund larger private JIT working sets within the process budget | Accepted. A 256 MiB private ceiling reduces browser startup cache resets while the total budget remains tied to guest RAM. Smaller process budgets reduce private geometry before allocating the shared remainder. |
 | Retain address-space link activation in writable data | Accepted. Generation-tagged direct and indirect links retain trained targets across unchanged address-space switches, while bounded context eviction and code publication deactivate the affected context. Link updates no longer open executable write windows. |
 | Lower bounded compare/exchange retry regions natively | Accepted. Native exclusives preserve width, ordering, status, flags, and retired prefixes; read-only mismatches and tagged accesses retain their semantic behavior. Concurrent native and semantic retries share the existing publication protocol. |
+| Remove speculative GPR residency recompilation from runtime misses | Accepted. Cold translation profiles exposed a second lowering pass on runtime misses. Keeping one lowering pass removes this duplicate compilation work. |
 
 ## Graphics backend investigations
 
