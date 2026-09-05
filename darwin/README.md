@@ -157,6 +157,8 @@ Bounded load/compare/conditional-branch/store-exclusive retry regions use host
 exclusives after checking both mappings and permissions. Unsupported shapes
 and tagged accesses retain the semantic path. Native and semantic stores
 continue to share the reservation publication protocol.
+An ordered store through an alias invalidates the matching software reservation
+even when the stored value is unchanged.
 
 ## Devices
 

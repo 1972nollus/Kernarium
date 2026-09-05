@@ -512,8 +512,12 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
                               std::uint32_t instruction) noexcept {
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
-  materialize_semantic_cpu_state(*cpu);
   const bool load = (instruction & 0x0040'0000U) != 0;
+  // Ordered stores must invalidate software reservations even when an alias
+  // writes the same bits. The semantic store also revalidates write access.
+  if (!load)
+    return uml_arm64_jit_execute_memory(cpu, tlb, instruction);
+  materialize_semantic_cpu_state(*cpu);
   const unsigned size_shift = instruction >> 30;
   const std::size_t size = std::size_t{1} << size_shift;
   const unsigned base = (instruction >> 5) & 31U;
@@ -522,33 +526,16 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const auto address = cpu->untag_data_address(tagged_address, base == 31U);
   if ((address & (size - 1U)) != 0) {
     tlb->fault_address = address;
-    tlb->fault_access = load ? Access::read : Access::write;
+    tlb->fault_access = Access::read;
     return pack_jit_result(Event::memory_fault, 0);
   }
-
-  if (load) {
-    auto *source = tlb->translate(address, Access::read);
-    if (source == nullptr)
-      return pack_jit_result(Event::memory_fault, 0);
-    std::uint64_t value = 0;
-    std::memcpy(&value, source, size);
-    std::atomic_thread_fence(std::memory_order_acquire);
-    cpu->write_register(transfer, value, false);
-  } else {
-    /*
-     * The dynamic loader can change COW permissions within the same
-     * page between ordered stores. Revalidate the write translation at
-     * this cold helper boundary instead of retaining a pre-transition
-     * host pointer.
-     */
-    tlb->discard(address);
-    auto *destination = tlb->translate(address, Access::write);
-    if (destination == nullptr)
-      return pack_jit_result(Event::memory_fault, 0);
-    const auto value = cpu->read_register(transfer, false);
-    std::atomic_thread_fence(std::memory_order_release);
-    std::memcpy(destination, &value, size);
-  }
+  auto *source = tlb->translate(address, Access::read);
+  if (source == nullptr)
+    return pack_jit_result(Event::memory_fault, 0);
+  std::uint64_t value = 0;
+  std::memcpy(&value, source, size);
+  std::atomic_thread_fence(std::memory_order_acquire);
+  cpu->write_register(transfer, value, false);
   cpu->pc += sizeof(instruction);
   return pack_jit_result(Event::continued, 1);
 }

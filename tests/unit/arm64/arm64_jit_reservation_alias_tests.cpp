@@ -2,6 +2,7 @@
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_semantic_memory.hpp"
 
 #include <array>
 #include <atomic>
@@ -281,11 +282,15 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
   require(backing.get64(page) == workers * iterations);
 }
 
-void same_backing_alias_case(bool overlaps, bool defer_cold = false) {
+enum class AliasStore : unsigned { plain, release, limited_release };
+
+void same_backing_alias_case(bool overlaps, bool defer_cold = false,
+                             AliasStore store = AliasStore::plain) {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   const auto generation =
       static_cast<unsigned long>((overlaps ? 10'100U : 10'101U) +
-                                 (defer_cold ? 20U : 0U));
+                                 (defer_cold ? 20U : 0U) +
+                                 40U * static_cast<unsigned>(store));
   const auto base =
       std::uint64_t{0x110'0000} + (overlaps ? 0U : 8U * page);
   const auto data = base + page;
@@ -337,11 +342,26 @@ void same_backing_alias_case(bool overlaps, bool defer_cold = false) {
   require(first_cpu.exclusive_size == 8);
   require(first_cpu.registers[3] == observed);
 
-  require(second.begin_execution(generation, second_cpu.pc));
-  require(second.run_block(second_cpu, shared_memory, generation, executed) ==
-          ::uml::cpu::EngineEvent::system_call);
-  require(executed == 2);
-  second.end_execution();
+  if (store == AliasStore::plain) {
+    require(second.begin_execution(generation, second_cpu.pc));
+    require(second.run_block(second_cpu, shared_memory, generation, executed) ==
+            ::uml::cpu::EngineEvent::system_call);
+    require(executed == 2);
+    second.end_execution();
+  } else {
+    // Exercise the helper explicitly so native lowering cannot hide a stale
+    // software reservation on an ordered instruction's cold path.
+    uml::memory::Tlb tlb;
+    tlb.prepare(generation, darwin_uml_static_vm_changes(generation));
+    const auto instruction = store == AliasStore::release ?
+        0xc89f'fcc2U : 0xc89f'7cc2U; // stlr/stllr x2, [x6]
+    const auto result = uml::cpu::arm64::uml_arm64_jit_execute_ordered(
+        &second_cpu, &tlb, instruction);
+    require((result >> 32U) == 1U);
+    require(static_cast<std::uint32_t>(result) ==
+            static_cast<std::uint32_t>(::uml::cpu::EngineEvent::continued));
+    require(second_cpu.pc == base + 12U);
+  }
 
   first_cpu.pc = base + 16U;
   require(first.run_block(first_cpu, shared_memory, generation, executed) ==
@@ -516,6 +536,10 @@ int main() {
   same_backing_alias_case(false);
   same_backing_alias_case(true, true);
   same_backing_alias_case(false, true);
+  for (const auto store : {AliasStore::release, AliasStore::limited_release}) {
+    same_backing_alias_case(true, false, store);
+    same_backing_alias_case(false, false, store);
+  }
   native_store_invalidates_semantic_reservation_case();
   concurrent_native_cold_paths_leave_publication_before_helper();
   return 0;
