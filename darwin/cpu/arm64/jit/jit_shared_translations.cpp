@@ -148,6 +148,7 @@ translation_payload_bytes(const SharedTranslation &translation) noexcept {
   return first.matches == second.matches && first.reuses == second.reuses &&
          first.misses == second.misses &&
          first.insertions == second.insertions &&
+         first.evictions == second.evictions &&
          first.rejected == second.rejected &&
          first.degraded_rejected == second.degraded_rejected &&
          first.malformed_rejected == second.malformed_rejected &&
@@ -186,7 +187,7 @@ void write_final_shared_translation_statistics(
     const SharedTranslationStatistics &statistics) noexcept {
   write_jit_profile_record(
       "Darwin JIT shared translations final entries=%llu "
-      "published=%llu matched=%llu reused=%llu missed=%llu "
+      "published=%llu evicted=%llu matched=%llu reused=%llu missed=%llu "
       "rejected=%llu degraded-rejected=%llu "
       "malformed-rejected=%llu insertion-failures=%llu "
       "failed-insertion-retained-accounted-bytes=%llu "
@@ -197,6 +198,7 @@ void write_final_shared_translation_statistics(
       "maximum-accounted-bytes=%llu\n",
       static_cast<unsigned long long>(statistics.entries),
       static_cast<unsigned long long>(statistics.insertions),
+      static_cast<unsigned long long>(statistics.evictions),
       static_cast<unsigned long long>(statistics.matches),
       static_cast<unsigned long long>(statistics.reuses),
       static_cast<unsigned long long>(statistics.misses),
@@ -337,7 +339,7 @@ SharedTranslationCache::preflight_publication(
     SharedTranslationPublicationSizes sizes,
     std::size_t direct_link_refusals,
     std::size_t indirect_link_refusals) {
-  const auto *shard = allocated_shard(guest_pc);
+  auto *shard = allocated_shard(guest_pc);
   std::shared_lock<std::shared_mutex> cache_lock;
   if (shard != nullptr) {
     cache_lock = std::shared_lock{shard->mutex};
@@ -370,8 +372,21 @@ SharedTranslationCache::preflight_publication(
    */
   sizes.guest_words = std::max(sizes.guest_words, guest_words.size());
   const auto lower_bound = lower_bound_entry_budget_charge(sizes);
+  if (shard != nullptr &&
+      (shard->count >= shard_capacity_ ||
+       !budget_can_fit(additional_budget_charge(*shard, lower_bound)))) {
+    cache_lock.unlock();
+    const std::unique_lock reclaim_lock{shard->mutex};
+    reclaim_unused(*shard, lower_bound);
+    if (shard->count < shard_capacity_ &&
+        budget_can_fit(additional_budget_charge(*shard, lower_bound)))
+      return {.canonical = nullptr, .may_construct = true};
+    rejected_.fetch_add(1, std::memory_order_relaxed);
+    return {};
+  }
   if ((shard != nullptr && shard->count >= shard_capacity_) ||
-      !budget_can_fit(lower_bound)) {
+      !budget_can_fit(shard == nullptr ? lower_bound :
+                     additional_budget_charge(*shard, lower_bound))) {
     rejected_.fetch_add(1, std::memory_order_relaxed);
     return {};
   }
@@ -411,7 +426,9 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
     return nullptr;
   const auto payload_bytes = translation_payload_bytes(*translation);
   const auto budget_charge = entry_budget_charge(*translation);
-  if (shard.count >= shard_capacity_ || !reserve_budget(budget_charge)) {
+  reclaim_unused(shard, budget_charge);
+  const auto additional_charge = additional_budget_charge(shard, budget_charge);
+  if (shard.count >= shard_capacity_ || !reserve_budget(additional_charge)) {
     rejected_.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
   }
@@ -435,13 +452,14 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
   } catch (...) {
     insertion_failures_.fetch_add(1, std::memory_order_relaxed);
     if (!retain_reservation_on_failure) {
-      release_budget(budget_charge);
+      release_budget(additional_charge);
     } else {
       failed_insertion_retained_accounted_bytes_.fetch_add(
-          budget_charge, std::memory_order_relaxed);
+          additional_charge, std::memory_order_relaxed);
     }
     throw;
   }
+  shard.index_credit -= budget_charge - additional_charge;
   ++shard.count;
   payload_bytes_.fetch_add(payload_bytes, std::memory_order_relaxed);
   const auto published =
@@ -464,7 +482,7 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
           std::memory_order_relaxed);
       write_jit_profile_record(
           "Darwin JIT shared translations entries=%llu "
-          "published=%llu matched=%llu reused=%llu missed=%llu "
+          "published=%llu evicted=%llu matched=%llu reused=%llu missed=%llu "
           "rejected=%llu degraded-rejected=%llu "
           "malformed-rejected=%llu insertion-failures=%llu "
           "failed-insertion-retained-accounted-bytes=%llu "
@@ -472,8 +490,10 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
           "direct-link-capacity=%llu indirect-link-capacity=%llu "
           "arena-exhaustion=%llu payload-bytes=%llu "
           "accounted-bytes=%llu maximum-accounted-bytes=%llu\n",
+          static_cast<unsigned long long>(statistics().entries),
           static_cast<unsigned long long>(published),
-          static_cast<unsigned long long>(published),
+          static_cast<unsigned long long>(
+              evictions_.load(std::memory_order_relaxed)),
           static_cast<unsigned long long>(
               matches_.load(std::memory_order_relaxed)),
           static_cast<unsigned long long>(
@@ -544,6 +564,76 @@ std::size_t SharedTranslationCache::entry_budget_charge_from_payload(
   total = saturating_add(total, 16U * sizeof(void *));
   total = saturating_add(total, 8U * allocation_allowance);
   return total;
+}
+
+std::size_t SharedTranslationCache::entry_index_budget_charge() noexcept {
+  return 2U * sizeof(Entry) + sizeof(std::uint64_t) +
+         sizeof(std::vector<Entry>) + 16U * sizeof(void *) +
+         3U * allocation_allowance;
+}
+
+std::size_t SharedTranslationCache::additional_budget_charge(
+    const Shard &shard, std::size_t charge) noexcept {
+  if (charge == maximum_size)
+    return charge;
+  return charge - std::min(shard.index_credit, entry_index_budget_charge());
+}
+
+void SharedTranslationCache::reclaim_unused(
+    Shard &shard, std::size_t charge) noexcept {
+  if (charge == maximum_size ||
+      (shard.count < shard_capacity_ &&
+       budget_can_fit(additional_budget_charge(shard, charge))))
+    return;
+  /* Keep the map's high-water index reservation after erasing nodes: its
+   * bucket array may survive. New entries reuse that credit, so replacement
+   * neither undercounts retained buckets nor accumulates a fresh index charge
+   * for each generation of the working set.
+   *
+   * Resume a bounded sweep by key, not by an iterator that insertion can
+   * invalidate. Private validation words and materializing translations pin
+   * their retained storage. Callers acquire strong ownership under this
+   * shard's lock; they must not resurrect owners through weak pointers.
+   */
+  auto victim = shard.victim_initialized ?
+      shard.entries.find(shard.next_victim) : shard.entries.end();
+  if (victim == shard.entries.end())
+    victim = shard.entries.begin();
+  const auto attempts = std::min<std::size_t>(shard.entries.size(), 256U);
+  for (std::size_t attempt = 0;
+       attempt < attempts && victim != shard.entries.end(); ++attempt) {
+    const bool unused = std::ranges::all_of(victim->second,
+        [](const Entry &entry) {
+          return entry.translation.use_count() == 1 &&
+                 entry.translation->guest_words.use_count() == 1;
+        });
+    if (unused) {
+      std::size_t released = 0;
+      std::size_t payload = 0;
+      for (const auto &entry : victim->second) {
+        released += entry_budget_charge(*entry.translation) -
+                    entry_index_budget_charge();
+        payload += translation_payload_bytes(*entry.translation);
+      }
+      const auto count = victim->second.size();
+      victim = shard.entries.erase(victim);
+      shard.count -= count;
+      shard.index_credit += count * entry_index_budget_charge();
+      payload_bytes_.fetch_sub(payload, std::memory_order_relaxed);
+      evictions_.fetch_add(count, std::memory_order_relaxed);
+      release_budget(released);
+    } else {
+      ++victim;
+    }
+    if (victim == shard.entries.end())
+      victim = shard.entries.begin();
+    if (shard.count < shard_capacity_ &&
+        budget_can_fit(additional_budget_charge(shard, charge)))
+      break;
+  }
+  shard.victim_initialized = victim != shard.entries.end();
+  if (shard.victim_initialized)
+    shard.next_victim = victim->first;
 }
 
 bool SharedTranslationCache::budget_can_fit(std::size_t bytes) const noexcept {
@@ -634,6 +724,7 @@ SharedTranslationCache::statistics() const noexcept {
           .reuses = reuses_.load(std::memory_order_relaxed),
           .misses = misses_.load(std::memory_order_relaxed),
           .insertions = insertions_.load(std::memory_order_relaxed),
+          .evictions = evictions_.load(std::memory_order_relaxed),
           .rejected = rejected_.load(std::memory_order_relaxed),
           .degraded_rejected =
               degraded_rejected_.load(std::memory_order_relaxed),

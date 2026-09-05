@@ -827,6 +827,72 @@ void cumulative_byte_budget_spans_all_shards()
 	cache.remove_executor();
 }
 
+void full_cache_replaces_unused_translations_without_spending_index_twice()
+{
+	constexpr std::size_t maximum_bytes = 128U * 1024U;
+	constexpr std::size_t host_words = 8192;
+	constexpr std::uint64_t guest_pc = 0x17e'0000;
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	arm64::SharedTranslationCache cache{8, maximum_bytes};
+	cache.add_executor();
+	cache.add_executor();
+	std::size_t high_water = 0;
+	for (unsigned iteration = 0; iteration < 128; ++iteration) {
+		const std::array words{0xd280'0000U | (iteration << 5U)};
+		const auto plan = allocation_free_preflight([&] {
+			return cache.preflight_publication(profile, guest_pc, words,
+				{.host_words = host_words, .relocations = 0,
+				 .guest_words = words.size()}, 0, 0);
+		});
+		require(plan.may_construct);
+		const auto admitted = cache.insert(profile, guest_pc, words,
+			make_translation(words, iteration, host_words));
+		require(admitted != nullptr);
+		require(cache.find(profile, guest_pc, words) == admitted);
+		const auto statistics = cache.statistics();
+		require(statistics.accounted_bytes <= maximum_bytes);
+		high_water = std::max<std::size_t>(
+			high_water, statistics.accounted_bytes);
+		if (iteration != 0)
+			require(statistics.evictions == iteration);
+	}
+	require(cache.statistics().entries == 1);
+	require(cache.statistics().accounted_bytes == high_water);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
+void private_validation_words_and_materialization_owners_pin_entries()
+{
+	constexpr std::uint64_t guest_pc = 0x17e'4000;
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	const std::array first_words{0xd400'0001U};
+	const std::array second_words{0xd420'0000U};
+	arm64::SharedTranslationCache cache{1};
+	cache.add_executor();
+	cache.add_executor();
+	auto owner = cache.insert(profile, guest_pc, first_words,
+		make_translation(first_words, 1));
+	require(owner != nullptr);
+	auto private_words = owner->guest_words;
+	const auto publish = [&] {
+		return cache.insert(profile, guest_pc, second_words,
+			make_translation(second_words, 2));
+	};
+	require(publish() == nullptr);
+	owner.reset();
+	require(publish() == nullptr);
+	require(private_words[0] == first_words[0]);
+	private_words.reset();
+	const auto replacement = publish();
+	require(replacement != nullptr);
+	require(cache.find(profile, guest_pc, first_words) == nullptr);
+	require(cache.find(profile, guest_pc, second_words) == replacement);
+	require(cache.statistics().evictions == 1);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
 } // namespace
 
 int main()
@@ -839,6 +905,8 @@ int main()
 	malformed_translation_metadata_is_rejected_before_admission();
 	early_degraded_refusal_is_one_counter_event();
 	cumulative_byte_budget_spans_all_shards();
+	full_cache_replaces_unused_translations_without_spending_index_twice();
+	private_validation_words_and_materialization_owners_pin_entries();
 	capacity_degraded_translation_leaves_the_key_publishable();
 	lookup_identity_stops_at_the_compiled_prefix();
 	codegen_abi_shape_partitions_the_cache_identity();

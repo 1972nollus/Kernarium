@@ -125,7 +125,10 @@ measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/READ
 The JIT derives private and shared cache geometry from one process budget. A
 managed run keeps at most one executor per guest CPU. Shared translations own
 immutable code and validation identity, while direct/indirect activation state
-remains private and is regenerated during materialization.
+remains private and is regenerated during materialization. Bounded replacement
+admits new working sets after the shared tier fills, retaining entries whose
+code or validation words are still in use. The shared index retains its
+high-water allocation charge.
 
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 The reservation publication protocol and its memory orders remain unchanged.

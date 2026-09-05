@@ -90,6 +90,7 @@ struct SharedTranslationStatistics final {
   std::uint64_t reuses{};
   std::uint64_t misses{};
   std::uint64_t insertions{};
+  std::uint64_t evictions{};
   std::uint64_t rejected{};
   std::uint64_t degraded_rejected{};
   std::uint64_t malformed_rejected{};
@@ -188,9 +189,9 @@ public:
    * live executors, then records exactly one degraded rejection when either
    * refusal count is nonzero, or one capacity rejection when the shard is
    * already full or an overflow-safe lower-bound charge for the supplied
-   * payload sizes cannot fit in the current accounting snapshot. insert()
-   * remains the authority for capacity consumed after this check and for
-   * actual vector capacities.
+   * payload sizes cannot fit after a bounded sweep of unused entries.
+   * insert() remains the authority for capacity consumed after this check
+   * and for actual vector capacities.
    */
   [[nodiscard]] SharedTranslationPublicationPreflight preflight_publication(
       const CodegenProfile &profile, std::uint64_t guest_pc,
@@ -259,6 +260,9 @@ private:
     mutable std::shared_mutex mutex;
     std::unordered_map<std::uint64_t, std::vector<Entry>> entries;
     std::size_t count{};
+    std::size_t index_credit{};
+    std::uint64_t next_victim{};
+    bool victim_initialized{};
   };
 
   struct alignas(64) ShardSlot final {
@@ -282,6 +286,10 @@ private:
       SharedTranslationPublicationSizes sizes) noexcept;
   [[nodiscard]] static std::size_t
   entry_budget_charge_from_payload(std::size_t payload_bytes) noexcept;
+  [[nodiscard]] static std::size_t entry_index_budget_charge() noexcept;
+  [[nodiscard]] static std::size_t additional_budget_charge(
+      const Shard &shard, std::size_t charge) noexcept;
+  void reclaim_unused(Shard &shard, std::size_t charge) noexcept;
   [[nodiscard]] bool budget_can_fit(std::size_t bytes) const noexcept;
   [[nodiscard]] bool reserve_budget(std::size_t bytes) noexcept;
   void release_budget(std::size_t bytes) noexcept;
@@ -298,6 +306,7 @@ private:
   std::atomic<std::uint64_t> reuses_{};
   mutable std::atomic<std::uint64_t> misses_{};
   std::atomic<std::uint64_t> insertions_{};
+  std::atomic<std::uint64_t> evictions_{};
   std::atomic<std::uint64_t> rejected_{};
   std::atomic<std::uint64_t> degraded_rejected_{};
   std::atomic<std::uint64_t> malformed_rejected_{};

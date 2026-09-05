@@ -219,6 +219,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Isolate JIT store-publication state at the host cache-line size | Accepted. Adjacent 64-byte vCPU slots shared an Apple arm64 cache line. Using 128-byte slots and separating the shared gate fields improved four-worker HDR throughput without weakening the publication memory orders. |
+| Replace unused shared JIT translations within the process budget | Accepted. Bounded replacement prevents startup code from permanently crowding out later working sets. The shared index retains its high-water allocation charge, and live validation words continue to pin their storage. |
 
 ## Graphics backend investigations
 
