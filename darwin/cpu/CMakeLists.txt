@@ -77,11 +77,11 @@ option(UML_GADGET_DEPENDENCY_COVERAGE
 
 option(UML_GADGET_SCALAR_FORWARDING
     "Forward adjacent write-through scalar results within gadget blocks"
-    OFF)
+    ON)
 
 option(UML_GADGET_VECTOR_FORWARDING
     "Forward adjacent write-through SIMD/FP results within gadget blocks"
-    OFF)
+    ON)
 
 # Also off by default, and for the same reason. G-4 needs to know how far a
 # fixed guest-to-host vector bank would reach, and that is decided by how

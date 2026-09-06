@@ -41,6 +41,10 @@ python3 tests/perf/run_ios_device_discard_bench.py \
 
 ## Gadget forwarding controls
 
+Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
+Set the two forwarding options explicitly for A/B controls. Existing CMake
+caches retain their selected values when source defaults change.
+
 Build the manual `uml_scalar_ceiling_bench` target with
 `UML_GADGET_SCALAR_FORWARDING=ON` and dependency coverage disabled. Its sources
 live in `scalar_ceiling/`, separately from the freestanding guest probes. The

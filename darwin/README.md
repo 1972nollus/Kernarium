@@ -88,7 +88,7 @@ must match every consumed guest word before reuse. Shared gadget translations
 contain no executor-owned link pointers after publication; consumers relocate
 links into their own state.
 
-The opt-in `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
+The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
 result in host `x0` between adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the
 builder selects a variant from the actual decoded entry, not an opcode-pair
@@ -99,7 +99,7 @@ register. Unsupported entries, fused decoder groups, branches, and block
 boundaries end the chain. Pair results and writeback-load results are not
 exported. There are no runtime register tags or executable-memory writes.
 
-The independent `UML_GADGET_VECTOR_FORWARDING` option applies the same
+The independent, default-on `UML_GADGET_VECTOR_FORWARDING` option applies the same
 template-owned selection to SIMD/FP results naturally produced in host `v2`.
 Arithmetic, logic, comparisons, widening/narrowing, reductions, and
 accumulator templates declare their source masks. Consumers capture all
@@ -110,10 +110,10 @@ path. Undeclared entries and block/link boundaries invalidate residency. Vector
 memory values and templates producing results in other scratch registers are
 not exported. This is not a persistent guest-vector register cache.
 
-With both forwarding options and coverage disabled, the original gadget text
-is unchanged. Forwarding remains opt-in: a higher dependency-chain ceiling
-does not establish a general application speedup or justify the larger bank
-for every workload.
+Both forwarding options can be disabled independently for controls or code-size
+tradeoffs. With both options and coverage disabled, the original gadget text is
+unchanged. The default policy does not imply a general application speedup:
+measured gains are workload-dependent and the forwarding bank is larger.
 
 `UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
 Its entered-group counters describe opportunities in both scalar and SIMD/FP
