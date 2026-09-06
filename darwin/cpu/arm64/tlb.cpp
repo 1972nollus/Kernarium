@@ -56,17 +56,52 @@ void Tlb::flush()
 
 void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 {
+	/* Keys may carry a logical tag in the top byte (translate_tagged), and
+	 * the set index never depends on that byte, so a masked compare finds
+	 * every key of the page in its own set. */
+	constexpr std::uint64_t untagged = 0x00ff'ffff'ffff'ffffULL;
 	const auto end = address + length;
 	for (auto page = address; page < end; page += page_size) {
 		const auto first = index_for(page);
 		for (std::size_t way = 0; way < tlb_way_count; ++way) {
 			auto &entry = entries[first + way];
-			if (entry.read_page == page)
+			if ((entry.read_page & untagged) == page)
 				entry.read_page = 1;
-			if (entry.write_page == page)
+			if ((entry.write_page & untagged) == page)
 				entry.write_page = 1;
 		}
 	}
+}
+
+std::byte *Tlb::translate_tagged(std::uint64_t address, Access access)
+{
+	constexpr std::uint64_t untagged_mask = 0x00ff'ffff'ffff'ffffULL;
+	if (!tagged_addresses || (address & ~untagged_mask) == 0 ||
+	    access == Access::execute)
+		return translate(address, access);
+	const auto untagged = address & untagged_mask;
+	auto *host = translate(untagged, access);
+	if (host == nullptr)
+		return nullptr;
+	/* Re-key the entry translate() just filled or hit so the tagged form
+	 * the guest actually uses hits next time. */
+	const auto page = untagged & ~(page_size - 1);
+	const auto tagged_page = address & ~(page_size - 1);
+	const auto first = index_for(untagged);
+	for (std::size_t way = 0; way < tlb_way_count; ++way) {
+		auto &entry = entries[first + way];
+		if (access == Access::write && entry.write_page == page) {
+			entry.write_page = tagged_page;
+			entry.write_data_minus_address -= (tagged_page - page);
+			break;
+		}
+		if (access != Access::write && entry.read_page == page) {
+			entry.read_page = tagged_page;
+			entry.read_data_minus_address -= (tagged_page - page);
+			break;
+		}
+	}
+	return host;
 }
 
 void Tlb::prepare(std::uint64_t next_generation,

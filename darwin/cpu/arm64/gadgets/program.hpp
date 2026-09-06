@@ -107,6 +107,12 @@ public:
 		data()[size_++] = word;
 	}
 
+	void pop_back() noexcept
+	{
+		if (size_ != 0)
+			--size_;
+	}
+
 	void reserve(std::size_t requested)
 	{
 		if (requested <= capacity_)
@@ -384,19 +390,26 @@ static_assert(offsetof(IndirectLinkEntry, guest_pc) == 0);
 static_assert(offsetof(IndirectLinkEntry, link) == 8);
 static_assert(sizeof(IndirectLinkEntry) == 16);
 
-/* Two target cells cover the monomorphic and common bimorphic branch/return
- * sites while keeping the assembly hit path compact. ProgramCache owns and
- * trains these data-only cells; translated streams only retain stable
- * pointers to them. */
+/* Target cells cover the monomorphic and common polymorphic branch/return
+ * sites while keeping the assembly hit path compact: a hit in cell N costs
+ * three instructions per cell scanned before it. ProgramCache owns and trains
+ * these data-only cells; translated streams only retain stable pointers to
+ * them. The count is a build constant shared with the assembly hit path. */
+#ifndef UML_GADGET_INDIRECT_ENTRIES
+#define UML_GADGET_INDIRECT_ENTRIES 2
+#endif
+inline constexpr std::size_t indirect_link_entries = UML_GADGET_INDIRECT_ENTRIES;
+static_assert(indirect_link_entries == 2 || indirect_link_entries == 4);
 struct IndirectLink final {
-	std::array<IndirectLinkEntry, 2> entries{};
+	std::array<IndirectLinkEntry, indirect_link_entries> entries{};
 	std::uint8_t next_replacement{};
 	/* Diagnostic only: 1 for a return site, 0 for a register branch. */
 	std::uint8_t kind{};
 };
 static_assert(offsetof(IndirectLink, entries) == 0);
-static_assert(offsetof(IndirectLink, next_replacement) == 32);
-static_assert(sizeof(IndirectLink) == 40);
+static_assert(offsetof(IndirectLink, next_replacement) ==
+	16 * indirect_link_entries);
+static_assert(sizeof(IndirectLink) == 16 * indirect_link_entries + 8);
 
 /* What a build needs in order to translate a callee inline: permission for this
  * particular callee, and a way to read guest instructions at an address other

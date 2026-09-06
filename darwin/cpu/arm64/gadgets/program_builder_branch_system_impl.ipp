@@ -66,6 +66,11 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		}
 		if (link)
 			emit(words, address + sizeof(instruction));
+#if UML_GADGET_RETURN_STACK
+		/* The linked call also pushes the return block's link. */
+		if (link && resolve_link)
+			emit_link(context, address + sizeof(instruction));
+#endif
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
@@ -338,6 +343,10 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				opcode == 0xd65f'0000U);
 		if (opcode == 0xd63f'0000U)
 			emit(words, address + sizeof(instruction));
+#if UML_GADGET_RETURN_STACK
+		if (opcode == 0xd63f'0000U && cached)
+			emit_link(context, address + sizeof(instruction));
+#endif
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {

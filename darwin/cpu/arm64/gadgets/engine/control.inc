@@ -125,11 +125,34 @@ gadget branch_link
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
+/* Return predictor: a linked call pushes {return pc, return BlockLink} on a
+ * sixteen-record ring in CpuState. Seven instructions per call; the ring is
+ * private engine state that a cached return consults only after its site
+ * cells miss, so a wrong or stale record costs nothing but the old exit. */
+.macro push_return_record pc, link
+	ldrb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	add x13, _cpu, #UML_GADGET_CPU_RETURN_STACK
+	add x13, x13, x12, lsl #4
+	stp \pc, \link, [x13]
+	add w12, w12, #1
+	and w12, w12, #UML_GADGET_CPU_RETURN_MASK
+	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+.endm
+
 gadget branch_link_linked
 	ldr x8, [_stream], #8
+#if UML_GADGET_RETURN_STACK
+	ldp x9, x11, [_stream]
+	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	push_return_record x9, x11
+	follow_block_link x8
+#else
 	ldr x9, [_stream]
 	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	follow_block_link x8
+	/* Matched-layout control for the return-stack build; unreachable. */
+	.space 28
+#endif
 
 gadget branch_register
 	ldr x8, [_stream]
@@ -158,19 +181,65 @@ gadget return
  * register offset and cache-cell address. A hit immediately follows the
  * already-safe BlockLink; only a miss commits the target and identifies the
  * cell for cold C++ training. */
-.macro follow_indirect_link
+.macro follow_indirect_link ras=0
 	ldp x11, x12, [x9]
 	cmp x10, x11
 	b.eq 98f
 	ldp x11, x12, [x9, #16]
 	cmp x10, x11
 	b.eq 98f
+#if UML_GADGET_INDIRECT_ENTRIES >= 4
+	ldp x11, x12, [x9, #32]
+	cmp x10, x11
+	b.eq 98f
+	ldp x11, x12, [x9, #48]
+	cmp x10, x11
+	b.eq 98f
+#endif
+	.if \ras
+#if UML_GADGET_RETURN_STACK
+	/* The newest return record is popped only when it names the live link
+	 * register; anything else leaves the ring alone and exits as before. */
+	ldrb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	sub w13, w13, #1
+	and w13, w13, #UML_GADGET_CPU_RETURN_MASK
+	add x14, _cpu, #UML_GADGET_CPU_RETURN_STACK
+	add x14, x14, x13, lsl #4
+	ldp x11, x12, [x14]
+	cmp x10, x11
+	b.ne 97f
+	strb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	/* Train the site's next cell as the cold helper would, so the ordinary
+	 * cell path hits this target from now on and the ring is consulted
+	 * only when the site is more polymorphic than its cells. */
+	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	add x14, x9, x13, lsl #4
+	stp x10, x12, [x14]
+	add w13, w13, #1
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	b 98f
+97:
+#endif
+	.endif
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x10, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 98:
 	follow_block_link x12
+#if UML_GADGET_INDIRECT_ENTRIES < 4
+	/* Matched-layout control: keep every later entry at the address the
+	 * four-cell build gives it; unreachable. */
+	.space 24
+#endif
+	.if \ras
+#if !UML_GADGET_RETURN_STACK
+	/* Matched-layout control for the return-stack build; unreachable. */
+	.space 68
+#endif
+	.endif
 .endm
 
 gadget branch_register_cached
@@ -180,17 +249,28 @@ gadget branch_register_cached
 
 gadget branch_link_register_cached
 	ldp x8, x9, [_stream], #16
+#if UML_GADGET_RETURN_STACK
+	ldp x11, x14, [_stream]
+	ldr x10, [_cpu, x8]
+	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	push_return_record x11, x14
+	follow_indirect_link
+#else
 	ldr x11, [_stream]
 	ldr x10, [_cpu, x8]
 	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	follow_indirect_link
+	/* Matched-layout control for the return-stack build; unreachable. */
+	.space 28
+#endif
 
 gadget return_cached
 	ldp x8, x9, [_stream]
 	ldr x10, [_cpu, x8]
-	follow_indirect_link
+	follow_indirect_link 1
 
 .purgem follow_indirect_link
+.purgem push_return_record
 
 /* Authenticated indirect branches. Key, link behavior, zero modifier, and
  * XZR target are fixed by the builder. The ordinary register/register path

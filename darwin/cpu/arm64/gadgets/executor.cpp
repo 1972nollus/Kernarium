@@ -523,10 +523,13 @@ public:
 			entry.link = target;
 			return;
 		}
-		auto &entry = site.entries[site.next_replacement & 1U];
+		auto &entry = site.entries[site.next_replacement %
+			arm64::gadgets::indirect_link_entries];
 		entry.guest_pc = target_pc;
 		entry.link = target;
-		site.next_replacement ^= 1U;
+		site.next_replacement = static_cast<std::uint8_t>(
+			(site.next_replacement + 1U) %
+			arm64::gadgets::indirect_link_entries);
 	}
 
 	/* Take a translation another executor built, if one is on offer.
@@ -1262,6 +1265,8 @@ void GadgetExecutor::select_cpu(CpuState &cpu) noexcept
 {
 	if (current_cpu_ == &cpu)
 		return;
+	cpu.gadget_return_stack = {};
+	cpu.gadget_return_top = 0;
 	if (current_cpu_ != nullptr) {
 		current_cpu_->gadget_indirect_miss = nullptr;
 		arm64::restore_native_fp_environment(*current_cpu_);
@@ -1294,8 +1299,13 @@ void GadgetExecutor::prepare_cache(
 	 * translations of the one being left stay resident for its return. */
 	programs_->prepare(generation, changes);
 #else
-	if (cache_generation_ != generation || cache_changes_ != changes)
+	if (cache_generation_ != generation || cache_changes_ != changes) {
 		programs_->invalidate();
+		if (current_cpu_ != nullptr) {
+			current_cpu_->gadget_return_stack = {};
+			current_cpu_->gadget_return_top = 0;
+		}
+	}
 	programs_->prepare(generation, changes);
 #endif
 	cache_generation_ = generation;
@@ -1409,10 +1419,17 @@ const BuildResult &GadgetExecutor::store(
 		mapping_generation_ = generation;
 		mapping_changes_ = sequences.mapping_changes;
 	}
+	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
 	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
 	if ((guest_fpcr &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
+	if (cache_generation_ != generation) {
+		/* Return records name link state of the address space being
+		 * left; the ring must not survive into another. */
+		cpu.gadget_return_stack = {};
+		cpu.gadget_return_top = 0;
+	}
 	prepare_cache(generation, sequences.code_changes);
 	auto selected = find(cpu.pc, sequences.code_changes, memory);
 #if UML_GADGET_EXECUTION_HISTOGRAM

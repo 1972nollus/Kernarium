@@ -57,6 +57,10 @@ static_assert(offsetof(CpuState, gadget_fp_active) == UML_ARM64_CPU_FP_ACTIVE);
 static_assert(offsetof(CpuState, gadget_indirect_miss) == UML_GADGET_CPU_INDIRECT_MISS);
 static_assert(offsetof(CpuState, gadget_host_fpmr) == UML_ARM64_CPU_HOST_FPMR);
 static_assert(offsetof(CpuState, gadget_fpmr_active) == UML_ARM64_CPU_FPMR_ACTIVE);
+static_assert(offsetof(CpuState, gadget_return_stack) == UML_GADGET_CPU_RETURN_STACK);
+static_assert(offsetof(CpuState, gadget_return_top) == UML_GADGET_CPU_RETURN_TOP);
+static_assert(CpuState::return_stack_entries == UML_GADGET_RETURN_STACK_ENTRIES);
+static_assert(sizeof(CpuState::ReturnRecord) == 16);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

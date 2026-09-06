@@ -148,6 +148,26 @@ option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
 # 3.43x duplication cancelling what the removed boundaries buy. See G163.
 option(UML_GADGET_INLINE_CALLS
     "Translate a direct call's callee inline behind it" OFF)
+# A guest instruction that resolves to the NOP entry (HINT space, BTI and
+# pointer-authentication hints on a profile without pointer authentication,
+# XZR-destination folds) otherwise costs a dispatch each time it runs. Leave
+# it out of the stream; retirement and fault positions are unaffected.
+# Experimental A/B arm, off by default: key the software TLB by the address
+# as presented, so scalar transfers skip the per-access top-byte check and the
+# miss helper strips the logical tag instead.
+option(UML_GADGET_TAGGED_TLB_KEYS
+    "Key the gadget TLB by tagged addresses instead of stripping per access" OFF)
+# Cells per indirect branch or return site. Execution histograms of Geekbench
+# and Aquarium show most executor round trips are misses through two cells;
+# four keeps the two-cell hit path and adds two scans before a miss.
+set(UML_GADGET_INDIRECT_ENTRIES "2" CACHE STRING
+    "Trained target cells per indirect branch site (2 or 4)")
+# Experimental A/B arm, off by default: linked calls push the return block's
+# link on a private ring and a cached return whose site cells miss pops it.
+option(UML_GADGET_RETURN_STACK
+    "Predict cached returns through a private return-record ring" OFF)
+option(UML_GADGET_ELIDE_NOPS
+    "Emit no gadget for guest instructions that translate to NOP" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -215,6 +235,10 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
+    UML_GADGET_ELIDE_NOPS=$<BOOL:${UML_GADGET_ELIDE_NOPS}>
+    UML_GADGET_TAGGED_TLB_KEYS=$<BOOL:${UML_GADGET_TAGGED_TLB_KEYS}>
+    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
+    UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
 
 # The gadget library is still many translation units, and the selection tables
@@ -403,6 +427,7 @@ target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
+    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
