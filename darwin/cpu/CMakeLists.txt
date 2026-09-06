@@ -75,6 +75,13 @@ option(UML_GADGET_DEPENDENCY_COVERAGE
     "Count executed scalar and SIMD/FP dependency opportunities (diagnostic builds only)"
     OFF)
 
+# Also default-off and mutually exclusive with dependency coverage: the same
+# threaded counter gadget indexes a table keyed by the exact selected entry,
+# which is what a static host-instruction cost per entry must be weighted by.
+option(UML_GADGET_EXECUTION_HISTOGRAM
+    "Count executed gadget entries (diagnostic builds only)"
+    OFF)
+
 option(UML_GADGET_SCALAR_FORWARDING
     "Forward adjacent write-through scalar results within gadget blocks"
     ON)
@@ -173,6 +180,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_simd_selection.cpp
     arm64/gadgets/pair_histogram.cpp
     arm64/gadgets/dependency_coverage.cpp
+    arm64/gadgets/execution_histogram.cpp
     arm64/gadgets/scalar_forwarding.cpp
     arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
@@ -198,6 +206,7 @@ set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
     UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
@@ -393,6 +402,7 @@ target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>

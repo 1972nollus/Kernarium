@@ -391,6 +391,8 @@ static_assert(sizeof(IndirectLinkEntry) == 16);
 struct IndirectLink final {
 	std::array<IndirectLinkEntry, 2> entries{};
 	std::uint8_t next_replacement{};
+	/* Diagnostic only: 1 for a return site, 0 for a register branch. */
+	std::uint8_t kind{};
 };
 static_assert(offsetof(IndirectLink, entries) == 0);
 static_assert(offsetof(IndirectLink, next_replacement) == 32);

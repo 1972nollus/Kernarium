@@ -502,13 +502,20 @@ public:
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
 			    std::uint64_t target_pc)
 	{
+#if UML_GADGET_EXECUTION_HISTOGRAM
+		/* Distinct targets seen per site, and misses per site, so the
+		 * dump can say how many cells a site would have needed. */
+		++site_misses_[&site][target_pc];
+#endif
 		const auto *target = link(target_pc);
 		/* Training is the only thing that moves a site off its empty
 		 * cells, and empty_pc is unreachable as a guest target, so a
 		 * site still holding two empty cells is untrained since its last
 		 * reset -- which makes this the transition that enrols it. */
-		if (site.entries[0].guest_pc == empty_pc &&
-		    site.entries[1].guest_pc == empty_pc)
+		if (std::all_of(site.entries.begin(), site.entries.end(),
+			    [](const auto &entry) {
+				    return entry.guest_pc == empty_pc;
+			    }))
 			current().live_indirect.push_back(&site);
 		for (auto &entry : site.entries) {
 			if (entry.guest_pc != target_pc)
@@ -1168,6 +1175,27 @@ private:
 			record.reset();
 	}
 
+#if UML_GADGET_EXECUTION_HISTOGRAM
+public:
+	std::unordered_map<const arm64::gadgets::IndirectLink *,
+		std::unordered_map<std::uint64_t, std::uint64_t>> site_misses_;
+	[[nodiscard]] std::array<std::uint64_t, 8> miss_distribution() const
+	{
+		/* misses at sites with 1, 2, 3, 4, 5-8, 9-16, 17-64, >64 targets */
+		std::array<std::uint64_t, 8> out{};
+		for (const auto &[site, targets] : site_misses_) {
+			std::uint64_t misses = 0;
+			for (const auto &[pc, count] : targets)
+				misses += count;
+			const auto n = targets.size();
+			const std::size_t bucket = n <= 4 ? n - 1 : n <= 8 ? 4 :
+				n <= 16 ? 5 : n <= 64 ? 6 : 7;
+			out[bucket] += misses;
+		}
+		return out;
+	}
+private:
+#endif
 	CountingResource counted_;
 	std::pmr::unsynchronized_pool_resource program_storage_;
 	/* Bounded: a guest that keeps generating code would otherwise accumulate
@@ -1387,6 +1415,11 @@ const BuildResult &GadgetExecutor::store(
 		return run_trap_enabled_instruction(cpu, memory, executed);
 	prepare_cache(generation, sequences.code_changes);
 	auto selected = find(cpu.pc, sequences.code_changes, memory);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	++cache_diagnostics_.block_entries;
+	if (!selected)
+		++cache_diagnostics_.cache_misses;
+#endif
 	if (!selected) {
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
@@ -1433,6 +1466,32 @@ const BuildResult &GadgetExecutor::store(
 				*current_program, event, cpu.pc, executed);
 		cpu.gadget_indirect_miss = nullptr;
 	}
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	{
+		auto &d = cache_diagnostics_;
+		if (event == ::uml::cpu::EngineEvent::system_call)
+			++d.exits_syscall;
+		else if (event == ::uml::cpu::EngineEvent::memory_fault)
+			++d.exits_fault;
+		else if (event == ::uml::cpu::EngineEvent::interrupt)
+			++d.exits_interrupt;
+		else if (event != ::uml::cpu::EngineEvent::continued)
+			++d.exits_other;
+		else if (cpu.gadget_indirect_miss != nullptr) {
+			++d.exits_indirect_miss;
+			if (static_cast<const arm64::gadgets::IndirectLink *>(
+				    cpu.gadget_indirect_miss)->kind != 0)
+				++d.exits_indirect_miss_return;
+			if ((d.exits_indirect_miss & 4095) == 0)
+				d.miss_by_site_targets = programs_->miss_distribution();
+		}
+		else if (executed >= 4096)
+			++d.exits_chain_limit;
+		else
+			++d.exits_unlinked;
+		diagnostics::execution_histogram_note_executor(&d);
+	}
+#endif
 	if (cpu.gadget_indirect_miss != nullptr &&
 	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
 		programs_->learn_indirect(

@@ -105,12 +105,19 @@ inline void emit_link(DecodeContext &context, std::uint64_t target)
 /* Emit the cell an indirect branch reads its trained targets through. This one
  * names the branch site rather than a target, because the site is what owns the
  * trained cells. */
-inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
+inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
+			       bool is_return = false)
 {
 	if (context.relocations != nullptr)
 		context.relocations->add(context.words.size(), true, source);
-	context.words.push_back(reinterpret_cast<std::uintptr_t>(
-		context.resolve_indirect_link(source)));
+	auto *site = context.resolve_indirect_link(source);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	if (site != nullptr)
+		site->kind = is_return ? 1 : 0;
+#else
+	(void)is_return;
+#endif
+	context.words.push_back(reinterpret_cast<std::uintptr_t>(site));
 }
 
 /* Continue translating the fall-through of a conditional branch rather than

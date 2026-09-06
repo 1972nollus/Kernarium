@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#if UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
 /* Diagnostic only. Forwarded x0/v2 results and architectural flags are
  * untouched. The entry frame owns a carrier-local counter pointer. No
  * helper or non-gadget exit is needed per observed decode group. */

@@ -122,6 +122,15 @@ one scalar, vector, or unsupported bucket; combined totals do not double-count.
 They do not measure retirement, conditional operand use, or speed. The
 measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
 
+`UML_GADGET_EXECUTION_HISTOGRAM` is the other default-off diagnostic build and
+excludes dependency coverage. The same counter gadget indexes a table keyed by
+the exact (predecessor, entry) pair the translator selected, so executed
+entries, executed adjacent pairs, and entered guest words are exact. Its dump
+also reports why each linked chain returned to the executor and how many
+distinct targets the missing indirect sites had. Instrumented streams carry
+one extra dispatch per guest instruction, so the build is evidence for
+instruction mix and static cost, never for speed.
+
 The JIT derives private and shared cache geometry from one process budget,
 defaulting to half of guest RAM. A managed run keeps at most one executor per
 guest CPU, with up to 256 MiB of private cache per executor; the shared tier

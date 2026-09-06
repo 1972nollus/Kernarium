@@ -3,10 +3,12 @@
 #include "gadget_selection.hpp"
 #include "pair_histogram.hpp"
 #include "dependency_coverage.hpp"
+#include "execution_histogram.hpp"
 #include "scalar_forwarding.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <span>
 #include <utility>
 
@@ -148,7 +150,7 @@ BuildResult Builder::build(
 			uml::cpu::arm64::detail::
 				instruction_accesses_fp_state(instruction);
 		const auto address = run_base + compiled * sizeof(instruction);
-#if UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
 		const auto coverage_word = words.size();
 		emit(words, diagnostics::uml_arm64_gadget_dependency_coverage);
 		emit(words, std::uintptr_t{sizeof(std::uint64_t)});
@@ -165,7 +167,7 @@ BuildResult Builder::build(
 				true, address, instruction};
 		}
 
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING || UML_GADGET_EXECUTION_HISTOGRAM
 		const auto compiled_before = compiled;
 #endif
 		DecodeContext context{
@@ -243,6 +245,17 @@ BuildResult Builder::build(
 #if UML_GADGET_VECTOR_FORWARDING
 		if (vector_mask != 0 && options.vector_forwarding)
 			words[emitted_start] = current_vector.contract->entries[vector_mask];
+#endif
+#if UML_GADGET_EXECUTION_HISTOGRAM
+		/* The entry is final only after forwarding selection above. */
+		if (words.size() > emitted_start) {
+			words[coverage_word + 1] = diagnostics::execution_histogram_slot(
+				previous_gadget,
+				reinterpret_cast<const void *>(words[emitted_start]));
+			words[coverage_word + 2] = std::max<std::size_t>(1,
+				compiled - compiled_before +
+				(decoded == DecodeResult::decoded));
+		}
 #endif
 		/* The first word a decode emits is its gadget pointer, which is
 		 * what makes the adjacent-pair record cheap: no separate pass and

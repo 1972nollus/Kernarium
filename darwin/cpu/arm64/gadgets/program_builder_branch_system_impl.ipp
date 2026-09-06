@@ -317,7 +317,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				context.retired_before_run + compiled + 1);
 			emit(words, std::uintptr_t{0});
 			emit(words, static_cast<std::uintptr_t>(source * 8U));
-			emit_indirect_link(context, address);
+			emit_indirect_link(context, address, true);
 			++compiled;
 			*context.continue_at = context.inlined_return;
 			*context.continue_return = 0;
@@ -334,7 +334,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
 			static_cast<std::uintptr_t>(source * 8U));
 		if (cached)
-			emit_indirect_link(context, address);
+			emit_indirect_link(context, address,
+				opcode == 0xd65f'0000U);
 		if (opcode == 0xd63f'0000U)
 			emit(words, address + sizeof(instruction));
 		++compiled;
