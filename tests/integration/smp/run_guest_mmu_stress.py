@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise shared-mm thread creation and mapping churn in Darwin UML."""
+"""Exercise shared-mm data, permissions, fork COW, and mapping churn."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -136,10 +136,16 @@ def main() -> int:
             guest, arguments.shared_mmap_binary
         )
         output = run_timed(guest, "shared-mm-distant-mmap", executable)
-        if output.strip() != "OK":
+        # Kernel diagnostics share the serial console. run_timed() already
+        # requires exit status zero; require the payload's standalone marker.
+        lines = output.splitlines()
+        if lines.count("OK") != 1:
             raise RuntimeError(
                 f"shared-mm workload returned unexpected output {output!r}"
             )
+        for line in lines:
+            if line != "OK":
+                print(line, flush=True)
         return 0
     finally:
         guest.close()
