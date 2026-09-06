@@ -116,8 +116,10 @@ does not establish a general application speedup or justify the larger bank
 for every workload.
 
 `UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
-Its entered-group counters describe opportunities in the scalar contracts;
-they do not measure retirement, conditional operand use, or speed. The
+Its entered-group counters describe opportunities in both scalar and SIMD/FP
+contracts, independently of whether forwarding is enabled. Each group occupies
+one scalar, vector, or unsupported bucket; combined totals do not double-count.
+They do not measure retirement, conditional operand use, or speed. The
 measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
 
 The JIT derives private and shared cache geometry from one process budget. A

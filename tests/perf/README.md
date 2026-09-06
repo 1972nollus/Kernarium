@@ -73,13 +73,24 @@ For execution-weighted coverage, use a separate
 `--coverage-file` records counters and workload events; use each installed
 version's full single-core set with `--iterations 1 --no-upload`. Aquarium
 uses `DARWIN_UML_GADGET_DEPENDENCY_COVERAGE` with its ordinary runner. Analyze
-the corresponding files with `analyze_gadget_dependencies.py --help`.
-Counters are per entered decoder group and declared scalar source accessor,
-including memory addresses, not SIMD value dependencies. Window boundaries
-have 100-ms snapshot and console-observation uncertainty; conditional reads
-are potential accesses, and no cross-block dependency is inferred. Report both
-all-guest-word coverage and the declared-source denominator. Never use
-instrumented scores as speed evidence.
+the corresponding files with `analyze_gadget_dependencies.py --help`. The
+analyzer separates single-core and multi-core sections when both are present.
+Use both forwarding options when measuring the enabled combined policy;
+coverage alone records the same declared opportunities without selecting
+forwarding variants.
+
+Counters are per entered decoder group and declared source accessor. Scalar
+sources include memory addresses; SIMD/FP sources follow the vector contracts.
+Each group belongs to one catalog or the unsupported bucket, so combined
+percentages divide summed counts without double-counting. Reports show scalar,
+SIMD/FP, and combined coverage against all entered guest words and declared
+eligible sources. Older scalar-only captures report SIMD coverage as unavailable,
+not zero. Window attribution uses nominal 100-ms counter snapshots and host
+polls (100 ms for Geekbench console markers, 500 ms for Aquarium); carrier
+snapshots are not globally atomic. Conditional reads are potential accesses,
+and no cross-block dependency is inferred. Report both all-guest-word coverage
+and the declared-source denominator. Never use instrumented scores as speed
+evidence.
 
 ## Focused assembly probes
 

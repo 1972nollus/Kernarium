@@ -72,7 +72,7 @@ option(UML_GADGET_PAIR_HISTOGRAM
     OFF)
 
 option(UML_GADGET_DEPENDENCY_COVERAGE
-    "Count executed scalar dependency opportunities (diagnostic builds only)"
+    "Count executed scalar and SIMD/FP dependency opportunities (diagnostic builds only)"
     OFF)
 
 option(UML_GADGET_SCALAR_FORWARDING

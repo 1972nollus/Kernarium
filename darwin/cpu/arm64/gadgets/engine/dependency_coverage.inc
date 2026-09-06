@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #if UML_GADGET_DEPENDENCY_COVERAGE
-/* Diagnostic only. x0 (the forwarded scalar result) and architectural flags
- * are untouched. The entry frame owns a carrier-local counter pointer. No
+/* Diagnostic only. Forwarded x0/v2 results and architectural flags are
+ * untouched. The entry frame owns a carrier-local counter pointer. No
  * helper or non-gadget exit is needed per observed decode group. */
 gadget dependency_coverage
 	ldp x8, x9, [_stream], #16

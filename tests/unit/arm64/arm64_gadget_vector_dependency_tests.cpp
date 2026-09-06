@@ -127,23 +127,29 @@ g::ScalarAccess access(std::uint32_t instruction)
 	}
 	return {};
 }
+#endif
 
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 void catalog()
 {
 	std::set<std::uintptr_t> pointers;
 	std::size_t variants{};
 	for (const auto &entry : g::vector_contracts()) {
-		require(pointers.insert(entry.entries[0]).second && entry.reserved == 0);
+		require(pointers.insert(entry.entries[0]).second && entry.reserved == 0 && entry.family == 0);
 		require(entry.operand_words >= 1 && entry.operand_words <= 2);
-		unsigned present{};
+		[[maybe_unused]] unsigned present{};
 		for (unsigned i = 0; i < 3; ++i)
 			if (entry.sources[i] != g::scalar_no_register) present |= 1U << i;
 		for (unsigned mask = 1; mask < 8; ++mask) {
+#if UML_GADGET_VECTOR_FORWARDING
 			require(bool(entry.entries[mask]) == ((mask & present) == mask));
 			if (entry.entries[mask]) {
 				require(pointers.insert(entry.entries[mask]).second);
 				++variants;
 			}
+#else
+			require(entry.entries[mask] == 0);
+#endif
 		}
 	}
 #if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
@@ -156,7 +162,9 @@ void catalog()
 	std::printf("vector catalog: %zu ordinary entries, %zu source-mask variants\n",
 		g::vector_contracts().size(), variants);
 }
+#endif
 
+#if UML_GADGET_VECTOR_FORWARDING
 void broad_matrix(uml::memory::Tlb &tlb)
 {
 	// Enumerate encoding controls, then retain only entries selected by the
@@ -291,8 +299,10 @@ void run_gadget_vector_dependency_tests()
 {
 	const uml::cpu::HostCapabilitiesScope host{uml::platform::apple::probed_host_capabilities()};
 	auto tlb = std::make_unique<uml::memory::Tlb>();
-#if UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 	catalog();
+#endif
+#if UML_GADGET_VECTOR_FORWARDING
 	broad_matrix(*tlb);
 #endif
 	boundaries(*tlb);

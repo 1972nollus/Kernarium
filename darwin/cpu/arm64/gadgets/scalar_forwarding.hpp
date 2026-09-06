@@ -54,9 +54,10 @@ struct ScalarAccess final {
 			if (sources[i] == previous) mask |= 1U << i;
 		return mask;
 	}
-	[[nodiscard]] unsigned coverage_bucket(unsigned mask) const noexcept
+	[[nodiscard]] unsigned coverage_bucket(unsigned mask, unsigned family_base = 0) const noexcept
 	{
-		return contract ? 2U + contract->family * 32U + source_count() * 8U + mask : 1U;
+		return contract ? 2U + (family_base + contract->family) * 32U +
+			source_count() * 8U + mask : 1U;
 	}
 };
 
@@ -65,7 +66,7 @@ struct ScalarAccess final {
 [[nodiscard]] ScalarAccess scalar_access(std::span<const std::uintptr_t> words);
 #endif
 
-#if UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 /* Vector contracts use the same immutable descriptor format, with bit 14
  * encoding a five-bit vector index relative to CpuState::vectors. Results
  * remain write-through and are live in native v2 only at declared edges. */

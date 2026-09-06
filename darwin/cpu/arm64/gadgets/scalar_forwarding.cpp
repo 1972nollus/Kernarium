@@ -58,7 +58,7 @@ ScalarAccess scalar_access(std::span<const std::uintptr_t> words)
 }
 #endif
 
-#if UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 extern "C" const ScalarContract uml_arm64_vector_contract_begin[];
 extern "C" const ScalarContract uml_arm64_vector_contract_end[];
 std::span<const ScalarContract> vector_contracts() noexcept

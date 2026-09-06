@@ -40,6 +40,9 @@ public:
 			for (unsigned sources = 0; sources < 4; ++sources)
 				for (unsigned mask = 0; mask < 8; ++mask)
 					std::fprintf(output_, ",%s_s%u_m%u", family, sources, mask);
+		for (unsigned sources = 0; sources < 4; ++sources)
+			for (unsigned mask = 0; mask < 8; ++mask)
+				std::fprintf(output_, ",simd_s%u_m%u", sources, mask);
 		std::fputc('\n', output_);
 		std::fflush(output_);
 		worker_ = std::thread{[this] {

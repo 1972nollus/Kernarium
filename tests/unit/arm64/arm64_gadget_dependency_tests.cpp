@@ -399,6 +399,74 @@ void taken_prefix()
 	require(after[skipped] == before[skipped]);
 #endif
 }
+
+#if UML_GADGET_DEPENDENCY_COVERAGE
+void mixed_domain_counts()
+{
+	constexpr std::uint64_t pc = 0x4000;
+	const std::array code{
+		0x9100'0400U, // add x0,x0,#1
+		0x9100'0801U, // add x1,x0,#2: scalar edge
+		0x4e3e'87e0U, // add v0.16b,v31.16b,v30.16b
+		0x4e20'8401U, // add v1.16b,v0.16b,v0.16b: two vector sources
+		0x9100'0c02U, // add x2,x0,#3: vector entry broke scalar residency
+		0x4e21'8422U, // add v2.16b,v1.16b,v1.16b: scalar entry broke vector residency
+		0x4e22'8443U, // add v3.16b,v2.16b,v2.16b: two vector sources
+		0xd400'0001U,
+	};
+	constexpr std::array masks{0U, 1U, 0U, 3U, 0U, 0U, 3U};
+	g::diagnostics::DependencyCounts expected_counts{};
+	expected_counts[0] = code.size();
+	expected_counts[1] = 1;
+	for (unsigned i = 0; i < masks.size(); ++i) {
+		const auto built = g::Builder{}.build(pc, std::array{code[i]}, {},
+			std::pmr::get_default_resource(), {},
+			{.scalar_forwarding = false, .vector_forwarding = false});
+		const auto words = built.program.words().subspan(3, 2);
+		const auto scalar = g::scalar_access(words), vector = g::vector_access(words);
+		require(bool(scalar.contract) != bool(vector.contract));
+		++expected_counts[vector.contract ? vector.coverage_bucket(
+			masks[i], g::diagnostics::vector_coverage_family) : scalar.coverage_bucket(masks[i])];
+	}
+	a::CpuState expected{};
+	expected.pc = pc;
+	expected.nzcv = 0xa000'0000U;
+	for (unsigned reg = 0; reg < 32; ++reg)
+		for (unsigned byte = 0; byte < 16; ++byte)
+			expected.vectors[reg].bytes[byte] = std::byte(reg + byte);
+	const auto initial = expected;
+	NoMemory memory;
+	for (auto word : code)
+		require(a::Dispatcher{}.execute(expected, memory, word).reason ==
+			(word == code.back() ? a::StopReason::system_call : a::StopReason::continued));
+	auto tlb = std::make_unique<uml::memory::Tlb>();
+	for (bool forwarding : {false, true}) {
+		const auto built = g::Builder{}.build(pc, code, {},
+			std::pmr::get_default_resource(), {},
+			{.scalar_forwarding = forwarding, .vector_forwarding = forwarding});
+		auto actual = initial;
+		const auto before = g::diagnostics::dependency_snapshot();
+		std::size_t executed{};
+		require(g::execute(built.program, actual, *tlb, executed) == uml::cpu::EngineEvent::system_call);
+		const auto after = g::diagnostics::dependency_snapshot();
+		for (std::size_t i = 0; i < expected_counts.size(); ++i)
+			require(after[i] - before[i] == expected_counts[i]);
+		require(executed == code.size() && actual.registers == expected.registers &&
+			actual.pc == expected.pc && actual.nzcv == expected.nzcv);
+		for (unsigned reg = 0; reg < 32; ++reg)
+			require(actual.vectors[reg].bytes == expected.vectors[reg].bytes);
+	}
+	// The builder's direct illegal-entry path is still an entered guest word.
+	const auto illegal = g::Builder{}.build(pc, std::array{0U});
+	auto state = initial;
+	const auto before = g::diagnostics::dependency_snapshot();
+	require(g::execute(illegal.program, state, *tlb) == uml::cpu::EngineEvent::illegal_instruction);
+	const auto after = g::diagnostics::dependency_snapshot();
+	for (std::size_t i = 0; i < before.size(); ++i)
+		require(after[i] - before[i] == (i < 2 ? 1U : 0U));
+	std::puts("mixed scalar/vector coverage: one bucket per group; both resident results preserved");
+}
+#endif
 } // namespace
 
 int main()
@@ -412,6 +480,9 @@ int main()
 	undeclared_boundary();
 	linked_counts();
 	taken_prefix();
+#if UML_GADGET_DEPENDENCY_COVERAGE
+	mixed_domain_counts();
+#endif
 	run_gadget_dependency_memory_tests();
 	run_gadget_vector_dependency_tests();
 	std::puts("gadget dependency tests passed");

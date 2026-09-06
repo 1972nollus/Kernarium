@@ -6,7 +6,7 @@
 .set vector_register8, 0x4000 | 8
 .set vector_register16, 0x4000 | 16
 
-#if UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 #if __APPLE__
 .pushsection __DATA_CONST,__gadget_vector
 #else
@@ -19,17 +19,21 @@ NAME(uml_arm64_vector_contract_begin):
 #endif
 
 .macro vector_pointer name, mask, sources
+#if UML_GADGET_VECTOR_FORWARDING
  .if (\mask & \sources) == \mask
  .quad NAME(uml_arm64_gadget_\name\()_vector_\mask)
  .else
  .quad 0
  .endif
+#else
+ .quad 0
+#endif
 .endm
 
 .macro vector_entry name, forward, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
-#if UML_GADGET_VECTOR_FORWARDING
+#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
  .set .Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
 #if __APPLE__
  .pushsection __DATA_CONST,__gadget_vector
@@ -41,7 +45,7 @@ NAME(uml_arm64_vector_contract_begin):
  vector_pointer \name, \mask, .Lvector_sources\@
  .endr
  .short \destination, \first, \second, \third
- /* Family is reserved: the scalar coverage schema does not count vectors. */
+ /* One SIMD/FP family in the separate vector coverage namespace. */
  .short 0, \words
  .long 0
  .popsection
