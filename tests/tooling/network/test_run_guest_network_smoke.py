@@ -58,14 +58,26 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             ),
             mock.patch.object(run_guest_network_smoke, "run", return_value=""),
             mock.patch.object(
-                run_guest_network_smoke, "verify_slirp_route"
-            ) as verify_route,
+                run_guest_network_smoke, "start_guest_dhcp_client"
+            ) as start_dhcp,
+            mock.patch.object(
+                run_guest_network_smoke,
+                "wait_for_slirp_lease",
+                return_value=("", "", ""),
+            ) as wait_for_lease,
+            mock.patch.object(
+                run_guest_network_smoke, "verify_slirp_lease"
+            ) as verify_lease,
             mock.patch.object(
                 run_guest_network_smoke, "run_node", side_effect=run_node
             ),
         ):
             self.assertEqual(run_guest_network_smoke.main(), 0)
-            verify_route.assert_called_once_with("", "")
+            # Guest userspace owns address configuration: every campaign has
+            # to start a DHCP client and wait for the lease before probing.
+            start_dhcp.assert_called_once()
+            wait_for_lease.assert_called_once()
+            verify_lease.assert_called_once_with("", "", "")
         return scripts
 
     def test_default_campaign_does_not_issue_dns(self) -> None:

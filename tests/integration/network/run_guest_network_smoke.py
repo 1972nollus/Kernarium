@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Exercise the deterministic SLiRP guest network without external traffic.
 
+The guest kernel deliberately has no ``CONFIG_IP_PNP``, so nothing is
+configured before userspace starts and guest userspace owns every address.
+This init-shell boot has no init system to run a DHCP client for it, so the
+runner starts the one the product rootfs ships, ``systemd-networkd``, and then
+proves the emulator's user-mode network answered with the documented lease:
+address 10.0.2.15/24 and a default route through the gateway 10.0.2.2.
+
 The default campaign reaches only the SLiRP host gateway.  An explicit
 ``--external`` switch is deliberately required before the guest resolves or
 contacts an Internet host; CMake registers that variant only when the caller
@@ -17,6 +24,7 @@ import pathlib
 import re
 import shlex
 import sys
+import time
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
@@ -26,6 +34,16 @@ from guest import Guest  # noqa: E402
 
 
 NODE = "/opt/node/bin/node"
+NETWORKD = "/lib/systemd/systemd-networkd"
+NETWORKD_LOG = "/run/uml-networkd.log"
+NETWORKD_RUNTIME = "/run/systemd/netif"
+NETWORK_DIRECTORY = "/run/systemd/network"
+NETWORK_UNIT = f"{NETWORK_DIRECTORY}/10-eth0.network"
+LEASE_TIMEOUT_SECONDS = 30
+LEASE_POLL_SECONDS = 0.25
+# 0202000A is the little-endian /proc/net/route spelling of 10.0.2.2.
+SLIRP_DEFAULT_ROUTE = re.compile(r"^eth0\s+00000000\s+0202000A\s+", re.MULTILINE)
+SLIRP_LEASE_ADDRESS = re.compile(r"\binet 10\.0\.2\.15/24\b")
 SLIRP_DNS_PROBE = (
     'const dgram=require("dgram");'
     'const socket=dgram.createSocket("udp4");'
@@ -60,16 +78,84 @@ def run_node(guest: Guest, script: str, timeout: int = 30) -> str:
     return run(guest, f"{NODE} -e {shlex.quote(script)}", timeout)
 
 
-def verify_slirp_route(route_table: str, interfaces: str) -> None:
-    if re.search(
-        r"^eth0\s+00000000\s+0202000A\s+", route_table, re.MULTILINE
-    ) is None:
+def start_guest_dhcp_client(guest: Guest) -> None:
+    """Start the DHCP client the product rootfs ships on a bare init shell.
+
+    ``systemd-networkd`` is the rootfs's only DHCP client, and here it runs
+    without the rest of systemd, so the runner supplies the three things its
+    unit would have provided.
+    """
+    run(guest, "mount -t proc proc /proc")
+    # systemd reads a writable /sys as "udev runs here" and then parks every
+    # link in "pending udev initialization" indefinitely.  A read-only /sys is
+    # its documented convention for a userspace that has no udev, which is
+    # exactly this boot.
+    run(guest, "mount -t sysfs -o ro sysfs /sys")
+    # The product root is read-only EROFS, so the drop-in and the daemon's
+    # runtime state both live on a disposable tmpfs.
+    run(guest, "mount -t tmpfs tmpfs /run")
+    run(guest, f"mkdir -p {NETWORK_DIRECTORY}")
+    # networkd drops to the systemd-network user and refuses a runtime
+    # directory owned by anyone else, which is what its unit's
+    # RuntimeDirectory= would have created for it.
+    run(
+        guest,
+        "install -d -o systemd-network -g systemd-network -m 0755 "
+        f"{NETWORKD_RUNTIME}",
+    )
+    run(
+        guest,
+        "printf '%s\\n' '[Match]' 'Name=eth0' '[Network]' 'DHCP=ipv4' "
+        f"> {NETWORK_UNIT}",
+    )
+    # The console harness appends "; rc=$?" to every command, so a trailing
+    # ampersand would be a shell syntax error.  The subshell detaches the
+    # daemon and keeps that wrapper valid.
+    run(guest, f"({NETWORKD} >{NETWORKD_LOG} 2>&1 </dev/null &)")
+
+
+def wait_for_slirp_lease(
+    guest: Guest, timeout_seconds: int = LEASE_TIMEOUT_SECONDS
+) -> tuple[str, str, str]:
+    """Return the guest routing, interface and address tables once DHCP lands.
+
+    The lease normally arrives well inside a second; the wait exists so a
+    loaded host reports the daemon's own diagnosis instead of an empty table.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        route_table = run(guest, "cat /proc/net/route")
+        if SLIRP_DEFAULT_ROUTE.search(route_table) is not None:
+            return (
+                route_table,
+                run(guest, "cat /proc/net/dev"),
+                run(guest, "ip -4 -oneline addr show eth0"),
+            )
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "guest userspace did not acquire the SLiRP DHCP lease within "
+                f"{timeout_seconds}s:\n{route_table}\n"
+                f"{run(guest, f'cat {NETWORKD_LOG}')}"
+            )
+        time.sleep(LEASE_POLL_SECONDS)
+
+
+def verify_slirp_lease(
+    route_table: str, interfaces: str, addresses: str
+) -> None:
+    if SLIRP_DEFAULT_ROUTE.search(route_table) is None:
         raise RuntimeError(
             "missing default route through the SLiRP gateway 10.0.2.2:\n"
             f"{route_table}"
         )
     if re.search(r"^\s*eth0:", interfaces, re.MULTILINE) is None:
         raise RuntimeError(f"SLiRP eth0 interface is missing:\n{interfaces}")
+    # The single SLiRP lease is also the default target of a host forward, so
+    # the address the guest is handed is part of the network's contract.
+    if SLIRP_LEASE_ADDRESS.search(addresses) is None:
+        raise RuntimeError(
+            f"eth0 did not receive the SLiRP lease 10.0.2.15/24:\n{addresses}"
+        )
 
 
 def external_probe(host: str) -> str:
@@ -105,18 +191,16 @@ def main() -> int:
         "tmpfs",
         (),
         # The production rootfs is raw EROFS and is intentionally entered
-        # through a temporary init shell.  This smoke exercises the kernel
-        # DHCP/SLiRP path there; guest-overlay-systemd-smoke separately proves
-        # the overlay pivot and real systemd boot.
+        # through a temporary init shell, which keeps this smoke to the
+        # emulator's network device and the guest's own DHCP client.
+        # guest-overlay-systemd-smoke separately proves the overlay pivot and
+        # a real systemd boot.
         init_shell=True,
     )
     try:
         guest.boot_to_shell(180)
-        run(guest, "mount -t proc proc /proc")
-        verify_slirp_route(
-            run(guest, "cat /proc/net/route"),
-            run(guest, "cat /proc/net/dev"),
-        )
+        start_guest_dhcp_client(guest)
+        verify_slirp_lease(*wait_for_slirp_lease(guest))
         if arguments.external:
             dns_output = run_node(guest, SLIRP_DNS_PROBE, 15)
             if "slirp-dns-ok" not in dns_output:
