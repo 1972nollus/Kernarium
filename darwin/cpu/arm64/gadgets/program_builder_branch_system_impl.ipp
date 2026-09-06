@@ -308,7 +308,11 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		   (instruction & 0xffff'fc1fU) == 0xd65f'0000U) {
 		const auto opcode = instruction & 0xffff'fc1fU;
 		const unsigned source = (instruction >> 5) & 31U;
-		const bool cached = static_cast<bool>(resolve_indirect_link);
+		/* A cached call also names the return block's link, so with the
+		 * return ring built in it needs the direct-link resolver too. */
+		const bool cached = static_cast<bool>(resolve_indirect_link) &&
+			(opcode != 0xd63f'0000U || !UML_GADGET_RETURN_STACK ||
+				static_cast<bool>(resolve_link));
 		/* A plain RET inside an inlined callee falls through into the
 		 * continuation, but only when the link register still holds the
 		 * address the call pushed; the guard's operands are the ordinary

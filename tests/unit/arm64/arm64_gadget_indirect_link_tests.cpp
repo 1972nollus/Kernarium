@@ -72,12 +72,18 @@ gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 	return gadgets::Builder{}.build(pc, instructions);
 }
 
+/* Cached calls also name their return block's link (the return ring pushes
+ * it), so the fixture resolves any direct target to one unlinked record. */
+LinkTarget unlinked_return{~std::uint64_t{}};
+
 gadgets::BuildResult build_cached(std::uint64_t pc,
 	std::uint32_t instruction, gadgets::IndirectLink &site)
 {
 	const std::array instructions{instruction};
 	return gadgets::Builder{}.build(
-		pc, instructions, {}, std::pmr::get_default_resource(),
+		pc, instructions,
+		[](std::uint64_t) { return &unlinked_return.link; },
+		std::pmr::get_default_resource(),
 		[&](std::uint64_t source_pc) {
 			require(source_pc == pc);
 			return &site;

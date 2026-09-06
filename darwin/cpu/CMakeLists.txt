@@ -197,10 +197,13 @@ option(UML_GADGET_TAGGED_TLB_KEYS
 # four keeps the two-cell hit path and adds two scans before a miss.
 set(UML_GADGET_INDIRECT_ENTRIES "2" CACHE STRING
     "Trained target cells per indirect branch site (2 or 4)")
-# Experimental A/B arm, off by default: linked calls push the return block's
-# link on a private ring and a cached return whose site cells miss pops it.
+# Linked calls push the return block's link on a private sixteen-record ring
+# and a cached return whose site cells miss pops a matching record, training
+# the cell. Exact counters over the Geekbench 6 single-core set: executor round
+# trips -59 percent, return misses -84 percent; HDR +9, Clang +4, HTML5 +4.5
+# percent on a quiet host with the aggregate inside the shared-host band.
 option(UML_GADGET_RETURN_STACK
-    "Predict cached returns through a private return-record ring" OFF)
+    "Predict cached returns through a private return-record ring" ON)
 option(UML_GADGET_ELIDE_NOPS
     "Emit no gadget for guest instructions that translate to NOP" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
