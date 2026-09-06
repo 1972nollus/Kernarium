@@ -1,4 +1,4 @@
-From c1215d32f2b0ec6f08262f415f4d565e86bfce9c Mon Sep 17 00:00:00 2001
+From bf900e860dfc420e61713f02dc3684d71d6086fd Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
 Subject: [PATCH 05/26] uml: make core build rules portable across hosts

@@ -1,4 +1,4 @@
-From 5707c9bab855cbec3118a4d1e4debbe9aefe5f69 Mon Sep 17 00:00:00 2001
+From 959f722e7e0eb3e7ee38cfc19dc16d2c391e5135 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
 Subject: [PATCH 04/26] uml: add execution and capability core support

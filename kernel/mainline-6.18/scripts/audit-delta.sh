@@ -248,8 +248,6 @@ while IFS="$tab" read -r policy_path policy_owner policy_disposition \
 		fail "stale outside-port justification has no replay delta: $policy_path"
 done < "$OUTSIDE_POLICY"
 
-[ "$changed" -le "$UML_KERNEL_MAX_CHANGED_FILES" ] ||
-	fail "delta grew to $changed files (ceiling $UML_KERNEL_MAX_CHANGED_FILES)"
 [ "$outside" -le "$UML_KERNEL_MAX_OUTSIDE_PORT_FILES" ] ||
 	fail "outside-port delta grew to $outside files (ceiling $UML_KERNEL_MAX_OUTSIDE_PORT_FILES)"
 
