@@ -66,6 +66,11 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		}
 		if (link)
 			emit(words, address + sizeof(instruction));
+#if UML_GADGET_RETURN_STACK
+		/* The linked call also pushes the return block's link. */
+		if (link && resolve_link)
+			emit_link(context, address + sizeof(instruction));
+#endif
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
@@ -317,7 +322,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				context.retired_before_run + compiled + 1);
 			emit(words, std::uintptr_t{0});
 			emit(words, static_cast<std::uintptr_t>(source * 8U));
-			emit_indirect_link(context, address);
+			emit_indirect_link(context, address, true);
 			++compiled;
 			*context.continue_at = context.inlined_return;
 			*context.continue_return = 0;
@@ -334,9 +339,14 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
 			static_cast<std::uintptr_t>(source * 8U));
 		if (cached)
-			emit_indirect_link(context, address);
+			emit_indirect_link(context, address,
+				opcode == 0xd65f'0000U);
 		if (opcode == 0xd63f'0000U)
 			emit(words, address + sizeof(instruction));
+#if UML_GADGET_RETURN_STACK
+		if (opcode == 0xd63f'0000U && cached)
+			emit_link(context, address + sizeof(instruction));
+#endif
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {

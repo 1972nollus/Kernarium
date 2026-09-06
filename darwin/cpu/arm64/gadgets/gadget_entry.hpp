@@ -4,6 +4,7 @@
 #include "../cpu_state.hpp"
 #include "tlb.hpp"
 #include "dependency_coverage.hpp"
+#include "execution_histogram.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +20,7 @@ struct EngineResult final {
 extern "C" EngineResult uml_arm64_gadget_enter(
 	const std::uintptr_t *program, CpuState *cpu, ::uml::memory::Tlb *tlb,
 	std::size_t initial_instructions
-#if UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
 	, void *dependency_counters
 #endif
 	);

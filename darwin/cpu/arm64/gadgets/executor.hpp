@@ -2,10 +2,12 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/gadgets/execution_histogram.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/tlb.hpp"
 #include "memory/static_guest_memory.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,6 +31,25 @@ struct GadgetCacheDiagnostics final {
 	std::uint64_t validation_mismatches{};
 	std::uint64_t validation_faults{};
 	std::uint64_t validation_sequence_races{};
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	/* Why translated execution returned to this executor, per block entry:
+	 * the chain reached its linked-instruction limit, an indirect site missed
+	 * both of its cells, an unlinked or exit gadget left with the PC set, or
+	 * a guest-visible event (syscall, fault, interrupt, other) ended it. */
+	std::uint64_t block_entries{};
+	std::uint64_t exits_chain_limit{};
+	std::uint64_t exits_indirect_miss{};
+	std::uint64_t exits_indirect_miss_return{};
+	/* Misses at sites with 1, 2, 3, 4, 5-8, 9-16, 17-64, >64 distinct
+	 * targets, refreshed by the executor on each miss. */
+	std::array<std::uint64_t, 8> miss_by_site_targets{};
+	std::uint64_t exits_unlinked{};
+	std::uint64_t exits_syscall{};
+	std::uint64_t exits_fault{};
+	std::uint64_t exits_interrupt{};
+	std::uint64_t exits_other{};
+	std::uint64_t cache_misses{};
+#endif
 };
 
 class GadgetExecutor final {

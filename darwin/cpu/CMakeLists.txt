@@ -110,6 +110,13 @@ option(UML_GADGET_DEPENDENCY_COVERAGE
     "Count executed scalar and SIMD/FP dependency opportunities (diagnostic builds only)"
     OFF)
 
+# Also default-off and mutually exclusive with dependency coverage: the same
+# threaded counter gadget indexes a table keyed by the exact selected entry,
+# which is what a static host-instruction cost per entry must be weighted by.
+option(UML_GADGET_EXECUTION_HISTOGRAM
+    "Count executed gadget entries (diagnostic builds only)"
+    OFF)
+
 option(UML_GADGET_SCALAR_FORWARDING
     "Forward adjacent write-through scalar results within gadget blocks"
     ON)
@@ -176,6 +183,26 @@ option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
 # 3.43x duplication cancelling what the removed boundaries buy. See G163.
 option(UML_GADGET_INLINE_CALLS
     "Translate a direct call's callee inline behind it" OFF)
+# A guest instruction that resolves to the NOP entry (HINT space, BTI and
+# pointer-authentication hints on a profile without pointer authentication,
+# XZR-destination folds) otherwise costs a dispatch each time it runs. Leave
+# it out of the stream; retirement and fault positions are unaffected.
+# Experimental A/B arm, off by default: key the software TLB by the address
+# as presented, so scalar transfers skip the per-access top-byte check and the
+# miss helper strips the logical tag instead.
+option(UML_GADGET_TAGGED_TLB_KEYS
+    "Key the gadget TLB by tagged addresses instead of stripping per access" OFF)
+# Cells per indirect branch or return site. Execution histograms of Geekbench
+# and Aquarium show most executor round trips are misses through two cells;
+# four keeps the two-cell hit path and adds two scans before a miss.
+set(UML_GADGET_INDIRECT_ENTRIES "2" CACHE STRING
+    "Trained target cells per indirect branch site (2 or 4)")
+# Experimental A/B arm, off by default: linked calls push the return block's
+# link on a private ring and a cached return whose site cells miss pops it.
+option(UML_GADGET_RETURN_STACK
+    "Predict cached returns through a private return-record ring" OFF)
+option(UML_GADGET_ELIDE_NOPS
+    "Emit no gadget for guest instructions that translate to NOP" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -208,6 +235,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_simd_selection.cpp
     arm64/gadgets/pair_histogram.cpp
     arm64/gadgets/dependency_coverage.cpp
+    arm64/gadgets/execution_histogram.cpp
     arm64/gadgets/scalar_forwarding.cpp
     arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
@@ -233,6 +261,7 @@ set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
     UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
@@ -241,6 +270,10 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
+    UML_GADGET_ELIDE_NOPS=$<BOOL:${UML_GADGET_ELIDE_NOPS}>
+    UML_GADGET_TAGGED_TLB_KEYS=$<BOOL:${UML_GADGET_TAGGED_TLB_KEYS}>
+    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
+    UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
 
 # The gadget library is still many translation units, and the selection tables
@@ -434,6 +467,8 @@ target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
+    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>

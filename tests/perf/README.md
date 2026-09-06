@@ -96,6 +96,20 @@ and no cross-block dependency is inferred. Report both all-guest-word coverage
 and the declared-source denominator. Never use instrumented scores as speed
 evidence.
 
+## Execution histogram
+
+A separate `UML_GADGET_EXECUTION_HISTOGRAM=ON` build counts every executed
+gadget entry by its (predecessor, entry) pair and every executor round trip by
+reason. Set `DARWIN_UML_GADGET_EXECUTION_HISTOGRAM` to a path; the merged
+counts are rewritten there every two seconds and at exit, most frequent
+first, so a run that ends on a signal still leaves its last snapshot. The
+Geekbench and Aquarium runners need no option: copy the file at each console
+marker for per-workload differences. Weighting each entry's count by the
+shortest helper-free host-instruction path of its symbol (from `objdump -d`)
+models the fast-path cost per guest instruction; per-thread hardware
+counters from an `xctrace` CPU Counters recording measure the whole engine.
+Both remain diagnostics, not scores.
+
 ## Focused assembly probes
 
 [`probes.tsv`](probes.tsv) is the complete inventory of freestanding A64 probe

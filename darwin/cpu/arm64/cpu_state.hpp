@@ -125,6 +125,22 @@ struct CpuState final {
 	 * leaner guest profile before entering any execution engine.
 	 */
 	bool pointer_authentication_enabled{true};
+	/* Private gadget-engine return predictor: linked calls push the return
+	 * PC with the BlockLink of its block, and a cached return whose site
+	 * cells miss pops the newest record when it names the live link
+	 * register. Records name link state of one address space, so the
+	 * executor empties the ring on every address-space switch. A stale or
+	 * mismatched record can only fall back to the ordinary miss path. */
+	struct ReturnRecord final {
+		/* An unaligned sentinel: no return PC can ever match an empty
+		 * record, so an empty ring never follows its null link. */
+		std::uint64_t pc{~std::uint64_t{0}};
+		const void *link{};
+	};
+	/* Shared with assembly_offsets.h; a power of two no larger than 256. */
+	static constexpr std::size_t return_stack_entries = 16;
+	std::array<ReturnRecord, return_stack_entries> gadget_return_stack{};
+	std::uint8_t gadget_return_top{};
 	[[nodiscard]] bool tagged_addresses_enabled() const noexcept
 	{
 		return mte_enabled || tbi_enabled;

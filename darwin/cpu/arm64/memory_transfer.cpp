@@ -28,7 +28,7 @@ extern "C" std::uint32_t uml_arm64_memory_transfer(
 		if (count == pages.size())
 			return 0;
 		const auto current = address + completed;
-		auto *translated = tlb->translate(current, direction);
+		auto *translated = tlb->translate_tagged(current, direction);
 		if (translated == nullptr)
 			return 0;
 		const auto length = std::min(size - completed,
@@ -171,7 +171,7 @@ extern "C" void *uml_arm64_tlb_miss(
 {
 	if (tlb == nullptr)
 		return nullptr;
-	return tlb->translate(address,
+	return tlb->translate_tagged(address,
 		access == static_cast<std::uint32_t>(
 			::uml::memory::Access::write) ?
 			::uml::memory::Access::write : ::uml::memory::Access::read);

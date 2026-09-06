@@ -70,11 +70,23 @@ struct alignas(32) Tlb final {
 	Access fault_access{Access::read};
 	std::uint32_t reserved{};
 	std::array<std::uint8_t, tlb_set_count> replacement_way{};
+	/* Whether the address space owning the current entries ignores the top
+	 * address byte (TBI or MTE). Set by the executor that fills the TLB
+	 * from its guest state; consumers that never present tagged addresses
+	 * leave it false. */
+	bool tagged_addresses{};
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);
 	void discard(std::uint64_t address);
 	[[nodiscard]] std::byte *translate(std::uint64_t address, Access access);
+	/* Translate an address that may still carry a logical tag. The entry is
+	 * keyed by the address as presented, so a later lookup with the same
+	 * tag hits without stripping it; a fault reports the untagged address.
+	 * Invalidation ignores the tag byte of every key, so tagged entries
+	 * follow their page's mapping changes. */
+	[[nodiscard]] std::byte *translate_tagged(
+		std::uint64_t address, Access access);
 	[[nodiscard]] bool read_allocation_tag(
 		std::uint64_t address, std::uint8_t &tag);
 	[[nodiscard]] bool write_allocation_tag(

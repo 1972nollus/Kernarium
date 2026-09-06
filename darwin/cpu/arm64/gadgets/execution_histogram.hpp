@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#ifndef UML_GADGET_EXECUTION_HISTOGRAM
+#define UML_GADGET_EXECUTION_HISTOGRAM 0
+#endif
+
+/*
+ * Execution-weighted histogram of gadget entries (diagnostic builds only).
+ *
+ * The dependency-coverage build counts entered decode groups by forwarding
+ * shape. This build counts them by the exact gadget entry the translator
+ * selected, including forwarding variants, so a static host-instruction cost
+ * per entry can be weighted by how often the entry actually runs. The same
+ * threaded counter gadget is reused; only the table it indexes differs. Slot
+ * zero accumulates guest words in entered groups, slot one counts groups whose
+ * entry could not be indexed, and slot 2 + i counts executions of the entry
+ * with dense index i, where an index names one (predecessor, entry) pair so
+ * that executed adjacent pairs are exact as well. Counting is per carrier and
+ * merged at dump time.
+ *
+ * Set DARWIN_UML_GADGET_EXECUTION_HISTOGRAM to a path to have the merged
+ * counts rewritten there periodically and at exit, most frequent first.
+ */
+namespace uml::cpu::arm64::gadgets::diagnostics {
+
+inline constexpr std::size_t execution_histogram_capacity = std::size_t{1} << 18;
+
+#if UML_GADGET_EXECUTION_HISTOGRAM
+[[nodiscard]] void *execution_counters();
+/* Byte offset of the counter slot for one adjacent entry pair. A null
+ * predecessor names a block entry, so per-entry totals are pair sums. */
+[[nodiscard]] std::size_t execution_histogram_slot(
+	const void *previous, const void *gadget);
+/* Executor diagnostics blocks to sum into the dump; each executor registers
+ * its own and keeps it alive for the process lifetime. */
+void execution_histogram_note_executor(const void *diagnostics);
+extern "C" void uml_arm64_gadget_dependency_coverage();
+#endif
+
+} // namespace uml::cpu::arm64::gadgets::diagnostics
