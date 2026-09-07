@@ -2,8 +2,8 @@
 /*
  * Freestanding arm64/Linux control for ordinary ADD-immediate gadgets.
  *
- * The dependency chain keeps every result live while one linked branch is
- * amortized over sixteen measured instructions.
+ * The loop body is the shared gadget_ceiling_add_immediate.inc, so this
+ * guest run and the ideal gadget ceiling bench execute the same words.
  */
 
 	.equ NR_WRITE,		64
@@ -13,6 +13,8 @@
 #endif
 	.equ ITERATIONS,	BENCH_ITERATIONS
 
+#include "gadget_ceiling_add_immediate.inc"
+
 	.section .text
 	.global _start
 	.type _start, %function
@@ -21,25 +23,7 @@ _start:
 	movk	x19, #((ITERATIONS >> 16) & 0xffff), lsl #16
 	mov	x20, #1
 
-.Lloop:
-	add	x20, x20, #1
-	add	x20, x20, #2
-	add	x20, x20, #3
-	add	x20, x20, #4
-	add	x20, x20, #5
-	add	x20, x20, #6
-	add	x20, x20, #7
-	add	x20, x20, #8
-	add	x20, x20, #9
-	add	x20, x20, #10
-	add	x20, x20, #11
-	add	x20, x20, #12
-	add	x20, x20, #13
-	add	x20, x20, #14
-	add	x20, x20, #15
-	add	x20, x20, #16
-	subs	x19, x19, #1
-	b.ne	.Lloop
+	uml_gadget_ceiling_add_immediate_body .Lloop
 
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message

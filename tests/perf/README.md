@@ -131,37 +131,52 @@ the manifest.
 
 ## Ideal gadget ceiling
 
-`gadget-ceiling-binaries` builds a matched native/ideal scalar benchmark. Both
-modes execute the exact labeled instruction words from
-`gadget_ceiling_workload.s`. The ideal mode translates that body once with the
-production gadget Builder, then keeps every timed iteration inside the linked
-gadget stream. It bypasses the UML executor, translation cache, software MMU,
-guest kernel, UML scheduler, and the normal 4,096-instruction fairness exit;
-the single final interrupt returns only after the complete workload. Host
-scheduling and the engine's intrinsic threaded dispatch remain.
+`gadget-ceiling-binaries` builds a matched native/ideal benchmark with three
+workloads. `add-immediate` is the dependent ADD chain, a best case rather than
+a mix. `scalar-mix` is a browser-like integer loop: loads of every width with
+register and unsigned offsets, a pair load, three stores, flag-setting ALU,
+selects, a never-taken bounds check and two data-dependent skips. `simd-mix`
+is an FP inner loop: vector pair and register-offset transfers, indexed and
+vector FMLA, converts, and an FP compare branch. Each body is a
+`gadget_ceiling_*.inc` macro that the matching `guest_*_loop.S` probe includes
+too, so the native control, the ideal stream and the real guest execute the
+same words.
 
-After configuring the `macos-unit-16k` preset, build and run the matched control:
+The ideal mode translates a body once with the production gadget Builder,
+gives every branch target inside the body its own block, keeps every timed
+iteration inside the linked streams, and maps the guest buffer through the
+static MMU so the software TLB is warm. It bypasses the UML executor,
+translation cache, guest kernel, UML scheduler, and the normal
+4,096-instruction fairness exit; the single final interrupt returns only after
+the complete workload. Host scheduling and the engine's intrinsic threaded
+dispatch remain.
+
+After configuring the `macos-unit-16k` preset, build and run one workload:
 
 ```sh
 cmake --build .build/presets/macos-unit-16k \
   --target gadget-ceiling-binaries performance-probe-binaries
 .build/presets/macos-unit-16k/bin/uml-gadget-ceiling-bench \
-  --iterations 100000000 --repetitions 7
+  --workload scalar-mix --repetitions 7
 ```
 
-The reported ratio is a best-case dependent ADD-immediate ceiling. It is not a
-general estimate for memory, SIMD, syscall, or whole-guest workloads. The hot
-body is instruction-for-instruction identical to
-`guest_add_immediate_loop.S`. Use that one static Linux ELF unchanged for both
-the arm64 Linux control and `run_guest_link_bench.py` real-guest run; its outer
-wall time is a conservative end-to-end guest rate because it also includes
-command and process boundaries.
+Rates count retired guest instructions, loop control included; the two
+data-dependent branches report their fall-through counts so the words they
+skipped are subtracted. Native and ideal runs must reproduce the same checksum
+and path counts, and the `UML_GADGET_CEILING_RESULT` line prints them for the
+default iteration count. The mix probes print the same fields from the real
+guest, which must agree with the host line. Every ratio is a workload ceiling,
+not an application estimate.
+
+Run the matching probe unchanged in a real guest; its outer wall time is a
+conservative end-to-end guest rate because it also includes command and
+process boundaries.
 
 ```sh
 python3 tests/perf/run_guest_link_bench.py \
   --emulator .build/presets/macos-integration/bin/uml-darwin \
   --rootfs rootfs.erofs \
-  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_add_immediate_loop \
+  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_scalar_mix_loop \
   --engine gadgets --cpus 1 --workers 1 --repetitions 7 \
   --core-class performance --overlay-shell \
   --boot-timeout 180 --command-timeout 120

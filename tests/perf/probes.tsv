@@ -1,5 +1,5 @@
 source	category	required_feature	runner	retention
-guest_add_immediate_loop.S	integer	base	run_guest_link_bench.py	Matched control for ADD-immediate lowering and gadget layout changes.
+guest_add_immediate_loop.S	integer	base	run_guest_link_bench.py	Matched control for ADD-immediate lowering and gadget layout changes, sharing its body with the ideal gadget ceiling bench.
 guest_atomic_add_loop.S	atomic	lse	run_guest_link_bench.py	Private-counter control for direct atomic lowering and multicore scaling.
 guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP-immediate followed by B.cond, the shape a translated block ends on. The loop counters in the other probes are subs with a real destination and so never take the fused path.
 guest_compare_register_branch_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP of two registers followed by B.cond. G116 ranks this pair fourth and ninth over a full Geekbench run while the immediate form does not reach the table, so the two shapes get separate probes.
@@ -30,6 +30,8 @@ guest_operand_predecode_loop.S	integer	base	run_guest_link_bench.py	Measures tra
 guest_pc_relative_address_loop.S	integer	base	run_guest_link_bench.py	The ADRP plus ADD address idiom in a loop. G113 measured it as the third most frequent adjacent gadget pair in translated code, and the other probes use it once each on their way out rather than in a loop.
 guest_reservation_store_fallback_loop.S	atomic	base	run_guest_link_bench.py	Exercises the software reservation fallback followed by publication.
 guest_reservation_store_loop.S	atomic	base	run_guest_link_bench.py	Exercises the bounded native reservation sequence followed by publication.
+guest_scalar_mix_loop.S	integer	base	run_guest_link_bench.py	Realistic scalar mix (loads, stores, pairs, narrow accesses, flag-setting ALU, selects, a never-taken check and two data-dependent skips) sharing its body with the ideal gadget ceiling bench and printing the checksum, path counts and retired instructions the host bench must reproduce.
+guest_simd_mix_loop.S	simd	base	run_guest_link_bench.py	Realistic FP/SIMD mix (vector pair and register-offset transfers, indexed and vector FMLA, converts, an FP compare branch) sharing its body with the ideal gadget ceiling bench and printing the checksum, path counts and retired instructions the host bench must reproduce.
 guest_scalar_byte_loop.S	memory	base	run_guest_link_bench.py	Matched control for the page-contained scalar byte fast path.
 guest_simd_basic_fadd_loop.S	simd	base	run_guest_link_bench.py	Measures basic vector floating arithmetic register addressing.
 guest_simd_destination_residency_control_loop.S	simd	base	run_guest_link_bench.py	Matched out-of-bank control for the destination-resident integer MLA run.

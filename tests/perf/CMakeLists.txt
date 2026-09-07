@@ -4,8 +4,6 @@
 # tests. Keep them buildable from the canonical graph without adding them to a
 # CTest suite or an ordinary suite-binary aggregate.
 set(_uml_performance_probe_manifest "${CMAKE_CURRENT_SOURCE_DIR}/probes.tsv")
-set(_uml_performance_probe_common
-    "${CMAKE_CURRENT_SOURCE_DIR}/vector_store32_probe.inc")
 file(STRINGS "${_uml_performance_probe_manifest}" _uml_performance_probe_rows)
 list(POP_FRONT _uml_performance_probe_rows _uml_performance_probe_header)
 if(NOT _uml_performance_probe_header STREQUAL
@@ -44,10 +42,18 @@ foreach(_uml_performance_probe_row IN LISTS _uml_performance_probe_rows)
     set(_uml_performance_probe_dependencies
         "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_performance_probe_source}"
         "${_uml_performance_probe_manifest}")
-    if(_uml_performance_probe_source MATCHES "^guest_vector_store32_")
+    # A probe that shares a loop body or harness through a quoted include
+    # rebuilds when that include changes.
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_performance_probe_source}"
+        _uml_performance_probe_includes
+        REGEX "^[ \t]*#[ \t]*include[ \t]+\"[^\"]+\"")
+    foreach(_uml_performance_probe_include IN LISTS
+            _uml_performance_probe_includes)
+        string(REGEX REPLACE ".*\"([^\"]+)\".*" "\\1"
+            _uml_performance_probe_include "${_uml_performance_probe_include}")
         list(APPEND _uml_performance_probe_dependencies
-            "${_uml_performance_probe_common}")
-    endif()
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_performance_probe_include}")
+    endforeach()
     add_custom_command(
         OUTPUT "${_uml_performance_probe_output}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -80,7 +86,7 @@ add_custom_target(performance-probe-binaries
 add_executable(uml-gadget-ceiling-bench EXCLUDE_FROM_ALL
     gadget_ceiling_bench.cpp
     gadget_ceiling_ideal.cpp
-    gadget_ceiling_workload.s
+    gadget_ceiling_workload.S
     $<TARGET_OBJECTS:uml_arm64_dispatch>
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
@@ -89,7 +95,7 @@ target_include_directories(uml-gadget-ceiling-bench PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/include)
 target_link_libraries(uml-gadget-ceiling-bench PRIVATE
-    UML::CpuContract)
+    UML::CpuContract UML::MemorySharedBacking)
 target_compile_definitions(uml-gadget-ceiling-bench PRIVATE
     UML_GADGET_CEILING_WITH_IDEAL=1)
 target_compile_features(uml-gadget-ceiling-bench PRIVATE cxx_std_20)
@@ -100,7 +106,7 @@ set_target_properties(uml-gadget-ceiling-bench PROPERTIES
 
 add_executable(uml-gadget-ceiling-native EXCLUDE_FROM_ALL
     gadget_ceiling_bench.cpp
-    gadget_ceiling_workload.s)
+    gadget_ceiling_workload.S)
 target_compile_features(uml-gadget-ceiling-native PRIVATE cxx_std_20)
 target_compile_options(uml-gadget-ceiling-native PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)

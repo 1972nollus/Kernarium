@@ -501,7 +501,7 @@ file(GLOB PERFORMANCE_ASSEMBLY_SOURCES RELATIVE "${PERFORMANCE_PROBE_ROOT}"
     "${PERFORMANCE_PROBE_ROOT}/*.s")
 list(REMOVE_DUPLICATES PERFORMANCE_ASSEMBLY_SOURCES)
 set(PERFORMANCE_PROBE_SOURCES)
-set(PERFORMANCE_CEILING_ASSEMBLY gadget_ceiling_workload.s)
+set(PERFORMANCE_CEILING_ASSEMBLY gadget_ceiling_workload.S)
 foreach(PERFORMANCE_ASSEMBLY_SOURCE IN LISTS PERFORMANCE_ASSEMBLY_SOURCES)
     if(PERFORMANCE_ASSEMBLY_SOURCE MATCHES "^guest_[a-z0-9_]+\\.S$")
         list(APPEND PERFORMANCE_PROBE_SOURCES
@@ -611,7 +611,7 @@ else()
        NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
            "add_custom_target\\([ \t\r\n]*gadget-ceiling-binaries" OR
        NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
-           "gadget_ceiling_workload\\.s")
+           "gadget_ceiling_workload\\.S")
         list(APPEND VIOLATIONS
             "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is incomplete")
     endif()
