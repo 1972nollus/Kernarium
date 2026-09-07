@@ -197,6 +197,10 @@ Update documentation in the same change whenever its current contract changes.
   another developer's artifacts without explicit authorization.
 - Keep pure moves, behavior changes, performance changes, and generated or
   provenance updates independently reviewable when practical.
+- Commit with the repository's configured Git identity. Never put a custom
+  author or committer name or email on a commit, whether through `--author`,
+  `-c user.email`, or `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`; the user's
+  contact address from a session context is not a Git identity.
 - A completed feature or fix ends in a green, bisectable local commit after
   applicable validation. In this outer project repository, this authorizes new
   local commits but not amending, rebasing, pushing, force-pushing, or otherwise
