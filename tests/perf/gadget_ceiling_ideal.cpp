@@ -4,6 +4,7 @@
 #include "cpu/arm64/gadgets/program.hpp"
 #include "uml_darwin_static_mmu.h"
 
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -16,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -133,6 +135,42 @@ public:
 		return {cpu.registers[20], {cpu.registers[24], cpu.registers[25]}};
 	}
 
+	/* Entries are the words that begin a gadget symbol; every other word
+	 * is an operand, a link or a guest PC and prints as a number. */
+	void dump_stream() const
+	{
+		for (const auto &[pc, program] : programs_) {
+			const auto words = program.words();
+			std::printf("UML_GADGET_CEILING_STREAM block=0x%llx words=%zu\n",
+				static_cast<unsigned long long>(pc), words.size());
+			for (std::size_t index = 0; index < words.size(); ++index) {
+				const auto *address =
+					reinterpret_cast<const void *>(words[index]);
+				Dl_info info{};
+				std::string_view name;
+				if (dladdr(address, &info) != 0 &&
+				    info.dli_saddr == address &&
+				    info.dli_sname != nullptr) {
+					name = info.dli_sname;
+					if (name.starts_with("_"))
+						name.remove_prefix(1);
+				}
+				if (name.starts_with("uml_arm64_gadget_"))
+					std::printf(
+						"UML_GADGET_CEILING_STREAM block=0x%llx index=%zu "
+						"entry=%.*s\n",
+						static_cast<unsigned long long>(pc), index,
+						static_cast<int>(name.size()), name.data());
+				else
+					std::printf(
+						"UML_GADGET_CEILING_STREAM block=0x%llx index=%zu "
+						"operand=0x%llx\n",
+						static_cast<unsigned long long>(pc), index,
+						static_cast<unsigned long long>(words[index]));
+			}
+		}
+	}
+
 private:
 	[[nodiscard]] const gadgets::BlockLink *resolve(std::uint64_t target)
 	{
@@ -226,4 +264,11 @@ UmlGadgetCeilingResult uml_gadget_ceiling_ideal_workload(
 	if (!ideal)
 		fail("workload was not prepared outside the timed region");
 	return ideal->run(iterations);
+}
+
+void uml_gadget_ceiling_ideal_dump_stream()
+{
+	if (!ideal)
+		fail("workload was not prepared outside the timed region");
+	ideal->dump_stream();
 }

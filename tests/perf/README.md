@@ -160,6 +160,10 @@ cmake --build .build/presets/macos-unit-16k \
   --workload scalar-mix --repetitions 7
 ```
 
+`--dump-stream` prints each translated block's words with the gadget entries
+the Builder selected, so a body's host cost can be attributed instruction by
+instruction against the static entry costs.
+
 Rates count retired guest instructions, loop control included; the two
 data-dependent branches report their fall-through counts so the words they
 skipped are subtracted. Native and ideal runs must reproduce the same checksum

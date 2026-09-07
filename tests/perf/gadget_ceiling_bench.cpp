@@ -69,6 +69,7 @@ struct Configuration final {
 	const Workload *workload{&workloads[0]};
 	std::uint64_t iterations{};
 	unsigned repetitions{default_repetitions};
+	bool dump_stream{};
 };
 
 struct Sample final {
@@ -87,7 +88,8 @@ struct Distribution final {
 {
 	std::fprintf(stderr,
 		"usage: %s [--workload name] [--iterations positive-integer] "
-		"[--repetitions positive-integer]\nworkloads:", program);
+		"[--repetitions positive-integer] [--dump-stream]\nworkloads:",
+		program);
 	for (const auto &workload : workloads)
 		std::fprintf(stderr, " %.*s",
 			static_cast<int>(workload.name.size()),
@@ -115,6 +117,10 @@ template <typename Integer>
 	Configuration result;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view option{argv[index]};
+		if (option == "--dump-stream") {
+			result.dump_stream = true;
+			continue;
+		}
 		if (index + 1 == argc)
 			usage(argv[0]);
 		const std::string_view value{argv[++index]};
@@ -388,6 +394,15 @@ int main(int argc, char **argv)
 
 #if defined(UML_GADGET_CEILING_WITH_IDEAL)
 	uml_gadget_ceiling_prepare_ideal(words);
+	if (configuration.dump_stream) {
+		uml_gadget_ceiling_ideal_dump_stream();
+		return 0;
+	}
+#else
+	if (configuration.dump_stream) {
+		std::fprintf(stderr, "this build has no ideal gadget mode\n");
+		return 2;
+	}
 #endif
 	for (const std::uint64_t count : {1ULL, 2ULL, 3ULL, 17ULL, 101ULL,
 		     4'096ULL, 100'003ULL})
