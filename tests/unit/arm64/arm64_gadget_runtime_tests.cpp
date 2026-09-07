@@ -313,8 +313,10 @@ void mapped_memory_runtime_boundaries()
 		((guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT) &
 			(::uml::memory::tlb_set_count - 1)) *
 		::uml::memory::tlb_way_count;
-	require(tlb->entries[collision_set].read_page == guest_page);
-	require(tlb->entries[collision_set + 1].read_page == collision_page);
+	require(tlb->entries[collision_set].read_page ==
+		guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT);
+	require(tlb->entries[collision_set + 1].read_page ==
+		collision_page >> DARWIN_UML_GUEST_PAGE_SHIFT);
 #endif
 
 	/*
@@ -341,9 +343,10 @@ void mapped_memory_runtime_boundaries()
 			(guest_page_number >> ::uml::memory::tlb_index_bits)) &
 		(::uml::memory::tlb_set_count - 1);
 #endif
-	require(independent_tlb->entries[collision_slot].read_page == guest_page);
+	require(independent_tlb->entries[collision_slot].read_page ==
+		guest_page_number);
 	require(independent_tlb->entries[collision_slot].write_page ==
-		collision_page);
+		collision_page >> DARWIN_UML_GUEST_PAGE_SHIFT);
 	require(independent_tlb->translate(guest_page, ::uml::memory::Access::read) ==
 		read_translation);
 	require(independent_tlb->translate(

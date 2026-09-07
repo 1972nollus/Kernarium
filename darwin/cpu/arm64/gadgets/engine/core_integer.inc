@@ -79,7 +79,8 @@ NAME(uml_arm64_gadget_\name):
  * updates the entry.
  */
 .macro translate access, page_offset, forward=0
-	and x8, x7, #UML_GADGET_GUEST_PAGE_BASE_MASK
+	/* Entries are keyed by guest page number (address >> page shift). */
+	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
 	add x10, _tlb, x9, lsl #6
@@ -137,6 +138,131 @@ NAME(uml_arm64_gadget_\name):
 	add \scratch, \address, #(\bytes - 1)
 	eor \scratch, \scratch, \address
 	tbnz \scratch, #UML_GADGET_GUEST_PAGE_SHIFT, \target
+.endm
+
+/* Hot-path translation of a same-page transfer of \bytes bytes at \address,
+ * which becomes the host address on the fall-through path. The pair
+ * transfer_translate / transfer_translate_cold replaces branch_if_cross_page
+ * plus translate; the cold half is placed after the gadget's dispatch and
+ * resumes at \resume. \check1 reproduces the control's check of one-byte
+ * transfers; the fused build never checks them because they cannot cross.
+ *
+ * With UML_GADGET_FUSED_TRANSLATE the 16 KiB build keys the lookup by the
+ * page of the transfer's final byte while indexing by its first: pages n and
+ * n + 1 never share a direct-mapped set, so a crossing transfer can only miss
+ * and the cold path is where it is recognized. The folded 4 KiB index can map
+ * neighbouring pages to one set, so that build keeps the explicit check in
+ * front. The key is shifted before a plain compare: a shifted-operand compare
+ * resolved the branch late enough to cost two percent on transfer-bound
+ * loops. Scratch: x8-x12.
+ */
+.macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0
+#if UML_GADGET_FUSED_TRANSLATE
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	.if \bytes > 1
+	add x8, \address, #(\bytes - 1)
+	.endif
+	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	add x10, _tlb, x9, lsl #6
+	ldp x11, x12, [x10, #\page_offset]
+	.if \bytes > 1
+	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
+	.else
+	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
+	.endif
+#else
+	.if \bytes > 1
+	branch_if_cross_page \address, \bytes, x9, \cross
+	.endif
+	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	eor x9, x9, \address, lsr #UML_GADGET_TLB_FOLD_SHIFT
+	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
+	add x10, _tlb, x9, lsl #5
+	ldp x11, x12, [x10, #\page_offset]
+	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
+#endif
+	cmp x11, x8
+	b.ne \cold
+	add \address, x12, \address
+\resume:
+#else
+	.if \bytes > 1 || \check1
+	branch_if_cross_page \address, \bytes, x9, \cross
+	.endif
+	.ifnc \address, x7
+	mov x7, \address
+	.endif
+	translate \access, \page_offset, \forward
+	.ifnc \address, x7
+	mov \address, x7
+	.endif
+#endif
+.endm
+
+/* Second way, crossing, miss and fault handling for transfer_translate. The
+ * two builds emit different word counts per entry; whichever is shorter pads
+ * the difference after its last branch, so both keep every later entry at the
+ * same address for matched A/B layouts. */
+.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0
+#if UML_GADGET_FUSED_TRANSLATE
+\cold:
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	.if \access
+	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
+	.else
+	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_READ_PAGE]
+	.endif
+	cmp x11, x8
+	b.eq 93f
+	.if \bytes > 1
+	branch_if_cross_page \address, \bytes, x9, \cross
+	.endif
+#endif
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	mov x1, \address
+	mov w2, #\access
+	bl NAME(uml_arm64_tlb_miss)
+	ldp x1, x2, [sp], #16
+	.if \forward
+	cbnz x0, 94f
+	b uml_arm64_gadget_memory_fault
+94:
+	.else
+	cbz x0, uml_arm64_gadget_memory_fault
+	.endif
+	mov \address, x0
+	b \resume
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+93:
+	add \address, x12, \address
+	b \resume
+#endif
+	/* Words the control has and this build lacks: three when the control
+	 * checked a one-byte transfer, two for the pair moves, minus one for the
+	 * relocated cross-page check of a wider transfer (16 KiB). */
+	.set .Ltt_pad\@, 0
+	.if \bytes == 1 && \check1
+	.set .Ltt_pad\@, .Ltt_pad\@ + 3
+	.endif
+	.ifnc \address, x7
+	.set .Ltt_pad\@, .Ltt_pad\@ + 2
+	.endif
+	.if \bytes > 1 && DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	.set .Ltt_pad\@, .Ltt_pad\@ - 1
+	.endif
+	.if .Ltt_pad\@ > 0
+	.space 4 * .Ltt_pad\@
+	.endif
+#elif DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	/* The fused build's wider x7 transfers carry one word more; pad the
+	 * control so the A/B layouts match. */
+	.if \bytes > 1
+	.ifc \address, x7
+	.space 4
+	.endif
+	.endif
+#endif
 .endm
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all

@@ -42,10 +42,15 @@ enum class Access : std::uint32_t {
 	return MemoryAccess::read;
 }
 
+/* Keys are guest page numbers (address >> page shift), which lets a hot path
+ * compare a shifted address without masking it first. No page number reaches
+ * all ones, so that value marks an empty way. */
+inline constexpr std::uint64_t tlb_empty_key = ~std::uint64_t{0};
+
 struct alignas(32) TlbEntry final {
-	std::uint64_t read_page{1};
+	std::uint64_t read_page{tlb_empty_key};
 	std::uintptr_t read_data_minus_address{};
-	std::uint64_t write_page{1};
+	std::uint64_t write_page{tlb_empty_key};
 	std::uintptr_t write_data_minus_address{};
 };
 

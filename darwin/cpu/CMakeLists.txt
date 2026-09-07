@@ -192,6 +192,13 @@ option(UML_GADGET_INLINE_CALLS
 # miss helper strips the logical tag instead.
 option(UML_GADGET_TAGGED_TLB_KEYS
     "Key the gadget TLB by tagged addresses instead of stripping per access" OFF)
+# Same-page transfers fold the cross-page check into the TLB tag compare
+# (16 KiB pages), fall through on a hit, and keep the second way, crossing and
+# miss handling behind the dispatch. OFF is the matched-layout control for A/B
+# timing; it pads each wider scalar transfer by one word so both builds keep
+# every later entry at the same address.
+option(UML_GADGET_FUSED_TRANSLATE
+    "Fold the transfer cross-page check into the TLB compare with a fall-through hit path" ON)
 # Cells per indirect branch or return site. Execution histograms of Geekbench
 # and Aquarium show most executor round trips are misses through two cells;
 # four keeps the two-cell hit path and adds two scans before a miss.
@@ -275,6 +282,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
     UML_GADGET_ELIDE_NOPS=$<BOOL:${UML_GADGET_ELIDE_NOPS}>
     UML_GADGET_TAGGED_TLB_KEYS=$<BOOL:${UML_GADGET_TAGGED_TLB_KEYS}>
+    UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
     UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)

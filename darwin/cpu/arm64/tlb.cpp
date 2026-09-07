@@ -59,16 +59,18 @@ void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 	/* Keys may carry a logical tag in the top byte (translate_tagged), and
 	 * the set index never depends on that byte, so a masked compare finds
 	 * every key of the page in its own set. */
-	constexpr std::uint64_t untagged = 0x00ff'ffff'ffff'ffffULL;
+	constexpr std::uint64_t untagged =
+		0x00ff'ffff'ffff'ffffULL >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto end = address + length;
 	for (auto page = address; page < end; page += page_size) {
 		const auto first = index_for(page);
+		const auto key = page >> DARWIN_UML_GUEST_PAGE_SHIFT;
 		for (std::size_t way = 0; way < tlb_way_count; ++way) {
 			auto &entry = entries[first + way];
-			if ((entry.read_page & untagged) == page)
-				entry.read_page = 1;
-			if ((entry.write_page & untagged) == page)
-				entry.write_page = 1;
+			if ((entry.read_page & untagged) == key)
+				entry.read_page = tlb_empty_key;
+			if ((entry.write_page & untagged) == key)
+				entry.write_page = tlb_empty_key;
 		}
 	}
 }
@@ -87,16 +89,18 @@ std::byte *Tlb::translate_tagged(std::uint64_t address, Access access)
 	 * the guest actually uses hits next time. */
 	const auto page = untagged & ~(page_size - 1);
 	const auto tagged_page = address & ~(page_size - 1);
+	const auto key = page >> DARWIN_UML_GUEST_PAGE_SHIFT;
+	const auto tagged_key = tagged_page >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto first = index_for(untagged);
 	for (std::size_t way = 0; way < tlb_way_count; ++way) {
 		auto &entry = entries[first + way];
-		if (access == Access::write && entry.write_page == page) {
-			entry.write_page = tagged_page;
+		if (access == Access::write && entry.write_page == key) {
+			entry.write_page = tagged_key;
 			entry.write_data_minus_address -= (tagged_page - page);
 			break;
 		}
-		if (access != Access::write && entry.read_page == page) {
-			entry.read_page = tagged_page;
+		if (access != Access::write && entry.read_page == key) {
+			entry.read_page = tagged_key;
 			entry.read_data_minus_address -= (tagged_page - page);
 			break;
 		}
@@ -161,12 +165,13 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		return static_cast<std::byte *>(translated) +
 			(address & (page_size - 1));
 	}
+	const auto key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto first = index_for(address);
 	for (std::size_t way = 0; way < tlb_way_count; ++way) {
 		auto &entry = entries[first + way];
 		const auto cached_page = access == Access::write ?
 			entry.write_page : entry.read_page;
-		if (cached_page == page) {
+		if (cached_page == key) {
 			const auto base = access == Access::write ?
 				entry.write_data_minus_address :
 				entry.read_data_minus_address;
@@ -190,7 +195,7 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		const auto &candidate = entries[first + way];
 		const auto other_page = access == Access::write ?
 			candidate.read_page : candidate.write_page;
-		if (other_page == page) {
+		if (other_page == key) {
 			selected = way;
 			break;
 		}
@@ -200,7 +205,7 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 			const auto &candidate = entries[first + way];
 			const auto cached_page = access == Access::write ?
 				candidate.write_page : candidate.read_page;
-			if (cached_page == 1) {
+			if (cached_page == tlb_empty_key) {
 				selected = way;
 				break;
 			}
@@ -216,10 +221,10 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 	const auto host_page = reinterpret_cast<std::uintptr_t>(translated);
 	if (access == Access::write) {
 		entry.write_data_minus_address = host_page - page;
-		entry.write_page = page;
+		entry.write_page = key;
 	} else {
 		entry.read_data_minus_address = host_page - page;
-		entry.read_page = page;
+		entry.read_page = key;
 	}
 	return static_cast<std::byte *>(translated) +
 		(address & (page_size - 1));

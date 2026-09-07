@@ -137,13 +137,12 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 .Lscalar_unsigned_untagged\@:
 #endif
 	.endif
+	.set .Lsb\@, 4
 	.if \bits64
-	branch_if_cross_page x7, 8, x9, .Lscalar_unsigned_cross\@
-	.else
-	branch_if_cross_page x7, 4, x9, .Lscalar_unsigned_cross\@
+	.set .Lsb\@, 8
 	.endif
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
 		.if \bits64
 	ldr x0, [x7]
 		.else
@@ -153,7 +152,7 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
@@ -169,6 +168,11 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
+	.endif
 
 .Lscalar_unsigned_cross\@:
 	.if \load
@@ -265,16 +269,14 @@ scalar_entry \name, \forward, (17 - 1), .Lsd\@, .Lsn\@, scalar_none, scalar_none
 .Lscalar_unsigned_narrow_load_untagged\@:
 #endif
 	.endif
-	.if \bytes > 1
-	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_load_cross\@
-	.endif
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_load_cross\@, \forward
 	\instruction \host_register\()0, [x7]
 	.if !\transfer_zero
 	str x0, [_cpu, x19]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_load_cross\@, \forward
 
 	.if \bytes > 1
 .Lscalar_unsigned_narrow_load_cross\@:
@@ -364,10 +366,7 @@ scalar_entry \name, \forward, (17 - 0), scalar_none, .Lsn\@, .Lsm\@, scalar_none
 .Lscalar_unsigned_narrow_store_untagged\@:
 #endif
 	.endif
-	.if \bytes > 1
-	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_store_cross\@
-	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_store_cross\@, \forward
 	.if \transfer_zero
 	mov x0, xzr
 	.else
@@ -378,6 +377,7 @@ scalar_entry \name, \forward, (17 - 0), scalar_none, .Lsn\@, .Lsm\@, scalar_none
 	scalar_memory_transfer 0, \forward, 2, \instruction, w
 	add _stream, _stream, #8
 	next_gadget
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_store_cross\@, \forward
 
 	.if \bytes > 1
 .Lscalar_unsigned_narrow_store_cross\@:
@@ -449,18 +449,22 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_unsigned_tagged\@
 	.endif
-	branch_if_cross_page x7, \bytes, x9, .Lvector_unsigned_cross\@
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	.endif
 
 .Lvector_unsigned_cross\@:
 	.if \load
@@ -590,18 +594,15 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none,
 .Lscalar_other_immediate_untagged\@:
 #endif
 	.endif
-	.if \bytes > 1
-	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_immediate_cross\@
-	.endif
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_immediate_cross\@, \forward
 	scalar_memory_transfer \load, \forward, 2, \instruction, \host_register
 		.if !\transfer_zero
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_immediate_cross\@, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
@@ -616,6 +617,11 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none,
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_immediate_cross\@, \forward
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_immediate_cross\@, \forward
+	.endif
 
 	.if \bytes > 1
 .Lscalar_other_immediate_cross\@:
@@ -800,18 +806,15 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 2
 .Lscalar_other_register_untagged\@:
 #endif
 	.endif
-	.if \bytes > 1
-	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_register_cross\@
-	.endif
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_register_cross\@, \forward
 	scalar_memory_transfer \load, \forward, 4, \instruction, \host_register
 		.if !\transfer_zero
 	str x0, [_cpu, x19]
 		.endif
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_register_cross\@, \forward
 		.if \transfer_zero
 	mov x0, xzr
 		.else
@@ -823,6 +826,11 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 2
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_register_cross\@, \forward
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_other_register_cross\@, \forward
+	.endif
 
 	.if \bytes > 1
 .Lscalar_other_register_cross\@:
@@ -951,14 +959,13 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_immediate_tagged\@
 	.endif
-	branch_if_cross_page x26, \bytes, x9, .Lvector_other_immediate_cross\@
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
@@ -967,6 +974,11 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	.endif
 
 .Lvector_other_immediate_cross\@:
 	.if \load
@@ -1082,19 +1094,23 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 	add x26, x24, x26
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_register_tagged\@
-	branch_if_cross_page x26, \bytes, x9, .Lvector_other_register_cross\@
 	mov x7, x26
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	.endif
 
 .Lvector_other_register_cross\@:
 	.if \load
@@ -1236,11 +1252,8 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	/* Comparing the page bits of the first and final transfer bytes catches
 	 * both page crossing and address wraparound with one hot-path branch. */
-	branch_if_cross_page x19, (2 * \bytes), x9, .Linteger_pair_cross\@
 	.if \load
-	mov x7, x19
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
-	mov x19, x7
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Linteger_pair_cross\@, \forward
 	\instruction \host_register\()6, \host_register\()7, [x19]
 		.if !\first_zero
 	str x6, [_cpu, x22]
@@ -1249,9 +1262,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	str x7, [_cpu, x23]
 		.endif
 	.else
-	mov x7, x19
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
-	mov x19, x7
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Linteger_pair_cross\@, \forward
 		.if \first_zero
 	mov x6, xzr
 		.else
@@ -1269,6 +1280,11 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Linteger_pair_cross\@, \forward
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Linteger_pair_cross\@, \forward
+	.endif
 
 .Linteger_pair_cross\@:
 	.if \load
@@ -1463,18 +1479,13 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_pair_tagged\@
 	.endif
-	branch_if_cross_page x19, (2 * \bytes), x9, .Lvector_pair_cross\@
 	.if \load
-	mov x7, x19
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
-	mov x19, x7
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Lvector_pair_cross\@, \forward
 	\instruction \host_register\()0, \host_register\()1, [x19]
 	str q0, [_cpu, x22]
 	str q1, [_cpu, x23]
 	.else
-	mov x7, x19
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \forward
-	mov x19, x7
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Lvector_pair_cross\@, \forward
 	ldr q0, [_cpu, x22]
 	ldr q1, [_cpu, x23]
 	\instruction \host_register\()0, \host_register\()1, [x19]
@@ -1484,6 +1495,11 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \load
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Lvector_pair_cross\@, \forward
+	.else
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Lvector_pair_cross\@, \forward
+	.endif
 
 .Lvector_pair_cross\@:
 	.if \load

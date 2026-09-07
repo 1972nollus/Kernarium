@@ -149,6 +149,11 @@ per-carrier return-record ring after their site cells miss: linked calls push
 the return PC with its block link, a matching record follows that link and
 trains the cell, and the executor empties the ring on every address-space
 switch, so a stale record can only fall back to the ordinary miss exit.
+The software TLB keys its entries by guest page number. A same-page transfer
+compares the page of its final byte against the way its first byte indexes: the
+16 KiB direct-mapped index never places neighbouring pages in one set, so a
+crossing transfer can only miss and is recognized on the cold path, while the
+folded 4 KiB index keeps the explicit crossing check ahead of the lookup.
 
 ## Kernel and Android ownership
 
