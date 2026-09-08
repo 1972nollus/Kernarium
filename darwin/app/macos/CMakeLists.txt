@@ -31,6 +31,16 @@ function(uml_add_macos_embedded_kernel_app
         "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework/Info.plist"
         "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/GLESv2"
         "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/Info.plist")
+    set(_uml_kosmickrisp_stage_commands)
+    if(TARGET uml_third_party_kosmickrisp)
+        set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY LINK_DEPENDS
+            "${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/KosmicKrisp"
+            "${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/Info.plist")
+        list(APPEND _uml_kosmickrisp_stage_commands
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
+                $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/KosmicKrisp.framework)
+    endif()
     target_link_libraries("${TARGET_NAME}" PRIVATE
         "${EMULATOR_TARGET}"
         UML::AudioDevice
@@ -68,9 +78,11 @@ function(uml_add_macos_embedded_kernel_app
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework
             $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/GLESv2.framework
+        ${_uml_kosmickrisp_stage_commands}
         COMMAND ${PROJECT_SOURCE_DIR}/dependencies/verify-runtime-dependencies.sh
             --binary $<TARGET_FILE:${TARGET_NAME}>
             --apple-gpu-prefix ${UML_APPLE_GPU_DEPENDENCY_PREFIX}
+            --apple-gpu-product ${UML_APPLE_GPU_PRODUCT}
             --framework-directory $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks
         COMMENT "Staging and checking the ${TARGET_NAME} Apple GPU runtime closure"
         VERBATIM)

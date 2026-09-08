@@ -208,6 +208,86 @@ endif()
 if(TARGET uml_gpu_host_gl_provider_tests)
     list(APPEND _uml_required_conditional_tests gpu-host-gl-provider-lifetime)
 endif()
+if(TARGET uml_gpu_kosmickrisp_timestamp_availability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-timestamp-availability)
+endif()
+if(TARGET uml_gpu_kosmickrisp_device_address_commands_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-device-address-commands-capabilities)
+endif()
+if(TARGET uml_gpu_vulkan_device_address_commands_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-vulkan-device-address-commands)
+endif()
+if(TARGET uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-dynamic-logic-op-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_line_multiview_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-line-multiview)
+endif()
+if(TARGET uml_gpu_kosmickrisp_geometry_side_effects_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-geometry-side-effects)
+endif()
+if(TARGET uml_gpu_kosmickrisp_geometry_invocations_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-geometry-invocations)
+endif()
+if(TARGET uml_gpu_kosmickrisp_pipeline_statistics_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-pipeline-statistics)
+endif()
+if(TARGET uml_gpu_kosmickrisp_point_clipping_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-point-clipping)
+endif()
+if(TARGET uml_gpu_kosmickrisp_tessellation_feedback_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-tessellation-feedback)
+endif()
+if(TARGET uml_gpu_kosmickrisp_raster_polygon_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-raster-polygon)
+endif()
+if(TARGET uml_gpu_kosmickrisp_raster_line_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-raster-line)
+endif()
+if(TARGET uml_gpu_kosmickrisp_raster_state_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-raster-state)
+endif()
+if(TARGET uml_gpu_kosmickrisp_unused_attachments_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-unused-attachments-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-graphics-pipeline-library-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-legacy-vertex-attribute-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-legacy-vertex-input-draws)
+endif()
+if(TARGET uml_gpu_kosmickrisp_non_seamless_cube_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-non-seamless-cube-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_rgb32_texel_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-rgb32-texel-capabilities)
+endif()
+if(TARGET uml_gpu_kosmickrisp_incremental_present_capability_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-incremental-present-capabilities)
+endif()
 if(TARGET uml_gpu_device_atomicity_tests)
     list(APPEND _uml_required_conditional_tests gpu-device-command-atomicity)
 endif()

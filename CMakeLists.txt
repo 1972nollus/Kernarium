@@ -219,8 +219,10 @@ endif()
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
 # the same relocation, exclusion-hole, and RAM-scaled auxiliary mechanisms at
 # its established 96 TiB native base, outside Darwin's crowded low host range.
-# The window is exactly guest RAM plus a page-rounded auxiliary allowance for
-# kernel mappings; that allowance is stated with its constants below.
+# The window is guest RAM plus a page-rounded auxiliary allowance for kernel
+# mappings; that allowance is stated with its constants below. The guarded
+# vhost-user shared-memory reservation and the kernel stub pages are additional
+# address space and must not consume that ordinary allowance.
 # The existing three-level 16 KiB guest page tables expose their maximum 47-bit
 # range; a true 48-bit range would add a page-table level to every kernel.
 set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)
@@ -234,8 +236,9 @@ set(UML_MACOS_NATIVE_ADDRESS 0x0000600000000000ULL)
 # eighth of RAM made it the binding constraint instead - 504 MiB on a 4 GiB
 # guest, which vmapped kernel stacks exhausted. Track RAM one-for-one between a
 # 1 GiB floor and a 4 GiB ceiling so vmalloc is never what runs out. The
-# ceiling keeps RAM plus auxiliary inside the 14 GiB iOS envelope for every
-# guest up to 10 GiB; no Apple product configures more than 4 GiB.
+# ceiling, together with the reserved space below, keeps RAM plus auxiliary
+# inside the 14 GiB iOS envelope for every guest up to 9 GiB; no Apple product
+# configures more than 4 GiB.
 set(UML_NATIVE_AUXILIARY_DIVISOR 1)
 set(UML_NATIVE_AUXILIARY_MINIMUM 0x0000000040000000ULL)
 set(UML_NATIVE_AUXILIARY_MAXIMUM 0x0000000100000000ULL)
