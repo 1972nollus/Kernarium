@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Use-UML-CPU-translation-and-create-ARM64-prefixes-in.patch	016fa0978f4ddc65f48d37a070a15aa1a2550f79	8f42017f09c414c7b42733a38624d229f9111c3cae26e4a57c914d83ad21780d	Use UML CPU translation and create ARM64 prefixes in the guest
-2	0002-Keep-offline-Proton-builds-pinned-to-prepared-inputs.patch	f0026d72910e743725239483d9fab105ee1d1050	b0e849e2ec16de6b7867079db3af928944eff150738f8bd7a5e61e4642098a26	Keep offline Proton builds pinned to prepared inputs
+1	0001-Use-UML-CPU-translation-and-create-ARM64-prefixes-in.patch	bc3e538c0c07c3fd17ad5836d6f1ba90efe602a7	0fba8baff8673e5a55849ac4115db58d19125e00f31dcc66e0faa9383fd636ae	Use UML CPU translation and create ARM64 prefixes in the guest
+2	0002-Keep-offline-Proton-builds-pinned-to-prepared-inputs.patch	f0026d72910e743725239483d9fab105ee1d1050	9edfd85ac49b02ca3ba2f01d6ea3693b3e9ff0037baec183d24d956d46ff7319	Keep offline Proton builds pinned to prepared inputs

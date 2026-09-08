@@ -10,6 +10,9 @@ Proton topics omit guest FEX, defer prefix creation to the emulator, enforce
 the prepared Cargo lock, and retain a useful Git identity in shallow builds.
 Prefix creation resolves image-owned links so Wine can create their targets
 on the persistent data partition while the installed Proton tree stays read-only.
+ARM64 template completion is published only after Wine finishes and flushes its
+registry. Interrupted templates finish initialization before a later launch
+can copy them.
 The ARM64 tool manifest uses the native Linux runtime supplied by the image;
 it does not request a separately downloaded Steam runtime. The x86 Linux
 manifest is unchanged because this appliance only executes native ARM64 Linux.

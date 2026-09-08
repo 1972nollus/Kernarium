@@ -93,6 +93,8 @@ remain image-owned, while Steam client updates, games, settings,
 saves, and prefixes live on the data partition.
 Proton's generated default prefixes and distribution lock also live in home,
 keyed by its build identity so a replacement Proton build gets fresh templates.
+A completion marker prevents a cancelled Steam probe from exposing a partial
+template. A later launch finishes initialization before copying that template.
 
 The image-owned init checks ext4 before mounting it. It formats only a new
 partition carrying the launcher's explicit initialization marker. Existing

@@ -135,7 +135,19 @@ def main() -> int:
             f"STEAM_COMPAT_CLIENT_INSTALL_PATH={STEAM} STEAM_COMPAT_DATA_PATH={compat} "
             "SteamGameId=0 SteamAppId=0"
         )
+        template = f"{PROTON}/files/share/default_pfx_arm64"
+        seed_interrupted = (
+            f'target=$(readlink -f {template}); mkdir -p "$target"; '
+            'printf retained >"$target/interrupted-template-sentinel"'
+        )
+        success(guest, "runuser -u uml -- sh -c " + shlex.quote(seed_interrupted))
         probe(guest, "proton", f"{proton_env} {PROTON}/proton waitforexitandrun /opt/uml-wine-smoke/x86_64-exit-42.exe", 42, args.timeout)
+        success(guest, f"test -f {template}/.uml-template-ready && "
+                f"test \"$(cat {template}/interrupted-template-sentinel)\" = retained")
+        registry = f"{proton_env} {PROTON}/proton runinprefix 'C:\\windows\\syswow64\\reg.exe' query 'HKLM\\Software\\Microsoft\\DirectX' /v Version"
+        probe(guest, "proton-registry", registry, 0, args.timeout)
+        print("PASS interrupted template recovery and x86 registry", flush=True)
+
         graphics = guest.run_command(
             "runuser -u uml -- env DISPLAY=:99 XDG_RUNTIME_DIR=/run/user/1000 "
             "vulkaninfo --summary >/tmp/steam-vulkan.log 2>&1; "
