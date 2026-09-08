@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
+import vulkan_cts_receipt as vk_receipt  # noqa: E402
 
 
 AQUARIUM_URL = (
@@ -278,45 +279,118 @@ EXTENSION_SCRIPT = """(() => {
 """
 LAUNCHER = """#!/bin/sh
 set -eu
+renderer_backend="@RENDERER_BACKEND@"
+if [ "$renderer_backend" = zink ]; then
+    export MESA_LOADER_DRIVER_OVERRIDE=zink
+fi
 runtime="/run/user/$(id -u uml)"
 remaining=600
-while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
+if [ "$renderer_backend" = zink ]; then
+    display_socket="$runtime/wayland-0"
+    display_description="KDE Wayland session"
+else
+    display_socket=/tmp/.X11-unix/X0
+    display_description="KDE X11 bridge"
+fi
+while [ ! -S "$display_socket" ] || [ ! -S "$runtime/bus" ]; do
     if [ "$remaining" -le 0 ]; then
-        echo "UML_CHROMIUM_ERROR: KDE X11 bridge did not become ready"
+        echo "UML_CHROMIUM_ERROR: $display_description did not become ready"
         exit 1
     fi
     remaining=$((remaining - 1))
     sleep 1
 done
-xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
-    head -n 1)"
-if [ -z "$xauthority" ]; then
-    echo "UML_CHROMIUM_ERROR: Xauthority cookie was not found"
-    exit 1
+xauthority=""
+chromium_platform_flags=""
+if [ "$renderer_backend" = zink ]; then
+    chromium_platform_flags="--ozone-platform=wayland"
+    kwin_pid="$(pgrep -xo kwin_wayland || true)"
+    if [ -z "$kwin_pid" ]; then
+        echo "UML_CHROMIUM_ERROR: KDE compositor is not running"
+        exit 1
+    fi
+    if ! tr '\\0' '\\n' < "/proc/$kwin_pid/environ" |
+        grep -qx 'MESA_LOADER_DRIVER_OVERRIDE=zink'; then
+        echo "UML_CHROMIUM_ERROR: KDE compositor did not inherit Zink"
+        exit 1
+    fi
+    kwin_renderer=""
+    remaining=60
+    while [ "$remaining" -gt 0 ]; do
+        kwin_support="$(runuser -u uml -- env \\
+            XDG_RUNTIME_DIR="$runtime" \\
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \\
+            qdbus6 org.kde.KWin /KWin supportInformation 2>/dev/null || true)"
+        kwin_renderer="$(printf '%s\\n' "$kwin_support" |
+            sed -n 's/^[[:space:]]*OpenGL renderer string:[[:space:]]*//p' |
+            head -n 1)"
+        if [ -n "$kwin_renderer" ]; then
+            break
+        fi
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    if [ "$remaining" -le 0 ]; then
+        printf 'UML_CHROMIUM_ERROR: KDE compositor renderer is not Zink/Venus: %s\\n' \\
+            "${kwin_renderer:-unavailable}"
+        exit 1
+    fi
+    if ! printf '%s\\n' "$kwin_renderer" | grep -qi zink ||
+        ! printf '%s\\n' "$kwin_renderer" | grep -qi 'virtio-gpu venus'; then
+        echo 'UML_ZINK_DIAGNOSTICS_BEGIN'
+        runuser -u uml -- env \
+            HOME=/home/uml \
+            XDG_RUNTIME_DIR="$runtime" \
+            MESA_LOADER_DRIVER_OVERRIDE=zink \
+            LIBGL_DEBUG=verbose \
+            MESA_DEBUG=1 \
+            timeout 30 eglinfo -v -a gles -p surfaceless || true
+        journalctl --no-pager -b _COMM=kwin_wayland -n 160 || true
+        echo 'UML_ZINK_DIAGNOSTICS_END'
+        printf 'UML_CHROMIUM_ERROR: KDE compositor renderer is not Zink/Venus: %s\\n' \
+            "$kwin_renderer"
+        exit 1
+    fi
+    printf 'UML_KDE_ZINK_READY|KWIN_PID=%s|RENDERER=%s\\n' \\
+        "$kwin_pid" "$kwin_renderer"
+else
+    xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
+        head -n 1)"
+    if [ -z "$xauthority" ]; then
+        echo "UML_CHROMIUM_ERROR: Xauthority cookie was not found"
+        exit 1
+    fi
+    runuser -u uml -- env \
+        DISPLAY=:0 \
+        XAUTHORITY="$xauthority" \
+        XDG_RUNTIME_DIR="$runtime" \
+        glxinfo -B || true
 fi
-runuser -u uml -- env \
-    DISPLAY=:0 \
-    XAUTHORITY="$xauthority" \
-    XDG_RUNTIME_DIR="$runtime" \
-    glxinfo -B || true
 if [ "@EGL_CONFIG_DIAGNOSTICS@" = 1 ]; then
     echo 'UML_EGL_CONFIG_DIAGNOSTICS_BEGIN'
     chromium --version
-    runuser -u uml -- env \
-        DISPLAY=:0 \
-        XAUTHORITY="$xauthority" \
-        XDG_RUNTIME_DIR="$runtime" \
-        eglinfo -v -a gles -p x11
-    runuser -u uml -- env \
-        DISPLAY=:0 \
-        XAUTHORITY="$xauthority" \
-        XDG_RUNTIME_DIR="$runtime" \
-        xdpyinfo
-    runuser -u uml -- env \
-        DISPLAY=:0 \
-        XAUTHORITY="$xauthority" \
-        XDG_RUNTIME_DIR="$runtime" \
-        xwininfo -root -stats
+    if [ "$renderer_backend" = zink ]; then
+        runuser -u uml -- env \
+            WAYLAND_DISPLAY=wayland-0 \
+            XDG_RUNTIME_DIR="$runtime" \
+            eglinfo -v -a gles -p wayland
+    else
+        runuser -u uml -- env \
+            DISPLAY=:0 \
+            XAUTHORITY="$xauthority" \
+            XDG_RUNTIME_DIR="$runtime" \
+            eglinfo -v -a gles -p x11
+        runuser -u uml -- env \
+            DISPLAY=:0 \
+            XAUTHORITY="$xauthority" \
+            XDG_RUNTIME_DIR="$runtime" \
+            xdpyinfo
+        runuser -u uml -- env \
+            DISPLAY=:0 \
+            XAUTHORITY="$xauthority" \
+            XDG_RUNTIME_DIR="$runtime" \
+            xwininfo -root -stats
+    fi
     echo 'UML_EGL_CONFIG_DIAGNOSTICS_END'
 fi
 printf 'UML_AQUARIUM_GUEST_IDENTITY|PAGE_SIZE=%s|CPUS=%s|MEM_TOTAL_KIB=%s\\n' \
@@ -346,6 +420,7 @@ runuser -u uml -- env \
     --use-gl=angle \
     --use-angle=gles-egl \
     --ignore-gpu-blocklist \
+    $chromium_platform_flags \
     @CHROMIUM_EXTRA_FLAGS@ \
     --no-first-run \
     --disable-crash-reporter \
@@ -453,7 +528,10 @@ def build_guest_launcher(
     *,
     auto_poweroff: bool,
     egl_config_diagnostics: bool = False,
+    renderer_backend: str = "virgl",
 ) -> str:
+    if renderer_backend not in ("virgl", "zink"):
+        raise ValueError("unsupported Chromium renderer backend")
     return (
         LAUNCHER.replace(
             "@CHROMIUM_EXTRA_FLAGS@",
@@ -465,6 +543,46 @@ def build_guest_launcher(
             "@EGL_CONFIG_DIAGNOSTICS@",
             "1" if egl_config_diagnostics else "0",
         )
+        .replace("@RENDERER_BACKEND@", renderer_backend)
+    )
+
+
+def validate_renderer(renderer_line: str, backend: str) -> None:
+    lowered = renderer_line.lower()
+    if "webgl 2.0" not in lowered or any(
+        name in lowered for name in ("llvmpipe", "softpipe", "swrast")
+    ):
+        raise RuntimeError(
+            f"Chromium WebGL did not report hardware {backend}: "
+            + renderer_line
+        )
+    if backend == "virgl":
+        matched = "virgl" in lowered and "zink" not in lowered
+    elif backend == "zink":
+        matched = "zink" in lowered and "virtio-gpu venus" in lowered
+    else:
+        raise ValueError("unsupported Chromium renderer backend")
+    if not matched:
+        raise RuntimeError(
+            f"Chromium WebGL did not report {backend}: " + renderer_line
+        )
+
+
+def load_vulkan_rootfs_contract(
+    receipt_path: Path,
+) -> tuple[dict[str, object], cts.RootfsContract]:
+    receipt = vk_receipt.validate_receipt(receipt_path)
+    derivative = receipt["derivative"]
+    guest_receipt = receipt["guest_receipt"]
+    executable = receipt["cts"]["executable"]
+    return receipt, cts.RootfsContract(
+        filesystem_type=derivative["filesystem"],
+        size=derivative["size"],
+        sha256=derivative["sha256"],
+        glcts_sha256=executable["sha256"],
+        filesystem_uuid=derivative["filesystem_uuid"],
+        guest_receipt_path=guest_receipt["path"],
+        guest_receipt_sha256=guest_receipt["sha256"],
     )
 
 
@@ -636,19 +754,29 @@ def wait_for_log(
 
 
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
-    """Stop a guest that shares this runner's process group.
+    """Stop the guest's isolated process group, escalating when necessary.
 
-    The guest runs attached, so a runner killed outright takes it along rather
-    than leaving an orphan burning host cores on an idle guest.
+    The emulator can ignore a graceful signal while a guest is wedged. Keep
+    escalation bounded so an interrupted validation cannot leave it consuming
+    host resources.
     """
-    if process.poll() is not None:
-        return
-    process.send_signal(signal.SIGINT)
-    try:
-        process.wait(timeout=45)
-    except subprocess.TimeoutExpired:
-        process.send_signal(signal.SIGTERM)
-        process.wait(timeout=15)
+    for guest_signal, timeout in (
+        (signal.SIGINT, 45),
+        (signal.SIGTERM, 15),
+        (signal.SIGKILL, 15),
+    ):
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, guest_signal)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    raise RuntimeError("Aquarium guest did not stop after SIGKILL")
 
 
 def read_ppm(capture_path: Path) -> tuple[int, int, memoryview]:
@@ -958,6 +1086,15 @@ def rootfs_contract_metadata(
     }
 
 
+def build_host_environment(renderer: str, display: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    if renderer == "zink":
+        environment["UML_GPU_EXPERIMENTAL_VULKAN"] = "1"
+    if display == "native":
+        environment["UML_GPU_FRAME_STATS"] = "1"
+    return environment
+
+
 def main() -> int:
     identity = cts.load_identity()
     parser = argparse.ArgumentParser()
@@ -990,6 +1127,17 @@ def main() -> int:
         default="jit",
     )
     parser.add_argument(
+        "--renderer",
+        choices=("virgl", "zink"),
+        default="virgl",
+        help="guest Gallium renderer to require (default: virgl)",
+    )
+    parser.add_argument(
+        "--serial-socket",
+        type=Path,
+        help="expose the guest serial console for live diagnostics",
+    )
+    parser.add_argument(
         "--warmup-seconds", type=int, default=DEFAULT_WARMUP_SECONDS
     )
     parser.add_argument(
@@ -1016,7 +1164,25 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=float, default=360)
     options = parser.parse_args()
-    kernarium_common.finish_rootfs_options(parser, options, identity)
+    receipt_kind = None
+    if options.rootfs_receipt is not None:
+        try:
+            receipt_kind = json.loads(
+                options.rootfs_receipt.read_text(encoding="utf-8")
+            ).get("artifact")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+    if receipt_kind == "uml-vulkan-rootfs":
+        try:
+            options.derivative_receipt, options.rootfs_contract = (
+                load_vulkan_rootfs_contract(options.rootfs_receipt.resolve())
+            )
+        except vk_receipt.ReceiptError as error:
+            parser.error(str(error))
+        if options.rootfs_type != "ext4":
+            parser.error("a Vulkan derivative receipt requires an ext4 rootfs")
+    else:
+        kernarium_common.finish_rootfs_options(parser, options, identity)
     if (
         options.cpus < 1
         or options.width < 1
@@ -1064,6 +1230,10 @@ def main() -> int:
         launcher_arguments.extend(
             ("--port", str(port), "--password", password)
         )
+    if options.serial_socket is not None:
+        launcher_arguments.extend(
+            ("--serial-socket", str(options.serial_socket.resolve()))
+        )
     launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
     command = boot_kde_vnc.build_harness_command(launcher_options)
     separator = boot_kde_vnc.guest_argument_separator(command)
@@ -1072,6 +1242,14 @@ def main() -> int:
         "packagekit.service apt-daily.service apt-daily.timer "
         "apt-daily-upgrade.service apt-daily-upgrade.timer; do "
         "ln -sf /dev/null /etc/systemd/system/$unit; done",
+        *(
+            (
+                "systemctl set-environment "
+                "MESA_LOADER_DRIVER_OVERRIDE=zink",
+            )
+            if options.renderer == "zink"
+            else ()
+        ),
         *(
             ("rm -f /etc/chromium.d/uml-virgl",)
             if options.ignore_image_chromium_config
@@ -1093,6 +1271,7 @@ def main() -> int:
                 options.chromium_flag,
                 auto_poweroff=options.display == "native",
                 egl_config_diagnostics=options.egl_config_diagnostics,
+                renderer_backend=options.renderer,
             ),
             "0755",
         ),
@@ -1135,6 +1314,12 @@ def main() -> int:
         "display": options.display,
         "page_profile": options.page_profile,
         "engine": options.engine,
+        "renderer_backend": options.renderer,
+        "serial_socket": (
+            str(options.serial_socket.resolve())
+            if options.serial_socket is not None
+            else None
+        ),
         "cpus": options.cpus,
         "memory": options.memory,
         "width": options.width,
@@ -1151,15 +1336,14 @@ def main() -> int:
         json.dumps(run_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    environment = os.environ.copy()
-    if options.display == "native":
-        environment["UML_GPU_FRAME_STATS"] = "1"
+    environment = build_host_environment(options.renderer, options.display)
     with log_path.open("wb") as log:
         process = subprocess.Popen(
             command,
             stdout=log,
             stderr=subprocess.STDOUT,
             env=environment,
+            start_new_session=True,
         )
         try:
             text, host_measurement = wait_for_log(
@@ -1178,19 +1362,9 @@ def main() -> int:
             renderer_line = next(
                 line for line in text.splitlines() if "UML_AQUARIUM_OK|" in line
             )
-            lowered_renderer = renderer_line.lower()
-            if (
-                "virgl" not in lowered_renderer
-                or "webgl 2.0" not in lowered_renderer
-                or any(
-                    name in lowered_renderer
-                    for name in ("llvmpipe", "softpipe", "swrast", "zink")
-                )
-            ):
-                raise RuntimeError(
-                    "Chromium WebGL did not report the Virgl renderer: "
-                    + renderer_line
-                )
+            validate_renderer(renderer_line, options.renderer)
+            if options.renderer == "zink" and "UML_KDE_ZINK_READY|" not in text:
+                raise RuntimeError("KDE did not report a Zink compositor")
             metrics = parse_metrics(renderer_line)
             if metrics["SAMPLES"] != options.sample_seconds:
                 raise RuntimeError("Aquarium returned an incomplete FPS window")

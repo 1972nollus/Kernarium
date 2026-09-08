@@ -125,15 +125,19 @@ remain aligned with the pixels that are actually visible.
 
 ## Vulkan
 
-Guest Vulkan is not implemented. The current transport lacks the complete blob
-resource, shared-memory, synchronization, and lifetime contract required by
-Venus. MoltenVK alone does not provide that Virtio-GPU protocol boundary.
+Guest Vulkan is an experimental, separately named capability, not part of the
+supported product. It exists only in the `apple-gpu-vulkan-experiment`
+dependency product, where Venus runs over KosmicKrisp on Metal and the guest
+reaches the host ring through the kernel's vhost-user shared-memory aperture.
+The default `apple-gpu` product advertises no Vulkan capset, and no build
+advertises one without `UML_GPU_EXPERIMENTAL_VULKAN`.
 
-Any future Vulkan work must remain a separate capability project with an
-explicit memory model, maintained kernel protocol changes, shared Apple
-dependency provenance, and Vulkan CTS qualification. Until those pieces are
-implemented and tested, the product must not advertise a Vulkan capset or
-claim Vulkan support.
+That route makes no conformance claim. Support is asserted only by the
+receipt-bound guest CTS campaigns described in
+[`testing.md`](testing.md#graphics-conformance-campaigns), which bind a run to
+its sealed image receipt, its CTS and Mesa source locks, and the staged
+provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
+passes.
 
 ## Validation
 

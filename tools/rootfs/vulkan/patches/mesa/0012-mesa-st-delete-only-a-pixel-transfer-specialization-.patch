@@ -1,4 +1,4 @@
-From bd3f016e316d63fdc963ba3cc3bd69327eabdd43 Mon Sep 17 00:00:00 2001
+From 4639483d3ab2bd853c04bd15b13f10bf127b6f79 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:13:28 +0900
 Subject: [PATCH 12/12] mesa/st: delete only a pixel-transfer specialization

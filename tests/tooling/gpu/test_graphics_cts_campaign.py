@@ -1,0 +1,834 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+from __future__ import annotations
+
+__import__("sys").dont_write_bytecode = True
+
+import contextlib
+from collections import Counter
+import copy
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from unittest import mock
+
+INTEGRATION = Path(__file__).resolve().parents[2] / "integration/gpu"
+sys.path.insert(0, str(INTEGRATION))
+import run_graphics_cts_campaign as campaign  # noqa: E402
+import run_vk_gl_cts as gl  # noqa: E402
+import test_run_vk_gl_cts as fixtures  # noqa: E402
+import test_opengl_cts_plan as plan_fixtures  # noqa: E402
+
+
+def ownership_record(attempt: Path) -> dict:
+    token = "b" * 32
+    path = attempt / gl.guest_process.JOURNAL_NAME
+    path.write_text("".join(json.dumps(record) + "\n" for record in (
+        {"event": "starting", "token": token, "owner_pid": 1001},
+        {"event": "started", "pid": 1002},
+        {"event": "reaped", "pid": 1002, "return_code": 0},
+    )))
+    return {"guest_ownership_token": token, "guest_ownership_sha256": gl.sha256_file(path)}
+
+
+def spec(directory: Path) -> dict:
+    receipt = fixtures.zink_gl_derivative_receipt(gl.load_identity())
+    receipt["schema_version"] = 4
+    receipt["opengl_cts"]["release"] = "vulkan-cts-1.4.6.2"
+    receipt["opengl_cts"]["mustpass"] = plan_fixtures.plan.build_manifest(plan_fixtures.fixture().__getitem__)
+    emulator = directory / "uml-darwin"
+    emulator.write_bytes(b"fixture executable")
+    emulator.chmod(0o755)
+    runtime_identity = {"emulator_sha256": gl.sha256_file(emulator), "kosmickrisp_sha256": "2" * 64}
+    _, contract = gl.load_zink_gl_derivative_receipt(receipt, gl.load_identity())
+    inventory = fixtures.write_config_inventory_evidence(
+        directory / "inventory", "gl46", contract, runtime_identity=runtime_identity,
+    )
+    config_rows = [{"id": 1, "surface_types": ["window", "pixmap", "pbuffer"]},
+                   {"id": 2, "surface_types": ["pbuffer", "pixmap"]}]
+    path = directory / "opengl.receipt.json"
+    path.write_text(json.dumps(receipt))
+    vk_receipt = campaign.vk.receipt_contract.validate_receipt(campaign.vk.RECEIPT_PATH)
+    vk_receipt["mustpass"]["unique_case_count"] = 10
+    return {
+        "suites": ["vulkan", "gl46"], "fraction_count": 8,
+        "cpus": 4, "memory": "4G", "engine": "jit", "page_profile": "16k",
+        "shard_timeout": 900, "guest_timeout": 1500, "console_stall_timeout": 600,
+        "console_stall_busy_timeout": 1800,
+        "max_resumptions": campaign.common.DEFAULT_MAX_RESUMPTIONS,
+        "emulator": str(emulator), **runtime_identity,
+        "source": {"git": {"revision": "a" * 40, "dirty_paths": []}},
+        "vulkan": {"rootfs": str(directory / "rootfs-vulkan-venus.ext4"), "receipt": vk_receipt,
+                   "receipt_path": str(campaign.vk.RECEIPT_PATH),
+                   "receipt_sha256": gl.sha256_file(campaign.vk.RECEIPT_PATH)},
+        "opengl": {"rootfs": str(directory / "rootfs-vulkan-zink-gl.ext4"), "receipt": receipt,
+                   "receipt_path": str(path), "receipt_sha256": gl.sha256_file(path),
+                   "config_inventory_run": str(inventory), "egl_configs": config_rows,
+                   "runs": plan_fixtures.plan.expand_runs(receipt["opengl_cts"]["mustpass"], config_rows)},
+    }
+
+
+def results(shard: campaign.Shard) -> dict[str, str]:
+    if shard.suite == "vulkan":
+        return {"dEQP-VK.mandatory0": "Pass", "dEQP-VK.mandatory1": "Pass",
+                f"dEQP-VK.case{shard.index}": "NotSupported"}
+    files = plan_fixtures.fixture()
+    manifest = plan_fixtures.plan.build_manifest(files.__getitem__)
+    runs = plan_fixtures.plan.expand_runs(manifest, [
+        {"id": 1, "surface_types": ["window", "pixmap", "pbuffer"]},
+        {"id": 2, "surface_types": ["pbuffer", "pixmap"]},
+    ])
+    leaf = next(row for row in manifest["leaves"] if row["id"] == runs[shard.run_index]["leaf_id"])
+    cases = files[leaf["path"]].decode().splitlines()
+    return {cases[index]: "NotSupported" if index == 0 else "Pass"
+            for index in range(shard.index, len(cases), 8)}
+
+
+def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path:
+    attempt = campaign.attempt_path(root, shard)
+    run = attempt / "driver-output/fixture-run"
+    (run / "artifacts").mkdir(parents=True)
+    command = campaign.child_command(definition, shard, attempt / "driver-output")
+    options = gl.parse_arguments(command[3:])
+    selection = options.matrix_run.selection
+    rows = results(shard)
+    artifacts = {
+        "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
+                         "x11_server=xwayland\nguest_page_size=16384\n"
+                         "zink over Virtio-GPU Venus\n").encode(),
+        "summary.txt": b"cts_rc=0\n",
+        "selected.txt": "".join(f"{case}\n" for case in rows).encode(),
+        "results.qpa": fixtures.qpa(*(fixtures.qpa_result(case, status)
+                                       for case, status in rows.items())).encode(),
+    }
+    for name, payload in artifacts.items():
+        (run / "artifacts" / name).write_bytes(payload)
+    (run / gl.ARTIFACT_TRANSPORT_LOG).write_text("".join(
+        fixtures.framed_artifact(name, payload) for name, payload in artifacts.items()))
+    (run / "console.log").write_text("Darwin UML stopped: result=0 exitcode=0\n")
+    (attempt / "runner.log").write_text("fixture runner completed\n")
+    item = definition["opengl"]
+    metadata = {
+        "schema_version": 1, "qualification": True, "formal_conformance": False,
+        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "16k",
+        "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
+        "git": definition["source"]["git"], "console_sha256": gl.sha256_file(run / "console.log"),
+        "adapter": "macos", "backend": "venus-kosmickrisp", "renderer": "zink",
+        "display": "vnc", "context": "egl", "mode": "mustpass-matrix-shard", "surface": [1280, 720],
+        "rootfs_type": "ext4", "rootfs_receipt": item["receipt"],
+        "rootfs_receipt_sha256": item["receipt_sha256"],
+        "rootfs_sha256": item["receipt"]["derivative"]["sha256"],
+        "glcts_sha256": item["receipt"]["opengl_cts"]["executable"]["sha256"],
+        "emulator_sha256": definition["emulator_sha256"],
+        "successful_case_statuses": item["receipt"]["runner_oracle"]["successful"],
+        "api": "gl46", "leaf": selection.leaf.identifier, "leaf_sha256": selection.leaf.sha256,
+        "fraction": [shard.index, 8], "exact_cases": [],
+        "seed": options.matrix_run.configuration.base_seed,
+        "matrix": gl.matrix_metadata(options),
+        "expected_cases": selection.expected_count, "emulator_return_code": 0,
+        "command": gl.build_harness_command(options, selection, run),
+        "max_resumptions": definition["max_resumptions"],
+        "console_stall_timeout": 600, "console_stall_busy_timeout": 1800,
+        "session_count": 1, "artifacts_provenance": "single-session-guest",
+        "host_recorded_results": {},
+        "completed_cases": len(rows), "status_totals": gl.status_totals(rows),
+        "waived_results": {},
+        "selected_caselist_sha256": hashlib.sha256(artifacts["selected.txt"]).hexdigest(),
+        "qpa_sha256": hashlib.sha256(artifacts["results.qpa"]).hexdigest(),
+        "renderer_sha256": hashlib.sha256(artifacts["renderer.txt"]).hexdigest(),
+        "artifact_transport_sha256": gl.sha256_file(run / gl.ARTIFACT_TRANSPORT_LOG),
+    }
+    (run / "run.json").write_text(json.dumps(metadata))
+    (attempt / "attempt.json").write_text(json.dumps({
+        **ownership_record(attempt),
+        "shard": shard.name(), "command": command, "state": "finished", "return_code": 0,
+        "error": None, "runner_log_sha256": gl.sha256_file(attempt / "runner.log"),
+    }))
+    return run
+
+
+def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path:
+    """A gl46 attempt whose first guest stalled and whose second finished it."""
+    attempt = campaign.attempt_path(root, shard)
+    run = attempt / "driver-output/fixture-run"
+    run.mkdir(parents=True)
+    command = campaign.child_command(definition, shard, attempt / "driver-output")
+    options = gl.parse_arguments(command[3:])
+    selection = options.matrix_run.selection
+    rows = results(shard)
+    cases = list(rows)
+    terminated = cases[1]
+    renderer = ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
+                "x11_server=xwayland\nguest_page_size=16384\n"
+                "zink over Virtio-GPU Venus\n").encode()
+    selected = "".join(f"{case}\n" for case in cases).encode()
+    stalled_qpa = fixtures.qpa(
+        *(fixtures.qpa_result(case, rows[case]) for case in cases[:1])
+    ).replace("#endSession\n", "").encode()
+    final_qpa = fixtures.qpa(
+        *(fixtures.qpa_result(case, rows[case]) for case in cases[2:])
+    ).encode()
+    ownership = ownership_record(attempt)
+    payloads = [
+        {"renderer.txt": renderer, "selected.txt": selected,
+         "results.qpa": stalled_qpa},
+        {"renderer.txt": renderer,
+         "selected.txt": "".join(f"{case}\n" for case in cases[2:]).encode(),
+         "results.qpa": final_qpa, "summary.txt": b"cts_rc=0\n"},
+    ]
+    sessions = []
+    for index, payload in enumerate(payloads):
+        guest = run if index == 0 else run / f"{gl.SESSION_DIRECTORY}/{index:02d}"
+        guest.mkdir(parents=True, exist_ok=True)
+        artifacts = run / f"{gl.SESSION_DIRECTORY}/{index:02d}/artifacts"
+        artifacts.mkdir(parents=True)
+        for name, value in payload.items():
+            (artifacts / name).write_bytes(value)
+        console = guest / "console.log"
+        console.write_text(
+            "Darwin UML stopped: result=0 exitcode=0\n" if index else "went quiet\n"
+        )
+        transport = guest / gl.ARTIFACT_TRANSPORT_LOG
+        transport.write_text("".join(
+            fixtures.framed_artifact(name if name != "results.qpa" else "results.qpa.0000", value)
+            for name, value in payload.items()))
+        journal = None
+        if index:
+            journal = f"{gl.SESSION_DIRECTORY}/{index:02d}/{gl.guest_process.JOURNAL_NAME}"
+            (run / journal).write_text(
+                (attempt / gl.guest_process.JOURNAL_NAME).read_text()
+            )
+        sessions.append(gl.SessionEvidence(
+            index=index,
+            outcome="completed" if index else "stalled",
+            resume_after=0 if index == 0 else 2,
+            qpa_text=gl.decode_qpa(payload["results.qpa"]),
+            completed_cases=tuple(cases[:1]) if index == 0 else tuple(cases[2:]),
+            terminated_case=None if index else terminated,
+            terminated_status=None if index else gl.STALL_STATUS,
+            console=str(console.relative_to(run)),
+            artifact_transport=str(transport.relative_to(run)),
+            artifacts_directory=str(artifacts.relative_to(run)),
+            return_code=0,
+            ownership_journal=journal,
+        ))
+    merged = gl.merged_shard_artifacts(sessions, run, len(cases))
+    gl.write_artifacts(merged, run / "artifacts")
+    merged_results = gl.validate_qpa_union(
+        gl.decode_qpa(merged["results.qpa"]), cases
+    )
+    (attempt / "runner.log").write_text("fixture runner resumed\n")
+    item = definition["opengl"]
+    metadata = {
+        "schema_version": 1, "qualification": True, "formal_conformance": False,
+        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "16k",
+        "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
+        "git": definition["source"]["git"],
+        "console_sha256": gl.sha256_file(run / "console.log"),
+        "adapter": "macos", "backend": "venus-kosmickrisp", "renderer": "zink",
+        "display": "vnc", "context": "egl", "mode": "mustpass-matrix-shard",
+        "surface": [1280, 720], "rootfs_type": "ext4",
+        "rootfs_receipt": item["receipt"],
+        "rootfs_receipt_sha256": item["receipt_sha256"],
+        "rootfs_sha256": item["receipt"]["derivative"]["sha256"],
+        "glcts_sha256": item["receipt"]["opengl_cts"]["executable"]["sha256"],
+        "emulator_sha256": definition["emulator_sha256"],
+        "successful_case_statuses": item["receipt"]["runner_oracle"]["successful"],
+        "api": "gl46", "leaf": selection.leaf.identifier,
+        "leaf_sha256": selection.leaf.sha256,
+        "fraction": [shard.index, 8], "exact_cases": [],
+        "seed": options.matrix_run.configuration.base_seed,
+        "matrix": gl.matrix_metadata(options),
+        "expected_cases": selection.expected_count, "emulator_return_code": 0,
+        "command": gl.build_harness_command(options, selection, run),
+        "max_resumptions": definition["max_resumptions"],
+        "console_stall_timeout": 600, "console_stall_busy_timeout": 1800,
+        "session_count": len(sessions), "artifacts_provenance": "host-merged",
+        "sessions": gl.session_records(sessions, run),
+        "host_recorded_results": gl.host_recorded_results(sessions),
+        "completed_cases": len(merged_results),
+        "status_totals": gl.status_totals(merged_results),
+        "waived_results": {},
+        "selected_caselist_sha256": hashlib.sha256(merged["selected.txt"]).hexdigest(),
+        "qpa_sha256": hashlib.sha256(merged["results.qpa"]).hexdigest(),
+        "renderer_sha256": hashlib.sha256(merged["renderer.txt"]).hexdigest(),
+        "artifact_transport_sha256": gl.sha256_file(run / gl.ARTIFACT_TRANSPORT_LOG),
+    }
+    (run / "run.json").write_text(json.dumps(metadata))
+    (attempt / "attempt.json").write_text(json.dumps({
+        **ownership,
+        "shard": shard.name(), "command": command, "state": "finished",
+        "return_code": 0, "error": None,
+        "runner_log_sha256": gl.sha256_file(attempt / "runner.log"),
+    }))
+    return run
+
+
+class GraphicsCampaignTests(unittest.TestCase):
+    def setUp(self) -> None:
+        provider = mock.patch.object(gl, "verify_staged_kosmickrisp", return_value="2" * 64)
+        provider.start()
+        self.addCleanup(provider.stop)
+
+    def arguments(self, root: Path) -> list[str]:
+        return ["--suite", "both", "--campaign-dir", str(root / "campaign"),
+                "--emulator", str(root / "uml-darwin"), "--vulkan-rootfs", str(root / "vk.ext4"),
+                "--opengl-rootfs", str(root / "gl.ext4"), "--opengl-receipt", str(root / "gl.json"),
+                "--opengl-config-inventory-run", str(root / "inventory/run.json")]
+
+    def test_fixed_eight_fractions_and_four_cpu_four_gib_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            keys = campaign.shards(definition)
+            self.assertEqual(len(keys), 98)
+            self.assertEqual(Counter(key.suite for key in keys), {"vulkan": 8, "gl46": 90})
+            for key in keys:
+                command = campaign.child_command(definition, key, Path(temporary) / key.name())
+                options = (campaign.vk if key.suite == "vulkan" else gl).parse_arguments(command[3:])
+                self.assertEqual(options.cpus, 4)
+                self.assertEqual(options.memory, "4G")
+                self.assertEqual(options.engine, "jit")
+                self.assertTrue(options.qualification)
+                self.assertEqual(command[command.index("--fraction") + 1], f"{key.index},8")
+                self.assertEqual(options.console_stall_timeout, 600)
+                if key.suite == "gl46":
+                    self.assertEqual(options.console_stall_busy_timeout, 1800)
+                else:
+                    self.assertNotIn("--console-stall-busy-timeout", command)
+                self.assertEqual(str(options.rootfs), definition["vulkan" if key.suite == "vulkan" else "opengl"]["rootfs"])
+
+    def test_cli_rejects_resource_and_selector_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = self.arguments(Path(temporary))
+            self.assertEqual(campaign.parse_arguments(args).jobs, 4)
+            self.assertEqual(campaign.parse_arguments(args).console_stall_busy_timeout, 3600)
+            for extra in (["--jobs", "5"], ["--cpus", "8"], ["--memory", "8G"],
+                          ["--case", "dEQP-VK.info.build"], ["--fraction-count", "16"],
+                          ["--guest-timeout", "1"], ["--verify-only", "--dry-run"],
+                          ["--console-stall-busy-timeout", "599"],
+                          ["--console-stall-busy-timeout", "0"]):
+                with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    campaign.parse_arguments(args + extra)
+
+    def test_one_case_leaves_omit_only_provably_empty_fractions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            keys = campaign.shards(definition)
+            for run_index in (2, 3):
+                self.assertEqual([key.index for key in keys if key.run_index == run_index], [0])
+            self.assertEqual([key.index for key in keys if key.run_index == 7], list(range(8)))
+            self.assertEqual(len({key.name() for key in keys}), len(keys))
+
+    def test_xml_run_omission_reordering_or_egl_identity_relabel_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            for mutation in ("omit", "reorder", "config"):
+                bad = copy.deepcopy(definition)
+                runs = bad["opengl"]["runs"]
+                if mutation == "omit":
+                    runs.pop(8)
+                elif mutation == "reorder":
+                    runs[7], runs[8] = runs[8], runs[7]
+                else:
+                    bad["opengl"]["egl_configs"].reverse()
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(gl.CampaignError, "run plan differs"):
+                    campaign.shards(bad)
+
+    def test_full_gl_campaign_rejects_legacy_scope_before_inventory_or_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            receipt = fixtures.zink_gl_derivative_receipt(gl.load_identity())
+            _, contract = gl.load_zink_gl_derivative_receipt(receipt, gl.load_identity())
+            args = ["--suite", "opengl", "--campaign-dir", str(root / "campaign"),
+                    "--emulator", definition["emulator"], "--opengl-rootfs", str(root / "gl.ext4"),
+                    "--opengl-receipt", str(root / "gl.json"),
+                    "--opengl-config-inventory-run", str(root / "inventory/run.json")]
+            with mock.patch.object(campaign, "source_identity", return_value={}), mock.patch.object(
+                gl, "load_derivative_receipt", return_value=(receipt, contract)
+            ), mock.patch.object(gl, "load_config_inventory_evidence") as inventory, self.assertRaisesRegex(
+                gl.CampaignError, "schema-4"
+            ):
+                campaign.build_spec(campaign.parse_arguments(args))
+            inventory.assert_not_called()
+
+    def test_zink_qualification_routes_only_through_valid_combined_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            args = campaign.child_command(definition, campaign.Shard("gl46", 0, 7), Path(temporary))[3:]
+            self.assertTrue(gl.parse_arguments(args).qualification)
+            for invalid in (args[:args.index("--rootfs-receipt")],
+                            ["--qualification", "--leaf", "gl46", "--api", "gl46"]):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    gl.parse_arguments(invalid)
+            path = Path(definition["opengl"]["receipt_path"])
+            receipt = definition["opengl"]["receipt"]
+            receipt["runner_oracle"]["successful"].append("Waiver")
+            path.write_text(json.dumps(receipt))
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                gl.parse_arguments(args)
+
+    def test_exact_aggregate_separates_unique_execution_and_ns_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+
+            def verify(_root, _spec, key, **_kwargs):
+                rows = results(key)
+                return {"results": rows, "status_totals": gl.status_totals(rows)}
+
+            with mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
+                campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
+            ):
+                result = campaign.aggregate(Path(temporary), definition)
+            self.assertFalse(result["formal_conformance"])
+            vk = result["suites"]["vulkan"]
+            self.assertEqual(vk["unique_case_count"], 10)
+            self.assertEqual(vk["case_execution_count"], 24)
+            self.assertEqual(vk["status_totals"], {"Pass": 16, "NotSupported": 8})
+            self.assertEqual(vk["unique_status_totals"], {"Pass": 2, "NotSupported": 8})
+            self.assertFalse(vk["all_pass"])
+            self.assertEqual(result["suites"]["gl46"]["unique_case_count"], 62)
+            self.assertEqual(result["suites"]["gl46"]["case_execution_count"], 112)
+            self.assertEqual(result["suites"]["gl46"]["run_count"], 13)
+            self.assertTrue(result["unwaived_runner_success"])
+            self.assertEqual(result["suites"]["gl46"]["waived_cases"], [])
+            self.assertEqual(vk["waived_cases"], [])
+
+    def test_waived_gl_results_are_listed_and_clear_unwaived_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            waived = {}
+
+            def verify(_root, _spec, key, **_kwargs):
+                rows = results(key)
+                if key.suite == "gl46" and key.run_index == 0 and key.index == 0:
+                    case = next(iter(rows))
+                    rows[case] = gl.WAIVED_STATUS
+                    waived[case] = key.run_index
+                return {"results": rows, "status_totals": gl.status_totals(rows)}
+
+            with mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
+                campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
+            ):
+                result = campaign.aggregate(Path(temporary), definition)
+            self.assertEqual(len(waived), 1)
+            case = next(iter(waived))
+            self.assertFalse(result["unwaived_runner_success"])
+            gl46 = result["suites"]["gl46"]
+            self.assertEqual(gl46["waived_cases"], [case])
+            self.assertFalse(gl46["all_pass"])
+            self.assertEqual(gl46["status_totals"].get(gl.WAIVED_STATUS), 1)
+            self.assertEqual([run["waived_cases"] for run in gl46["runs"] if run["index"] == 0], [[case]])
+            self.assertTrue(all(run["waived_cases"] == [] for run in gl46["runs"] if run["index"] != 0))
+            self.assertEqual(result["suites"]["vulkan"]["waived_cases"], [])
+
+    def test_source_identity_freezes_the_waiver_list(self) -> None:
+        files = campaign.source_identity()["files"]
+        self.assertEqual(
+            files["tests/integration/gpu/vk_gl_cts_waivers.json"],
+            gl.sha256_file(gl.WAIVERS_PATH),
+        )
+
+    def test_aggregate_rejects_omission_duplicate_order_and_mandatory_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            for mutation in ("missing", "duplicate", "mandatory", "order"):
+                def verify(_root, _spec, key, **_kwargs):
+                    rows = results(key)
+                    if key.index == 7 and key.suite == "vulkan":
+                        if mutation == "missing":
+                            rows.pop("dEQP-VK.mandatory0")
+                        elif mutation == "duplicate":
+                            rows["dEQP-VK.case0"] = rows.pop("dEQP-VK.case7")
+                        elif mutation == "mandatory":
+                            rows["dEQP-VK.mandatory0"] = "NotSupported"
+                    if mutation == "order" and key.suite == "gl46" and key.index == 0:
+                        rows = dict(reversed(list(rows.items())))
+                    return {"results": rows, "status_totals": gl.status_totals(rows)}
+                with self.subTest(mutation=mutation), mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
+                    campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
+                ), self.assertRaises(gl.CampaignError):
+                    campaign.aggregate(Path(temporary), definition)
+
+    def test_gl_attempt_reparses_qpa_and_transport_and_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            key = campaign.Shard("gl46", 0, 7)
+            run = make_gl_attempt(root, definition, key)
+            result = campaign.validate_attempt(root, definition, key)
+            self.assertEqual(result["status_totals"], {"NotSupported": 1, "Pass": 1})
+            path = run / "run.json"
+            original = path.read_text()
+            for field, value in (("kosmickrisp_sha256", "0" * 64), ("qualification", False),
+                                 ("emulator_sha256", "0" * 64), ("cpus", 8),
+                                 ("leaf", "gl46-gtf"), ("fraction", [1, 8])):
+                changed = json.loads(original)
+                changed[field] = value
+                path.write_text(json.dumps(changed))
+                with self.subTest(field=field), self.assertRaises(gl.CampaignError):
+                    campaign.validate_attempt(root, definition, key)
+            path.write_text(original)
+            artifact = run / "artifacts/results.qpa"
+            artifact.write_bytes(artifact.read_bytes().replace(b"Pass", b"Fail"))
+            with self.assertRaisesRegex(gl.CampaignError, "transport differs"):
+                campaign.validate_attempt(root, definition, key)
+
+    def test_resumed_gl_attempt_reparses_and_names_its_recorded_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            key = campaign.Shard("gl46", 0, 7)
+            run = make_resumed_gl_attempt(root, definition, key)
+            metadata = json.loads((run / "run.json").read_text())
+            recorded = metadata["host_recorded_results"]
+            self.assertEqual(list(recorded.values()), ["Timeout"])
+            # Structural reparse of the multi-session shard succeeds; the shard
+            # then fails exactly on its recorded, explicit non-pass status.
+            with self.assertRaisesRegex(
+                gl.CampaignError,
+                f"official CTS runner rejects case result: "
+                f"{next(iter(recorded))}=Timeout",
+            ):
+                campaign.validate_attempt(root, definition, key)
+            merged = run / "artifacts/results.qpa"
+            original = merged.read_bytes()
+            merged.write_bytes(original.replace(
+                b"#terminateTestCaseResult Timeout",
+                b'<Result StatusCode="Pass">result</Result>'))
+            with self.assertRaisesRegex(gl.CampaignError, "not reproducible"):
+                campaign.validate_attempt(root, definition, key)
+            merged.write_bytes(original)
+            (run / f"{gl.SESSION_DIRECTORY}/01/{gl.guest_process.JOURNAL_NAME}").unlink()
+            with self.assertRaises(gl.CampaignError):
+                campaign.validate_attempt(root, definition, key)
+
+    def test_artifact_symlinks_extra_files_and_limits_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            run = make_gl_attempt(root, definition, campaign.Shard("gl46", 0, 0))
+            names = set(gl.SHARD_ARTIFACTS)
+            with mock.patch.object(gl, "MAX_UNCOMPRESSED_ARTIFACT", 1), self.assertRaises(gl.CampaignError):
+                campaign.read_artifacts(run, names)
+            extra = run / "artifacts/extra.txt"
+            extra.write_text("not part of the receipt")
+            with self.assertRaises(gl.CampaignError):
+                campaign.read_artifacts(run, names)
+            extra.unlink()
+            original = run / "artifacts/selected.txt"
+            original.rename(root / "selected.txt")
+            original.symlink_to(root / "selected.txt")
+            with self.assertRaises(gl.CampaignError):
+                campaign.read_artifacts(run, names)
+
+    def test_pool_refills_without_waiting_for_three_slow_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            definition["suites"] = ["vulkan"]
+            first = threading.Barrier(4)
+            refilled = threading.Event()
+            guard = threading.Lock()
+            active = peak = 0
+
+            def worker(_root, _spec, key, _cancelled):
+                nonlocal active, peak
+                with guard:
+                    active += 1
+                    peak = max(peak, active)
+                try:
+                    if key.index < 4:
+                        first.wait(timeout=5)
+                        if key.index != 0 and not refilled.wait(timeout=5):
+                            raise AssertionError("pool did not refill the freed slot")
+                    elif key.index == 4:
+                        refilled.set()
+                    return {"cases": 1, "status_totals": {"Pass": 1}}
+                finally:
+                    with guard:
+                        active -= 1
+
+            complete, failures = {}, {}
+            with mock.patch.object(campaign, "run_shard", side_effect=worker), contextlib.redirect_stdout(io.StringIO()):
+                campaign.run_pending(Path(temporary), definition, list(campaign.shards(definition)),
+                                     4, False, threading.Event(), complete, failures)
+            self.assertTrue(refilled.is_set())
+            self.assertEqual(peak, 4)
+            self.assertEqual(len(complete), 8)
+            self.assertFalse(failures)
+
+    def test_failed_attempts_are_never_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.lock").touch()
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
+                "attempted_shards": ["vulkan-00of08"],
+            }))
+            campaign.attempt_path(location, campaign.Shard("vulkan", 0)).mkdir(parents=True)
+            with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
+                campaign, "run_pending"
+            ) as launch, self.assertRaisesRegex(gl.CampaignError, "immutable failed/incomplete"):
+                campaign.main(self.arguments(root))
+            launch.assert_not_called()
+
+    def test_missing_attempt_directory_cannot_be_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
+                "attempted_shards": ["vulkan-00of08"], "state": "running",
+            }))
+            with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
+                campaign, "run_pending"
+            ) as launch, self.assertRaisesRegex(gl.CampaignError, "launch catalog disagree"):
+                campaign.main(self.arguments(root))
+            launch.assert_not_called()
+
+    def test_launch_catalog_is_persisted_before_worker_and_resume_skips_finished(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            location = root / "campaign"
+            location.mkdir()
+            first = campaign.Shard("vulkan", 0)
+            campaign.attempt_path(location, first).mkdir(parents=True)
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
+                "attempted_shards": [first.name()], "state": "running",
+            }))
+            seen = []
+
+            def worker(_root, _spec, key, _cancelled):
+                catalog = campaign.load_json(location / "campaign.json")["attempted_shards"]
+                self.assertIn(key.name(), catalog)
+                seen.append(key.name())
+                return {"cases": 1, "status_totals": {"Pass": 1}}
+
+            with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
+                campaign, "validate_attempt", return_value={"cases": 1}
+            ), mock.patch.object(campaign, "run_shard", side_effect=worker), mock.patch.object(
+                campaign, "check_current_inputs"
+            ), mock.patch.object(campaign, "aggregate", return_value={"complete": True}), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(campaign.main(self.arguments(root)), 0)
+            self.assertEqual(set(seen), {key.name() for key in campaign.shards(definition)} - {first.name()})
+            self.assertEqual(len(campaign.load_json(location / "campaign.json")["attempted_shards"]), 8)
+
+    def test_pool_fail_fast_keep_going_and_prelaunch_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            definition = spec(Path(temporary))
+            definition["suites"] = ["vulkan"]
+            for keep_going, pre_cancelled in ((False, False), (True, False), (False, True)):
+                cancelled = threading.Event()
+                if pre_cancelled:
+                    cancelled.set()
+                complete, failures, launched = {}, {}, []
+
+                def worker(_root, _spec, key, _cancelled):
+                    launched.append(key.index)
+                    if key.index == 0:
+                        raise gl.CampaignError("fixture leaf failed")
+                    return {"cases": 1}
+
+                with self.subTest(keep_going=keep_going, cancelled=pre_cancelled), mock.patch.object(
+                    campaign, "run_shard", side_effect=worker
+                ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    campaign.run_pending(Path(temporary), definition, list(campaign.shards(definition)),
+                                         1, keep_going, cancelled, complete, failures)
+                self.assertEqual(launched, [] if pre_cancelled else list(range(8)) if keep_going else [0])
+
+    def test_dry_run_creates_no_campaign_or_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
+                campaign.subprocess, "Popen"
+            ) as launch, contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(campaign.main(self.arguments(root) + ["--dry-run"]), 0)
+            self.assertEqual(len(output.getvalue().splitlines()), 98)
+            launch.assert_not_called()
+            self.assertFalse((root / "campaign").exists())
+
+    def test_changed_spec_and_verify_only_never_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.lock").touch()
+            record = {"schema_version": 1, "kind": campaign.KIND, "spec": copy.deepcopy(definition),
+                      "attempted_shards": []}
+            (location / "campaign.json").write_text(json.dumps(record))
+            before = (location / "campaign.json").read_bytes()
+            for changed in (False, True):
+                if changed:
+                    definition["emulator_sha256"] = "f" * 64
+                with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
+                    campaign, "run_pending"
+                ) as launch, self.assertRaises(gl.CampaignError):
+                    campaign.main(self.arguments(root) + ["--verify-only"])
+                launch.assert_not_called()
+                self.assertEqual((location / "campaign.json").read_bytes(), before)
+
+    def test_owned_group_uses_bounded_term_kill_fallback(self) -> None:
+        process = mock.Mock(pid=123456)
+        process.poll.return_value = None
+        alive = True
+
+        def send(pgid, sig):
+            nonlocal alive
+            self.assertEqual(pgid, process.pid)
+            if sig == signal.SIGKILL:
+                alive = False
+
+        with mock.patch.object(campaign, "group_exists", side_effect=lambda _pid: alive), mock.patch.object(
+            campaign.os, "killpg", side_effect=send
+        ) as kill:
+            campaign.stop_owned_group(process, grace=0, term_grace=0, kill_grace=0.1)
+        self.assertEqual(kill.call_args_list, [mock.call(process.pid, signal.SIGTERM),
+                                             mock.call(process.pid, signal.SIGKILL)])
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+
+    def test_permission_denial_never_proves_process_group_gone(self) -> None:
+        process = mock.Mock(pid=123456)
+        process.poll.return_value = 0
+        with mock.patch.object(campaign.os, "killpg", side_effect=PermissionError):
+            self.assertTrue(campaign.group_exists(process.pid))
+            with self.assertRaisesRegex(gl.CampaignError, "did not terminate"):
+                campaign.stop_owned_group(process, grace=0, term_grace=0, kill_grace=0)
+
+    def test_vulkan_attempt_requires_recorded_candidate_emulator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            key = campaign.Shard("vulkan", 0)
+            attempt = campaign.attempt_path(root, key)
+            run = attempt / "driver-output/fixture-run"
+            run.mkdir(parents=True)
+            (run / "console.log").write_text("fixture console")
+            (attempt / "runner.log").write_text("fixture runner")
+            (attempt / "attempt.json").write_text(json.dumps({
+                **ownership_record(attempt),
+                "shard": key.name(), "state": "finished", "return_code": 0, "error": None,
+                "command": campaign.child_command(definition, key, attempt / "driver-output"),
+                "runner_log_sha256": gl.sha256_file(attempt / "runner.log"),
+            }))
+            metadata = {
+                "qualification": True, "formal_conformance": False, "engine": "jit",
+                "memory": "4G", "cpus": 4, "page_profile": "16k",
+                "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
+                "git": definition["source"]["git"],
+                "console_sha256": gl.sha256_file(run / "console.log"),
+            }
+            for digest in (None, "f" * 64):
+                if digest is not None:
+                    metadata["emulator_sha256"] = digest
+                (run / "run.json").write_text(json.dumps(metadata))
+                with self.subTest(digest=digest), self.assertRaisesRegex(gl.CampaignError, "emulator_sha256"):
+                    campaign.validate_attempt(root, definition, key)
+
+    def test_metadata_failure_after_spawn_still_reaps_owned_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            process = mock.Mock(pid=123456, returncode=0)
+            actual_write = campaign.write_json
+            writes = 0
+
+            def failing_write(path, value):
+                nonlocal writes
+                writes += 1
+                if writes == 2:
+                    raise OSError("fixture disk full after child creation")
+                actual_write(path, value)
+
+            with mock.patch.object(campaign, "check_current_inputs"), mock.patch.object(
+                campaign.subprocess, "Popen", return_value=process
+            ), mock.patch.object(campaign, "stop_owned_group") as stop, mock.patch.object(
+                campaign, "write_json", side_effect=failing_write
+            ), self.assertRaisesRegex(OSError, "disk full"):
+                campaign.run_shard(root, definition, campaign.Shard("vulkan", 0), threading.Event())
+            stop.assert_called_once()
+            self.assertEqual(stop.call_args.args, (process,))
+            self.assertEqual(stop.call_args.kwargs["ownership"][0],
+                             root / "shards/vulkan-00of08" / gl.guest_process.JOURNAL_NAME)
+
+    def test_missing_nested_reap_ack_cancels_pool_after_leaf_group_exits(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            cancelled = threading.Event()
+            process = mock.Mock(pid=123456, returncode=1)
+            process.poll.return_value = 1
+
+            def spawn(*_args, **kwargs):
+                ownership = json.loads(kwargs["env"][gl.guest_process.OWNERSHIP_ENV])
+                Path(ownership["path"]).write_text(json.dumps({
+                    "event": "starting", "token": ownership["token"], "owner_pid": 123457,
+                }) + "\n")
+                return process
+
+            with mock.patch.object(campaign, "check_current_inputs"), mock.patch.object(
+                campaign.subprocess, "Popen", side_effect=spawn
+            ), mock.patch.object(campaign, "group_exists", return_value=False), self.assertRaisesRegex(
+                gl.CampaignError, "incomplete"
+            ):
+                campaign.run_shard(root, definition, campaign.Shard("vulkan", 0), cancelled)
+            self.assertTrue(cancelled.is_set())
+            record = json.loads((root / "shards/vulkan-00of08/attempt.json").read_text())
+            self.assertEqual(record["state"], "failed")
+            self.assertIn("incomplete", record["error"])
+
+    @unittest.skipUnless(os.name == "posix", "process sessions require POSIX")
+    def test_real_owned_session_cleanup_preserves_unrelated_process(self) -> None:
+        owned = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        try:
+            campaign.stop_owned_group(owned, grace=0.1, term_grace=0.1, kill_grace=1)
+            self.assertIsNotNone(owned.poll())
+            self.assertFalse(campaign.group_exists(owned.pid))
+            self.assertIsNone(unrelated.poll())
+        finally:
+            for process in (owned, unrelated):
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+
+    @unittest.skipUnless(os.name == "posix", "process sessions require POSIX")
+    def test_real_cleanup_reaps_descendant_after_leaf_exits(self) -> None:
+        process = subprocess.Popen([
+            sys.executable, "-c",
+            "import subprocess,sys; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+            "print(child.pid,flush=True)",
+        ], start_new_session=True, stdout=subprocess.PIPE)
+        try:
+            self.assertTrue(process.stdout.readline().strip().isdigit())
+            process.wait(timeout=5)
+            campaign.stop_owned_group(process, grace=0, term_grace=1, kill_grace=2)
+            self.assertFalse(campaign.group_exists(process.pid))
+        finally:
+            process.stdout.close()
+            if campaign.group_exists(process.pid):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    unittest.main()

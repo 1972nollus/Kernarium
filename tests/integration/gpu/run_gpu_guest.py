@@ -25,6 +25,8 @@ import time
 import tty
 from typing import Any, BinaryIO, Sequence
 
+import guest_process
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
@@ -38,6 +40,12 @@ MAX_SERIAL_CLIENT_BACKLOG = 1024 * 1024
 MAX_SERIAL_INPUT_BACKLOG = 1024 * 1024
 SERIAL_WRITE_CHUNK_BYTES = 128
 SERIAL_WRITE_INTERVAL_SECONDS = 0.01
+BOOTSTRAP_PRIMARY_PROMPT = b"UML_BOOTSTRAP_READY> "
+BOOTSTRAP_CONTINUATION_PROMPT = b"UML_BOOTSTRAP_CONTINUE> "
+BOOTSTRAP_PROMPT_COMMAND = (
+    b"PS1='UML_BOOTSTRAP_READY> '; "
+    b"PS2='UML_BOOTSTRAP_CONTINUE> '\n"
+)
 PROTECTED_ARGUMENTS = (
     "ubd0",
     "root=",
@@ -460,21 +468,7 @@ exec /lib/systemd/systemd
 
 
 def terminate_process(process: subprocess.Popen[bytes]) -> None:
-    """Stop a guest that shares this runner's process group.
-
-    The guest runs attached, so a runner killed outright takes it along instead
-    of leaving an orphan. That matters because an orphaned guest boots to idle
-    and still burns one to two host cores indefinitely.
-    """
-    if process.poll() is not None:
-        return
-    try:
-        process.send_signal(signal.SIGTERM)
-        process.wait(timeout=10)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
-            process.send_signal(signal.SIGKILL)
-            process.wait(timeout=5)
+    guest_process.stop_process(process, guest_process.EMULATOR_STOP)
 
 
 def write_pending(
@@ -501,13 +495,6 @@ def write_pending(
             remaining -= written
 
 
-BOOTSTRAP_READY_MARKER = b"UML_GPU_BOOTSTRAP_INPUT_READY"
-BOOTSTRAP_CONSOLE_PRELUDE = (
-    b"stty -echo || exit 1\n"
-    b"printf '%s%s\\n' UML_GPU_BOOTSTRAP_ INPUT_READY\n"
-)
-
-
 def run_guest(
     command: Sequence[str],
     bootstrap: bytes,
@@ -516,6 +503,7 @@ def run_guest(
     expect_poweroff: bool,
     serial_socket: Path | None = None,
 ) -> tuple[int, bool, bool]:
+    artifact_socket = guest_process.SocketOwnership(command)
     serial = (
         SerialConsoleSocket(serial_socket) if serial_socket is not None else None
     )
@@ -533,47 +521,61 @@ def run_guest(
         if serial is not None:
             serial.close()
         raise
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            bufsize=0,
-            close_fds=True,
-        )
-    except BaseException:
-        os.close(master)
-        if serial is not None:
-            serial.close()
-        raise
-    finally:
-        os.close(slave)
-    console = os.fdopen(master, "r+b", buffering=0)
-    os.set_blocking(console.fileno(), False)
-    saw_pass = False
-    saw_fail = False
-    deadline = time.monotonic() + timeout if timeout > 0 else None
-    pending = bytearray()
-    guest_input = bytearray(BOOTSTRAP_CONSOLE_PRELUDE)
-    bootstrap_input = bytearray(bootstrap + b"\n")
-    console_input_enabled = False
-    bootstrap_input_enabled = False
-    next_guest_write = 0.0
-    if serial is not None:
-        print(f"Serial console socket: {serial.path}", file=sys.stderr)
+    console = None
 
-    try:
+    def stop_emulator(process: subprocess.Popen[bytes]) -> None:
+        try:
+            artifact_socket.observe()
+        finally:
+            terminate_process(process)
+
+    def close_resources() -> None:
+        try:
+            if serial is not None:
+                serial.close()
+        finally:
+            try:
+                if console is not None:
+                    console.close()
+                else:
+                    os.close(master)
+            finally:
+                try:
+                    if slave is not None:
+                        os.close(slave)
+                finally:
+                    artifact_socket.close()
+
+    with guest_process.managed_child(
+        command, stop=stop_emulator, cleanup=close_resources,
+        journal_setting=os.environ.get(guest_process.OWNERSHIP_ENV),
+        stdin=slave, stdout=slave, stderr=slave, bufsize=0, close_fds=True,
+    ) as process:
+        os.close(slave)
+        slave = None
+        console = os.fdopen(master, "r+b", buffering=0)
+        os.set_blocking(console.fileno(), False)
+        saw_pass = False
+        saw_fail = False
+        deadline = time.monotonic() + timeout if timeout > 0 else None
+        pending = bytearray()
+        guest_input = bytearray()
+        deferred_input = bytearray()
+        bootstrap_payload = bootstrap if bootstrap.endswith(b"\n") else bootstrap + b"\n"
+        bootstrap_lines = bootstrap_payload.splitlines(keepends=True)
+        bootstrap_line = 0
+        bootstrap_stage = "initial-prompt"
+        bootstrap_prompt_output = bytearray()
+        next_guest_write = 0.0
+        if serial is not None:
+            print(f"Serial console socket: {serial.path}", file=sys.stderr)
         with console_log.open("wb") as log:
             while process.poll() is None:
+                artifact_socket.observe()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"guest did not finish within {timeout:.0f}s")
                 now = time.monotonic()
-                guest_write_ready = (
-                    console_input_enabled
-                    and bool(guest_input)
-                    and now >= next_guest_write
-                )
+                guest_write_ready = bool(guest_input) and now >= next_guest_write
                 read_descriptors: list[Any] = [console]
                 write_descriptors: list[Any] = (
                     [console] if guest_write_ready else []
@@ -585,7 +587,7 @@ def run_guest(
                         if serial.output:
                             write_descriptors.append(serial.client)
                 select_timeout = 0.25
-                if console_input_enabled and guest_input and not guest_write_ready:
+                if guest_input and not guest_write_ready:
                     select_timeout = min(
                         select_timeout,
                         max(0.0, next_guest_write - now),
@@ -602,10 +604,15 @@ def run_guest(
                 ):
                     data = serial.read_input()
                     if data:
-                        if len(guest_input) + len(data) > MAX_SERIAL_INPUT_BACKLOG:
+                        input_queue = (
+                            guest_input
+                            if bootstrap_stage == "complete"
+                            else deferred_input
+                        )
+                        if len(input_queue) + len(data) > MAX_SERIAL_INPUT_BACKLOG:
                             serial.close_client()
                         else:
-                            guest_input.extend(data)
+                            input_queue.extend(data)
                 if (
                     serial is not None
                     and serial.client is not None
@@ -638,28 +645,48 @@ def run_guest(
                 pending.extend(data)
                 if len(pending) > 8192:
                     del pending[:-8192]
-                normalized = bytes(pending).replace(b"\r", b"")
-                if not console_input_enabled:
-                    console_input_enabled = b"\n# " in normalized
+                bootstrap_prompt_output.extend(data.replace(b"\r", b""))
+                if len(bootstrap_prompt_output) > 8192:
+                    del bootstrap_prompt_output[:-8192]
                 if (
-                    console_input_enabled
-                    and not bootstrap_input_enabled
-                    and BOOTSTRAP_READY_MARKER + b"\n" in normalized
+                    bootstrap_stage == "initial-prompt"
+                    and b"\n# " in bootstrap_prompt_output
                 ):
-                    guest_input.extend(bootstrap_input)
-                    bootstrap_input.clear()
-                    bootstrap_input_enabled = True
+                    # The init shell has echo enabled. Disable it before installing
+                    # unique prompts so the prompt strings in the setup command
+                    # cannot be mistaken for acknowledgements.
+                    guest_input.extend(b"stty -echo\n")
+                    bootstrap_stage = "echo-off"
+                    bootstrap_prompt_output.clear()
+                elif (
+                    bootstrap_stage == "echo-off"
+                    and b"\n# " in bootstrap_prompt_output
+                ):
+                    guest_input.extend(BOOTSTRAP_PROMPT_COMMAND)
+                    bootstrap_stage = "line-prompt"
+                    bootstrap_prompt_output.clear()
+                elif bootstrap_stage == "line-prompt" and (
+                    BOOTSTRAP_PRIMARY_PROMPT in bootstrap_prompt_output
+                    or BOOTSTRAP_CONTINUATION_PROMPT in bootstrap_prompt_output
+                ):
+                    if bootstrap_line >= len(bootstrap_lines):
+                        raise RuntimeError(
+                            "guest requested input after the complete bootstrap"
+                        )
+                    guest_input.extend(bootstrap_lines[bootstrap_line])
+                    bootstrap_line += 1
+                    bootstrap_prompt_output.clear()
+                    if bootstrap_line == len(bootstrap_lines):
+                        bootstrap_stage = "complete"
+                        guest_input.extend(deferred_input)
+                        deferred_input.clear()
                 decoded = pending.decode("utf-8", errors="replace")
                 saw_pass = saw_pass or PASS_MARKER in decoded
                 saw_fail = saw_fail or FAIL_MARKER in decoded
                 if serial is not None:
                     serial.queue_output(data)
             return_code = process.wait(timeout=5)
-    finally:
-        if serial is not None:
-            serial.close()
-        terminate_process(process)
-        console.close()
+
 
     if return_code != 0:
         raise RuntimeError(f"emulator exited with status {return_code}")

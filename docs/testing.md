@@ -278,6 +278,92 @@ investigation document.
 GPU capabilities, qualification boundaries, and unsupported Vulkan work are
 summarized in [`graphics.md`](graphics.md).
 
+## Graphics conformance campaigns
+
+Guest CTS qualification is opt-in, receipt-bound, and separate from the
+`*-venus*` workflows above, which never launch a guest or make a Vulkan support
+claim. Every campaign guest is JIT with exactly four vCPUs and 4 GiB.
+
+`tests/integration/gpu/run_vk_cts.py` owns the Vulkan lane. `--qualification`
+binds the run to `vulkan_cts_receipt.json`: the sealed image's receipt, the CTS
+and Mesa source locks, and the staged KosmicKrisp provider digest, which must
+match the configured verified prefix so a run cannot silently use an older
+provider. `--mode exact-family` selects cases in released traversal order; a
+reordered list is rejected. Accepted `NotSupported` and warning results stay
+distinct from `Pass` and prove nothing about an optional feature.
+
+`tests/integration/gpu/run_vk_gl_cts.py` owns the OpenGL lane. `--api gl46
+--leaf gl46 --case` runs one core `KHR-GL46.*` case; `--matrix gl46` runs the
+official XML-derived must-pass configurations by
+`--mustpass-config-index`/`--fraction` and rejects `--case`. The ES-for-GL
+leaves (`dEQP-GL45-ES3.*`, `dEQP-GL45-ES31.*`, `KHR-Single-GL46.*`) exist only
+as matrix shards. Seeds, dimensions, and FBO settings come from the XML
+records, and an ordered `CTS-Configs.gl46` inventory captured from the exact
+emulator, image, and provider (`--config-inventory gl46`, replayed with
+`--config-inventory-run`) assigns the first/other EGL configuration roles.
+
+`tests/integration/gpu/run_graphics_cts_campaign.py` coordinates both suites:
+eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
+most four owned guests at a time (`--jobs` may only lower that), immediately
+refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
+selection, and timeout identities; resumes only never-attempted shards;
+reverifies completed ones; and never overwrites or retries a failed, truncated,
+or interrupted attempt. `--verify-only` reparses all evidence without launching
+a guest and `--dry-run` prints the derived shard commands. A leaf arms its
+ownership journal before creating a child, so a repeated interrupt cannot skip
+the wait/kill fallback, and the pool releases a slot only after a run-token
+journal acknowledges that exact guest's reap and console/socket cleanup;
+`gpu-guest-process-ownership-safety` exercises that boundary host-only. A
+complete accepted-status campaign is not an all-`Pass`, all-features-supported,
+or Khronos conformance claim.
+
+A shard is one or more guest sessions. The guest transports its growing QPA as
+ordered checkpoint segments, so a killed guest still leaves the prefix it
+produced, and the host reassembles the single `results.qpa` every consumer
+reads. The progress watchdog is CPU-aware: a case that produces no QPA output
+for `--console-stall-timeout` seconds while its `glcts` processes also burn no
+CPU is abandoned, while a case that is silent but computing survives until
+`--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
+software fp64 cases run for 700-2000 s without logging whereas a wedged Venus
+wait consumes nothing. The host then records the case in flight as `Timeout` or
+`Crash`, never retries it, and continues in a fresh guest bounded by
+`--max-resumptions`. Both statuses are always failures.
+
+### OpenGL ES3 FBO state-query waiver
+
+`tests/integration/gpu/vk_gl_cts_waivers.json` holds the granted waivers. Its
+one entry covers the fifteen `dEQP-GL45-ES3.functional.state_query` cases that
+assert default-framebuffer state in the `es3-main` configuration, whose
+must-pass record renders into a framework-owned framebuffer object; a
+conforming driver reports the bound object there, so those failures belong to
+the configuration rather than to the driver. The project owner granted it on
+2026-09-08 for Zink over Venus and KosmicKrisp.
+
+A waiver applies only to a matrix run whose API, configuration name, and draw
+surface match its scope. The runner installs the official waiver file in the
+guest, the launcher verifies its digest, `glcts` receives `--deqp-waiver-file`,
+and the guest records the applied waiver URL in the QPA session header.
+Verification accepts `Waiver` only for the listed cases of such a run and only
+when that header names the granted list; a listed case that still fails, a
+`Waiver` anywhere else, or a missing header is rejected. `run.json` records
+every waived result, the campaign aggregate counts `waived_cases` per run, and
+`unwaived_runner_success` is false whenever a waiver was used. A waived result
+is not a pass and makes no conformance claim.
+
+### Native whole-submit timing
+
+The KosmicKrisp line and geometry unit executables accept the opt-in arguments
+`performance` (render-only Vulkan queries) and `performance-whole-submit`
+(native Metal commit feedback through `MESA_KK_DEBUG=submit_timing`);
+`tests/perf/uml-kosmickrisp-rgb32-texel-bench` uses the same collector through
+`--timing metal-whole-submit`. Registered CTests never run these modes. The
+collector permits one outstanding submission and requires exactly one finite,
+ordered, wall-bounded callback per draw; missing, malformed, duplicate, late,
+or unmatched records fail closed rather than being filtered. Whole-submit
+intervals include every clear, barrier, and copy in the Metal commit and are
+not comparable with render-only query intervals. No speed ratio is a
+correctness threshold.
+
 ## Claiming completion
 
 A passing structural audit does not prove generated-code shape, performance,

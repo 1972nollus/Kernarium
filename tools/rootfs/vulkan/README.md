@@ -60,9 +60,18 @@ fd to the renderer's exact guest DRM primary or render identity, including
 non-PCI virtio devices. Different devices retain the cross-device path; an
 import cannot grow the exported allocation.
 For single-plane native-heap WSI images, the private implicit-import metadata
-supplies a bounded logical row pitch required by DRI3. It does not describe a
-linear pixel buffer or change public Vulkan subresource-layout queries; the
-image remains optimal and the fd still carries only native allocation identity.
+supplies a logical row pitch required by DRI3. Its envelope bounds the image's
+width, height and total allocation, and the pitch itself is a 32-bit value that
+linux-dmabuf and DRI3 v1.2 carry unchanged, so a wide image keeps its envelope
+instead of failing swapchain creation. The metadata does not describe a linear
+pixel buffer or change public Vulkan subresource-layout queries; the image
+remains optimal and the fd still carries only native allocation identity.
+Because one such image is one renderer blob resource whose refusal is reported
+asynchronously, a native-heap surface advertises at most 8192 in each direction
+as its maximum image extent and refuses an image above the per-image budget
+with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, rather than presenting a dma-buf with no
+resource behind it. Ordinary images keep the device's own
+`maxImageDimension2D`.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also

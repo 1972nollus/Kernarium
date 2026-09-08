@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -169,6 +170,83 @@ class AquariumProbePolicyTests(unittest.TestCase):
         self.assertIn("xdpyinfo", launcher)
         self.assertIn("xwininfo -root -stats", launcher)
         self.assertIn("UML_EGL_CONFIG_DIAGNOSTICS_END", launcher)
+
+    def test_launcher_can_require_zink_for_kde_and_chromium(self) -> None:
+        launcher = run_chromium_webgl.build_guest_launcher(
+            auto_poweroff=False,
+            renderer_backend="zink",
+        )
+        self.assertIn("export MESA_LOADER_DRIVER_OVERRIDE=zink", launcher)
+        self.assertIn("UML_KDE_ZINK_READY", launcher)
+        self.assertIn("/proc/$kwin_pid/environ", launcher)
+        self.assertIn("qdbus6 org.kde.KWin /KWin supportInformation", launcher)
+        self.assertIn("OpenGL renderer string:", launcher)
+        self.assertIn("virtio-gpu venus", launcher)
+        self.assertIn('display_socket="$runtime/wayland-0"', launcher)
+        self.assertIn(
+            'chromium_platform_flags="--ozone-platform=wayland"',
+            launcher,
+        )
+        self.assertIn("eglinfo -v -a gles -p wayland", launcher)
+        self.assertNotIn("@RENDERER_BACKEND@", launcher)
+
+    def test_zink_enables_the_opt_in_host_vulkan_backend(self) -> None:
+        with mock.patch.dict(run_chromium_webgl.os.environ, {}, clear=True):
+            environment = run_chromium_webgl.build_host_environment(
+                "zink", "vnc"
+            )
+        self.assertEqual(environment["UML_GPU_EXPERIMENTAL_VULKAN"], "1")
+        self.assertNotIn("UML_GPU_FRAME_STATS", environment)
+
+        with mock.patch.dict(run_chromium_webgl.os.environ, {}, clear=True):
+            environment = run_chromium_webgl.build_host_environment(
+                "virgl", "native"
+            )
+        self.assertNotIn("UML_GPU_EXPERIMENTAL_VULKAN", environment)
+        self.assertEqual(environment["UML_GPU_FRAME_STATS"], "1")
+
+    def test_guest_shutdown_escalates_for_a_wedged_emulator(self) -> None:
+        process = mock.Mock()
+        process.pid = 1234
+        process.poll.side_effect = (None, None, None)
+        process.wait.side_effect = (
+            subprocess.TimeoutExpired("guest", 45),
+            subprocess.TimeoutExpired("guest", 15),
+            0,
+        )
+        with mock.patch.object(run_chromium_webgl.os, "killpg") as killpg:
+            run_chromium_webgl.stop_guest(process)
+        self.assertEqual(
+            killpg.call_args_list,
+            [
+                mock.call(1234, run_chromium_webgl.signal.SIGINT),
+                mock.call(1234, run_chromium_webgl.signal.SIGTERM),
+                mock.call(1234, run_chromium_webgl.signal.SIGKILL),
+            ],
+        )
+
+    def test_renderer_policy_distinguishes_virgl_and_zink(self) -> None:
+        virgl = metric_line([20.0] * 30)
+        zink = virgl.replace(
+            "ANGLE (Mesa, virgl, OpenGL ES 3.0)",
+            "ANGLE (Mesa, zink Vulkan 1.4 (Virtio-GPU Venus), "
+            "OpenGL ES 3.0)",
+        )
+        run_chromium_webgl.validate_renderer(virgl, "virgl")
+        run_chromium_webgl.validate_renderer(zink, "zink")
+        with self.assertRaises(RuntimeError):
+            run_chromium_webgl.validate_renderer(zink, "virgl")
+        with self.assertRaises(RuntimeError):
+            run_chromium_webgl.validate_renderer(virgl, "zink")
+
+    def test_checked_vulkan_rootfs_is_accepted_for_zink(self) -> None:
+        receipt, contract = run_chromium_webgl.load_vulkan_rootfs_contract(
+            REPO_ROOT
+            / "tests/integration/gpu/vulkan_cts_receipt.json"
+        )
+        self.assertEqual(receipt["artifact"], "uml-vulkan-rootfs")
+        self.assertEqual(contract.filesystem_type, "ext4")
+        self.assertEqual(contract.sha256, receipt["derivative"]["sha256"])
 
     def test_kernarium_header_is_generated_from_common_probe(self) -> None:
         driver = generate_aquarium_header.load_driver(SCRIPT)

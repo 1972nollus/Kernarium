@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run a bounded VK-GL-CTS shard in the ordinary rendered guest.
+"""Run a bounded VK-GL-CTS shard in an authenticated rendered guest.
 
 The authenticated rootfs owns the CTS executable, resources, Mesa, libdrm,
 and WSI.  This runner injects only a first-party launcher and transient output
-into the disposable OverlayFS upper layer.  It deliberately refuses the old
-macOS CGL renderer and requires the common ANGLE/Metal product.
+into the disposable OverlayFS upper layer. The default path requires the
+common ANGLE/Metal Virgl product. The explicit Zink path instead requires the
+receipt-bound Vulkan/OpenGL derivative and proves Zink over Virtio-GPU Venus.
 
 Official must-pass qualification remains fail-closed while the original image
 has no authoritative CTS build receipt and the complete matrices have not run.
@@ -20,7 +21,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import base64
 import binascii
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import errno
 import gzip
 import hashlib
@@ -31,17 +32,20 @@ from pathlib import Path
 import re
 import select
 import shlex
-import signal
 import socket
 import stat
 import subprocess
 import sys
 import time
-from typing import Any, Sequence
+from typing import Any, Callable, Collection, Sequence
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape as xml_escape, quoteattr as xml_quoteattr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import virgl_capset  # noqa: E402
+import vulkan_cts_receipt  # noqa: E402
+import guest_process  # noqa: E402
+import opengl_cts_plan  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -58,6 +62,15 @@ GLES_MUSTPASS_PATH = Path(__file__).with_name(
 RUNNER_ORACLE_PATH = Path(__file__).with_name(
     "vk_gl_cts_runner_oracle.json"
 )
+WAIVERS_PATH = Path(__file__).with_name("vk_gl_cts_waivers.json")
+GUEST_WAIVER_PATH = "/usr/local/share/uml-vk-gl-cts/waivers.xml"
+WAIVED_STATUS = "Waiver"
+WAIVER_KEYS = frozenset(
+    {"id", "granted", "granted_by", "scope", "vendor", "renderers", "url",
+     "description", "cases"}
+)
+WAIVER_SCOPE_KEYS = frozenset({"api", "configuration_name", "draw_surface_type"})
+WAIVER_SURFACE_TYPES = frozenset({"fbo", "window", "pbuffer", "pixmap"})
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vk-gl-cts"
@@ -71,6 +84,7 @@ MAX_UNCOMPRESSED_ARTIFACT = 512 * 1024 * 1024
 SHARD_ARTIFACTS = frozenset(
     {"renderer.txt", "results.qpa", "selected.txt", "summary.txt"}
 )
+ENUMERATED_SHARD_ARTIFACTS = SHARD_ARTIFACTS | {"expected.txt"}
 INVENTORY_ARTIFACTS = frozenset(
     {"inventory.txt", "renderer.txt", "results.qpa", "summary.txt"}
 )
@@ -78,7 +92,10 @@ CONFIG_INVENTORY_ARTIFACTS = frozenset(
     {"renderer.txt", "results.qpa", "summary.txt"}
 )
 ALLOWED_ARTIFACTS = (
-    SHARD_ARTIFACTS | INVENTORY_ARTIFACTS | CONFIG_INVENTORY_ARTIFACTS
+    SHARD_ARTIFACTS
+    | ENUMERATED_SHARD_ARTIFACTS
+    | INVENTORY_ARTIFACTS
+    | CONFIG_INVENTORY_ARTIFACTS
 )
 GLES_INVENTORY_SCOPE = "gles2-gles3"
 GLES_INVENTORY_MODULES = ("KHR-GLES2", "KHR-GLES3")
@@ -86,6 +103,7 @@ BASELINE_GLES_APIS = ("gles2", "gles3")
 CONFIG_CASES = {
     "gles2": "CTS-Configs.es2",
     "gles3": "CTS-Configs.es3",
+    "gl46": "CTS-Configs.gl46",
 }
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
@@ -93,8 +111,8 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z"
 )
-FORBIDDEN_RENDERERS = re.compile(
-    r"(?:llvmpipe|softpipe|swrast|software rasterizer|\bzink\b|xvfb)",
+SOFTWARE_RENDERERS = re.compile(
+    r"(?:llvmpipe|softpipe|swrast|software rasterizer|xvfb)",
     re.IGNORECASE,
 )
 BEGIN_ARTIFACT = re.compile(
@@ -147,16 +165,113 @@ HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
 RETIRED_BACKEND_MARKER = "Virgl CGL"
 DARWIN_CLEAN_STOP = "Darwin UML stopped: result=0 exitcode=0"
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
-MAX_ARTIFACT_TRANSPORT_LINE = 2048
+MAX_ARTIFACT_TRANSPORT_LINE = 64 * 1024
+ARTIFACT_SERVICE_INTERVAL = 0.05
 VIRTIO_SERIAL_PORT_NAME = "org.uml.host-serial.0"
 VIRTIO_SERIAL_GUEST_DEVICE = (
     f"/dev/virtio-ports/{VIRTIO_SERIAL_PORT_NAME}"
 )
 ARTIFACT_TRANSPORT_LOG = "artifact-serial.log"
+QPA_ARTIFACT = "results.qpa"
+SUMMARY_ARTIFACT = "summary.txt"
+# Every session emits its summary last, so this frame marks the moment the
+# guest has nothing left to deliver.  An unkillable wedged case can then stall
+# the poweroff while the kernel keeps printing, which would defeat any bound
+# derived from console silence; the completed transfer gets its own deadline.
+FINAL_ARTIFACT_FRAME = f"UML_CTS_ARTIFACT_END|{SUMMARY_ARTIFACT}|"
+SHUTDOWN_GRACE_SECONDS = 180
+QPA_SEGMENT = re.compile(r"results\.qpa\.([0-9]{4})\Z")
+MAX_QPA_SEGMENTS = 4096
+QPA_CHECKPOINT_BYTES = 8 * 1024 * 1024
+QPA_BOUNDARY = "#umlSessionBoundary "
+SESSION_DIRECTORY = "sessions"
+DEFAULT_MAX_RESUMPTIONS = 4
+# dEQP's own terminated-case statuses; the receipt oracles list both as
+# always-failure, so a recorded one can never be mistaken for success.
+STALL_STATUS = "Timeout"
+ABORT_STATUS = "Crash"
+SESSION_OUTCOMES = ("completed", "stalled", "aborted")
 
 
 class CampaignError(RuntimeError):
     """A campaign input or result violated a fail-closed contract."""
+
+
+class GuestSessionInterrupted(CampaignError, TimeoutError):
+    """A guest session ended early; its partial evidence is still attached.
+
+    It stays a ``TimeoutError`` so every existing caller keeps its behaviour,
+    and carries the console and acknowledged frames the guest had already
+    delivered so a shard can continue from real evidence.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        transcript: str,
+        artifact_transcript: str,
+    ) -> None:
+        super().__init__(message)
+        if reason not in {"stalled", "aborted"}:
+            raise CampaignError(f"invalid guest interruption reason: {reason}")
+        self.reason = reason
+        self.transcript = transcript
+        self.artifact_transcript = artifact_transcript
+
+
+@dataclass(frozen=True)
+class QpaPrefix:
+    """Complete results of one QPA session plus its unfinished trailer."""
+
+    results: dict[str, str]
+    in_flight_case: str | None
+    ended_session: bool
+
+
+@dataclass(frozen=True)
+class SessionEvidence:
+    """One guest session of a shard, with the evidence it transported."""
+
+    index: int
+    outcome: str
+    resume_after: int
+    qpa_text: str
+    completed_cases: tuple[str, ...]
+    terminated_case: str | None
+    terminated_status: str | None
+    console: str
+    artifact_transport: str
+    artifacts_directory: str
+    return_code: int | None
+    ownership_journal: str | None = None
+
+    def record(self, directory: Path) -> dict[str, Any]:
+        artifacts = directory / self.artifacts_directory
+        return {
+            "index": self.index,
+            "outcome": self.outcome,
+            "resume_after": self.resume_after,
+            "completed_cases": len(self.completed_cases),
+            "first_case": self.completed_cases[0] if self.completed_cases else None,
+            "last_case": self.completed_cases[-1] if self.completed_cases else None,
+            "terminated_case": self.terminated_case,
+            "terminated_status": self.terminated_status,
+            "return_code": self.return_code,
+            "console": self.console,
+            "console_sha256": sha256_file(directory / self.console),
+            "artifact_transport": self.artifact_transport,
+            "artifact_transport_sha256": sha256_file(
+                directory / self.artifact_transport
+            ),
+            "artifacts_directory": self.artifacts_directory,
+            "ownership_journal": self.ownership_journal,
+            "artifact_sha256": {
+                path.name: sha256_file(path)
+                for path in sorted(artifacts.iterdir())
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -224,6 +339,24 @@ class MatrixRun:
     mustpass_xml_path: str
     mustpass_xml_size: int
     mustpass_xml_sha256: str
+    opengl_configuration_index: int | None = None
+
+
+@dataclass(frozen=True)
+class Waiver:
+    """One granted CTS waiver: its scope, renderer binding and exact cases."""
+
+    identifier: str
+    granted: str
+    granted_by: str
+    api: str
+    configuration_name: str
+    draw_surface_type: str
+    vendor: str
+    renderers: tuple[str, ...]
+    url: str
+    description: str
+    cases: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -334,15 +467,18 @@ class AcknowledgedArtifactSocket:
         self.connection = connection
         self.connected = True
 
-    def service(self) -> None:
+    def service(self, timeout: float = 0.0) -> None:
+        """Perform one receive/send with a finite, nonnegative readiness wait."""
         self.try_connect()
         if self.connection is None:
+            if timeout > 0:
+                time.sleep(timeout)
             return
-        readable, writable, _ = select.select(
+        readable, _, _ = select.select(
             [self.connection],
             [self.connection] if self.output else [],
             [],
-            0,
+            timeout,
         )
         if self.connection in readable:
             try:
@@ -364,7 +500,9 @@ class AcknowledgedArtifactSocket:
             elif payload:
                 self.input.extend(payload)
                 self._parse_input()
-        if self.connection is not None and self.connection in writable:
+        # A received frame can queue an ACK after select's writable snapshot.
+        # The socket is nonblocking: try it now, retaining any unsent suffix.
+        if self.connection is not None and self.output:
             try:
                 written = self.connection.send(self.output)
             except BlockingIOError:
@@ -479,6 +617,12 @@ def load_derivative_receipt(
         raise CampaignError(
             f"cannot read derivative rootfs receipt {path}: {error}"
         ) from error
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("schema_version") in {3, 4}
+        and receipt.get("artifact") == "uml-vulkan-zink-gl-rootfs"
+    ):
+        return load_zink_gl_derivative_receipt(receipt, base_identity)
     if not isinstance(receipt, dict) or set(receipt) != {
         "schema_version",
         "artifact",
@@ -573,6 +717,262 @@ def load_derivative_receipt(
     )
 
 
+def checked_file_identity(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"path", "size", "sha256"}:
+        raise CampaignError(f"invalid {field} identity")
+    if (
+        not isinstance(value["path"], str)
+        or not value["path"].startswith("/")
+        or type(value["size"]) is not int
+        or value["size"] < 1
+        or not isinstance(value["sha256"], str)
+        or SHA256.fullmatch(value["sha256"]) is None
+    ):
+        raise CampaignError(f"invalid {field} identity")
+    return value
+
+
+def load_zink_gl_derivative_receipt(
+    receipt: dict[str, Any],
+    base_identity: dict[str, Any],
+) -> tuple[dict[str, Any], RootfsContract]:
+    expected_keys = {
+        "schema_version",
+        "artifact",
+        "claim_scope",
+        "base_rootfs",
+        "derivative",
+        "protocol",
+        "mesa",
+        "vulkan_headers",
+        "vulkan_loader",
+        "cts",
+        "opengl_cts",
+        "toolchain",
+        "install_closure",
+        "mustpass",
+        "runner_oracle",
+        "exclusions",
+        "base_packages",
+        "guest_receipt",
+    }
+    if (set(receipt) != expected_keys
+            or receipt["schema_version"] not in {3, 4}
+            or receipt["artifact"] != "uml-vulkan-zink-gl-rootfs"):
+        raise CampaignError("invalid Zink/OpenGL derivative receipt")
+    try:
+        vulkan_cts_receipt.verify_source_epoch(receipt)
+    except vulkan_cts_receipt.ReceiptError as error:
+        raise CampaignError(f"Zink/OpenGL source epoch changed: {error}") from error
+    scope = receipt["claim_scope"]
+    if (
+        not isinstance(scope, dict)
+        or scope.get("backend") != "venus-kosmickrisp"
+        or scope.get("downstream_guest_mesa") is not True
+        or scope.get("formal_conformance") is not False
+    ):
+        raise CampaignError("invalid Zink/OpenGL qualification scope")
+    base = receipt["base_rootfs"]
+    image = receipt["derivative"]
+    if not isinstance(base, dict) or not isinstance(image, dict):
+        raise CampaignError("invalid Zink/OpenGL image identity")
+    if set(base) != {
+        "filename",
+        "filesystem",
+        "size",
+        "sha256",
+        "filesystem_uuid",
+        "read_only",
+    } or set(image) != {
+        "filename",
+        "filesystem",
+        "size",
+        "sha256",
+        "filesystem_uuid",
+        "read_only",
+    }:
+        raise CampaignError("invalid Zink/OpenGL image identity")
+    if (
+        base.get("size") != base_identity["rootfs"]["size"]
+        or base.get("sha256") != base_identity["rootfs"]["sha256"]
+        or image.get("filename") != "rootfs-vulkan-zink-gl.ext4"
+        or image.get("filesystem") != "ext4"
+        or image.get("size") != 8 * 1024 * 1024 * 1024
+        or not isinstance(image.get("sha256"), str)
+        or SHA256.fullmatch(image["sha256"]) is None
+        or not isinstance(image.get("filesystem_uuid"), str)
+        or UUID.fullmatch(image["filesystem_uuid"]) is None
+        or image.get("read_only") is not True
+    ):
+        raise CampaignError("invalid Zink/OpenGL image identity")
+    glcts = receipt["opengl_cts"]
+    if not isinstance(glcts, dict) or set(glcts) != {
+        "release",
+        "configure_argv",
+        "build_targets",
+        "install_prefix",
+        "executable",
+        "resources",
+        "build_id",
+        "reported_cpu",
+        "reported_target",
+        "mustpass",
+    }:
+        raise CampaignError("invalid OpenGL CTS receipt")
+    executable = checked_file_identity(
+        glcts.get("executable"), "OpenGL CTS executable"
+    )
+    if (
+        glcts.get("release") != (
+            "vulkan-cts-1.4.6.2" if receipt["schema_version"] == 4
+            else "opengl-cts-1.4.6.2"
+        )
+        or glcts.get("install_prefix") != "/opt/vk-gl-cts/openglcts"
+        or glcts.get("reported_cpu") != "DE_CPU_ARM_64"
+        or glcts.get("reported_target") != "Default"
+        or executable["path"] != "/opt/vk-gl-cts/openglcts/glcts"
+        or not isinstance(glcts.get("build_id"), str)
+        or re.fullmatch(r"[0-9a-f]+", glcts["build_id"]) is None
+    ):
+        raise CampaignError("invalid OpenGL CTS build identity")
+    resources = glcts["resources"]
+    expected_resources = {
+        "/opt/vk-gl-cts/openglcts/gl_cts",
+        "/opt/vk-gl-cts/openglcts/gles2",
+        "/opt/vk-gl-cts/openglcts/gles3",
+        "/opt/vk-gl-cts/openglcts/gles31",
+    }
+    if not isinstance(resources, list) or {
+        row.get("path") for row in resources if isinstance(row, dict)
+    } != expected_resources:
+        raise CampaignError("invalid OpenGL CTS resource closure")
+    for index, resource in enumerate(resources):
+        if not isinstance(resource, dict) or set(resource) != {
+            "path",
+            "file_count",
+            "total_bytes",
+            "verified_against",
+        }:
+            raise CampaignError(f"invalid OpenGL CTS resource at {index}")
+        if (
+            type(resource["file_count"]) is not int
+            or resource["file_count"] < 1
+            or type(resource["total_bytes"]) is not int
+            or resource["total_bytes"] < 1
+            or not isinstance(resource["verified_against"], str)
+            or not resource["verified_against"]
+        ):
+            raise CampaignError(f"invalid OpenGL CTS resource at {index}")
+    if receipt["schema_version"] == 4:
+        try:
+            opengl_cts_plan.validate_manifest(glcts.get("mustpass"))
+        except opengl_cts_plan.PlanError as error:
+            raise CampaignError(f"invalid OpenGL runner scope: {error}") from error
+    else:
+        validate_legacy_opengl_mustpass(glcts.get("mustpass"))
+    guest_receipt = checked_file_identity(
+        receipt["guest_receipt"], "in-guest build receipt"
+    )
+    if guest_receipt["path"] != "/usr/share/uml-vulkan/rootfs-build-receipt.json":
+        raise CampaignError("invalid in-guest build receipt path")
+    oracle = receipt["runner_oracle"]
+    oracle_path = REPO_ROOT / "tools/rootfs/vulkan/status-oracle.json"
+    checked_oracle = json.loads(oracle_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(oracle, dict)
+        or set(oracle) != {"file", "successful", "always_failure", "qualification_authority"}
+        or oracle["file"] != {
+            "path": "/usr/share/uml-vulkan/status-oracle.json",
+            "size": oracle_path.stat().st_size,
+            "sha256": sha256_file(oracle_path),
+        }
+        or oracle["qualification_authority"] is not False
+        or oracle["successful"] != checked_oracle["successful"]
+        or oracle["always_failure"] != checked_oracle["always_failure"]
+    ):
+        raise CampaignError("Zink/OpenGL released status oracle changed")
+    return receipt, RootfsContract(
+        filesystem_type="ext4",
+        size=image["size"],
+        sha256=image["sha256"],
+        glcts_sha256=executable["sha256"],
+        filesystem_uuid=image["filesystem_uuid"],
+        guest_receipt_path=guest_receipt["path"],
+        guest_receipt_sha256=guest_receipt["sha256"],
+    )
+
+
+def validate_legacy_opengl_mustpass(mustpass: Any) -> None:
+    """Read historical schema-3 evidence, not a current qualification plan."""
+    if not isinstance(mustpass, dict) or set(mustpass) != {
+        "xml",
+        "leaves",
+        "leaf_count",
+        "case_count",
+        "unique_case_count",
+        "duplicate_occurrence_count",
+        "coverage_semantics",
+    }:
+        raise CampaignError("invalid OpenGL 4.6 must-pass identity")
+    mustpass_xml = checked_file_identity(
+        mustpass["xml"], "OpenGL must-pass XML"
+    )
+    if mustpass_xml["path"] != (
+        "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
+        "khronos_mustpass/main/mustpass.xml"
+    ):
+        raise CampaignError("invalid OpenGL must-pass XML path")
+    leaves = mustpass["leaves"]
+    if not isinstance(leaves, list) or len(leaves) != 2:
+        raise CampaignError("invalid OpenGL 4.6 must-pass leaves")
+    expected_paths = {
+        "gl46": (
+            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
+            "khronos_mustpass/main/gl46-main.txt"
+        ),
+        "gl46-gtf": (
+            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
+            "khronos_mustpass/main/gl46-gtf-main.txt"
+        ),
+    }
+    seen_ids: set[str] = set()
+    total = 0
+    for index, leaf in enumerate(leaves):
+        if not isinstance(leaf, dict) or set(leaf) != {
+            "id",
+            "path",
+            "size",
+            "sha256",
+            "case_count",
+        }:
+            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
+        checked_file_identity(
+            {key: leaf[key] for key in ("path", "size", "sha256")},
+            f"OpenGL leaf {index}",
+        )
+        identifier = leaf["id"]
+        if (
+            identifier not in expected_paths
+            or identifier in seen_ids
+            or leaf["path"] != expected_paths[identifier]
+            or type(leaf["case_count"]) is not int
+            or leaf["case_count"] < 1
+        ):
+            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
+        seen_ids.add(identifier)
+        total += leaf["case_count"]
+    if (
+        seen_ids != set(expected_paths)
+        or mustpass["leaf_count"] != 2
+        or mustpass["case_count"] != total
+        or mustpass["unique_case_count"] != total
+        or mustpass["duplicate_occurrence_count"] != 0
+        or not isinstance(mustpass["coverage_semantics"], str)
+        or not mustpass["coverage_semantics"]
+    ):
+        raise CampaignError("inconsistent OpenGL 4.6 must-pass coverage")
+
+
 def select_rootfs_contract(
     identity: dict[str, Any],
     filesystem_type: str,
@@ -603,6 +1003,42 @@ def sha256_file(path: Path) -> str:
         while chunk := stream.read(8 * 1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_staged_kosmickrisp(emulator: Path) -> str:
+    """Bind CTS evidence to the actual framework and reject stale CMake staging."""
+    staged = emulator.parent / "Frameworks/KosmicKrisp.framework/KosmicKrisp"
+    if not staged.is_file():
+        raise CampaignError(f"staged KosmicKrisp provider is missing: {staged}")
+    staged_sha256 = sha256_file(staged)
+    cache = next(
+        (parent / "CMakeCache.txt" for parent in emulator.parents
+         if (parent / "CMakeCache.txt").is_file()),
+        None,
+    )
+    if cache is None:
+        return staged_sha256
+    try:
+        configured = next(
+            (line.partition("=")[2]
+             for line in cache.read_text(encoding="utf-8").splitlines()
+             if line.startswith("UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK:")
+             and "=" in line),
+            None,
+        )
+    except OSError as error:
+        raise CampaignError(f"cannot read emulator CMake cache {cache}: {error}") from error
+    if configured is None:
+        raise CampaignError("experimental emulator CMake cache omits its KosmicKrisp provider")
+    framework = Path(configured)
+    if not framework.is_absolute():
+        framework = cache.parent / framework
+    source = framework / "KosmicKrisp"
+    if not source.is_file():
+        raise CampaignError(f"configured KosmicKrisp provider is missing: {source}")
+    if sha256_file(source) != staged_sha256:
+        raise CampaignError("staged KosmicKrisp provider is stale; rebuild the emulator target")
+    return staged_sha256
 
 
 def artifact_socket_path(artifact_directory: Path) -> Path:
@@ -852,6 +1288,7 @@ def baseline_mustpass_configuration(
 def matrix_runner_arguments(
     matrix: MatrixRun,
     caselist_path: str,
+    waiver_path: str | None = None,
 ) -> list[str]:
     configuration = matrix.configuration
     arguments = [
@@ -879,7 +1316,158 @@ def matrix_runner_arguments(
             "--deqp-gl-context-type=egl",
         )
     )
+    if waiver_path is not None:
+        arguments.append(f"--deqp-waiver-file={waiver_path}")
     return arguments
+
+
+def load_waivers(path: Path = WAIVERS_PATH) -> tuple[Waiver, ...]:
+    """Load the checked waiver list; every field is exact and fail-closed."""
+    try:
+        value = json.loads(
+            path.read_bytes().decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CampaignError(f"cannot read CTS waiver list {path}: {error}") from error
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "waivers"}
+        or value["schema_version"] != 1
+        or not isinstance(value["waivers"], list)
+        or not value["waivers"]
+    ):
+        raise CampaignError("invalid CTS waiver list")
+    waivers: list[Waiver] = []
+    seen_identifiers: set[str] = set()
+    seen_cases: set[str] = set()
+    for row in value["waivers"]:
+        if not isinstance(row, dict) or set(row) != WAIVER_KEYS:
+            raise CampaignError("invalid CTS waiver entry")
+        scope = row["scope"]
+        if not isinstance(scope, dict) or set(scope) != WAIVER_SCOPE_KEYS:
+            raise CampaignError("invalid CTS waiver scope")
+        texts = [
+            row["id"], row["granted"], row["granted_by"], row["vendor"],
+            row["url"], row["description"], *scope.values(),
+        ]
+        if any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise CampaignError("CTS waiver fields must be non-empty strings")
+        if scope["draw_surface_type"] not in WAIVER_SURFACE_TYPES:
+            raise CampaignError("CTS waiver names an unknown draw surface type")
+        renderers = row["renderers"]
+        cases = row["cases"]
+        if (
+            not isinstance(renderers, list)
+            or not renderers
+            or any(not isinstance(item, str) or not item.strip() for item in renderers)
+        ):
+            raise CampaignError("CTS waiver needs renderer patterns")
+        if (
+            not isinstance(cases, list)
+            or not cases
+            or any(
+                not isinstance(case, str) or CASE_NAME.fullmatch(case) is None
+                for case in cases
+            )
+            or cases != sorted(set(cases))
+        ):
+            raise CampaignError("CTS waiver cases must be sorted unique case names")
+        if row["id"] in seen_identifiers or seen_cases.intersection(cases):
+            raise CampaignError("CTS waiver repeats an id or a case")
+        seen_identifiers.add(row["id"])
+        seen_cases.update(cases)
+        waivers.append(
+            Waiver(
+                identifier=row["id"],
+                granted=row["granted"],
+                granted_by=row["granted_by"],
+                api=scope["api"],
+                configuration_name=scope["configuration_name"],
+                draw_surface_type=scope["draw_surface_type"],
+                vendor=row["vendor"],
+                renderers=tuple(renderers),
+                url=row["url"],
+                description=row["description"],
+                cases=tuple(cases),
+            )
+        )
+    return tuple(waivers)
+
+
+def matrix_draw_surface_type(matrix: MatrixRun) -> str:
+    if matrix.configuration.fbo_config is not None:
+        return "fbo"
+    return matrix.egl_config.selected_surface_type
+
+
+def applicable_waivers(
+    matrix: MatrixRun, waivers: Sequence[Waiver]
+) -> tuple[Waiver, ...]:
+    """Return the waivers whose scope names exactly this matrix run.
+
+    GL matrices carry ``gl46`` as their configuration API while their leaf is
+    the XML-referenced list (``gl45-es3-main-es-for-gl``); GLES matrices carry
+    their own API (``gles3``), so the configuration API is the scope key.
+    """
+    api = matrix.configuration.api
+    surface = matrix_draw_surface_type(matrix)
+    return tuple(
+        waiver
+        for waiver in waivers
+        if waiver.api == api
+        and waiver.configuration_name == matrix.configuration.name
+        and waiver.draw_surface_type == surface
+    )
+
+
+def waived_cases(waivers: Sequence[Waiver]) -> frozenset[str]:
+    return frozenset(case for waiver in waivers for case in waiver.cases)
+
+
+def waiver_xml(waivers: Sequence[Waiver]) -> str:
+    """Render the official CTS waiver file consumed by ``--deqp-waiver-file``."""
+    lines = ['<?xml version="1.0" encoding="utf-8"?>', "<waiver_list>"]
+    for waiver in waivers:
+        lines.append(
+            f"\t<waiver vendor={xml_quoteattr(waiver.vendor)} "
+            f"url={xml_quoteattr(waiver.url)}>"
+        )
+        lines.append(
+            f"\t\t<description>{xml_escape(waiver.description)}</description>"
+        )
+        lines.append("\t\t<renderer_list>")
+        for renderer in waiver.renderers:
+            lines.append(f"\t\t\t<r>{xml_escape(renderer)}</r>")
+        lines.append("\t\t</renderer_list>")
+        for case in waiver.cases:
+            lines.append(f"\t\t<t>{xml_escape(case)}</t>")
+        lines.append("\t</waiver>")
+    lines.append("</waiver_list>")
+    return "\n".join(lines) + "\n"
+
+
+def validate_waiver_session(qpa_text: str, waivers: Sequence[Waiver]) -> None:
+    """Require the guest runner to have applied exactly the granted waivers.
+
+    The official runner records the URL of every waiver whose vendor and
+    renderer matched in a ``#sessionInfo waiverUrls`` line; a missing line
+    means the list never reached the guest or named another renderer, and a
+    present line without a granted list means a foreign waiver was applied.
+    """
+    recorded: set[str] = set()
+    for line in qpa_text.splitlines():
+        if line.startswith("#sessionInfo waiverUrls "):
+            urls = line[len("#sessionInfo waiverUrls "):].strip()
+            if len(urls) < 2 or urls[0] != '"' or urls[-1] != '"':
+                raise CampaignError("official CTS runner recorded a malformed waiver line")
+            recorded.update(urls[1:-1].split())
+    expected = {waiver.url for waiver in waivers}
+    if recorded != expected:
+        raise CampaignError(
+            "official CTS runner applied waivers "
+            f"{sorted(recorded)!r}, expected {sorted(expected)!r}"
+        )
 
 
 def load_runner_oracle(
@@ -1455,6 +2043,26 @@ def parse_qpa(text: str) -> dict[str, str]:
         raise CampaignError("QPA does not contain exactly one session start")
     if text.count("#endSession") != 1:
         raise CampaignError("QPA is truncated or has multiple session trailers")
+    prefix = scan_qpa(text)
+    if prefix.in_flight_case is not None:
+        raise CampaignError(f"QPA is truncated during case {prefix.in_flight_case}")
+    if not prefix.ended_session:
+        raise CampaignError("QPA has no complete session trailer")
+    return prefix.results
+
+
+def scan_qpa(text: str) -> QpaPrefix:
+    """Parse a QPA session that may stop inside its last test case.
+
+    A guest killed while a case is running transports the bytes it had
+    already written.  Every complete case block before that point is real
+    evidence; the unterminated trailer is reported separately and never
+    counted as a result.
+    """
+    if text.count("#beginSession") != 1:
+        raise CampaignError("QPA does not contain exactly one session start")
+    if text.count("#endSession") > 1:
+        raise CampaignError("QPA is truncated or has multiple session trailers")
 
     results: dict[str, str] = {}
     current_case: str | None = None
@@ -1503,14 +2111,102 @@ def parse_qpa(text: str) -> dict[str, str]:
                 raise CampaignError(f"QPA ended during case {current_case}")
             ended_session = True
             continue
-        if current_case is not None:
+        if current_case is not None and not line.startswith(QPA_BOUNDARY):
             body.append(raw_line)
 
-    if current_case is not None:
-        raise CampaignError(f"QPA is truncated during case {current_case}")
-    if not ended_session:
-        raise CampaignError("QPA has no complete session trailer")
-    return results
+    return QpaPrefix(results, current_case, ended_session)
+
+
+def qpa_session_split(text: str) -> tuple[str, str]:
+    """Return one session's prologue and its complete case blocks.
+
+    The prologue is everything through ``#beginSession``.  The body stops
+    after the last terminated case, so a truncated trailer never reaches a
+    merged transcript.
+    """
+    lines = text.splitlines(keepends=True)
+    start: int | None = None
+    end = 0
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if line == "#beginSession":
+            if start is not None:
+                raise CampaignError("QPA does not contain exactly one session start")
+            start = end = index + 1
+            continue
+        if start is None:
+            continue
+        if line == "#endTestCaseResult" or line.startswith(
+            "#terminateTestCaseResult "
+        ):
+            end = index + 1
+        elif line == "#endSession":
+            break
+    if start is None:
+        raise CampaignError("QPA does not contain exactly one session start")
+    return "".join(lines[:start]), "".join(lines[start:end])
+
+
+def host_recorded_qpa_block(case: str, status: str, reason: str) -> str:
+    """Return the host-authored record for a case the guest never finished."""
+    if CASE_NAME.fullmatch(case) is None:
+        raise CampaignError(f"invalid host-recorded case name: {case!r}")
+    if status not in {STALL_STATUS, ABORT_STATUS}:
+        raise CampaignError(f"invalid host-recorded status: {status!r}")
+    if re.fullmatch(r"[a-z0-9-]+", reason) is None:
+        raise CampaignError(f"invalid host-recorded reason: {reason!r}")
+    return (
+        f"#beginTestCaseResult {case}\n"
+        f"{QPA_BOUNDARY}host-recorded {status} reason={reason}\n"
+        f"#terminateTestCaseResult {status}\n"
+    )
+
+
+def merge_qpa_sessions(sessions: Sequence["SessionEvidence"]) -> str:
+    """Concatenate per-session QPA prefixes into one auditable transcript.
+
+    A single completed session is returned byte for byte.  Otherwise the
+    first session's header is kept, each session contributes only its
+    complete case blocks, and every case the guest never finished becomes an
+    explicit host-recorded terminated record marked with its boundary line.
+    """
+    if not sessions:
+        raise CampaignError("QPA merge requires at least one session")
+    if [session.index for session in sessions] != list(range(len(sessions))):
+        raise CampaignError("QPA merge requires gapless ordered sessions")
+    if len(sessions) == 1 and sessions[0].terminated_case is None:
+        return sessions[0].qpa_text
+    # A guest can be aborted before it checkpoints anything, so the release
+    # header comes from the earliest session that transported a QPA at all.
+    prologue = next(
+        (
+            qpa_session_split(session.qpa_text)[0]
+            for session in sessions
+            if session.qpa_text
+        ),
+        None,
+    )
+    if prologue is None:
+        raise CampaignError("no shard session transported a QPA")
+    parts = [prologue]
+    for session in sessions:
+        if session.index:
+            parts.append(
+                f"{QPA_BOUNDARY}session {session.index} "
+                f"resumes at index {session.resume_after}\n"
+            )
+        if session.qpa_text:
+            parts.append(qpa_session_split(session.qpa_text)[1])
+        if session.terminated_case is not None:
+            parts.append(
+                host_recorded_qpa_block(
+                    session.terminated_case,
+                    session.terminated_status or ABORT_STATUS,
+                    session.outcome,
+                )
+            )
+    parts.append("#endSession\n")
+    return "".join(parts)
 
 
 def validate_qpa_union(qpa: str, selected: Sequence[str]) -> dict[str, str]:
@@ -1641,10 +2337,18 @@ def validate_required_passes(results: dict[str, str]) -> None:
 def validate_official_runner_results(
     results: dict[str, str],
     successful_statuses: Sequence[str],
+    waived: Collection[str] = (),
 ) -> None:
+    """Accept only the runner's success statuses, plus ``Waiver`` for the
+    exact cases a granted waiver names; a waived case that still fails, and a
+    waived status on any other case, are rejected."""
     accepted = set(successful_statuses)
+    waived_set = set(waived)
     nonconformant = {
-        case: status for case, status in results.items() if status not in accepted
+        case: status
+        for case, status in results.items()
+        if status not in accepted
+        and not (status == WAIVED_STATUS and case in waived_set)
     }
     if nonconformant:
         first_case = sorted(nonconformant)[0]
@@ -1654,18 +2358,32 @@ def validate_official_runner_results(
         )
 
 
-def validate_renderer_probe(text: str, expected_page_size: int | None = None) -> None:
+def validate_renderer_probe(
+    text: str,
+    expected_page_size: int | None = None,
+    renderer_backend: str = "virgl",
+) -> None:
     lower = text.lower()
     for device in ("/dev/dri/card0", "/dev/dri/renderD128"):
         if f"device={device}" not in text:
             raise CampaignError(f"renderer probe did not prove {device}")
     if "x11_server=xwayland" not in lower:
         raise CampaignError("renderer probe did not prove the real Xwayland WSI")
-    forbidden = FORBIDDEN_RENDERERS.search(text)
+    forbidden = SOFTWARE_RENDERERS.search(text)
     if forbidden is not None:
         raise CampaignError(f"software or forbidden renderer: {forbidden.group(0)}")
-    if "virgl" not in lower:
-        raise CampaignError("renderer probe did not report Virgl")
+    if renderer_backend == "virgl":
+        if "zink" in lower:
+            raise CampaignError("software or forbidden renderer: Zink")
+        if "virgl" not in lower:
+            raise CampaignError("renderer probe did not report Virgl")
+    elif renderer_backend == "zink":
+        if "zink" not in lower or "virtio-gpu venus" not in lower:
+            raise CampaignError(
+                "renderer probe did not report Zink over Virtio-GPU Venus"
+            )
+    else:
+        raise CampaignError(f"unsupported renderer backend: {renderer_backend}")
     if (
         expected_page_size is not None
         and f"guest_page_size={expected_page_size}" not in text
@@ -1931,7 +2649,36 @@ def artifact_acknowledgement(line: str) -> str:
     raise CampaignError("artifact transport emitted a non-frame line")
 
 
-def decode_artifacts(transcript: str) -> dict[str, bytes]:
+def assemble_qpa_segments(decoded: dict[str, bytes]) -> dict[str, bytes]:
+    """Join transported QPA checkpoints into the single canonical artifact.
+
+    Segments are byte ranges of the growing guest QPA, emitted in order from
+    offset zero.  Callers keep seeing one ``results.qpa``; the split only
+    exists so a killed guest still leaves the prefix it had produced.
+    """
+    segments = sorted(name for name in decoded if QPA_SEGMENT.fullmatch(name))
+    if not segments:
+        return decoded
+    if QPA_ARTIFACT in decoded:
+        raise CampaignError(
+            "QPA checkpoint segments cannot accompany a whole-file QPA"
+        )
+    if len(segments) > MAX_QPA_SEGMENTS:
+        raise CampaignError("QPA checkpoint segment count exceeds its bound")
+    indices = [int(QPA_SEGMENT.fullmatch(name).group(1)) for name in segments]
+    if indices != list(range(len(indices))):
+        raise CampaignError("QPA checkpoint segments are not a gapless prefix")
+    payload = b"".join(decoded[name] for name in segments)
+    if len(payload) > MAX_UNCOMPRESSED_ARTIFACT:
+        raise CampaignError("assembled QPA exceeds the output bound")
+    assembled = {
+        name: value for name, value in decoded.items() if name not in set(segments)
+    }
+    assembled[QPA_ARTIFACT] = payload
+    return assembled
+
+
+def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, bytes]:
     encoded: dict[str, EncodedArtifact] = {}
     for raw_line in transcript.replace("\r", "").splitlines():
         marker = artifact_marker(raw_line)
@@ -1940,7 +2687,7 @@ def decode_artifacts(transcript: str) -> dict[str, bytes]:
         begin = BEGIN_ARTIFACT.fullmatch(marker)
         if begin is not None:
             name, size_text, digest = begin.groups()
-            if name not in ALLOWED_ARTIFACTS:
+            if name not in ALLOWED_ARTIFACTS and QPA_SEGMENT.fullmatch(name) is None:
                 raise CampaignError(f"unsafe or unexpected artifact name: {name}")
             if name in encoded:
                 raise CampaignError(f"duplicate artifact start: {name}")
@@ -1970,11 +2717,18 @@ def decode_artifacts(transcript: str) -> dict[str, bytes]:
             continue
         raise CampaignError(f"malformed artifact marker: {marker[:120]}")
 
-    if not encoded:
+    if not encoded and not partial:
         raise CampaignError("campaign emitted no artifacts")
     decoded: dict[str, bytes] = {}
     for name, artifact in encoded.items():
         count = artifact.expected_chunks
+        # An interrupted guest can leave its last frame group unfinished. The
+        # partial lane keeps every acknowledged, complete artifact and drops
+        # only that trailer; ordinary runs still fail closed.
+        if partial and (
+            count is None or count < 1 or set(artifact.chunks) != set(range(count))
+        ):
+            continue
         if count is None or count < 1:
             raise CampaignError(f"artifact {name} is missing its trailer")
         if set(artifact.chunks) != set(range(count)):
@@ -2001,7 +2755,7 @@ def decode_artifacts(transcript: str) -> dict[str, bytes]:
         if len(payload) > MAX_UNCOMPRESSED_ARTIFACT:
             raise CampaignError(f"artifact {name} exceeds the output bound")
         decoded[name] = payload
-    return decoded
+    return assemble_qpa_segments(decoded)
 
 
 def write_artifacts(artifacts: dict[str, bytes], directory: Path) -> None:
@@ -2026,6 +2780,61 @@ def install_text(path: str, content: str, mode: str = "0644") -> str:
     )
 
 
+def real_xwayland_setup() -> str:
+    """Return the canonical guest-side real-Xwayland discovery contract."""
+    return r'''uml_uid=$(id -u uml)
+runtime="/run/user/$uml_uid"
+xdisplay=
+xauthority=
+
+find_xwayland()
+{
+    candidates=$(pgrep -u "$uml_uid" -x Xwayland 2>/dev/null || true)
+    for candidate_pid in $candidates; do
+        command_line="/proc/$candidate_pid/cmdline"
+        [ -r "$command_line" ] || continue
+        candidate_display=$(tr '\000' '\n' < "$command_line" |
+            grep -E '^:[0-9]+$' | head -n 1 || true)
+        candidate_xauthority=$(tr '\000' '\n' < "$command_line" |
+            awk 'previous == "-auth" { print; exit } { previous = $0 }')
+        [ -n "$candidate_display" ] || continue
+        case "$candidate_xauthority" in
+        "$runtime"/xauth_*) ;;
+        *) continue ;;
+        esac
+        xsocket="/tmp/.X11-unix/X${candidate_display#:}"
+        [ -S "$xsocket" ] && [ -f "$candidate_xauthority" ] || continue
+        xdisplay=$candidate_display
+        xauthority=$candidate_xauthority
+        return 0
+    done
+    return 1
+}
+
+remaining=600
+while [ ! -S "$runtime/bus" ] || ! find_xwayland; do
+    [ "$remaining" -gt 0 ] || {
+        echo 'UML_CTS_ERROR: graphical Xwayland session did not become ready'
+        exit 1
+    }
+    remaining=$((remaining - 1))
+    sleep 1
+done
+if pgrep -x Xvfb >/dev/null; then
+    echo 'UML_CTS_ERROR: Xvfb is forbidden'
+    exit 1
+fi
+for device in /dev/dri/card0 /dev/dri/renderD128; do
+    [ -e "$device" ] || {
+        echo "UML_CTS_ERROR: missing DRM device $device"
+        exit 1
+    }
+    printf 'device=%s\n' "$device" >> "$renderer"
+done
+printf 'x11_server=xwayland\n' >> "$renderer"
+'''
+
+
 def build_guest_launcher(
     selection: Selection | None,
     seed: int,
@@ -2036,7 +2845,18 @@ def build_guest_launcher(
     config_inventory_api: str | None = None,
     matrix: MatrixRun | None = None,
     artifact_transport: str = "console",
+    renderer_backend: str = "virgl",
+    resume_after: int = 0,
+    checkpoint_bytes: int = 0,
+    progress_timeout: int = 0,
+    progress_interval: int = 15,
+    waiver_sha256: str | None = None,
+    progress_busy_timeout: int = 0,
 ) -> str:
+    if waiver_sha256 is not None and (
+        matrix is None or re.fullmatch(r"[0-9a-f]{64}", waiver_sha256) is None
+    ):
+        raise CampaignError("a waiver list needs an official matrix run and its digest")
     if config_inventory_api is not None and config_inventory_api not in CONFIG_CASES:
         raise CampaignError(
             f"unsupported EGL config inventory API: {config_inventory_api}"
@@ -2051,6 +2871,21 @@ def build_guest_launcher(
         raise CampaignError("matrix and config inventory modes are exclusive")
     if artifact_transport not in {"console", "virtio-serial"}:
         raise CampaignError("unsupported CTS artifact transport")
+    if renderer_backend not in {"virgl", "zink"}:
+        raise CampaignError("unsupported CTS renderer backend")
+    if resume_after and selection is None:
+        raise CampaignError("only a selected shard can resume after a case")
+    if resume_after < 0 or checkpoint_bytes < 0 or progress_timeout < 0:
+        raise CampaignError("shard resumption inputs must not be negative")
+    if progress_busy_timeout < 0 or (
+        progress_busy_timeout and progress_busy_timeout < progress_timeout
+    ):
+        raise CampaignError(
+            "the busy stall bound must be zero or at least the stall timeout"
+        )
+    if progress_interval < 1:
+        raise CampaignError("shard progress interval must be positive")
+    checkpoint = 1 if (selection is not None and checkpoint_bytes > 0) else 0
     glcts = "/opt/vk-gl-cts/openglcts/glcts"
     archive = "/opt/vk-gl-cts/openglcts"
     output = "/run/uml-cts"
@@ -2108,7 +2943,11 @@ actual_receipt_sha=$(sha256sum \
     elif matrix is not None:
         command = [
             glcts,
-            *matrix_runner_arguments(matrix, selected),
+            *matrix_runner_arguments(
+                matrix,
+                selected,
+                GUEST_WAIVER_PATH if waiver_sha256 is not None else None,
+            ),
             f"--deqp-archive-dir={archive}",
             "--deqp-crashhandler=disable",
             "--deqp-test-oom=disable",
@@ -2138,6 +2977,31 @@ actual_receipt_sha=$(sha256sum \
     leaf_path = "" if selection is None else selection.leaf.path
     leaf_identity_check = ""
     mustpass_identity_check = ""
+    renderer_environment = (
+        "export MESA_LOADER_DRIVER_OVERRIDE=zink"
+        if renderer_backend == "zink"
+        else "unset MESA_LOADER_DRIVER_OVERRIDE"
+    )
+    renderer_check = (
+        """grep -Eiq 'zink' "$renderer" &&
+grep -Eiq 'virtio-gpu venus' "$renderer" || {
+    echo 'UML_CTS_ERROR: renderer is not Zink over Virtio-GPU Venus'
+    exit 1
+}
+if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|xvfb' "$renderer"; then
+    echo 'UML_CTS_ERROR: software or forbidden renderer selected'
+    exit 1
+fi"""
+        if renderer_backend == "zink"
+        else """grep -Eiq 'virgl' "$renderer" || {
+    echo 'UML_CTS_ERROR: renderer is not Virgl'
+    exit 1
+}
+if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|zink|xvfb' "$renderer"; then
+    echo 'UML_CTS_ERROR: software or forbidden renderer selected'
+    exit 1
+fi"""
+    )
     prepare_command = ""
     post_run_command = ""
     if hierarchy_inventory:
@@ -2219,11 +3083,24 @@ actual_leaf_sha=$(sha256sum "$leaf" | cut -d ' ' -f 1)
     exit 1
 }}
 """
+        resume_command = ""
+        if resume_after:
+            # A resumed session re-derives the same ordered selection from the
+            # same authenticated leaf and drops only the cases the earlier
+            # sessions already accounted for.
+            resume_command = f"""
+tail -n +{resume_after + 1} "$selected" > "$selected.resume"
+mv "$selected.resume" "$selected"
+"""
+        expected_after_resume = selection.expected_count - resume_after
+        if expected_after_resume < 1:
+            raise CampaignError("shard resumption selects no remaining cases")
         prepare_command = f"""
 {selection_command}
+{resume_command}
 selected_count=$(grep -Evc '^[[:space:]]*(#|$)' "$selected")
-[ "$selected_count" -eq {selection.expected_count} ] || {{
-    echo "UML_CTS_ERROR: selected $selected_count cases, expected {selection.expected_count}"
+[ "$selected_count" -eq {expected_after_resume} ] || {{
+    echo "UML_CTS_ERROR: selected $selected_count cases, expected {expected_after_resume}"
     exit 1
 }}
 chown uml:uml "$selected" "$renderer"
@@ -2232,13 +3109,21 @@ chown uml:uml "$selected" "$renderer"
         mustpass_identity_check = f"""
 actual_mustpass_size=$(wc -c < {shlex.quote(matrix.mustpass_xml_path)} | tr -d ' ')
 [ "$actual_mustpass_size" -eq {matrix.mustpass_xml_size} ] || {{
-    echo 'UML_CTS_ERROR: GLES must-pass XML size changed'
+    echo 'UML_CTS_ERROR: must-pass XML size changed'
     exit 1
 }}
 actual_mustpass_sha=$(sha256sum \
     {shlex.quote(matrix.mustpass_xml_path)} | cut -d ' ' -f 1)
 [ "$actual_mustpass_sha" = {shlex.quote(matrix.mustpass_xml_sha256)} ] || {{
-    echo 'UML_CTS_ERROR: GLES must-pass XML identity changed'
+    echo 'UML_CTS_ERROR: must-pass XML identity changed'
+    exit 1
+}}
+"""
+        if waiver_sha256 is not None:
+            mustpass_identity_check += f"""
+actual_waiver_sha=$(sha256sum {shlex.quote(GUEST_WAIVER_PATH)} | cut -d ' ' -f 1)
+[ "$actual_waiver_sha" = {shlex.quote(waiver_sha256)} ] || {{
+    echo 'UML_CTS_ERROR: waiver list identity changed'
     exit 1
 }}
 """
@@ -2257,11 +3142,24 @@ selected_mode={1 if selection is not None else 0}
 artifact_transport={shlex.quote(artifact_transport)}
 artifact_channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
 artifact_fd_ready=0
+checkpoint_mode={checkpoint}
+checkpoint_bytes={checkpoint_bytes}
+progress_timeout={progress_timeout}
+progress_busy_timeout={progress_busy_timeout}
+progress_interval={progress_interval}
+clock_ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
+[ "$clock_ticks" -gt 0 ] 2>/dev/null || clock_ticks=100
+progress_busy_ticks=$((progress_interval * clock_ticks / 10))
+prerun_emitted=0
+qpa_offset=0
+qpa_segments=0
+progress_timed_out=0
 status=1
 
 prepare_artifact_transport()
 {{
     [ "$artifact_transport" = virtio-serial ] || return 0
+    [ "$artifact_fd_ready" -eq 0 ] || return 0
     remaining=60
     while [ ! -c "$artifact_channel" ]; do
         [ "$remaining" -gt 0 ] || return 1
@@ -2316,6 +3214,106 @@ emit_artifact()
     rm -f "$compressed" "$encoded"
 }}
 
+flush_qpa()
+{{
+    force="$1"
+    [ -f "$qpa" ] || return 0
+    qpa_size=$(wc -c < "$qpa" | tr -d ' ')
+    qpa_delta=$((qpa_size - qpa_offset))
+    if [ "$qpa_delta" -le 0 ]; then
+        if [ "$force" -ne 1 ] || [ "$qpa_segments" -ne 0 ]; then
+            return 0
+        fi
+        qpa_delta=0
+    fi
+    segment=$(printf 'results.qpa.%04d' "$qpa_segments")
+    if [ "$qpa_delta" -eq 0 ]; then
+        : > "$output/$segment"
+    else
+        tail -c +$((qpa_offset + 1)) "$qpa" | head -c "$qpa_delta" \
+            > "$output/$segment"
+    fi
+    emit_artifact "$segment" "$output/$segment" || return 1
+    rm -f "$output/$segment"
+    qpa_offset=$qpa_size
+    qpa_segments=$((qpa_segments + 1))
+}}
+
+emit_prerun()
+{{
+    [ "$prerun_emitted" -eq 0 ] || return 0
+    emit_artifact renderer.txt "$renderer" || return 1
+    if [ "$hierarchy_inventory_mode" -eq 1 ]; then
+        emit_artifact inventory.txt "$inventory_report" || return 1
+    elif [ "$selected_mode" -eq 1 ]; then
+        emit_artifact selected.txt "$selected" || return 1
+    fi
+    prerun_emitted=1
+}}
+
+cts_cpu_ticks()
+{{
+    # User plus system clock ticks of every running CTS process (all threads):
+    # a case computing in the guest keeps consuming CPU while a wedged wait
+    # on the host consumes none.
+    cts_ticks_total=0
+    for cts_process in $(pgrep -x glcts 2>/dev/null); do
+        cts_ticks=$(sed -n 's/^[^)]*) //p' "/proc/$cts_process/stat" 2>/dev/null | \
+            awk '{{ print $12 + $13 }}')
+        [ -n "$cts_ticks" ] && cts_ticks_total=$((cts_ticks_total + cts_ticks))
+    done
+    printf '%s\n' "$cts_ticks_total"
+}}
+
+watch_cts()
+{{
+    watched_pid="$1"
+    watched_size=0
+    stalled_seconds=0
+    idle_seconds=0
+    watched_ticks=$(cts_cpu_ticks)
+    while kill -0 "$watched_pid" 2>/dev/null; do
+        sleep "$progress_interval"
+        watched_current=$(wc -c < "$qpa" 2>/dev/null | tr -d ' ')
+        [ -n "$watched_current" ] || watched_current=0
+        watched_case=$(tail -c 1048576 "$qpa" 2>/dev/null | \
+            sed -n 's/^#beginTestCaseResult //p' | tail -n 1)
+        if [ "$watched_current" -ne "$watched_size" ]; then
+            watched_size=$watched_current
+            stalled_seconds=0
+        else
+            stalled_seconds=$((stalled_seconds + progress_interval))
+        fi
+        current_ticks=$(cts_cpu_ticks)
+        if [ "$current_ticks" -ge $((watched_ticks + progress_busy_ticks)) ]; then
+            idle_seconds=0
+        else
+            idle_seconds=$((idle_seconds + progress_interval))
+        fi
+        watched_ticks=$current_ticks
+        printf 'UML_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|idle_seconds=%s|cpu_ticks=%s|case=%s\n' \
+            "$watched_current" "$stalled_seconds" "$idle_seconds" \
+            "$current_ticks" "$watched_case"
+        if [ $((watched_current - qpa_offset)) -ge "$checkpoint_bytes" ]; then
+            flush_qpa 0 || {{
+                echo 'UML_CTS_ERROR: QPA checkpoint transfer failed'
+                return 1
+            }}
+        fi
+        # A case with no QPA output is cut when it also burns no CPU for the
+        # stall timeout, or, while it keeps computing, at the busy bound.
+        if [ "$progress_timeout" -gt 0 ] && \
+           [ "$stalled_seconds" -ge "$progress_timeout" ]; then
+            if [ "$progress_busy_timeout" -le 0 ] || \
+               [ "$idle_seconds" -ge "$progress_timeout" ] || \
+               [ "$stalled_seconds" -ge "$progress_busy_timeout" ]; then
+                progress_timed_out=1
+                return 0
+            fi
+        fi
+    done
+}}
+
 finish()
 {{
     trap - EXIT HUP INT TERM
@@ -2326,17 +3324,12 @@ finish()
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         transfer_status=1
     fi
-    if [ "$transfer_status" -eq 0 ] && \
-        ! emit_artifact renderer.txt "$renderer"; then
-        transfer_status=1
-    fi
-    if [ "$transfer_status" -eq 0 ] && \
-        [ "$hierarchy_inventory_mode" -eq 1 ]; then
-        emit_artifact inventory.txt "$inventory_report" || transfer_status=1
-    elif [ "$transfer_status" -eq 0 ] && [ "$selected_mode" -eq 1 ]; then
-        emit_artifact selected.txt "$selected" || transfer_status=1
-    fi
     if [ "$transfer_status" -eq 0 ]; then
+        emit_prerun || transfer_status=1
+    fi
+    if [ "$transfer_status" -eq 0 ] && [ "$checkpoint_mode" -eq 1 ]; then
+        flush_qpa 1 || transfer_status=1
+    elif [ "$transfer_status" -eq 0 ]; then
         emit_artifact results.qpa "$qpa" || transfer_status=1
     fi
     if [ "$transfer_status" -eq 0 ]; then
@@ -2369,56 +3362,8 @@ actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
     exit 1
 }}
 
-uml_uid=$(id -u uml)
-runtime="/run/user/$uml_uid"
-xdisplay=
-xauthority=
-
-find_xwayland()
-{{
-    candidates=$(pgrep -u "$uml_uid" -x Xwayland 2>/dev/null || true)
-    for candidate_pid in $candidates; do
-        command_line="/proc/$candidate_pid/cmdline"
-        [ -r "$command_line" ] || continue
-        candidate_display=$(tr '\\000' '\\n' < "$command_line" |
-            grep -E '^:[0-9]+$' | head -n 1 || true)
-        candidate_xauthority=$(tr '\\000' '\\n' < "$command_line" |
-            awk 'previous == "-auth" {{ print; exit }} {{ previous = $0 }}')
-        [ -n "$candidate_display" ] || continue
-        case "$candidate_xauthority" in
-        "$runtime"/xauth_*) ;;
-        *) continue ;;
-        esac
-        xsocket="/tmp/.X11-unix/X${{candidate_display#:}}"
-        [ -S "$xsocket" ] && [ -f "$candidate_xauthority" ] || continue
-        xdisplay=$candidate_display
-        xauthority=$candidate_xauthority
-        return 0
-    done
-    return 1
-}}
-
-remaining=600
-while [ ! -S "$runtime/bus" ] || ! find_xwayland; do
-    [ "$remaining" -gt 0 ] || {{
-        echo 'UML_CTS_ERROR: graphical Xwayland session did not become ready'
-        exit 1
-    }}
-    remaining=$((remaining - 1))
-    sleep 1
-done
-if pgrep -x Xvfb >/dev/null; then
-    echo 'UML_CTS_ERROR: Xvfb is forbidden'
-    exit 1
-fi
-for device in /dev/dri/card0 /dev/dri/renderD128; do
-    [ -e "$device" ] || {{
-        echo "UML_CTS_ERROR: missing DRM device $device"
-        exit 1
-    }}
-    printf 'device=%s\n' "$device" >> "$renderer"
-done
-printf 'x11_server=xwayland\n' >> "$renderer"
+{renderer_environment}
+{real_xwayland_setup()}
 runuser -u uml -- env \
     HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" glxinfo -B >> "$renderer" 2>&1 || {{
@@ -2428,25 +3373,48 @@ runuser -u uml -- env \
 runuser -u uml -- env \
     HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" eglinfo -B -p gbm >> "$renderer" 2>&1 || true
-grep -Eiq 'virgl' "$renderer" || {{
-    echo 'UML_CTS_ERROR: renderer is not Virgl'
-    exit 1
-}}
-if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|zink|xvfb' "$renderer"; then
-    echo 'UML_CTS_ERROR: software or forbidden renderer selected'
-    exit 1
-fi
+{renderer_check}
 
 {prepare_command}
 
+if [ "$checkpoint_mode" -eq 1 ]; then
+    prepare_artifact_transport || {{
+        echo 'UML_CTS_ERROR: artifact transport did not become ready'
+        exit 1
+    }}
+    emit_prerun || {{
+        echo 'UML_CTS_ERROR: acknowledged artifact transfer failed'
+        exit 1
+    }}
+fi
+
 set +e
-runuser -u uml -- env \
-    HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
-    XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
-    timeout --signal=TERM --kill-after=30 {timeout} \
-    {quoted_command}
-status=$?
+if [ "$checkpoint_mode" -eq 1 ]; then
+    runuser -u uml -- env \
+        HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
+        XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+        timeout --signal=TERM --kill-after=30 {timeout} \
+        {quoted_command} &
+    cts_pid=$!
+    watch_cts "$cts_pid"
+    if [ "$progress_timed_out" -eq 1 ]; then
+        # Never signal a wedged case from inside the guest: the checkpointed
+        # prefix is already transported and the host owns the recovery.
+        status=124
+    else
+        wait "$cts_pid"
+        status=$?
+    fi
+else
+    runuser -u uml -- env \
+        HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
+        XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+        timeout --signal=TERM --kill-after=30 {timeout} \
+        {quoted_command}
+    status=$?
+fi
 set -e
 {post_run_command}
 exit "$status"
@@ -2474,6 +3442,8 @@ def build_harness_command(
     options: argparse.Namespace,
     selection: Selection | None,
     artifact_directory: Path,
+    *,
+    resume_after: int = 0,
 ) -> list[str]:
     artifact_socket = artifact_socket_path(artifact_directory)
     launcher_arguments = [
@@ -2501,7 +3471,19 @@ def build_harness_command(
     launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
     command = boot_kde_vnc.build_harness_command(launcher_options)
     separator = boot_kde_vnc.guest_argument_separator(command)
+    applied_waivers = getattr(options, "applied_waivers", ())
+    waiver_text = waiver_xml(applied_waivers) if applied_waivers else None
     overlay_commands = (
+        *(
+            ("systemctl set-environment MESA_LOADER_DRIVER_OVERRIDE=zink",)
+            if options.renderer == "zink"
+            else ()
+        ),
+        *(
+            (install_text(GUEST_WAIVER_PATH, waiver_text, "0644"),)
+            if waiver_text is not None
+            else ()
+        ),
         install_text(
             "/usr/local/libexec/uml-vk-gl-cts",
             build_guest_launcher(
@@ -2513,6 +3495,16 @@ def build_harness_command(
                 config_inventory_api=options.config_inventory,
                 matrix=options.matrix_run,
                 artifact_transport="virtio-serial",
+                renderer_backend=options.renderer,
+                resume_after=resume_after,
+                checkpoint_bytes=QPA_CHECKPOINT_BYTES,
+                progress_timeout=options.console_stall_timeout,
+                progress_busy_timeout=options.console_stall_busy_timeout,
+                waiver_sha256=(
+                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest()
+                    if waiver_text is not None
+                    else None
+                ),
             ),
             "0755",
         ),
@@ -2526,7 +3518,11 @@ def build_harness_command(
     for overlay_command in overlay_commands:
         additions.extend(("--command", overlay_command))
     command[separator:separator] = additions
-    launch_environment = ["UML_GPU_CAPABILITY_REPORT=1"]
+    launch_environment = (
+        ["UML_GPU_EXPERIMENTAL_VULKAN=1"]
+        if options.renderer == "zink"
+        else ["UML_GPU_CAPABILITY_REPORT=1"]
+    )
     if options.display == "native":
         launch_environment.append("UML_GPU_FRAME_STATS=1")
     command.append(f"--virtio-serial-socket={artifact_socket}")
@@ -2534,18 +3530,7 @@ def build_harness_command(
 
 
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    process.send_signal(signal.SIGINT)
-    try:
-        process.wait(timeout=45)
-    except subprocess.TimeoutExpired:
-        process.send_signal(signal.SIGTERM)
-        try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+    guest_process.stop_process(process, guest_process.HARNESS_STOP)
 
 
 def wait_for_guest(
@@ -2553,41 +3538,602 @@ def wait_for_guest(
     log_path: Path,
     timeout: int,
     artifact_socket_path: Path,
+    *,
+    console_stall_timeout: int = 0,
+    shutdown_grace: int = SHUTDOWN_GRACE_SECONDS,
 ) -> tuple[str, str]:
-    deadline = time.monotonic() + timeout
-    next_heartbeat = time.monotonic() + 30
+    started = time.monotonic()
+    deadline = started + timeout
+    next_heartbeat = started + 30
+    last_console_size = 0
+    last_artifact_frames = 0
+    last_progress = started
+    scanned_frames = 0
+    delivered: float | None = None
     transport = AcknowledgedArtifactSocket(artifact_socket_path)
+
+    def interrupted(error: BaseException, reason: str) -> GuestSessionInterrupted:
+        # Keep every acknowledged frame and console byte: a shard resumption
+        # is only truthful when it starts from evidence the guest really sent.
+        return GuestSessionInterrupted(
+            str(error),
+            reason=reason,
+            transcript=(
+                log_path.read_text(encoding="utf-8", errors="replace")
+                if log_path.exists()
+                else ""
+            ),
+            artifact_transcript="".join(transport.lines),
+        )
+
     try:
-        while time.monotonic() < deadline:
-            transport.service()
+        while (remaining := deadline - time.monotonic()) > 0:
+            transport.service(timeout=min(ARTIFACT_SERVICE_INTERVAL, remaining))
             if process.poll() is not None:
                 break
             now = time.monotonic()
+            if delivered is None and scanned_frames < len(transport.lines):
+                if any(
+                    line.startswith(FINAL_ARTIFACT_FRAME)
+                    for line in transport.lines[scanned_frames:]
+                ):
+                    delivered = now
+                scanned_frames = len(transport.lines)
+            if (
+                delivered is not None
+                and shutdown_grace > 0
+                and now - delivered >= shutdown_grace
+            ):
+                raise interrupted(
+                    TimeoutError(
+                        "VK-GL-CTS guest delivered its complete evidence but "
+                        f"did not stop within {shutdown_grace} seconds"
+                    ),
+                    "stalled",
+                )
             if now >= next_heartbeat:
                 size = log_path.stat().st_size if log_path.exists() else 0
+                artifact_frames = len(transport.lines)
+                if (
+                    size != last_console_size
+                    or artifact_frames != last_artifact_frames
+                ):
+                    last_console_size = size
+                    last_artifact_frames = artifact_frames
+                    last_progress = now
+                elif (
+                    console_stall_timeout > 0
+                    and (size > 0 or artifact_frames > 0)
+                    and now - last_progress >= console_stall_timeout
+                ):
+                    raise interrupted(
+                        TimeoutError(
+                            "VK-GL-CTS guest console and artifact transport made "
+                            "no progress for "
+                            f"{console_stall_timeout} seconds"
+                        ),
+                        "stalled",
+                    )
                 print(
                     "VK-GL-CTS guest is running; "
                     f"console_bytes={size} "
-                    f"artifact_frames={len(transport.lines)}",
+                    f"artifact_frames={artifact_frames}",
                     flush=True,
                 )
                 next_heartbeat = now + 30
-            time.sleep(0.05)
         else:
-            raise TimeoutError(f"VK-GL-CTS guest exceeded {timeout} seconds")
+            raise interrupted(
+                TimeoutError(f"VK-GL-CTS guest exceeded {timeout} seconds"),
+                "stalled",
+            )
         process.wait(timeout=5)
         drain_deadline = time.monotonic() + 2
-        while transport.connection is not None and time.monotonic() < drain_deadline:
-            transport.service()
-            if transport.connection is not None:
-                time.sleep(0.01)
+        while (
+            transport.connection is not None
+            and (remaining := drain_deadline - time.monotonic()) > 0
+        ):
+            transport.service(timeout=min(ARTIFACT_SERVICE_INTERVAL, remaining))
         artifact_transcript = transport.finish()
+    except GuestSessionInterrupted:
+        raise
+    except CampaignError as error:
+        # A host-side abort tears the transport down mid-frame. Report it as
+        # an interrupted session so the retained prefix is still usable.
+        raise interrupted(error, "aborted") from error
     finally:
         transport.close()
     return (
         log_path.read_text(encoding="utf-8", errors="replace"),
         artifact_transcript,
     )
+
+
+@dataclass(frozen=True)
+class RawSession:
+    """What one guest session left behind, however it ended."""
+
+    transcript: str
+    artifact_transcript: str
+    return_code: int | None
+    outcome: str
+    detail: str | None
+    artifacts: dict[str, bytes]
+
+
+def session_environment(index: int, guest: Path) -> dict[str, str] | None:
+    """Give each continuation guest its own exclusive ownership journal.
+
+    The first session keeps the journal its owner armed before creating this
+    leaf, so the existing pool contract is unchanged; a later session proves
+    its own emulator was reaped in a journal beside its evidence.
+    """
+    setting = os.environ.get(guest_process.OWNERSHIP_ENV)
+    if setting is None or index == 0:
+        return None
+    try:
+        token = json.loads(setting)["token"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise CampaignError("invalid inherited guest ownership setting") from error
+    return {
+        **os.environ,
+        guest_process.OWNERSHIP_ENV: json.dumps(
+            {
+                "path": str(guest / guest_process.JOURNAL_NAME),
+                "token": token,
+            }
+        ),
+    }
+
+
+def run_guest_session(
+    command: Sequence[str],
+    console_path: Path,
+    transport_path: Path,
+    socket_path: Path,
+    *,
+    guest_timeout: int,
+    console_stall_timeout: int = 0,
+    environment: dict[str, str] | None = None,
+) -> RawSession:
+    """Run one guest and keep whatever evidence it managed to transport."""
+    outcome = "completed"
+    detail: str | None = None
+    artifact_transcript = ""
+    return_code: int | None = None
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        with console_path.open("wb") as console:
+            with guest_process.managed_child(
+                list(command),
+                stop=stop_guest,
+                stdout=console,
+                stderr=subprocess.STDOUT,
+                **({} if environment is None else {"env": environment}),
+            ) as process:
+                transcript, artifact_transcript = wait_for_guest(
+                    process,
+                    console_path,
+                    guest_timeout,
+                    socket_path,
+                    console_stall_timeout=console_stall_timeout,
+                )
+        return_code = process.returncode
+        if return_code != 0:
+            outcome = "aborted"
+            detail = f"guest harness exited with status {return_code}"
+        elif os.path.lexists(socket_path):
+            outcome = "aborted"
+            detail = "emulator did not remove the artifact socket"
+        else:
+            try:
+                validate_guest_shutdown(transcript)
+            except CampaignError as error:
+                outcome = "aborted"
+                detail = str(error)
+    except GuestSessionInterrupted as error:
+        transcript = error.transcript
+        artifact_transcript = error.artifact_transcript
+        outcome = error.reason
+        detail = str(error)
+        return_code = process.returncode if process is not None else None
+    transport_path.write_text(artifact_transcript, encoding="ascii")
+    artifacts = (
+        decode_artifacts(artifact_transcript, partial=outcome != "completed")
+        if artifact_transcript
+        else {}
+    )
+    return RawSession(
+        transcript, artifact_transcript, return_code, outcome, detail, artifacts
+    )
+
+
+def session_paths(directory: Path, index: int) -> tuple[Path, Path, Path, Path]:
+    """Return the guest, console, transport and artifact paths of one session.
+
+    Session zero keeps the historical single-session layout so an ordinary
+    shard produces exactly the files, socket and command it always did.
+    """
+    if index == 0:
+        return (
+            directory,
+            directory / "console.log",
+            directory / ARTIFACT_TRANSPORT_LOG,
+            directory / "artifacts",
+        )
+    nested = directory / SESSION_DIRECTORY / f"{index:02d}"
+    return (
+        nested,
+        nested / "console.log",
+        nested / ARTIFACT_TRANSPORT_LOG,
+        nested / "artifacts",
+    )
+
+
+def relative_session_path(directory: Path, path: Path) -> str:
+    return str(path.relative_to(directory))
+
+
+def run_shard_sessions(
+    directory: Path,
+    *,
+    build_command: Callable[[int, Path], list[str]],
+    resolve_expected: Callable[[dict[str, bytes]], tuple[str, ...]],
+    check_session: Callable[[int, int, dict[str, bytes]], None],
+    guest_timeout: int,
+    console_stall_timeout: int,
+    max_resumptions: int,
+    on_sessions: Callable[[tuple[SessionEvidence, ...]], None] | None = None,
+) -> tuple[tuple[SessionEvidence, ...], tuple[str, ...], dict[str, str]]:
+    """Run a shard as one or more guest sessions and merge their results.
+
+    A session that stalls or is killed by a host abort still delivers the QPA
+    checkpoint prefix it transported.  The case the guest was executing is
+    recorded with an explicit terminated status, and the next session starts
+    at the following case in the released traversal order.  Nothing is ever
+    retried and the number of resumptions is bounded.
+    """
+    if max_resumptions < 0:
+        raise CampaignError("resumption bound must not be negative")
+    sessions: list[SessionEvidence] = []
+    merged: dict[str, str] = {}
+    expected: tuple[str, ...] = ()
+    resume_after = 0
+    while True:
+        index = len(sessions)
+        guest, console_path, transport_path, artifact_path = session_paths(
+            directory, index
+        )
+        guest.mkdir(parents=True, exist_ok=True)
+        environment = session_environment(index, guest)
+        raw = run_guest_session(
+            build_command(resume_after, guest),
+            console_path,
+            transport_path,
+            artifact_socket_path(guest),
+            guest_timeout=guest_timeout,
+            console_stall_timeout=console_stall_timeout,
+            environment=environment,
+        )
+        if raw.outcome != "completed" and DIRTY_DRM_SHUTDOWN in raw.transcript:
+            raise CampaignError(
+                "Virtio-GPU memory manager was not clean during guest shutdown"
+            )
+        qpa_text = decode_qpa(raw.artifacts.get(QPA_ARTIFACT, b""))
+        if raw.outcome == "completed" and not qpa_text:
+            # Never invent a terminated case for a guest that stopped cleanly:
+            # an empty QPA there is a transport failure, not a hung case.
+            raise CampaignError("a completed shard session transported no QPA")
+        prefix = scan_qpa(qpa_text) if qpa_text else QpaPrefix({}, None, False)
+        if index == 0:
+            expected = resolve_expected(raw.artifacts)
+            if not expected:
+                raise CampaignError("shard resolved an empty expected case list")
+        check_session(index, resume_after, raw.artifacts)
+        completed = tuple(prefix.results)
+        window = expected[resume_after : resume_after + len(completed)]
+        if completed != window:
+            raise CampaignError(
+                "guest results left the expected traversal order at "
+                f"session {index}"
+            )
+        finished = raw.outcome == "completed" and prefix.ended_session
+        outcome = "completed" if finished else raw.outcome
+        if raw.outcome == "completed" and not prefix.ended_session:
+            # The guest stopped cleanly but its CTS process did not finish the
+            # caselist: its own progress watchdog or a crash ended the case.
+            outcome = "stalled" if guest_reported_stall(raw.artifacts) else "aborted"
+        position = resume_after + len(completed)
+        terminated = (
+            None
+            if finished or position >= len(expected)
+            else expected[position]
+        )
+        status = (
+            None
+            if terminated is None
+            else STALL_STATUS
+            if outcome == "stalled"
+            else ABORT_STATUS
+        )
+        if terminated is not None and prefix.in_flight_case not in (None, terminated):
+            raise CampaignError(
+                "guest QPA trailer names a case outside the traversal order"
+            )
+        write_artifacts(raw.artifacts, artifact_path)
+        sessions.append(
+            SessionEvidence(
+                index=index,
+                outcome=outcome,
+                resume_after=resume_after,
+                qpa_text=qpa_text,
+                completed_cases=completed,
+                terminated_case=terminated,
+                terminated_status=status,
+                console=relative_session_path(directory, console_path),
+                artifact_transport=relative_session_path(directory, transport_path),
+                artifacts_directory=relative_session_path(directory, artifact_path),
+                return_code=raw.return_code,
+                ownership_journal=(
+                    None
+                    if environment is None
+                    else relative_session_path(
+                        directory, guest / guest_process.JOURNAL_NAME
+                    )
+                ),
+            )
+        )
+        merged.update(prefix.results)
+        if terminated is not None:
+            merged[terminated] = status or ABORT_STATUS
+        resume_after = position + (1 if terminated is not None else 0)
+        if index == 0 and terminated is not None:
+            # The shard-level artifact set becomes the host-merged one, so the
+            # first guest's own files move beside every later session's.
+            nested = directory / SESSION_DIRECTORY / "00" / "artifacts"
+            nested.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(artifact_path, nested)
+            sessions[0] = replace(
+                sessions[0],
+                artifacts_directory=relative_session_path(directory, nested),
+            )
+        if on_sessions is not None:
+            on_sessions(tuple(sessions))
+        if finished or resume_after >= len(expected):
+            break
+        print(
+            f"VK-GL-CTS shard session {index} {outcome} after "
+            f"{len(completed)} cases; recording {terminated}={status} and "
+            f"resuming at index {resume_after}",
+            file=sys.stderr,
+            flush=True,
+        )
+        # Record what happened before refusing to continue, so an exhausted
+        # shard still leaves a truthful catalogue of its guest sessions.
+        if len(sessions) > max_resumptions:
+            raise CampaignError(
+                f"shard exhausted its {max_resumptions} resumptions with "
+                f"{len(expected) - resume_after} cases left"
+            )
+    return tuple(sessions), expected, merged
+
+
+def guest_reported_stall(artifacts: dict[str, bytes]) -> bool:
+    summary = artifacts.get("summary.txt")
+    if summary is None:
+        return False
+    return "cts_rc=124" in summary.decode("utf-8", errors="replace")
+
+
+def merged_shard_artifacts(
+    sessions: Sequence[SessionEvidence],
+    directory: Path,
+    expected_count: int,
+) -> dict[str, bytes]:
+    """Return the shard-level artifact set for a resumed shard.
+
+    Every session keeps its own transported files.  The shard-level set
+    reuses the first session's selection and renderer evidence and replaces
+    only the QPA and the summary, whose host-merged provenance is recorded
+    both inside the summary and in ``run.json``.
+    """
+    first = directory / sessions[0].artifacts_directory
+    artifacts = {
+        path.name: path.read_bytes()
+        for path in sorted(first.iterdir())
+        if path.name not in {QPA_ARTIFACT, SUMMARY_ARTIFACT}
+    }
+    # The last session that reached its own exit trap owns the guest identity
+    # rows.  A shard whose final case hung still has one, because the guest
+    # transports its summary before powering off.
+    final = next(
+        (
+            candidate
+            for session in reversed(sessions)
+            if (
+                candidate := directory
+                / session.artifacts_directory
+                / SUMMARY_ARTIFACT
+            ).is_file()
+        ),
+        None,
+    )
+    if final is None:
+        raise CampaignError("no shard session transported a summary")
+    artifacts[QPA_ARTIFACT] = merge_qpa_sessions(sessions).encode(
+        "utf-8", errors="surrogateescape"
+    )
+    artifacts[SUMMARY_ARTIFACT] = merged_summary(
+        sessions, final.read_bytes(), expected_count
+    )
+    return artifacts
+
+
+def merged_summary(
+    sessions: Sequence[SessionEvidence],
+    base: bytes,
+    expected_count: int,
+) -> bytes:
+    """Return the host-merged shard summary.
+
+    The completing guest's own identity rows are kept; the shard-wide
+    counts, the merge provenance, and every host-recorded terminated case
+    are stated explicitly so nothing looks like an ordinary guest result.
+    """
+    overridden = (
+        "cts_rc=",
+        "expected_case_count=",
+        "provenance=",
+        "sessions=",
+        "host_recorded_",
+    )
+    kept = [
+        line
+        for line in base.decode("utf-8", errors="strict").splitlines()
+        if line and not line.startswith(overridden)
+    ]
+    recorded = [
+        f"host_recorded_{index}={session.terminated_case}="
+        f"{session.terminated_status}"
+        for index, session in enumerate(
+            row for row in sessions if row.terminated_case is not None
+        )
+    ]
+    rows = [
+        f"cts_rc={1 if recorded else 0}",
+        *kept,
+        f"expected_case_count={expected_count}",
+        "provenance=host-merged",
+        f"sessions={len(sessions)}",
+        *recorded,
+    ]
+    return "".join(f"{row}\n" for row in rows).encode("utf-8")
+
+
+def session_records(
+    sessions: Sequence[SessionEvidence], directory: Path
+) -> list[dict[str, Any]]:
+    return [session.record(directory) for session in sessions]
+
+
+def shard_provenance(sessions: Sequence[SessionEvidence]) -> str:
+    """Say who authored a shard's own ``results.qpa`` and ``summary.txt``.
+
+    Only a lone guest session that finished its whole caselist owns them
+    directly.  As soon as the host has to record a terminated case, or a
+    second guest contributes results, the shard-level artifacts are a host
+    merge and must say so everywhere they are read.
+    """
+    if not sessions:
+        raise CampaignError("a shard needs at least one guest session")
+    if len(sessions) == 1 and sessions[0].terminated_case is None:
+        return "single-session-guest"
+    return "host-merged"
+
+
+def host_recorded_results(
+    sessions: Sequence[SessionEvidence],
+) -> dict[str, str]:
+    return {
+        session.terminated_case: session.terminated_status or ABORT_STATUS
+        for session in sessions
+        if session.terminated_case is not None
+    }
+
+
+def validate_session_provenance(
+    directory: Path,
+    metadata: dict[str, Any],
+    artifacts: dict[str, bytes],
+    expected_count: int,
+) -> None:
+    """Re-derive a multi-session shard from the evidence each guest sent.
+
+    The merged QPA and summary are recomputed from the per-session artifacts
+    and must match byte for byte, so a host-merged shard is reparseable and
+    cannot silently gain or lose a result.
+    """
+    records = metadata.get("sessions")
+    provenance = metadata.get("artifacts_provenance")
+    if not isinstance(records, list) or not records:
+        raise CampaignError("shard evidence omits its guest session records")
+    bound = metadata.get("max_resumptions")
+    if type(bound) is not int or bound < 0:
+        raise CampaignError("shard evidence omits its resumption bound")
+    if len(records) - 1 > bound:
+        raise CampaignError("shard exceeded its recorded resumption bound")
+    if metadata.get("session_count") != len(records):
+        raise CampaignError("shard session count disagrees with its records")
+    if provenance not in {"single-session-guest", "host-merged"}:
+        raise CampaignError("shard evidence has an invalid artifact provenance")
+    rebuilt: list[SessionEvidence] = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict) or record.get("index") != index:
+            raise CampaignError("shard session records are not ordered")
+        if record.get("outcome") not in SESSION_OUTCOMES:
+            raise CampaignError("shard session record has an invalid outcome")
+        if record.get("outcome") == "completed" and index != len(records) - 1:
+            raise CampaignError("only the final shard session may be complete")
+        console = directory / str(record.get("console"))
+        transport = directory / str(record.get("artifact_transport"))
+        session_artifacts = directory / str(record.get("artifacts_directory"))
+        for path, digest in (
+            (console, record.get("console_sha256")),
+            (transport, record.get("artifact_transport_sha256")),
+        ):
+            if not path.is_file() or sha256_file(path) != digest:
+                raise CampaignError(f"shard session evidence changed: {path.name}")
+        if record["outcome"] != "completed" and DIRTY_DRM_SHUTDOWN in (
+            console.read_text(encoding="utf-8", errors="replace")
+        ):
+            raise CampaignError(
+                "Virtio-GPU memory manager was not clean during guest shutdown"
+            )
+        stored = {
+            path.name: path.read_bytes()
+            for path in sorted(session_artifacts.iterdir())
+        }
+        if {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in stored.items()
+        } != record.get("artifact_sha256"):
+            raise CampaignError("shard session artifact digests changed")
+        if decode_artifacts(
+            transport.read_text(encoding="ascii"),
+            partial=record["outcome"] != "completed",
+        ) != stored:
+            raise CampaignError(
+                "shard session transport differs from its decoded artifacts"
+            )
+        rebuilt.append(
+            SessionEvidence(
+                index=index,
+                outcome=str(record["outcome"]),
+                resume_after=int(record.get("resume_after", 0)),
+                qpa_text=decode_qpa(stored.get(QPA_ARTIFACT, b"")),
+                completed_cases=(),
+                terminated_case=record.get("terminated_case"),
+                terminated_status=record.get("terminated_status"),
+                console=str(record["console"]),
+                artifact_transport=str(record["artifact_transport"]),
+                artifacts_directory=str(record["artifacts_directory"]),
+                return_code=record.get("return_code"),
+            )
+        )
+    # A shard may end on a guest that never stopped only when the host wrote
+    # down why: otherwise the clean stop marker is still required of it.
+    if rebuilt[-1].terminated_case is None and rebuilt[-1].outcome != "completed":
+        raise CampaignError(
+            "a shard whose last session did not complete must record its case"
+        )
+    if provenance != shard_provenance(rebuilt):
+        raise CampaignError("shard artifact provenance contradicts its sessions")
+    if provenance == "single-session-guest":
+        return
+    recomputed = merged_shard_artifacts(rebuilt, directory, expected_count)
+    if recomputed != artifacts:
+        raise CampaignError("host-merged shard artifacts are not reproducible")
+    if metadata.get("host_recorded_results") != host_recorded_results(rebuilt):
+        raise CampaignError("host-recorded shard results changed")
 
 
 def git_state() -> dict[str, Any]:
@@ -2655,6 +4201,8 @@ def load_config_inventory_evidence(
     page_profile: str,
     display: str,
     rootfs_contract: RootfsContract,
+    runtime_identity: dict[str, str] | None = None,
+    surface: tuple[int, int] = (1280, 720),
 ) -> tuple[tuple[EglConfig, ...], str]:
     try:
         metadata = json.loads(
@@ -2669,7 +4217,7 @@ def load_config_inventory_evidence(
         raise CampaignError("unsupported config-inventory evidence")
     expected = {
         "adapter": "macos",
-        "backend": "angle-metal",
+        "backend": "venus-kosmickrisp" if api == "gl46" else "angle-metal",
         "mode": "config-inventory",
         "api": api,
         "page_profile": page_profile,
@@ -2681,6 +4229,12 @@ def load_config_inventory_evidence(
         "completed_cases": 1,
         "status_totals": {"Pass": 1},
     }
+    if api == "gl46":
+        if runtime_identity is None or set(runtime_identity) != {
+            "emulator_sha256", "kosmickrisp_sha256",
+        }:
+            raise CampaignError("GL config inventory requires the exact runtime identity")
+        expected.update({"renderer": "zink", "surface": list(surface), **runtime_identity})
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise CampaignError(
@@ -2710,7 +4264,106 @@ def load_config_inventory_evidence(
     parsed = parse_egl_config_qpa(qpa_text, api)
     if parsed != configs:
         raise CampaignError("config-inventory QPA and metadata disagree")
+    if api == "gl46":
+        directory = path.parent
+        console = directory / "console.log"
+        if sha256_file(console) != metadata.get("console_sha256"):
+            raise CampaignError("config-inventory console identity changed")
+        validate_guest_shutdown(console.read_text(encoding="utf-8"))
+        serial = directory / ARTIFACT_TRANSPORT_LOG
+        if sha256_file(serial) != metadata.get("artifact_transport_sha256"):
+            raise CampaignError("config-inventory transport identity changed")
+        artifacts = decode_artifacts(serial.read_text(encoding="ascii"))
+        if set(artifacts) != CONFIG_INVENTORY_ARTIFACTS:
+            raise CampaignError("config-inventory artifact set changed")
+        if any((directory / "artifacts" / name).read_bytes() != payload
+               for name, payload in artifacts.items()):
+            raise CampaignError("config-inventory transport and artifacts disagree")
+        if artifacts["summary.txt"].decode("utf-8").strip() != "cts_rc=0":
+            raise CampaignError("config-inventory CTS process failed")
+        validate_renderer_probe(
+            artifacts["renderer.txt"].decode("utf-8"),
+            16384 if page_profile == "16k" else 4096, "zink",
+        )
     return configs, digest
+
+
+def opengl_matrix_run(
+    receipt: dict[str, Any], configs: tuple[EglConfig, ...], digest: str,
+    config_index: int, configuration_index: int, fraction: tuple[int, int],
+) -> MatrixRun:
+    if receipt.get("schema_version") != 4:
+        raise CampaignError("GL matrix requires the XML-scoped schema-4 receipt")
+    manifest = receipt["opengl_cts"]["mustpass"]
+    try:
+        runs = opengl_cts_plan.expand_runs(manifest, [
+            {"id": config.identifier, "surface_types": list(config.surface_types)}
+            for config in configs
+        ])
+    except opengl_cts_plan.PlanError as error:
+        raise CampaignError(str(error)) from error
+    matching = [run for run in runs if run["egl_config_index"] == config_index
+                and run["configuration_index"] == configuration_index]
+    if len(matching) != 1:
+        raise CampaignError("GL XML configuration does not apply to this EGL config")
+    row = manifest["configurations"][configuration_index]
+    identity = next(leaf for leaf in manifest["leaves"] if leaf["id"] == row["leaf_id"])
+    leaf = LeafIdentity(identity["id"], identity["path"],
+                        identity["case_count"], identity["sha256"])
+    document = next(item for item in manifest["documents"]
+                    if item["collection"] == row["collection"])
+    return MatrixRun(
+        configuration=MustpassConfiguration(
+            api="gl46", leaf=leaf, name=row["name"],
+            use_for_first_egl_config=row["use_for_first_egl_config"],
+            screen_rotation="unspecified", surface_width=row["surface_width"],
+            surface_height=row["surface_height"], base_seed=row["base_seed"],
+            watchdog="disable", fbo_config=row["fbo_config"],
+            xml_arguments=tuple(row["xml_arguments"]),
+        ),
+        egl_config=configs[config_index], egl_config_index=config_index,
+        config_inventory_sha256=digest, selection=Selection(leaf, (), *fraction),
+        mustpass_xml_path=document["path"], mustpass_xml_size=document["size"],
+        mustpass_xml_sha256=document["sha256"],
+        opengl_configuration_index=configuration_index,
+    )
+
+
+def matrix_metadata(options: argparse.Namespace) -> dict[str, Any]:
+    matrix = options.matrix_run
+    return {
+        "mustpass_xml_path": matrix.mustpass_xml_path,
+        "mustpass_xml_size": matrix.mustpass_xml_size,
+        "mustpass_xml_sha256": matrix.mustpass_xml_sha256,
+        "runner_oracle_path": options.runner_oracle.path,
+        "runner_oracle_size": options.runner_oracle.size,
+        "runner_oracle_sha256": options.runner_oracle.sha256,
+        "successful_case_statuses": list(options.runner_oracle.successful_case_statuses),
+        "configuration_name": matrix.configuration.name,
+        "configuration_role": "first" if matrix.configuration.use_for_first_egl_config else "other",
+        "xml_arguments": list(matrix.configuration.xml_arguments),
+        "waivers": [
+            {"id": waiver.identifier, "url": waiver.url, "cases": list(waiver.cases)}
+            for waiver in options.applied_waivers
+        ],
+        "waiver_list_sha256": (
+            hashlib.sha256(waiver_xml(options.applied_waivers).encode("utf-8")).hexdigest()
+            if options.applied_waivers else None
+        ),
+        "runner_arguments": matrix_runner_arguments(
+            matrix, "/run/uml-cts/selected.txt",
+            GUEST_WAIVER_PATH if options.applied_waivers else None),
+        "egl_config_index": matrix.egl_config_index,
+        "egl_config_id": matrix.egl_config.identifier,
+        "egl_surface_types": list(matrix.egl_config.surface_types),
+        "egl_surface_type": matrix.egl_config.selected_surface_type,
+        "config_inventory_sha256": matrix.config_inventory_sha256,
+        "config_inventory_run": str(options.config_inventory_run.resolve()),
+        **({"opengl_configuration_index": matrix.opengl_configuration_index,
+            "draw_surface_type": ("fbo" if matrix.configuration.fbo_config
+                                  else matrix.egl_config.selected_surface_type)}
+           if matrix.opengl_configuration_index is not None else {}),
+    }
 
 
 def api_for_leaf(identifier: str) -> str:
@@ -2718,12 +4371,20 @@ def api_for_leaf(identifier: str) -> str:
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
-    identity = load_identity()
+    identity_parser = argparse.ArgumentParser(add_help=False)
+    identity_parser.add_argument(
+        "--cts-identity", type=Path, default=IDENTITY_PATH
+    )
+    identity_options, _ = identity_parser.parse_known_args(arguments)
+    identity = load_identity(identity_options.cts_identity.resolve())
     leaves = leaf_identities(identity)
     campaigns = load_apple_campaigns(identity)
     mustpass = load_gles_mustpass(identity)
     parser = argparse.ArgumentParser(
-        description="run a bounded in-image VK-GL-CTS shard through Virgl"
+        description="run a bounded in-image VK-GL-CTS shard"
+    )
+    parser.add_argument(
+        "--cts-identity", type=Path, default=IDENTITY_PATH
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -2733,12 +4394,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     mode.add_argument(
         "--config-inventory",
-        choices=BASELINE_GLES_APIS,
-        help="enumerate the ordered conformant EGL configs for one GLES API",
+        choices=tuple(CONFIG_CASES),
+        help="enumerate the ordered conformant EGL configs for one API",
     )
     mode.add_argument(
         "--matrix",
-        choices=BASELINE_GLES_APIS,
+        choices=tuple(CONFIG_CASES),
         help="run one exact official must-pass matrix shard",
     )
     mode.add_argument("--campaign", choices=sorted(campaigns))
@@ -2754,15 +4415,45 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--seed", type=int)
     parser.add_argument("--config-inventory-run", type=Path)
     parser.add_argument("--egl-config-index", type=nonnegative_integer)
+    parser.add_argument("--mustpass-config-index", type=nonnegative_integer,
+                        help="authenticated GL46 XML configuration index")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
+    parser.add_argument(
+        "--renderer",
+        choices=("virgl", "zink"),
+        default="virgl",
+        help="guest Gallium renderer to require (default: virgl)",
+    )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
     parser.add_argument("--shard-timeout", type=positive_integer)
     parser.add_argument("--guest-timeout", type=positive_integer)
+    parser.add_argument(
+        "--console-stall-timeout",
+        type=int,
+        default=0,
+        help="guest console/transport progress bound in seconds (0 disables)",
+    )
+    parser.add_argument(
+        "--console-stall-busy-timeout",
+        type=int,
+        default=0,
+        help="bound in seconds for a case that produces no QPA output but keeps "
+             "the guest CTS process busy (0 cuts it at the stall timeout)",
+    )
+    parser.add_argument(
+        "--max-resumptions",
+        type=int,
+        default=DEFAULT_MAX_RESUMPTIONS,
+        help=(
+            "fresh guests a stalled or aborted shard may continue in "
+            f"(default: {DEFAULT_MAX_RESUMPTIONS}; 0 keeps one session)"
+        ),
+    )
     parser.add_argument("--emulator", type=Path)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
     parser.add_argument(
@@ -2780,13 +4471,26 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--qualification",
         action="store_true",
-        help="mark an authenticated official-matrix candidate shard",
+        help="qualify an authenticated GLES matrix or Zink/OpenGL leaf (not formal conformance)",
     )
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
+    if options.console_stall_timeout < 0:
+        parser.error("--console-stall-timeout must not be negative")
+    if options.console_stall_busy_timeout < 0 or (
+        options.console_stall_busy_timeout
+        and options.console_stall_busy_timeout < options.console_stall_timeout
+    ):
+        parser.error(
+            "--console-stall-busy-timeout must be zero or at least "
+            "--console-stall-timeout"
+        )
+    if options.max_resumptions < 0:
+        parser.error("--max-resumptions must not be negative")
     matrix_only_arguments = (
         options.config_inventory_run is not None
         or options.egl_config_index is not None
+        or options.mustpass_config_index is not None
     )
     if options.inventory:
         if (
@@ -2830,6 +4534,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error("--matrix requires --qualification")
         if options.display != "vnc":
             parser.error("a macOS qualification matrix requires --display vnc")
+        if (options.matrix == "gl46") != (options.mustpass_config_index is not None):
+            parser.error("only --matrix gl46 requires --mustpass-config-index")
     elif options.campaign is not None:
         if (
             options.leaf is not None
@@ -2869,6 +4575,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     if (
         options.qualification
         and options.matrix is None
+        and options.renderer != "zink"
         and not identity["cts"]["qualification_ready"]
     ):
         parser.error(identity["cts"]["qualification_blocker"])
@@ -2886,6 +4593,36 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         parser.error(str(error))
     options.derivative_receipt = receipt
     options.rootfs_contract = contract
+    if options.renderer == "zink" and (
+        options.rootfs_type != "ext4"
+        or receipt is None
+        or receipt.get("artifact") != "uml-vulkan-zink-gl-rootfs"
+    ):
+        parser.error(
+            "Zink CTS requires the authenticated combined Vulkan/OpenGL ext4 rootfs"
+        )
+    if options.renderer == "zink":
+        if (
+            options.inventory
+            or options.config_inventory not in {None, "gl46"}
+            or options.matrix not in {None, "gl46"}
+            or options.campaign is not None
+        ):
+            parser.error("Zink accepts only the receipt-bound GL46 scope")
+        receipt_leaves = receipt["opengl_cts"]["mustpass"]["leaves"]
+        leaves = {
+            row["id"]: LeafIdentity(
+                row["id"], row["path"], row["case_count"], row["sha256"]
+            )
+            for row in receipt_leaves
+        }
+        if (options.matrix is None and options.config_inventory is None
+                and options.leaf != "gl46"):
+            parser.error(
+                "Zink developer shards require the active gl46 core leaf"
+            )
+    elif options.matrix == "gl46" or options.config_inventory == "gl46":
+        parser.error("GL46 config discovery and matrices require --renderer zink")
     options.matrix_run = None
     options.runner_oracle = None
     if options.matrix is not None:
@@ -2894,35 +4631,61 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                 "an official matrix requires the authenticated derivative ext4 rootfs"
             )
         try:
-            options.runner_oracle = load_runner_oracle(identity, mustpass)
             configs, config_digest = load_config_inventory_evidence(
                 options.config_inventory_run.resolve(),
                 options.matrix,
                 options.page_profile,
                 options.display,
                 contract,
+                ({"emulator_sha256": sha256_file(options.emulator.resolve()),
+                  "kosmickrisp_sha256": verify_staged_kosmickrisp(options.emulator.resolve())}
+                 if options.matrix == "gl46" else None),
+                (options.width, options.height),
             )
+            if options.matrix == "gl46":
+                options.matrix_run = opengl_matrix_run(
+                    receipt, configs, config_digest, options.egl_config_index,
+                    options.mustpass_config_index, options.fraction,
+                )
+                source = receipt["opengl_cts"]["mustpass"]["runner_source"]
+                options.runner_oracle = RunnerOracle(
+                    source["path"], source["size"], source["sha256"], (),
+                    tuple(receipt["runner_oracle"]["successful"]),
+                )
+            else:
+                options.runner_oracle = load_runner_oracle(identity, mustpass)
         except (CampaignError, UnicodeDecodeError) as error:
             parser.error(str(error))
         if options.egl_config_index >= len(configs):
             parser.error(
                 f"--egl-config-index exceeds the {len(configs)} discovered configs"
             )
-        fraction_index, fraction_count = options.fraction
-        leaf = leaves[options.matrix]
-        selected = Selection(leaf, (), fraction_index, fraction_count)
-        xml_identity = identity["mustpass"]["gles_xml"]
-        options.matrix_run = MatrixRun(
-            configuration=baseline_mustpass_configuration(
-                mustpass, options.matrix, options.egl_config_index == 0
-            ),
-            egl_config=configs[options.egl_config_index],
-            egl_config_index=options.egl_config_index,
-            config_inventory_sha256=config_digest,
-            selection=selected,
-            mustpass_xml_path=xml_identity["path"],
-            mustpass_xml_size=xml_identity["size"],
-            mustpass_xml_sha256=xml_identity["sha256"],
+        if options.matrix_run is None:
+            fraction_index, fraction_count = options.fraction
+            leaf = leaves[options.matrix]
+            selected = Selection(leaf, (), fraction_index, fraction_count)
+            xml_identity = identity["mustpass"]["gles_xml"]
+            options.matrix_run = MatrixRun(
+                configuration=baseline_mustpass_configuration(
+                    mustpass, options.matrix, options.egl_config_index == 0
+                ),
+                egl_config=configs[options.egl_config_index],
+                egl_config_index=options.egl_config_index,
+                config_inventory_sha256=config_digest,
+                selection=selected,
+                mustpass_xml_path=xml_identity["path"],
+                mustpass_xml_size=xml_identity["size"],
+                mustpass_xml_sha256=xml_identity["sha256"],
+            )
+    options.waivers = ()
+    options.applied_waivers = ()
+    if options.matrix_run is not None:
+        try:
+            options.waivers = load_waivers()
+        except CampaignError as error:
+            parser.error(str(error))
+        options.applied_waivers = applicable_waivers(
+            options.matrix_run, options.waivers
         )
     options.identity = identity
     options.leaves = leaves
@@ -2946,10 +4709,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         selection = matrix.selection
         api_identifier = matrix.configuration.api
         leaf_identifier = leaf.identifier
-        suffix = (
-            f"matrix-{api_identifier}-cfg{matrix.egl_config_index:02d}-"
-            f"{fraction_index:03d}of{fraction_count:03d}"
-        )
+        row = (f"xml{matrix.opengl_configuration_index:02d}-"
+               if matrix.opengl_configuration_index is not None else "")
+        suffix = (f"matrix-{api_identifier}-cfg{matrix.egl_config_index:02d}-"
+                  f"{row}{fraction_index:03d}of{fraction_count:03d}")
     elif options.campaign is not None:
         campaign = options.campaigns[options.campaign]
         leaf = campaign.leaf
@@ -2984,10 +4747,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if not emulator.is_file() or not os.access(emulator, os.X_OK):
         raise CampaignError(f"emulator is not executable: {emulator}")
     emulator_bytes = emulator.read_bytes()
-    if RETIRED_BACKEND_MARKER.encode() in emulator_bytes:
-        raise CampaignError("emulator contains the retired CGL provider")
-    if HOST_BACKEND_MARKER.encode() not in emulator_bytes:
-        raise CampaignError("emulator does not contain the ANGLE/Metal provider marker")
+    provider_sha256 = (
+        verify_staged_kosmickrisp(emulator)
+        if options.renderer == "zink"
+        else None
+    )
+    if options.renderer == "virgl":
+        if RETIRED_BACKEND_MARKER.encode() in emulator_bytes:
+            raise CampaignError("emulator contains the retired CGL provider")
+        if HOST_BACKEND_MARKER.encode() not in emulator_bytes:
+            raise CampaignError(
+                "emulator does not contain the ANGLE/Metal provider marker"
+            )
     rootfs_contract = options.rootfs_contract
     if rootfs_contract.filesystem_type == "erofs":
         if not rootfs.is_file() or rootfs.stat().st_size != rootfs_contract.size:
@@ -3012,7 +4783,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "schema_version": 1,
         "git": git_state(),
         "adapter": "macos",
-        "backend": "angle-metal",
+        "backend": (
+            "venus-kosmickrisp"
+            if options.renderer == "zink"
+            else "angle-metal"
+        ),
+        "renderer": options.renderer,
         "page_profile": options.page_profile,
         "engine": options.engine,
         "memory": options.memory,
@@ -3041,7 +4817,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "acknowledged_frames": True,
         },
         "launch_environment": {
-            "UML_GPU_CAPABILITY_REPORT": "1",
+            **(
+                {"UML_GPU_EXPERIMENTAL_VULKAN": "1"}
+                if options.renderer == "zink"
+                else {"UML_GPU_CAPABILITY_REPORT": "1"}
+            ),
             **(
                 {"UML_GPU_FRAME_STATS": "1"}
                 if options.display == "native"
@@ -3052,6 +4832,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     }
     if options.derivative_receipt is not None:
         metadata["rootfs_receipt"] = options.derivative_receipt
+    if options.renderer == "zink":
+        metadata["formal_conformance"] = False
+        metadata["kosmickrisp_sha256"] = provider_sha256
+        metadata["rootfs_receipt_sha256"] = sha256_file(options.rootfs_receipt.resolve())
+        metadata["successful_case_statuses"] = (
+            options.derivative_receipt["runner_oracle"]["successful"]
+            if options.qualification else ["Pass"]
+        )
     if options.inventory:
         metadata["expected_artifacts"] = [
             "inventory.txt",
@@ -3090,65 +4878,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if options.campaign is not None:
             metadata["campaign"] = options.campaign
         if options.matrix is not None:
-            matrix = options.matrix_run
-            metadata["matrix"] = {
-                "mustpass_xml_path": matrix.mustpass_xml_path,
-                "mustpass_xml_size": matrix.mustpass_xml_size,
-                "mustpass_xml_sha256": matrix.mustpass_xml_sha256,
-                "runner_oracle_path": options.runner_oracle.path,
-                "runner_oracle_size": options.runner_oracle.size,
-                "runner_oracle_sha256": options.runner_oracle.sha256,
-                "successful_case_statuses": list(
-                    options.runner_oracle.successful_case_statuses
-                ),
-                "configuration_name": matrix.configuration.name,
-                "configuration_role": (
-                    "first"
-                    if matrix.configuration.use_for_first_egl_config
-                    else "other"
-                ),
-                "xml_arguments": list(matrix.configuration.xml_arguments),
-                "runner_arguments": matrix_runner_arguments(
-                    matrix, "/run/uml-cts/selected.txt"
-                ),
-                "egl_config_index": matrix.egl_config_index,
-                "egl_config_id": matrix.egl_config.identifier,
-                "egl_surface_types": list(matrix.egl_config.surface_types),
-                "egl_surface_type": matrix.egl_config.selected_surface_type,
-                "config_inventory_sha256": matrix.config_inventory_sha256,
-                "config_inventory_run": str(
-                    options.config_inventory_run.resolve()
-                ),
-            }
+            metadata["matrix"] = matrix_metadata(options)
     write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
     artifact_socket = artifact_socket_path(artifact_directory)
     artifact_log_path = artifact_directory / ARTIFACT_TRANSPORT_LOG
-    with log_path.open("wb") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            transcript, artifact_transcript = wait_for_guest(
-                process,
-                log_path,
-                options.guest_timeout,
-                artifact_socket,
-            )
-        finally:
-            stop_guest(process)
-
-    if process.returncode != 0:
-        raise CampaignError(f"guest harness exited with status {process.returncode}")
-    if os.path.lexists(artifact_socket):
-        raise CampaignError("emulator did not remove the artifact socket")
-    artifact_log_path.write_text(artifact_transcript, encoding="ascii")
-    metadata["artifact_transport_sha256"] = sha256_file(artifact_log_path)
-    validate_host_backend(transcript)
-    validate_guest_shutdown(transcript)
-    metadata.update(parse_gpu_capability_report(transcript))
-    if options.display == "native":
-        metadata["native_display_final"] = parse_native_display_final(transcript)
-    write_json(artifact_directory / "run.json", metadata)
-    artifacts = decode_artifacts(artifact_transcript)
     required_artifacts = (
         INVENTORY_ARTIFACTS
         if options.inventory
@@ -3156,19 +4890,113 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if options.config_inventory is not None
         else SHARD_ARTIFACTS
     )
-    required = required_artifacts - set(artifacts)
-    if required:
-        guest_errors = GUEST_ERROR.findall(transcript)
-        if guest_errors:
-            raise CampaignError(f"guest campaign failed: {guest_errors[-1]}")
-        raise CampaignError(f"campaign omitted artifacts: {sorted(required)!r}")
-    unexpected = set(artifacts) - required_artifacts
-    if unexpected:
-        raise CampaignError(
-            f"campaign emitted unexpected artifacts: {sorted(unexpected)!r}"
+
+    def missing_artifacts(names: set[str], transcript: str) -> None:
+        required = required_artifacts - names
+        if required:
+            guest_errors = GUEST_ERROR.findall(transcript)
+            if guest_errors:
+                raise CampaignError(f"guest campaign failed: {guest_errors[-1]}")
+            raise CampaignError(f"campaign omitted artifacts: {sorted(required)!r}")
+        unexpected = names - required_artifacts
+        if unexpected:
+            raise CampaignError(
+                f"campaign emitted unexpected artifacts: {sorted(unexpected)!r}"
+            )
+
+    if selection is None:
+        with log_path.open("wb") as log:
+            with guest_process.managed_child(
+                command, stop=stop_guest, stdout=log, stderr=subprocess.STDOUT,
+            ) as process:
+                transcript, artifact_transcript = wait_for_guest(
+                    process,
+                    log_path,
+                    options.guest_timeout,
+                    artifact_socket,
+                )
+        if process.returncode != 0:
+            raise CampaignError(
+                f"guest harness exited with status {process.returncode}"
+            )
+        if os.path.lexists(artifact_socket):
+            raise CampaignError("emulator did not remove the artifact socket")
+        artifact_log_path.write_text(artifact_transcript, encoding="ascii")
+        validate_guest_shutdown(transcript)
+        artifacts = decode_artifacts(artifact_transcript)
+        missing_artifacts(set(artifacts), transcript)
+        write_artifacts(artifacts, artifact_directory / "artifacts")
+        sessions = ()
+        emulator_return_code = process.returncode
+    else:
+        def record_sessions(rows: tuple[SessionEvidence, ...]) -> None:
+            metadata.update(
+                {
+                    "session_count": len(rows),
+                    "max_resumptions": options.max_resumptions,
+                    "console_stall_timeout": options.console_stall_timeout,
+                    "console_stall_busy_timeout": options.console_stall_busy_timeout,
+                    "artifacts_provenance": shard_provenance(rows),
+                    "sessions": session_records(rows, artifact_directory),
+                    "host_recorded_results": host_recorded_results(rows),
+                }
+            )
+            write_json(artifact_directory / "run.json", metadata)
+
+        sessions, expected_cases, merged_results = run_shard_sessions(
+            artifact_directory,
+            build_command=lambda resume, guest: build_harness_command(
+                options, selection, guest, resume_after=resume
+            ),
+            resolve_expected=lambda first: tuple(
+                parse_case_list(
+                    first["selected.txt"].decode("utf-8", errors="strict")
+                )
+                if "selected.txt" in first
+                else ()
+            ),
+            # A stalled first guest is expected to be missing its summary;
+            # the shard-level artifact set is checked once, after the merge.
+            check_session=lambda index, resume, found: None,
+            guest_timeout=options.guest_timeout,
+            console_stall_timeout=options.console_stall_timeout,
+            max_resumptions=options.max_resumptions,
+            on_sessions=record_sessions,
         )
-    output_directory = artifact_directory / "artifacts"
-    write_artifacts(artifacts, output_directory)
+        final = sessions[-1]
+        transcript = (artifact_directory / final.console).read_text(
+            encoding="utf-8", errors="replace"
+        )
+        artifact_transcript = (
+            artifact_directory / final.artifact_transport
+        ).read_text(encoding="ascii")
+        if shard_provenance(sessions) == "single-session-guest":
+            artifacts = {
+                path.name: path.read_bytes()
+                for path in sorted(
+                    (artifact_directory / final.artifacts_directory).iterdir()
+                )
+            }
+        else:
+            artifacts = merged_shard_artifacts(
+                sessions, artifact_directory, len(expected_cases)
+            )
+            write_artifacts(artifacts, artifact_directory / "artifacts")
+        missing_artifacts(set(artifacts), transcript)
+        if list(merged_results) != list(expected_cases):
+            raise CampaignError("merged shard results left the selected order")
+        record_sessions(sessions)
+        emulator_return_code = final.return_code
+        if final.terminated_case is None:
+            validate_guest_shutdown(transcript)
+    metadata["artifact_transport_sha256"] = sha256_file(artifact_log_path)
+    metadata["console_sha256"] = sha256_file(log_path)
+    if options.renderer == "virgl":
+        validate_host_backend(transcript)
+        metadata.update(parse_gpu_capability_report(transcript))
+    if options.display == "native":
+        metadata["native_display_final"] = parse_native_display_final(transcript)
+    write_json(artifact_directory / "run.json", metadata)
     metadata["renderer_sha256"] = hashlib.sha256(
         artifacts["renderer.txt"]
     ).hexdigest()
@@ -3177,8 +5005,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
     validate_renderer_probe(
         renderer_text,
         16384 if options.page_profile == "16k" else 4096,
+        options.renderer,
     )
-    if summary_text.strip() != "cts_rc=0":
+    if sessions and shard_provenance(sessions) == "host-merged":
+        # A host-merged shard always carries at least one recorded terminated
+        # case; the precise per-case rejection comes from the status policy
+        # below, after run.json records the complete totals.
+        if "provenance=host-merged" not in summary_text or (
+            "cts_rc=1" not in summary_text
+        ):
+            raise CampaignError("host-merged shard summary is not truthful")
+    elif summary_text.strip() != "cts_rc=0":
         raise CampaignError(f"CTS process failed: {summary_text.strip()}")
     if options.inventory:
         case_count, caselist_digest, modules, package_count = validate_inventory_report(
@@ -3186,7 +5023,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         metadata.update(
             {
-                "emulator_return_code": process.returncode,
+                "emulator_return_code": emulator_return_code,
                 "complete_caselist_case_count": case_count,
                 "complete_caselist_sha256": caselist_digest,
                 "exported_package_count": package_count,
@@ -3208,7 +5045,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         totals = {"Pass": 1}
         metadata.update(
             {
-                "emulator_return_code": process.returncode,
+                "emulator_return_code": emulator_return_code,
                 "completed_cases": 1,
                 "status_totals": totals,
                 "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
@@ -3241,17 +5078,28 @@ def main(arguments: Sequence[str] | None = None) -> int:
     totals = status_totals(results)
     metadata.update(
         {
-            "emulator_return_code": process.returncode,
+            "emulator_return_code": emulator_return_code,
             "completed_cases": len(results),
             "status_totals": totals,
             "selected_caselist_sha256": selected_digest,
             "qpa_sha256": hashlib.sha256(artifacts["results.qpa"]).hexdigest(),
         }
     )
+    waived: frozenset[str] = frozenset()
+    if options.matrix is not None:
+        waived = waived_cases(options.applied_waivers)
+        metadata["waived_results"] = {
+            case: status for case, status in results.items() if case in waived
+        }
     write_json(artifact_directory / "run.json", metadata)
     if options.matrix is not None:
+        validate_waiver_session(qpa_text, options.applied_waivers)
         validate_official_runner_results(
-            results, options.runner_oracle.successful_case_statuses
+            results, options.runner_oracle.successful_case_statuses, waived
+        )
+    elif options.renderer == "zink" and options.qualification:
+        validate_official_runner_results(
+            results, options.derivative_receipt["runner_oracle"]["successful"]
         )
     else:
         validate_required_passes(results)

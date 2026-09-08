@@ -643,8 +643,15 @@ rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.p
 rootfs-starter-image-contract	tests/tooling/rootfs/test_starter_images.py	tooling	retained
 rootfs-wine-arm64ec-pe-audit	tests/tooling/rootfs/test_wine_arm64ec_pe.py	tooling	retained
 gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
+gpu-guest-process-ownership-safety	tests/tooling/gpu/test_guest_process.py	tooling	retained
+vulkan-probe-guest-safety	tests/tooling/gpu/test_run_vulkan_probe.py	tooling	retained
 vk-gl-cts-campaign-safety	tests/tooling/gpu/test_run_vk_gl_cts.py	tooling	retained
 vk-gl-cts-matrix-orchestrator-safety	tests/tooling/gpu/test_run_vk_gl_cts_matrix.py	tooling	retained
+opengl-cts-plan-safety	tests/tooling/gpu/test_opengl_cts_plan.py	tooling	retained
+cts-shard-resumption-safety	tests/tooling/gpu/test_cts_shard_resilience.py	tooling	retained
+graphics-cts-pool-safety	tests/tooling/gpu/test_graphics_cts_campaign.py	tooling	retained
+vulkan-cts-campaign-safety	tests/tooling/gpu/test_run_vk_cts.py	tooling	retained
+vulkan-guest-rootfs-safety	tests/tooling/gpu/test_vulkan_guest_rootfs.py	tooling	retained
 kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained
 chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained
 ios-simulator-webgl-aquarium-policy	tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py	tooling	retained

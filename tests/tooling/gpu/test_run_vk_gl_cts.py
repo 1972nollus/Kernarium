@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 
 import base64
 import contextlib
+import copy
 import gzip
 import hashlib
 import io
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from xml.etree import ElementTree
 from unittest import mock
 
 
@@ -81,6 +83,84 @@ def derivative_receipt(identity: dict[str, object]) -> dict[str, object]:
     }
 
 
+def zink_gl_derivative_receipt(
+    identity: dict[str, object],
+) -> dict[str, object]:
+    receipt = json.loads(
+        (INTEGRATION_GPU / "vulkan_cts_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    receipt["schema_version"] = 3
+    receipt["artifact"] = "uml-vulkan-zink-gl-rootfs"
+    receipt["base_rootfs"]["size"] = identity["rootfs"]["size"]
+    receipt["base_rootfs"]["sha256"] = identity["rootfs"]["sha256"]
+    receipt["derivative"] = {
+        "filename": "rootfs-vulkan-zink-gl.ext4",
+        "filesystem": "ext4",
+        "size": 8 * 1024 * 1024 * 1024,
+        "sha256": "4" * 64,
+        "filesystem_uuid": "3b59fbc9-4b35-4a2b-890d-286a77b04afd",
+        "read_only": True,
+    }
+    root = (
+        "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
+        "khronos_mustpass/main"
+    )
+    receipt["opengl_cts"] = {
+        "release": "opengl-cts-1.4.6.2",
+        "configure_argv": ["cmake"],
+        "build_targets": ["cmake", "--build", "build", "--target", "glcts"],
+        "install_prefix": "/opt/vk-gl-cts/openglcts",
+        "executable": {
+            "path": "/opt/vk-gl-cts/openglcts/glcts",
+            "size": 123456,
+            "sha256": "5" * 64,
+        },
+        "resources": [
+            {
+                "path": f"/opt/vk-gl-cts/openglcts/{directory}",
+                "file_count": 1,
+                "total_bytes": 1,
+                "verified_against": "test fixture",
+            }
+            for directory in ("gl_cts", "gles2", "gles3", "gles31")
+        ],
+        "build_id": "abcd1234",
+        "reported_cpu": "DE_CPU_ARM_64",
+        "reported_target": "Default",
+        "mustpass": {
+            "xml": {
+                "path": f"{root}/mustpass.xml",
+                "size": 1234,
+                "sha256": "6" * 64,
+            },
+            "leaves": [
+                {
+                    "id": "gl46",
+                    "path": f"{root}/gl46-main.txt",
+                    "size": 111,
+                    "sha256": "7" * 64,
+                    "case_count": 19714,
+                },
+                {
+                    "id": "gl46-gtf",
+                    "path": f"{root}/gl46-gtf-main.txt",
+                    "size": 222,
+                    "sha256": "8" * 64,
+                    "case_count": 1742,
+                },
+            ],
+            "leaf_count": 2,
+            "case_count": 21456,
+            "unique_case_count": 21456,
+            "duplicate_occurrence_count": 0,
+            "coverage_semantics": "exact OpenGL 4.6 leaf union",
+        },
+    }
+    return receipt
+
+
 def qpa_result(case: str, status: str = "Pass") -> str:
     return f"""#beginTestCaseResult {case}
 <?xml version="1.0" encoding="UTF-8"?>
@@ -125,6 +205,7 @@ def write_config_inventory_evidence(
     contract: cts.RootfsContract,
     page_profile: str = "16k",
     display: str = "vnc",
+    runtime_identity: dict[str, str] | None = None,
 ) -> Path:
     payload = config_qpa(api).encode()
     configs = cts.parse_egl_config_qpa(payload.decode(), api)
@@ -156,6 +237,23 @@ def write_config_inventory_evidence(
             for config in configs
         ],
     }
+    if api == "gl46":
+        metadata.update({"backend": "venus-kosmickrisp", "renderer": "zink",
+                         "surface": [1280, 720], **(runtime_identity or {})})
+        (directory / "console.log").write_text("Darwin UML stopped: result=0 exitcode=0\n")
+        payloads = {
+            "results.qpa": payload,
+            "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
+                             "x11_server=xwayland\nguest_page_size=16384\n"
+                             "zink over Virtio-GPU Venus\n").encode(),
+            "summary.txt": b"cts_rc=0\n",
+        }
+        for name, content in payloads.items():
+            (artifacts / name).write_bytes(content)
+        serial = directory / cts.ARTIFACT_TRANSPORT_LOG
+        serial.write_text("".join(framed_artifact(name, content) for name, content in payloads.items()))
+        metadata.update({"console_sha256": cts.sha256_file(directory / "console.log"),
+                         "artifact_transport_sha256": cts.sha256_file(serial)})
     run = directory / "run.json"
     run.write_text(json.dumps(metadata), encoding="utf-8")
     return run
@@ -450,6 +548,236 @@ class VkGlCtsToolingTests(unittest.TestCase):
                     "--rootfs-type",
                     "ext4",
                 ]
+            )
+
+    def test_zink_gl_receipt_owns_exact_gl46_leaves_and_launcher(self) -> None:
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt_path = Path(temporary) / "zink-gl-receipt.json"
+            receipt_path.write_text(
+                json.dumps(zink_gl_derivative_receipt(identity)),
+                encoding="utf-8",
+            )
+            options = cts.parse_arguments(
+                [
+                    "--renderer",
+                    "zink",
+                    "--leaf",
+                    "gl46",
+                    "--api",
+                    "gl46",
+                    "--fraction",
+                    "3,8",
+                    "--rootfs",
+                    "/tmp/rootfs-vulkan-zink-gl.ext4",
+                    "--rootfs-type",
+                    "ext4",
+                    "--rootfs-receipt",
+                    str(receipt_path),
+                ]
+            )
+            self.assertEqual(options.rootfs_contract.glcts_sha256, "5" * 64)
+            self.assertEqual(options.leaves["gl46"].case_count, 19714)
+            self.assertEqual(options.leaves["gl46"].sha256, "7" * 64)
+            selection = cts.Selection(options.leaves["gl46"], (), 3, 8)
+            launcher = cts.build_guest_launcher(
+                selection,
+                0,
+                900,
+                16384,
+                options.rootfs_contract,
+                renderer_backend="zink",
+            )
+            self.assertIn("MESA_LOADER_DRIVER_OVERRIDE=zink", launcher)
+            self.assertIn("renderer is not Zink over Virtio-GPU Venus", launcher)
+            command = cts.build_harness_command(
+                options, selection, Path("/tmp/uml-zink-cts-test")
+            )
+            self.assertEqual(command[:2], ["env", "UML_GPU_EXPERIMENTAL_VULKAN=1"])
+            self.assertTrue(
+                any(
+                    "systemctl set-environment MESA_LOADER_DRIVER_OVERRIDE=zink"
+                    in argument
+                    for argument in command
+                )
+            )
+
+    def test_zink_gl_receipt_requires_each_source_identity(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        for field in ("protocol", "mesa", "cts", "vulkan_headers", "vulkan_loader"):
+            for invalid in (None, {}, []):
+                with self.subTest(field=field, invalid=invalid):
+                    receipt = copy.deepcopy(valid)
+                    receipt[field] = invalid
+                    with self.assertRaisesRegex(cts.CampaignError, field):
+                        cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_rejects_stale_and_mismatched_sources(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        for field in ("protocol", "mesa", "cts", "vulkan_headers", "vulkan_loader"):
+            changes = {
+                "repository": "https://example.invalid/unrelated",
+                "base_commit": "0" * 40,
+                "base_tree": "0" * 40,
+            }
+            if "release_ref" in valid[field]:
+                changes.update(release_ref="stale-tag", release_object="0" * 40)
+            if "patched_tree" in valid[field]:
+                changes["patched_tree"] = valid[field]["base_tree"]
+            for key, value in changes.items():
+                with self.subTest(field=field, key=key):
+                    receipt = copy.deepcopy(valid)
+                    receipt[field][key] = value
+                    with self.assertRaisesRegex(cts.CampaignError, field):
+                        cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_requires_the_exact_ordered_patch_series(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        for field in ("protocol", "mesa", "cts"):
+            patches = valid[field]["patches"]
+            changed = copy.deepcopy(patches)
+            changed[-1]["sha256"] = "0" * 64
+            wrong_id = copy.deepcopy(patches)
+            wrong_id[-1]["stable_patch_id"] = "0" * 40
+            for invalid in ([], patches[:-1], patches[::-1], changed, wrong_id):
+                with self.subTest(field=field, patches=invalid):
+                    receipt = copy.deepcopy(valid)
+                    receipt[field]["patches"] = invalid
+                    with self.assertRaisesRegex(cts.CampaignError, field + r"\.patches"):
+                        cts.load_zink_gl_derivative_receipt(receipt, identity)
+        for field in ("protocol", "cts", "vulkan_headers", "vulkan_loader"):
+            receipt = copy.deepcopy(valid)
+            receipt[field]["patched"] = not receipt[field]["patched"]
+            with self.subTest(field=field), self.assertRaisesRegex(cts.CampaignError, field):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+        for field in ("vulkan_headers", "vulkan_loader"):
+            receipt = copy.deepcopy(valid)
+            receipt[field]["patches"] = valid["cts"]["patches"]
+            with self.subTest(field=field), self.assertRaisesRegex(cts.CampaignError, field):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_epoch_does_not_freeze_vulkan_image_or_build_identity(self) -> None:
+        identity = cts.load_identity()
+        receipt = zink_gl_derivative_receipt(identity)
+        receipt["cts"]["build_id"] = "d" * 40
+        _, contract = cts.load_zink_gl_derivative_receipt(receipt, identity)
+        self.assertEqual(contract.sha256, "4" * 64)
+        self.assertEqual(contract.glcts_sha256, "5" * 64)
+
+    def test_zink_gl_receipt_requires_authenticated_protocol_generation(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        for value in (None, {}, {"driver_headers": {}}):
+            receipt = copy.deepcopy(valid)
+            receipt["protocol"]["generation"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(cts.CampaignError, "protocol generation"):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+        for key, value in (("registry_sha256", "0" * 64),
+                           ("configure_argv", []), ("driver_headers", {})):
+            receipt = copy.deepcopy(valid)
+            receipt["protocol"]["generation"][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(cts.CampaignError, "protocol generat"):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_requires_exact_offline_protocol_setup(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        argv = valid["protocol"]["generation"]["configure_argv"]
+        for wrap_mode in ("nofallback", "nodownload"):
+            receipt = copy.deepcopy(valid)
+            receipt["protocol"]["generation"]["configure_argv"][4] = f"--wrap-mode={wrap_mode}"
+            cts.load_zink_gl_derivative_receipt(receipt, identity)
+        changes = [
+            ["true"],
+            ["ninja", *argv[1:]],
+            [argv[0], "configure", *argv[2:]],
+            argv[:-1],
+            [*argv, "--wrap-mode=default"],
+            [*argv[:4], "--wrap-mode=default", argv[5]],
+            [*argv[:4], "--wrap-mode=forcefallback", argv[5]],
+            [*argv[:4], argv[5], argv[4]],
+            [*argv[:5], "-Dunrelated=/prepared/sdk"],
+        ]
+        for invalid in changes:
+            receipt = copy.deepcopy(valid)
+            receipt["protocol"]["generation"]["configure_argv"] = invalid
+            with self.subTest(argv=invalid), self.assertRaisesRegex(
+                cts.CampaignError, "protocol generation command"
+            ):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_requires_normalized_protocol_input_paths(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        for index, prefix in ((2, ""), (3, ""), (5, "-Dvulkan-headers-dir=")):
+            for path in ("", "relative/input", "/home/../vm/input", "/home/./vm/input",
+                         "//home/vm/input", "/home//vm/input", "/home/vm/input/",
+                         "/home/vm/input/..", "/home/vm/input/.", "/", "/home/\x00/input"):
+                receipt = copy.deepcopy(valid)
+                receipt["protocol"]["generation"]["configure_argv"][index] = prefix + path
+                diagnostic = ("protocol generation command" if not path and not prefix
+                              else "protocol generation .* directory")
+                with self.subTest(index=index, path=path), self.assertRaisesRegex(
+                    cts.CampaignError, diagnostic
+                ):
+                    cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_requires_one_matching_mesa_protocol_binding(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        argv = valid["mesa"]["configure_argv"]
+        option = next(value for value in argv if value.startswith("-Dvenus-protocol-dir="))
+        without = [value for value in argv if value != option]
+        for invalid in (
+            without,
+            [*without, "-Dvenus-protocol-dir=/unrelated/generated"],
+            [*argv, option],
+            [*argv, "-Dvenus-protocol-dir=/unrelated/generated"],
+            [*argv, "-Dvenus-protocol-dir"],
+            [*argv, "-D", option[2:]],
+        ):
+            receipt = copy.deepcopy(valid)
+            receipt["mesa"]["configure_argv"] = invalid
+            with self.subTest(argv=invalid), self.assertRaisesRegex(
+                cts.CampaignError, "Mesa protocol generation binding"
+            ):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_gl_receipt_requires_the_exact_protocol_header_names(self) -> None:
+        identity = cts.load_identity()
+        valid = zink_gl_derivative_receipt(identity)
+        schema = cts.vulkan_cts_receipt.load_json(cts.vulkan_cts_receipt.SCHEMA_PATH)
+        expected = schema["$defs"]["protocolDriverHeader"]["enum"]
+        headers = valid["protocol"]["generation"]["driver_headers"]
+        self.assertEqual(len(expected), 38)
+        self.assertEqual(set(headers), set(expected))
+        for name in expected:
+            receipt = copy.deepcopy(valid)
+            changed = receipt["protocol"]["generation"]["driver_headers"]
+            changed["vn_protocol_driver_unrecognized.h"] = changed.pop(name)
+            with self.subTest(header=name), self.assertRaisesRegex(
+                cts.CampaignError, "protocol generated header inventory"
+            ):
+                cts.load_zink_gl_derivative_receipt(receipt, identity)
+
+    def test_zink_renderer_probe_requires_venus_and_rejects_software(self) -> None:
+        valid = """device=/dev/dri/card0
+device=/dev/dri/renderD128
+x11_server=xwayland
+OpenGL renderer string: zink Vulkan 1.4 (Virtio-GPU Venus)
+"""
+        cts.validate_renderer_probe(valid, renderer_backend="zink")
+        with self.assertRaisesRegex(cts.CampaignError, "Virtio-GPU Venus"):
+            cts.validate_renderer_probe(
+                valid.replace("Virtio-GPU Venus", "unknown Vulkan device"),
+                renderer_backend="zink",
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "forbidden renderer"):
+            cts.validate_renderer_probe(
+                valid + "llvmpipe\n", renderer_backend="zink"
             )
 
     def test_complete_inventory_identity_is_exact_and_fail_closed(self) -> None:
@@ -959,12 +1287,13 @@ Kernarium: runtime returned 0
             cts.artifact_acknowledgement("UML_CTS_STATUS|rc=0")
 
         host, guest = socket.socketpair()
+        host.setblocking(False)
+        guest.setblocking(False)
         transport = cts.AcknowledgedArtifactSocket(Path("/unused"))
         transport.connection = host
         transport.connected = True
         try:
             guest.sendall((frames[0] + "\n").encode("ascii"))
-            transport.service()
             transport.service()
             self.assertEqual(
                 guest.recv(256),
@@ -1294,8 +1623,12 @@ Kernarium: runtime returned 0
                     str(generator),
                     "--runner",
                     str(INTEGRATION_GPU / "run_vk_gl_cts.py"),
+                    "--vulkan-runner",
+                    str(INTEGRATION_GPU / "run_vk_cts.py"),
                     "--identity",
                     str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
+                    "--vulkan-identity",
+                    str(INTEGRATION_GPU / "vulkan_cts_identity.json"),
                     "--campaigns",
                     str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
                     "--matrix",
@@ -1326,6 +1659,10 @@ Kernarium: runtime returned 0
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
             self.assertIn("x11_server=xwayland", generated)
             self.assertIn("uml-vk-gl-cts.service", generated)
+            self.assertIn("vulkan-info-development-v1", generated)
+            self.assertIn("uml-vulkan-cts.service", generated)
+            self.assertIn("VK_ERROR_INITIALIZATION_FAILED", generated)
+            self.assertIn("bool namedSerialArtifacts", generated)
             self.assertIn("std::string_view erofsSetup", generated)
             self.assertIn("std::string_view ext4Setup", generated)
             self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", generated)
@@ -1334,6 +1671,48 @@ Kernarium: runtime returned 0
                 generated,
             )
             self.assertNotIn("/dev/ubda", generated)
+
+            venus_output = Path(temporary) / "KernariumVenusCtsCampaigns.hpp"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(generator),
+                    "--runner",
+                    str(INTEGRATION_GPU / "run_vk_gl_cts.py"),
+                    "--vulkan-runner",
+                    str(INTEGRATION_GPU / "run_vk_cts.py"),
+                    "--identity",
+                    str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
+                    "--vulkan-identity",
+                    str(INTEGRATION_GPU / "vulkan_cts_identity.json"),
+                    "--campaigns",
+                    str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
+                    "--matrix",
+                    str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
+                    "--derivative-receipt",
+                    str(DERIVATIVE_RECEIPT),
+                    "--vulkan-receipt",
+                    str(INTEGRATION_GPU / "vulkan_cts_receipt.json"),
+                    "--experimental-venus",
+                    "--page-size",
+                    "4096",
+                    "--output",
+                    str(venus_output),
+                ],
+                check=True,
+            )
+            venus_generated = venus_output.read_text(encoding="utf-8")
+            self.assertIn("vulkan-info-receipt-smoke-v1", venus_generated)
+            self.assertIn(
+                cts.sha256_file(INTEGRATION_GPU / "vulkan_cts_receipt.json"),
+                venus_generated,
+            )
+            self.assertIn(
+                "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
+                venus_generated,
+            )
+            self.assertIn("formal_conformance=false", venus_generated)
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
         shards = cts.load_apple_matrix_shards()
@@ -2138,6 +2517,531 @@ OpenGL renderer string: virgl
             ["env", "UML_GPU_CAPABILITY_REPORT=1", "UML_GPU_FRAME_STATS=1"],
         )
 
+
+class ArtifactTransportTests(unittest.TestCase):
+    def transport(self, connection: socket.socket) -> cts.AcknowledgedArtifactSocket:
+        transport = cts.AcknowledgedArtifactSocket(Path("/unused"))
+        transport.connection = connection
+        transport.connected = True
+        self.addCleanup(transport.close)
+        return transport
+
+    def test_fragmented_and_coalesced_frames_acknowledge_in_one_call(self) -> None:
+        transcript = framed_artifact("results.qpa", b"payload")
+        frames = transcript.splitlines()
+        expected = "".join(cts.artifact_acknowledgement(f) + "\n" for f in frames)
+        host, guest = socket.socketpair()
+        host.setblocking(False)
+        guest.setblocking(False)
+        self.addCleanup(guest.close)
+        transport = self.transport(host)
+        guest.sendall(transcript[:7].encode("ascii"))
+        transport.service()
+        with self.assertRaises(BlockingIOError):
+            guest.recv(4096)
+        guest.sendall(transcript[7:].encode("ascii"))
+        transport.service()
+        self.assertEqual(guest.recv(4096), expected.encode("ascii"))
+        guest.close()
+        transport.service()
+        self.assertTrue(transport.closed)
+        self.assertEqual(transport.finish(), transcript)
+        self.assertEqual(cts.decode_artifacts(transcript), {"results.qpa": b"payload"})
+
+    def test_backpressure_retains_exact_suffix_and_services_new_input(self) -> None:
+        frames = framed_artifact("results.qpa", b"payload").splitlines()
+        connection = mock.Mock(spec=socket.socket)
+        transport = self.transport(connection)
+        connection.recv.side_effect = [
+            (frame + "\n").encode("ascii") for frame in frames[:2]
+        ]
+        ack0, ack1 = [
+            (cts.artifact_acknowledgement(frame) + "\n").encode("ascii")
+            for frame in frames[:2]
+        ]
+        attempts = []
+
+        def send(payload: bytes) -> int:
+            attempts.append(bytes(payload))
+            if len(attempts) == 1:
+                raise BlockingIOError()
+            return 5 if len(attempts) == 2 else len(payload)
+
+        connection.send.side_effect = send
+        with mock.patch.object(
+            cts.select, "select", side_effect=[
+                ([connection], [], []),
+                ([connection], [], []),
+                ([], [connection], []),
+            ],
+        ) as readiness:
+            transport.service(timeout=0.05)
+            self.assertEqual(transport.output, ack0)
+            transport.service(timeout=0.05)
+            self.assertEqual(transport.output, (ack0 + ack1)[5:])
+            transport.service(timeout=0.05)
+        self.assertEqual(attempts, [ack0, ack0 + ack1, (ack0 + ack1)[5:]])
+        self.assertEqual(transport.output, b"")
+        self.assertEqual(connection.recv.call_args_list, [mock.call(64 * 1024)] * 2)
+        self.assertEqual(
+            readiness.call_args_list,
+            [
+                mock.call([connection], [], [], 0.05),
+                mock.call([connection], [connection], [], 0.05),
+                mock.call([connection], [connection], [], 0.05),
+            ],
+        )
+
+    def test_idle_connected_socket_waits_once_without_polling(self) -> None:
+        connection = mock.Mock(spec=socket.socket)
+        transport = self.transport(connection)
+        with (
+            mock.patch.object(
+                cts.select, "select", return_value=([], [], []),
+            ) as readiness,
+            mock.patch.object(cts.time, "sleep") as sleep,
+        ):
+            transport.service(timeout=0.05)
+        readiness.assert_called_once_with([connection], [], [], 0.05)
+        sleep.assert_not_called()
+        connection.recv.assert_not_called()
+        connection.send.assert_not_called()
+
+    def test_absent_and_closed_sockets_wait_without_spinning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            for connected in (False, True):
+                with self.subTest(connected=connected):
+                    transport = cts.AcknowledgedArtifactSocket(
+                        Path(temporary) / "absent.sock"
+                    )
+                    transport.connected = connected
+                    transport.closed = connected
+                    with (
+                        mock.patch.object(cts.time, "sleep") as sleep,
+                        mock.patch.object(cts.select, "select") as readiness,
+                    ):
+                        transport.service(timeout=0.05)
+                        transport.service()
+                    sleep.assert_called_once_with(0.05)
+                    readiness.assert_not_called()
+
+    def test_continuously_readable_socket_gets_only_one_receive_and_send(self) -> None:
+        frame = framed_artifact("results.qpa", b"payload").splitlines()[0]
+        connection = mock.Mock(spec=socket.socket)
+        connection.recv.return_value = (frame + "\n").encode("ascii")
+        connection.send.side_effect = lambda payload: len(payload)
+        transport = self.transport(connection)
+        with mock.patch.object(
+            cts.select, "select", return_value=([connection], [], []),
+        ) as readiness:
+            transport.service(timeout=0.05)
+        readiness.assert_called_once()
+        connection.recv.assert_called_once_with(64 * 1024)
+        connection.send.assert_called_once()
+        self.assertEqual(transport.lines, [frame + "\n"])
+
+    def test_invalid_frames_are_never_acknowledged(self) -> None:
+        for payload in (b"\n", b"status\n", b"\xff\n", b"status\r\n"):
+            with self.subTest(payload=payload):
+                connection = mock.Mock(spec=socket.socket)
+                connection.recv.return_value = payload
+                transport = self.transport(connection)
+                with mock.patch.object(
+                    cts.select, "select", return_value=([connection], [], []),
+                ):
+                    with self.assertRaises(cts.CampaignError):
+                        transport.service()
+                connection.send.assert_not_called()
+                self.assertEqual(transport.lines, [])
+                self.assertEqual(transport.output, b"")
+
+    def test_overlong_partial_frame_is_rejected_without_acknowledgement(self) -> None:
+        connection = mock.Mock(spec=socket.socket)
+        connection.recv.return_value = b"x"
+        transport = self.transport(connection)
+        transport.input.extend(b"x" * cts.MAX_ARTIFACT_TRANSPORT_LINE)
+        with mock.patch.object(
+            cts.select, "select", return_value=([connection], [], []),
+        ):
+            with self.assertRaisesRegex(cts.CampaignError, "exceeds its bound"):
+                transport.service()
+        connection.send.assert_not_called()
+
+    def test_eof_rejects_both_partial_input_and_pending_acknowledgement(self) -> None:
+        for pending in ("input", "output"):
+            with self.subTest(pending=pending):
+                connection = mock.Mock(spec=socket.socket)
+                connection.recv.return_value = b""
+                transport = self.transport(connection)
+                getattr(transport, pending).extend(b"pending")
+                with mock.patch.object(
+                    cts.select, "select",
+                    return_value=([connection], [connection], []),
+                ):
+                    with self.assertRaisesRegex(cts.CampaignError, "incomplete frame"):
+                        transport.service()
+                connection.close.assert_called_once()
+                connection.send.assert_not_called()
+                self.assertTrue(transport.closed)
+
+
+class ArtifactGuestWaitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.context = contextlib.ExitStack()
+        self.addCleanup(self.context.close)
+        temporary = self.context.enter_context(tempfile.TemporaryDirectory())
+        self.log = Path(temporary) / "console.log"
+        self.log.write_text("guest progress\n", encoding="utf-8")
+        self.clock = 0.0
+        self.process = mock.Mock(spec=subprocess.Popen)
+        self.process.poll.return_value = None
+        self.transport = mock.Mock()
+        self.transport.connection = object()
+        self.transport.lines = []
+        self.transport.finish.side_effect = lambda: "".join(self.transport.lines)
+        self.context.enter_context(mock.patch.object(
+            cts, "AcknowledgedArtifactSocket", return_value=self.transport,
+        ))
+        self.context.enter_context(mock.patch.object(
+            cts.time, "monotonic", side_effect=lambda: self.clock,
+        ))
+        self.context.enter_context(mock.patch.object(
+            cts.time, "sleep",
+            side_effect=AssertionError("unconditional polling sleep"),
+        ))
+        self.context.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        self.waits = []
+
+    def advance(self, timeout: float, *, ready_after: float | None = None) -> None:
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, cts.ARTIFACT_SERVICE_INTERVAL)
+        self.waits.append(timeout)
+        self.clock += timeout if ready_after is None else min(timeout, ready_after)
+
+    def wait(self, timeout: int = 1, *, stall_timeout: int = 0) -> tuple[str, str]:
+        return cts.wait_for_guest(
+            self.process, self.log, timeout, Path("/unused"),
+            console_stall_timeout=stall_timeout,
+        )
+
+    def test_exit_drains_final_frame_without_fixed_pacing(self) -> None:
+        self.process.poll.side_effect = [None, None, 0]
+
+        def service(timeout: float) -> None:
+            self.advance(timeout)
+            if len(self.waits) == 4:
+                self.transport.lines.append("final frame\n")
+                self.transport.connection = None
+
+        self.transport.service.side_effect = service
+        self.assertEqual(self.wait(), ("guest progress\n", "final frame\n"))
+        self.assertEqual(len(self.waits), 4)
+        self.process.wait.assert_called_once_with(timeout=5)
+        self.transport.close.assert_called_once()
+
+    def test_continuous_input_cannot_starve_hard_deadline_or_process_poll(self) -> None:
+        def service(timeout: float) -> None:
+            self.advance(timeout, ready_after=0.01)
+            self.transport.lines.append("progress\n")
+
+        self.transport.service.side_effect = service
+        with self.assertRaisesRegex(TimeoutError, "exceeded 1 seconds"):
+            self.wait()
+        self.assertEqual(self.process.poll.call_count, len(self.waits))
+        self.assertGreater(len(self.waits), 20)
+        self.assertEqual(self.clock, 1)
+        self.transport.close.assert_called_once()
+
+    def test_idle_socket_still_checks_console_stall(self) -> None:
+        self.transport.service.side_effect = self.advance
+        with self.assertRaisesRegex(TimeoutError, "no progress for 30 seconds"):
+            self.wait(timeout=100, stall_timeout=30)
+        self.assertGreaterEqual(self.clock, 60)
+        self.assertLess(self.clock, 61)
+        self.assertEqual(self.process.poll.call_count, len(self.waits))
+        self.transport.close.assert_called_once()
+
+    def test_post_exit_pending_bytes_still_fail_after_bounded_drain(self) -> None:
+        self.process.poll.return_value = 0
+        self.transport.service.side_effect = self.advance
+        self.transport.finish.side_effect = cts.CampaignError("pending bytes")
+        with self.assertRaisesRegex(cts.CampaignError, "pending bytes"):
+            self.wait()
+        self.assertAlmostEqual(self.clock, 2 + cts.ARTIFACT_SERVICE_INTERVAL)
+        self.assertLessEqual(len(self.waits), 42)
+        self.transport.close.assert_called_once()
+
+    def test_interruption_closes_transport(self) -> None:
+        self.transport.service.side_effect = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.wait()
+        self.transport.close.assert_called_once()
+
+
+
+class WaiverTests(unittest.TestCase):
+    """The granted CTS waivers are exact, scoped, guest-bound and fail-closed."""
+
+    @staticmethod
+    def leaf() -> cts.LeafIdentity:
+        return cts.LeafIdentity(
+            "gl45-es3-main-es-for-gl", "gl45-es3-main-es-for-gl.txt", 16, "4" * 64
+        )
+
+    def matrix(
+        self,
+        name: str = "es3-main",
+        fbo_config: str | None = "rgba8888d24s8ms0",
+        leaf: cts.LeafIdentity | None = None,
+        opengl_configuration_index: int | None = 0,
+        api: str = "gl46",
+    ) -> cts.MatrixRun:
+        leaf = leaf or self.leaf()
+        configuration = cts.MustpassConfiguration(
+            api=api,
+            leaf=leaf,
+            name=name,
+            use_for_first_egl_config=True,
+            screen_rotation="unspecified",
+            surface_width=256,
+            surface_height=256,
+            base_seed=1,
+            watchdog="disable",
+            fbo_config=fbo_config,
+            xml_arguments=("--deqp-screen-rotation=unspecified",),
+        )
+        return cts.MatrixRun(
+            configuration=configuration,
+            egl_config=cts.EglConfig(1, ("window", "pixmap", "pbuffer")),
+            egl_config_index=0,
+            config_inventory_sha256="1" * 64,
+            selection=cts.Selection(leaf, (), 0, 8),
+            mustpass_xml_path="/opt/vk-gl-cts/openglcts/mustpass.xml",
+            mustpass_xml_size=1478,
+            mustpass_xml_sha256="2" * 64,
+            opengl_configuration_index=opengl_configuration_index,
+        )
+
+    def test_checked_waiver_list_names_only_the_es3_fbo_state_queries(self) -> None:
+        waivers = cts.load_waivers()
+        self.assertEqual(
+            [waiver.identifier for waiver in waivers],
+            ["es3-fbo-default-framebuffer-state-queries"],
+        )
+        waiver = waivers[0]
+        self.assertEqual(
+            (waiver.api, waiver.configuration_name, waiver.draw_surface_type),
+            ("gl46", "es3-main", "fbo"),
+        )
+        self.assertEqual(waiver.vendor, "Mesa")
+        self.assertEqual(waiver.granted, "2026-09-08")
+        self.assertEqual(len(waiver.cases), 15)
+        self.assertEqual(list(waiver.cases), sorted(set(waiver.cases)))
+        for case in waiver.cases:
+            self.assertRegex(
+                case,
+                r"^dEQP-GL45-ES3\.functional\.state_query\."
+                r"(fbo\.(draw|read)_framebuffer_default_framebuffer"
+                r"|fbo\.framebuffer_attachment_x_size_initial"
+                r"|integers\.(draw_buffer|read_buffer|framebuffer_binding)"
+                r"_get(boolean|float|integer|integer64))$",
+            )
+        self.assertEqual(cts.waived_cases(waivers), frozenset(waiver.cases))
+
+        self.assertEqual(cts.applicable_waivers(self.matrix(), waivers), waivers)
+        for other in (
+            self.matrix(name="es31-main"),
+            self.matrix(fbo_config=None),
+            self.matrix(
+                api="gles3", name="khr-main", opengl_configuration_index=None,
+                leaf=cts.LeafIdentity("gles3", "gles3.txt", 16, "5" * 64),
+            ),
+        ):
+            self.assertEqual(cts.applicable_waivers(other, waivers), ())
+
+        payload = json.loads(cts.WAIVERS_PATH.read_text(encoding="utf-8"))
+        entry = payload["waivers"][0]
+
+        def duplicate_waiver(document: dict) -> None:
+            clone = copy.deepcopy(entry)
+            clone["id"] = "other"
+            document["waivers"].append(clone)
+
+        mutations = (
+            (lambda document: document.update(schema_version=2), "invalid CTS waiver list"),
+            (lambda document: document.update(waivers=[]), "invalid CTS waiver list"),
+            (lambda document: document["waivers"][0].update(note="x"), "invalid CTS waiver entry"),
+            (lambda document: document["waivers"][0]["scope"].pop("api"), "invalid CTS waiver scope"),
+            (lambda document: document["waivers"][0].update(description=" "), "non-empty strings"),
+            (lambda document: document["waivers"][0]["scope"].update(draw_surface_type="screen"), "unknown draw surface"),
+            (lambda document: document["waivers"][0].update(renderers=[]), "renderer patterns"),
+            (lambda document: document["waivers"][0]["cases"].reverse(), "sorted unique case names"),
+            (lambda document: document["waivers"][0]["cases"].append(entry["cases"][-1]), "sorted unique case names"),
+            (lambda document: document["waivers"][0]["cases"].append("bad case name"), "sorted unique case names"),
+            (duplicate_waiver, "repeats an id or a case"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "waivers.json"
+            for mutate, message in mutations:
+                document = copy.deepcopy(payload)
+                mutate(document)
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    cts.CampaignError, message
+                ):
+                    cts.load_waivers(path)
+            path.write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "cannot read CTS waiver list"):
+                cts.load_waivers(path)
+
+    def test_waiver_file_and_runner_arguments_bind_the_guest(self) -> None:
+        waivers = cts.load_waivers()
+        xml = cts.waiver_xml(waivers)
+        self.assertTrue(
+            xml.startswith('<?xml version="1.0" encoding="utf-8"?>\n<waiver_list>\n')
+        )
+        self.assertIn(
+            '<waiver vendor="Mesa" url="docs/testing.md#opengl-es3-fbo-state-query-waiver">',
+            xml,
+        )
+        self.assertIn(
+            "<r>zink Vulkan *(Virtio-GPU Venus (*) (MESA_KOSMICKRISP))</r>", xml
+        )
+        self.assertEqual(xml.count("<t>"), 15)
+        for case in waivers[0].cases:
+            self.assertIn(f"<t>{case}</t>", xml)
+        parsed = ElementTree.fromstring(xml)
+        self.assertEqual(
+            [element.text for element in parsed.iter("t")], list(waivers[0].cases)
+        )
+
+        odd = cts.Waiver(
+            "odd", "2026-09-08", "owner", "gl46", "es3-main", "fbo",
+            'V"<&', ("r<",), "u&", "d>", ("a.b",),
+        )
+        rendered = cts.waiver_xml((odd,))
+        self.assertIn("<r>r&lt;</r>", rendered)
+        self.assertIn("<description>d&gt;</description>", rendered)
+        self.assertIn("url=\"u&amp;\"", rendered)
+        self.assertEqual(ElementTree.fromstring(rendered).find("waiver").get("vendor"), 'V"<&')
+
+        matrix = self.matrix()
+        plain = cts.matrix_runner_arguments(matrix, "/run/uml-cts/selected.txt")
+        self.assertFalse(any(argument.startswith("--deqp-waiver-file") for argument in plain))
+        self.assertEqual(
+            cts.matrix_runner_arguments(
+                matrix, "/run/uml-cts/selected.txt", cts.GUEST_WAIVER_PATH
+            ),
+            plain + ["--deqp-waiver-file=/usr/local/share/uml-vk-gl-cts/waivers.xml"],
+        )
+
+        digest = hashlib.sha256(xml.encode("utf-8")).hexdigest()
+        launcher = cts.build_guest_launcher(
+            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix=matrix, renderer_backend="zink", waiver_sha256=digest,
+        )
+        self.assertIn(
+            "--deqp-waiver-file=/usr/local/share/uml-vk-gl-cts/waivers.xml", launcher
+        )
+        self.assertIn(digest, launcher)
+        self.assertIn("waiver list identity changed", launcher)
+        unwaived = cts.build_guest_launcher(
+            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix=matrix, renderer_backend="zink",
+        )
+        self.assertNotIn("--deqp-waiver-file", unwaived)
+        self.assertNotIn("waiver list identity changed", unwaived)
+        for arguments in (
+            {"matrix": None, "waiver_sha256": digest},
+            {"matrix": matrix, "waiver_sha256": "abc"},
+        ):
+            with self.subTest(arguments=arguments), self.assertRaisesRegex(
+                cts.CampaignError, "waiver list needs"
+            ):
+                cts.build_guest_launcher(
+                    matrix.selection, 1, 300, 16384, erofs_contract(),
+                    renderer_backend="zink", **arguments,
+                )
+
+    def test_busy_stall_bound_keeps_a_computing_case_and_cuts_a_wedged_one(self) -> None:
+        matrix = self.matrix()
+        busy = cts.build_guest_launcher(
+            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix=matrix, renderer_backend="zink", progress_timeout=600,
+            progress_busy_timeout=3600,
+        )
+        self.assertIn("progress_timeout=600\n", busy)
+        self.assertIn("progress_busy_timeout=3600\n", busy)
+        self.assertIn("progress_busy_ticks=$((progress_interval * clock_ticks / 10))", busy)
+        self.assertIn("cts_cpu_ticks()", busy)
+        self.assertIn("pgrep -x glcts", busy)
+        self.assertIn('"/proc/$cts_process/stat"', busy)
+        self.assertIn("idle_seconds=0", busy)
+        self.assertIn(
+            "UML_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|idle_seconds=%s|cpu_ticks=%s|case=%s",
+            busy,
+        )
+        self.assertIn('[ "$idle_seconds" -ge "$progress_timeout" ]', busy)
+        self.assertIn('[ "$stalled_seconds" -ge "$progress_busy_timeout" ]', busy)
+        plain = cts.build_guest_launcher(
+            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix=matrix, renderer_backend="zink", progress_timeout=600,
+        )
+        self.assertIn("progress_busy_timeout=0\n", plain)
+        self.assertIn('[ "$progress_busy_timeout" -le 0 ]', plain)
+        for bound in (-1, 599):
+            with self.subTest(bound=bound), self.assertRaisesRegex(
+                cts.CampaignError, "busy stall bound"
+            ):
+                cts.build_guest_launcher(
+                    matrix.selection, 1, 300, 16384, erofs_contract(),
+                    matrix=matrix, renderer_backend="zink", progress_timeout=600,
+                    progress_busy_timeout=bound,
+                )
+
+    def test_waived_statuses_are_accepted_only_for_granted_cases(self) -> None:
+        statuses = ("Pass", "NotSupported", "QualityWarning", "CompatibilityWarning")
+        waivers = cts.load_waivers()
+        granted = waivers[0].cases[0]
+        other = waivers[0].cases[1]
+        cts.validate_official_runner_results(
+            {granted: "Waiver", other: "Pass", "KHR-GL46.info.vendor": "NotSupported"},
+            statuses, cts.waived_cases(waivers),
+        )
+        for results in (
+            {granted: "Fail"},
+            {granted: "Crash"},
+            {"KHR-GL46.info.vendor": "Waiver"},
+        ):
+            with self.subTest(results=results), self.assertRaisesRegex(
+                cts.CampaignError, "official CTS runner rejects"
+            ):
+                cts.validate_official_runner_results(
+                    results, statuses, cts.waived_cases(waivers)
+                )
+        with self.assertRaisesRegex(cts.CampaignError, "official CTS runner rejects"):
+            cts.validate_official_runner_results({granted: "Waiver"}, statuses)
+
+        header = (
+            '#sessionInfo vendor "Mesa"\n'
+            '#sessionInfo renderer "zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) (MESA_KOSMICKRISP))"\n'
+            '#sessionInfo waiverUrls "docs/testing.md#opengl-es3-fbo-state-query-waiver"\n'
+            "#beginSession\n"
+        )
+        cts.validate_waiver_session(header, waivers)
+        cts.validate_waiver_session('#sessionInfo vendor "Mesa"\n#beginSession\n', ())
+        for text, applied in (
+            (header, ()),
+            ('#sessionInfo vendor "Mesa"\n#beginSession\n', waivers),
+            (header.replace("docs/testing.md", "elsewhere.md"), waivers),
+            (header.replace('waiver"', 'waiver other"'), waivers),
+        ):
+            with self.subTest(text=text[-80:]), self.assertRaisesRegex(
+                cts.CampaignError, "applied waivers"
+            ):
+                cts.validate_waiver_session(text, applied)
+        with self.assertRaisesRegex(cts.CampaignError, "malformed waiver line"):
+            cts.validate_waiver_session("#sessionInfo waiverUrls x\n", waivers)
 
 if __name__ == "__main__":
     unittest.main()

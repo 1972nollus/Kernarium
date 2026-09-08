@@ -1,4 +1,4 @@
-From ce0c84d7cde430eda1ad0367cfca28f1c56a82db Mon Sep 17 00:00:00 2001
+From 32d3f6f985d9ea400132e494023329a8fed0bc32 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
 Subject: [PATCH 07/12] venus: consume paired protocol headers from an explicit

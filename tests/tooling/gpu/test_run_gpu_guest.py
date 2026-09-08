@@ -6,8 +6,10 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import io
+import signal
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -306,6 +308,52 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertEqual(stream.getvalue(), b"0123")
         self.assertEqual(pending, b"456789")
 
+    def test_repeated_interrupt_cannot_skip_emulator_kill_fallback(self) -> None:
+        observed_handlers: list[tuple[object, object]] = []
+
+        class StubbornProcess:
+            def __init__(self) -> None:
+                self.alive = True
+                self.signals: list[int] = []
+
+            def poll(self) -> int | None:
+                return None if self.alive else -signal.SIGKILL
+
+            def send_signal(self, signal_number: int) -> None:
+                self.signals.append(signal_number)
+                if signal_number == signal.SIGKILL:
+                    self.alive = False
+
+            def wait(self, timeout: float) -> int:
+                if self.alive:
+                    observed_handlers.append(
+                        (
+                            signal.getsignal(signal.SIGINT),
+                            signal.getsignal(signal.SIGTERM),
+                        )
+                    )
+                    raise subprocess.TimeoutExpired("emulator", timeout)
+                return -signal.SIGKILL
+
+        process = StubbornProcess()
+        previous_handlers = (
+            signal.getsignal(signal.SIGINT),
+            signal.getsignal(signal.SIGTERM),
+        )
+        run_gpu_guest.terminate_process(process)  # type: ignore[arg-type]
+
+        self.assertEqual(
+            observed_handlers, [(signal.SIG_IGN, signal.SIG_IGN)]
+        )
+        self.assertEqual(process.signals, [signal.SIGTERM, signal.SIGKILL])
+        self.assertEqual(
+            (
+                signal.getsignal(signal.SIGINT),
+                signal.getsignal(signal.SIGTERM),
+            ),
+            previous_handlers,
+        )
+
     def test_serial_socket_relays_console_output_and_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -352,13 +400,12 @@ class GpuGuestSafetyTests(unittest.TestCase):
             fake_emulator = (
                 "import sys,time;"
                 "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "first=sys.stdin.buffer.readline();"
-                "second=sys.stdin.buffer.readline();"
-                "assert first == b'stty -echo || exit 1\\n';"
-                "assert b'UML_GPU_BOOTSTRAP_' in second;"
-                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_READY_MARKER!r}+b'\\n');"
+                "sys.stdin.buffer.readline();"
+                "sys.stdout.write('\\n# ');sys.stdout.flush();"
+                "sys.stdin.buffer.readline();"
+                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
                 "sys.stdout.buffer.flush();"
-                "assert sys.stdin.buffer.readline() == b'BOOT\\n';"
+                "sys.stdin.buffer.readline();"
                 f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+"
                 "'\\nTTY:'+str(int(sys.stdin.isatty()))+'\\nREADY\\n');"
                 "sys.stdout.flush();"
@@ -386,6 +433,37 @@ class GpuGuestSafetyTests(unittest.TestCase):
             self.assertIn(b"TTY:1\n", received)
             self.assertIn(b"ECHO:status\n", received)
             self.assertFalse(serial_path.exists())
+
+    def test_bootstrap_waits_for_each_shell_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_emulator = (
+                "import select,sys,time;"
+                "sys.stdout.write('\\n# ');sys.stdout.flush();"
+                "sys.stdin.buffer.readline();"
+                "sys.stdout.write('\\n# ');sys.stdout.flush();"
+                "sys.stdin.buffer.readline();"
+                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
+                "sys.stdout.buffer.flush();"
+                "first=sys.stdin.buffer.readline();"
+                "early=bool(select.select([sys.stdin.buffer],[],[],0.1)[0]);"
+                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
+                "sys.stdout.buffer.flush();"
+                "second=sys.stdin.buffer.readline();"
+                f"marker={run_gpu_guest.FAIL_MARKER!r} if early else "
+                f"{run_gpu_guest.PASS_MARKER!r};"
+                "sys.stdout.write(marker+'\\n');sys.stdout.flush();time.sleep(0.1)"
+            )
+            return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
+                [sys.executable, "-c", fake_emulator],
+                b"first\nsecond\n",
+                root / "console.log",
+                timeout=10,
+                expect_poweroff=False,
+            )
+            self.assertEqual(return_code, 0)
+            self.assertTrue(saw_pass)
+            self.assertFalse(saw_fail)
 
     def test_serial_socket_refuses_to_replace_an_existing_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

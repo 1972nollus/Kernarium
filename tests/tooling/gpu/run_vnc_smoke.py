@@ -58,7 +58,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--client", type=Path, required=True)
+    parser.add_argument("--startup-timeout", type=float, default=5)
     options = parser.parse_args()
+    if options.startup_timeout <= 0:
+        parser.error("--startup-timeout must be positive")
     password = "umltest"
 
     with tempfile.TemporaryDirectory(prefix="uml-gpu-vnc-") as directory:
@@ -83,7 +86,7 @@ def main() -> int:
             bufsize=0,
         )
         try:
-            port = wait_for_vnc_port(server, 5)
+            port = wait_for_vnc_port(server, options.startup_timeout)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 if server.poll() is not None:

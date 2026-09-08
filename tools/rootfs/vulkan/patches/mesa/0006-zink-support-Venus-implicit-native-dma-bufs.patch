@@ -1,4 +1,4 @@
-From ce46232af50a911bde7d8ed272d755087a5fa2d8 Mon Sep 17 00:00:00 2001
+From 232d7555a769b886ea75b5364c420937b2ad5e2f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 19:31:13 +0900
 Subject: [PATCH 06/12] zink: support Venus implicit native dma-bufs
@@ -6,19 +6,19 @@ Subject: [PATCH 06/12] zink: support Venus implicit native dma-bufs
 ---
  src/gallium/drivers/zink/zink_batch.c        |  10 +-
  src/gallium/drivers/zink/zink_context.c      |   2 +-
- src/gallium/drivers/zink/zink_resource.c     |  92 +++++++++++++---
+ src/gallium/drivers/zink/zink_resource.c     |  92 +++++++++--
  src/gallium/drivers/zink/zink_screen.c       |   3 +-
- src/gallium/drivers/zink/zink_screen.h       |  17 +++
+ src/gallium/drivers/zink/zink_screen.h       |  17 ++
  src/gallium/drivers/zink/zink_types.h        |   1 +
- src/virtio/vulkan/meson.build                |  18 ++++
- src/virtio/vulkan/tests/vn_wsi_drm_test.c    |  65 +++++++++++
- src/virtio/vulkan/tests/vn_wsi_native_test.c | 107 +++++++++++++++++++
- src/virtio/vulkan/vn_image.c                 |  13 +++
+ src/virtio/vulkan/meson.build                |  18 ++
+ src/virtio/vulkan/tests/vn_wsi_drm_test.c    |  65 ++++++++
+ src/virtio/vulkan/tests/vn_wsi_native_test.c | 163 +++++++++++++++++++
+ src/virtio/vulkan/vn_image.c                 |  13 ++
  src/virtio/vulkan/vn_image.h                 |   3 +
- src/virtio/vulkan/vn_wsi.c                   |  75 ++++++++++++-
- src/virtio/vulkan/vn_wsi_drm.h               |  30 ++++++
- src/virtio/vulkan/vn_wsi_native.h            |  73 +++++++++++++
- 14 files changed, 485 insertions(+), 24 deletions(-)
+ src/virtio/vulkan/vn_wsi.c                   |  97 ++++++++++-
+ src/virtio/vulkan/vn_wsi_drm.h               |  30 ++++
+ src/virtio/vulkan/vn_wsi_native.h            | 101 ++++++++++++
+ 14 files changed, 591 insertions(+), 24 deletions(-)
  create mode 100644 src/virtio/vulkan/tests/vn_wsi_drm_test.c
  create mode 100644 src/virtio/vulkan/tests/vn_wsi_native_test.c
  create mode 100644 src/virtio/vulkan/vn_wsi_drm.h
@@ -448,10 +448,10 @@ index 0000000..f269ccf
 +}
 diff --git a/src/virtio/vulkan/tests/vn_wsi_native_test.c b/src/virtio/vulkan/tests/vn_wsi_native_test.c
 new file mode 100644
-index 0000000..2e44a91
+index 0000000..788ad05
 --- /dev/null
 +++ b/src/virtio/vulkan/tests/vn_wsi_native_test.c
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,163 @@
 +/*
 + * Copyright 2026
 + * SPDX-License-Identifier: MIT
@@ -517,9 +517,65 @@ index 0000000..2e44a91
 +                                UINT16_MAX, 1};
 +      CHECK(vn_wsi_native_heap_row_pitch(&info, UINT32_MAX, &pitch));
 +      CHECK(pitch == info.extent.width * formats[i].bytes_per_pixel);
++      /* A row that no longer fits sixteen bits still has an envelope: only
++       * the legacy DRI3 v1.0 pixmap request is that narrow, and refusing the
++       * image would fail vkCreateSwapchainKHR on every window system.
++       */
 +      info.extent.width++;
-+      CHECK(!vn_wsi_native_heap_row_pitch(&info, UINT32_MAX, &pitch));
++      CHECK(vn_wsi_native_heap_row_pitch(&info, UINT32_MAX, &pitch));
++      CHECK(pitch == info.extent.width * formats[i].bytes_per_pixel);
++      CHECK(pitch > UINT16_MAX);
++      /* The allocation still has to cover that wider envelope. */
++      CHECK(!vn_wsi_native_heap_row_pitch(&info, (uint64_t)pitch *
++                                                       info.extent.height - 1,
++                                          &pitch));
 +   }
++
++   /* A wide image still has an envelope, whatever the renderer can back. */
++   info = base;
++   info.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
++   info.extent = (VkExtent3D){16384, 16384, 1};
++   CHECK(vn_wsi_native_heap_row_pitch(&info, 16384ull * 16384u * 4u, &pitch));
++   CHECK(pitch == 16384 * 4);
++
++   /* The budget is what the surface advertises, and it must not be exceeded
++    * by an image at that advertised extent in any envelope format.
++    */
++   CHECK(!vn_wsi_native_image_within_budget(&info, 16384ull * 16384u * 4u));
++   for (unsigned i = 0; i < sizeof(formats) / sizeof(formats[0]); i++) {
++      info = base;
++      info.format = formats[i].format;
++      info.extent = (VkExtent3D){VN_WSI_NATIVE_MAX_IMAGE_DIMENSION,
++                                 VN_WSI_NATIVE_MAX_IMAGE_DIMENSION, 1};
++      const uint64_t size = (uint64_t)info.extent.width *
++                            info.extent.height * formats[i].bytes_per_pixel;
++      CHECK(size <= VN_WSI_NATIVE_MAX_IMAGE_SIZE);
++      CHECK(vn_wsi_native_image_within_budget(&info, size));
++      CHECK(vn_wsi_native_heap_row_pitch(&info, size, &pitch));
++      CHECK(pitch == info.extent.width * formats[i].bytes_per_pixel);
++      /* Padding the renderer adds on top of that envelope still fits. */
++      CHECK(vn_wsi_native_image_within_budget(&info, size + size / 4));
++   }
++
++   /* Each bound of the budget is refused on its own. */
++   info = base;
++   info.extent = (VkExtent3D){VN_WSI_NATIVE_MAX_IMAGE_DIMENSION,
++                              VN_WSI_NATIVE_MAX_IMAGE_DIMENSION, 1};
++   CHECK(vn_wsi_native_image_within_budget(&info,
++                                           VN_WSI_NATIVE_MAX_IMAGE_SIZE));
++   CHECK(!vn_wsi_native_image_within_budget(&info,
++                                            VN_WSI_NATIVE_MAX_IMAGE_SIZE + 1));
++   info.extent.width++;
++   CHECK(!vn_wsi_native_image_within_budget(&info, 4096));
++   info.extent.width--;
++   info.extent.height++;
++   CHECK(!vn_wsi_native_image_within_budget(&info, 4096));
++
++   /* The budget stays inside the renderer's one-gibibyte blob window. */
++   CHECK(VN_WSI_NATIVE_MAX_IMAGE_SIZE < 1024ull * 1024ull * 1024ull);
++   CHECK((uint64_t)VN_WSI_NATIVE_MAX_IMAGE_DIMENSION *
++            VN_WSI_NATIVE_MAX_IMAGE_DIMENSION * 8u <=
++         VN_WSI_NATIVE_MAX_IMAGE_SIZE);
 +
 +   static const VkFormat excluded[] = {
 +      VK_FORMAT_UNDEFINED, VK_FORMAT_D32_SFLOAT, VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
@@ -612,7 +668,7 @@ index 74bdeed..1439711 100644
        struct vn_device_memory *blit_mem;
     } wsi;
 diff --git a/src/virtio/vulkan/vn_wsi.c b/src/virtio/vulkan/vn_wsi.c
-index e73ab48..23e482d 100644
+index e73ab48..62c392c 100644
 --- a/src/virtio/vulkan/vn_wsi.c
 +++ b/src/virtio/vulkan/vn_wsi.c
 @@ -18,6 +18,20 @@
@@ -665,7 +721,7 @@ index e73ab48..23e482d 100644
  VkResult
  vn_wsi_init(struct vn_physical_device *physical_dev)
  {
-@@ -186,7 +215,31 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
+@@ -186,7 +215,39 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
     if (result != VK_SUCCESS)
        return result;
  
@@ -683,6 +739,14 @@ index e73ab48..23e482d 100644
 +       */
 +      physical_dev->wsi_device.GetImageSubresourceLayout =
 +         vn_wsi_get_image_subresource_layout;
++
++      /* A surface advertises this as its maximum image extent.  Keep it
++       * inside the renderer's per-image budget so that a swapchain never asks
++       * for a blob resource the renderer would decline asynchronously.
++       */
++      physical_dev->wsi_device.maxImageDimension2D =
++         MIN2(physical_dev->wsi_device.maxImageDimension2D,
++              VN_WSI_NATIVE_MAX_IMAGE_DIMENSION);
 +   }
 +#ifdef HAVE_LIBDRM
 +   if (physical_dev->external_memory.renderer_supports_metal_heap) {
@@ -698,7 +762,7 @@ index e73ab48..23e482d 100644
     physical_dev->wsi_device.supports_modifiers =
        physical_dev->base.vk.supported_extensions.EXT_image_drm_format_modifier;
     physical_dev->base.vk.wsi_device = &physical_dev->wsi_device;
-@@ -227,7 +280,8 @@ vn_wsi_create_image(struct vn_device *dev,
+@@ -227,7 +288,8 @@ vn_wsi_create_image(struct vn_device *dev,
      * a workaround here, venus can once again force linear tiling when legacy
      * scanout is requested outside of common wsi.
      */
@@ -708,7 +772,7 @@ index e73ab48..23e482d 100644
        if (create_info != &local_create_info) {
           local_create_info = *create_info;
           local_create_info.tiling = VK_IMAGE_TILING_LINEAR;
-@@ -242,6 +296,23 @@ vn_wsi_create_image(struct vn_device *dev,
+@@ -242,6 +304,37 @@ vn_wsi_create_image(struct vn_device *dev,
     if (result != VK_SUCCESS)
        return result;
  
@@ -720,12 +784,26 @@ index e73ab48..23e482d 100644
 +       dev->physical_device->external_memory.renderer_supports_metal_heap &&
 +       external_info && external_info->handleTypes ==
 +                           VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT) {
-+      if (!vn_wsi_native_heap_row_pitch(
-+             create_info, img->requirements[0].memory.memoryRequirements.size,
-+             &img->wsi.native_heap_row_pitch)) {
++      const VkDeviceSize size =
++         img->requirements[0].memory.memoryRequirements.size;
++      /* Refuse an image the renderer cannot back before its memory is
++       * allocated.  The allocating ioctl cannot report the renderer's own
++       * refusal, so an image accepted here would present a dma-buf with no
++       * resource behind it.
++       */
++      if (!vn_wsi_native_image_within_budget(create_info, size)) {
 +         vn_DestroyImage(vn_device_to_handle(dev), vn_image_to_handle(img),
 +                         alloc);
-+         return VK_ERROR_FORMAT_NOT_SUPPORTED;
++         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++      }
++      if (!vn_wsi_native_heap_row_pitch(create_info, size,
++                                        &img->wsi.native_heap_row_pitch)) {
++         vn_DestroyImage(vn_device_to_handle(dev), vn_image_to_handle(img),
++                         alloc);
++         /* This result reaches the application from vkCreateSwapchainKHR,
++          * which has no error code for an unshareable image.
++          */
++         return VK_ERROR_INITIALIZATION_FAILED;
 +      }
 +   }
 +
@@ -770,10 +848,10 @@ index 0000000..1fc35f2
 +#endif /* VN_WSI_DRM_H */
 diff --git a/src/virtio/vulkan/vn_wsi_native.h b/src/virtio/vulkan/vn_wsi_native.h
 new file mode 100644
-index 0000000..1bd4a80
+index 0000000..20b42a5
 --- /dev/null
 +++ b/src/virtio/vulkan/vn_wsi_native.h
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,101 @@
 +/*
 + * Copyright 2026
 + * SPDX-License-Identifier: MIT
@@ -786,10 +864,38 @@ index 0000000..1bd4a80
 +#include <stdint.h>
 +#include <vulkan/vulkan_core.h>
 +
-+/* Implicit native-heap imports preserve the opaque image layout.  DRI3's
-+ * legacy envelope nevertheless requires a representable logical row pitch
-+ * and an allocation large enough for that envelope.  This is not a Vulkan
-+ * linear subresource layout or a DRM format modifier.
++/* One native swapchain image is backed by one renderer blob resource, and a
++ * paired renderer bounds a single blob by its guest-visible blob window (one
++ * gibibyte).  That refusal is reported asynchronously, long after the guest
++ * kernel has answered the allocating ioctl, so an image the renderer declines
++ * would still be published to the window system as a dma-buf with no resource
++ * behind it and would wedge whichever compositor imports it.  Keep a native
++ * swapchain image inside a budget the renderer can always serve instead: the
++ * dimension bound keeps even an eight-byte envelope format at half the
++ * window, and the size bound covers the renderer's own image padding.  The
++ * budget applies to what a surface advertises as its maximum image extent; an
++ * ordinary image keeps the device's own maxImageDimension2D.
++ */
++#define VN_WSI_NATIVE_MAX_IMAGE_DIMENSION 8192u
++#define VN_WSI_NATIVE_MAX_IMAGE_SIZE (768ull * 1024ull * 1024ull)
++
++static inline bool
++vn_wsi_native_image_within_budget(const VkImageCreateInfo *info,
++                                  VkDeviceSize allocation_size)
++{
++   return info->extent.width <= VN_WSI_NATIVE_MAX_IMAGE_DIMENSION &&
++          info->extent.height <= VN_WSI_NATIVE_MAX_IMAGE_DIMENSION &&
++          allocation_size <= VN_WSI_NATIVE_MAX_IMAGE_SIZE;
++}
++
++/* Implicit native-heap imports preserve the opaque image layout.  The window
++ * system's legacy envelope nevertheless requires a logical row pitch and an
++ * allocation large enough for that envelope.  Both linux-dmabuf and DRI3
++ * bound the image's width, height and total allocation, and both carry the
++ * pitch itself as a 32-bit value.  A legacy DRI3 v1.0 pixmap request that
++ * cannot express a wide image's stride is a common-WSI limitation shared with
++ * its own prime images, so the envelope does not bound the pitch further.
++ * This is not a Vulkan linear subresource layout or a DRM format modifier.
 + */
 +static inline bool
 +vn_wsi_native_heap_row_pitch(const VkImageCreateInfo *info,
@@ -839,7 +945,7 @@ index 0000000..1bd4a80
 +
 +   const uint64_t stride = (uint64_t)info->extent.width * bytes_per_pixel;
 +   const uint64_t size = stride * info->extent.height;
-+   if (stride > UINT16_MAX || size > allocation_size)
++   if (size > allocation_size)
 +      return false;
 +
 +   *row_pitch = (uint32_t)stride;
