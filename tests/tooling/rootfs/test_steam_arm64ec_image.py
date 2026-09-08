@@ -38,6 +38,10 @@ class ImageAudit(unittest.TestCase):
         self.root = Path(self.temporary.name)
         for relative in image.REQUIRED_ELF:
             write_elf(self.root / relative, 183)
+        for relative in image.REQUIRED_LIBRARIES:
+            library = self.root / relative
+            write_elf(library.with_name(library.name + ".1"), 183)
+            library.symlink_to(library.name + ".1")
         for relative, architecture in image.REQUIRED_PE.items():
             if architecture == "ARM64EC":
                 write_arm64ec_pe(self.root / relative)
@@ -66,6 +70,11 @@ class ImageAudit(unittest.TestCase):
         self.assertTrue(image.inventory(self.root))
         library.write_bytes(library.read_bytes() + b"modified")
         with self.assertRaisesRegex(RuntimeError, "installed Vulkan runtime differs"):
+            image.inventory(self.root)
+
+    def test_steam_ui_library_required(self) -> None:
+        (self.root / image.REQUIRED_LIBRARIES[0]).unlink()
+        with self.assertRaisesRegex(RuntimeError, "required native Linux library"):
             image.inventory(self.root)
 
     def test_native_stack_and_bundled_foreign_steam_assets(self) -> None:

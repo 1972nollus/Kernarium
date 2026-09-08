@@ -29,11 +29,13 @@ STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
 ELF_MACHINES = {3: "I386", 62: "AMD64", 183: "AArch64"}
 REQUIRED_ELF = (
     "usr/games/gamescope",
+    "usr/games/gamescopereaper",
     PROTON + "files/bin-arm64/wine",
     PROTON + "files/bin-arm64/wineserver",
     STEAM + "steamrtarm64/steam",
     STEAM + "steamrtarm64/steamwebhelper",
 )
+REQUIRED_LIBRARIES = ("usr/lib/aarch64-linux-gnu/libgtk-x11-2.0.so.0",)
 REQUIRED_PE = {
     PROTON + "files/lib/wine/aarch64-windows/xtajit64.dll": "ARM64EC",
     PROTON + "files/lib/wine/aarch64-windows/xtajit.dll": "ARM64",
@@ -82,6 +84,11 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
     for relative in REQUIRED_ELF:
         if observed.get(relative) != ("ELF", "AArch64"):
             raise RuntimeError(f"required native Linux executable is absent or foreign: {relative}")
+    for relative in REQUIRED_LIBRARIES:
+        resolved = (root / relative).resolve()
+        if not resolved.is_relative_to(root.resolve()) or observed.get(
+                resolved.relative_to(root.resolve()).as_posix()) != ("ELF", "AArch64"):
+            raise RuntimeError(f"required native Linux library is absent or foreign: {relative}")
     for relative, architecture in REQUIRED_PE.items():
         if observed.get(relative) != ("PE", architecture):
             raise RuntimeError(f"required {architecture} Windows image is absent or invalid: {relative}")

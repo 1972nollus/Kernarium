@@ -1,4 +1,4 @@
-From 69b169198631f21162b6637675b35b52aeb6eecd Mon Sep 17 00:00:00 2001
+From 4fcd0985a7b88081e36051851eff0f7b3c2826df Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
 Subject: [PATCH 07/13] venus: consume paired protocol headers from an explicit
@@ -208,7 +208,7 @@ index 69ed631..2eae2f4 100644
  
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_image.c b/src/virtio/vulkan/vn_image.c
-index 9341c5c..921a044 100644
+index d98b30c..ade1a73 100644
 --- a/src/virtio/vulkan/vn_image.c
 +++ b/src/virtio/vulkan/vn_image.c
 @@ -10,10 +10,10 @@

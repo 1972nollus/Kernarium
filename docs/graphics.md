@@ -19,6 +19,8 @@ consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend. With no connected VNC client,
 scanout flushes retire without a synchronous GPU-to-CPU readback; the first
 frame after a zero-client interval refreshes the complete active scanout.
+The experimental Vulkan product compiles native Metal readback into the VNC
+display target and enables it with the same explicit runtime opt-in as Venus.
 
 Fenced Virgl submissions and host transfers from ordinary guest contexts may
 remain in flight together. Their descriptor chains retire only after the

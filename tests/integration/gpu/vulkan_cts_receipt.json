@@ -30,7 +30,7 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source17-20260908-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/VK-GL-CTS-1.4.6.2",
       "--target",
       "deqp-vk"
     ],
@@ -38,9 +38,9 @@
       "cmake",
       "--fresh",
       "-S",
-      "/home/vm/uml-source17-20260908-v1/sources/VK-GL-CTS",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/VK-GL-CTS",
       "-B",
-      "/home/vm/uml-source17-20260908-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/VK-GL-CTS-1.4.6.2",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -106,7 +106,7 @@
     "filesystem": "ext4",
     "filesystem_uuid": "2240061a-2b64-4626-b8bf-dd0f9993a4a9",
     "read_only": true,
-    "sha256": "4e14b730be231ab763ed1800d89aecabcfcddc758c218751252473ba39af6788",
+    "sha256": "0ac72d59ed2326327ef51e60207d6be5717cdcc9c613e4238979ab60dd44d87e",
     "size": 8589934592
   },
   "exclusions": [
@@ -139,8 +139,8 @@
   ],
   "guest_receipt": {
     "path": "/usr/share/uml-vulkan/rootfs-build-receipt.json",
-    "sha256": "bafde9dcff6992d3c6aa83ab356ada87fa4d5256c0b6e9dc520ad050f2b05ced",
-    "size": 96720
+    "sha256": "41f5bd9a2ad83cf5375e607d56eae002575e6efa335a7da0996c48bca74e1904",
+    "size": 96993
   },
   "install_closure": [
     {
@@ -437,7 +437,7 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "309eaa2bd345f851512ef79eed691a1401294851c5cc14b2e83f3b5749ca070b",
+        "sha256": "f682deef082ed9276f6a017013f7c5bf050607d3b9664791d24052b6b4bf4a59",
         "size": 24310360
       },
       "needed": "libgallium-26.2.1.so",
@@ -627,7 +627,7 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "309eaa2bd345f851512ef79eed691a1401294851c5cc14b2e83f3b5749ca070b",
+        "sha256": "f682deef082ed9276f6a017013f7c5bf050607d3b9664791d24052b6b4bf4a59",
         "size": 24310360
       },
       "needed": "libgallium-26.2.1.so",
@@ -877,7 +877,7 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "309eaa2bd345f851512ef79eed691a1401294851c5cc14b2e83f3b5749ca070b",
+        "sha256": "f682deef082ed9276f6a017013f7c5bf050607d3b9664791d24052b6b4bf4a59",
         "size": 24310360
       },
       "needed": "libgallium-26.2.1.so",
@@ -1549,19 +1549,19 @@
     "base_tree": "a41b271df29845735895fd23bfcef54076ec4515",
     "build_targets": [
       "env",
-      "DESTDIR=/home/vm/uml-source17-20260908-v1/stage/mesa",
+      "DESTDIR=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/stage/mesa",
       "meson",
       "install",
       "-C",
-      "/home/vm/uml-source17-20260908-v1/build/mesa",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/mesa",
       "--tags",
       "runtime"
     ],
     "configure_argv": [
       "meson",
       "setup",
-      "/home/vm/uml-source17-20260908-v1/build/mesa",
-      "/home/vm/uml-source17-20260908-v1/sources/mesa",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/mesa",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/mesa",
       "--wrap-mode=nofallback",
       "--prefix=/usr",
       "--libdir=lib/aarch64-linux-gnu",
@@ -1591,7 +1591,7 @@
       "-Dxmlconfig=enabled",
       "-Dshader-cache=enabled",
       "-Dzstd=enabled",
-      "-Dvenus-protocol-dir=/home/vm/uml-source17-20260908-v1/build/venus-protocol"
+      "-Dvenus-protocol-dir=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/venus-protocol"
     ],
     "files": [
       {
@@ -1616,7 +1616,7 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "309eaa2bd345f851512ef79eed691a1401294851c5cc14b2e83f3b5749ca070b",
+        "sha256": "f682deef082ed9276f6a017013f7c5bf050607d3b9664791d24052b6b4bf4a59",
         "size": 24310360
       },
       {
@@ -1626,8 +1626,8 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-        "sha256": "d86ac588eabe193da25c84b55284650a9039fdd51223afdf79ef6b17f15e0013",
-        "size": 2151960
+        "sha256": "4e92adb60fefc01fc8c28cf88db2d1e62960d0a7c869d0a5819b54789e6ddd68",
+        "size": 2151864
       },
       {
         "path": "/usr/share/drirc.d/00-mesa-defaults.conf",
@@ -1661,96 +1661,96 @@
       }
     ],
     "install_prefix": "/usr",
-    "patched_tree": "d3184b34e376b74cc7394c0ffddac357be3ff586",
+    "patched_tree": "e9ecc3470e832917fc66ba1b76d92192a89306d4",
     "patches": [
       {
         "order": 1,
         "patch": "0001-venus-observe-pipeline-creation-results.patch",
-        "sha256": "7078420f582c7be0b420f3ee36b16f234d85f96ccb4fcca57bbda42ab5f380dc",
+        "sha256": "b9ba0351eef4f2ba3612577ab0dda70ead85e64d6c1a3e6a41b589950cea416c",
         "stable_patch_id": "09fbb0b6c3a7c407e6913977b52158ef9f78ab1e",
         "subject": "venus: observe pipeline creation results"
       },
       {
         "order": 2,
         "patch": "0002-venus-size-a-host-image-copy-from-a-describable-form.patch",
-        "sha256": "42ced4cc1e8ea47345541c750644d46e6f018aecf27e694da7ea1c02195eaf38",
+        "sha256": "4c263e2751784a2881270803260f25c3854bfd38e6c0f12780e7ded490b1f73e",
         "stable_patch_id": "2bdfbe66c3d8e453ae1f742d8f388078bd437f03",
         "subject": "venus: size a host image copy from a describable format"
       },
       {
         "order": 3,
         "patch": "0003-venus-stop-advertising-DRM-display-acquisition.patch",
-        "sha256": "defc7a913e6d9fa18cc471d28d80728cad15f65ff706a8e7d5598f6fa2246781",
+        "sha256": "fe674350c21292974e6d511e06397fb495b549909c429ed65e25eef44c5c8050",
         "stable_patch_id": "531ad5aa9083942e485ffaa778c92794555c8013",
         "subject": "venus: stop advertising DRM display acquisition"
       },
       {
         "order": 4,
         "patch": "0004-venus-preserve-renderer-conformance-version.patch",
-        "sha256": "006a250eb693eedc211b7468e9651dc1e45aba0869fb1a55805feca70c0d66d3",
+        "sha256": "a08defe820330215966c181e3cf0bbce88fee6294aa32792be0558eb3e0e4564",
         "stable_patch_id": "75d0014ec339aeba1e3c475c60a2131a3b0a6b9c",
         "subject": "venus: preserve renderer conformance version"
       },
       {
         "order": 5,
         "patch": "0005-venus-expose-host-backed-guest-memory-fds.patch",
-        "sha256": "3a72a02c015bf1e14fc4bee18533e505ee362b89eaf1ea31ef8dc0aca16faaf6",
+        "sha256": "8f70c050cc50e78c4e05def90ac927340f3be318ed8426e0dc253af7f530a020",
         "stable_patch_id": "711ec19d680e2afdb105f6127aa1c46e1ac99061",
         "subject": "venus: expose host-backed guest memory fds"
       },
       {
         "order": 6,
         "patch": "0006-zink-support-Venus-implicit-native-dma-bufs.patch",
-        "sha256": "e6d67611ce942f954596f9d9988621efc911c4fa101b16b8661e6757d772823d",
-        "stable_patch_id": "0d8add6413c27344486eaa5d883eeddb7abb474f",
+        "sha256": "4fcfe5f1bd279781b3d7a1ed31f3eb6d9780f70005f0a8ea2bdb3e1b3dbbb352",
+        "stable_patch_id": "404975218063ca73e2ca90f22d128937ec716409",
         "subject": "zink: support Venus implicit native dma-bufs"
       },
       {
         "order": 7,
         "patch": "0007-venus-consume-paired-protocol-headers-from-an-explic.patch",
-        "sha256": "f6e2eba6b5be44548dcfea11001f68c933c3be88b0aba92a765d0e83ac2c48b3",
+        "sha256": "3fb5e8a13c797588ae7fa0426e1bbe6411da8b868612aab5e5e58fe5e52af8e6",
         "stable_patch_id": "527ef85dd7e56ba4e2067431d597e504439be4a1",
         "subject": "venus: consume paired protocol headers from an explicit build directory"
       },
       {
         "order": 8,
         "patch": "0008-venus-forward-device-address-and-maintenance-command.patch",
-        "sha256": "a6518492964de5468e5cda9ad788f5d3748234b2e48e1f6e87fe399c766d595e",
+        "sha256": "4eb73ad13d0f9ace94deb19ac8c122ba74200a81a979b35503072a9de859da9a",
         "stable_patch_id": "a7cc8a3fcab739ee6f9f17cef5dec4f87de14349",
         "subject": "venus: forward device address and maintenance commands"
       },
       {
         "order": 9,
         "patch": "0009-gallium-preserve-integer-blit-output-types-in-NIR.patch",
-        "sha256": "7956aef30caab256eafa8916430b789c38bbf63811881002de02fc1ebf4f87b3",
+        "sha256": "aef93942937cb826ebabd9596dbf4b9fdffdb4cc0214658e3a9e4f6a665c9c09",
         "stable_patch_id": "f745f4673d3af8867f17935118831fd5d5e42c95",
         "subject": "gallium: preserve integer blit output types in NIR"
       },
       {
         "order": 10,
         "patch": "0010-mesa-st-store-integer-pixel-transfers-without-a-blit.patch",
-        "sha256": "91cdce88a6ad3fcb95811c1a79f0585c988212fa2affc823ae4a6ffb7d5cc446",
+        "sha256": "75845820b40cf52cdf7a658b884038a7e4b6bfd35b365b4dd5c19b9dd657d876",
         "stable_patch_id": "f3a8d18a722d1fc20eb451f6aa8a3e4d1bb33954",
         "subject": "mesa/st: store integer pixel transfers without a blit"
       },
       {
         "order": 11,
         "patch": "0011-gallium-return-NULL-for-failed-threaded-buffer-maps.patch",
-        "sha256": "33af69eab886ec17f04edcf97bc76877c19fc606ad6e24398016c166be4e80ef",
+        "sha256": "4f3a26bee26d122f207a067450b2d260f3d4e646a5e6c642992ee683e9fd80f7",
         "stable_patch_id": "ca5f653cb19aacfd9cacfcdffe81a3cc40d9c8c4",
         "subject": "gallium: return NULL for failed threaded buffer maps"
       },
       {
         "order": 12,
         "patch": "0012-mesa-st-delete-only-a-pixel-transfer-specialization-.patch",
-        "sha256": "fae9ea87977dda2f450a48b424498fbb028a0963c48d205f8d4d7b806588eec7",
+        "sha256": "f6774c305b17abc6e0ebaf5a5317475c85d7c4a82ec24fd5a8864ee843bdc7c4",
         "stable_patch_id": "b74662d5150704e3af15e6890df0be57956f315f",
         "subject": "mesa/st: delete only a pixel-transfer specialization that was compiled"
       },
       {
         "order": 13,
         "patch": "0013-vulkan-wsi-x11-bound-the-swapchain-event-wait.patch",
-        "sha256": "9f699e7530ea4889908e17c1ef258fce8f266f6de6be9148cd3f562e4fcf3aa9",
+        "sha256": "c36f3bd1180bf2efb131492aed9c48b783945d7f5b07050f6b2f119904880ff8",
         "stable_patch_id": "602418d83354cebfa8a3a02e141fe1fd85f1f5e0",
         "subject": "vulkan/wsi/x11: bound the swapchain event wait"
       }
@@ -2278,10 +2278,10 @@
       "configure_argv": [
         "meson",
         "setup",
-        "/home/vm/uml-source17-20260908-v1/build/venus-protocol",
-        "/home/vm/uml-source17-20260908-v1/sources/venus-protocol",
+        "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/venus-protocol",
+        "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/venus-protocol",
         "--wrap-mode=nofallback",
-        "-Dvulkan-headers-dir=/home/vm/uml-source17-20260908-v1/sources/Vulkan-Headers"
+        "-Dvulkan-headers-dir=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/Vulkan-Headers"
       ],
       "driver_headers": {
         "vn_protocol_driver.h": "d5d335aebb4b42964cd53ee74f617833942352b923c52d7166b225587919980f",
@@ -2386,20 +2386,20 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source17-20260908-v1/build/Vulkan-Headers",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/Vulkan-Headers",
       "--target",
       "install"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source17-20260908-v1/sources/Vulkan-Headers",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/Vulkan-Headers",
       "-B",
-      "/home/vm/uml-source17-20260908-v1/build/Vulkan-Headers",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/Vulkan-Headers",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
-      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source17-20260908-v1/stage/vulkan-headers"
+      "-DCMAKE_INSTALL_PREFIX=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/stage/vulkan-headers"
     ],
     "installed_in_guest": false,
     "patched": false,
@@ -2415,14 +2415,14 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source17-20260908-v1/build/Vulkan-Loader"
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/Vulkan-Loader"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source17-20260908-v1/sources/Vulkan-Loader",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/sources/Vulkan-Loader",
       "-B",
-      "/home/vm/uml-source17-20260908-v1/build/Vulkan-Loader",
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/Vulkan-Loader",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -2430,14 +2430,14 @@
       "-DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu",
       "-DUPDATE_DEPS=OFF",
       "-DBUILD_TESTS=OFF",
-      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source17-20260908-v1/stage/vulkan-headers"
+      "-DVULKAN_HEADERS_INSTALL_DIR=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/stage/vulkan-headers"
     ],
     "install_argv": [
       "env",
-      "DESTDIR=/home/vm/uml-source17-20260908-v1/stage/vulkan-loader",
+      "DESTDIR=/home/build/uml-steam-arm64ec/vulkan-rebase-v1/stage/vulkan-loader",
       "cmake",
       "--install",
-      "/home/vm/uml-source17-20260908-v1/build/Vulkan-Loader"
+      "/home/build/uml-steam-arm64ec/vulkan-rebase-v1/build/Vulkan-Loader"
     ],
     "install_prefix": "/usr",
     "patched": false,

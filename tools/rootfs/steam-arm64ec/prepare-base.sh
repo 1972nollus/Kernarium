@@ -42,7 +42,7 @@ sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	libwayland-client0 libwayland-egl1 libxkbcommon0 \
 	libavcodec61 libavformat61 libavutil59 \
 	pipewire pipewire-pulse wireplumber libnss3 libnspr4 \
-	libatomic1 libcurl4t64 libgtk-3-0t64 libsdl3-0 libsm6 libice6 \
+	libatomic1 libcurl4t64 libgtk-3-0t64 libgtk2.0-0t64 libsdl3-0 libsm6 libice6 \
 	libxtst6 libgdk-pixbuf-2.0-0 libva2 libvdpau1
 sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --no-install-recommends -t trixie-backports gamescope

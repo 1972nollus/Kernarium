@@ -1,4 +1,4 @@
-From 46651b7f2625dba3e1108a8dd6f483da273cb492 Mon Sep 17 00:00:00 2001
+From 9117b21cdcba738e7e87ea02b7bbd0909b1a3f43 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 21:33:52 +0900
 Subject: [PATCH 02/13] venus: size a host image copy from a describable format

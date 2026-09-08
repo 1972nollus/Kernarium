@@ -64,7 +64,7 @@ def main() -> int:
     args = parser.parse_args()
     guest = Guest(args.emulator.resolve(), args.rootfs.resolve(), args.memory, "tmpfs",
                   kernel_arguments=("panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
-                  systemd_overlay=True, engine="jit")
+                  systemd_overlay=True, systemd_overlay_size="16G", engine="jit")
     try:
         guest.boot_and_login(args.boot_timeout)
         output = success(guest,
@@ -101,10 +101,23 @@ def main() -> int:
         guest.run_command("systemctl start steam-gaming.service", 60)
         deadline = time.monotonic() + 90
         state = ""
+        steam_seen_at = None
+        steam_bootstrap_running = False
         while time.monotonic() < deadline:
             state = success(guest, "systemctl show steam-gaming.service -p ActiveState -p ExecMainCode -p ExecMainStatus")
             if "ActiveState=failed" in state or "ActiveState=inactive" in state:
                 break
+            if args.experimental_venus:
+                client = guest.run_command(
+                    f"pgrep -u uml -f '^{STEAM}/steamrtarm64/steam -steamdeck -gamepadui$' >/dev/null", 15)
+                if client.return_code == 0:
+                    if steam_seen_at is None:
+                        steam_seen_at = time.monotonic()
+                    elif time.monotonic() - steam_seen_at >= 5:
+                        steam_bootstrap_running = True
+                        break
+                else:
+                    steam_seen_at = None
             time.sleep(0.5)
         # PAM moves the application into a session scope; its journal records
         # need not retain the system service's unit identity.
@@ -123,13 +136,19 @@ def main() -> int:
         if re.search(r"ExecMainCode=[23]", state) and "ExecMainStatus=4" in state:
             raise RuntimeError("gaming session terminated with an illegal instruction")
         if args.experimental_venus:
-            scanout_failure = re.search(
-                r"Cannot import FB to DRM: format 0x34325241 and modifier "
-                r"0xFFFFFFFFFFFFFF not supported for scan-out", journal)
-            if not scanout_failure or not any(value in state for value in
-                    ("ActiveState=failed", "ActiveState=inactive")):
-                raise RuntimeError("gaming session did not reach the documented Venus scanout boundary")
-            print("OBSERVED GPU BLOCKER: Gamescope cannot scan out its Venus AR24 framebuffer; Steam UI not reached", flush=True)
+            if not steam_bootstrap_running or "ActiveState=active" not in state:
+                raise RuntimeError("Gamescope did not launch the native Steam bootstrap")
+            if re.search(r"drmModeAddFB2.*failed|bad pitch", journal, re.I):
+                raise RuntimeError("Gamescope framebuffer registration failed")
+            # KMS may reject direct AR24 client scanout and use composition;
+            # require a registered Gamescope framebuffer with its real pitch.
+            success(guest,
+                "awk '/^framebuffer\\[/ {owned=0; width=0} "
+                "/allocated by = gamescope/ {owned=1} "
+                "/size\\[0\\]=/ {split($0,a,\"=\"); split(a[2],b,\"x\"); width=b[1]+0} "
+                "/pitch\\[0\\]=/ {split($0,a,\"=\"); if (owned && width>0 && a[2]+0==width*4) ok=1} "
+                "END {exit !ok}' /sys/kernel/debug/dri/0/framebuffer")
+            print("PASS Gamescope framebuffer registration and native Steam bootstrap; login UI not qualified", flush=True)
         else:
             expected = re.search(
                 r"Failed to initialize Vulkan|No Vulkan devices|vulkan:.*(?:vkCreateDevice failed|failed to find physical device|failed to initialize|does not support)",

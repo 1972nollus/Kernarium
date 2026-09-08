@@ -235,11 +235,31 @@ class Guest:
         systemd_overlay: bool = False,
         engine: str = "jit",
         core_class: str = "performance",
+        systemd_overlay_size: str | None = None,
     ) -> None:
         if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
             raise ValueError("guest boot modes are mutually exclusive")
+        if systemd_overlay_size and not systemd_overlay:
+            raise ValueError("a disk overlay requires systemd overlay boot")
+        self._swap_path = None
+        self._overlay_path = None
+        if systemd_overlay_size:
+            descriptor, name = tempfile.mkstemp(prefix="uml-systemd-overlay-", suffix=".ext4")
+            self._overlay_path = pathlib.Path(name)
+            try:
+                os.ftruncate(descriptor, size_bytes(systemd_overlay_size))
+            except BaseException:
+                self._overlay_path.unlink(missing_ok=True)
+                raise
+            finally:
+                os.close(descriptor)
+            kernel_arguments = (*kernel_arguments, f"ubd2={self._overlay_path}")
         self._core_class = core_class
-        self._swap_path = create_swap_image(swap_size) if swap_size else None
+        try:
+            self._swap_path = create_swap_image(swap_size) if swap_size else None
+        except BaseException:
+            self._remove_swap_image()
+            raise
         self._cgroup1 = cgroup1
         self._cgroup2_nsdelegate = cgroup2_nsdelegate
         self._init_shell = init_shell
@@ -254,7 +274,11 @@ class Guest:
             )
         if systemd_overlay:
             kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
-        master, slave = pty.openpty()
+        try:
+            master, slave = pty.openpty()
+        except BaseException:
+            self._remove_swap_image()
+            raise
         self._master = master
         os.set_blocking(master, False)
         try:
@@ -341,7 +365,14 @@ class Guest:
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
         if self._systemd_overlay:
             self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
-            self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
+            bootstrap = SYSTEMD_OVERLAY_BOOTSTRAP
+            if self._overlay_path is not None:
+                bootstrap = bootstrap.replace(
+                    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
+                    "mkfs.ext4 -q -E lazy_itable_init=1,lazy_journal_init=1 /dev/ubdc\n"
+                    "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdc /mnt",
+                )
+            self._write(bootstrap + "\n")
             login = self._read_until(
                 re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
                 timeout_seconds,
@@ -366,6 +397,11 @@ class Guest:
                 timeout_seconds,
                 search_from,
             )
+            if self._overlay_path is not None:
+                # The emulator has opened the disk before mounting it. Keep
+                # its sparse backing only through that open descriptor, so
+                # even an abrupt emulator exit releases all allocated blocks.
+                self._overlay_path.unlink(missing_ok=True)
         elif self._init_shell or self._overlay_shell:
             self.boot_to_shell(timeout_seconds)
         else:
@@ -480,6 +516,9 @@ class Guest:
                     self._remove_swap_image()
 
     def _remove_swap_image(self) -> None:
+        if self._overlay_path is not None:
+            self._overlay_path.unlink(missing_ok=True)
+            self._overlay_path = None
         if self._swap_path is not None:
             self._swap_path.unlink(missing_ok=True)
             self._swap_path = None

@@ -157,8 +157,9 @@ The separate gaming-only Steam image uses
 `cmake --workflow --preset check-steam-arm64ec-macos`. It qualifies systemd
 boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
 Gamescope Vulkan startup boundary. Stock Mesa and experimental Venus are
-separate image/renderer selections; a recorded GPU blocker is not proof of a
-working Steam login screen.
+separate image/renderer selections. The Venus gate requires framebuffer
+registration and the native Steam bootstrap, not a working login screen.
+Its disposable upper disk is sparse ext4 and is released on emulator exit.
 The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
 binary audit, startup contract, and continuing graphics limitation.
 

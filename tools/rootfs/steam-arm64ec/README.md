@@ -11,6 +11,9 @@ receipt-verified Mesa/Venus and Vulkan-Loader runtimes from the
 epoch and each installed file, validates dynamic dependencies, and selects
 only the Virtio ICD. Its receipt is included in the image provenance. This
 qualifies neither game rendering nor Vulkan conformance.
+The Vulkan gaming session selects Zink for Xwayland and OpenGL clients so
+their native-heap buffers can be imported by Venus. VirGL buffers cannot cross
+that sharing boundary. The native Steam UI requires both GTK 2 and GTK 3.
 
 The image uses the existing dedicated 4 KiB ARM64EC Wine kernel and emulator.
 There is no 16 KiB Steam product. Apple builds consume the accepted prebuilt
@@ -99,16 +102,21 @@ Xvfb without a desktop, requires AMD64 exit code 42 and i386 exit code 43,
 and repeats the AMD64 launch through Proton. It then starts the actual gaming
 service and requires the known Vulkan limitation. Any illegal instruction,
 missing runtime dependency, prefix failure, or other gaming-session failure
-blocks the gate. Guest output is saved under the build's `reports/` directory.
+blocks the gate. This graphics-limitation check applies to the stock Mesa
+image. Guest output is saved under the build's `reports/` directory.
+The smoke uses a temporary sparse 16 GiB ext4 upper disk. After the guest
+mounts it, the harness unlinks its host pathname; the emulator's open disk
+descriptor retains the backing until exit, including a forced exit.
 
 For experimental Venus, select `UML_APPLE_GPU_PRODUCT=apple-gpu-vulkan-experiment`,
 its verified `UML_APPLE_GPU_DEPENDENCY_PREFIX`, and macOS deployment target
 `26.0` in the local configure preset. Select the current Wine-profile kernel
 bundle and the Vulkan Steam image as complete inputs. Launch the workflow or
 interactive emulator with `UML_GPU_EXPERIMENTAL_VULKAN=1`. The smoke additionally
-requires `vulkaninfo` to identify Venus; the documented Gamescope scanout
-failure is reported as a GPU blocker, not a Steam UI success. A running session
-still requires visual verification of the login or setup screen.
+requires `vulkaninfo` to identify Venus, a Gamescope framebuffer with a valid
+pitch, and a running native Steam bootstrap. These checks do not qualify
+composed rendering. A running session still requires visual verification of
+the login or setup screen.
 
 For an interactive boot with the same development account:
 
@@ -120,12 +128,14 @@ scripts/boot-overlay-systemd.sh --emulator /path/to/uml-darwin-wine-arm64ec \
 
 ## Current Venus startup boundary
 
-On macOS with Mesa 26.2.1 and the paired KosmicKrisp renderer, `vulkaninfo`
-identifies `Virtio-GPU Venus (Apple M1 Ultra)`. Gamescope selects that device
-and starts its Wayland compositor and Xwayland, but cannot import its AR24
-framebuffer into DRM: format `0x34325241`, modifier `0xFFFFFFFFFFFFFF`,
-`not supported for scan-out`, with `drmModeAddFB2 failed: Invalid argument`.
-The session deactivates before a Steam login or
-setup screen is visible. AMD64, i386, and Proton execution probes pass. The
-smoke records this exact GPU blocker; it does not qualify Steam UI startup or
-work around the driver's scanout behavior.
+On macOS with Mesa 26.2.1 and the paired KosmicKrisp renderer, Gamescope can
+register its XR24 framebuffer through Mesa's private scanout-image path.
+The native allocation remains optimal and carries a logical pitch for DRM.
+Direct Vulkan color scanout reaches VNC through native Metal readback.
+AR24 client buffers may still be rejected for direct KMS scanout and require
+composition. Composed Vulkan-cube output is visibly corrupted; a nonblank VNC
+frame alone is not evidence of correct rendering or a working Steam login UI.
+Steam completes its client update and reaches UI-module loading, where
+`vgui2_s` cannot load because `libopenal.so.1` is absent. The native client
+module closure also lacks `libnm.so.0`. Login and game launch remain
+unqualified.

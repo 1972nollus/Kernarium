@@ -1,4 +1,4 @@
-From 17ebc7f9b670275dbd16d50210c7cd6a0f6eeae3 Mon Sep 17 00:00:00 2001
+From 9500757ada9fffe4f451e8d7a9430d229bb116be Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 13:24:15 +0900
 Subject: [PATCH 09/13] gallium: preserve integer blit output types in NIR

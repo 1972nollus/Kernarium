@@ -1,4 +1,4 @@
-From 1f431d95b73acabe85d542956e5fb30c1b64c42c Mon Sep 17 00:00:00 2001
+From 2bbd5b6609e0336d81f3e2e1832ce60d2a9a6d9d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
 Subject: [PATCH 05/13] venus: expose host-backed guest memory fds
