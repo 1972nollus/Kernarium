@@ -1,4 +1,4 @@
-From dab474380dde4795b3f8dd74f45d523ec5dae78f Mon Sep 17 00:00:00 2001
+From 56f6ed8e7e04c9b9813beb545efb554cbfba70e9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:19:23 +0900
 Subject: [PATCH 3/3] arm64: describe the emulated x86 CPU in /proc/cpuinfo
@@ -75,10 +75,10 @@ index 5777ded66..a010caedc 100644
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index a9e6e1030..21f14ee3f 100644
+index ce2f8bf20..25b6d55f4 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -84,6 +84,57 @@ static const char *uml_cpu_model_name(void)
+@@ -85,6 +85,57 @@ static const char *uml_cpu_model_name(void)
  #endif
  }
  
@@ -136,7 +136,7 @@ index a9e6e1030..21f14ee3f 100644
  static int show_cpuinfo(struct seq_file *m, void *v)
  {
  	int i = 0;
-@@ -95,8 +146,17 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -96,8 +147,17 @@ static int show_cpuinfo(struct seq_file *m, void *v)
  #endif
  
  	seq_printf(m, "processor\t: %d\n", i);
@@ -154,7 +154,7 @@ index a9e6e1030..21f14ee3f 100644
  	seq_printf(m, "mode\t\t: skas\n");
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
-@@ -432,7 +492,11 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -442,7 +502,11 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
  

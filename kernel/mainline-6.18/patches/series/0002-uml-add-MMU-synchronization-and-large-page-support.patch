@@ -1,7 +1,7 @@
-From b209c7cff17584f0810ca4253811ba34b67054f3 Mon Sep 17 00:00:00 2001
+From e27d7560107cbdb1ea9f46b1f6f58a40aa26a120 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:20 +0900
-Subject: [PATCH 02/26] uml: add MMU synchronization and large-page support
+Subject: [PATCH 02/28] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, precise nested invalidation ranges, large-page handling, same-process address-space lifetime, and user-access behavior in one final-state MMU topic.
 ---
@@ -12,11 +12,11 @@ Keep page-table synchronization, precise nested invalidation ranges, large-page 
  arch/um/kernel/skas/mmu.c        |  33 +-
  arch/um/kernel/skas/mmu_darwin.c | 102 ++++++
  arch/um/kernel/skas/process.c    | 113 +++++-
- arch/um/kernel/skas/uaccess.c    | 231 ++++++++++--
+ arch/um/kernel/skas/uaccess.c    | 248 +++++++++++--
  arch/um/kernel/tlb.c             | 585 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  41 ++-
  mm/mmu_gather.c                  |   7 +-
- 11 files changed, 1306 insertions(+), 83 deletions(-)
+ 11 files changed, 1323 insertions(+), 83 deletions(-)
  create mode 100644 arch/um/kernel/hugetlb.c
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
@@ -680,12 +680,14 @@ index 5881b17eb..b53004892 100644
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e38..ff1ebe3c1 100644
+index 198269e38..c85116f19 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -8,72 +8,197 @@
+@@ -7,73 +7,215 @@
+ #include <linux/highmem.h>
  #include <linux/mm.h>
  #include <linux/module.h>
++#include <linux/rcupdate.h>
  #include <linux/sched.h>
 +#include <linux/uaccess.h>
  #include <asm/current.h>
@@ -707,6 +709,7 @@ index 198269e38..ff1ebe3c1 100644
 +	pte_t *ptep;
 +	spinlock_t *ptl;
 +	struct page *page = NULL;
++	bool mmap_locked = true;
  
  	if (mm == NULL)
  		return NULL;
@@ -715,11 +718,23 @@ index 198269e38..ff1ebe3c1 100644
 +	 * Atomic uaccess callers can already hold a futex hash-bucket lock.  A
 +	 * blocking mmap lock acquisition would let UML schedule the Linux task
 +	 * while its Darwin carrier still owns that spinlock, stranding the next
-+	 * ticket.  Let the caller drop its outer lock and retry instead.
++	 * ticket.  Contention must not be answered with a fault either.
++	 * mmap_read_trylock() refuses to barge past a queued writer, while the
++	 * ordinary mmap_read_lock() of the same task's faulting retry still
++	 * steals the lock from under it, so the try keeps failing for as long as
++	 * that writer stays queued.  futex_wait_setup() answers the resulting
++	 * -EFAULT by dropping its hash-bucket lock and re-reading the same word
++	 * with faults enabled; that read succeeds, so the two alternate forever
++	 * and this CONFIG_PREEMPT_NONE task never yields the CPU the queued
++	 * writer needs to make progress.  Walk the page tables under RCU
++	 * instead: UML selects MMU_GATHER_RCU_TABLE_FREE, so an RCU read section
++	 * keeps every level alive, and the page-table lock taken below still
++	 * samples the entry itself.
 +	 */
 +	if (faulthandler_disabled()) {
-+		if (!mmap_read_trylock(mm))
-+			return NULL;
++		mmap_locked = mmap_read_trylock(mm);
++		if (!mmap_locked)
++			rcu_read_lock();
 +	} else {
 +		mmap_read_lock(mm);
 +	}
@@ -774,12 +789,12 @@ index 198269e38..ff1ebe3c1 100644
 +		get_page(page);
 +		goto unlock_huge;
 +	}
- 
--	return pte_offset_kernel(pmd, addr);
++
 +	ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
 +	if (ptep != NULL) {
 +		pte_t value = ptep_get(ptep);
-+
+ 
+-	return pte_offset_kernel(pmd, addr);
 +		if (pte_present(value) &&
 +		    (is_write ? pte_write(value) : pte_read(value))) {
 +			page = pte_page(value);
@@ -792,7 +807,10 @@ index 198269e38..ff1ebe3c1 100644
 +unlock_huge:
 +	spin_unlock(ptl);
 +out:
-+	mmap_read_unlock(mm);
++	if (mmap_locked)
++		mmap_read_unlock(mm);
++	else
++		rcu_read_unlock();
 +	return page;
  }
  
@@ -822,13 +840,16 @@ index 198269e38..ff1ebe3c1 100644
 +	page = pin_user_mapping(current->mm, virt, is_write);
 +	if (page == NULL) {
 +		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code))
- 			return NULL;
--		pte = virt_to_pte(current->mm, virt);
++			return NULL;
 +		page = pin_user_mapping(current->mm, virt, is_write);
 +		if (page == NULL)
-+			return NULL;
-+	}
-+
+ 			return NULL;
+-		pte = virt_to_pte(current->mm, virt);
+ 	}
+-	if (!pte_present(*pte))
+-		pte = NULL;
+ 
+-	return pte;
 +#ifdef UML_HOST_DARWIN
 +	/* A task can resume inside a syscall after a child left a different mm
 +	 * active.  Restore the current generation and verify that a concurrently
@@ -860,14 +881,11 @@ index 198269e38..ff1ebe3c1 100644
 +		if (darwin_uml_vm_sync_to_backing(virt) < 0)
 +			goto fail;
 +#endif
- 	}
--	if (!pte_present(*pte))
--		pte = NULL;
++	}
 +#endif
 +
 +	return page;
- 
--	return pte;
++
 +#ifdef UML_HOST_DARWIN
 +fail:
 +	put_page(page);
@@ -906,7 +924,7 @@ index 198269e38..ff1ebe3c1 100644
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
  		(addr & ~PAGE_MASK);
-@@ -89,6 +214,20 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -89,6 +231,20 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -927,7 +945,7 @@ index 198269e38..ff1ebe3c1 100644
  	return n;
  }
  
-@@ -223,7 +362,7 @@ long strnlen_user(const char __user *str, long len)
+@@ -223,7 +379,7 @@ long strnlen_user(const char __user *str, long len)
  	int count = 0, n;
  
  	if (!access_ok(str, 1))
@@ -936,7 +954,7 @@ index 198269e38..ff1ebe3c1 100644
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -253,17 +392,18 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -253,17 +409,18 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  	int oldval, ret;
  	struct page *page;
  	unsigned long addr = (unsigned long) uaddr;
@@ -960,7 +978,7 @@ index 198269e38..ff1ebe3c1 100644
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -302,8 +442,15 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -302,8 +459,15 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -977,7 +995,7 @@ index 198269e38..ff1ebe3c1 100644
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +478,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +495,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -1002,7 +1020,7 @@ index 198269e38..ff1ebe3c1 100644
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -361,8 +509,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -361,8 +526,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Mutation-pin Darwin's serialized init_mm host-TLB repair policy."""
+"""Mutation-pin Darwin's serialized host-TLB and fault-routing policy."""
 
 from __future__ import annotations
 
@@ -546,17 +546,209 @@ def validate_nested_tlb_range_policy(um_tlb_header: str, mmu_gather: str) -> Non
     )
 
 
+def validate_atomic_uaccess_contention(uaccess: str, um_kconfig: str) -> None:
+    """A pagefault-disabled uaccess walk may never report contention as a fault."""
+    find(
+        uaccess,
+        r"#\s*include\s+<linux/rcupdate\.h>",
+        "uaccess.c must include the RCU interface it walks page tables under",
+    )
+    find(
+        um_kconfig,
+        r"(?m)^\s*select\s+MMU_GATHER_RCU_TABLE_FREE\s*$",
+        "UML must select MMU_GATHER_RCU_TABLE_FREE for the RCU page-table walk",
+    )
+    region = function_region(uaccess, "pin_user_mapping")
+    require_order(
+        region.text,
+        (
+            (
+                "recorded trylock result",
+                r"mmap_locked\s*=\s*mmap_read_trylock\s*\(\s*mm\s*\)\s*;",
+            ),
+            (
+                "RCU fallback on contention",
+                r"if\s*\(\s*!\s*mmap_locked\s*\)\s*rcu_read_lock\s*\(\s*\)\s*;",
+            ),
+            (
+                "blocking acquisition for the faulting caller",
+                r"\}\s*else\s*\{\s*mmap_read_lock\s*\(\s*mm\s*\)\s*;\s*\}",
+            ),
+            (
+                "matched release of whichever lock was taken",
+                r"if\s*\(\s*mmap_locked\s*\)\s*mmap_read_unlock\s*\(\s*mm\s*\)\s*;\s*"
+                r"else\s*rcu_read_unlock\s*\(\s*\)\s*;",
+            ),
+        ),
+    )
+    masked = mask_c_comments_and_literals(region.text)
+    guard = re.search(
+        r"if\s*\(\s*faulthandler_disabled\s*\(\s*\)\s*\)", masked)
+    require(
+        guard is not None,
+        "pin_user_mapping must branch on faulthandler_disabled()",
+    )
+    walk = re.search(r"\bpgd\s*=\s*pgd_offset\s*\(", masked)
+    require(walk is not None, "pin_user_mapping must walk from pgd_offset()")
+    require(
+        re.search(r"\breturn\b", masked[guard.start() : walk.start()]) is None,
+        "pin_user_mapping must not abandon the walk when the mmap lock is contended",
+    )
+
+
+def validate_darwin_fault_ownership(
+    darwin_internal: str,
+    darwin_process: str,
+    darwin_signal: str,
+    darwin_smp: str,
+) -> None:
+    """A synchronous host fault may only be interpreted by its owner."""
+    internal_masked = mask_c_comments_and_literals(darwin_internal)
+    find(
+        internal_masked,
+        r"int\s+darwin_carrier_cpu\s*\(\s*void\s*\)\s*;\s*"
+        r"void\s+darwin_adopt_boot_thread\s*\(\s*void\s*\)\s*;\s*"
+        r"void\s+darwin_release_boot_thread\s*\(\s*void\s*\)\s*;",
+        "Darwin SMP declarations must expose the fault-owner lifecycle",
+        flags=re.DOTALL,
+    )
+    find(
+        internal_masked,
+        r"static\s+inline\s+int\s+darwin_carrier_cpu\s*\(\s*void\s*\)\s*"
+        r"\{\s*return\s+0\s*;\s*\}\s*"
+        r"static\s+inline\s+void\s+darwin_adopt_boot_thread\s*"
+        r"\(\s*void\s*\)\s*\{\s*\}\s*"
+        r"static\s+inline\s+void\s+darwin_release_boot_thread\s*"
+        r"\(\s*void\s*\)\s*\{\s*\}",
+        "single-CPU Darwin must retain its boot-thread owner stubs",
+        flags=re.DOTALL,
+    )
+
+    carrier = function_region(darwin_smp, "darwin_carrier_cpu")
+    find(
+        carrier.text,
+        r"if\s*\(\s*__atomic_load_n\s*\(\s*&current_cpu_key_ready\s*,\s*"
+        r"__ATOMIC_ACQUIRE\s*\)\s*!=\s*0\s*\)\s*\{\s*"
+        r"carrier\s*=\s*pthread_getspecific\s*\(\s*current_cpu_key\s*\)\s*;\s*"
+        r"if\s*\(\s*carrier\s*!=\s*NULL\s*\)\s*return\s+carrier->cpu\s*;\s*\}",
+        "carrier lookup must report the owning virtual CPU",
+        flags=re.DOTALL,
+    )
+    find(
+        carrier.text,
+        r"owner\s*=\s*__atomic_load_n\s*\(\s*&boot_thread\s*,\s*"
+        r"__ATOMIC_ACQUIRE\s*\)\s*;\s*"
+        r"if\s*\(\s*owner\s*!=\s*0\s*&&\s*"
+        r"pthread_equal\s*\(\s*pthread_self\s*\(\s*\)\s*,\s*"
+        r"\(\s*pthread_t\s*\)\s*owner\s*\)\s*\)\s*return\s+0\s*;\s*"
+        r"return\s+-1\s*;",
+        "a thread with no carrier is only the kernel's while it is the boot thread",
+        flags=re.DOTALL,
+    )
+
+    adopt = function_region(darwin_smp, "darwin_adopt_boot_thread")
+    find(
+        adopt.text,
+        r"__atomic_store_n\s*\(\s*&boot_thread\s*,\s*"
+        r"\(\s*uintptr_t\s*\)\s*pthread_self\s*\(\s*\)\s*,\s*"
+        r"__ATOMIC_RELEASE\s*\)\s*;",
+        "boot-thread adoption must publish the real host thread",
+        flags=re.DOTALL,
+    )
+    release = function_region(darwin_smp, "darwin_release_boot_thread")
+    find(
+        release.text,
+        r"__atomic_store_n\s*\(\s*&boot_thread\s*,\s*0\s*,\s*"
+        r"__ATOMIC_RELEASE\s*\)\s*;",
+        "boot-thread release must clear ownership",
+        flags=re.DOTALL,
+    )
+    primary = function_region(darwin_smp, "darwin_start_primary_cpu_carrier")
+    find(
+        primary.text,
+        r"if\s*\(\s*error\s*==\s*0\s*\)\s*"
+        r"darwin_release_boot_thread\s*\(\s*\)\s*;\s*return\s+error\s*;",
+        "the boot thread must stop owning the kernel once CPU0's carrier exists",
+        flags=re.DOTALL,
+    )
+
+    installer = function_region(darwin_process, "init_new_thread_signals")
+    require_order(
+        installer.text,
+        (
+            ("boot-thread adoption", r"darwin_adopt_boot_thread\s*\(\s*\)\s*;"),
+            ("SIGSEGV handler installation", r"set_handler\s*\(\s*SIGSEGV\s*\)\s*;"),
+            ("SIGBUS handler installation", r"set_handler\s*\(\s*SIGBUS\s*\)\s*;"),
+        ),
+    )
+
+    hard = function_region(darwin_signal, "hard_handler")
+    gate = find(
+        hard.text,
+        r"if\s*\(\s*\(\s*signal\s*==\s*SIGSEGV\s*\|\|\s*"
+        r"signal\s*==\s*SIGBUS\s*\)\s*&&\s*"
+        r"darwin_carrier_cpu\s*\(\s*\)\s*<\s*0\s*\)\s*\{\s*"
+        r"darwin_report_foreign_fault\s*\(\s*signal\s*,\s*info\s*,\s*"
+        r"context\s*\)\s*;\s*errno\s*=\s*saved_errno\s*;\s*return\s*;\s*\}",
+        "an unowned synchronous fault must leave the guest signal path",
+        flags=re.DOTALL,
+    )
+    local_state = find(
+        hard.text,
+        r"state\s*=\s*local_signal_state\s*\(\s*\)\s*;",
+        "hard handler must obtain its local signal state",
+    )
+    require(
+        gate.end() < local_state.start(),
+        "foreign faults must be rejected before touching virtual-CPU signal state",
+    )
+
+    report = function_region(darwin_signal, "darwin_report_foreign_fault")
+    require(
+        "far=%#lx pc=%#lx sp=%#lx lr=%#lx" in report.text
+        and "address=%#lx" in report.text
+        and "%p" not in report.text,
+        "foreign-fault reports must expose literal host addresses",
+    )
+    find(
+        report.text,
+        r"restore\.sa_handler\s*=\s*SIG_DFL\s*;\s*"
+        r"sigemptyset\s*\(\s*&restore\.sa_mask\s*\)\s*;\s*"
+        r"\(\s*void\s*\)\s*sigaction\s*\(\s*signal\s*,\s*&restore\s*,\s*NULL\s*\)\s*;",
+        "a foreign fault must restore the terminating host disposition",
+        flags=re.DOTALL,
+    )
+    require(
+        "owns no virtual CPU" in report.text
+        and "the guest is not the faulting agent" in report.text,
+        "foreign-fault reporting must preserve its ownership diagnosis",
+    )
+
+
 def validate_sources(
     tlb: str,
     trap: str,
     um_tlb_header: str,
     mmu_gather: str,
+    darwin_internal: str,
+    darwin_process: str,
+    darwin_signal: str,
+    darwin_smp: str,
+    uaccess: str,
+    um_kconfig: str,
 ) -> None:
     validate_init_mm_wrapper(tlb)
     validate_pending_range_transaction(tlb)
     validate_four_k_slot_policy(tlb)
     validate_trap_repair(trap)
     validate_nested_tlb_range_policy(um_tlb_header, mmu_gather)
+    validate_atomic_uaccess_contention(uaccess, um_kconfig)
+    validate_darwin_fault_ownership(
+        darwin_internal,
+        darwin_process,
+        darwin_signal,
+        darwin_smp,
+    )
 
 
 def substitute_once(source: str, pattern: str, replacement: str) -> str:
@@ -577,6 +769,12 @@ def run_mutation_fixtures(
     trap: str,
     um_tlb_header: str,
     mmu_gather: str,
+    darwin_internal: str,
+    darwin_process: str,
+    darwin_signal: str,
+    darwin_smp: str,
+    uaccess: str,
+    um_kconfig: str,
 ) -> None:
     Mutation = tuple[str, str, Callable[[str], str]]
     mutations: tuple[Mutation, ...] = (
@@ -843,6 +1041,104 @@ def run_mutation_fixtures(
                 "if (mm_tlb_flush_nested(tlb->mm))",
             ),
         ),
+        (
+            "atomic-contention-reported-as-fault",
+            "uaccess",
+            lambda value: substitute_once(
+                value,
+                r"mmap_locked = mmap_read_trylock\(mm\);\n"
+                r"\t\tif \(!mmap_locked\)\n"
+                r"\t\t\trcu_read_lock\(\);",
+                "if (!mmap_read_trylock(mm))\n\t\t\treturn NULL;",
+            ),
+        ),
+        (
+            "atomic-contended-walk-without-rcu",
+            "uaccess",
+            lambda value: substitute_once(
+                value,
+                r"\t\tif \(!mmap_locked\)\n\t\t\trcu_read_lock\(\);\n",
+                "",
+            ),
+        ),
+        (
+            "atomic-walk-always-drops-mmap-lock",
+            "uaccess",
+            lambda value: substitute_once(
+                value,
+                r"\tif \(mmap_locked\)\n"
+                r"\t\tmmap_read_unlock\(mm\);\n"
+                r"\telse\n"
+                r"\t\trcu_read_unlock\(\);",
+                "\tmmap_read_unlock(mm);",
+            ),
+        ),
+        (
+            "uml-drops-rcu-table-free",
+            "um_kconfig",
+            lambda value: substitute_once(
+                value,
+                r"(?m)^\tselect MMU_GATHER_RCU_TABLE_FREE\n",
+                "",
+            ),
+        ),
+        (
+            "fault-ownership-hard-handler",
+            "darwin_signal",
+            lambda value: substitute_once(
+                value,
+                r"if \(\(signal == SIGSEGV \|\| signal == SIGBUS\) &&\s*"
+                r"darwin_carrier_cpu\(\) < 0\) \{\s*"
+                r"darwin_report_foreign_fault\(signal, info, context\);\s*",
+                "if (false) {\n\t\tdarwin_report_foreign_fault(signal, info, context);\n",
+            ),
+        ),
+        (
+            "fault-ownership-carrier-default",
+            "darwin_smp",
+            lambda value: substitute_once(
+                value,
+                r"(if \(owner != 0 && pthread_equal\(pthread_self\(\),\s*"
+                r"\(pthread_t\)owner\)\)\s*return 0;\s*)return -1;",
+                r"\1return 0;",
+            ),
+        ),
+        (
+            "fault-ownership-boot-release",
+            "darwin_smp",
+            lambda value: substitute_once(
+                value,
+                r"(if \()error == 0(\)\s*darwin_release_boot_thread\(\);)",
+                r"\1error != 0\2",
+            ),
+        ),
+        (
+            "fault-ownership-boot-adoption",
+            "darwin_process",
+            lambda value: substitute_once(
+                value,
+                r"darwin_adopt_boot_thread\(\);",
+                "darwin_release_boot_thread();",
+            ),
+        ),
+        (
+            "fault-ownership-default-disposition",
+            "darwin_signal",
+            lambda value: substitute_once(
+                value,
+                r"restore\.sa_handler = SIG_DFL;",
+                "restore.sa_handler = SIG_IGN;",
+            ),
+        ),
+        (
+            "fault-ownership-literal-addresses",
+            "darwin_signal",
+            lambda value: substitute_once(
+                value,
+                r"far=%#lx pc=%#lx sp=%#lx lr=%#lx",
+                "far=%p pc=%p sp=%p lr=%p",
+            ),
+        ),
     )
 
     sources = {
@@ -850,6 +1146,12 @@ def run_mutation_fixtures(
         "trap": trap,
         "um_tlb_header": um_tlb_header,
         "mmu_gather": mmu_gather,
+        "darwin_internal": darwin_internal,
+        "darwin_process": darwin_process,
+        "darwin_signal": darwin_signal,
+        "darwin_smp": darwin_smp,
+        "uaccess": uaccess,
+        "um_kconfig": um_kconfig,
     }
     for name, target, mutate in mutations:
         mutated = dict(sources)
@@ -860,6 +1162,12 @@ def run_mutation_fixtures(
                 mutated["trap"],
                 mutated["um_tlb_header"],
                 mutated["mmu_gather"],
+                mutated["darwin_internal"],
+                mutated["darwin_process"],
+                mutated["darwin_signal"],
+                mutated["darwin_smp"],
+                mutated["uaccess"],
+                mutated["um_kconfig"],
             )
         except PolicyError:
             continue
@@ -886,6 +1194,13 @@ def main() -> int:
         arguments.linux_source / "arch" / "um" / "include" / "asm" / "tlb.h"
     )
     mmu_gather_path = arguments.linux_source / "mm" / "mmu_gather.c"
+    darwin_directory = arguments.linux_source / "arch" / "um" / "os-Darwin"
+    darwin_internal_path = darwin_directory / "internal.h"
+    darwin_process_path = darwin_directory / "process.c"
+    darwin_signal_path = darwin_directory / "signal.c"
+    darwin_smp_path = darwin_directory / "smp.c"
+    uaccess_path = kernel_directory / "skas" / "uaccess.c"
+    um_kconfig_path = arguments.linux_source / "arch" / "um" / "Kconfig"
     require(tlb_path.is_file(), f"missing prepared kernel source: {tlb_path}")
     require(trap_path.is_file(), f"missing prepared kernel source: {trap_path}")
     require(
@@ -896,12 +1211,49 @@ def main() -> int:
         mmu_gather_path.is_file(),
         f"missing prepared kernel source: {mmu_gather_path}",
     )
+    for path in (
+        darwin_internal_path,
+        darwin_process_path,
+        darwin_signal_path,
+        darwin_smp_path,
+        uaccess_path,
+        um_kconfig_path,
+    ):
+        require(path.is_file(), f"missing prepared kernel source: {path}")
     tlb = tlb_path.read_text(encoding="utf-8")
     trap = trap_path.read_text(encoding="utf-8")
     um_tlb_header = um_tlb_header_path.read_text(encoding="utf-8")
     mmu_gather = mmu_gather_path.read_text(encoding="utf-8")
-    validate_sources(tlb, trap, um_tlb_header, mmu_gather)
-    run_mutation_fixtures(tlb, trap, um_tlb_header, mmu_gather)
+    darwin_internal = darwin_internal_path.read_text(encoding="utf-8")
+    darwin_process = darwin_process_path.read_text(encoding="utf-8")
+    darwin_signal = darwin_signal_path.read_text(encoding="utf-8")
+    darwin_smp = darwin_smp_path.read_text(encoding="utf-8")
+    uaccess = uaccess_path.read_text(encoding="utf-8")
+    um_kconfig = um_kconfig_path.read_text(encoding="utf-8")
+    validate_sources(
+        tlb,
+        trap,
+        um_tlb_header,
+        mmu_gather,
+        darwin_internal,
+        darwin_process,
+        darwin_signal,
+        darwin_smp,
+        uaccess,
+        um_kconfig,
+    )
+    run_mutation_fixtures(
+        tlb,
+        trap,
+        um_tlb_header,
+        mmu_gather,
+        darwin_internal,
+        darwin_process,
+        darwin_signal,
+        darwin_smp,
+        uaccess,
+        um_kconfig,
+    )
     print("Darwin init_mm TLB policy fixtures passed")
     return 0
 

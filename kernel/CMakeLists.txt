@@ -7,7 +7,8 @@ include("${UML_KERNEL_COMMON_ROOT}/artifacts/KernelArtifact.cmake")
 
 set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
     "Prebuilt kernel product consumed by the selected Apple executable/runtime")
-set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS mainline-6.18 android-17)
+set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
+    mainline-6.18 mainline-6.18-vulkan-experiment android-17)
 set(UML_MAINLINE_KERNEL_PROFILE "standard" CACHE STRING
     "Mainline arm64 kernel profile: standard or wine-arm64ec")
 set_property(CACHE UML_MAINLINE_KERNEL_PROFILE PROPERTY STRINGS
@@ -36,9 +37,11 @@ if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     return()
 endif()
 
-if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
+if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18" AND
+   NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
     message(FATAL_ERROR
-        "UML_KERNEL_PRODUCT must be mainline-6.18 or android-17")
+        "UML_KERNEL_PRODUCT must be mainline-6.18, "
+        "mainline-6.18-vulkan-experiment, or android-17")
 endif()
 
 set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING
@@ -58,7 +61,17 @@ if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec" AND
     message(FATAL_ERROR
         "The wine-arm64ec kernel profile requires the arm64 4 KiB slice")
 endif()
+if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment" AND
+   (NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" OR
+    NOT UML_MAINLINE_KERNEL_PROFILE STREQUAL "standard"))
+    message(FATAL_ERROR
+        "The mainline-6.18-vulkan-experiment product is published only for "
+        "the standard arm64 profile")
+endif()
 
+# The Vulkan experiment reads the same mainline-6.18 series through its own
+# fixed descriptors, so the accepted default product keeps its reviewed bundle
+# and its migration defaults.
 set(_uml_mainline_artifact_cache_arguments)
 set(_uml_mainline_profile_fragment)
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
@@ -70,24 +83,32 @@ if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
     set(_uml_expected_page_size 4096)
 elseif(UML_GUEST_16K_PAGES)
-    set(_uml_mainline_acceptance
-        "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
+    if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
+        set(_uml_mainline_acceptance
+            "${UML_KERNEL_LINE_ROOT}/artifacts/vulkan-experiment-16k.env")
+    else()
+        set(_uml_mainline_acceptance
+            "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
+        list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
+            "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4")
+    endif()
     set(_uml_expected_page_size 16384)
-    list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
-        "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4")
 else()
     if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec")
         set(_uml_mainline_acceptance
             "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/artifacts/accepted-4k.env")
         set(_uml_mainline_profile_fragment
             "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/config.fragment")
+    elseif(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
+        set(_uml_mainline_acceptance
+            "${UML_KERNEL_LINE_ROOT}/artifacts/vulkan-experiment-4k.env")
     else()
         set(_uml_mainline_acceptance
             "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
+        list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
+            "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4")
     endif()
     set(_uml_expected_page_size 4096)
-    list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
-        "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4")
 endif()
 uml_read_artifact_env(
     "${_uml_mainline_acceptance}"

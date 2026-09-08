@@ -1,8 +1,8 @@
-From 6e8fe684bb6bc094b31977278aad2fa76693bcd8 Mon Sep 17 00:00:00 2001
+From 232419717a75ba27d6c3e206e53e60b444903a5e Mon Sep 17 00:00:00 2001
 From: linux-um-darwin kernel patch maintainer
  <noreply@linux-um-darwin.invalid>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
-Subject: [PATCH 24/26] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+Subject: [PATCH 24/28] UML-DARWIN-LOCAL: um: batch UBD discard ranges
 
 ---
  arch/um/drivers/ubd_kern.c | 20 ++++++++++++++++++--

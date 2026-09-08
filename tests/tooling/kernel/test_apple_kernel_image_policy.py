@@ -343,6 +343,9 @@ def main() -> int:
     parser.add_argument("--acceptance-16k", type=Path, required=True)
     parser.add_argument("--acceptance-4k", type=Path, required=True)
     parser.add_argument("--acceptance-x86-4k", type=Path, required=True)
+    parser.add_argument("--experiment-16k", type=Path, required=True)
+    parser.add_argument("--experiment-4k", type=Path, required=True)
+    parser.add_argument("--series-metadata", type=Path, required=True)
     parser.add_argument("--android-kernel-acceptance", type=Path, required=True)
     parser.add_argument("--android-kernel-publisher", type=Path, required=True)
     parser.add_argument("--runtime-cmake", type=Path, required=True)
@@ -376,6 +379,9 @@ def main() -> int:
     acceptance_4k = read(arguments.acceptance_4k)
     acceptance_x86_4k = read(arguments.acceptance_x86_4k)
     android_kernel_acceptance = read(arguments.android_kernel_acceptance)
+    experiment_16k = read(arguments.experiment_16k)
+    experiment_4k = read(arguments.experiment_4k)
+    series_metadata = read(arguments.series_metadata)
     directory_16k = env_value(
         acceptance_16k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
     )
@@ -490,6 +496,9 @@ def main() -> int:
         "UML_MAINLINE_KERNEL_SLICE",
         "accepted-16k.env",
         "accepted-4k.env",
+        "vulkan-experiment-16k.env",
+        "vulkan-experiment-4k.env",
+        "mainline-6.18-vulkan-experiment",
         "slices/x86_64/artifacts/accepted-4k.env",
         "profiles/wine-arm64ec/artifacts/accepted-4k.env",
         "profiles/wine-arm64ec/config.fragment",
@@ -543,6 +552,49 @@ def main() -> int:
         and env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
         and directory_4k.startswith("mainline-6.18-arm64-4k-"),
         "4 KiB artifact acceptance is malformed",
+    )
+    experiment_directory_16k = env_value(
+        experiment_16k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+    )
+    experiment_directory_4k = env_value(
+        experiment_4k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+    )
+    require(
+        env_value(experiment_16k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
+        and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
+        and experiment_directory_16k.startswith("mainline-6.18-arm64-16k-"),
+        "16 KiB Vulkan experiment descriptor is malformed",
+    )
+    require(
+        env_value(experiment_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        and env_value(experiment_4k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
+        and env_value(experiment_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
+        and experiment_directory_4k.startswith("mainline-6.18-arm64-4k-"),
+        "4 KiB Vulkan experiment descriptor is malformed",
+    )
+    for key in (
+        "UML_KERNEL_ARTIFACT_FAMILY",
+        "UML_KERNEL_ARTIFACT_RELEASE",
+        "UML_KERNEL_ARTIFACT_FINAL_TREE",
+        "UML_KERNEL_ARTIFACT_PATCH_MANIFEST_SHA256",
+        "UML_KERNEL_ARTIFACT_ABI_VERSION",
+        "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT",
+    ):
+        require(
+            env_value(experiment_16k, key) == env_value(experiment_4k, key),
+            f"Vulkan experiment page profiles disagree on {key}",
+        )
+    # The experiment is the product built from the series this tree carries, so
+    # its descriptors must name that series rather than a stale publication.
+    require(
+        env_value(experiment_16k, "UML_KERNEL_ARTIFACT_FINAL_TREE")
+        == env_value(series_metadata, "UML_KERNEL_FINAL_TREE")
+        and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_ABI_VERSION")
+        == env_value(series_metadata, "UML_KERNEL_ABI_VERSION")
+        and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT")
+        == env_value(series_metadata, "UML_KERNEL_ABI_FINGERPRINT"),
+        "Vulkan experiment descriptors do not name the maintained series",
     )
     require(
         env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"

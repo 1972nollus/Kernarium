@@ -1,7 +1,7 @@
-From bcf0a3fce74d1ff2bf7d80bc34552738f09bf1b8 Mon Sep 17 00:00:00 2001
+From d721462708b69ca5d7d04f1c2f7936e169129473 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:30 +0900
-Subject: [PATCH 22/26] UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
+Subject: [PATCH 22/28] UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
 
 Keep anonymous shared physical-memory backing and free-page range reclamation in one host-memory topic.
 ---

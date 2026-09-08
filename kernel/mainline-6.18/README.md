@@ -106,7 +106,29 @@ address-space configuration axis.
 The native mapping window contains guest RAM plus an auxiliary address-space
 allowance equal to RAM, bounded from 1 GiB to 4 GiB. Vmapped task stacks and
 other kernel virtual mappings use that allowance; their physical pages still
-come from the guest's `mem=` allocation.
+come from the guest's `mem=` allocation. The window additionally carries the
+fixed vhost-user shared-memory reservation described below plus the stub pages,
+added after that bound so the aperture never reduces the vmalloc allowance or
+the configured guest RAM. The host emulator admits the same span
+(`UML_NATIVE_VHOST_USER_SHMEM_RESERVATION` and `UML_NATIVE_STUB_PAGES` in the
+top-level CMake layout); a host that reserves less faults on the kernel's own
+stub write, so the two sizes move together.
+
+Darwin UML negotiates the standardized vhost-user shared-memory-region
+transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
+`VHOST_USER_GET_SHMEM_CONFIG`, and services acknowledged backend
+`SHMEM_MAP`/`SHMEM_UNMAP` messages with exact descriptor, range, permission,
+and owner validation. The kernel reserves a 1 GiB guarded guest-physical
+aperture outside RAM, enforces 16 KiB mapping alignment under both guest page
+profiles, and supports one mapping per 16 KiB aperture page through a
+constant-time page-to-record index. Reset, disconnect, and release revoke every
+mapping in bounded descriptor batches, and a request-stream lock serializes the
+backend-request IRQ against the synchronous reply-wait drain so two vCPUs
+cannot split one framed request. Virtio-GPU host-visible blobs use the same
+16 KiB granularity without a private userspace ioctl or a bridge ABI change.
+This transport has no Android product: the ACK line does not negotiate or
+reserve the aperture, so it and its mapping-capacity policy apply only to the
+mainline Linux desktop guest.
 
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
@@ -116,8 +138,24 @@ Free-page reporting remains available to a file-backed provider and disables
 itself after the anonymous provider rejects range punching.
 
 Darwin's cooperative scheduler services timer deadlines at safe kernel spin,
-retry, TLB-walk, and `cond_resched()` boundaries. The Darwin network receive
-path uses NAPI, and the display-mapped absolute pointer is a direct touchscreen.
+retry, TLB-walk, and `cond_resched()` boundaries. A pagefault-disabled uaccess
+never reports mmap-lock contention as a fault: `mmap_read_trylock()` refuses to
+barge past a queued writer while the faulting retry of the same task still
+steals the lock, so answering the try with `-EFAULT` made `futex_wait_setup()`
+alternate a failing atomic read with a succeeding faulting one and never yield
+the CPU that writer needs. The contended atomic walk runs under RCU instead,
+which `MMU_GATHER_RCU_TABLE_FREE` keeps safe, and the page-table lock still
+samples the entry.
+
+Signal dispositions are process-wide, so the emulator's device and renderer
+threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
+Linux task. A synchronous fault enters the guest path only from a virtual CPU
+carrier, or from the boot thread while it still owns CPU0. Every other fault is
+reported with its real host thread and literal addresses before the default
+host disposition terminates the faulting instruction.
+
+The Darwin network receive path uses NAPI, and the display-mapped absolute
+pointer is a direct touchscreen.
 Direct UBD images advertise discard ranges up to 128 MiB and service each range
 with one host hole punch. The project adds no behavior to upstream UML's COW
 implementation, and Apple launchers never construct a COW image pair.
@@ -179,6 +217,13 @@ userspace publication. Artifact identity includes the slice, so an arm64 4 KiB
 kernel cannot satisfy an x86_64 selection. Apple products validate the whole
 selected bundle and derive paths from its manifest; they do not inspect source
 or Kbuild state.
+
+`artifacts/vulkan-experiment-16k.env` and `vulkan-experiment-4k.env` select the
+separately published standard-arm64 bundles built from the series this
+directory currently tracks, and apply only when a build sets
+`UML_KERNEL_PRODUCT=mainline-6.18-vulkan-experiment`. They do not replace the
+accepted descriptors, which stay on their independently reviewed publication
+until a new one is accepted.
 
 ## Toolchain
 

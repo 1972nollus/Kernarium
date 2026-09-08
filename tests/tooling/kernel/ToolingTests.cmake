@@ -94,6 +94,17 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-virtio-gpu-shared-memory-policy
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_virtio_gpu_shared_memory_policy.py
+        --series-manifest
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/manifest.tsv
+        --series-directory
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series
+    LABELS kernel;gpu;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME apple-shared-kernel-image-policy
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py
@@ -108,6 +119,12 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-4k.env
         --acceptance-x86-4k
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/slices/x86_64/artifacts/accepted-4k.env
+        --experiment-16k
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/vulkan-experiment-16k.env
+        --experiment-4k
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/vulkan-experiment-4k.env
+        --series-metadata
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/metadata.env
         --android-kernel-acceptance
             ${PROJECT_SOURCE_DIR}/kernel/android-6.18/artifacts/accepted-16k.env
         --android-kernel-publisher
