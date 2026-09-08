@@ -1,7 +1,7 @@
 From d88ca9efae360cfdcffa26f0735e7ced38f67d94 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:04:40 +0900
-Subject: [PATCH 19/47] kosmickrisp: support unused dynamic-rendering
+Subject: [PATCH 19/48] kosmickrisp: support unused dynamic-rendering
  attachments
 
 ---
@@ -26,7 +26,7 @@ Subject: [PATCH 19/47] kosmickrisp: support unused dynamic-rendering
  create mode 100644 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert.h
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 46a45bc..3fa01ae 100644
+index 46a45bce..3fa01aef 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -133,6 +133,7 @@ struct kk_rendering_state {
@@ -38,7 +38,7 @@ index 46a45bc..3fa01ae 100644
     struct kk_attachment stencil_att;
     struct kk_attachment fsr_att;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 1c46a18..132aa31 100644
+index 1c46a182..132aa31a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -186,6 +186,7 @@ static void
@@ -364,7 +364,7 @@ index 1c46a18..132aa31 100644
           mtl_set_depth_stencil_state(enc, gfx->depth_stencil_state);
     }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0c11b75..1f396d5 100644
+index 0c11b757..1f396d55 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -167,6 +167,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -394,7 +394,7 @@ index 0c11b75..1f396d5 100644
        .extendedDynamicState3DepthClampEnable = true,
        .extendedDynamicState3DepthClipNegativeOneToOne = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a1d1b5b..77bb894 100644
+index a1d1b5b5..77bb894f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -425,6 +425,32 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
@@ -721,7 +721,7 @@ index a1d1b5b..77bb894 100644
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2d0d0f2..ef0c456 100644
+index 2d0d0f2b..ef0c4563 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,8 @@
@@ -772,7 +772,7 @@ index 2d0d0f2..ef0c456 100644
                                  struct kk_shader *shader);
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c13f569..5259c0d 100644
+index c13f5698..5259c0d6 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -211,6 +211,20 @@ if with_tests
@@ -798,7 +798,7 @@ index c13f569..5259c0d 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_unused_attachment_gaps.cpp b/src/kosmickrisp/vulkan/tests/test_unused_attachment_gaps.cpp
 new file mode 100644
-index 0000000..5a0bfe1
+index 00000000..5a0bfe1b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_unused_attachment_gaps.cpp
 @@ -0,0 +1,567 @@
@@ -1371,7 +1371,7 @@ index 0000000..5a0bfe1
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
 new file mode 100755
-index 0000000..53e208e
+index 00000000..53e208e3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -1384,7 +1384,7 @@ index 0000000..53e208e
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag
 new file mode 100644
-index 0000000..8e2d589
+index 00000000..8e2d589d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag
 @@ -0,0 +1,14 @@
@@ -1404,7 +1404,7 @@ index 0000000..8e2d589
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag.h b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag.h
 new file mode 100644
-index 0000000..69adafb
+index 00000000..69adafbd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag.h
 @@ -0,0 +1,37 @@
@@ -1447,7 +1447,7 @@ index 0000000..69adafb
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert
 new file mode 100644
-index 0000000..168e8f0
+index 00000000..168e8f0b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert
 @@ -0,0 +1,10 @@
@@ -1463,7 +1463,7 @@ index 0000000..168e8f0
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert.h b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert.h
 new file mode 100644
-index 0000000..a588d42
+index 00000000..a588d424
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert.h
 @@ -0,0 +1,57 @@

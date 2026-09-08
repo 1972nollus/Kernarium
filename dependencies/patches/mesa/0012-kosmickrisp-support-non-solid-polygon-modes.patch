@@ -1,7 +1,7 @@
 From 699fdc357779309db18bd72593987017636a2698 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:59 +0900
-Subject: [PATCH 12/47] kosmickrisp: support non-solid polygon modes
+Subject: [PATCH 12/48] kosmickrisp: support non-solid polygon modes
 
 ---
  src/kosmickrisp/bridge/mtl_encoder.h        |   6 +
@@ -18,7 +18,7 @@ Subject: [PATCH 12/47] kosmickrisp: support non-solid polygon modes
  11 files changed, 528 insertions(+), 24 deletions(-)
 
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
-index 91ef3af..23efebf 100644
+index 91ef3af0..23efebf7 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.h
 +++ b/src/kosmickrisp/bridge/mtl_encoder.h
 @@ -63,6 +63,9 @@ void mtl_dispatch_threads(mtl_compute_encoder *encoder,
@@ -42,7 +42,7 @@ index 91ef3af..23efebf 100644
                                      enum mtl_visibility_result_mode mode,
                                      size_t offset);
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
-index a1942ff..a8c7e74 100644
+index a1942ff8..a8c7e74e 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.m
 +++ b/src/kosmickrisp/bridge/mtl_encoder.m
 @@ -228,6 +228,16 @@
@@ -80,7 +80,7 @@ index a1942ff..a8c7e74 100644
  mtl_set_visibility_result_mode(mtl_render_encoder *encoder,
                                 enum mtl_visibility_result_mode mode,
 diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
-index 76256c2..f60ad27 100644
+index 76256c2f..f60ad272 100644
 --- a/src/kosmickrisp/bridge/mtl_types.h
 +++ b/src/kosmickrisp/bridge/mtl_types.h
 @@ -112,6 +112,11 @@ enum mtl_primitive_type {
@@ -96,7 +96,7 @@ index 76256c2..f60ad27 100644
     MTL_PRIMITIVE_TOPOLOGY_CLASS_UNSPECIFIED = 0,
     MTL_PRIMITIVE_TOPOLOGY_CLASS_POINT = 1,
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_encoder.c b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
-index b1482b5..b984fd5 100644
+index b1482b50..b984fd54 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 @@ -104,6 +104,12 @@ mtl_dispatch_threadgroups_with_indirect_buffer(mtl_compute_encoder *encoder,
@@ -126,7 +126,7 @@ index b1482b5..b984fd5 100644
  mtl_set_visibility_result_mode(mtl_render_encoder *encoder,
                                 enum mtl_visibility_result_mode mode,
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index fbd6126..5fd6c04 100644
+index fbd61265..5fd6c04f 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -74,6 +74,7 @@ static const struct {
@@ -138,7 +138,7 @@ index fbd6126..5fd6c04 100644
     [VARYING_SLOT_VAR1] = {"vary_01", .user = true},
     [VARYING_SLOT_VAR2] = {"vary_02", .user = true},
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index b240bf2..8b7d616 100644
+index b240bf2f..8b7d6165 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -10,6 +10,45 @@
@@ -188,7 +188,7 @@ index b240bf2..8b7d616 100644
  libkk_prefix_sum_tess(global struct poly_tess_params *p)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 2406b63..aafa90c 100644
+index 2406b63b..aafa90ca 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -83,6 +83,12 @@ struct kk_per_draw_data {
@@ -205,7 +205,7 @@ index 2406b63..aafa90c 100644
  
  struct kk_attachment {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 14072e3..cdb8b61 100644
+index 14072e3a..cdb8b61b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1228,6 +1228,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -410,7 +410,7 @@ index 14072e3..cdb8b61 100644
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 31f2a8e..1a15d74 100644
+index 31f2a8e6..1a15d747 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -210,6 +210,7 @@ kk_get_device_features(
@@ -431,7 +431,7 @@ index 31f2a8e..1a15d74 100644
        .nonStrictWideLinesUseParallelogram = false,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 59cfd52..567530c 100644
+index 59cfd521..567530c1 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -24,6 +24,7 @@
@@ -873,7 +873,7 @@ index 59cfd52..567530c 100644
  
     if (result != VK_SUCCESS) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 6e092ef..b0d3ecf 100644
+index 6e092ef0..b0d3ecf5 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -69,6 +69,7 @@ struct kk_shader_info {

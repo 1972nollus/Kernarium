@@ -155,6 +155,14 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
+submission, using the common Vulkan runtime's on-demand submit worker. This
+keeps delayed host signals from outliving Metal's finite GPU event-wait window;
+`MESA_VK_ENABLE_SUBMIT_THREAD=false` still preserves that required fallback.
+Completed waits retain the immediate path. CPU waits preserve their absolute
+deadlines and observe device loss so pending submissions and queue drains can
+shut down before device resources are released.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is

@@ -1303,6 +1303,141 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.clearCount == clearsBeforeUnref + 1);
 }
 
+void softwareScanoutProgressesWhileRendererFenceIsPending()
+{
+    const std::array<std::uint8_t, 4> pixel {11, 22, 33, 255};
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [&](std::uint64_t address, std::span<std::uint8_t> destination) {
+            if (address != 0x1000 || destination.size() != pixel.size())
+                return false;
+            std::copy(pixel.begin(), pixel.end(), destination.begin());
+            return true;
+        },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        },
+        0,
+        true};
+
+    const auto context = createContext(811, protocol::venusCapsetId);
+    const auto software = create2d(812, 1, 1);
+    const auto rendered = create3d(813, 1, 1);
+    require(responseType(device.process(requestBytes(context), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(software), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(rendered), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    protocol::GpuAttachBacking attach {};
+    attach.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceAttachBacking);
+    attach.resourceId = software.resourceId;
+    attach.entryCount = 1;
+    const protocol::GpuMemoryEntry entry {
+        .address = 0x1000,
+        .length = static_cast<std::uint32_t>(pixel.size()),
+    };
+    require(responseType(device.process(
+        requestWithEntry(attach, entry), false)) ==
+        protocol::GpuResponse::okNoData);
+    protocol::GpuSetScanout scanout {};
+    scanout.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::setScanout);
+    scanout.rectangle = {.x = 0, .y = 0, .width = 1, .height = 1};
+    scanout.resourceId = software.resourceId;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    protocol::GpuSubmit3d waitSubmit {};
+    waitSubmit.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::submit3d);
+    waitSubmit.header.contextId = context.header.contextId;
+    waitSubmit.header.flags =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    waitSubmit.header.ringIndex = 1;
+    const auto pending = device.processWithDeferredFence(
+        requestBytes(waitSubmit), false, 41);
+    require(pending.fence.has_value());
+    require(device.contextFenceStatus(*pending.fence) == EBUSY);
+
+    /* A console update can precede the submit carrying the host semaphore
+     * signal. Both software commands must pass the transport's production
+     * predicate without retiring the renderer fence. */
+    protocol::GpuTransferToHost2d transfer {};
+    transfer.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::transferToHost2d);
+    transfer.rectangle = scanout.rectangle;
+    transfer.resourceId = software.resourceId;
+    require(device.canProcessWhileFencesPending(requestBytes(transfer), false));
+    require(responseType(device.process(requestBytes(transfer), false)) ==
+        protocol::GpuResponse::okNoData);
+    protocol::GpuResourceFlush flush {};
+    flush.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceFlush);
+    flush.rectangle = scanout.rectangle;
+    flush.resourceId = software.resourceId;
+    require(device.canProcessWhileFencesPending(requestBytes(flush), false));
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(std::equal(
+        pixel.begin(), pixel.end(), dependencies.framebuffer.begin()));
+    require(device.contextFenceStatus(*pending.fence) == EBUSY);
+
+    /* The same opcode must not admit renderer readback or unknown resources.
+     * A software transfer cannot be used to access a renderer resource. */
+    flush.resourceId = rendered.resourceId;
+    require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
+    flush.resourceId = 9999;
+    require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
+    require(!device.canProcessWhileFencesPending(
+        requestBytes(flush).first(sizeof(protocol::GpuControlHeader)), false));
+    transfer.resourceId = rendered.resourceId;
+    require(responseType(device.process(requestBytes(transfer), false)) ==
+        protocol::GpuResponse::errorInvalidResource);
+    require(dependencies.transferCount == 0);
+    for (const auto command : {
+             protocol::GpuCommand::resourceUnref,
+             protocol::GpuCommand::resourceDetachBacking,
+             protocol::GpuCommand::contextDetachResource,
+             protocol::GpuCommand::contextDestroy,
+         }) {
+        protocol::GpuResourceReference mutation {};
+        mutation.header.type = static_cast<std::uint32_t>(command);
+        mutation.header.contextId = context.header.contextId;
+        mutation.resourceId = rendered.resourceId;
+        require(!device.canProcessWhileFencesPending(
+            requestBytes(mutation), false));
+    }
+    auto signalSubmit = waitSubmit;
+    signalSubmit.header.flags = 0;
+    signalSubmit.header.ringIndex = 0;
+    require(device.canProcessWhileFencesPending(
+        requestBytes(signalSubmit), false));
+    require(responseType(device.process(requestBytes(signalSubmit), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.submitCount == 2);
+    dependencies.retireContextFence(context.header.contextId, 1, 41);
+    require(device.pollContextFences(context.header.contextId) == 0);
+    require(device.contextFenceStatus(*pending.fence) == 0);
+
+    /* Classification follows current ownership when an ID is recycled. */
+    protocol::GpuResourceReference unref {};
+    unref.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceUnref);
+    unref.resourceId = software.resourceId;
+    require(responseType(device.process(requestBytes(unref), false)) ==
+        protocol::GpuResponse::okNoData);
+    flush.resourceId = software.resourceId;
+    require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
+    const auto replacement = create3d(software.resourceId, 1, 1);
+    require(responseType(device.process(requestBytes(replacement), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
+}
+
 void deferredFencesUseHostTimelineAndMergedRetirement()
 {
     FakeGpuDependencies dependencies;
@@ -2338,6 +2473,7 @@ void runVirtioGpuDeviceTests()
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
+    softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();

@@ -1,7 +1,7 @@
 From 84061459648b5fcfa435e8b861a3b7a4303ad1cb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 14:57:25 +0900
-Subject: [PATCH 13/47] kosmickrisp: satisfy the Zink OpenGL 2.1 profile
+Subject: [PATCH 13/48] kosmickrisp: satisfy the Zink OpenGL 2.1 profile
 
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |  37 +++
@@ -18,7 +18,7 @@ Subject: [PATCH 13/47] kosmickrisp: satisfy the Zink OpenGL 2.1 profile
  11 files changed, 496 insertions(+), 29 deletions(-)
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 8b7d616..1e540ef 100644
+index 8b7d6165..1e540ef4 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -49,6 +49,43 @@ libkk_polygon_point_setup_indirect(
@@ -66,7 +66,7 @@ index 8b7d616..1e540ef 100644
  libkk_prefix_sum_tess(global struct poly_tess_params *p)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index aafa90c..7a81fee 100644
+index aafa90ca..7a81fee4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -89,6 +89,18 @@ struct kk_per_draw_data {
@@ -89,7 +89,7 @@ index aafa90c..7a81fee 100644
  
  struct kk_attachment {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index cdb8b61..783c5e3 100644
+index cdb8b61b..783c5e30 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1196,6 +1196,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -292,7 +292,7 @@ index cdb8b61..783c5e3 100644
        const enum mesa_prim raster_prim = tess ? cmd->state.gfx.tess.prim
                                                 : data->prim;
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index df5a21d..62dd802 100644
+index df5a21d4..62dd8026 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -78,6 +78,8 @@ get_sampled_image_view_desc(VkDescriptorType descriptor_type,
@@ -313,7 +313,7 @@ index df5a21d..62dd802 100644
  
        if (sampler->has_border) {
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 6f5d204..88a8176 100644
+index 6f5d2040..88a8176a 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -21,14 +21,52 @@ struct kk_sampled_image_descriptor {
@@ -372,7 +372,7 @@ index 6f5d204..88a8176 100644
     uint64_t image_gpu_resource_id;
  };
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 79ba814..2a78510 100644
+index 79ba814a..2a785103 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -550,6 +550,56 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
@@ -433,7 +433,7 @@ index 79ba814..2a78510 100644
        return true;
     }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 1a15d74..298b0aa 100644
+index 1a15d747..298b0aa8 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -160,6 +160,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -474,7 +474,7 @@ index 1a15d74..298b0aa 100644
        .extendedDynamicState3TessellationDomainOrigin = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_sampler.c b/src/kosmickrisp/vulkan/kk_sampler.c
-index 28dbe4e..40bc4d6 100644
+index 28dbe4ec..40bc4d65 100644
 --- a/src/kosmickrisp/vulkan/kk_sampler.c
 +++ b/src/kosmickrisp/vulkan/kk_sampler.c
 @@ -7,6 +7,7 @@
@@ -510,7 +510,7 @@ index 28dbe4e..40bc4d6 100644
  
     *pSampler = kk_sampler_to_handle(sampler);
 diff --git a/src/kosmickrisp/vulkan/kk_sampler.h b/src/kosmickrisp/vulkan/kk_sampler.h
-index 610f5e6..35cd7e7 100644
+index 610f5e6c..35cd7e77 100644
 --- a/src/kosmickrisp/vulkan/kk_sampler.h
 +++ b/src/kosmickrisp/vulkan/kk_sampler.h
 @@ -22,6 +22,7 @@
@@ -522,7 +522,7 @@ index 610f5e6..35cd7e7 100644
     /* Depth-compare samples evaluate the emulated border themselves. */
     VkCompareOp border_compare_op;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 567530c..4819058 100644
+index 567530c1..48190582 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -114,6 +114,7 @@ has_static_depth_stencil_state(const struct vk_graphics_pipeline_state *state)
@@ -840,7 +840,7 @@ index 567530c..4819058 100644
        for (uint32_t i = shader_count; i < total_shaders; ++i)
           kk_shader_destroy(&dev->vk, shaders[i], pAllocator);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index b0d3ecf..4aaf802 100644
+index b0d3ecf5..4aaf802b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -70,6 +70,7 @@ struct kk_shader_info {

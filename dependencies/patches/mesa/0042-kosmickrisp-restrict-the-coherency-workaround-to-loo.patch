@@ -1,7 +1,7 @@
 From 3c48b0fd32402012fa67d59d98e5c9cadbb89298 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
-Subject: [PATCH 42/47] kosmickrisp: restrict the coherency workaround to loops
+Subject: [PATCH 42/48] kosmickrisp: restrict the coherency workaround to loops
 
 Large compute kernels miscompile on macOS 26 when a global access is marked
 coherent: part way through the kernel every device load starts returning zero,
@@ -52,7 +52,7 @@ materializes as a compute kernel.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_indexing.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index bb69632..0f20577 100644
+index bb696326..0f205771 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,36 @@ info on what was updated.
@@ -101,7 +101,7 @@ index bb69632..0f20577 100644
  KK_WORKAROUND_5
  ---------------
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 92be4b4..0101968 100644
+index 92be4b42..01019686 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -226,6 +226,32 @@ output_type(nir_shader *shader)
@@ -160,7 +160,7 @@ index 92be4b4..0101968 100644
                                    ? "coherent device"
                                    : "device";
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 695e96a..62fc86d 100644
+index 695e96a1..62fc86dc 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -403,6 +403,20 @@ if with_tests
@@ -186,7 +186,7 @@ index 695e96a..62fc86d 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
 new file mode 100755
-index 0000000..0795ee9
+index 00000000..0795ee9b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -199,7 +199,7 @@ index 0000000..0795ee9
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag
 new file mode 100644
-index 0000000..0a74414
+index 00000000..0a74414e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag
 @@ -0,0 +1,4 @@
@@ -209,7 +209,7 @@ index 0000000..0a74414
 +void main() { color = vec4(0.0); }
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag.h b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag.h
 new file mode 100644
-index 0000000..f3bdb33
+index 00000000..f3bdb334
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.frag.h
 @@ -0,0 +1,18 @@
@@ -233,7 +233,7 @@ index 0000000..f3bdb33
 +0x00000009,0x0000000b,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc
 new file mode 100644
-index 0000000..ce8d53f
+index 00000000..ce8d53f7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc
 @@ -0,0 +1,12 @@
@@ -251,7 +251,7 @@ index 0000000..ce8d53f
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc.h b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc.h
 new file mode 100644
-index 0000000..c3ba99a
+index 00000000..c3ba99ad
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tesc.h
 @@ -0,0 +1,44 @@
@@ -301,7 +301,7 @@ index 0000000..c3ba99a
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese
 new file mode 100644
-index 0000000..090aeba
+index 00000000..090aebaf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese
 @@ -0,0 +1,41 @@
@@ -348,7 +348,7 @@ index 0000000..090aeba
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese.h b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese.h
 new file mode 100644
-index 0000000..a3d3c53
+index 00000000..a3d3c53f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.tese.h
 @@ -0,0 +1,147 @@
@@ -501,7 +501,7 @@ index 0000000..a3d3c53
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert
 new file mode 100644
-index 0000000..2684d1e
+index 00000000..2684d1ed
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert
 @@ -0,0 +1,6 @@
@@ -513,7 +513,7 @@ index 0000000..2684d1e
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert.h b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert.h
 new file mode 100644
-index 0000000..618d315
+index 00000000..618d315e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/sampler.vert.h
 @@ -0,0 +1,42 @@
@@ -561,7 +561,7 @@ index 0000000..618d315
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tes_sampler_indexing.cpp b/src/kosmickrisp/vulkan/tests/test_tes_sampler_indexing.cpp
 new file mode 100644
-index 0000000..f353d01
+index 00000000..f353d01a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tes_sampler_indexing.cpp
 @@ -0,0 +1,669 @@

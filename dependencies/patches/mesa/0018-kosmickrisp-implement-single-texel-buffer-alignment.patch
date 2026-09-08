@@ -1,7 +1,7 @@
 From 45e0a73e8566d028c91fd26d968d482492d086fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:10:24 +0900
-Subject: [PATCH 18/47] kosmickrisp: implement single-texel buffer alignment
+Subject: [PATCH 18/48] kosmickrisp: implement single-texel buffer alignment
 
 ---
  src/kosmickrisp/bridge/mtl_device.h           |  2 +
@@ -18,7 +18,7 @@ Subject: [PATCH 18/47] kosmickrisp: implement single-texel buffer alignment
  11 files changed, 121 insertions(+), 12 deletions(-)
 
 diff --git a/src/kosmickrisp/bridge/mtl_device.h b/src/kosmickrisp/bridge/mtl_device.h
-index 2aae765..ec90ac4 100644
+index 2aae7659..ec90ac4c 100644
 --- a/src/kosmickrisp/bridge/mtl_device.h
 +++ b/src/kosmickrisp/bridge/mtl_device.h
 @@ -51,6 +51,8 @@ void mtl_heap_buffer_size_and_align_with_length(mtl_device *device,
@@ -31,7 +31,7 @@ index 2aae765..ec90ac4 100644
     mtl_device *device, struct kk_image_layout *layout, uint64_t *size_B,
     uint64_t *align_B);
 diff --git a/src/kosmickrisp/bridge/mtl_device.m b/src/kosmickrisp/bridge/mtl_device.m
-index 4f7bc3e..7ccf20b 100644
+index 4f7bc3e9..7ccf20bb 100644
 --- a/src/kosmickrisp/bridge/mtl_device.m
 +++ b/src/kosmickrisp/bridge/mtl_device.m
 @@ -264,6 +264,16 @@
@@ -52,7 +52,7 @@ index 4f7bc3e..7ccf20b 100644
  mtl_heap_texture_size_and_align_with_descriptor(mtl_device *device,
                                                  struct kk_image_layout *layout,
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_device.c b/src/kosmickrisp/bridge/stubs/mtl_device.c
-index ba9614d..73f3f17 100644
+index ba9614dc..73f3f174 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_device.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_device.c
 @@ -116,6 +116,13 @@ mtl_minimum_linear_texture_alignment_for_pixel_format(
@@ -70,7 +70,7 @@ index ba9614d..73f3f17 100644
  mtl_heap_texture_size_and_align_with_descriptor(mtl_device *device,
                                                  struct kk_image_layout *layout,
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 7363e8f..2a16944 100644
+index 7363e8ff..2a169448 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -16,6 +16,7 @@
@@ -129,7 +129,7 @@ index 7363e8f..2a16944 100644
        vk_buffer_view_destroy(&dev->vk, pAllocator, &view->vk);
        return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.h b/src/kosmickrisp/vulkan/kk_buffer_view.h
-index 8525e50..b1ce0e0 100644
+index 8525e50b..b1ce0e0d 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.h
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.h
 @@ -23,6 +23,7 @@ struct kk_buffer_view {
@@ -141,7 +141,7 @@ index 8525e50..b1ce0e0 100644
  
  VK_DEFINE_NONDISP_HANDLE_CASTS(kk_buffer_view, vk.base, VkBufferView,
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index 62dd802..ae9d752 100644
+index 62dd8026..ae9d752c 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -225,7 +225,7 @@ write_buffer_view_desc(struct kk_descriptor_set *set,
@@ -163,7 +163,7 @@ index 62dd802..ae9d752 100644
     write_desc(set, binding, elem, &desc, sizeof(desc));
  }
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c b/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
-index 6e6db1a..828830d 100644
+index 6e6db1a9..828830d0 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
 @@ -44,6 +44,9 @@ kk_descriptor_stride_align_for_type(
@@ -177,7 +177,7 @@ index 6e6db1a..828830d 100644
        *stride = *alignment = sizeof(struct kk_storage_image_descriptor);
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 88a8176..9c2620f 100644
+index 88a8176a..9c2620f7 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -74,6 +74,15 @@ struct kk_storage_image_descriptor {
@@ -197,7 +197,7 @@ index 88a8176..9c2620f 100644
  struct kk_buffer_address {
     uint64_t base_addr;
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 50a1b08..af7c0ce 100644
+index 50a1b087..af7c0cea 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -391,9 +391,39 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
@@ -273,7 +273,7 @@ index 50a1b08..af7c0ce 100644
      * the sampler descriptor. There's no spot in the hardware descriptor,
      * plus this saves on precious sampler heap spots.
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 89de078..0c11b75 100644
+index 89de0780..0c11b757 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -515,7 +515,8 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
@@ -299,7 +299,7 @@ index 89de078..0c11b75 100644
  
        /* VK_KHR_push_descriptor */
 diff --git a/src/kosmickrisp/vulkan/kk_private.h b/src/kosmickrisp/vulkan/kk_private.h
-index b58bd21..a31eadd 100644
+index b58bd219..a31eadde 100644
 --- a/src/kosmickrisp/vulkan/kk_private.h
 +++ b/src/kosmickrisp/vulkan/kk_private.h
 @@ -22,6 +22,8 @@

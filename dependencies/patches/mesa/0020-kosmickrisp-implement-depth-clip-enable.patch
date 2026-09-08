@@ -1,7 +1,7 @@
 From fa74de125ce8e6376d45cdf6652c9aea66b5ce2c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:07:49 +0900
-Subject: [PATCH 20/47] kosmickrisp: implement depth clip enable
+Subject: [PATCH 20/48] kosmickrisp: implement depth clip enable
 
 ---
  docs/features.txt                             |   2 +-
@@ -17,7 +17,7 @@ Subject: [PATCH 20/47] kosmickrisp: implement depth clip enable
  create mode 100644 src/kosmickrisp/vulkan/tests/test_depth_clip.c
 
 diff --git a/docs/features.txt b/docs/features.txt
-index ada13f6..1fce418 100644
+index ada13f68..1fce4188 100644
 --- a/docs/features.txt
 +++ b/docs/features.txt
 @@ -625,7 +625,7 @@ Khronos extensions that are not part of any Vulkan version:
@@ -30,7 +30,7 @@ index ada13f6..1fce418 100644
    VK_EXT_descriptor_buffer                              DONE (anv, lvp, nvk, radv, tu)
    VK_EXT_descriptor_heap                                DONE (anv, radv, vn)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 3fa01ae..67b5d26 100644
+index 3fa01aef..67b5d26d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -10,6 +10,7 @@
@@ -52,7 +52,7 @@ index 3fa01ae..67b5d26 100644
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 132aa31..9b3be74 100644
+index 132aa31a..9b3be74c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -11,6 +11,7 @@
@@ -134,7 +134,7 @@ index 132aa31..9b3be74 100644
        mtl_set_stencil_references(
 diff --git a/src/kosmickrisp/vulkan/kk_depth_clip.h b/src/kosmickrisp/vulkan/kk_depth_clip.h
 new file mode 100644
-index 0000000..8b698c5
+index 00000000..8b698c58
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_depth_clip.h
 @@ -0,0 +1,117 @@
@@ -256,7 +256,7 @@ index 0000000..8b698c5
 +
 +#endif /* KK_DEPTH_CLIP_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 1f396d5..c48462c 100644
+index 1f396d55..c48462c4 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -167,6 +167,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -286,7 +286,7 @@ index 1f396d5..c48462c 100644
        /* Rectangular-line expansion is selected at pipeline compile time. */
        .extendedDynamicState3LineRasterizationMode = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 77bb894..d23acd5 100644
+index 77bb894f..d23acd5a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -117,6 +117,7 @@ struct kk_vs_key {
@@ -536,7 +536,7 @@ index 77bb894..d23acd5 100644
  
     /* Descriptor lowering needs to happen after lowering blend since we will
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5259c0d..cfd8253 100644
+index 5259c0d6..cfd82532 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -62,6 +62,7 @@ kk_files = files(
@@ -565,7 +565,7 @@ index 5259c0d..cfd8253 100644
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_depth_clip.c b/src/kosmickrisp/vulkan/tests/test_depth_clip.c
 new file mode 100644
-index 0000000..ea22399
+index 00000000..ea22399e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_depth_clip.c
 @@ -0,0 +1,223 @@

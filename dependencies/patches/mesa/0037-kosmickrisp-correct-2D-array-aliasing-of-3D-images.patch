@@ -1,7 +1,7 @@
 From f87fc14499dfafc55d8d61fa3b918df0967c9a67 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:21:53 +0900
-Subject: [PATCH 37/47] kosmickrisp: correct 2D array aliasing of 3D images
+Subject: [PATCH 37/48] kosmickrisp: correct 2D array aliasing of 3D images
 
 Metal cannot view a 3D texture as a 2D array, so a 3D image created with
 VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT also allocates an auxiliary 2D array
@@ -48,7 +48,7 @@ matching view and through a format-reinterpreting one.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
 
 diff --git a/src/kosmickrisp/bridge/mtl_render_state.h b/src/kosmickrisp/bridge/mtl_render_state.h
-index f2515b2..4991426 100644
+index f2515b23..49914266 100644
 --- a/src/kosmickrisp/bridge/mtl_render_state.h
 +++ b/src/kosmickrisp/bridge/mtl_render_state.h
 @@ -43,6 +43,9 @@ void mtl_render_pass_attachment_descriptor_set_level(
@@ -62,7 +62,7 @@ index f2515b2..4991426 100644
     mtl_render_pass_attachment_descriptor *descriptor,
     enum mtl_load_action action);
 diff --git a/src/kosmickrisp/bridge/mtl_render_state.m b/src/kosmickrisp/bridge/mtl_render_state.m
-index b463cdb..5dd010f 100644
+index b463cdbc..5dd010f8 100644
 --- a/src/kosmickrisp/bridge/mtl_render_state.m
 +++ b/src/kosmickrisp/bridge/mtl_render_state.m
 @@ -86,6 +86,16 @@
@@ -83,7 +83,7 @@ index b463cdb..5dd010f 100644
  mtl_render_pass_attachment_descriptor_set_load_action(
     mtl_render_pass_attachment_descriptor *descriptor,
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_render_state.c b/src/kosmickrisp/bridge/stubs/mtl_render_state.c
-index ede8d59..f8ecaff 100644
+index ede8d596..f8ecaffb 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_render_state.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_render_state.c
 @@ -57,6 +57,12 @@ mtl_render_pass_attachment_descriptor_set_slice(
@@ -100,7 +100,7 @@ index ede8d59..f8ecaff 100644
  mtl_render_pass_attachment_descriptor_set_load_action(
     mtl_render_pass_attachment_descriptor *descriptor,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 639810e..34d0df1 100644
+index 639810e9..34d0df11 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -130,8 +130,13 @@ kk_fill_common_attachment_description(
@@ -120,7 +120,7 @@ index 639810e..34d0df1 100644
     enum mtl_load_action load_action =
        force_attachment_load
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 5388859..405b303 100644
+index 53888598..405b303c 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -884,6 +884,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
@@ -132,7 +132,7 @@ index 5388859..405b303 100644
           mem->bo->mtl_handle, &array_layout, *offset_B);
        if (!plane->mtl_handle_array) {
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.h b/src/kosmickrisp/vulkan/kk_image_layout.h
-index b49c188..6b93665 100644
+index b49c188b..6b936653 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.h
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.h
 @@ -12,6 +12,7 @@
@@ -165,7 +165,7 @@ index b49c188..6b93665 100644
  kk_get_layer_offset_B(const struct kk_image_layout *layout, unsigned z_px)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index 9e601ea..bfddc6f 100644
+index 9e601ea3..bfddc6f0 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
 @@ -140,10 +140,24 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
@@ -234,7 +234,7 @@ index 9e601ea..bfddc6f 100644
     }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a4f30f7..366d06e 100644
+index a4f30f7c..366d06e3 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -304,6 +304,26 @@ if with_tests
@@ -266,7 +266,7 @@ index a4f30f7..366d06e 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c b/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
 new file mode 100644
-index 0000000..4226d84
+index 00000000..4226d843
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
 @@ -0,0 +1,334 @@

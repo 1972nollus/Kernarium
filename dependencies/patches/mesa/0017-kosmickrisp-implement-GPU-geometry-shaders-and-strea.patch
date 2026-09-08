@@ -1,7 +1,7 @@
 From 61e360be59461447733c939fcac7f44566871204 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:38:05 +0900
-Subject: [PATCH 17/47] kosmickrisp: implement GPU geometry shaders and streams
+Subject: [PATCH 17/48] kosmickrisp: implement GPU geometry shaders and streams
 
 Lower application geometry shaders through the shared GPU poly pipeline, including multi-stream emission, raster stream selection, transform-feedback accounting, and generated-draw setup. Keep primitive assembly, counting, prefix sums, and rasterization entirely on the GPU for direct, indexed, indirect, restart, tessellation, and invocation paths.
 ---
@@ -20,7 +20,7 @@ Lower application geometry shaders through the shared GPU poly pipeline, includi
  create mode 100644 src/poly/nir/tests/test_gs_invocations.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 3401b9b..2d05d94 100644
+index 3401b9b4..2d05d94a 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -17,11 +17,26 @@ libkk_gs_setup_indirect(
@@ -52,7 +52,7 @@ index 3401b9b..2d05d94 100644
  
  KERNEL(1024)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 7c56304..46a45bc 100644
+index 7c563049..46a45bce 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -209,6 +209,13 @@ struct kk_graphics_state {
@@ -70,7 +70,7 @@ index 7c56304..46a45bc 100644
     struct vk_vertex_input_state _dynamic_vi;
     struct vk_sample_locations_state _dynamic_sl;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 3e1da33..1c46a18 100644
+index 3e1da33a..1c46a182 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1065,7 +1065,7 @@ static uint64_t
@@ -513,7 +513,7 @@ index 3e1da33..1c46a18 100644
                                        : data->prim;
        if (!emulate_transform_feedback && polygon_as_points &&
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index b268e55..89de078 100644
+index b268e555..89de0780 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -218,6 +218,7 @@ kk_get_device_features(
@@ -553,7 +553,7 @@ index b268e55..89de078 100644
  
        /* VK_KHR_vertex_attribute_divisor */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 91b3cee..a1d1b5b 100644
+index 91b3cee9..a1d1b5b5 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -22,6 +22,7 @@
@@ -1145,7 +1145,7 @@ index 91b3cee..a1d1b5b 100644
  
     if (info.stage == MESA_SHADER_COMPUTE) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 15d27ab..2d0d0f2 100644
+index 15d27ab9..2d0d0f2b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -74,7 +74,10 @@ struct kk_shader_info {
@@ -1201,7 +1201,7 @@ index 15d27ab..2d0d0f2 100644
  
  VK_DEFINE_NONDISP_HANDLE_CASTS(kk_shader, vk.base, VkShaderEXT,
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9098998..c13f569 100644
+index 90989988..c13f5698 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -201,3 +201,35 @@ kosmickrisp_icd = custom_target(
@@ -1242,7 +1242,7 @@ index 9098998..c13f569 100644
 +endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_geometry_setup_gpu.c
 new file mode 100644
-index 0000000..305053f
+index 00000000..305053fb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_geometry_setup_gpu.c
 @@ -0,0 +1,195 @@
@@ -1442,7 +1442,7 @@ index 0000000..305053f
 +   return 0;
 +}
 diff --git a/src/poly/nir/poly_nir_lower_gs.c b/src/poly/nir/poly_nir_lower_gs.c
-index e13f4cd..bf0e74d 100644
+index e13f4cdd..bf0e74db 100644
 --- a/src/poly/nir/poly_nir_lower_gs.c
 +++ b/src/poly/nir/poly_nir_lower_gs.c
 @@ -1057,7 +1057,8 @@ lower_gs_instancing(nir_shader *gs)
@@ -1569,7 +1569,7 @@ index e13f4cd..bf0e74d 100644
  bool
 diff --git a/src/poly/nir/tests/test_gs_invocations.c b/src/poly/nir/tests/test_gs_invocations.c
 new file mode 100644
-index 0000000..cdcabfc
+index 00000000..cdcabfc2
 --- /dev/null
 +++ b/src/poly/nir/tests/test_gs_invocations.c
 @@ -0,0 +1,105 @@

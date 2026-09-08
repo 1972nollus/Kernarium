@@ -1,7 +1,7 @@
 From c47922f42b04ae7af4244a91cf23e875e1fa3cd8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:44 +0900
-Subject: [PATCH 11/47] kosmickrisp: emulate custom border colors on Metal
+Subject: [PATCH 11/48] kosmickrisp: emulate custom border colors on Metal
 
 (cherry picked from commit a89fd62d3eeb828371891de5eb940b64c80a956f)
 ---
@@ -19,7 +19,7 @@ Subject: [PATCH 11/47] kosmickrisp: emulate custom border colors on Metal
  create mode 100644 src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index 570d4ee..df5a21d 100644
+index 570d4eeb..df5a21d4 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -60,6 +60,9 @@ get_sampled_image_view_desc(VkDescriptorType descriptor_type,
@@ -63,7 +63,7 @@ index 570d4ee..df5a21d 100644
  
     assert(sizeof(desc[0]) * plane_count <= dst_size);
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 5296366..6f5d204 100644
+index 5296366c..6f5d2040 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -16,7 +16,11 @@ struct kk_sampled_image_descriptor {
@@ -153,7 +153,7 @@ index 5296366..6f5d204 100644
  #endif /* KK_DESCRIPTOR_TYPES */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 new file mode 100644
-index 0000000..fd69d73
+index 00000000..fd69d736
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 @@ -0,0 +1,202 @@
@@ -360,7 +360,7 @@ index 0000000..fd69d73
 +                              NULL);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 49f40a4..79ba814 100644
+index 49f40a4e..79ba814a 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -518,17 +518,27 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
@@ -423,7 +423,7 @@ index 49f40a4..79ba814 100644
        nir_tex_instr_add_src(tex, nir_tex_src_sampler_handle,
                              nir_load_sampler_handle_kk(b, index));
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 51714d1..31f2a8e 100644
+index 51714d10..31f2a8e6 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -162,6 +162,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -446,7 +446,7 @@ index 51714d1..31f2a8e 100644
        .depthClipControl = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_sampler.c b/src/kosmickrisp/vulkan/kk_sampler.c
-index 10389a2..28dbe4e 100644
+index 10389a28..28dbe4ec 100644
 --- a/src/kosmickrisp/vulkan/kk_sampler.c
 +++ b/src/kosmickrisp/vulkan/kk_sampler.c
 @@ -49,7 +49,8 @@ is_border_color_custom(VkBorderColor color, bool workaround_rgba4)
@@ -536,7 +536,7 @@ index 10389a2..28dbe4e 100644
        /* We also need to record the border.
         *
 diff --git a/src/kosmickrisp/vulkan/kk_sampler.h b/src/kosmickrisp/vulkan/kk_sampler.h
-index 15f3de9..610f5e6 100644
+index 15f3de9e..610f5e6c 100644
 --- a/src/kosmickrisp/vulkan/kk_sampler.h
 +++ b/src/kosmickrisp/vulkan/kk_sampler.h
 @@ -23,6 +23,8 @@ struct kk_sampler {
@@ -549,7 +549,7 @@ index 15f3de9..610f5e6 100644
     uint8_t plane_count;
     uint16_t lod_bias_fp16;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 9c2fe2b..59cfd52 100644
+index 9c2fe2b6..59cfd521 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -21,6 +21,7 @@
@@ -571,7 +571,7 @@ index 9c2fe2b..59cfd52 100644
     NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_push_const,
              nir_address_format_32bit_offset);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 123bf04..6e092ef 100644
+index 123bf047..6e092ef0 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,10 @@
@@ -595,7 +595,7 @@ index 123bf04..6e092ef 100644
  
  bool kk_nir_lower_vs_multiview(nir_shader *nir, uint32_t view_mask);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index cf6047d..9098998 100644
+index cf6047d4..90989988 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -88,6 +88,7 @@ kk_files = files(

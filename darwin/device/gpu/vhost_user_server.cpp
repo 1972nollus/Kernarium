@@ -530,7 +530,7 @@ public:
             throw std::runtime_error("short Virtio-GPU response buffer");
         }
         if (!pendingFences_.empty() &&
-            !canProcessWhileFencesPending(cursorQueue, request)) {
+            !gpu_.canProcessWhileFencesPending(request, cursorQueue)) {
             return {.action = uml::virtio::VhostUserQueueAction::retry};
         }
 
@@ -878,28 +878,6 @@ private:
          * and the device rejects a ring index the capset does not allow. */
         return pipelineCommand && fence && header.contextId != 0 &&
             (ringIndex == 0 || experimentalVulkan_);
-    }
-
-    [[nodiscard]] static bool canProcessWhileFencesPending(
-        bool cursorQueue,
-        std::span<const std::uint8_t> request) noexcept
-    {
-        if (cursorQueue || request.size() < sizeof(protocol::GpuControlHeader))
-            return true;
-        const auto header =
-            loadUnaligned<protocol::GpuControlHeader>(request.data());
-        switch (static_cast<protocol::GpuCommand>(header.type)) {
-        case protocol::GpuCommand::getDisplayInfo:
-        case protocol::GpuCommand::getEdid:
-        case protocol::GpuCommand::getCapsetInfo:
-        case protocol::GpuCommand::getCapset:
-        case protocol::GpuCommand::submit3d:
-        case protocol::GpuCommand::transferToHost3d:
-        case protocol::GpuCommand::transferFromHost3d:
-            return true;
-        default:
-            return false;
-        }
     }
 
     void armFenceTimer()

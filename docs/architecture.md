@@ -227,7 +227,11 @@ contains the experimental provider. Its fences ride the same deferred
 fence pipeline the default path uses: the device creates a context fence per
 pipelined request, and the transport retires it from the queue-worker timer.
 Venus gives each guest ring its own timeline, so a Venus context is polled
-individually while one poll still drains every Virgl context.
+individually while one poll still drains every Virgl context. Software 2D
+console transfers and flushes can progress while renderer fences are pending;
+otherwise a console command can block a later host signal needed by that fence.
+Renderer-resource flushes and destructive resource operations retain their
+fence ordering.
 
 The experiment keeps shareable Zink scanouts in their renderer-optimal Metal
 layout. An unlinked vnode-backed identity descriptor reconnects each guest

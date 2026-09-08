@@ -700,6 +700,35 @@ VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
     };
 }
 
+bool VirtioGpuDevice::canProcessWhileFencesPending(
+    std::span<const std::uint8_t> request,
+    bool cursorQueue) const noexcept
+{
+    const auto* header = readStructure<protocol::GpuControlHeader>(request);
+    if (cursorQueue || header == nullptr)
+        return true;
+    switch (static_cast<protocol::GpuCommand>(header->type)) {
+    case protocol::GpuCommand::getDisplayInfo:
+    case protocol::GpuCommand::getEdid:
+    case protocol::GpuCommand::getCapsetInfo:
+    case protocol::GpuCommand::getCapset:
+    case protocol::GpuCommand::submit3d:
+    case protocol::GpuCommand::transferToHost3d:
+    case protocol::GpuCommand::transferFromHost3d:
+    case protocol::GpuCommand::transferToHost2d:
+        return true;
+    case protocol::GpuCommand::resourceFlush: {
+        /* Console pixels are CPU-owned. Blocking their flush behind a
+         * renderer fence can also block a later submit carrying the host
+         * signal that fence needs. Renderer flushes retain ordering. */
+        const auto* flush = readStructure<protocol::GpuResourceFlush>(request);
+        return flush != nullptr && resources_.contains(flush->resourceId);
+    }
+    default:
+        return false;
+    }
+}
+
 int VirtioGpuDevice::pollContextFences(
     std::uint32_t contextId) noexcept
 {

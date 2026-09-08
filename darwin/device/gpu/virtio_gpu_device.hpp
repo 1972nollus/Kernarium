@@ -95,6 +95,9 @@ public:
         std::span<const std::uint8_t> request,
         bool cursorQueue,
         std::uint64_t fenceCookie);
+    [[nodiscard]] bool canProcessWhileFencesPending(
+        std::span<const std::uint8_t> request,
+        bool cursorQueue) const noexcept;
     [[nodiscard]] int pollContextFences(
         std::uint32_t contextId) noexcept;
     [[nodiscard]] int contextFenceStatus(

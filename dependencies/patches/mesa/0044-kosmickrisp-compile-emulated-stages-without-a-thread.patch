@@ -1,7 +1,7 @@
 From 6730e4b8097afc94aee4a2849e66eaa3cdad91d9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:34:49 +0900
-Subject: [PATCH 44/47] kosmickrisp: compile emulated stages without a thread
+Subject: [PATCH 44/48] kosmickrisp: compile emulated stages without a thread
  limit
 
 A compute pipeline built with a small maxTotalThreadsPerThreadgroup
@@ -83,7 +83,7 @@ without a passthrough geometry shader and compares the images.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 0f20577..8248ca1 100644
+index 0f205771..8248ca16 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,35 @@ info on what was updated.
@@ -123,7 +123,7 @@ index 0f20577..8248ca1 100644
  ----------------
  | macOS version: 26.x
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
-index 92c532e..87e93c0 100644
+index 92c532e4..87e93c0a 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.m
 +++ b/src/kosmickrisp/bridge/mtl_compiler.m
 @@ -91,7 +91,10 @@
@@ -139,7 +139,7 @@ index 92c532e..87e93c0 100644
        NSError *error;
        id<MTLComputePipelineState> pipeline = [comp newComputePipelineStateWithDescriptor:desc compilerTaskOptions:nil
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 8a33cdc..62fe827 100644
+index 8a33cdce..62fe8275 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -3480,10 +3480,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
@@ -269,7 +269,7 @@ index 8a33cdc..62fe827 100644
        result = kk_compile_graphics_pipeline(dev, shader);
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b407aa2..ef21c04 100644
+index b407aa26..ef21c047 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -302,6 +302,20 @@ if with_tests
@@ -316,7 +316,7 @@ index b407aa2..ef21c04 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese
 new file mode 100644
-index 0000000..6185456
+index 00000000..61854566
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese
 @@ -0,0 +1,39 @@
@@ -361,7 +361,7 @@ index 0000000..6185456
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese.h b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese.h
 new file mode 100644
-index 0000000..201cf1b
+index 00000000..201cf1bd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/dynamic.tese.h
 @@ -0,0 +1,137 @@
@@ -503,7 +503,7 @@ index 0000000..201cf1b
 +0x0003003e,0x00000075,0x00000062,0x000100fd,
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
-index 0795ee9..1c416f9 100755
+index 0795ee9b..1c416f95 100755
 --- a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
 +++ b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
 @@ -2,6 +2,6 @@
@@ -516,7 +516,7 @@ index 0795ee9..1c416f9 100755
  done
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh
 new file mode 100755
-index 0000000..fcde9ff
+index 00000000..fcde9ff7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh
 @@ -0,0 +1,8 @@
@@ -530,7 +530,7 @@ index 0000000..fcde9ff
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese
 new file mode 100644
-index 0000000..42c39ed
+index 00000000..42c39ed4
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese
 @@ -0,0 +1,29 @@
@@ -565,7 +565,7 @@ index 0000000..42c39ed
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese.h
 new file mode 100644
-index 0000000..1a4d291
+index 00000000..1a4d2913
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/isolines.tese.h
 @@ -0,0 +1,114 @@
@@ -685,7 +685,7 @@ index 0000000..1a4d291
 +0x00000068,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom
 new file mode 100644
-index 0000000..a543085
+index 00000000..a5430853
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom
 @@ -0,0 +1,24 @@
@@ -715,7 +715,7 @@ index 0000000..a543085
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom.h
 new file mode 100644
-index 0000000..473070c
+index 00000000..473070cf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/lines.geom.h
 @@ -0,0 +1,57 @@
@@ -778,7 +778,7 @@ index 0000000..473070c
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag
 new file mode 100644
-index 0000000..2679d9d
+index 00000000..2679d9d8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag
 @@ -0,0 +1,9 @@
@@ -793,7 +793,7 @@ index 0000000..2679d9d
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag.h
 new file mode 100644
-index 0000000..50544d6
+index 00000000..50544d69
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.frag.h
 @@ -0,0 +1,20 @@
@@ -819,7 +819,7 @@ index 0000000..50544d6
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc
 new file mode 100644
-index 0000000..1e1f2d7
+index 00000000..1e1f2d78
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc
 @@ -0,0 +1,30 @@
@@ -855,7 +855,7 @@ index 0000000..1e1f2d7
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc.h
 new file mode 100644
-index 0000000..0f04c9e
+index 00000000..0f04c9e0
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.tesc.h
 @@ -0,0 +1,88 @@
@@ -949,7 +949,7 @@ index 0000000..0f04c9e
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert
 new file mode 100644
-index 0000000..2215616
+index 00000000..22156162
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert
 @@ -0,0 +1,11 @@
@@ -966,7 +966,7 @@ index 0000000..2215616
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert.h
 new file mode 100644
-index 0000000..682deb8
+index 00000000..682deb8a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/passthrough.vert.h
 @@ -0,0 +1,52 @@
@@ -1024,7 +1024,7 @@ index 0000000..682deb8
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese
 new file mode 100644
-index 0000000..0de8cf7
+index 00000000..0de8cf78
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese
 @@ -0,0 +1,29 @@
@@ -1059,7 +1059,7 @@ index 0000000..0de8cf7
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese.h
 new file mode 100644
-index 0000000..832be9e
+index 00000000..832be9e1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/quads.tese.h
 @@ -0,0 +1,114 @@
@@ -1179,7 +1179,7 @@ index 0000000..832be9e
 +0x00000068,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom
 new file mode 100644
-index 0000000..b1f117b
+index 00000000..b1f117b7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom
 @@ -0,0 +1,24 @@
@@ -1209,7 +1209,7 @@ index 0000000..b1f117b
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom.h
 new file mode 100644
-index 0000000..e9a5064
+index 00000000..e9a5064a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/triangles.geom.h
 @@ -0,0 +1,57 @@
@@ -1272,7 +1272,7 @@ index 0000000..e9a5064
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese
 new file mode 100644
-index 0000000..47d0d1a
+index 00000000..47d0d1a1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese
 @@ -0,0 +1,28 @@
@@ -1306,7 +1306,7 @@ index 0000000..47d0d1a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese.h b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese.h
 new file mode 100644
-index 0000000..71afd07
+index 00000000..71afd071
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/tris.tese.h
 @@ -0,0 +1,107 @@
@@ -1419,7 +1419,7 @@ index 0000000..71afd07
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp b/src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 new file mode 100644
-index 0000000..85a10b7
+index 00000000..85a10b7a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 @@ -0,0 +1,682 @@
@@ -2107,7 +2107,7 @@ index 0000000..85a10b7
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp b/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp
 new file mode 100644
-index 0000000..d7de8f7
+index 00000000..d7de8f71
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp
 @@ -0,0 +1,664 @@
