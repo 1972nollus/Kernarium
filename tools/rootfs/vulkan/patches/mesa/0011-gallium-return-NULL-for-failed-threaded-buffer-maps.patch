@@ -1,7 +1,7 @@
-From ab2a273d56408a651c7155c13cd29b2619b28b96 Mon Sep 17 00:00:00 2001
+From 2e991ea998af337ec056c60959382778b85d1a72 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 20:33:46 +0900
-Subject: [PATCH 11/12] gallium: return NULL for failed threaded buffer maps
+Subject: [PATCH 11/13] gallium: return NULL for failed threaded buffer maps
 
 A driver buffer_map failure leaves the output transfer untouched, but the
 threaded context annotated it anyway and dereferenced an uninitialized

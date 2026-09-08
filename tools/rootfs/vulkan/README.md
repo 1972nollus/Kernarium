@@ -41,11 +41,14 @@ sharing correctness fixes:
   through a floating-point or normalized format, keep their blit;
 - return NULL from a threaded-context buffer map whose driver map failed,
   without annotating the untouched transfer or publishing an uninitialized
-  CPU shadow, so the same context can still map afterwards; and
+  CPU shadow, so the same context can still map afterwards;
 - delete a pixel-transfer download specialization's compute state only when
   a later download compiled one, and free only the specialized shader a
   driver thread produced, so context teardown never hands the driver a NULL
-  compute state.
+  compute state; and
+- bound the wait the X11 swapchain's event thread spends on Present events, so
+  destroying a swapchain whose images the server still owns completes instead
+  of deadlocking.
 
 The first fix prevents a rejected native pipeline from becoming a stale guest
 object and a later fatal command stream. The second prevents the renderer from
@@ -72,6 +75,16 @@ as its maximum image extent and refuses an image above the per-image budget
 with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, rather than presenting a dma-buf with no
 resource behind it. Ordinary images keep the device's own
 `maxImageDimension2D`.
+The X11 swapchain's event thread waits for a Present event whenever the server
+owns two or more presented images, which common WSI treats as a guarantee that
+a `PresentIdleNotify` will arrive. It is not one: a compositor keeps the buffer
+it is showing for as long as the window stays mapped, and an application that
+destroys its window before the swapchain leaves the server with no present
+state for it at all. Because `xcb_wait_for_special_event()` cannot be
+interrupted, either state deadlocked `vkDestroySwapchainKHR` on joining that
+thread. The thread now waits with a bound and re-reads the swapchain status,
+which costs one poll wakeup per interval only while an event is genuinely
+outstanding.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also

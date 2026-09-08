@@ -26,7 +26,7 @@ METADATA_ROOT = REPO_ROOT / "tools/rootfs/vulkan"
 MANDATORY_CASES_PATH = Path(__file__).resolve().with_name(
     "vulkan_cts_mandatory_1_4_6_2.txt"
 )
-EXPECTED_IMAGE_SHA256 = "fef7ac611251736d40a049bee376e5a701f6dd701f94d94485a83de641b58cdd"
+EXPECTED_IMAGE_SHA256 = "4e14b730be231ab763ed1800d89aecabcfcddc758c218751252473ba39af6788"
 EXPECTED_IMAGE_SIZE = 8_589_934_592
 EXPECTED_IMAGE_UUID = "2240061a-2b64-4626-b8bf-dd0f9993a4a9"
 EXPECTED_BASE_SHA256 = "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91"
@@ -38,7 +38,7 @@ EXPECTED_LOADER_BUILD_ID = "bbd14af1bc9b54509831cbb1a156d1a089a0be72"
 EXPECTED_LOADER_RUNTIME = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357"
 EXPECTED_FINAL_TREES = {
     "protocol": "82cd85907372d8437e73b2280d27f2fa03ca7fc4",
-    "mesa": "9568ff07f1ad77ad9de50ebaa361cb5f332b1ab7",
+    "mesa": "d3184b34e376b74cc7394c0ffddac357be3ff586",
     "cts": "baed9ddd836897afcd628c8480b497a3e42bef61",
     "vulkan_headers": "7509994568d7423209793fb72c3ac793d9aec0c9",
     "vulkan_loader": "9a68aaf7a98185b4e9224323003df0699033d0c4",

@@ -1,7 +1,7 @@
 From 481916374c9d5b746370e191ba18cc655d86e949 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 00:21:56 +0900
-Subject: [PATCH 04/12] venus: preserve renderer conformance version
+Subject: [PATCH 04/13] venus: preserve renderer conformance version
 
 The hard-coded 1.4.0.0 value is not a published conformance version recognized by Vulkan CTS 1.4.6.2, so the driver-properties self-test fails even when every functional case in the fraction passes.
 
