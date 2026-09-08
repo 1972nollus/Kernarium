@@ -302,7 +302,7 @@ int main(int argc, char *argv[], char *envp[])
 				.default_guest_memory = android_default_guest_memory,
 				.default_guest_cpus = android_default_guest_cpus,
 				.top_byte_ignore = true,
-				.touchscreen_input = true,
+				.input_mode = uml::app::DisplayInput::touchscreen,
 			});
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure Android guest: %s\n",

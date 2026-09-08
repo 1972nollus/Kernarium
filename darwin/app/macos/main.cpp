@@ -11,6 +11,7 @@
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
+#include "input/virtio/in_process_service.hpp"
 #include "profile_reporter.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
@@ -502,6 +503,8 @@ int uml::app::runEmbeddedKernel(
 	}
 	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator{
 		created, uml_emulator_destroy};
+	std::unique_ptr<uml::input::virtio::InProcessInputService> touchscreen;
+	std::unique_ptr<uml::input::virtio::InProcessInputService> keyboard;
 	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service;
 	if (prepared.gpu.enabled && !informational(argc, argv)) {
 		if (has_virtio_device_argument(
@@ -512,6 +515,41 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 		try {
+			uml::input::vnc::VncInputSink input_sink;
+			if (configuration.input_mode == DisplayInput::virtio_touchscreen) {
+				namespace vnc = uml::input::vnc;
+				namespace virtio_input = uml::input::virtio;
+				// Display adapters normalize coordinates independently of resize.
+				constexpr auto extent = vnc::absoluteMaximum + 1U;
+				touchscreen = std::make_unique<virtio_input::InProcessInputService>(
+					virtio_input::DeviceKind::touchscreen, extent, extent);
+				keyboard = std::make_unique<virtio_input::InProcessInputService>(
+					virtio_input::DeviceKind::keyboard, extent, extent);
+				for (auto *device : {touchscreen.get(), keyboard.get()})
+					prepared.kernel.emplace_back("virtio_uml.device=" +
+						device->takeConnectionName() + ":" +
+						std::to_string(virtio_input::protocol::deviceId));
+				input_sink = [&](std::span<const vnc::VncInputEvent> events) {
+					std::vector<virtio_input::protocol::InputEvent> touch_events;
+					std::vector<virtio_input::protocol::InputEvent> key_events;
+					touch_events.reserve(events.size());
+					key_events.reserve(events.size());
+					for (const auto &event : events) {
+						const virtio_input::protocol::InputEvent converted{
+							event.type, event.code, event.value};
+						if (event.type == vnc::eventAbsolute ||
+							(event.type == vnc::eventKey && event.code == vnc::buttonTouch) ||
+							event.type == vnc::eventSync)
+							touch_events.push_back(converted);
+						if ((event.type == vnc::eventKey &&
+							 event.code <= virtio_input::protocol::keyboardKeyMaximum) ||
+							event.type == vnc::eventSync)
+							key_events.push_back(converted);
+					}
+					touchscreen->send(touch_events);
+					keyboard->send(key_events);
+				};
+			}
 			gpu_service =
 				std::make_unique<uml::gpu::InProcessGpuService>(
 					uml::gpu::InProcessGpuOptions{
@@ -525,20 +563,21 @@ int uml::app::runEmbeddedKernel(
 						.height = prepared.gpu.height,
 						.dotsPerInch =
 							prepared.gpu.dots_per_inch,
-						.pointerMode = configuration.touchscreen_input ?
+						.pointerMode = configuration.input_mode != DisplayInput::mouse ?
 							uml::input::vnc::PointerMode::touchscreen :
 							uml::input::vnc::PointerMode::mouse,
 						.autoResizeGuest =
 							prepared.gpu.auto_resize_guest,
+						.inputSink = std::move(input_sink),
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				gpu_service->takeConnectionName() + ":" +
 				std::to_string(
 					uml::gpu::protocol::virtioGpuDeviceId));
-			prepared.kernel.emplace_back(
-				"uml_vnc_input." +
-				gpu_service->takeInputConnectionName());
+			if (configuration.input_mode != DisplayInput::virtio_touchscreen)
+				prepared.kernel.emplace_back(
+					"uml_vnc_input." + gpu_service->takeInputConnectionName());
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio-GPU: %s\n",
@@ -673,6 +712,10 @@ int uml::app::runEmbeddedKernel(
 		console_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
+	if (touchscreen)
+		touchscreen->stop();
+	if (keyboard)
+		keyboard->stop();
 	/* The embedded ELF kernel installs process-wide Linux signal handlers.
 	 * Once it halts, avoid running unrelated C++ static teardown through that
 	 * signal environment.  Native app-linked kernels can use normal app

@@ -16,6 +16,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifndef UML_APP_TOUCHSCREEN_INPUT
+#define UML_APP_TOUCHSCREEN_INPUT 0
+#endif
+
 namespace {
 
 constexpr std::string_view macos_default_guest_memory{"mem=8G"};
@@ -108,5 +112,8 @@ int main(int argc, char *argv[], char *envp[])
 			.rootfs_path = rootfs.empty() ? nullptr : rootfs.c_str(),
 			.default_guest_memory = macos_default_guest_memory,
 			.default_guest_cpus = macos_default_guest_cpus,
+			.input_mode = UML_APP_TOUCHSCREEN_INPUT ?
+				uml::app::DisplayInput::virtio_touchscreen :
+				uml::app::DisplayInput::mouse,
 		});
 }

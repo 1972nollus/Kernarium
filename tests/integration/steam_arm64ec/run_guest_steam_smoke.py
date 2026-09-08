@@ -78,6 +78,13 @@ def main() -> int:
     guest = boot(args.rootfs.resolve())
     try:
         guest.boot_and_login(args.boot_timeout)
+        success(guest, "grep -Fq 'Name=\"Kernarium Touchscreen\"' /proc/bus/input/devices && "
+                "grep -Fq 'Name=\"Kernarium Keyboard\"' /proc/bus/input/devices && "
+                "for device in /sys/class/input/event*; do "
+                "udevadm info -q property -p \"$device\"; done > /tmp/steam-input-properties && "
+                "grep -Fxq ID_INPUT_TOUCHSCREEN=1 /tmp/steam-input-properties && "
+                "grep -Fxq ID_INPUT_KEYBOARD=1 /tmp/steam-input-properties && "
+                "! grep -Eq '^ID_INPUT_(MOUSE|TABLET|TOUCHPAD)=1$' /tmp/steam-input-properties")
         success(guest, "test \"$(findmnt -n -o FSTYPE /)\" = erofs && "
                 "test \"$(findmnt -n -o FSTYPE /userdata)\" = ext4 && "
                 "test \"$(blockdev --getro /dev/ubda)\" = 1 && "

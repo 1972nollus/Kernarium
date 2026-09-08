@@ -100,6 +100,28 @@ void transferredEndpointsAreNotClosedByService()
     require(descriptorCount() == before);
 }
 
+void composedInputHasNoLegacyEndpoint()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        options.inputSink = [](auto) {};
+        InProcessGpuService service {std::move(options)};
+        bool rejected = false;
+        try {
+            (void)service.takeInputConnectionName();
+        } catch (const std::logic_error&) {
+            rejected = true;
+        }
+        require(rejected);
+        service.stop();
+    }
+    require(descriptorCount() == before);
+}
+
 void stopWithoutEndpointTransferIsBalanced()
 {
     const auto before = descriptorCount();
@@ -163,6 +185,7 @@ void runInProcessServiceTests()
     forceRepeatedFailure(StartupFailure::afterInputSocketPair);
     forceRepeatedFailure(StartupFailure::workerEntry);
     endpointsTransferExactlyOnce();
+    composedInputHasNoLegacyEndpoint();
     transferredEndpointsAreNotClosedByService();
     stopWithoutEndpointTransferIsBalanced();
     partialFrameStopUsesOwnedWake(false);

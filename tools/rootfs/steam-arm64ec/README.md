@@ -18,9 +18,13 @@ and libnm; the binary audit checks its required native library aliases.
 `lsof` is required for Steam to authenticate its loopback WebUI connections.
 
 The image uses the existing dedicated 4 KiB ARM64EC Wine kernel and emulator.
-There is no 16 KiB Steam product. Apple builds consume the accepted prebuilt
-kernel; the Vulkan variant requires that current kernel source series built
-with the Wine profile, including the shared-memory GPU transport. This
+There is no 16 KiB Steam product. The Wine emulator exposes a dedicated Virtio
+touchscreen and keyboard. Native clicks and VNC presses become touch contacts;
+the guest has no mouse or hybrid tablet device.
+
+Apple builds consume the accepted prebuilt kernel; the Vulkan variant requires
+the current kernel source series built with the Wine profile, including the
+shared-memory GPU transport. This
 workflow changes neither maintained kernel line. iOS packaging
 and automatic image discovery are not part of this producer.
 
