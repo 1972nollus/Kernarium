@@ -24,6 +24,8 @@ for path in \
 	"$LINE/config/page-4k.fragment" \
 	"$LINE/artifacts/accepted-16k.env" \
 	"$LINE/artifacts/accepted-4k.env" \
+	"$LINE/artifacts/vulkan-experiment-16k.env" \
+	"$LINE/artifacts/vulkan-experiment-4k.env" \
 	"$LINE/slices/x86_64/artifacts/accepted-4k.env" \
 	"$LINE/patches/metadata.env" \
 	"$LINE/build/build-kernel.sh" \
