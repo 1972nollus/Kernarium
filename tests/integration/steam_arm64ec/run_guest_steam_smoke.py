@@ -10,13 +10,17 @@ import argparse
 from pathlib import Path
 import re
 import shlex
+import shutil
 import sys
 import time
+import tempfile
 
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests/integration/support"))
 from guest import Guest  # noqa: E402
+sys.path.insert(0, str(REPOSITORY / "tools/rootfs/steam-arm64ec"))
+from boot import prepare_disk  # noqa: E402
 
 PROTON = "/opt/proton-uml-arm64ec"
 STEAM = "/home/uml/.local/share/Steam"
@@ -57,16 +61,48 @@ def main() -> int:
     parser.add_argument("--emulator", required=True, type=Path)
     parser.add_argument("--rootfs", required=True, type=Path)
     parser.add_argument("--memory", default="8G")
-    parser.add_argument("--boot-timeout", type=int, default=120)
+    parser.add_argument("--boot-timeout", type=int, default=300)
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--log", type=Path)
     parser.add_argument("--experimental-venus", action="store_true")
     args = parser.parse_args()
-    guest = Guest(args.emulator.resolve(), args.rootfs.resolve(), args.memory, "tmpfs",
-                  kernel_arguments=("--video", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
-                  systemd_overlay=True, systemd_overlay_size="16G", engine="jit")
+    temporary = tempfile.TemporaryDirectory(prefix="uml-steam-data-test-")
+    disk = Path(temporary.name) / "userdata.img"
+    prepare_disk(disk, 16)
+
+    def boot(rootfs: Path) -> Guest:
+        return Guest(args.emulator.resolve(), rootfs, args.memory, "tmpfs",
+                     kernel_arguments=(f"ubd1={disk}", "--video", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
+                     systemd_image_init="/usr/local/libexec/kernarium-init", engine="jit")
+
+    guest = boot(args.rootfs.resolve())
     try:
         guest.boot_and_login(args.boot_timeout)
+        success(guest, "test \"$(findmnt -n -o FSTYPE /)\" = erofs && "
+                "test \"$(findmnt -n -o FSTYPE /userdata)\" = ext4 && "
+                "test \"$(blockdev --getro /dev/ubda)\" = 1 && "
+                "! touch /immutable-root-test 2>/dev/null && "
+                "overlays=$(findmnt -t overlay -n -o TARGET) && test -z \"$overlays\" && "
+                "echo retained > /home/uml/persistence-test && "
+                "echo retained > /var/lib/kernarium-persistence-test")
+        identity = success(guest, "blkid -s UUID -o value /dev/ubdb1; cat /etc/machine-id").strip()
+        if not guest.shutdown(30) or guest.return_code != 0:
+            raise RuntimeError("first persistent-data boot did not shut down")
+        guest.close()
+        # A replacement pathname must not be interpreted as a data reset.
+        replacement = Path(temporary.name) / "replacement-rootfs.erofs"
+        shutil.copyfile(args.rootfs.resolve(), replacement)
+        prepare_disk(disk, 32)  # Requested creation size cannot resize existing data.
+        if disk.stat().st_size != 16 << 30:
+            raise RuntimeError("existing user-data capacity was changed during boot preparation")
+        guest = boot(replacement)
+        guest.boot_and_login(args.boot_timeout)
+        success(guest, "test \"$(cat /home/uml/persistence-test)\" = retained && "
+                "test \"$(cat /var/lib/kernarium-persistence-test)\" = retained && "
+                "test \"$(findmnt -n -o FSTYPE /)\" = erofs && ! touch /immutable-root-test 2>/dev/null")
+        if success(guest, "blkid -s UUID -o value /dev/ubdb1; cat /etc/machine-id").strip() != identity:
+            raise RuntimeError("reboot replaced the persistent filesystem or machine identity")
+        print("PASS immutable EROFS, separate GPT/ext4 data, reboot and replacement-path persistence", flush=True)
         success(guest, "test -c /dev/video-dec0 && runuser -u uml -- test -w /dev/video-dec0")
         output = success(guest,
             "test \"$(uname -m)\" = aarch64 && test \"$(getconf PAGESIZE)\" = 4096 && "
@@ -170,6 +206,7 @@ def main() -> int:
             args.log.parent.mkdir(parents=True, exist_ok=True)
             args.log.write_text(guest.output())
         guest.close()
+        temporary.cleanup()
 
 
 if __name__ == "__main__":

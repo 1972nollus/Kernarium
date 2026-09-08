@@ -12,6 +12,18 @@ import tempfile
 import hashlib
 import json
 import unittest
+from unittest.mock import patch
+import subprocess
+import os
+import sys
+
+
+def load_tool(name: str, relative: str):
+    tool_spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert tool_spec and tool_spec.loader
+    tool = importlib.util.module_from_spec(tool_spec)
+    tool_spec.loader.exec_module(tool)
+    return tool
 
 from test_wine_arm64ec_pe import write_arm64ec_pe, write_pe
 
@@ -21,6 +33,9 @@ spec = importlib.util.spec_from_file_location("steam_image", ROOT / "tools/rootf
 assert spec and spec.loader
 image = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(image)
+boot = load_tool("steam_boot", "tools/rootfs/steam-arm64ec/boot.py")
+storage = load_tool("steam_storage", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-storage.py")
+installer = load_tool("steam_installer", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-steam.py")
 
 
 def write_elf(path: Path, machine: int) -> None:
@@ -57,13 +72,25 @@ class ImageAudit(unittest.TestCase):
         rule = self.root / "etc/udev/rules.d/70-uml-virtio-video.rules"
         rule.parent.mkdir(parents=True)
         rule.write_text('SUBSYSTEM=="video4linux", SYMLINK+="video-dec%n"\n')
+        (self.root / image.PROTON / "version").write_text("test-proton-version\n")
+        version = hashlib.sha256(b"test-proton-version\n").hexdigest()
+        for relative in ("dist.lock", "files/share/default_pfx", "files/share/default_pfx_arm64"):
+            path = self.root / image.PROTON / relative
+            path.symlink_to(f"/home/uml/.local/share/proton-{version}-{path.name}")
+
+    def test_proton_writable_state_requires_data_partition(self) -> None:
+        path = self.root / image.PROTON / "dist.lock"
+        path.unlink()
+        path.write_text("")
+        with self.assertRaisesRegex(RuntimeError, "Proton writable state"):
+            image.inventory(self.root)
 
 
     def test_vulkan_receipt_rejects_modified_runtime(self) -> None:
         library = self.root / "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
         write_elf(library, 183)
         metadata = self.root / "usr/share/uml-steam/vulkan-runtime.json"
-        metadata.parent.mkdir(parents=True)
+        metadata.parent.mkdir(parents=True, exist_ok=True)
         metadata.write_text(json.dumps({"installed_files": [{
             "path": "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
             "sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
@@ -124,6 +151,106 @@ class ImageAudit(unittest.TestCase):
         registry.write_text('"libarm64ecfex.dll"\n"xtajit.dll"\n')
         with self.assertRaisesRegex(RuntimeError, "registry still selects"):
             image.inventory(self.root)
+
+
+class PersistentStorage(unittest.TestCase):
+    def test_existing_invalid_disk_is_never_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "userdata.img"
+            disk.write_bytes(b"existing user data")
+            with patch.object(boot, "disk_command", return_value="Invalid GPT"):
+                with self.assertRaisesRegex(ValueError, "GPT is invalid"):
+                    boot.prepare_disk(disk, 32)
+            self.assertEqual(disk.read_bytes(), b"existing user data")
+
+    def test_existing_disk_ignores_new_creation_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "userdata.img"
+            disk.write_bytes(b"existing user data")
+            with patch.object(boot, "disk_command", side_effect=[
+                    "No problems found", "   1 2048 8388574 4.0 GiB 8300 kernarium-data"]):
+                boot.prepare_disk(disk, 64)
+            self.assertEqual(disk.read_bytes(), b"existing user data")
+
+    def test_unrecognized_filesystem_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "partition"
+            disk.write_bytes(b"valuable data" * 200)
+            before = disk.read_bytes()
+            with patch.object(storage.subprocess, "run", return_value=subprocess.CompletedProcess([], 2, "")) as run:
+                with self.assertRaisesRegex(RuntimeError, "preserved for repair"):
+                    storage.check_filesystem(disk)
+                self.assertEqual(run.call_count, 1)
+            self.assertEqual(disk.read_bytes(), before)
+
+    def test_failed_ext4_repair_never_formats(self) -> None:
+        with patch.object(storage, "status"), patch.object(storage.subprocess, "run", side_effect=[
+                subprocess.CompletedProcess([], 0, "ext4\n"), subprocess.CompletedProcess([], 4)]) as run:
+            with self.assertRaisesRegex(RuntimeError, "was not erased"):
+                storage.check_filesystem(Path("/dev/test-data"))
+            self.assertEqual([call.args[0][0] for call in run.call_args_list], ["blkid", "e2fsck"])
+
+    def test_only_explicit_new_partition_marker_allows_formatting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "partition"
+            disk.write_bytes(bytes(1024) + storage.NEW_DISK)
+            with patch.object(storage, "status"), patch.object(storage.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, ""), subprocess.CompletedProcess([], 0),
+                    subprocess.CompletedProcess([], 1)]) as run:
+                storage.check_filesystem(disk)
+                self.assertEqual([call.args[0][0] for call in run.call_args_list], ["blkid", "mkfs.ext4", "e2fsck"])
+
+    def test_existing_home_is_not_reseeded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, destination = root / "seed", root / "home"
+            source.mkdir()
+            destination.mkdir()
+            (source / "steam").write_text("old bundled client")
+            (destination / "steam").write_text("updated client and saves")
+            storage.seed_tree(source, destination, "Installing")
+            self.assertEqual((destination / "steam").read_text(), "updated client and saves")
+
+    def test_update_progress_uses_actual_bytes(self) -> None:
+        caption, fraction = installer.progress("[2026-09-08] Downloading update (327,680 of 655,360 KB)...")
+        self.assertEqual(fraction, 0.5)
+        self.assertIn("320.0 of 640.0 MiB", caption)
+        self.assertEqual(installer.progress("Extracting package..."), ("Installing Steam • extracting update", None))
+        self.assertIsNone(installer.progress("unrelated Steam diagnostic"))
+
+    def test_steam_restart_protocol_and_normal_quit(self) -> None:
+        original_popen = subprocess.Popen
+        for status, expected_invocations in ((42, 2), (0, 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                counter = root / "invocations"
+                client = root / "client.py"
+                client.write_text(
+                    "import pathlib, sys\n"
+                    "p = pathlib.Path(sys.argv[1])\n"
+                    "n = int(p.read_text()) + 1 if p.exists() else 1\n"
+                    "p.write_text(str(n))\n"
+                    "sys.exit(int(sys.argv[2]) if n == 1 else 0)\n")
+
+                def launch(argv, **kwargs):
+                    if argv[0] == "/usr/local/bin/steam":
+                        return original_popen([sys.executable, str(client), str(counter), str(status)], **kwargs)
+                    return original_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+
+                with patch.object(Path, "home", return_value=root), patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}), \
+                        patch.object(installer.subprocess, "Popen", side_effect=launch), \
+                        patch.object(installer, "big_picture_visible", return_value=False):
+                    self.assertEqual(installer.main(), 0)
+                self.assertEqual(int(counter.read_text()), expected_invocations)
+
+    def test_launcher_has_no_overlay_and_distinct_data_device(self) -> None:
+        argv = boot.command(Path("/emulator"), Path("/new-root.erofs"), Path("/data.img"), "8G", "graphical.target", [])
+        self.assertIn("ubd0rc=/new-root.erofs", argv)
+        self.assertIn("ubd1=/data.img", argv)
+        self.assertIn("ro", argv)
+        self.assertNotIn("console=tty0", argv)
+        with self.assertRaisesRegex(ValueError, "controls this argument"):
+            boot.command(Path("/emulator"), Path("/root.erofs"), Path("/data.img"), "8G", "graphical.target", ["ubd1=/other.img"])
 
 
 if __name__ == "__main__":

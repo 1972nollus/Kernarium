@@ -1,4 +1,4 @@
-From 69aaf4991b4f0f869946f5220ca7b0c6a0a8c1bf Mon Sep 17 00:00:00 2001
+From 8247e5ffed5a0c9c5d99c362fbb94592ddad4337 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:20:30 +0900
 Subject: [PATCH 2/2] Keep offline Proton builds pinned to prepared inputs

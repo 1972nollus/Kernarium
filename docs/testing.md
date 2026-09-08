@@ -119,8 +119,8 @@ directly; authentication happens only when provisioning a replacement. Shared
 runs map it with `ubd0c=` and boot `root=/dev/ubda rootfstype=erofs`. Never use
 the root device as writable scratch space.
 
-Writable guest state belongs in a disposable OverlayFS
-layer. Rootfs updates replace the complete authenticated image through
+Ordinary test guest state belongs in a disposable OverlayFS
+layer; the Steam appliance instead owns a separate persistent GPT data disk. Rootfs updates replace the complete authenticated image through
 `tools/rootfs/provision.py`; there is no in-place maintenance workflow.
 
 The image owns accounts, credentials, login policy, gettys, desktop packages,
@@ -170,7 +170,9 @@ boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
 Gamescope Vulkan startup boundary. Stock Mesa and experimental Venus are
 separate image/renderer selections. The Venus gate requires framebuffer
 registration and the native Steam bootstrap, not a working login screen.
-Its disposable upper disk is sparse ext4 and is released on emulator exit.
+Its test-only GPT/ext4 data disk is reused across two boots to check persistence
+and immutable-root write rejection, then removed after the guest exits.
+Interactive Steam launches retain that disk across boots and rootfs replacements.
 The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
 binary audit, startup contract, and continuing graphics limitation.
 

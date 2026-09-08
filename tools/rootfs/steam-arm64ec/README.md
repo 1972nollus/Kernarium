@@ -85,9 +85,31 @@ engine.
 
 `steam-gaming.service` starts a Gamescope session as the image-owned `uml`
 user. That account has passwordless local sudo and serial autologin, matching
-the existing development appliances. Steam data and the registered local
-Proton tool use the writable root overlay. The standard client and Proton
-runtime downloads remain Steam's responsibility after account login.
+the existing development appliances. The EROFS root remains read-only. A separate raw GPT disk contains one ext4
+partition, mounted at `/userdata`; its `home`, `var`, and `root` directories
+are bind-mounted at `/home`, `/var`, and `/root`. `/run` and `/tmp` are tmpfs.
+There is no root OverlayFS. Package metadata and the source-built Proton tool
+remain image-owned, while Steam updates, downloaded runtimes, games, settings,
+saves, and prefixes live on the data partition.
+Proton's generated default prefixes and distribution lock also live in home,
+keyed by its build identity so a replacement Proton build gets fresh templates.
+
+The image-owned init checks ext4 before mounting it. It formats only a new
+partition carrying the launcher's explicit initialization marker. Existing
+ext4 is repaired with `e2fsck -p`; unrecognized filesystems or failed repairs
+stop boot with a visible recovery message and preserve the disk. The first
+boot copies the bundled client through a staging directory and publishes it
+only after the copy completes. Subsequent boots never reseed an existing home.
+Replacing the rootfs therefore retains the client installation and user data.
+This follows Steam Deck's separation of an immutable system and persistent
+home; it does not implement the Deck's hardware-specific A/B boot layout.
+
+The Kernarium splash appears on the boot framebuffer while storage is checked
+and the seed is copied. Gamescope then displays a matching installation screen
+with actual Steam download bytes and extraction/verification stages. Steam's
+completed updater restart is handled automatically. The screen yields when
+the Big Picture window becomes visible. Console diagnostics remain available
+on `ttyS0`; the graphical screen has no getty or distribution branding.
 
 ## macOS qualification
 
@@ -99,16 +121,17 @@ presets, then run:
 cmake --workflow --preset check-steam-arm64ec-macos
 ```
 
-The gate boots systemd with a disposable overlay and a virtio GPU, starts
+The gate boots the image-owned init with a test-only GPT data disk and a virtio GPU, starts
 Xvfb without a desktop, requires AMD64 exit code 42 and i386 exit code 43,
 and repeats the AMD64 launch through Proton. It then starts the actual gaming
 service and requires the known Vulkan limitation. Any illegal instruction,
 missing runtime dependency, prefix failure, or other gaming-session failure
 blocks the gate. This graphics-limitation check applies to the stock Mesa
 image. Guest output is saved under the build's `reports/` directory.
-The smoke uses a temporary sparse 16 GiB ext4 upper disk. After the guest
-mounts it, the harness unlinks its host pathname; the emulator's open disk
-descriptor retains the backing until exit, including a forced exit.
+The smoke reuses one temporary 16 GiB GPT disk across two boots and checks
+filesystem and machine identities, home and system-state markers, and root
+write rejection. It changes the rootfs pathname on the second boot. Only the
+test-owned disk is deleted after the guest exits; interactive disks persist.
 
 For experimental Venus, select `UML_APPLE_GPU_PRODUCT=apple-gpu-vulkan-experiment`,
 its verified `UML_APPLE_GPU_DEPENDENCY_PREFIX`, and macOS deployment target
@@ -123,10 +146,18 @@ the login or setup screen.
 For an interactive boot with the same development account:
 
 ```sh
-scripts/boot-overlay-systemd.sh --emulator /path/to/uml-darwin-wine-arm64ec \
-  --rootfs /path/to/steam-arm64ec-gaming.erofs --unit graphical.target \
+python3 tools/rootfs/steam-arm64ec/boot.py \
+  --emulator /path/to/uml-darwin-wine-arm64ec \
+  --rootfs /path/to/steam-arm64ec-gaming.erofs \
+  --userdata /path/to/steam-userdata.img --size-gib 32 \
   -- --video --gpu-display=native
 ```
+
+The launcher needs Python 3 and `sgdisk`. It creates a sparse GPT disk only
+when `--userdata` is absent on disk and holds an exclusive launch lock. The
+size option applies only at creation; it never resizes or resets existing
+data. Reuse the same `--userdata` path when selecting a replacement EROFS.
+Keep the data disk backed up separately from the replaceable rootfs.
 
 ## Current Venus startup boundary
 

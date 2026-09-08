@@ -1,4 +1,4 @@
-From 88fbcb6e70fa9d9c55be84913dfa139948fffa10 Mon Sep 17 00:00:00 2001
+From 82ad6ea04097212c21b623db8071060b2ea328cb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 16:43:38 +0900
 Subject: [PATCH 1/2] Use UML CPU translation and create ARM64 prefixes in the
@@ -6,8 +6,8 @@ Subject: [PATCH 1/2] Use UML CPU translation and create ARM64 prefixes in the
 
 ---
  Makefile.in | 49 +++----------------------------------------------
- proton      |  8 --------
- 2 files changed, 3 insertions(+), 54 deletions(-)
+ proton      | 11 ++---------
+ 2 files changed, 5 insertions(+), 55 deletions(-)
 
 diff --git a/Makefile.in b/Makefile.in
 index 5e477c7..4b06622 100644
@@ -77,10 +77,20 @@ index 5e477c7..4b06622 100644
  
  all-dist: default_pfx
 diff --git a/proton b/proton
-index 2463695..5d79aa1 100755
+index 2463695..dacb855 100755
 --- a/proton
 +++ b/proton
-@@ -2038,14 +2038,6 @@ class Session:
+@@ -599,7 +599,8 @@ class Proton:
+             local_env = dict(g_session.env)
+             if self.missing_default_prefix():
+                 #make default prefix
+-                local_env["WINEPREFIX"] = self.default_pfx_dir
++                # Resolve an image-owned link before Wine creates its data-directory target.
++                local_env["WINEPREFIX"] = os.path.realpath(self.default_pfx_dir)
+                 local_env["WINEDEBUG"] = "-all"
+                 g_session.run_proc([self.wine_bin, "wineboot"], local_env)
+                 g_session.run_proc([self.wineserver_bin, "-w"], local_env)
+@@ -2038,14 +2039,6 @@ class Session:
                  # https://github.com/microsoft/mimalloc/issues/958
                  self.env["MIMALLOC_DISABLE_REDIRECT"] = "1"
  

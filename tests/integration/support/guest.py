@@ -139,12 +139,13 @@ def emulator_arguments(
     init_path: str = "/sbin/init",
     engine: str = "jit",
     core_class: str = "performance",
+    readonly_root: bool = False,
 ) -> list[str]:
     arguments = [
         *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
-        f"ubd0c={rootfs}",
+        f"ubd0{'rc' if readonly_root else 'c'}={rootfs}",
         "root=/dev/ubda",
         "rootfstype=erofs",
         f"init={init_path}",
@@ -236,8 +237,9 @@ class Guest:
         engine: str = "jit",
         core_class: str = "performance",
         systemd_overlay_size: str | None = None,
+        systemd_image_init: str | None = None,
     ) -> None:
-        if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
+        if sum((init_shell, overlay_shell, systemd_overlay, bool(systemd_image_init))) > 1:
             raise ValueError("guest boot modes are mutually exclusive")
         if systemd_overlay_size and not systemd_overlay:
             raise ValueError("a disk overlay requires systemd overlay boot")
@@ -265,6 +267,7 @@ class Guest:
         self._init_shell = init_shell
         self._overlay_shell = overlay_shell
         self._systemd_overlay = systemd_overlay
+        self._systemd_image_init = systemd_image_init
         if init_shell or overlay_shell or systemd_overlay:
             kernel_arguments = (
                 *kernel_arguments,
@@ -274,6 +277,9 @@ class Guest:
             )
         if systemd_overlay:
             kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
+        if systemd_image_init:
+            kernel_arguments = (*kernel_arguments, "console=ttyS0", "ip=off", "quiet", "loglevel=3",
+                                "systemd.show_status=false", "systemd.unit=multi-user.target")
         try:
             master, slave = pty.openpty()
         except BaseException:
@@ -292,9 +298,10 @@ class Guest:
                     self._swap_path,
                     "/bin/sh"
                     if init_shell or overlay_shell or systemd_overlay
-                    else "/sbin/init",
+                    else systemd_image_init or "/sbin/init",
                     engine,
                     core_class,
+                    bool(systemd_image_init),
                 ),
                 # Darwin can miss PTY readiness while all guest CPUs are
                 # busy. A pipe keeps input pollable at guest timer boundaries;
@@ -363,16 +370,17 @@ class Guest:
             )
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        if self._systemd_overlay:
-            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
-            bootstrap = SYSTEMD_OVERLAY_BOOTSTRAP
-            if self._overlay_path is not None:
-                bootstrap = bootstrap.replace(
-                    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
-                    "mkfs.ext4 -q -E lazy_itable_init=1,lazy_journal_init=1 /dev/ubdc\n"
-                    "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdc /mnt",
-                )
-            self._write(bootstrap + "\n")
+        if self._systemd_overlay or self._systemd_image_init:
+            if self._systemd_overlay:
+                self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
+                bootstrap = SYSTEMD_OVERLAY_BOOTSTRAP
+                if self._overlay_path is not None:
+                    bootstrap = bootstrap.replace(
+                        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
+                        "mkfs.ext4 -q -E lazy_itable_init=1,lazy_journal_init=1 /dev/ubdc\n"
+                        "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdc /mnt",
+                    )
+                self._write(bootstrap + "\n")
             login = self._read_until(
                 re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
                 timeout_seconds,

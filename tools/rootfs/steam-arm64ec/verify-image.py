@@ -21,7 +21,7 @@ assert spec is not None and spec.loader is not None
 wine_pe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wine_pe)
 
-STEAM = "home/uml/.local/share/Steam/"
+STEAM = "usr/share/uml-steam/home/uml/.local/share/Steam/"
 PROTON = "opt/proton-uml-arm64ec/"
 STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
     "linux32", "linux64", "steamrt32", "steamrt64", "ubuntu12_32", "ubuntu12_64",
@@ -37,6 +37,9 @@ REQUIRED_ELF = (
     STEAM + "steamrtarm64/steamwebhelper",
 )
 REQUIRED_LIBRARIES = (
+    "usr/lib/aarch64-linux-gnu/libcairo.so.2",
+    "usr/lib/aarch64-linux-gnu/libX11.so.6",
+    "usr/lib/aarch64-linux-gnu/libdrm.so.2",
     "usr/lib/aarch64-linux-gnu/libgtk-x11-2.0.so.0",
     "usr/lib/aarch64-linux-gnu/libopenal.so.1",
     "usr/lib/aarch64-linux-gnu/libnm.so.0",
@@ -100,6 +103,12 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
     decoder_rule = root / "etc/udev/rules.d/70-uml-virtio-video.rules"
     if not decoder_rule.is_file() or 'SYMLINK+="video-dec%n"' not in decoder_rule.read_text():
         raise RuntimeError("V4L2 decoder discovery rule is absent or invalid")
+    version = hashlib.sha256((root / PROTON / "version").read_bytes()).hexdigest()
+    for relative in ("dist.lock", "files/share/default_pfx", "files/share/default_pfx_arm64"):
+        path = root / PROTON / relative
+        expected = f"/home/uml/.local/share/proton-{version}-{path.name}"
+        if not path.is_symlink() or os.readlink(path) != expected:
+            raise RuntimeError(f"Proton writable state is not on the data partition: {relative}")
     wine_inf = (root / PROTON / "files/share/wine/wine.inf").read_text()
     for name in ("libarm64ecfex.dll", "libwow64fex.dll"):
         if name in wine_inf:

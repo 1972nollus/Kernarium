@@ -8,6 +8,8 @@ The Wine topics select the emulator's ARM64EC and i386 WoW64 modules and
 provide a readable ARM64 signal restorer for native thread unwinding. The
 Proton topics omit guest FEX, defer prefix creation to the emulator, enforce
 the prepared Cargo lock, and retain a useful Git identity in shallow builds.
+Prefix creation resolves image-owned links so Wine can create their targets
+on the persistent data partition while the installed Proton tree stays read-only.
 The producer copies the shared CPU bridge sources into its build overlay;
 the patches do not duplicate those sources.
 

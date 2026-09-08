@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 [Unit]
 Description=Steam gaming session
-After=systemd-user-sessions.service network.target
+After=systemd-user-sessions.service network.target kernarium-splash-stop.service
 Wants=network.target
+Requires=kernarium-splash-stop.service
+RequiresMountsFor=/home/uml /var
 Conflicts=getty@tty1.service
 
 [Service]

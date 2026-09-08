@@ -11,4 +11,4 @@ export XDG_CURRENT_DESKTOP=gamescope
 export XDG_SESSION_DESKTOP=gamescope
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.local/share/Steam"
 export PROTON_USE_ARM64=1
-exec dbus-run-session -- /usr/games/gamescope -e -- steam -gamepadui
+exec dbus-run-session -- /usr/games/gamescope -e -- python3 -B /usr/local/libexec/kernarium-steam.py

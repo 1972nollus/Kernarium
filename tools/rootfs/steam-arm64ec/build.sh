@@ -42,6 +42,13 @@ sudo -n tar -xf "$inputs/base.tar.zst" -C "$root"
 sudo -n cp -a "$here/overlay/." "$root/"
 sudo -n install -d "$root/opt"
 sudo -n cp -a "$proton" "$root/opt/proton-uml-arm64ec"
+# Proton creates a distribution lock and default prefixes beside its binaries.
+# Keep those generated files in home, keyed by the installed build identity.
+proton_state=$(sha256sum "$proton/version" | cut -d ' ' -f 1)
+for entry in dist.lock files/share/default_pfx files/share/default_pfx_arm64; do
+	sudo -n ln -s "/home/uml/.local/share/proton-$proton_state-${entry##*/}" \
+		"$root/opt/proton-uml-arm64ec/$entry"
+done
 sudo -n chroot "$root" useradd -m -s /bin/bash uml
 sudo -n chroot "$root" passwd -d uml
 for group in sudo video audio input render; do
@@ -77,6 +84,11 @@ write_file etc/hosts 0644 <<'EOF'
 ::1 localhost ip6-localhost ip6-loopback
 EOF
 write_file etc/fstab 0644 <<'EOF'
+/dev/ubda / erofs ro 0 0
+/dev/ubdb1 /userdata ext4 noatime 0 0
+/userdata/home /home none bind 0 0
+/userdata/var /var none bind 0 0
+/userdata/root /root none bind 0 0
 none /tmp tmpfs mode=1777,nosuid,nodev 0 0
 EOF
 write_file etc/sudoers.d/uml 0440 <<'EOF'
@@ -110,7 +122,9 @@ sudo -n chroot "$root" locale-gen en_US.UTF-8
 sudo -n systemctl --root="$root" enable systemd-networkd systemd-resolved steam-gaming
 sudo -n systemctl --root="$root" set-default graphical.target
 sudo -n ln -sfn /run/systemd/resolve/stub-resolv.conf "$root/etc/resolv.conf"
-sudo -n truncate -s 0 "$root/etc/machine-id"
+sudo -n rm -f "$root/etc/machine-id" "$root/var/lib/dbus/machine-id"
+sudo -n ln -s /var/lib/dbus/machine-id "$root/etc/machine-id"
+sudo -n systemctl --root="$root" mask getty@tty1.service
 
 sdk=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdk"])' "$inputs/inputs.json")
 "$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
@@ -125,4 +139,12 @@ if [ -n "$vulkan_root" ]; then
 	sudo -n python3 -B "$here/install-vulkan.py" --source "$vulkan_root" \
 		--receipt "$vulkan_receipt" --root "$root"
 fi
+# Keep versioned package and client seeds in the immutable image. Only the
+# image-owned init copies them to a new data partition, never on an update.
+sudo -n install -d "$root/usr/share/uml-steam/home" "$root/userdata"
+sudo -n mv "$root/home/uml" "$root/usr/share/uml-steam/home/uml"
+sudo -n mv "$root/var/lib/dpkg" "$root/usr/share/uml-steam/dpkg"
+sudo -n ln -s /usr/share/uml-steam/dpkg "$root/var/lib/dpkg"
+sudo -n cp -a "$root/var" "$root/usr/share/uml-steam/var"
+sudo -n chmod 0755 "$root/usr/local/libexec/kernarium-init"
 "$here/seal-image.sh" "$inputs" "$work" "$output"

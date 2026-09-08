@@ -141,7 +141,11 @@ environment. Bundled x86 Linux Steam assets remain inert compatibility files;
 the appliance provides no x86 Linux execution engine. Its experimental Vulkan
 variant consumes the receipt-verified Mesa/Venus guest runtime and the paired
 KosmicKrisp host product. The producer owns CPU and gaming-session validation
-and documents any remaining GPU startup boundary.
+and documents any remaining GPU startup boundary. Its image-owned init mounts
+EROFS read-only and binds home and system state from a separate persistent
+GPT/ext4 disk. Replacing the rootfs never resets that disk or reseeds an
+existing Steam client. Boot and client-update progress use a Kernarium splash
+before handing the display to Big Picture.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
