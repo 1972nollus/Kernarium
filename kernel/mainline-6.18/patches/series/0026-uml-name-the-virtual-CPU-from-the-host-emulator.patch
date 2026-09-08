@@ -1,7 +1,7 @@
-From 1a08b3ccb2f5d337e852a2005c811830673793ec Mon Sep 17 00:00:00 2001
+From 23bf27499d2babec8410b11d94ea4df8b424af5f Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Thu, 3 Sep 2026 20:41:56 +0900
-Subject: [PATCH 26/28] uml: name the virtual CPU from the host emulator
+Subject: [PATCH 26/29] uml: name the virtual CPU from the host emulator
 
 /proc/cpuinfo reported "UML" as the model name on every configuration.  That
 names the kernel port rather than the machine, and it is the same name whether

@@ -1,7 +1,7 @@
-From 65ba2304f6e0046c1bece42c0c19436b37cc23fa Mon Sep 17 00:00:00 2001
+From 2b033d6846e9bc46f577759fe7709c91cfdbe61b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:28 +0900
-Subject: [PATCH 19/28] UML-DARWIN-LOCAL: service cooperative progress at
+Subject: [PATCH 19/29] UML-DARWIN-LOCAL: service cooperative progress at
  kernel quiescent points
 
 Keep timer checkpoints, safe loop boundaries, quiescent timer service, and the pre-cond_resched poll together as one cooperative-progress topic.
@@ -29,10 +29,10 @@ index 3daaa5c4b..960950e40 100644
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index c85116f19..038516878 100644
+index ff1ebe3c1..ec0850650 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -193,6 +193,30 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -176,6 +176,30 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -63,7 +63,7 @@ index c85116f19..038516878 100644
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -201,10 +225,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -184,10 +208,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	unsigned long user_addr = addr;
  #endif
  	int n = -1;
@@ -82,7 +82,7 @@ index c85116f19..038516878 100644
  
  #ifdef CONFIG_64BIT
  #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -245,6 +276,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -228,6 +259,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		set_page_dirty_lock(page);
  out_put:
  	put_page(page);

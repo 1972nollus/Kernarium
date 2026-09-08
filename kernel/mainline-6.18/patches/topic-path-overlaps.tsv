@@ -15,7 +15,7 @@ arch/um/include/shared/os.h	0001,0018,0022,0026	The shared host contract remains
 arch/um/kernel/physmem.c	0022,0027	The reclamation topic owns Darwin physical-range reporting while topic 0027 adds the guarded shared-memory aperture and its constant-time physical lookup.
 arch/um/kernel/process.c	0004,0016	The execution core owns Linux task entry while topic 0016 adapts activation to fixed Darwin vCPU carriers.
 arch/um/kernel/skas/process.c	0002,0016	The MMU bootstrap owns CPU0 setup while topic 0016 installs the Darwin signal stack on its carrier.
-arch/um/kernel/skas/uaccess.c	0002,0019	The MMU topic owns synchronized user access while topic 0019 adds safe cooperative progress boundaries.
+arch/um/kernel/skas/uaccess.c	0002,0019,0029	The MMU topic owns synchronized user access, topic 0019 adds safe cooperative progress boundaries, and topic 0029 answers mmap-lock contention in a pagefault-disabled walk with an RCU page-table walk instead of a fault.
 arch/um/kernel/smp.c	0003,0018	The SMP core owns IPI dispatch while topic 0018 adds the irq-work vector and local raise.
 arch/um/kernel/time.c	0003,0019	The timer core owns Darwin delivery while topic 0019 exposes safe cooperative progress checkpoints.
 arch/um/kernel/tlb.c	0002,0019	The MMU topic owns Darwin invalidation while topic 0019 adds a quiescent progress boundary after it completes.

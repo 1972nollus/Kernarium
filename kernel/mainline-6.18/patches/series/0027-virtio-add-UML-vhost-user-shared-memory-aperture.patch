@@ -1,8 +1,7 @@
-From 9c85d2b835b8b8fdd3b07e47a64bc19d2e52cfb4 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin kernel patch maintainer
- <noreply@linux-um-darwin.invalid>
+From acc87b920194601c09e55319c24919fdc36a9f85 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 08:02:37 +0900
-Subject: [PATCH 27/28] virtio: add UML vhost-user shared-memory aperture
+Subject: [PATCH 27/29] virtio: add UML vhost-user shared-memory aperture
 
 ---
  arch/um/drivers/vhost_user.h          |  36 +++-

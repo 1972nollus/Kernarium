@@ -1,7 +1,7 @@
-From 88d5ca02521da49f1fc920140378fe917c96d75d Mon Sep 17 00:00:00 2001
+From 7006e86c1cf02969215d654fb006d8842a9e7dc9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 19:38:15 +0900
-Subject: [PATCH 28/28] uml: interpret Darwin host faults only on their owner
+Subject: [PATCH 28/29] uml: interpret Darwin host faults only on their owner
 
 Signal dispositions are process-wide, so UML's SIGSEGV and SIGBUS handlers
 also cover the host threads the emulator runs for its own devices and
