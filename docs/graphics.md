@@ -139,6 +139,22 @@ its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
 passes.
 
+### Experimental host memory limitation
+
+Zink/OpenGL CTS sessions can accumulate host Metal allocations beyond the
+configured guest RAM limit, and ending an individual GL process does not
+reliably restore the starting footprint. The growth is also present on the
+pre-rebase host; identifying and bounding the retaining owner remains separate
+follow-up work.
+
+Budget campaign concurrency from host physical footprint and the
+`IOAccelerator (graphics)` row of `vmmap -summary`, not process RSS, which omits
+swapped-out allocations. Keep fresh emulator processes at shard boundaries;
+a longer shard or more concurrent guests needs a corresponding host memory
+budget. Six concurrent long shards can substantially increase memory pressure.
+A retention fix must demonstrate recovery between repeated GL groups before
+this limitation is removed.
+
 ## Validation
 
 Use `check-gpu` for native GPU ownership and VNC checks and
