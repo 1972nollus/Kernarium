@@ -404,6 +404,23 @@ def main() -> int:
         not in configurations["macos-integration-4k"]["cacheVariables"],
         "macOS integration still exposes a Kbuild output directory",
     )
+    experiment_profile_16k = configurations["macos-integration-venus"]
+    experiment_profile_4k = configurations["macos-integration-venus-4k"]
+    require(
+        experiment_profile_16k["cacheVariables"]["UML_KERNEL_PRODUCT"]
+        == "mainline-6.18-vulkan-experiment"
+        and experiment_profile_16k["cacheVariables"]["UML_APPLE_GPU_PRODUCT"]
+        == "apple-gpu-vulkan-experiment",
+        "macOS Venus integration does not select both experimental products",
+    )
+    require(
+        experiment_profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
+        and experiment_profile_16k["binaryDir"]
+        == "${sourceDir}/.build/presets/${presetName}"
+        and experiment_profile_4k["binaryDir"]
+        == "${sourceDir}/.build/presets/${presetName}",
+        "macOS Venus page profiles do not use distinct artifact build trees",
+    )
     x86_profile = configurations["macos-x86_64"]
     require(
         x86_profile["cacheVariables"]["UML_KERNEL_PRODUCT"]
@@ -446,6 +463,11 @@ def main() -> int:
             not in profile_4k["cacheVariables"],
             f"{platform} 4 KiB runtime profile bypasses artifact selection",
         )
+        for suffix in ("", "-4k"):
+            require(
+                f"kernarium-ios-{platform}-venus{suffix}" not in configurations,
+                f"{platform} retains a Vulkan-experiment runtime preset",
+            )
         require(
             profile_16k["binaryDir"] != profile_4k["binaryDir"],
             f"{platform} page profiles share one CMake build tree",
