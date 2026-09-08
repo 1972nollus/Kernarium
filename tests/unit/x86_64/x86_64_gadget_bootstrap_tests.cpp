@@ -2668,7 +2668,8 @@ read_test_sequences(void *context) noexcept
 	return true;
 }
 /* CMP, SUB, TEST and AND leave compatible host flags for the next condition:
- * only zero at narrow widths, and the supported NZCV conditions at 32/64 bits. The slot after that reads the same flags through the deferred
+ * zero and unsigned subtraction ordering at narrow widths, and the supported
+ * NZCV conditions at 32/64 bits. The slot after that reads through the deferred
  * record instead, so the two bytes a pair of identical SETcc write must agree
  * for every producer, width, operand pair and condition. That equality is the
  * whole correctness claim of the fused path, and it needs no reference model:
@@ -2679,8 +2680,8 @@ read_test_sequences(void *context) noexcept
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 4> producers{
 		0x39, 0x29, 0x85, 0x21};
-	static constexpr std::array<std::uint64_t, 12> values{
-		0U, 1U, 2U, 0xffU, 0x7fff'ffffULL, 0x8000'0000ULL,
+	static constexpr std::array<std::uint64_t, 17> values{
+		0U, 1U, 2U, 0x7fU, 0x80U, 0xffU, 0x7fffU, 0x8000U, 0xffffU, 0x7fff'ffffULL, 0x8000'0000ULL,
 		0xffff'ffffULL, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
 	};
@@ -2766,7 +2767,8 @@ read_test_sequences(void *context) noexcept
 				const bool wide = width >= 32U;
 				const bool expected_fusion = wide ? !parity &&
 					!(logical && (carry_condition || ordered_carry)) :
-					condition == 4U || condition == 5U;
+					condition == 4U || condition == 5U ||
+					(!logical && (carry_condition || ordered_carry));
 				std::vector<std::byte> fused;
 				std::vector<std::byte> plain;
 				const auto emit = [&](std::vector<std::byte> &code,
@@ -2880,11 +2882,11 @@ read_test_sequences(void *context) noexcept
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 4> producers{0x39, 0x29, 0x85, 0x21};
-	static constexpr std::array<std::uint64_t, 6> values{
-		0U, 1U, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
+	static constexpr std::array<std::uint64_t, 12> values{
+		0U, 1U, 0x7fU, 0x80U, 0xffU, 0x7fffU, 0x8000U, 0xffffU, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL};
 	for (const auto producer : producers) {
-		for (const unsigned width : {32U, 64U}) {
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				for (const auto left : values) {
 					for (const auto right : values) {
@@ -2895,9 +2897,11 @@ read_test_sequences(void *context) noexcept
 								code.push_back(
 									static_cast<std::byte>(byte));
 							};
+							if (width == 16U)
+								push(0x66);
 							if (width == 64U)
 								push(0x48);
-							push(producer);
+							push(width == 8U ? producer - 1U : producer);
 							push(0xd8);
 							if (barrier != 0U)
 								push(0x90);

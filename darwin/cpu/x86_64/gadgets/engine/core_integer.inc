@@ -53,8 +53,9 @@ scalar_arithmetic_ri \operation\()_\width\()_ri, \instruction, \flag_operation, 
 .endm
 
 /* Narrow operands are zero-extended, so subtraction and logical operations
- * preserve the guest zero condition in NZCV. Other narrow conditions still
- * require the deferred record because host sign and overflow use bit 31.
+ * preserve the guest zero condition in NZCV. Subtraction also preserves
+ * unsigned ordering. Sign and overflow still require the deferred record
+ * because the host uses bit 31.
  */
 .macro arithmetic_family operation, instruction, flag_operation, writes, host_flags=0
 .if \host_flags

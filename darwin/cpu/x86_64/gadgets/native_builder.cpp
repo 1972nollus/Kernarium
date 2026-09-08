@@ -4539,11 +4539,13 @@ enum class VectorFloatKind {
  * sign, zero and signed-order conditions transfer unchanged; the conditions
  * that read CF do not, because a cleared ARM C reads as "borrowed".
  * The narrow widths arrive zero-extended into a host register, so their host
- * flags describe a 32-bit operation; only the zero condition transfers.
+ * flags describe a 32-bit operation. Zero still transfers, and subtraction
+ * also preserves unsigned ordering because both operands are zero-extended.
  */
 enum class HostFlags : std::uint8_t {
 	none,
 	zero_only,
+	narrow_subtract,
 	subtract,
 	logical,
 };
@@ -4558,7 +4560,7 @@ enum class HostFlags : std::uint8_t {
 	switch (instruction.operation) {
 	case Operation::subtract:
 	case Operation::compare:
-		return narrow ? HostFlags::zero_only : HostFlags::subtract;
+		return narrow ? HostFlags::narrow_subtract : HostFlags::subtract;
 	case Operation::bit_and:
 	case Operation::test:
 		return narrow ? HostFlags::zero_only : HostFlags::logical;
@@ -4583,9 +4585,12 @@ enum class HostFlags : std::uint8_t {
 	case Condition::above_or_equal:
 	case Condition::below_or_equal:
 	case Condition::above:
-		return flags == HostFlags::subtract;
-	default:
+		return flags == HostFlags::subtract || flags == HostFlags::narrow_subtract;
+	case Condition::equal:
+	case Condition::not_equal:
 		return true;
+	default:
+		return flags != HostFlags::narrow_subtract;
 	}
 }
 
