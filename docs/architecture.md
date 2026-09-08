@@ -43,8 +43,12 @@ provider.
 All products use a 128 TiB sparse software-MMU guest task range. The default
 guest page profile is 16 KiB; 4 KiB is a supported compatibility build. The
 native kernel window contains guest RAM plus a RAM-scaled auxiliary mapping
-allowance bounded between 1 GiB and 4 GiB. macOS places it at 96 TiB; iOS
-top-packs it below the physical-device address ceiling.
+allowance bounded between 1 GiB and 4 GiB, plus the fixed guarded aperture the
+kernel reserves for negotiated vhost-user shared-memory regions and its stub
+pages. The host and the kernel derive that reservation from the same constants,
+so a host window smaller than the kernel's expectation faults on the kernel's
+own stub write. macOS places the window at 96 TiB; iOS top-packs it below the
+physical-device address ceiling.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create

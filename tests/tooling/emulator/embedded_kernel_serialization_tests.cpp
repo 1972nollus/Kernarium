@@ -57,9 +57,12 @@ constexpr std::uint64_t proportional_auxiliary_memory =
 constexpr std::uint64_t scaled_auxiliary_memory =
 	(proportional_auxiliary_memory + DARWIN_UML_GUEST_PAGE_SIZE - 1U) &
 	~(DARWIN_UML_GUEST_PAGE_SIZE - 1U);
-constexpr std::uint64_t default_auxiliary_memory = std::max(
-	scaled_auxiliary_memory,
-	static_cast<std::uint64_t>(DARWIN_UML_NATIVE_AUXILIARY_MINIMUM));
+constexpr std::uint64_t default_auxiliary_memory =
+	std::max(scaled_auxiliary_memory,
+		static_cast<std::uint64_t>(
+			DARWIN_UML_NATIVE_AUXILIARY_MINIMUM)) +
+	DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
+	DARWIN_UML_NATIVE_STUB_PAGES * DARWIN_UML_GUEST_PAGE_SIZE;
 constexpr std::uint64_t native_window_start =
 	DARWIN_UML_NATIVE_ADDRESS_CEILING - default_guest_memory -
 	default_auxiliary_memory;

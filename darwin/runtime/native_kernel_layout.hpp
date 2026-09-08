@@ -16,7 +16,8 @@ struct NativeKernelLayout final {
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
 	std::uint64_t AuxiliaryDivisor, std::uint64_t MinimumAuxiliarySize,
-	std::uint64_t MaximumAuxiliarySize, std::uint64_t PageSize>
+	std::uint64_t MaximumAuxiliarySize, std::uint64_t PageSize,
+	std::uint64_t SharedMemoryReservationSize, std::uint64_t StubPageCount>
 class NativeKernelLayoutGeometry final {
 	static_assert(PageSize != 0 && (PageSize & (PageSize - 1U)) == 0);
 	static_assert(AuxiliaryDivisor != 0);
@@ -25,6 +26,23 @@ class NativeKernelLayoutGeometry final {
 	static_assert(MaximumAuxiliarySize <= AddressCeiling - LinkAddress);
 	static_assert((MinimumAuxiliarySize & (PageSize - 1U)) == 0);
 	static_assert((MaximumAuxiliarySize & (PageSize - 1U)) == 0);
+	static_assert((SharedMemoryReservationSize & (PageSize - 1U)) == 0);
+	static_assert(StubPageCount <=
+		std::numeric_limits<std::uint64_t>::max() / PageSize);
+
+	/* The kernel places its stub pages and the guarded vhost-user
+	 * shared-memory aperture above the RAM-scaled auxiliary allowance, so
+	 * the admitted native window must reserve that span too. Anything less
+	 * leaves the kernel's own stub write outside the window the host will
+	 * admit.
+	 */
+	static constexpr std::uint64_t reserved_auxiliary =
+		SharedMemoryReservationSize + StubPageCount * PageSize;
+	static_assert(SharedMemoryReservationSize <=
+		std::numeric_limits<std::uint64_t>::max() -
+			StubPageCount * PageSize);
+	static_assert(reserved_auxiliary <=
+		AddressCeiling - LinkAddress - MaximumAuxiliarySize);
 
 public:
 	[[nodiscard]] static constexpr NativeKernelLayout derive(
@@ -45,11 +63,14 @@ public:
 			(proportional + PageSize - 1U) & ~(PageSize - 1U);
 		const auto floored = scaled_auxiliary < MinimumAuxiliarySize ?
 			MinimumAuxiliarySize : scaled_auxiliary;
-		/* Capped so RAM plus auxiliary stays inside the signed iOS
-		 * envelope; vmalloc's own consumption is bounded by the page
-		 * allocator rather than by this reservation. */
-		const auto auxiliary = floored > MaximumAuxiliarySize ?
+		/* Capped so RAM plus the vmalloc allowance stays inside the
+		 * signed iOS envelope; vmalloc's own consumption is bounded by
+		 * the page allocator rather than by this reservation. The fixed
+		 * kernel reservation is added after the cap because it is not
+		 * part of that allowance. */
+		const auto capped = floored > MaximumAuxiliarySize ?
 			MaximumAuxiliarySize : floored;
+		const auto auxiliary = capped + reserved_auxiliary;
 		constexpr auto envelope = AddressCeiling - LinkAddress;
 		if (rounded == 0 || rounded > envelope ||
 		    auxiliary > envelope - rounded)
