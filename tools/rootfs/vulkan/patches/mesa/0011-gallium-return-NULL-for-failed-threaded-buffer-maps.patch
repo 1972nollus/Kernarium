@@ -1,4 +1,4 @@
-From ab2a273d56408a651c7155c13cd29b2619b28b96 Mon Sep 17 00:00:00 2001
+From aae3b757487303f9e87a1b9a9cda0376f366c8c4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 20:33:46 +0900
 Subject: [PATCH 11/12] gallium: return NULL for failed threaded buffer maps

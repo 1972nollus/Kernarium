@@ -1,4 +1,4 @@
-From 44085935d7699b1b6e7e27e782867bcc21d6be23 Mon Sep 17 00:00:00 2001
+From 980dd5c8c6f135d42a8d73743367930c3914f73d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
 Subject: [PATCH 08/12] venus: forward device address and maintenance commands
