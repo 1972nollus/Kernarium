@@ -1,4 +1,4 @@
-From de53ebffac3287a8751cb58b79d315bf29613712 Mon Sep 17 00:00:00 2001
+From 7c7f5d3a165d70e0987deed13a2ee81c091353af Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:45:53 +0900
 Subject: [PATCH 32/44] kosmickrisp: lower clip/cull outputs after software
@@ -25,10 +25,10 @@ Lower the final Metal vertex/fragment interface only after software-stage conver
  create mode 100644 src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 1c93f2f..c6a63d1 100644
+index a52b1ec..c99592f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1241,10 +1241,6 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1174,10 +1174,6 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
     gather_shader_info(shader, nir, state);
     shader->info.stage = logical_stage;
  
@@ -39,7 +39,7 @@ index 1c93f2f..c6a63d1 100644
     /* When using poly to emulate tessellation, vertex and tess control shaders
      * are turned to compute shaders that will be dispatched before the draw
      * call. Tess evalutaion shaders are turned into vertex shaders. */
-@@ -1296,6 +1292,16 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1229,6 +1225,16 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
        }
     }
  

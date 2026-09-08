@@ -1,4 +1,4 @@
-From a762175bc74c6b8ea11923b68aeb6550b20bd9b6 Mon Sep 17 00:00:00 2001
+From faeed61684e17c5cb81bb7e25d13368c630550ca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 14:51:41 +0900
 Subject: [PATCH 40/44] kosmickrisp: declare MSL temporaries without a dead

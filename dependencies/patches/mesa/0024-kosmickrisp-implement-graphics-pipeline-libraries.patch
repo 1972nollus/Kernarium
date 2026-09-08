@@ -1,4 +1,4 @@
-From 4fcd0aa6927a09354c76ec24eeecb8e5237c87f7 Mon Sep 17 00:00:00 2001
+From 54bc42be4f47f86b405f86d774f96cd86980fee5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:49:11 +0900
 Subject: [PATCH 24/44] kosmickrisp: implement graphics pipeline libraries
@@ -6,15 +6,15 @@ Subject: [PATCH 24/44] kosmickrisp: implement graphics pipeline libraries
 ---
  src/kosmickrisp/vulkan/kk_device.c            |   9 +-
  src/kosmickrisp/vulkan/kk_device.h            |   6 +
- src/kosmickrisp/vulkan/kk_gpl.h               |  34 ++
+ src/kosmickrisp/vulkan/kk_gpl.h               | 114 +++++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   8 +-
- src/kosmickrisp/vulkan/kk_shader.c            | 419 +++++++++++++++++-
+ src/kosmickrisp/vulkan/kk_shader.c            | 471 +++++++++++++++---
  src/kosmickrisp/vulkan/kk_shader.h            |   4 +
  src/kosmickrisp/vulkan/meson.build            |  11 +
- src/kosmickrisp/vulkan/tests/test_gpl_state.c |  59 +++
+ src/kosmickrisp/vulkan/tests/test_gpl_state.c | 168 +++++++
  src/vulkan/runtime/vk_pipeline.c              |  45 ++
  src/vulkan/runtime/vk_shader.h                |  35 ++
- 10 files changed, 610 insertions(+), 20 deletions(-)
+ 10 files changed, 794 insertions(+), 77 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_gpl.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_gpl_state.c
 
@@ -82,10 +82,10 @@ index cb6aa03..d00c2a4 100644
                                                mtl_heap *heap);
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
 new file mode 100644
-index 0000000..7d8f92d
+index 0000000..6ffdd35
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,114 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -94,7 +94,11 @@ index 0000000..7d8f92d
 +#ifndef KK_GPL_H
 +#define KK_GPL_H
 +
++#include "kk_depth_clip.h"
++
 +#include "vk_graphics_state.h"
++
++#include <string.h>
 +
 +static inline bool
 +kk_graphics_state_is_complete(const struct vk_graphics_pipeline_state *state)
@@ -117,6 +121,82 @@ index 0000000..7d8f92d
 +      return true;
 +
 +   return vk_render_pass_state_has_attachment_info(state->rp);
++}
++
++static inline bool
++kk_graphics_state_has_static_depth_stencil(
++   const struct vk_graphics_pipeline_state *state)
++{
++   if (!state->ds)
++      return false;
++
++   return !(
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_TEST_ENABLE) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_WRITE_ENABLE) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_COMPARE_OP) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_TEST_ENABLE) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_OP) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_COMPARE_MASK) |
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_WRITE_MASK));
++}
++
++/* Fragment-output identity of a graphics pipeline.  A linked pipeline library
++ * is cached device-wide under this key, so it must describe every attachment
++ * the compiled Metal pipeline and its depth-stencil state are built from.
++ */
++struct kk_fs_key {
++   VkFormat color_formats[MESA_VK_MAX_COLOR_ATTACHMENTS];
++   VkFormat depth_attachment_format;
++   VkFormat stencil_attachment_format;
++   struct vk_color_blend_state color_blend;
++   struct vk_depth_stencil_state ds;
++   uint32_t rasterization_samples;
++   uint16_t static_sample_mask;
++   uint8_t color_attachment_count;
++   bool sample_shading_enable;
++   bool alpha_to_coverage_enable;
++   bool alpha_to_one_enable;
++   enum kk_fragment_depth_clamp_mode depth_clamp_mode;
++};
++
++static inline void
++kk_populate_fs_key(struct kk_fs_key *key,
++                   const struct vk_graphics_pipeline_state *state)
++{
++   memset(key, 0, sizeof(*key));
++
++   /* Required since we [de]serialize blend, and render target swizzle for
++    * non-native formats */
++   memcpy(key->color_formats, state->rp->color_attachment_formats,
++          sizeof(key->color_formats));
++   key->color_attachment_count = state->rp->color_attachment_count;
++
++   if (kk_graphics_state_has_static_depth_stencil(state))
++      key->ds = *(state->ds);
++
++   /* Blend state gets [de]serialized, so we need to hash it */
++   if (state->cb)
++      key->color_blend = *(state->cb);
++
++   if (state->ms) {
++      key->rasterization_samples = state->ms->rasterization_samples;
++      key->static_sample_mask = state->ms->sample_mask;
++      key->sample_shading_enable = state->ms->sample_shading_enable;
++      key->alpha_to_coverage_enable = state->ms->alpha_to_coverage_enable;
++      key->alpha_to_one_enable = state->ms->alpha_to_one_enable;
++   }
++
++   /* Both depth/stencil attachment formats belong to the identity, exactly as
++    * the colour attachment formats do.  Depth writes are removed without a
++    * depth attachment, and the Metal depth-stencil state carries stencil
++    * descriptors only when a stencil attachment is bound, so a key that
++    * recorded only "some depth attachment exists" let one compilation serve
++    * both a depth-only and a depth+stencil render pass; whichever was
++    * compiled first then decided whether the other wrote stencil at all.
++    */
++   key->depth_attachment_format = state->rp->depth_attachment_format;
++   key->stencil_attachment_format = state->rp->stencil_attachment_format;
++   key->depth_clamp_mode = kk_fragment_depth_clamp_mode(state);
 +}
 +
 +#endif /* KK_GPL_H */
@@ -161,7 +241,7 @@ index 9b5aa16..cb59b6d 100644
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7f0ff51..5bddba0 100644
+index 7f0ff51..ea3fe35 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -12,6 +12,7 @@
@@ -180,35 +260,77 @@ index 7f0ff51..5bddba0 100644
  #include "nir_xfb_info.h"
  
  #include "poly/cl/libpoly.h"
-@@ -177,7 +179,10 @@ struct kk_fs_key {
-    struct vk_depth_stencil_state ds;
-    uint32_t rasterization_samples;
-    uint16_t static_sample_mask;
-+   uint8_t color_attachment_count;
-    bool sample_shading_enable;
-+   bool alpha_to_coverage_enable;
-+   bool alpha_to_one_enable;
-    bool has_depth;
-    enum kk_fragment_depth_clamp_mode depth_clamp_mode;
- };
-@@ -192,6 +197,7 @@ kk_populate_fs_key(struct kk_fs_key *key,
-     * non-native formats */
-    memcpy(key->color_formats, state->rp->color_attachment_formats,
-           sizeof(key->color_formats));
-+   key->color_attachment_count = state->rp->color_attachment_count;
+@@ -97,22 +99,6 @@ kk_preprocess_nir(UNUSED struct vk_physical_device *vk_pdev, nir_shader *nir,
+    NIR_PASS(_, nir, nir_lower_compute_system_values, &csv_options);
+ }
  
-    if (has_static_depth_stencil_state(state))
-       key->ds = *(state->ds);
-@@ -204,6 +210,8 @@ kk_populate_fs_key(struct kk_fs_key *key,
-       key->rasterization_samples = state->ms->rasterization_samples;
-       key->static_sample_mask = state->ms->sample_mask;
-       key->sample_shading_enable = state->ms->sample_shading_enable;
-+      key->alpha_to_coverage_enable = state->ms->alpha_to_coverage_enable;
-+      key->alpha_to_one_enable = state->ms->alpha_to_one_enable;
-    }
+-static bool
+-has_static_depth_stencil_state(const struct vk_graphics_pipeline_state *state)
+-{
+-   if (!state->ds)
+-      return false;
+-
+-   return !(
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_TEST_ENABLE) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_WRITE_ENABLE) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_COMPARE_OP) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_TEST_ENABLE) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_OP) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_COMPARE_MASK) |
+-      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_WRITE_MASK));
+-}
+-
+ struct kk_vs_key {
+    bool is_points;
+    bool polygon_point_emulation;
+@@ -171,46 +157,6 @@ kk_populate_vs_key(struct kk_vs_key *key,
+    key->vi = *state->vi;
+ }
  
-    /* Depth writes are removed unless there's an actual attachment */
-@@ -220,6 +228,16 @@ kk_hash_graphics_state(struct vk_physical_device *device,
+-struct kk_fs_key {
+-   VkFormat color_formats[MESA_VK_MAX_COLOR_ATTACHMENTS];
+-   struct vk_color_blend_state color_blend;
+-   struct vk_depth_stencil_state ds;
+-   uint32_t rasterization_samples;
+-   uint16_t static_sample_mask;
+-   bool sample_shading_enable;
+-   bool has_depth;
+-   enum kk_fragment_depth_clamp_mode depth_clamp_mode;
+-};
+-
+-static void
+-kk_populate_fs_key(struct kk_fs_key *key,
+-                   const struct vk_graphics_pipeline_state *state)
+-{
+-   memset(key, 0, sizeof(*key));
+-
+-   /* Required since we [de]serialize blend, and render target swizzle for
+-    * non-native formats */
+-   memcpy(key->color_formats, state->rp->color_attachment_formats,
+-          sizeof(key->color_formats));
+-
+-   if (has_static_depth_stencil_state(state))
+-      key->ds = *(state->ds);
+-
+-   /* Blend state gets [de]serialized, so we need to hash it */
+-   if (state->cb)
+-      key->color_blend = *(state->cb);
+-
+-   if (state->ms) {
+-      key->rasterization_samples = state->ms->rasterization_samples;
+-      key->static_sample_mask = state->ms->sample_mask;
+-      key->sample_shading_enable = state->ms->sample_shading_enable;
+-   }
+-
+-   /* Depth writes are removed unless there's an actual attachment */
+-   key->has_depth = state->rp->depth_attachment_format != VK_FORMAT_UNDEFINED;
+-   key->depth_clamp_mode = kk_fragment_depth_clamp_mode(state);
+-}
+-
+ static void
+ kk_hash_graphics_state(struct vk_physical_device *device,
+                        const struct vk_graphics_pipeline_state *state,
+@@ -220,6 +166,16 @@ kk_hash_graphics_state(struct vk_physical_device *device,
     struct mesa_blake3 blake3_ctx;
     _mesa_blake3_init(&blake3_ctx);
  
@@ -225,7 +347,7 @@ index 7f0ff51..5bddba0 100644
     if (stages & VK_SHADER_STAGE_VERTEX_BIT) {
        struct kk_vs_key key;
        kk_populate_vs_key(&key, state);
-@@ -235,6 +253,7 @@ kk_hash_graphics_state(struct vk_physical_device *device,
+@@ -235,6 +191,7 @@ kk_hash_graphics_state(struct vk_physical_device *device,
                            sizeof(state->mv->view_mask));
     }
  
@@ -233,7 +355,7 @@ index 7f0ff51..5bddba0 100644
     _mesa_blake3_update(&blake3_ctx, &enabled_features->nullDescriptor,
                         sizeof(enabled_features->nullDescriptor));
  
-@@ -913,6 +932,9 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -913,6 +870,9 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
  {
     struct kk_device *dev = container_of(vk_dev, struct kk_device, vk);
  
@@ -243,7 +365,16 @@ index 7f0ff51..5bddba0 100644
     struct kk_pipeline_handles *pipe = &shader->pipeline;
  
     if (shader->info.stage == MESA_SHADER_COMPUTE) {
-@@ -2302,16 +2324,74 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
+@@ -1965,7 +1925,7 @@ gather_graphics_pipeline_create_info(
+       info->vs.view_mask = state->mv->view_mask;
+    }
+ 
+-   info->vs.has_ds = has_static_depth_stencil_state(state);
++   info->vs.has_ds = kk_graphics_state_has_static_depth_stencil(state);
+    if (info->vs.has_ds)
+       kk_gather_ds_info(state->ds, has_depth, has_stencil, info);
+ 
+@@ -2302,16 +2262,74 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
  }
  
  static VkResult
@@ -324,7 +455,7 @@ index 7f0ff51..5bddba0 100644
     /* Vulkan doesn't enforce a fragment shader to build pipelines. We may need
      * to create one. */
     nir_shader *nir_shaders[shader_count + 6u];
-@@ -2392,8 +2472,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2392,8 +2410,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
           NIR_PASS(_, nir, nir_io_add_intrinsic_xfb_info);
     }
  
@@ -335,7 +466,7 @@ index 7f0ff51..5bddba0 100644
      * fragment. */
     uint32_t total_shaders = shader_count;
     if (state && infos[shader_count - 1u].stage != MESA_SHADER_FRAGMENT) {
-@@ -2625,10 +2705,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2625,10 +2643,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -349,7 +480,7 @@ index 7f0ff51..5bddba0 100644
      */
     if (shaders[0]->vk.stage == MESA_SHADER_COMPUTE) {
        struct kk_shader *s = shaders[0];
-@@ -2673,6 +2752,256 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2673,6 +2690,256 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
     return result;
  }
  
@@ -606,7 +737,7 @@ index 7f0ff51..5bddba0 100644
  static void
  kk_msl_data_serialize(const struct msl_compile_data *data, struct blob *blob)
  {
-@@ -2698,6 +3027,15 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -2698,6 +2965,15 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
     struct kk_shader *shader = container_of(vk_shader, struct kk_shader, vk);
  
     blob_write_bytes(blob, &shader->info, sizeof(shader->info));
@@ -622,7 +753,7 @@ index 7f0ff51..5bddba0 100644
     kk_msl_serialize(shader, shader->info.stage, blob);
     if (shader->info.stage == MESA_SHADER_VERTEX) {
        u_foreach_bit(stage, shader->info.vs.additional_stages_bits) {
-@@ -2766,12 +3104,39 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -2766,12 +3042,39 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
     if (shader == NULL)
        return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
  
@@ -665,7 +796,7 @@ index 7f0ff51..5bddba0 100644
     if (shader->info.stage == MESA_SHADER_VERTEX) {
        u_foreach_bit(stage, shader->info.vs.additional_stages_bits) {
           result = kk_msl_deserialize(blob, stage, shader);
-@@ -2863,6 +3228,21 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -2863,6 +3166,21 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     cmd->state.gfx.pipeline_sample_count = shader->info.vs.sample_count;
  }
  
@@ -687,7 +818,7 @@ index 7f0ff51..5bddba0 100644
  static void
  kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
                      const mesa_shader_stage *stages,
-@@ -2934,9 +3314,12 @@ const struct vk_device_shader_ops kk_device_shader_ops = {
+@@ -2934,9 +3252,12 @@ const struct vk_device_shader_ops kk_device_shader_ops = {
     .get_spirv_options = kk_get_spirv_options,
     .preprocess_nir = kk_preprocess_nir,
     .hash_state = kk_hash_graphics_state,
@@ -763,10 +894,10 @@ index 74d3065..63bf44e 100644
      'kosmickrisp_rgb32_texel_format',
 diff --git a/src/kosmickrisp/vulkan/tests/test_gpl_state.c b/src/kosmickrisp/vulkan/tests/test_gpl_state.c
 new file mode 100644
-index 0000000..25e8212
+index 0000000..c99a954
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_gpl_state.c
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,168 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -775,12 +906,119 @@ index 0000000..25e8212
 +#include "kosmickrisp/vulkan/kk_gpl.h"
 +
 +#include <stdlib.h>
++#include <string.h>
 +
 +static void
 +require(bool condition)
 +{
 +   if (!condition)
 +      abort();
++}
++
++/* Two render passes may share one linked pipeline library only when their
++ * fragment-output keys are identical.
++ */
++static bool
++same_fragment_output(struct vk_graphics_pipeline_state *state,
++                     struct vk_render_pass_state *rp, VkFormat depth_a,
++                     VkFormat stencil_a, VkFormat depth_b, VkFormat stencil_b)
++{
++   struct kk_fs_key a, b;
++
++   rp->depth_attachment_format = depth_a;
++   rp->stencil_attachment_format = stencil_a;
++   kk_populate_fs_key(&a, state);
++
++   rp->depth_attachment_format = depth_b;
++   rp->stencil_attachment_format = stencil_b;
++   kk_populate_fs_key(&b, state);
++
++   return memcmp(&a, &b, sizeof(a)) == 0;
++}
++
++static void
++check_fragment_output_key(void)
++{
++   struct vk_rasterization_state rs = {0};
++   struct vk_multiview_state mv = {0};
++   struct vk_multisample_state ms = {
++      .rasterization_samples = VK_SAMPLE_COUNT_4_BIT,
++      .sample_mask = 0xffff,
++   };
++   /* The application state a multisampled depth/stencil pipeline sets is the
++    * same whichever aspects its render pass actually carries, so only the
++    * attachment formats can tell the two pipelines apart.
++    */
++   struct vk_depth_stencil_state ds = {
++      .depth =
++         {
++            .test_enable = true,
++            .write_enable = true,
++            .compare_op = VK_COMPARE_OP_LESS,
++         },
++      .stencil =
++         {
++            .test_enable = true,
++            .front = {.op = {.pass = VK_STENCIL_OP_REPLACE},
++                      .write_mask = 0xff},
++            .back = {.op = {.pass = VK_STENCIL_OP_REPLACE},
++                     .write_mask = 0xff},
++         },
++   };
++   struct vk_render_pass_state rp = {
++      .attachments = MESA_VK_RP_ATTACHMENT_COLOR_0_BIT |
++                     MESA_VK_RP_ATTACHMENT_DEPTH_BIT |
++                     MESA_VK_RP_ATTACHMENT_STENCIL_BIT,
++      .color_attachment_count = 1,
++      .color_attachment_formats = {VK_FORMAT_R8G8B8A8_UNORM},
++   };
++   struct vk_graphics_pipeline_state state = {
++      .shader_stages = VK_SHADER_STAGE_VERTEX_BIT |
++                       VK_SHADER_STAGE_FRAGMENT_BIT,
++      .rs = &rs,
++      .mv = &mv,
++      .ms = &ms,
++      .ds = &ds,
++      .rp = &rp,
++   };
++
++   /* A depth-only pass compiles a depth-stencil state with no stencil
++    * descriptor at all, so it must never serve a depth+stencil pass: the
++    * shared pipeline would silently stop writing stencil.
++    */
++   require(!same_fragment_output(&state, &rp, VK_FORMAT_D16_UNORM,
++                                 VK_FORMAT_UNDEFINED,
++                                 VK_FORMAT_D32_SFLOAT_S8_UINT,
++                                 VK_FORMAT_D32_SFLOAT_S8_UINT));
++   require(!same_fragment_output(&state, &rp, VK_FORMAT_D32_SFLOAT,
++                                 VK_FORMAT_UNDEFINED,
++                                 VK_FORMAT_D32_SFLOAT_S8_UINT,
++                                 VK_FORMAT_D32_SFLOAT_S8_UINT));
++
++   /* A stencil-only pass is likewise distinct from one with no depth/stencil
++    * attachment, and the concrete depth format is part of the identity.
++    */
++   require(!same_fragment_output(&state, &rp, VK_FORMAT_UNDEFINED,
++                                 VK_FORMAT_S8_UINT, VK_FORMAT_UNDEFINED,
++                                 VK_FORMAT_UNDEFINED));
++   require(!same_fragment_output(&state, &rp, VK_FORMAT_D16_UNORM,
++                                 VK_FORMAT_UNDEFINED, VK_FORMAT_D32_SFLOAT,
++                                 VK_FORMAT_UNDEFINED));
++
++   /* Equal render passes still share one compilation. */
++   require(same_fragment_output(&state, &rp, VK_FORMAT_D32_SFLOAT_S8_UINT,
++                                VK_FORMAT_D32_SFLOAT_S8_UINT,
++                                VK_FORMAT_D32_SFLOAT_S8_UINT,
++                                VK_FORMAT_D32_SFLOAT_S8_UINT));
++
++   /* The rest of the fragment-output identity is still keyed. */
++   rp.depth_attachment_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
++   rp.stencil_attachment_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
++   struct kk_fs_key four_samples, two_samples;
++   kk_populate_fs_key(&four_samples, &state);
++   ms.rasterization_samples = VK_SAMPLE_COUNT_2_BIT;
++   kk_populate_fs_key(&two_samples, &state);
++   require(memcmp(&four_samples, &two_samples, sizeof(four_samples)) != 0);
 +}
 +
 +int
@@ -823,6 +1061,8 @@ index 0000000..25e8212
 +   BITSET_SET(state.dynamic,
 +              MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
 +   require(!kk_graphics_state_is_complete(&state));
++
++   check_fragment_output_key();
 +
 +   return 0;
 +}

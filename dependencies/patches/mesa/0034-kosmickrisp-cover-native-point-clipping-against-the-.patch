@@ -1,4 +1,4 @@
-From fe05119a47ee4003eccb86f2df71d3b34f366cc0 Mon Sep 17 00:00:00 2001
+From f238f8ae588777f792a0467d0a71006068730014 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 03:21:00 +0900
 Subject: [PATCH 34/44] kosmickrisp: cover native point clipping against the

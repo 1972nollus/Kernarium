@@ -1,4 +1,4 @@
-From b9be28c4fde58877e64745385f52e54486d470ae Mon Sep 17 00:00:00 2001
+From 695b8daa9b8726a93e6f2e812cf52d00e06881b3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
 Subject: [PATCH 33/44] kosmickrisp: precompile bounded raster executable
@@ -857,7 +857,7 @@ index 0000000..a3981f5
 +   return mask;
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index c6a63d1..2d21544 100644
+index c99592f..d2f630a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -15,6 +15,7 @@
@@ -868,7 +868,7 @@ index c6a63d1..2d21544 100644
  #include "kk_nir_lower_vbo.h"
  #include "kk_physical_device.h"
  #include "kk_sampler.h"
-@@ -155,8 +156,7 @@ kk_needs_polygon_point_emulation(
+@@ -139,8 +140,7 @@ kk_needs_polygon_point_emulation(
         !kk_vk_prim_is_triangles(state->ia->primitive_topology))
        return false;
  
@@ -878,7 +878,7 @@ index c6a63d1..2d21544 100644
  }
  
  static void
-@@ -1053,10 +1053,13 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -986,10 +986,13 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
              kk_shader_destroy(vk_dev, shader->statistics_variant_shaders[stage],
                                pAllocator);
        }
@@ -896,7 +896,7 @@ index c6a63d1..2d21544 100644
        }
  
        /* Pre-render compute pipelines. */
-@@ -1527,172 +1530,581 @@ kk_load_polygon_point_output(nir_builder *b, nir_def *vertex_params,
+@@ -1460,172 +1463,581 @@ kk_load_polygon_point_output(nir_builder *b, nir_def *vertex_params,
                            .align_mul = sizeof(uint32_t), .align_offset = 0);
  }
  
@@ -1589,7 +1589,7 @@ index c6a63d1..2d21544 100644
     return nir;
  }
  
-@@ -1817,6 +2229,13 @@ kk_lower_line_fs(nir_shader *fs, bool smooth, bool stipple,
+@@ -1750,6 +2162,13 @@ kk_lower_line_fs(nir_shader *fs, bool smooth, bool stipple,
           &b, nir_fsub(&b,
                        nir_fadd_imm(&b, nir_channel(&b, line, 1), 0.5f),
                        nir_fabs(&b, nir_channel(&b, line, 0))));
@@ -1603,7 +1603,7 @@ index c6a63d1..2d21544 100644
        struct kk_smooth_line_store_state state = {.coverage = coverage};
        nir_shader_intrinsics_pass(fs, kk_lower_smooth_line_store,
                                   nir_metadata_control_flow, &state);
-@@ -1909,27 +2328,6 @@ kk_line_raster_viewport_for_vertex(nir_builder *b, nir_def *vertex_params,
+@@ -1842,27 +2261,6 @@ kk_line_raster_viewport_for_vertex(nir_builder *b, nir_def *vertex_params,
     return nir_umin_imm(b, viewport, KK_MAX_VIEWPORTS - 1);
  }
  
@@ -1631,7 +1631,7 @@ index c6a63d1..2d21544 100644
  
  static nir_def *
  kk_line_primitive_count(nir_builder *b, nir_def *topology, nir_def *vertices)
-@@ -2100,8 +2498,13 @@ static nir_shader *
+@@ -2033,8 +2431,13 @@ static nir_shader *
  kk_create_line_materialize_shader(const nir_shader *source)
  {
     nir_shader *nir = nir_shader_clone(NULL, source);
@@ -1647,7 +1647,7 @@ index c6a63d1..2d21544 100644
  
     NIR_PASS(_, nir, nir_shader_intrinsics_pass,
              kk_lower_line_materialize_instr, nir_metadata_control_flow, nir);
-@@ -2117,373 +2520,636 @@ kk_create_line_materialize_shader(const nir_shader *source)
+@@ -2050,373 +2453,636 @@ kk_create_line_materialize_shader(const nir_shader *source)
     return nir;
  }
  
@@ -2606,7 +2606,7 @@ index c6a63d1..2d21544 100644
     return nir;
  }
  
-@@ -3005,13 +3671,13 @@ gather_graphics_pipeline_create_info(
+@@ -2938,13 +3604,13 @@ gather_graphics_pipeline_create_info(
            MTL_PRIMITIVE_TOPOLOGY_CLASS_TRIANGLE)
        topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
  
@@ -2622,7 +2622,7 @@ index c6a63d1..2d21544 100644
         (info->vs.geometry_shader_emulation ||
          info->vs.transform_feedback_emulation)) {
        const struct poly_gs_info *gsi = info->vs.geometry_shader_emulation
-@@ -3201,7 +3867,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3134,7 +3800,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
           return VK_ERROR_INVALID_SHADER_NV;
     }
  
@@ -2631,7 +2631,7 @@ index c6a63d1..2d21544 100644
        result = kk_compile_compute_pipeline(
           device, &vs->line_stipple_prefix_msl, 1,
           &pipe->gfx.line_stipple_prefix);
-@@ -3425,14 +4091,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3358,14 +4024,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     const bool geometry_shader_emulation = geometry_shader != UINT32_MAX;
     transform_feedback_emulation &= !tess && !geometry_shader_emulation;
  
@@ -2650,7 +2650,7 @@ index c6a63d1..2d21544 100644
     const bool line_raster_polygon_edges =
        state && u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES &&
        state->rs->polygon_mode == VK_POLYGON_MODE_LINE;
-@@ -3452,15 +4118,19 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3385,15 +4051,19 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         state->rs->line.stipple.enable ||
         BITSET_TEST(state->dynamic,
                     MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE));
@@ -2672,7 +2672,7 @@ index c6a63d1..2d21544 100644
        line_raster_emulation && kk_line_raster_uses_triangles(state);
     const bool line_raster_smooth =
        line_raster_emulation &&
-@@ -3497,7 +4167,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3430,7 +4100,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         * that shader, not Metal's rasterizer-generated primitive ID.  Expose it
         * as a flat varying before the original GS->FS link so the varying
         * optimizer relocates both sides to a matching user slot. */
@@ -2681,7 +2681,7 @@ index c6a63d1..2d21544 100644
            nir->info.stage == MESA_SHADER_FRAGMENT) {
           const nir_lower_sysvals_to_varyings_options sysvals = {
              .primitive_id = true,
-@@ -3511,10 +4181,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3444,10 +4114,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         * it is linked exactly once to the final generated raster stage below. */
        if (line_raster_emulation &&
            nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -2696,7 +2696,7 @@ index c6a63d1..2d21544 100644
  
        msl_preprocess_nir_workarounds(nir, dev->disabled_workarounds);
        kk_lower_nir(dev, nir, emulated_stage, pipeline_statistics, info->robustness,
-@@ -3543,17 +4215,28 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3476,17 +4148,28 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           get_empty_nir(dev, MESA_SHADER_FRAGMENT, state);
        if (line_raster_emulation) {
           kk_lower_line_fs(nir_shaders[shader_count], line_raster_smooth,
@@ -2727,7 +2727,7 @@ index c6a63d1..2d21544 100644
     nir_opt_varyings_bulk(nir_shaders, initial_link_count, true, UINT32_MAX,
                           UINT32_MAX, nir_opts, NULL);
     /* Second pass is required because some dEQP-VK.glsl.matrix.sub.dynamic.*
-@@ -3562,7 +4245,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3495,7 +4178,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     nir_opt_varyings_bulk(nir_shaders, initial_link_count, true, UINT32_MAX,
                           UINT32_MAX, nir_opts, NULL);
  
@@ -2735,7 +2735,7 @@ index c6a63d1..2d21544 100644
     uint32_t line_raster_shader = UINT32_MAX;
     uint32_t line_raster_materialize_shader = UINT32_MAX;
     uint32_t line_stipple_prefix_shader = UINT32_MAX;
-@@ -3576,6 +4258,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3509,6 +4191,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     nir_shader *line_source = nir_shaders[0];
     nir_shader *line_source_clone = NULL;
     uint64_t line_raster_outputs = 0;
@@ -2744,7 +2744,7 @@ index c6a63d1..2d21544 100644
     const struct vk_shader_compile_info *line_source_compile = &infos[0];
     if (geometry_shader_emulation) {
        const struct vk_shader_compile_info *gs_compile =
-@@ -3716,19 +4400,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3649,19 +4333,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                     infos[0].set_layout_count, infos[0].set_layouts, state);
        transform_feedback_raster_shader = total_shaders;
        nir_shaders[total_shaders++] = raster;
@@ -2764,7 +2764,7 @@ index c6a63d1..2d21544 100644
     }
  
     if (line_raster_materialize && tess && !geometry_shader_emulation) {
-@@ -3743,7 +4414,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3676,7 +4347,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        nir_shaders[total_shaders++] = materialize;
     }
  
@@ -2773,7 +2773,7 @@ index c6a63d1..2d21544 100644
        assert(nir_shaders[0]->info.stage == MESA_SHADER_VERTEX);
  
        nir_shader *fs = nir_shaders[shader_count - 1u];
-@@ -3751,17 +4422,23 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3684,17 +4355,23 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           fs = nir_shaders[shader_count];
        assert(fs->info.stage == MESA_SHADER_FRAGMENT);
  
@@ -2802,7 +2802,7 @@ index c6a63d1..2d21544 100644
           ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
           : VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
        struct vk_rasterization_state line_rs = *state->rs;
-@@ -3769,6 +4446,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3702,6 +4379,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        struct vk_graphics_pipeline_state line_state = *state;
        line_state.ia = &line_ia;
        line_state.rs = &line_rs;
@@ -2816,7 +2816,7 @@ index c6a63d1..2d21544 100644
        kk_lower_nir(dev, line, false, pipeline_statistics, line_source_compile->robustness,
                     line_source_compile->set_layout_count,
                     line_source_compile->set_layouts, &line_state);
-@@ -3785,11 +4469,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3718,11 +4402,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        line_raster_shader = total_shaders;
        nir_shaders[total_shaders++] = line;
  
@@ -2834,7 +2834,7 @@ index c6a63d1..2d21544 100644
           msl_preprocess_nir_workarounds(prefix, dev->disabled_workarounds);
           kk_lower_nir(dev, prefix, false, pipeline_statistics, line_source_compile->robustness,
                        line_source_compile->set_layout_count,
-@@ -3799,12 +4484,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3732,12 +4417,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        }
  
        line_raster_outputs = line_source->info.outputs_written;
@@ -2850,7 +2850,7 @@ index c6a63d1..2d21544 100644
            i == line_raster_materialize_shader ||
            i == line_stipple_prefix_shader ||
            i == transform_feedback_raster_shader)
-@@ -3820,7 +4507,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3753,7 +4440,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                       nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL;
  
        mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
@@ -2859,7 +2859,7 @@ index c6a63d1..2d21544 100644
            i == line_raster_shader ||
            i == transform_feedback_raster_shader)
           logical_stage = MESA_SHADER_GEOMETRY;
-@@ -3831,7 +4518,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3764,7 +4451,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           dev, nir_shaders[i], logical_stage, prev_stage, vertex_robustness,
           state, force_sw_vs,
           i == geometry_shader || i == transform_feedback_raster_shader,
@@ -2868,7 +2868,7 @@ index c6a63d1..2d21544 100644
           state && enabled_features &&
              enabled_features->legacyVertexAttributes &&
              BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_VI),
-@@ -3854,14 +4541,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3787,14 +4474,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
  
        if (i == 0 && polygon_point_emulation)
           shaders[i]->info.vs.polygon_point_emulation = true;
@@ -2889,7 +2889,7 @@ index c6a63d1..2d21544 100644
           shaders[i]->info.vs.line_raster_stipple = line_raster_stipple;
           shaders[i]->info.vs.line_raster_materialize =
              line_raster_materialize;
-@@ -3872,6 +4561,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3805,6 +4494,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                       : line_raster_prim)
                 : line_raster_prim;
           shaders[i]->info.vs.line_raster_outputs = line_raster_outputs;
@@ -2898,7 +2898,7 @@ index c6a63d1..2d21544 100644
        }
  
        if (i == 0 && transform_feedback_emulation) {
-@@ -4018,11 +4709,9 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -3951,11 +4642,9 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
                          struct vk_shader **shaders_out,
                          bool defer_library_shaders, bool pipeline_statistics)
  {
@@ -2913,7 +2913,7 @@ index c6a63d1..2d21544 100644
     if (!state || !kk_graphics_state_is_complete(state) || shader_count == 0 ||
         infos[0].stage != MESA_SHADER_VERTEX ||
         (defer_library_shaders &&
-@@ -4046,83 +4735,96 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -3979,83 +4668,96 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
                           infos[i].stage == MESA_SHADER_GEOMETRY;
     const enum mesa_prim primitive =
        kk_graphics_raster_primitive(shader_count, infos, state);
@@ -3077,7 +3077,7 @@ index c6a63d1..2d21544 100644
  }
  
  static VkResult
-@@ -4140,7 +4842,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -4073,7 +4775,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
     if (!enabled_features->pipelineStatisticsQuery || !state ||
         !kk_graphics_state_is_complete(state) || shader_count == 0 ||
         infos[0].stage != MESA_SHADER_VERTEX ||
@@ -3088,7 +3088,7 @@ index c6a63d1..2d21544 100644
        return kk_compile_line_variants(device, shader_count, infos, state,
                                        enabled_features, pAllocator, shaders_out,
                                        defer_library_shaders, false);
-@@ -4823,7 +5527,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4756,7 +5460,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
        if (shader->info.vs.line_raster_materialize)
           kk_msl_data_serialize(&shader->line_raster_materialize_msl, blob);
  
@@ -3097,7 +3097,7 @@ index c6a63d1..2d21544 100644
           kk_msl_data_serialize(&shader->line_stipple_prefix_msl, blob);
  
        if (shader->info.vs.geometry_shader_emulation) {
-@@ -4834,11 +5538,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4767,11 +5471,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
           kk_msl_data_serialize(&shader->geometry_pre_gs_msl, blob);
        }
  
@@ -3117,7 +3117,7 @@ index c6a63d1..2d21544 100644
        }
  
        u_foreach_bit(stage, shader->info.vs.statistics_variant_stages) {
-@@ -4895,11 +5602,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4828,11 +5535,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
     if (blob->overrun || (unsigned)info.stage >= MESA_SHADER_STAGES)
        return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
  
@@ -3135,7 +3135,7 @@ index c6a63d1..2d21544 100644
           return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
     }
     if (info.stage == MESA_SHADER_VERTEX && info.vs.statistics_variant_stages) {
-@@ -4969,7 +5679,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4902,7 +5612,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -3144,7 +3144,7 @@ index c6a63d1..2d21544 100644
           result = kk_msl_data_deserialize(blob,
                                            &shader->line_stipple_prefix_msl);
           if (result != VK_SUCCESS)
-@@ -4994,19 +5704,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4927,19 +5637,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -3180,7 +3180,7 @@ index c6a63d1..2d21544 100644
           }
        }
  
-@@ -5220,10 +5933,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
+@@ -5153,10 +5866,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
     const enum mesa_prim primitive = fixed_primitive
                                        ? owner->info.vs.raster_primitive
                                        : vk_topology_to_mesa(dyn->ia.primitive_topology);

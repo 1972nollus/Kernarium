@@ -1,4 +1,4 @@
-From 809393f176ea75371a0b6a164acc17bb441ef6fc Mon Sep 17 00:00:00 2001
+From 03c308f04eb5be56c70794454ac4d2714dc30684 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:34:49 +0900
 Subject: [PATCH 44/44] kosmickrisp: compile emulated stages without a thread
@@ -139,10 +139,10 @@ index 92c532e..87e93c0 100644
        NSError *error;
        id<MTLComputePipelineState> pipeline = [comp newComputePipelineStateWithDescriptor:desc compilerTaskOptions:nil
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 85f9a39..12f3976 100644
+index ee53601..50277bd 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -3551,10 +3551,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
+@@ -3484,10 +3484,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
     return nir;
  }
  
@@ -176,7 +176,7 @@ index 85f9a39..12f3976 100644
                              mtl_compute_pipeline_state **pipe)
  {
     mtl_library *library = mtl_new_library(
-@@ -3566,7 +3588,9 @@ kk_compile_compute_pipeline(struct kk_device *device,
+@@ -3499,7 +3521,9 @@ kk_compile_compute_pipeline(struct kk_device *device,
     mtl_function_descriptor *function =
        mtl_new_library_function_descriptor(library, data->entrypoint_name);
     mtl_compute_pipeline_state *pipeline = mtl_new_compute_pipeline_state(
@@ -187,7 +187,7 @@ index 85f9a39..12f3976 100644
     mtl_release(function);
     mtl_release(library);
  
-@@ -3959,7 +3983,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3892,7 +3916,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
              ? vs->info.vs.tess_local_thread_size
              : 64u;
        result = kk_compile_compute_pipeline(device, &vs->msl_data[vs_stage],
@@ -196,7 +196,7 @@ index 85f9a39..12f3976 100644
                                             &pipe->gfx.pre_render[i]);
  
        if (result != VK_SUCCESS)
-@@ -3969,7 +3993,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3902,7 +3926,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.transform_feedback_emulation) {
        result = kk_compile_compute_pipeline(
@@ -205,7 +205,7 @@ index 85f9a39..12f3976 100644
           &pipe->gfx.transform_feedback_pre_gs);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3977,7 +4001,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3910,7 +3934,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.line_raster_materialize) {
        result = kk_compile_compute_pipeline(
@@ -214,7 +214,7 @@ index 85f9a39..12f3976 100644
           &pipe->gfx.line_raster_materialize);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3985,7 +4009,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3918,7 +3942,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.line_raster_stipple || vs->info.vs.line_raster_procedural) {
        result = kk_compile_compute_pipeline(
@@ -223,7 +223,7 @@ index 85f9a39..12f3976 100644
           &pipe->gfx.line_stipple_prefix);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3993,21 +4017,22 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3926,21 +3950,22 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.geometry_shader_emulation) {
        result = kk_compile_compute_pipeline(device, &vs->geometry_main_msl, 64,
@@ -249,7 +249,7 @@ index 85f9a39..12f3976 100644
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
     }
-@@ -4772,7 +4797,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4705,7 +4730,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                      s->info.cs.local_size.z;
        result =
           kk_compile_compute_pipeline(dev, &s->msl_data[MESA_SHADER_COMPUTE],
@@ -259,7 +259,7 @@ index 85f9a39..12f3976 100644
     } else {
        uint32_t skipped_shaders = 0;
        if (transform_feedback_pre_gs_shader != UINT32_MAX)
-@@ -5884,7 +5910,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -5817,7 +5843,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
                                      shader->info.cs.local_size.z;
        result = kk_compile_compute_pipeline(
           dev, &shader->msl_data[MESA_SHADER_COMPUTE], local_size_threads,
