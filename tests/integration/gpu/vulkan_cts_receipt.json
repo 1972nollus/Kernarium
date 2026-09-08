@@ -30,7 +30,7 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source15-20260908-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/vm/uml-source16-20260908-v1/build/VK-GL-CTS-1.4.6.2",
       "--target",
       "deqp-vk"
     ],
@@ -38,9 +38,9 @@
       "cmake",
       "--fresh",
       "-S",
-      "/home/vm/uml-source15-20260908-v1/sources/VK-GL-CTS",
+      "/home/vm/uml-source16-20260908-v1/sources/VK-GL-CTS",
       "-B",
-      "/home/vm/uml-source15-20260908-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/vm/uml-source16-20260908-v1/build/VK-GL-CTS-1.4.6.2",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -106,7 +106,7 @@
     "filesystem": "ext4",
     "filesystem_uuid": "2240061a-2b64-4626-b8bf-dd0f9993a4a9",
     "read_only": true,
-    "sha256": "3f69fbe30d0eed9fcf54ffcf97a38bdcfb346fddae9e0a70f79b23d69a445b75",
+    "sha256": "fef7ac611251736d40a049bee376e5a701f6dd701f94d94485a83de641b58cdd",
     "size": 8589934592
   },
   "exclusions": [
@@ -139,7 +139,7 @@
   ],
   "guest_receipt": {
     "path": "/usr/share/uml-vulkan/rootfs-build-receipt.json",
-    "sha256": "3b542676186ebe5ed3b01cf12712722fcbc054445b7b70288536a400418e61ee",
+    "sha256": "e4b3e144e6fdc3c6af993deba9eda149e9060a562af86324289f4d9a73dde496",
     "size": 96380
   },
   "install_closure": [
@@ -1549,19 +1549,19 @@
     "base_tree": "a41b271df29845735895fd23bfcef54076ec4515",
     "build_targets": [
       "env",
-      "DESTDIR=/home/vm/uml-source15-20260908-v1/stage/mesa",
+      "DESTDIR=/home/vm/uml-source16-20260908-v1/stage/mesa",
       "meson",
       "install",
       "-C",
-      "/home/vm/uml-source15-20260908-v1/build/mesa",
+      "/home/vm/uml-source16-20260908-v1/build/mesa",
       "--tags",
       "runtime"
     ],
     "configure_argv": [
       "meson",
       "setup",
-      "/home/vm/uml-source15-20260908-v1/build/mesa",
-      "/home/vm/uml-source15-20260908-v1/sources/mesa",
+      "/home/vm/uml-source16-20260908-v1/build/mesa",
+      "/home/vm/uml-source16-20260908-v1/sources/mesa",
       "--wrap-mode=nofallback",
       "--prefix=/usr",
       "--libdir=lib/aarch64-linux-gnu",
@@ -1591,7 +1591,7 @@
       "-Dxmlconfig=enabled",
       "-Dshader-cache=enabled",
       "-Dzstd=enabled",
-      "-Dvenus-protocol-dir=/home/vm/uml-source15-20260908-v1/build/venus-protocol"
+      "-Dvenus-protocol-dir=/home/vm/uml-source16-20260908-v1/build/venus-protocol"
     ],
     "files": [
       {
@@ -1680,7 +1680,7 @@
       {
         "order": 3,
         "patch": "0003-venus-stop-advertising-DRM-display-acquisition.patch",
-        "sha256": "68c1c0265416f5063b4ef379bb2d54098cce00892529572c5dd87c9006bf9966",
+        "sha256": "53bd0a31df89ec75ed111af0329c4b935c9a9b90549cb2ac68dd4ffeebb9ff50",
         "stable_patch_id": "531ad5aa9083942e485ffaa778c92794555c8013",
         "subject": "venus: stop advertising DRM display acquisition"
       },
@@ -2271,10 +2271,10 @@
       "configure_argv": [
         "meson",
         "setup",
-        "/home/vm/uml-source15-20260908-v1/build/venus-protocol",
-        "/home/vm/uml-source15-20260908-v1/sources/venus-protocol",
+        "/home/vm/uml-source16-20260908-v1/build/venus-protocol",
+        "/home/vm/uml-source16-20260908-v1/sources/venus-protocol",
         "--wrap-mode=nofallback",
-        "-Dvulkan-headers-dir=/home/vm/uml-source15-20260908-v1/sources/Vulkan-Headers"
+        "-Dvulkan-headers-dir=/home/vm/uml-source16-20260908-v1/sources/Vulkan-Headers"
       ],
       "driver_headers": {
         "vn_protocol_driver.h": "d5d335aebb4b42964cd53ee74f617833942352b923c52d7166b225587919980f",
@@ -2379,20 +2379,20 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source15-20260908-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source16-20260908-v1/build/Vulkan-Headers",
       "--target",
       "install"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source15-20260908-v1/sources/Vulkan-Headers",
+      "/home/vm/uml-source16-20260908-v1/sources/Vulkan-Headers",
       "-B",
-      "/home/vm/uml-source15-20260908-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source16-20260908-v1/build/Vulkan-Headers",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
-      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source15-20260908-v1/stage/vulkan-headers"
+      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source16-20260908-v1/stage/vulkan-headers"
     ],
     "installed_in_guest": false,
     "patched": false,
@@ -2408,14 +2408,14 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source15-20260908-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source16-20260908-v1/build/Vulkan-Loader"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source15-20260908-v1/sources/Vulkan-Loader",
+      "/home/vm/uml-source16-20260908-v1/sources/Vulkan-Loader",
       "-B",
-      "/home/vm/uml-source15-20260908-v1/build/Vulkan-Loader",
+      "/home/vm/uml-source16-20260908-v1/build/Vulkan-Loader",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -2423,14 +2423,14 @@
       "-DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu",
       "-DUPDATE_DEPS=OFF",
       "-DBUILD_TESTS=OFF",
-      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source15-20260908-v1/stage/vulkan-headers"
+      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source16-20260908-v1/stage/vulkan-headers"
     ],
     "install_argv": [
       "env",
-      "DESTDIR=/home/vm/uml-source15-20260908-v1/stage/vulkan-loader",
+      "DESTDIR=/home/vm/uml-source16-20260908-v1/stage/vulkan-loader",
       "cmake",
       "--install",
-      "/home/vm/uml-source15-20260908-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source16-20260908-v1/build/Vulkan-Loader"
     ],
     "install_prefix": "/usr",
     "patched": false,
