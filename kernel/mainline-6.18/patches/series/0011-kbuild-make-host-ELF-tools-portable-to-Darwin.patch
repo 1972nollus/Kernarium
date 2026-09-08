@@ -1,4 +1,4 @@
-From 938092b446b05772b321af7286a1e27483297c85 Mon Sep 17 00:00:00 2001
+From a15c597b3b57b5a11ba7d0e9d072fd0e987c9116 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
 Subject: [PATCH 11/29] kbuild: make host ELF tools portable to Darwin

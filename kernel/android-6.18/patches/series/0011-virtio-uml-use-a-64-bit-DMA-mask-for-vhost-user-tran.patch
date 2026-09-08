@@ -1,4 +1,4 @@
-From 92f5ff06c0d746a8b5c3970482daef97bf2c74d8 Mon Sep 17 00:00:00 2001
+From 77c0042d89e34e7060bf65e922bc59d62244e13a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 4 Aug 2026 12:44:59 +0900
 Subject: [PATCH 11/40] virtio: uml: use a 64-bit DMA mask for vhost-user

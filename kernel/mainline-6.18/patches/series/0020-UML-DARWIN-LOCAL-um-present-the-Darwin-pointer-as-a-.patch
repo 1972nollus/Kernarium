@@ -1,4 +1,4 @@
-From 40092a44c8eb2e397ea0d7a7f9ac12acbab9cec4 Mon Sep 17 00:00:00 2001
+From ab6380a2230da07fdec63d7e90c11e1b34410320 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 04:16:53 +0000
 Subject: [PATCH 20/29] UML-DARWIN-LOCAL: um: present the Darwin pointer as a

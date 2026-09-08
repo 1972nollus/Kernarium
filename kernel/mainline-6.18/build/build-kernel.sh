@@ -370,4 +370,8 @@ else
 		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
 		--slice "$UML_KERNEL_SLICE"
 fi
+if [ "$(uname -s)" = Darwin ]; then
+	python3 "$COMMON_ROOT/tooling/verify-console-input.py" \
+		--source "$SOURCE_DIR" --build "$BUILD_DIR"
+fi
 printf '%s\n' "built $UML_KERNEL_SLICE $PAGE_SIZE $PROFILE Darwin UML kernel: $BUILD_DIR/vmlinux"

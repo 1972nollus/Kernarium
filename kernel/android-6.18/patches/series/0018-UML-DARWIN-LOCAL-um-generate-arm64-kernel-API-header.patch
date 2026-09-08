@@ -1,4 +1,4 @@
-From 74ca5e673e79359768b75fbf9e0470e7ef81b241 Mon Sep 17 00:00:00 2001
+From 6a3baaf4fe708c730eb7b20adbb1eff46c32c26f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 14:47:32 +0000
 Subject: [PATCH 18/40] UML-DARWIN-LOCAL: um: generate arm64 kernel API headers

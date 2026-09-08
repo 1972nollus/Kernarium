@@ -1,4 +1,4 @@
-From 1883fb82683ede69a5f78f00d8cc8c0db9dc439d Mon Sep 17 00:00:00 2001
+From b41183b45543b921a2a6de80d846cbb702498ed1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 31 Aug 2026 03:46:09 +0900
 Subject: [PATCH 25/29] UML-DARWIN-LOCAL: um: never walk another task's

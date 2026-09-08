@@ -1,4 +1,4 @@
-From bf900e860dfc420e61713f02dc3684d71d6086fd Mon Sep 17 00:00:00 2001
+From 868bf4f62ca3019827dee5bbc6b0f3de71e42dcb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
 Subject: [PATCH 05/29] uml: make core build rules portable across hosts

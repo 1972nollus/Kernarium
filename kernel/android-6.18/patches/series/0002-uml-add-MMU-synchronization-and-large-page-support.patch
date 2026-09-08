@@ -1,4 +1,4 @@
-From 2ee964d04ee20c0c64e136869eb5721ce63ff685 Mon Sep 17 00:00:00 2001
+From 1920b829e36151b9d2e64a6c458a128a001f0ee6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
 Subject: [PATCH 02/40] uml: add MMU synchronization and large-page support
