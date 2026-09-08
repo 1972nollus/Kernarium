@@ -60,6 +60,38 @@
       }
     },
     {
+      "name": "macos-unit-gpu-venus",
+      "displayName": "macOS experimental Venus GPU tests (16 KiB)",
+      "inherits": "macos-unit-gpu",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
+        "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
+        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64"
+      }
+    },
+    {
+      "name": "macos-unit-gpu-venus-4k",
+      "displayName": "macOS experimental Venus GPU tests (4 KiB)",
+      "inherits": "macos-unit-gpu-venus",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false
+      }
+    },
+    {
+      "name": "macos-unit-gpu-venus-asan-ubsan",
+      "displayName": "macOS experimental Venus GPU tests with ASan/UBSan",
+      "inherits": "macos-unit-gpu-venus",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
       "name": "macos-tooling",
       "displayName": "macOS host tooling checks",
       "inherits": "macos-unit-16k",
@@ -111,6 +143,28 @@
         "UML_GUEST_16K_PAGES": false,
         "UML_KERNEL_PRODUCT": "mainline-6.18",
         "UML_MAINLINE_KERNEL_SLICE": "x86_64"
+      }
+    },
+    {
+      "name": "macos-integration-venus",
+      "displayName": "macOS experimental Venus guest integration tests (16 KiB)",
+      "inherits": "macos-integration",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
+        "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
+        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64",
+        "UML_KERNEL_PRODUCT": "mainline-6.18-vulkan-experiment"
+      }
+    },
+    {
+      "name": "macos-integration-venus-4k",
+      "displayName": "macOS experimental Venus guest integration tests (4 KiB)",
+      "inherits": "macos-integration-venus",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false
       }
     },
     {
@@ -358,6 +412,21 @@
       "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
     },
     {
+      "name": "gpu-venus-test-binaries",
+      "configurePreset": "macos-unit-gpu-venus",
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+    },
+    {
+      "name": "gpu-venus-test-binaries-4k",
+      "configurePreset": "macos-unit-gpu-venus-4k",
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+    },
+    {
+      "name": "gpu-venus-test-binaries-asan-ubsan",
+      "configurePreset": "macos-unit-gpu-venus-asan-ubsan",
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+    },
+    {
       "name": "macos-integration",
       "configurePreset": "macos-integration",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
@@ -371,6 +440,16 @@
       "name": "macos-x86_64",
       "configurePreset": "macos-x86_64",
       "targets": ["uml-darwin", "tooling-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-integration-venus",
+      "configurePreset": "macos-integration-venus",
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "architecture-audit"]
+    },
+    {
+      "name": "macos-integration-venus-4k",
+      "configurePreset": "macos-integration-venus-4k",
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "architecture-audit"]
     },
     {
       "name": "macos-jitprof",
@@ -504,7 +583,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-console-protocol|virtio-sound-protocol)$"
+          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-kosmickrisp-device-address-commands-capabilities|gpu-kosmickrisp-dynamic-logic-op-capabilities|gpu-kosmickrisp-graphics-pipeline-library-capabilities|gpu-kosmickrisp-incremental-present-capabilities|gpu-kosmickrisp-legacy-vertex-attribute-capabilities|gpu-kosmickrisp-legacy-vertex-input-draws|gpu-kosmickrisp-non-seamless-cube-capabilities|gpu-kosmickrisp-rgb32-texel-capabilities|gpu-kosmickrisp-unused-attachments-capabilities|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-console-protocol|virtio-sound-protocol)$"
         }
       },
       "execution": {
@@ -515,6 +594,21 @@
       "name": "unit-gpu-asan-ubsan",
       "inherits": "unit-gpu",
       "configurePreset": "macos-unit-gpu-asan-ubsan"
+    },
+    {
+      "name": "unit-gpu-venus",
+      "inherits": "unit-gpu",
+      "configurePreset": "macos-unit-gpu-venus"
+    },
+    {
+      "name": "unit-gpu-venus-4k",
+      "inherits": "unit-gpu",
+      "configurePreset": "macos-unit-gpu-venus-4k"
+    },
+    {
+      "name": "unit-gpu-venus-asan-ubsan",
+      "inherits": "unit-gpu",
+      "configurePreset": "macos-unit-gpu-venus-asan-ubsan"
     },
     {
       "name": "tooling-gpu-vnc",
@@ -536,6 +630,21 @@
       "name": "tooling-gpu-vnc-asan-ubsan",
       "inherits": "tooling-gpu-vnc",
       "configurePreset": "macos-unit-gpu-asan-ubsan"
+    },
+    {
+      "name": "tooling-gpu-vnc-venus",
+      "inherits": "tooling-gpu-vnc",
+      "configurePreset": "macos-unit-gpu-venus"
+    },
+    {
+      "name": "tooling-gpu-vnc-venus-4k",
+      "inherits": "tooling-gpu-vnc",
+      "configurePreset": "macos-unit-gpu-venus-4k"
+    },
+    {
+      "name": "tooling-gpu-vnc-venus-asan-ubsan",
+      "inherits": "tooling-gpu-vnc",
+      "configurePreset": "macos-unit-gpu-venus-asan-ubsan"
     },
     {
       "name": "integration-fast",
@@ -576,6 +685,16 @@
       "name": "integration-fast-4k",
       "inherits": "integration-fast",
       "configurePreset": "macos-integration-4k"
+    },
+    {
+      "name": "integration-fast-venus",
+      "inherits": "integration-fast",
+      "configurePreset": "macos-integration-venus"
+    },
+    {
+      "name": "integration-fast-venus-4k",
+      "inherits": "integration-fast",
+      "configurePreset": "macos-integration-venus-4k"
     },
     {
       "name": "integration-full-4k",
@@ -637,6 +756,16 @@
       "name": "tooling-integration-4k",
       "inherits": "tooling-integration",
       "configurePreset": "macos-integration-4k"
+    },
+    {
+      "name": "tooling-integration-venus",
+      "inherits": "tooling-integration",
+      "configurePreset": "macos-integration-venus"
+    },
+    {
+      "name": "tooling-integration-venus-4k",
+      "inherits": "tooling-integration",
+      "configurePreset": "macos-integration-venus-4k"
     },
     {
       "name": "tooling-jitprof",
@@ -789,6 +918,33 @@
       ]
     },
     {
+      "name": "check-gpu-venus",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-gpu-venus"},
+        {"type": "build", "name": "gpu-venus-test-binaries"},
+        {"type": "test", "name": "unit-gpu-venus"},
+        {"type": "test", "name": "tooling-gpu-vnc-venus"}
+      ]
+    },
+    {
+      "name": "check-gpu-venus-4k",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-gpu-venus-4k"},
+        {"type": "build", "name": "gpu-venus-test-binaries-4k"},
+        {"type": "test", "name": "unit-gpu-venus-4k"},
+        {"type": "test", "name": "tooling-gpu-vnc-venus-4k"}
+      ]
+    },
+    {
+      "name": "check-gpu-venus-asan-ubsan",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-gpu-venus-asan-ubsan"},
+        {"type": "build", "name": "gpu-venus-test-binaries-asan-ubsan"},
+        {"type": "test", "name": "unit-gpu-venus-asan-ubsan"},
+        {"type": "test", "name": "tooling-gpu-vnc-venus-asan-ubsan"}
+      ]
+    },
+    {
       "name": "check-integration-4k",
       "steps": [
         {"type": "configure", "name": "macos-integration-4k"},
@@ -803,6 +959,24 @@
         {"type": "configure", "name": "wine-arm64ec-macos-stack"},
         {"type": "build", "name": "wine-arm64ec-macos-stack"},
         {"type": "test", "name": "wine-arm64ec-macos-stack"}
+      ]
+    },
+    {
+      "name": "check-integration-venus",
+      "steps": [
+        {"type": "configure", "name": "macos-integration-venus"},
+        {"type": "build", "name": "macos-integration-venus"},
+        {"type": "test", "name": "tooling-integration-venus"},
+        {"type": "test", "name": "integration-fast-venus"}
+      ]
+    },
+    {
+      "name": "check-integration-venus-4k",
+      "steps": [
+        {"type": "configure", "name": "macos-integration-venus-4k"},
+        {"type": "build", "name": "macos-integration-venus-4k"},
+        {"type": "test", "name": "tooling-integration-venus-4k"},
+        {"type": "test", "name": "integration-fast-venus-4k"}
       ]
     },
     {
