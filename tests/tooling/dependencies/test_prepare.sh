@@ -70,7 +70,8 @@ BASE=$(git -C "$UPSTREAM" rev-parse HEAD)
 printf '%s\n' patched >"$UPSTREAM/payload.txt"
 git -C "$UPSTREAM" commit --quiet -am 'fixture: first maintained change'
 printf '%s\n' added >"$UPSTREAM/added.txt"
-git -C "$UPSTREAM" add added.txt
+printf '\000\001\002\377' >"$UPSTREAM/added.bin"
+git -C "$UPSTREAM" add added.txt added.bin
 git -C "$UPSTREAM" commit --quiet -m 'fixture: second maintained change'
 mkdir -p "$SERIES_DIR"
 git -C "$UPSTREAM" format-patch --no-signature --output-directory "$SERIES_DIR" \
@@ -99,11 +100,31 @@ for name in clean patched sparse; do
 	git -C "$CACHE/git/$name" config uploadpack.allowFilter true
 done
 
+# Model the large sparse-source cache used by the Apple GPU product: only the
+# selected cone is present, and the promisor URL is deliberately unreachable.
+# Publishing from this cache must remain local and must not let upload-pack
+# recursively lazy-fetch through the staged repository's local origin.
+git -C "$UPSTREAM" config uploadpack.allowFilter true
+git clone --quiet --filter=blob:none --no-checkout \
+	"file://$UPSTREAM" "$CACHE/git/partial"
+git -C "$CACHE/git/partial" sparse-checkout init --cone
+git -C "$CACHE/git/partial" sparse-checkout set --cone sub
+git -C "$CACHE/git/partial" switch --detach "$BASE" >/dev/null
+git -C "$CACHE/git/partial" remote set-url origin \
+	https://example.invalid/partial.git
+git -C "$CACHE/git/partial" update-ref refs/heads/uml-pin "$BASE"
+git -C "$CACHE/git/partial" config uploadpack.allowFilter true
+printf '%s\n' "$BASE" >"$CACHE/git/partial/.git/shallow"
+[ -n "$(env GIT_NO_LAZY_FETCH=1 git -C "$CACHE/git/partial" \
+	rev-list --objects --missing=print "$BASE" | sed -n 's/^?//p' | sed -n '1p')" ] ||
+	fail "partial sparse fixture unexpectedly contains the whole commit"
+
 cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
 clean	1.0	fixture	https://example.invalid/clean.git	$BASE	.	-
 patched	1.0	fixture	https://example.invalid/patched.git	$BASE	.	patches/patched/series.tsv
 sparse	1.0	sparse-fixture	https://example.invalid/sparse.git	$BASE	sub	-
+partial	1.0	partial-fixture	https://example.invalid/partial.git	$BASE	sub	-
 EOF
 cp "$MANIFEST" "$MANIFEST.original"
 cp -R "$SERIES_DIR" "$TEST_ROOT/series-original"
@@ -124,6 +145,8 @@ verify "$PREPARED" >/dev/null
 	fail "dependency patch series was not replayed"
 [ "$(cat "$PREPARED/patched/added.txt")" = added ] ||
 	fail "ordered dependency patch series was incomplete"
+cmp "$UPSTREAM/added.bin" "$PREPARED/patched/added.bin" >/dev/null ||
+	fail "binary dependency patch was not replayed exactly"
 [ -x "$PREPARED/clean/sub/tool.sh" ] ||
 	fail "prepared Git checkout lost executable status"
 [ -z "$(git -C "$PREPARED/patched" remote)" ] ||
@@ -146,6 +169,18 @@ UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
 	fail "sparse materialization changed the shared cache HEAD"
 [ "$(git -C "$CACHE/git/sparse" status --porcelain)" = "$SPARSE_CACHE_STATUS" ] ||
 	fail "sparse materialization changed the shared cache worktree"
+
+PARTIAL_PREPARED="$TEST_ROOT/partial-prepared"
+UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+	"$PREPARE" --product partial-fixture --root "$PARTIAL_PREPARED" \
+		--cache "$CACHE" --no-fetch >/dev/null
+[ -x "$PARTIAL_PREPARED/partial/sub/tool.sh" ] ||
+	fail "partial-cache publication omitted its selected source path"
+[ ! -e "$PARTIAL_PREPARED/partial/other/unselected.txt" ] ||
+	fail "partial-cache publication materialized an unselected source path"
+[ -z "$(git -C "$PARTIAL_PREPARED/partial" remote)" ] ||
+	fail "partial-cache publication retained its local promisor remote"
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &
@@ -194,6 +229,68 @@ git -C "$CACHE/git/clean" remote set-url origin \
 mv "$CACHE/git/clean" "$CACHE/git/clean.absent"
 expect_failure "missing offline Git cache" prepare "$TEST_ROOT/missing-cache"
 mv "$CACHE/git/clean.absent" "$CACHE/git/clean"
+
+# Foreign-owned protocol metadata is authenticated in place, never copied
+# into the dependency patch inventory or resolved through arbitrary '..'.
+ROOTFS_METADATA="$TEST_ROOT/tools/rootfs/vulkan"
+ROOTFS_SERIES="$ROOTFS_METADATA/patches/venus-protocol"
+mkdir -p "$ROOTFS_METADATA/patches"
+cp -R "$TEST_ROOT/series-original" "$ROOTFS_SERIES"
+for name in venus-protocol vulkan-headers; do
+	git clone --quiet "$UPSTREAM" "$CACHE/git/$name"
+	git -C "$CACHE/git/$name" remote set-url origin \
+		"https://example.invalid/$name.git"
+	git -C "$CACHE/git/$name" update-ref refs/heads/uml-pin "$BASE"
+done
+cat >>"$MANIFEST" <<EOF
+vulkan-headers	1.0	apple-gpu-vulkan-experiment	https://example.invalid/vulkan-headers.git	$BASE	.	-
+venus-protocol	1.0	apple-gpu-vulkan-experiment	https://example.invalid/venus-protocol.git	$BASE	.	rootfs-vulkan:patches/venus-protocol/series.tsv
+EOF
+cat >"$ROOTFS_METADATA/sources.tsv" <<EOF
+component	repository	base_commit	base_tree	release_ref	release_object	series
+vulkan-headers	https://example.invalid/vulkan-headers.git	$BASE	-	-	-	-
+venus-protocol	https://example.invalid/venus-protocol.git	$BASE	-	-	-	patches/venus-protocol/series.tsv
+EOF
+cp "$MANIFEST" "$TEST_ROOT/paired-manifest.tsv"
+cp "$ROOTFS_METADATA/sources.tsv" "$TEST_ROOT/paired-sources.tsv"
+paired_prepare()
+{
+	UML_DEPENDENCY_MANIFEST="$MANIFEST" UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+		"$PREPARE" --product apple-gpu-vulkan-experiment \
+		--root "$TEST_ROOT/paired-prepared" --cache "$CACHE" --no-fetch
+}
+paired_prepare >/dev/null
+[ "$(cat "$TEST_ROOT/paired-prepared/venus-protocol/payload.txt")" = patched ] ||
+	fail "foreign-owned protocol topics were not replayed"
+[ ! -e "$METADATA/patches/venus-protocol" ] ||
+	fail "preparation duplicated foreign-owned protocol metadata"
+for invalid in \
+	'unknown:patches/venus-protocol/series.tsv' \
+	'rootfs-vulkan:../patches/venus-protocol/series.tsv' \
+	'rootfs-vulkan:/patches/venus-protocol/series.tsv' \
+	'rootfs-vulkan:patches/%2e%2e/venus-protocol/series.tsv'; do
+	awk -F '\t' -v replacement="$invalid" 'BEGIN { OFS = FS }
+		$1 == "venus-protocol" { $7 = replacement } { print }' \
+		"$TEST_ROOT/paired-manifest.tsv" >"$MANIFEST"
+	expect_failure "unsafe foreign series $invalid" paired_prepare
+done
+cp "$TEST_ROOT/paired-manifest.tsv" "$MANIFEST"
+mv "$ROOTFS_SERIES" "$TEST_ROOT/foreign-series"
+ln -s "$TEST_ROOT/foreign-series" "$ROOTFS_SERIES"
+expect_failure "foreign series symlink escape" paired_prepare
+rm "$ROOTFS_SERIES"
+mv "$TEST_ROOT/foreign-series" "$ROOTFS_SERIES"
+for component in venus-protocol vulkan-headers; do
+	awk -F '\t' -v component="$component" 'BEGIN { OFS = FS }
+		$1 == component { $3 = "0000000000000000000000000000000000000000" }
+		{ print }' "$TEST_ROOT/paired-sources.tsv" >"$ROOTFS_METADATA/sources.tsv"
+	expect_failure "mismatched paired $component source" paired_prepare
+done
+cp "$TEST_ROOT/paired-sources.tsv" "$ROOTFS_METADATA/sources.tsv"
+awk -F '\t' '$1 != "vulkan-headers"' "$TEST_ROOT/paired-manifest.tsv" >"$MANIFEST"
+expect_failure "missing paired SDK declaration" paired_prepare
+cp "$TEST_ROOT/paired-manifest.tsv" "$MANIFEST"
+paired_prepare >/dev/null
 
 TOOLCHAIN_MANIFEST="$TEST_ROOT/toolchains.tsv"
 TOOLCHAIN_CACHE="$TEST_ROOT/toolchain-cache"

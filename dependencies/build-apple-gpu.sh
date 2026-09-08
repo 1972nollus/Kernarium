@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Build the one ANGLE/Metal, libepoxy, and virglrenderer product used by every
-# Apple platform from sources authenticated by dependencies/prepare.sh.
+# Apple platform, plus the opt-in KosmicKrisp/Venus experiment, from sources
+# authenticated by dependencies/prepare.sh.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -13,6 +14,7 @@ PREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX:-}
 WORK_ROOT=${UML_APPLE_GPU_DEPENDENCY_BUILD_ROOT:-}
 JOBS=${UML_APPLE_GPU_DEPENDENCY_JOBS:-8}
 PLATFORM=macos
+PRODUCT=apple-gpu
 VERIFY_ONLY=0
 
 fail()
@@ -28,6 +30,7 @@ usage()
 		"" \
 		"Options:" \
 		"  --platform NAME      macos (default), ios-simulator, or ios" \
+		"  --product NAME       apple-gpu (default) or apple-gpu-vulkan-experiment" \
 		"  --source-root PATH   Verified dependency source trees" \
 		"  --prefix PATH        Output prefix" \
 		"  --work-root PATH     Build parent and shared ANGLE DerivedData" \
@@ -36,7 +39,7 @@ usage()
 		"  -h, --help           Show this help" \
 		"" \
 		"The build performs no network access. Run dependencies/prepare.sh" \
-		"--product apple-gpu first to materialize the pinned source matrix."
+		"--product NAME first to materialize the pinned source matrix."
 }
 
 while [ "$#" -gt 0 ]; do
@@ -44,6 +47,11 @@ while [ "$#" -gt 0 ]; do
 	--platform)
 		[ "$#" -ge 2 ] || fail "--platform requires a value"
 		PLATFORM=$2
+		shift 2
+		;;
+	--product)
+		[ "$#" -ge 2 ] || fail "--product requires a value"
+		PRODUCT=$2
 		shift 2
 		;;
 	--source-root)
@@ -82,6 +90,10 @@ case "$JOBS" in
 ''|*[!0-9]*) fail "jobs must be a positive integer" ;;
 esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
+case "$PRODUCT" in
+apple-gpu|apple-gpu-vulkan-experiment) ;;
+*) fail "product must be apple-gpu or apple-gpu-vulkan-experiment" ;;
+esac
 [ "$(uname -s)" = Darwin ] || fail "the Apple GPU build requires macOS"
 case "$(uname -m)" in
 arm64|aarch64) ;;
@@ -91,39 +103,56 @@ esac
 case "$PLATFORM" in
 macos)
 	SDK_NAME=macosx
+	XCODE_DESTINATION='generic/platform=macOS'
 	TARGET=arm64-apple-macos14.0
 	EPOXY_SYSTEM=darwin
 	SUBSYSTEM=macos
 	DEPLOYMENT_TARGET=14.0
 	DEPLOYMENT_SETTING=MACOSX_DEPLOYMENT_TARGET
-	CONTRACT_NAME=macos-gpu-arm64.tsv
+	GL_CONTRACT_NAME=macos-gpu-arm64.tsv
+	VULKAN_CONTRACT_NAME=macos-gpu-vulkan-arm64.tsv
 	MINIMUM_OS_KEY=LSMinimumSystemVersion
-	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/macos-arm64"
+	PREFIX_PLATFORM=macos-arm64
 	;;
 ios-simulator)
 	SDK_NAME=iphonesimulator
+	XCODE_DESTINATION='generic/platform=iOS Simulator'
 	TARGET=arm64-apple-ios16.0-simulator
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios-simulator
 	DEPLOYMENT_TARGET=16.0
 	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
-	CONTRACT_NAME=ios-simulator-gpu-arm64.tsv
+	GL_CONTRACT_NAME=ios-simulator-gpu-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion
-	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64"
+	PREFIX_PLATFORM=ios-simulator-arm64
 	;;
 ios)
 	SDK_NAME=iphoneos
+	XCODE_DESTINATION='generic/platform=iOS'
 	TARGET=arm64-apple-ios16.0
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios
 	DEPLOYMENT_TARGET=16.0
 	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
-	CONTRACT_NAME=ios-device-gpu-arm64.tsv
+	GL_CONTRACT_NAME=ios-device-gpu-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion
-	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64"
+	PREFIX_PLATFORM=ios-device-arm64
 	;;
 *) fail "platform must be macos, ios-simulator, or ios" ;;
 esac
+
+if [ "$PRODUCT" = apple-gpu-vulkan-experiment ]; then
+	[ "$PLATFORM" = macos ] ||
+		fail "the KosmicKrisp Vulkan product currently supports macOS only"
+	VULKAN_ENABLED=1
+	CONTRACT_NAME=$VULKAN_CONTRACT_NAME
+	TARGET=arm64-apple-macos26.0
+	DEPLOYMENT_TARGET=26.0
+else
+	VULKAN_ENABLED=0
+	CONTRACT_NAME=$GL_CONTRACT_NAME
+fi
+DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/$PRODUCT/$PREFIX_PLATFORM"
 
 PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
 [ -r "$MANIFEST" ] || fail "source manifest is unavailable: $MANIFEST"
@@ -131,7 +160,7 @@ PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
 	fail "platform contract is unavailable: $PLATFORM_CONTRACT"
 [ -n "$PREFIX" ] || PREFIX=$DEFAULT_PREFIX
 [ -n "$WORK_ROOT" ] ||
-	WORK_ROOT="$ROOT_DIR/.build/dependency-build/apple-gpu"
+	WORK_ROOT="$ROOT_DIR/.build/dependency-build/$PRODUCT/$PLATFORM"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
 mkdir -p -- "$PREFIX_PARENT"
@@ -141,7 +170,7 @@ PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 verify_prefix()
 {
 	cmake -DPREFIX="$1" -DSOURCE_ROOT="$ROOT_DIR" \
-		-DPLATFORM="$PLATFORM" -P "$VERIFY_SCRIPT"
+		-DPLATFORM="$PLATFORM" -DPRODUCT="$PRODUCT" -P "$VERIFY_SCRIPT"
 }
 
 if [ "$VERIFY_ONLY" -eq 1 ]; then
@@ -157,11 +186,17 @@ if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	exit 0
 fi
 
-"$ROOT_DIR/dependencies/prepare.sh" --product apple-gpu \
+"$ROOT_DIR/dependencies/prepare.sh" --product "$PRODUCT" \
 	--root "$SOURCE_ROOT" --verify
+SOURCE_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT" && pwd -P)
 WEBKIT_SOURCE="$SOURCE_ROOT/utm-webkit"
 EPOXY_SOURCE="$SOURCE_ROOT/utm-libepoxy"
 VIRGL_SOURCE="$SOURCE_ROOT/utm-virglrenderer"
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	MESA_SOURCE="$SOURCE_ROOT/mesa"
+	VULKAN_HEADERS_SOURCE="$SOURCE_ROOT/vulkan-headers"
+	VENUS_PROTOCOL_SOURCE="$SOURCE_ROOT/venus-protocol"
+fi
 
 find_tool()
 {
@@ -191,7 +226,16 @@ find_tool XCRUN xcrun
 find_tool SHLOCK shlock
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
-find_tool PYTHON python3
+if [ -n "${UML_MESA_PYTHON:-}" ]; then
+	PYTHON=$UML_MESA_PYTHON
+else
+	find_tool PYTHON python3
+fi
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	find_tool NINJA ninja
+	"$PYTHON" -c 'import mako, packaging, yaml' >/dev/null 2>&1 ||
+		fail "KosmicKrisp requires Python modules mako, packaging, and yaml"
+fi
 
 SDK_ROOT=$($XCRUN --sdk "$SDK_NAME" --show-sdk-path)
 [ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid $PLATFORM SDK"
@@ -225,20 +269,7 @@ trap cleanup EXIT HUP INT TERM
 
 publish_exclusively()
 {
-	python3 - "$1" "$2" <<'PY'
-import ctypes
-import os
-import sys
-
-
-source = os.fsencode(sys.argv[1])
-destination = os.fsencode(sys.argv[2])
-libc = ctypes.CDLL(None, use_errno=True)
-rename_exclusive = libc.renamex_np
-rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-rename_exclusive.restype = ctypes.c_int
-raise SystemExit(rename_exclusive(source, destination, 0x00000004) != 0)
-PY
+	"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$1" "$2"
 }
 
 SOURCES="$TEMP_ROOT/sources"
@@ -251,6 +282,9 @@ mkdir -p -- "$ANGLE_ROOT" "$SOURCES/WebKit/Configurations" \
 	"$SOURCES/WebKit/Tools/ccache" "$SOURCES/libepoxy" \
 	"$SOURCES/virglrenderer" "$BUILDS" "$STAGE/include" \
 	"$STAGE/lib" "$STAGE/Frameworks"
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	mkdir -p -- "$SOURCES/Mesa"
+fi
 
 $RSYNC -a --exclude .git --exclude ANGLE.xcarchive \
 	"$WEBKIT_SOURCE/Source/ThirdParty/ANGLE/" "$ANGLE_ROOT/"
@@ -262,8 +296,12 @@ $RSYNC -a --exclude .git --exclude utm_build \
 	"$EPOXY_SOURCE/" "$SOURCES/libepoxy/"
 $RSYNC -a --exclude .git --exclude utm_build \
 	"$VIRGL_SOURCE/" "$SOURCES/virglrenderer/"
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	$RSYNC -a --exclude .git "$MESA_SOURCE/" "$SOURCES/Mesa/"
+fi
 
 APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
+APPLE_GPU_TOOL_PATH=/usr/bin:/bin:/usr/sbin:/sbin
 # macOS, Simulator, and device archives share this cache across invocations.
 # Serialize only Xcode so later Meson work may still overlap safely.
 if ! "$SHLOCK" -f "$ANGLE_DERIVED_DATA_LOCK" -p "$$"; then
@@ -272,14 +310,16 @@ fi
 ANGLE_DERIVED_DATA_LOCK_HELD=1
 (
 	cd "$ANGLE_ROOT"
-	env -i PATH="$PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+	env -i PATH="$APPLE_GPU_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 		"$XCODEBUILD" archive -quiet \
+		-jobs "$JOBS" \
 		-archivePath "$ANGLE_ARCHIVE" \
 		-derivedDataPath "$ANGLE_DERIVED_DATA" \
 		-scheme ANGLE \
 		-sdk "$SDK_NAME" \
-		-arch arm64 \
+		-destination "$XCODE_DESTINATION" \
 		-configuration Release \
+		ARCHS=arm64 \
 		WEBCORE_LIBRARY_DIR=/usr/local/lib \
 		NORMAL_UMBRELLA_FRAMEWORKS_DIR= \
 		CODE_SIGNING_ALLOWED=NO \
@@ -299,6 +339,57 @@ for headers in EGL GLES GLES2 GLES3 KHR; do
 	mkdir -p -- "$STAGE/include/$headers"
 	$RSYNC -a "$ANGLE_ROOT/include/$headers/" "$STAGE/include/$headers/"
 done
+
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	MESA_BUILD="$BUILDS/Mesa"
+	MESA_STAGE="$BUILDS/Mesa-stage"
+	MESA_PKG_CONFIG="$BUILDS/empty-mesa-pkgconfig"
+	mkdir -p -- "$MESA_STAGE" "$MESA_PKG_CONFIG"
+	MESA_TOOL_PATH="$(dirname -- "$PYTHON"):$(dirname -- "$MESON"):$(dirname -- "$NINJA"):$APPLE_GPU_TOOL_PATH"
+	# The protocol producer runs out of tree against authenticated source, so
+	# its Git banner records the real prepared topic rather than an outer repo.
+	VENUS_PROTOCOL_BUILD="$BUILDS/venus-protocol"
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		CC="$CC" SDKROOT="$SDK_ROOT" \
+		CFLAGS="-isysroot $SDK_ROOT -target $TARGET" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+		"$MESON" setup "$VENUS_PROTOCOL_BUILD" "$VENUS_PROTOCOL_SOURCE" \
+			--buildtype debugoptimized -Db_ndebug=false --wrap-mode=nodownload \
+			-Dvulkan-headers-dir="$VULKAN_HEADERS_SOURCE"
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		"$MESON" compile -C "$VENUS_PROTOCOL_BUILD" -j "$JOBS"
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		"$MESON" test -C "$VENUS_PROTOCOL_BUILD" --print-errorlogs
+	VENUS_PROTOCOL_GENERATED_SHA256=$(
+		cd "$VENUS_PROTOCOL_BUILD"
+		shasum -a 256 vn_protocol_driver*.h vn_protocol_renderer*.h |
+			shasum -a 256 | awk '{print $1}'
+	)
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		CC="$CC" CXX="$CXX" OBJC="$CC" OBJCXX="$CXX" \
+		PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+		PKG_CONFIG_SYSROOT_DIR= \
+		"$MESON" setup "$MESA_BUILD" "$SOURCES/Mesa" \
+			--prefix "$MESA_STAGE" --libdir lib --buildtype release \
+			--wrap-mode=nodownload --prefer-static \
+			-Dplatforms=macos -Dvulkan-drivers=kosmickrisp \
+			-Dgallium-drivers= -Dopengl=false -Dzstd=disabled \
+			-Dllvm=disabled -Dspirv-tools=disabled
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		"$MESON" compile -C "$MESA_BUILD" -j "$JOBS"
+	KOSMICKRISP_BINARY="$MESA_BUILD/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
+	[ -f "$KOSMICKRISP_BINARY" ] ||
+		fail "Mesa did not produce the pinned KosmicKrisp dynamic library"
+	mkdir -p -- "$STAGE/include/vulkan" "$STAGE/include/vk_video"
+	$RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vulkan/" "$STAGE/include/vulkan/"
+	$RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vk_video/" "$STAGE/include/vk_video/"
+fi
 
 cat > "$EPOXY_CROSS" <<EOF
 [properties]
@@ -356,14 +447,24 @@ PKG_CONFIG_SYSROOT_DIR= \
 "$MESON" compile -C "$BUILDS/libepoxy" -j "$JOBS"
 "$MESON" install -C "$BUILDS/libepoxy"
 
+set -- \
+	-Ddefault_library=static -Dtests=false -Dvtest=false \
+	-Dcheck-gl-errors=false -Dneptune=false \
+	-Dplatforms=egl -Drender-server-mode=thread -Dvideo=true
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	set -- "$@" \
+		-Dvenus=true -Dvulkan-dload=false -Dvulkan-preload=false \
+		-Dvenus-protocol-dir="$VENUS_PROTOCOL_BUILD" \
+		-Dvulkan-include-dir="$VULKAN_HEADERS_SOURCE/include" \
+		-Dvulkan-library-file="$KOSMICKRISP_BINARY"
+else
+	set -- "$@" -Dvenus=false
+fi
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
 PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/virglrenderer" "$SOURCES/virglrenderer" \
 	--prefix "$STAGE" --buildtype release --cross-file "$VIRGL_CROSS" \
-	--wrap-mode=nodownload \
-	-Ddefault_library=static -Dtests=false -Dvtest=false \
-	-Dcheck-gl-errors=false -Dvenus=false -Dneptune=false \
-	-Dplatforms=egl -Drender-server-mode=thread -Dvideo=true
+	--wrap-mode=nodownload "$@"
 "$MESON" compile -C "$BUILDS/virglrenderer" -j "$JOBS"
 "$MESON" install -C "$BUILDS/virglrenderer"
 install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
@@ -378,6 +479,7 @@ install_framework()
 	framework_name=$1
 	source_binary=$2
 	bundle_identifier=$3
+	framework_version=${4:-1.0}
 	framework_dir="$STAGE/Frameworks/$framework_name.framework"
 	mkdir -p -- "$framework_dir"
 	install -m 0755 "$source_binary" "$framework_dir/$framework_name"
@@ -395,7 +497,7 @@ install_framework()
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>$framework_name</string>
 	<key>CFBundlePackageType</key><string>FMWK</string>
-	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>CFBundleShortVersionString</key><string>$framework_version</string>
 	<key>CFBundleVersion</key><string>1</string>
 	<key>$MINIMUM_OS_KEY</key><string>$DEPLOYMENT_TARGET</string>
 </dict>
@@ -410,6 +512,31 @@ install_framework EGL \
 install_framework GLESv2 \
 	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" \
 	org.linux-um-darwin.angle.GLESv2
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	install_framework KosmicKrisp "$KOSMICKRISP_BINARY" \
+		org.linux-um-darwin.KosmicKrisp 26.2.1
+	KOSMICKRISP_FRAMEWORK="$STAGE/Frameworks/KosmicKrisp.framework"
+	mkdir -p -- "$KOSMICKRISP_FRAMEWORK/Headers/vulkan" \
+		"$KOSMICKRISP_FRAMEWORK/Headers/vk_video" \
+		"$KOSMICKRISP_FRAMEWORK/Modules"
+	$RSYNC -a "$STAGE/include/vulkan/" \
+		"$KOSMICKRISP_FRAMEWORK/Headers/vulkan/"
+	$RSYNC -a "$STAGE/include/vk_video/" \
+		"$KOSMICKRISP_FRAMEWORK/Headers/vk_video/"
+	cat > "$KOSMICKRISP_FRAMEWORK/Headers/KosmicKrisp.h" <<'EOF'
+#ifndef UML_KOSMICKRISP_FRAMEWORK_H
+#define UML_KOSMICKRISP_FRAMEWORK_H
+#include <vulkan/vulkan.h>
+#endif
+EOF
+	cat > "$KOSMICKRISP_FRAMEWORK/Modules/module.modulemap" <<'EOF'
+framework module KosmicKrisp {
+    umbrella header "KosmicKrisp.h"
+    export *
+    module * { export * }
+}
+EOF
+fi
 
 mkdir -p "$STAGE/share/uml-dependencies/patches"
 cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
@@ -419,6 +546,39 @@ cp -R "$ROOT_DIR/dependencies/patches/utm-libepoxy" \
 	"$STAGE/share/uml-dependencies/patches/"
 cp -R "$ROOT_DIR/dependencies/patches/utm-virglrenderer" \
 	"$STAGE/share/uml-dependencies/patches/"
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	cp -R "$ROOT_DIR/dependencies/patches/mesa" \
+		"$STAGE/share/uml-dependencies/patches/"
+	mkdir -p "$STAGE/share/uml-dependencies/tools/rootfs/vulkan/patches"
+	cp -R "$ROOT_DIR/tools/rootfs/vulkan/patches/venus-protocol" \
+		"$STAGE/share/uml-dependencies/tools/rootfs/vulkan/patches/"
+	SDK_VERSION=$($XCRUN --sdk "$SDK_NAME" --show-sdk-version)
+	COMPILER_VERSION=$("$CC" --version | sed -n '1p')
+	BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	MANIFEST_SHA256=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
+	CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
+	{
+		printf '%s\n' 'field	value'
+		printf 'format\t1\n'
+		printf 'product\t%s\n' "$PRODUCT"
+		printf 'platform\t%s\n' "$PLATFORM"
+		printf 'sdk_name\t%s\n' "$SDK_NAME"
+		printf 'sdk_version\t%s\n' "$SDK_VERSION"
+		printf 'sdk_path\t%s\n' "$SDK_ROOT"
+		printf 'compiler\t%s\n' "$COMPILER_VERSION"
+		printf 'built_at_utc\t%s\n' "$BUILD_TIMESTAMP"
+		printf 'source_manifest_sha256\t%s\n' "$MANIFEST_SHA256"
+		printf 'platform_contract_sha256\t%s\n' "$CONTRACT_SHA256"
+		printf 'mesa_base_commit\t%s\n' \
+			da14d65e4499e66468094be52bff9ea0915a695e
+		printf 'vulkan_headers_base_commit\t%s\n' \
+			"$(git -C "$VULKAN_HEADERS_SOURCE" rev-parse HEAD)"
+		printf 'venus_protocol_source_commit\t%s\n' \
+			"$(git -C "$VENUS_PROTOCOL_SOURCE" rev-parse HEAD)"
+		printf 'venus_protocol_generated_sha256\t%s\n' \
+			"$VENUS_PROTOCOL_GENERATED_SHA256"
+	} > "$STAGE/share/uml-dependencies/build-receipt.tsv"
+fi
 cp "$PLATFORM_CONTRACT" \
 	"$STAGE/share/uml-dependencies/$CONTRACT_NAME"
 verify_prefix "$STAGE"

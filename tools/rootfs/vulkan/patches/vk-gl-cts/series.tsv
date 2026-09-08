@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+order	patch	stable_patch_id	sha256	subject
+1	0001-vulkan-bound-memory-image-copy-address-ranges-to-the.patch	cd1bb813c7b7b308d553dcb8e64add5a541ea155	148c2d945f2cb1d7b890120f6e3217564e85bd02cbae4c2e71c180f7c0c5dd8f	vulkan: bound memory-image copy address ranges to the buffer
+2	0002-Check-for-compute-queue-support.patch	9f14ff790edbef1ed404bec7284dfa143e0beaf7	7a6e0342db324641bc0efa0bfcff6788979699d98e7bfeb331d68c6fc307710c	Check for compute queue support

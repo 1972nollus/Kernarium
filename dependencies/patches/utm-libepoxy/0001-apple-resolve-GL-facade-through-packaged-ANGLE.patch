@@ -1,14 +1,14 @@
-From 7b09c5f85465636bf61137d24543b6ed3a5db9e4 Mon Sep 17 00:00:00 2001
+From 875e7bfab4e80e3188e2ee3c5462afc15adeff07 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 23:01:37 +0900
 Subject: [PATCH] apple: resolve GL facade through packaged ANGLE
 
 ---
- src/dispatch_common.c | 21 +++++++++------------
- 1 file changed, 9 insertions(+), 12 deletions(-)
+ src/dispatch_common.c | 36 ++++++++++++++++++++++++------------
+ 1 file changed, 24 insertions(+), 12 deletions(-)
 
 diff --git a/src/dispatch_common.c b/src/dispatch_common.c
-index 6fb7f02..5b7746e 100644
+index 6fb7f02..705a8fd 100644
 --- a/src/dispatch_common.c
 +++ b/src/dispatch_common.c
 @@ -175,18 +175,15 @@
@@ -39,3 +39,56 @@ index 6fb7f02..5b7746e 100644
  #else
  #error "This Apple platform is not supported."
  #endif
+@@ -713,23 +710,34 @@ epoxy_gl_dlsym(const char *name)
+ void *
+ epoxy_gles1_dlsym(const char *name)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    return epoxy_get_proc_address(name);
++#else
+     if (epoxy_current_context_is_glx()) {
+         return epoxy_get_proc_address(name);
+     } else {
+         get_dlopen_handle(&api.gles1_handle, GLES1_LIB, true, true);
+         return do_dlsym(&api.gles1_handle, name, true);
+     }
++#endif
+ }
+ 
+ void *
+ epoxy_gles2_dlsym(const char *name)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    /* ANGLE's iOS facade exports core GLES symbols, but those exports are not
++     * the context dispatch used by its EGL implementation.  Resolve through
++     * EGL so libepoxy observes the selected packaged ANGLE context. */
++    return epoxy_get_proc_address(name);
++#else
+     if (epoxy_current_context_is_glx()) {
+         return epoxy_get_proc_address(name);
+     } else {
+         get_dlopen_handle(&api.gles2_handle, GLES2_LIB, true, true);
+         return do_dlsym(&api.gles2_handle, name, true);
+     }
++#endif
+ }
+ 
+ /**
+@@ -745,6 +753,9 @@ epoxy_gles2_dlsym(const char *name)
+ void *
+ epoxy_gles3_dlsym(const char *name)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    return epoxy_get_proc_address(name);
++#else
+     if (epoxy_current_context_is_glx()) {
+         return epoxy_get_proc_address(name);
+     } else {
+@@ -757,6 +768,7 @@ epoxy_gles3_dlsym(const char *name)
+ 
+         return epoxy_get_proc_address(name);
+     }
++#endif
+ }
+ 
+ /**

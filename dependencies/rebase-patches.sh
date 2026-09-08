@@ -73,6 +73,12 @@ $row
 EOF
 [ "$name" = "$DEPENDENCY" ] || fail "could not parse dependency row"
 [ "$series" != '-' ] || fail "$DEPENDENCY has no maintained patch series"
+case "$series" in
+rootfs-vulkan:*)
+	fail "$DEPENDENCY is owned by tools/rootfs/vulkan/rebase-patches.sh"
+	;;
+*:*) fail "unknown patch-series owner: $series" ;;
+esac
 [ "$(git -C "$SOURCE" rev-parse "$base^{commit}" 2>/dev/null || true)" = "$base" ] ||
 	fail "pinned upstream commit is absent from source: $base"
 git -C "$SOURCE" merge-base --is-ancestor "$base" HEAD ||

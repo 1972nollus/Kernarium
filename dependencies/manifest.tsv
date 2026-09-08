@@ -15,9 +15,12 @@ gvdb	2b42fc7	macos,ios-network	https://gitlab.gnome.org/GNOME/gvdb.git	2b42fc75f
 libslirp	4.9.3	macos,ios-network	https://gitlab.freedesktop.org/slirp/libslirp.git	dd76415fce457e319d665eb8210d05c5731360ba	.	-
 gptfdisk	1.0.10	ios-storage	https://git.code.sf.net/p/gptfdisk/code.git	53ac725a88a616b9f3395500d6e520aa04742fa5	.	patches/gptfdisk/series.tsv
 libvncserver	0.9.15	macos	https://github.com/LibVNC/libvncserver.git	9b54b1ec32731bd23158ca014dc18014db4194c3	.	-
-utm-webkit	ed78ab6	apple-gpu	https://github.com/utmapp/WebKit.git	ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10	Source/ThirdParty/ANGLE,Configurations,Tools/ccache	patches/utm-webkit/series.tsv
-utm-libepoxy	bf98587	apple-gpu	https://github.com/utmapp/libepoxy.git	bf98587477fe68d07b93319ece7b40a7d0e2eabe	.	patches/utm-libepoxy/series.tsv
-utm-virglrenderer	65cc14e	apple-gpu	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.	patches/utm-virglrenderer/series.tsv
+utm-webkit	ed78ab6	apple-gpu,apple-gpu-vulkan-experiment	https://github.com/utmapp/WebKit.git	ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10	Source/ThirdParty/ANGLE,Configurations,Tools/ccache	patches/utm-webkit/series.tsv
+utm-libepoxy	bf98587	apple-gpu,apple-gpu-vulkan-experiment	https://github.com/utmapp/libepoxy.git	bf98587477fe68d07b93319ece7b40a7d0e2eabe	.	patches/utm-libepoxy/series.tsv
+utm-virglrenderer	65cc14e	apple-gpu,apple-gpu-vulkan-experiment	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.	patches/utm-virglrenderer/series.tsv
+mesa	26.2.1	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/mesa/mesa.git	da14d65e4499e66468094be52bff9ea0915a695e	.	patches/mesa/series.tsv
+vulkan-headers	1.4.357.0	apple-gpu-vulkan-experiment	https://github.com/KhronosGroup/Vulkan-Headers.git	e3b1eec08173d6b825cd3ac88c885a63b621504a	.	-
+venus-protocol	70991d4	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/venus-protocol.git	70991d4c7e4e5a7bfa2fbb8a6e77e4eac350145d	.	rootfs-vulkan:patches/venus-protocol/series.tsv
 fex	FEX-2608	macos,ios-x86,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
 wine	10.0	wine-arm64ec-rootfs	https://github.com/wine-mirror/wine.git	b073859675060c9211fcbccfd90e4e87520dc2c2	.	-
 nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+order	patch	stable_patch_id	sha256	subject
+1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	f65a6aad1181b36d949798f8af1f9fe592a4a128	951f533389eb9428ac718752639395b038f98f8c741929ab96c9a132095ffebb	protocol: use explicit Vulkan SDK inputs and handle aliases
+2	0002-protocol-serialize-device-address-commands-and-maint.patch	8ca3be4b2a064c8b87f8fa63406498e393b11c34	33db63f9ca0afa727f5ad3e6e7811033388085dbd44ee8fd6458061827164419	protocol: serialize device-address commands and maintenance features

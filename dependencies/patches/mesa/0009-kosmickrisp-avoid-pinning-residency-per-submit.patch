@@ -1,0 +1,93 @@
+From 6cf4614da985f542d204cc25cad37393e7b79a3f Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 21:34:01 +0900
+Subject: [PATCH 09/44] kosmickrisp: avoid pinning residency per submit
+
+---
+ src/kosmickrisp/vulkan/kk_buffer_view.c | 11 ++++++++++-
+ src/kosmickrisp/vulkan/kk_device.c      | 24 +++++++++++++++++++++++-
+ src/kosmickrisp/vulkan/kk_device.h      |  4 ++++
+ 3 files changed, 37 insertions(+), 2 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
+index 70ff32c..7363e8f 100644
+--- a/src/kosmickrisp/vulkan/kk_buffer_view.c
++++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
+@@ -109,6 +109,11 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+    view->texel_buffer_gpu_id =
+       mtl_texture_get_gpu_resource_id(view->mtl_texel_buffer_handle);
+ 
++   /* Heap residency covers the storage, but Metal shader validation also needs
++    * the native texture view identity registered for its lifetime.
++    */
++   kk_device_add_texture_to_residency_set(dev, view->mtl_texel_buffer_handle);
++
+    *pBufferView = kk_buffer_view_to_handle(view);
+ 
+    return VK_SUCCESS;
+@@ -124,6 +129,10 @@ kk_DestroyBufferView(VkDevice _device, VkBufferView bufferView,
+    if (!view)
+       return;
+ 
+-   mtl_release(view->mtl_texel_buffer_handle);
++   if (view->mtl_texel_buffer_handle) {
++      kk_device_remove_texture_from_residency_set(
++         dev, view->mtl_texel_buffer_handle);
++      mtl_release(view->mtl_texel_buffer_handle);
++   }
+    vk_buffer_view_destroy(&dev->vk, pAllocator, &view->vk);
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index 216faed..8361e4f 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -463,11 +463,33 @@ kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
+    simple_mtx_unlock(&dev->residency_set.mutex);
+ }
+ 
++void
++kk_device_add_texture_to_residency_set(struct kk_device *dev, mtl_texture *texture)
++{
++   simple_mtx_lock(&dev->residency_set.mutex);
++   mtl_residency_set_add_allocation(dev->residency_set.handle, texture);
++   simple_mtx_unlock(&dev->residency_set.mutex);
++}
++
++void
++kk_device_remove_texture_from_residency_set(struct kk_device *dev,
++                                            mtl_texture *texture)
++{
++   simple_mtx_lock(&dev->residency_set.mutex);
++   mtl_residency_set_remove_allocation(dev->residency_set.handle, texture);
++   simple_mtx_unlock(&dev->residency_set.mutex);
++}
++
+ void
+ kk_device_make_resources_resident(struct kk_device *dev)
+ {
+    simple_mtx_lock(&dev->residency_set.mutex);
+    mtl_residency_set_commit(dev->residency_set.handle);
+-   mtl_residency_set_request_residency(dev->residency_set.handle);
++   /* A residency set attached to a command queue is made resident for work
++    * committed to that queue. requestResidency is only an optional prewarm;
++    * it keeps the allocations resident until a matching endResidency. Calling
++    * it for every Vulkan submit therefore pins the device's allocations for
++    * the lifetime of the device and can exhaust resident memory during long
++    * applications such as CTS. */
+    simple_mtx_unlock(&dev->residency_set.mutex);
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
+index be4f3e7..cb6aa03 100644
+--- a/src/kosmickrisp/vulkan/kk_device.h
++++ b/src/kosmickrisp/vulkan/kk_device.h
+@@ -126,6 +126,10 @@ void kk_device_add_buffer_to_residency_set(struct kk_device *dev,
+                                            mtl_buffer *buffer);
+ void kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
+                                                 mtl_buffer *buffer);
++void kk_device_add_texture_to_residency_set(struct kk_device *dev,
++                                           mtl_texture *texture);
++void kk_device_remove_texture_from_residency_set(struct kk_device *dev,
++                                                mtl_texture *texture);
+ void kk_device_make_resources_resident(struct kk_device *dev);
+ 
+ /* Required to create a sampler */

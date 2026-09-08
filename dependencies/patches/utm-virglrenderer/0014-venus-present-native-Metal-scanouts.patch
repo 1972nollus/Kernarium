@@ -1,0 +1,753 @@
+From 8fa95aae3ebc43d95d089da90a30667208a69b83 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 4 Sep 2026 18:25:14 +0900
+Subject: [PATCH 14/15] venus: present native Metal scanouts
+
+---
+ src/venus/vkr_device.c          |  17 ++++
+ src/venus/vkr_device.h          |   1 +
+ src/venus/vkr_device_memory.c   | 126 ++++++++++++++++++++-----
+ src/venus/vkr_device_memory.h   |   4 +
+ src/venus/vkr_image.c           | 122 +++++++++++++++++++++++-
+ src/venus/vkr_image.h           |   2 +
+ src/venus/vkr_physical_device.c |   3 +
+ src/venus/vkr_physical_device.h |   1 +
+ src/virgl_resource.c            | 162 ++++++++++++++++++++++++++++++++
+ src/virgl_resource.h            |  16 ++++
+ src/virglrenderer.c             |   9 ++
+ 11 files changed, 441 insertions(+), 22 deletions(-)
+
+diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+index f69dc48..1c7ddeb 100644
+--- a/src/venus/vkr_device.c
++++ b/src/venus/vkr_device.c
+@@ -132,6 +132,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+    uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
+    ext_count += physical_dev->EXT_external_memory_host;
+    ext_count += physical_dev->EXT_external_memory_metal;
++   ext_count += physical_dev->EXT_metal_objects;
+    ext_count += physical_dev->KHR_portability_subset;
+    ext_count += physical_dev->KHR_external_memory_fd;
+    ext_count += physical_dev->EXT_external_memory_dma_buf;
+@@ -151,6 +152,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+       if (physical_dev->EXT_external_memory_metal)
+          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME;
++      if (physical_dev->EXT_metal_objects)
++         exts[ext_count++] = VK_EXT_METAL_OBJECTS_EXTENSION_NAME;
+       if (physical_dev->KHR_portability_subset)
+          exts[ext_count++] = "VK_KHR_portability_subset";
+       if (physical_dev->KHR_external_memory_fd)
+@@ -220,6 +223,20 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+       }
+    }
+ 
++   if (physical_dev->EXT_metal_objects) {
++      dev->ExportMetalObjectsEXT =
++         (PFN_vkExportMetalObjectsEXT)vk->GetDeviceProcAddr(
++            dev->base.handle.device, "vkExportMetalObjectsEXT");
++      if (!dev->ExportMetalObjectsEXT) {
++         struct vn_device_proc_table *dev_vk = &dev->proc_table;
++         dev_vk->DestroyDevice(dev->base.handle.device, NULL);
++         free(exts);
++         free(dev);
++         args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
++         return;
++      }
++   }
++
+    free(exts);
+ 
+    args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
+diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
+index 175ecb9..94e7b41 100644
+--- a/src/venus/vkr_device.h
++++ b/src/venus/vkr_device.h
+@@ -30,6 +30,7 @@ struct vkr_device {
+    PFN_vkGetMemoryHostPointerPropertiesEXT GetMemoryHostPointerPropertiesEXT;
+    PFN_vkGetMemoryMetalHandlePropertiesEXT GetMemoryMetalHandlePropertiesEXT;
+    PFN_vkGetMemoryMetalHandleEXT GetMemoryMetalHandleEXT;
++   PFN_vkExportMetalObjectsEXT ExportMetalObjectsEXT;
+ };
+ VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
+ 
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index 1741baf..aeb7374 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -5,7 +5,10 @@
+ 
+ #include "vkr_device_memory.h"
+ 
++#include <fcntl.h>
+ #include <math.h>
++#include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "util/anon_file.h"
+ #include "venus-protocol/vn_protocol_renderer_transport.h"
+@@ -14,6 +17,47 @@
+ #include "vkr_host_memory.h"
+ #include "vkr_physical_device.h"
+ 
++static int
++vkr_create_metal_heap_identity_file(off_t size)
++{
++#ifdef __APPLE__
++   /* macOS reports st_dev == st_ino == 0 for every POSIX shared-memory
++    * descriptor.  Native resources use that identity to reconnect the fd
++    * returned to virtio-gpu with its in-process Metal object, so give these
++    * small identity files real vnode identities instead.  The file is
++    * unlinked immediately and is never used for the image payload.
++    */
++   const char *tmpdir = getenv("TMPDIR");
++   if (!tmpdir || !tmpdir[0]) {
++      errno = ENOENT;
++      return -1;
++   }
++
++   const char *separator = tmpdir[strlen(tmpdir) - 1] == '/' ? "" : "/";
++   char *path = NULL;
++   if (asprintf(&path, "%s%svkr-metal-heap-XXXXXX", tmpdir, separator) < 0)
++      return -1;
++
++   int fd = mkstemp(path);
++   if (fd >= 0) {
++      const int flags = fcntl(fd, F_GETFD);
++      if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0 ||
++          unlink(path) || ftruncate(fd, size)) {
++         const int saved_errno = errno;
++         close(fd);
++         fd = -1;
++         errno = saved_errno;
++      }
++   }
++   const int saved_errno = errno;
++   free(path);
++   errno = saved_errno;
++   return fd;
++#else
++   return os_create_anonymous_file(size, "vkr-metal-heap");
++#endif
++}
++
+ static bool
+ vkr_get_fd_info_from_resource(const struct vkr_resource *res,
+                               const void *pnext,
+@@ -268,6 +312,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+       .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_METAL_HANDLE_INFO_EXT,
+    };
+    VkImportMemoryResourceInfoMESA *res_info = NULL;
++   uint64_t imported_native_resource_id = 0;
+    VkBaseInStructure *prev_of_res_info = vkr_find_prev_struct(
+       alloc_info, VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA);
+    if (prev_of_res_info) {
+@@ -312,6 +357,12 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+          prev_of_res_info->pNext =
+             (const struct VkBaseInStructure *)&local_metal_import;
+          alloc_info->allocationSize = res->size;
++         imported_native_resource_id =
++            virgl_resource_native_retain(res->native_resource_id);
++         if (!imported_native_resource_id) {
++            args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++            return;
++         }
+       } else if (res->fd_type == VIRGL_RESOURCE_FD_SHM) {
+          if (!physical_dev->EXT_external_memory_host || !res->u.data ||
+              alloc_info->allocationSize > res->size ||
+@@ -527,6 +578,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+ 
+    struct vkr_device_memory *mem = vkr_device_memory_create_and_add(ctx, args);
+    if (!mem) {
++      virgl_resource_native_release(imported_native_resource_id);
+       if (local_import_info.fd >= 0)
+          close(local_import_info.fd);
+       if (gbm_bo)
+@@ -543,6 +595,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+    mem->gbm_bo = gbm_bo;
+    mem->host_shm = host_shm;
+    mem->metal_heap_exportable = export_metal_heap;
++   mem->metal_heap_fd = -1;
++   mem->native_resource_id = imported_native_resource_id;
+    mem->allocation_size = alloc_info->allocationSize;
+    mem->memory_type_index = host_mem_type_index;
+ }
+@@ -680,6 +734,8 @@ void
+ vkr_device_memory_release(struct vkr_device_memory *mem)
+ {
+    virgl_resource_native_release(mem->native_resource_id);
++   if (mem->metal_heap_fd >= 0)
++      close(mem->metal_heap_fd);
+    vkr_host_shm_free(mem->host_shm);
+    if (mem->gbm_bo)
+       vkr_gbm_bo_destroy(mem->gbm_bo);
+@@ -687,6 +743,50 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
+       close(mem->udmabuf_fd);
+ }
+ 
++bool
++vkr_device_memory_prepare_metal_heap_export(struct vkr_device_memory *mem)
++{
++   if (mem->native_resource_id)
++      return true;
++   if (!mem->metal_heap_exportable)
++      return false;
++
++   const VkMemoryGetMetalHandleInfoEXT handle_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_GET_METAL_HANDLE_INFO_EXT,
++      .memory = mem->base.handle.device_memory,
++      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT,
++   };
++   void *metal_heap = NULL;
++   VkResult ret = mem->device->GetMemoryMetalHandleEXT(
++      mem->device->base.handle.device, &handle_info, &metal_heap);
++   if (ret != VK_SUCCESS || !metal_heap) {
++      vkr_log("mem Metal heap export failed (vk ret %d)", ret);
++      return false;
++   }
++
++   const uint64_t page_size = (uint64_t)getpagesize();
++   if (mem->allocation_size > INT64_MAX - (page_size - 1))
++      return false;
++   const uint64_t fd_size = align64(mem->allocation_size, page_size);
++   int fd = vkr_create_metal_heap_identity_file((off_t)fd_size);
++   if (fd < 0) {
++      vkr_log("Metal heap identity file creation failed (%s)", strerror(errno));
++      return false;
++   }
++
++   const uint64_t native_resource_id = virgl_resource_native_publish(
++      fd, VIRGL_RESOURCE_NATIVE_HANDLE_METAL_HEAP, metal_heap);
++   if (!native_resource_id) {
++      vkr_log("Metal heap native-resource publication failed");
++      close(fd);
++      return false;
++   }
++
++   mem->metal_heap_fd = fd;
++   mem->native_resource_id = native_resource_id;
++   return true;
++}
++
+ bool
+ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+                               uint64_t blob_size,
+@@ -731,35 +831,19 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+    }
+ 
+    if (mem->metal_heap_exportable) {
+-      const VkMemoryGetMetalHandleInfoEXT handle_info = {
+-         .sType = VK_STRUCTURE_TYPE_MEMORY_GET_METAL_HANDLE_INFO_EXT,
+-         .memory = mem->base.handle.device_memory,
+-         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT,
+-      };
+-      void *metal_heap = NULL;
+-      VkResult ret = mem->device->GetMemoryMetalHandleEXT(
+-         mem->device->base.handle.device, &handle_info, &metal_heap);
+-      if (ret != VK_SUCCESS || !metal_heap) {
+-         vkr_log("mem Metal heap export failed (vk ret %d)", ret);
++      if (!vkr_device_memory_prepare_metal_heap_export(mem))
+          return false;
+-      }
+ 
+       const uint64_t page_size = (uint64_t)getpagesize();
+       if (blob_size > INT64_MAX - (page_size - 1))
+          return false;
+-      const uint64_t fd_size = align64(blob_size, page_size);
+-      int fd = os_create_anonymous_file((off_t)fd_size, "vkr-metal-heap");
+-      if (fd < 0)
++      if (align64(blob_size, page_size) >
++          align64(mem->allocation_size, page_size))
+          return false;
+-
+-      const uint64_t native_resource_id = virgl_resource_native_publish(
+-         fd, VIRGL_RESOURCE_NATIVE_HANDLE_METAL_HEAP, metal_heap);
+-      if (!native_resource_id) {
+-         close(fd);
++      int fd = os_dupfd_cloexec(mem->metal_heap_fd);
++      if (fd < 0)
+          return false;
+-      }
+ 
+-      mem->native_resource_id = native_resource_id;
+       mem->exported = true;
+       *out_blob = (struct virgl_context_blob) {
+          .type = VIRGL_RESOURCE_FD_SHM,
+diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
+index e25198b..02e2ebf 100644
+--- a/src/venus/vkr_device_memory.h
++++ b/src/venus/vkr_device_memory.h
+@@ -32,6 +32,7 @@ struct vkr_device_memory {
+ 
+    /* Renderer-private MTLHeap export retained by the fd identity registry. */
+    bool metal_heap_exportable;
++   int metal_heap_fd;
+    uint64_t native_resource_id;
+ 
+    uint64_t allocation_size;
+@@ -47,6 +48,9 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx);
+ void
+ vkr_device_memory_release(struct vkr_device_memory *mem);
+ 
++bool
++vkr_device_memory_prepare_metal_heap_export(struct vkr_device_memory *mem);
++
+ bool
+ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+                               uint64_t blob_size,
+diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
+index 5036b68..273f9be 100644
+--- a/src/venus/vkr_image.c
++++ b/src/venus/vkr_image.c
+@@ -6,13 +6,95 @@
+ #include "vkr_image.h"
+ 
+ #include "vkr_image_gen.h"
++#include "vkr_device_memory.h"
+ #include "vkr_physical_device.h"
+ 
++static bool
++vkr_image_should_export_metal_texture(
++   const struct vkr_device *dev, const VkImageCreateInfo *create_info)
++{
++   if (!dev->physical_device->EXT_metal_objects ||
++       !dev->physical_device->EXT_external_memory_metal)
++      return false;
++
++   const VkExternalMemoryImageCreateInfo *external_info =
++      vkr_find_struct(create_info->pNext,
++                      VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   if (external_info &&
++       (external_info->handleTypes &
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT))
++      return true;
++
++   /* Venus can export the allocation as a virtio-gpu blob without exposing
++    * the renderer's Metal handle type in the guest image create chain.  Make
++    * optimal color-render targets exportable up front so a later MTLHeap bind
++    * can publish the native texture for zero-copy scanout.  Publication still
++    * occurs only for allocations backed by a native Metal heap.
++    */
++   return create_info->tiling == VK_IMAGE_TILING_OPTIMAL &&
++          (create_info->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
++}
++
++static void
++vkr_image_publish_metal_texture(struct vkr_device *dev,
++                                const struct vkr_image *image,
++                                struct vkr_device_memory *mem,
++                                VkDeviceSize memory_offset)
++{
++   if (!image->export_metal_texture)
++      return;
++   if (!mem->native_resource_id &&
++       !vkr_device_memory_prepare_metal_heap_export(mem)) {
++      vkr_log("failed to prepare Metal heap for scanout texture");
++      return;
++   }
++
++   VkExportMetalTextureInfoEXT texture_info = {
++      .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_TEXTURE_INFO_EXT,
++      .image = image->base.handle.image,
++      .plane = VK_IMAGE_ASPECT_COLOR_BIT,
++   };
++   VkExportMetalObjectsInfoEXT objects_info = {
++      .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
++      .pNext = &texture_info,
++   };
++   dev->ExportMetalObjectsEXT(dev->base.handle.device, &objects_info);
++   if (!texture_info.mtlTexture) {
++      vkr_log("native scanout texture export returned null for %ux%u",
++              image->extent.width, image->extent.height);
++      return;
++   }
++
++   if (!virgl_resource_native_set_metal_texture(
++          mem->native_resource_id, texture_info.mtlTexture, memory_offset,
++          image->extent.width, image->extent.height)) {
++      vkr_log("failed to publish Metal scanout texture");
++   }
++}
++
+ static void
+ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+                            struct vn_command_vkCreateImage *args)
+ {
++   struct vkr_device *dev = vkr_device_from_handle(args->device);
+    const VkImageTiling tiling = args->pCreateInfo->tiling;
++   const VkExtent3D extent = args->pCreateInfo->extent;
++   const bool export_metal_texture =
++      vkr_image_should_export_metal_texture(dev, args->pCreateInfo);
++   VkImageCreateInfo local_create_info;
++   VkExportMetalObjectCreateInfoEXT local_export_info;
++   if (export_metal_texture) {
++      local_create_info = *args->pCreateInfo;
++      local_export_info = (VkExportMetalObjectCreateInfoEXT) {
++         .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
++         .pNext = local_create_info.pNext,
++         .exportObjectType =
++            VK_EXPORT_METAL_OBJECT_TYPE_METAL_TEXTURE_BIT_EXT,
++      };
++      local_create_info.pNext = &local_export_info;
++      args->pCreateInfo = &local_create_info;
++   }
++
+    /* XXX If VkExternalMemoryImageCreateInfo is chained by the app, all is
+     * good.  If it is not chained, we might still bind an external memory to
+     * the image, because vkr_dispatch_vkAllocateMemory makes any HOST_VISIBLE
+@@ -33,8 +115,11 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+     */
+ 
+    struct vkr_image *image = vkr_image_create_and_add(dispatch->data, args);
+-   if (image)
++   if (image) {
+       image->tiling = tiling;
++      image->extent = extent;
++      image->export_metal_texture = export_metal_texture;
++   }
+ }
+ 
+ static void
+@@ -113,12 +198,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
+ {
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vn_device_proc_table *vk = &dev->proc_table;
++   struct vkr_image *image = vkr_image_from_handle(args->image);
++   struct vkr_device_memory *mem =
++      vkr_device_memory_from_handle(args->memory);
++   const VkDeviceSize memory_offset = args->memoryOffset;
+ 
+    vn_replace_vkBindImageMemory_args_handle(args);
+    args->ret =
+       vk->BindImageMemory(args->device, args->image, args->memory, args->memoryOffset);
++   if (args->ret == VK_SUCCESS)
++      vkr_image_publish_metal_texture(dev, image, mem, memory_offset);
+ }
+ 
++struct vkr_metal_image_binding {
++   struct vkr_image *image;
++   struct vkr_device_memory *memory;
++   VkDeviceSize memory_offset;
++};
++
+ static void
+ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+                                 struct vn_command_vkBindImageMemory2 *args)
+@@ -126,8 +223,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vn_device_proc_table *vk = &dev->proc_table;
+ 
++   STACK_ARRAY(struct vkr_metal_image_binding, bindings,
++               args->bindInfoCount);
++   if (!bindings) {
++      args->ret = VK_ERROR_OUT_OF_HOST_MEMORY;
++      return;
++   }
++   for (uint32_t i = 0; i < args->bindInfoCount; i++) {
++      bindings[i] = (struct vkr_metal_image_binding) {
++         .image = vkr_image_from_handle(args->pBindInfos[i].image),
++         .memory =
++            vkr_device_memory_from_handle(args->pBindInfos[i].memory),
++         .memory_offset = args->pBindInfos[i].memoryOffset,
++      };
++   }
++
+    vn_replace_vkBindImageMemory2_args_handle(args);
+    args->ret = vk->BindImageMemory2(args->device, args->bindInfoCount, args->pBindInfos);
++   if (args->ret == VK_SUCCESS) {
++      for (uint32_t i = 0; i < args->bindInfoCount; i++) {
++         vkr_image_publish_metal_texture(
++            dev, bindings[i].image, bindings[i].memory,
++            bindings[i].memory_offset);
++      }
++   }
++   STACK_ARRAY_FINISH(bindings);
+ }
+ 
+ static void
+diff --git a/src/venus/vkr_image.h b/src/venus/vkr_image.h
+index a491b8d..5120b80 100644
+--- a/src/venus/vkr_image.h
++++ b/src/venus/vkr_image.h
+@@ -11,6 +11,8 @@
+ struct vkr_image {
+    struct vkr_object base;
+    VkImageTiling tiling;
++   VkExtent3D extent;
++   bool export_metal_texture;
+ };
+ VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
+ 
+diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+index 9388683..70c61bc 100644
+--- a/src/venus/vkr_physical_device.c
++++ b/src/venus/vkr_physical_device.c
+@@ -363,6 +363,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+       else if (!strcmp(props->extensionName,
+                        VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME))
+          physical_dev->EXT_external_memory_metal = true;
++      else if (!strcmp(props->extensionName,
++                       VK_EXT_METAL_OBJECTS_EXTENSION_NAME))
++         physical_dev->EXT_metal_objects = true;
+       else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
+          physical_dev->KHR_portability_subset = true;
+ 
+diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
+index 5f56526..0c0dd21 100644
+--- a/src/venus/vkr_physical_device.h
++++ b/src/venus/vkr_physical_device.h
+@@ -32,6 +32,7 @@ struct vkr_physical_device {
+    bool EXT_external_memory_host;
+    VkDeviceSize min_imported_host_pointer_alignment;
+    bool EXT_external_memory_metal;
++   bool EXT_metal_objects;
+ 
+    VkPhysicalDeviceMemoryProperties host_memory_properties;
+    VkPhysicalDeviceMemoryProperties memory_properties;
+diff --git a/src/virgl_resource.c b/src/virgl_resource.c
+index 3dac1dc..c0dd532 100644
+--- a/src/virgl_resource.c
++++ b/src/virgl_resource.c
+@@ -54,6 +54,15 @@ struct virgl_native_resource {
+    enum virgl_resource_native_handle_type type;
+    void *handle;
+    uint32_t refcount;
++   struct list_head metal_textures;
++   struct list_head head;
++};
++
++struct virgl_native_metal_texture {
++   void *handle;
++   uint64_t offset;
++   uint32_t width;
++   uint32_t height;
+    struct list_head head;
+ };
+ 
+@@ -120,6 +129,7 @@ virgl_resource_native_publish(int fd,
+    resource->type = type;
+    resource->handle = virgl_metal_retain_object(handle);
+    resource->refcount = 1;
++   list_inithead(&resource->metal_textures);
+    list_addtail(&resource->head, &native_resources);
+    mtx_unlock(&native_resource_mutex);
+ 
+@@ -132,6 +142,152 @@ virgl_resource_native_publish(int fd,
+ #endif
+ }
+ 
++uint64_t
++virgl_resource_native_retain(uint64_t id)
++{
++#if defined(ENABLE_METAL) && defined(ENABLE_SAME_PROCESS_RENDER_SERVER)
++   if (!id)
++      return 0;
++
++   call_once(&native_resource_once, virgl_resource_native_init_once);
++   if (!native_resource_ready)
++      return 0;
++
++   uint64_t retained_id = 0;
++   mtx_lock(&native_resource_mutex);
++   list_for_each_entry (struct virgl_native_resource, resource,
++                        &native_resources, head) {
++      if (resource->id == id && resource->refcount != UINT32_MAX) {
++         resource->refcount++;
++         retained_id = id;
++         break;
++      }
++   }
++   mtx_unlock(&native_resource_mutex);
++   return retained_id;
++#else
++   (void)id;
++   return 0;
++#endif
++}
++
++bool
++virgl_resource_native_set_metal_texture(uint64_t id,
++                                        void *texture,
++                                        uint64_t offset,
++                                        uint32_t width,
++                                        uint32_t height)
++{
++#if defined(ENABLE_METAL) && defined(ENABLE_SAME_PROCESS_RENDER_SERVER)
++   if (!id || !texture || !width || !height)
++      return false;
++
++   struct virgl_native_metal_texture *new_texture =
++      calloc(1, sizeof(*new_texture));
++   if (!new_texture)
++      return false;
++
++   new_texture->handle = virgl_metal_retain_object(texture);
++   new_texture->offset = offset;
++   new_texture->width = width;
++   new_texture->height = height;
++
++   call_once(&native_resource_once, virgl_resource_native_init_once);
++   if (!native_resource_ready) {
++      virgl_metal_release_object(new_texture->handle);
++      free(new_texture);
++      return false;
++   }
++
++   void *replaced_handle = NULL;
++   bool found = false;
++   mtx_lock(&native_resource_mutex);
++   list_for_each_entry (struct virgl_native_resource, resource,
++                        &native_resources, head) {
++      if (resource->id != id)
++         continue;
++
++      list_for_each_entry (struct virgl_native_metal_texture, existing,
++                           &resource->metal_textures, head) {
++         if (existing->offset == offset && existing->width == width &&
++             existing->height == height) {
++            replaced_handle = existing->handle;
++            existing->handle = new_texture->handle;
++            new_texture->handle = NULL;
++            found = true;
++            break;
++         }
++      }
++
++      if (!found) {
++         list_addtail(&new_texture->head, &resource->metal_textures);
++         new_texture = NULL;
++      }
++      found = true;
++      break;
++   }
++   mtx_unlock(&native_resource_mutex);
++
++   if (replaced_handle)
++      virgl_metal_release_object(replaced_handle);
++   if (new_texture) {
++      if (new_texture->handle)
++         virgl_metal_release_object(new_texture->handle);
++      free(new_texture);
++   }
++   return found;
++#else
++   (void)id;
++   (void)texture;
++   (void)offset;
++   (void)width;
++   (void)height;
++   return false;
++#endif
++}
++
++void *
++virgl_resource_native_acquire_metal_texture(uint64_t id,
++                                            uint64_t offset,
++                                            uint32_t width,
++                                            uint32_t height)
++{
++#if defined(ENABLE_METAL) && defined(ENABLE_SAME_PROCESS_RENDER_SERVER)
++   if (!id)
++      return NULL;
++
++   call_once(&native_resource_once, virgl_resource_native_init_once);
++   if (!native_resource_ready)
++      return NULL;
++
++   void *handle = NULL;
++   mtx_lock(&native_resource_mutex);
++   list_for_each_entry (struct virgl_native_resource, resource,
++                        &native_resources, head) {
++      if (resource->id != id)
++         continue;
++
++      list_for_each_entry (struct virgl_native_metal_texture, texture,
++                           &resource->metal_textures, head) {
++         if (texture->offset == offset && texture->width == width &&
++             texture->height == height) {
++            handle = virgl_metal_retain_object(texture->handle);
++            break;
++         }
++      }
++      break;
++   }
++   mtx_unlock(&native_resource_mutex);
++   return handle;
++#else
++   (void)id;
++   (void)offset;
++   (void)width;
++   (void)height;
++   return NULL;
++#endif
++}
++
+ uint64_t
+ virgl_resource_native_acquire(int fd,
+                               enum virgl_resource_native_handle_type *out_type,
+@@ -199,6 +355,12 @@ virgl_resource_native_release(uint64_t id)
+    mtx_unlock(&native_resource_mutex);
+ 
+    if (released) {
++      list_for_each_entry_safe (struct virgl_native_metal_texture, texture,
++                                &released->metal_textures, head) {
++         list_del(&texture->head);
++         virgl_metal_release_object(texture->handle);
++         free(texture);
++      }
+       virgl_metal_release_object(released->handle);
+       free(released);
+    }
+diff --git a/src/virgl_resource.h b/src/virgl_resource.h
+index 875baef..2e43afa 100644
+--- a/src/virgl_resource.h
++++ b/src/virgl_resource.h
+@@ -211,6 +211,22 @@ virgl_resource_native_acquire(int fd,
+                               enum virgl_resource_native_handle_type *out_type,
+                               void **out_handle);
+ 
++uint64_t
++virgl_resource_native_retain(uint64_t id);
++
++bool
++virgl_resource_native_set_metal_texture(uint64_t id,
++                                        void *texture,
++                                        uint64_t offset,
++                                        uint32_t width,
++                                        uint32_t height);
++
++void *
++virgl_resource_native_acquire_metal_texture(uint64_t id,
++                                            uint64_t offset,
++                                            uint32_t width,
++                                            uint32_t height);
++
+ void
+ virgl_resource_native_release(uint64_t id);
+ 
+diff --git a/src/virglrenderer.c b/src/virglrenderer.c
+index 154a377..6eac683 100644
+--- a/src/virglrenderer.c
++++ b/src/virglrenderer.c
+@@ -1532,12 +1532,21 @@ virgl_renderer_create_handle_for_scanout(uint32_t res_id,
+                                          virgl_renderer_native_handle *handle)
+ {
+    TRACE_FUNC();
++   (void)padding;
+ #ifdef ENABLE_METAL
+    struct virgl_resource *res = virgl_resource_lookup(res_id);
+ 
+    if (!res)
+       return VIRGL_NATIVE_HANDLE_NONE;
+ 
++   MTLTexture_id native_texture =
++      virgl_resource_native_acquire_metal_texture(
++         res->native_resource_id, offset, width, height);
++   if (native_texture) {
++      *handle = native_texture;
++      return VIRGL_NATIVE_HANDLE_METAL_TEXTURE;
++   }
++
+    /*
+     * An in-process (vrend) blob allocated as a native Metal texture
+     * (VIRGL_RES_BIND_SCANOUT, see vrend_resource_metal_init) already

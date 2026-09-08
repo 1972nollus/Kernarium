@@ -33,7 +33,7 @@ Usage: dependencies/prepare.sh [options]
 Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
                   ios-x86, wine-arm64ec-rootfs, apple-gpu,
-                  x86-conformance, or all
+                  apple-gpu-vulkan-experiment, x86-conformance, or all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
   --toolchain NAME
@@ -305,6 +305,75 @@ safe_relative_path()
 	return 0
 }
 
+# A shared protocol series has one source owner. The explicit namespace does
+# not grant general parent-directory access to dependency metadata.
+resolve_series()
+{
+	case "$patch_series" in
+	rootfs-vulkan:*)
+		series_relative=${patch_series#rootfs-vulkan:}
+		[ "$name:$series_relative" = \
+			'venus-protocol:patches/venus-protocol/series.tsv' ] ||
+			fail "$name has an unsupported rootfs-vulkan series: $patch_series"
+		metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
+		series_owner="$metadata_outer/tools/rootfs/vulkan"
+		;;
+	*:*) fail "$name has an unknown patch-series owner: $patch_series" ;;
+	*)
+		series_relative=$patch_series
+		series_owner=$(CDPATH= cd -- "$PATCH_ROOT" && pwd -P)
+		;;
+	esac
+	safe_relative_path "$series_relative" ||
+		fail "$name has an unsafe patch-series path: $patch_series"
+	case "$series_relative" in
+	*[!A-Za-z0-9._/-]*) fail "$name has an unsafe patch-series path: $patch_series" ;;
+	esac
+	series_path="$series_owner/$series_relative"
+	verify_metadata_path "$series_path"
+}
+
+verify_metadata_path()
+{
+	python3 - "$1" <<'PY' || fail "metadata path contains a symlink: $1"
+import os
+import sys
+
+path = os.path.abspath(sys.argv[1])
+if os.path.realpath(path) != path:
+    raise SystemExit(1)
+PY
+}
+
+validate_vulkan_pair()
+{
+	case "$name" in
+	venus-protocol|vulkan-headers) ;;
+	*) return 0 ;;
+	esac
+	metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
+	paired_sources="$metadata_outer/tools/rootfs/vulkan/sources.tsv"
+	verify_metadata_path "$paired_sources"
+	[ -f "$paired_sources" ] || fail "paired Vulkan source lock is missing"
+	paired_identity=$(awk -F '\t' -v component="$name" \
+		'$1 == component { print $2 "\t" $3; count++ }
+		END { if (count != 1) exit 1 }' "$paired_sources") ||
+		fail "$name paired Vulkan source identity is missing or duplicated"
+	[ "$paired_identity" = "$(printf '%s\t%s' "$repository" "$commit")" ] ||
+		fail "$name host and guest Vulkan source identities differ"
+	[ "$products" = apple-gpu-vulkan-experiment ] && [ "$source_paths" = . ] ||
+		fail "$name is a full-source experimental Vulkan dependency only"
+	if [ "$name" = venus-protocol ]; then
+		[ "$patch_series" = rootfs-vulkan:patches/venus-protocol/series.tsv ] ||
+			fail "venus-protocol must use its canonical rootfs-vulkan series"
+		[ "$(awk -F '\t' '$1 == "venus-protocol" { print $7 }' "$paired_sources")" = \
+			patches/venus-protocol/series.tsv ] ||
+			fail "venus-protocol paired series owner differs"
+	else
+		[ "$patch_series" = - ] || fail "Vulkan-Headers must use the unmodified SDK"
+	fi
+}
+
 validate_products()
 {
 	old_ifs=$IFS
@@ -341,9 +410,7 @@ mail_subject()
 validate_series()
 {
 	[ "$patch_series" != '-' ] || return 0
-	safe_relative_path "$patch_series" ||
-		fail "$name has an unsafe patch-series path: $patch_series"
-	series_path="$PATCH_ROOT/$patch_series"
+	resolve_series
 	[ -f "$series_path" ] || fail "$name patch series is missing: $series_path"
 	awk -F '\t' '
 		/^#/ || /^[[:space:]]*$/ { next }
@@ -379,6 +446,7 @@ validate_series()
 			fail "$name has an invalid patch identity"
 		[ -n "$subject" ] || fail "$name patch subject is empty"
 		patch_path="$series_directory/$patch_file"
+		verify_metadata_path "$patch_path"
 		[ -f "$patch_path" ] || fail "$name patch is missing: $patch_path"
 		[ "$(sha256_file "$patch_path")" = "$digest" ] ||
 			fail "$name patch hash changed: $patch_file"
@@ -396,6 +464,14 @@ validate_series()
 		expected_order=$((expected_order + 1))
 	done < "$series_path"
 	[ "$series_count" -gt 0 ] || fail "$name patch series is empty"
+	if [ "$patch_series" = rootfs-vulkan:patches/venus-protocol/series.tsv ]; then
+		declared_patches=$(awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 }' \
+			"$series_path" | LC_ALL=C sort)
+		owned_patches=$(find "$series_directory" -type f -name '*.patch' \
+			-exec basename {} \; | LC_ALL=C sort)
+		[ "$declared_patches" = "$owned_patches" ] ||
+			fail "venus-protocol patch inventory differs from its owning series"
+	fi
 }
 
 validate_row()
@@ -414,6 +490,7 @@ validate_row()
 	esac
 	[ "${#commit}" -eq 40 ] || fail "$name commit must be a full Git OID"
 	validate_source_paths
+	validate_vulkan_pair
 	validate_series
 }
 
@@ -425,10 +502,16 @@ while IFS="$tab" read -r name version products repository commit source_paths \
 	validate_row
 done < "$MANIFEST"
 
+paired_count=$(awk -F '\t' '$1 == "vulkan-headers" || $1 == "venus-protocol" \
+	{ count++ } END { print count + 0 }' "$MANIFEST")
+[ "$paired_count" -eq 0 ] || [ "$paired_count" -eq 2 ] ||
+	fail "the experimental Vulkan SDK and protocol inputs must be declared together"
+
 validate_patch_inventory()
 {
 	manifest_series=$(awk -F '\t' '
-		/^#/ || /^[[:space:]]*$/ || $1 == "name" || $7 == "-" { next }
+		/^#/ || /^[[:space:]]*$/ || $1 == "name" || $7 == "-" ||
+		    $7 ~ /^rootfs-vulkan:/ { next }
 		{ print $7 }
 	' "$MANIFEST" | LC_ALL=C sort -u)
 	directory_series=$(
@@ -516,7 +599,7 @@ series_values()
 	SERIES_SUBJECTS=
 	SERIES_COUNT=0
 	[ "$patch_series" != '-' ] || return 0
-	series_path="$PATCH_ROOT/$patch_series"
+	resolve_series
 	while IFS="$tab" read -r order patch_file patch_id digest subject; do
 		case "$order" in
 		\#*|order|'') continue ;;
@@ -569,7 +652,7 @@ verify_repository()
 	actual_ids=$(printf '%s\n' "$commits" |
 		while IFS= read -r prepared_commit; do
 			[ -n "$prepared_commit" ] || continue
-			git -C "$repository_directory" show --pretty=format: "$prepared_commit" |
+			git -C "$repository_directory" show --binary --pretty=format: "$prepared_commit" |
 				git patch-id --stable | awk '{print $1}'
 		done)
 	[ "$actual_ids" = "$(printf '%s' "$SERIES_IDS")" ] ||
@@ -714,20 +797,40 @@ prepare_repository()
 		git clone --quiet --no-checkout --no-local \
 			"$cache_repository" "$staged_repository"
 	else
-		git clone --quiet --no-checkout --filter=blob:none \
-			"file://$cache_repository" "$staged_repository"
+		# A partial repository cannot safely serve another filtered local
+		# clone: upload-pack may try to lazily obtain an omitted blob through
+		# the clone's local promisor URL and recursively invoke itself.  Copy
+		# the already verified object store into an independent repository
+		# instead.  The temporary promisor marker lets sparse checkout tolerate
+		# unselected blobs, while GIT_NO_LAZY_FETCH below makes publication
+		# strictly offline.  Removing the remote leaves the prepared source
+		# self-contained for every selected path.
+		git -C "$STAGING_ROOT" init --quiet "$name"
+		git -C "$staged_repository" remote add origin "$repository"
+		git -C "$staged_repository" config remote.origin.promisor true
+		git -C "$staged_repository" config \
+			remote.origin.partialclonefilter blob:none
+		cp -R "$cache_repository/.git/objects/." \
+			"$staged_repository/.git/objects"
+		if [ -f "$cache_repository/.git/shallow" ]; then
+			cp "$cache_repository/.git/shallow" \
+				"$staged_repository/.git/shallow"
+		fi
+		git -C "$staged_repository" update-ref refs/heads/uml-pin "$commit"
 	fi
 	if [ "$source_paths" != '.' ]; then
 		old_ifs=$IFS
 		IFS=,
 		set -- $source_paths
 		IFS=$old_ifs
-		git -C "$staged_repository" sparse-checkout set --cone "$@"
+		env GIT_NO_LAZY_FETCH=1 git -C "$staged_repository" \
+			sparse-checkout set --cone "$@"
 	fi
-	git -C "$staged_repository" switch --detach "$commit" >/dev/null
+	env GIT_NO_LAZY_FETCH=1 git -C "$staged_repository" \
+		switch --detach "$commit" >/dev/null
 	git -C "$staged_repository" remote remove origin
 	if [ "$patch_series" != '-' ]; then
-		series_path="$PATCH_ROOT/$patch_series"
+		resolve_series
 		series_directory=$(dirname -- "$series_path")
 		while IFS="$tab" read -r order patch_file patch_id digest subject; do
 			case "$order" in

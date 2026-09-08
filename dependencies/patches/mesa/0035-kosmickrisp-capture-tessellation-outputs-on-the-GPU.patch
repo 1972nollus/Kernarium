@@ -1,0 +1,552 @@
+From 0659dd56d28d6b72b84c714a4b33ed649b6b2b90 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 07:09:27 +0900
+Subject: [PATCH 35/44] kosmickrisp: capture tessellation outputs on the GPU
+
+Produce ordered TES records once, then pull raw capture and raster outputs without re-executing application effects. Preserve shared GPU capacity and query accounting, independent raster provoking values, and empty-patch draws.
+
+Use one tessellator index winding for native and software consumers. Match indirect VS/TCS launches to the exact-thread Metal dispatch ABI.
+---
+ src/kosmickrisp/libkk/kk_tessellation.cl |  23 +++-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c     |  54 ++++----
+ src/kosmickrisp/vulkan/kk_shader.c       | 155 +++++++++++++++++++----
+ src/poly/cl/tessellation.cl              |   2 +-
+ src/poly/cl/tessellator.h                |   7 +-
+ src/poly/tessellator.h                   |  15 ++-
+ 6 files changed, 191 insertions(+), 65 deletions(-)
+
+diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
+index 0e8c1a9..abc66eb 100644
+--- a/src/kosmickrisp/libkk/kk_tessellation.cl
++++ b/src/kosmickrisp/libkk/kk_tessellation.cl
+@@ -11,7 +11,7 @@
+ KERNEL(1)
+ libkk_tess_setup_indirect(
+    global struct poly_tess_params *p,
+-   global uint32_t *grids /* output: VS then TCS then tess */,
++   global uint32_t *grids /* 6-word exact-thread records: VS, TCS, tess */,
+    global struct poly_vertex_params *vp /* output */, global uint32_t *indirect,
+    uint64_t in_index_buffer, uint32_t in_index_buffer_range_el,
+    uint32_t in_index_size_B, uint64_t vertex_outputs /* bitfield */,
+@@ -81,14 +81,23 @@ libkk_tess_setup_indirect(
+    grids[0] = count;
+    grids[1] = instance_count;
+    grids[2] = 1;
++   grids[3] = 64;
++   grids[4] = 1;
++   grids[5] = 1;
+ 
+    /* TCS grid size */
+-   grids[3] = in_patches * p->output_patch_size;
+-   grids[4] = instance_count;
+-   grids[5] = 1;
++   grids[6] = in_patches * p->output_patch_size;
++   grids[7] = instance_count;
++   grids[8] = 1;
++   grids[9] = p->output_patch_size;
++   grids[10] = 1;
++   grids[11] = 1;
+ 
+    /* Tess grid size */
+-   grids[6] = unrolled_patches;
+-   grids[7] = 1;
+-   grids[8] = 1;
++   grids[12] = unrolled_patches;
++   grids[13] = 1;
++   grids[14] = 1;
++   grids[15] = 1;
++   grids[16] = 1;
++   grids[17] = 1;
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
+index 2deeb00..5998509 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
+@@ -1464,6 +1464,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+       .partitioning = partitioning,
+       .points_mode = gfx->tess.info.points,
+       .isolines = gfx->tess.info.mode == TESS_PRIMITIVE_ISOLINES,
++      .winding_in_index_buffer = true,
+    };
+ 
+    if (!args.points_mode && gfx->tess.info.mode != TESS_PRIMITIVE_ISOLINES) {
+@@ -1507,8 +1508,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+       args.out_draws = addr + draw_offs;
+       args.counts = addr + count_offs;
+    } else {
+-      /* Allocate 3x indirect global+local grids for VS/TCS/tess */
+-      uint32_t grid_stride = sizeof(uint32_t) * 3;
++      /* MTLDispatchThreadsIndirectArguments: exact grid plus local size. */
++      uint32_t grid_stride = sizeof(uint32_t) * 6;
+       gfx->tess.indirect_ptr = kk_pool_alloc(cmd, grid_stride * 3, 4);
+ 
+       struct kk_ptr ptr = kk_pool_alloc(cmd, draw_stride_B, 4);
+@@ -1634,15 +1635,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+        IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL) ||
+        IS_SHADER_DIRTY(VERTEX)) {
+       bool front_face_ccw = dyn->rs.front_face != VK_FRONT_FACE_CLOCKWISE;
+-      if (cmd->state.shaders[MESA_SHADER_TESS_EVAL] &&
+-          !vertex->info.vs.geometry_shader_emulation &&
+-          !vertex->info.vs.line_raster_materialize) {
+-         /* Software TES indexing has already applied the domain winding.
+-          * A following application GS supplies its own output winding. */
+-         front_face_ccw ^= gfx->tess.info.ccw;
+-         front_face_ccw ^=
+-            dyn->ts.domain_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
+-      }
+       mtl_set_front_face_winding(enc, front_face_ccw
+                                          ? MTL_WINDING_COUNTER_CLOCKWISE
+                                          : MTL_WINDING_CLOCKWISE);
+@@ -2424,8 +2416,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+    }
+ 
+    if (transform_feedback) {
++      enum mesa_prim xfb_input = tess ? gfx->tess.prim : prim;
+       gfx->per_draw_data.geometry_params =
+-         kk_upload_geometry_params(cmd, draw, prim,
++         kk_upload_geometry_params(cmd, draw, xfb_input,
+                                    &vs->info.vs.transform_feedback, false);
+       if (!gfx->per_draw_data.geometry_params)
+          return false;
+@@ -2471,10 +2464,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+       gfx->per_draw_data.polygon_point_clip_flags =
+          (vk_rasterization_state_depth_clip_enable(&dyn->rs) ? 1u : 0u) |
+          (dyn->vp.depth_clip_negative_one_to_one ? 2u : 0u) |
+-         (tess && !vs->info.vs.geometry_shader_emulation &&
+-          (gfx->tess.info.ccw ^
+-           (dyn->ts.domain_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT))
+-             ? 4u : 0u) |
+          (dyn->rs.depth_bias.enable ? 8u : 0u) |
+          (dyn->rs.depth_clamp_enable ? 16u : 0u);
+       gfx->per_draw_data.polygon_depth_bias_constant =
+@@ -2563,8 +2552,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+    if (grid.mode == KK_GRID_DIRECT)
+       mtl_dispatch_threads(enc, grid.size, local_size);
+    else
+-      mtl_dispatch_threadgroups_with_indirect_buffer(enc, grid.addr,
+-                                                     local_size);
++      mtl_dispatch_threads_with_indirect_buffer(enc, grid.addr);
+ }
+ 
+ static struct kk_draw_data
+@@ -2590,6 +2578,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+       &gfx->descriptors, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
+ 
+    if (vs->info.vs.geometry_shader_emulation ||
++       vs->info.vs.transform_feedback_emulation ||
+        dyn->rs.rasterizer_discard_enable) {
+       c_primitives = 0;
+       c_invocations = 0;
+@@ -2615,7 +2604,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+ 
+       libkk_tess_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
+ 
+-      uint32_t grid_stride = sizeof(uint32_t) * 3;
++      uint32_t grid_stride = sizeof(uint32_t) * 6;
+       grid_vs = kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 0u * grid_stride);
+       grid_tcs =
+          kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 1u * grid_stride);
+@@ -2933,6 +2922,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+                              struct kk_draw_data draw, enum mesa_prim prim)
+ {
+    struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
++   struct kk_shader *tes = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
+    struct kk_graphics_state *gfx = &cmd->state.gfx;
+    const struct poly_gs_info *gsi = &vs->info.vs.transform_feedback;
+    bool indirect = kk_grid_is_indirect(draw.grid);
+@@ -2953,7 +2943,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+          .vp = gfx->per_draw_data.vertex_params,
+          .p = gfx->per_draw_data.geometry_params,
+          .heap = kk_heap(cmd),
+-         .vertex_outputs = vs->info.vs.outputs_written,
++         .vertex_outputs =
++            tes ? tes->info.tess.outputs_written : vs->info.vs.outputs_written,
+          .index_size_B = draw.index.el_size_B,
+          .index_buffer_range_el =
+             draw.index.el_size_B
+@@ -2968,7 +2959,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+    }
+ 
+    mtl_compute_encoder *enc = cs_get_compute(cmd, true);
+-   mtl_compute_pipeline_state *vs_pipeline = vs->pipeline.gfx.pre_render[0];
++   /* TES runs once as the software producer after VS/TCS/tessellation.  The
++    * synthetic raster stage only reads its ordered records and captures XFB;
++    * it must not execute application effects or count an application GS. */
++   mtl_compute_pipeline_state *vs_pipeline =
++      vs->pipeline.gfx.pre_render[tes ? 2 : 0];
+    struct mtl_size vs_local_size = {64, 1, 1};
+ 
+    mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
+@@ -3331,15 +3326,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+                                    data->prim))
+          return;
+ 
+-      if (tess)
++      if (tess) {
+          draw_data = kk_launch_tess(cmd, draw_data);
++         /* No complete input patch: the VS may have run, but no TES output
++          * exists. Do not revive this empty result from cached pre-tess XFB
++          * counts or issue a zero-sized downstream compute dispatch. */
++         if (!kk_grid_is_indirect(draw_data.grid) &&
++             (!draw_data.grid.size.x || !draw_data.grid.size.y))
++            continue;
++      }
+ 
+       if (emulate_geometry) {
+          enum mesa_prim gs_input = tess ? cmd->state.gfx.tess.prim : data->prim;
+          draw_data = kk_launch_geometry(cmd, draw_data, gs_input);
+-      } else if (emulate_transform_feedback)
++      } else if (emulate_transform_feedback) {
++         enum mesa_prim xfb_input = tess ? cmd->state.gfx.tess.prim : data->prim;
+          draw_data =
+-            kk_launch_transform_feedback(cmd, draw_data, data->prim);
++            kk_launch_transform_feedback(cmd, draw_data, xfb_input);
++      }
+ 
+       const enum mesa_prim source_raster_prim =
+          emulate_geometry ? vs->info.vs.geometry.mode
+@@ -3363,7 +3367,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+        * requested provoking vertex itself.  Keep its non-indexed vertex IDs
+        * intact: they also address the generated XFB records. */
+       if (provoking_last && !emulate_line_raster && !emulate_polygon_points &&
+-          (emulate_geometry || tess))
++          (emulate_geometry || tess) && !emulate_transform_feedback)
+          draw_data =
+             kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index 2d21544..eaa8bf4 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -1292,6 +1292,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+          NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
+          nir->info.stage = MESA_SHADER_COMPUTE;
+          memset(&nir->info.cs, 0, sizeof(nir->info.cs));
++         nir->xfb_info = NULL;
+       }
+    }
+ 
+@@ -2499,10 +2500,8 @@ kk_create_line_materialize_shader(const nir_shader *source)
+ {
+    nir_shader *nir = nir_shader_clone(NULL, source);
+    if (nir->info.stage == MESA_SHADER_TESS_EVAL) {
+-      /* Match the native TES's indexed order, including its provoking
+-       * vertices. Compute TES indexing swaps two corners for winding; doing
+-       * that only in generated classes would change LAST flat attributes.
+-       * The polygon area helper carries the native facing correction. */
++      /* Use the same winding-correct index buffer and provoking vertices as
++       * the native hardware TES and transform-feedback materializer. */
+       NIR_PASS(_, nir, poly_nir_lower_tes, true);
+    }
+ 
+@@ -3355,6 +3354,82 @@ kk_lower_xfb_raster_flat_outputs(nir_shader *raster, const nir_shader *vs,
+                               nir_metadata_control_flow, &state);
+ }
+ 
++/* TES has already produced a decomposed point/line/triangle list in primitive
++ * order. Pull its current record directly instead of evaluating all corners of
++ * a synthetic GS and selecting one. Keep the Poly pre-GS program as the sole
++ * owner of primitive counts, buffer capacity, offsets and overflow queries. */
++static nir_shader *
++kk_create_tes_transform_feedback_raster(
++   const nir_shader *tes, enum mesa_prim primitive,
++   const struct kk_polygon_point_output *outputs)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, tes->options, "tes_transform_feedback_raster");
++   nir_shader *nir = b.shader;
++   nir->info.outputs_written = tes->info.outputs_written;
++   nir->info.clip_distance_array_size = tes->info.clip_distance_array_size;
++   nir->info.cull_distance_array_size = tes->info.cull_distance_array_size;
++
++   nir_def *vp = nir_load_vertex_param_buffer_poly(&b);
++   nir_def *gp = nir_load_geometry_param_buffer_poly(&b);
++   nir_def *vertex = nir_load_vertex_id(&b);
++   nir_def *instance = nir_load_instance_id(&b);
++   nir_def *record = nir_iadd(
++      &b, vertex, nir_imul(&b, instance, poly_input_vertices(&b, vp)));
++   nir_def *values[NUM_TOTAL_VARYING_SLOTS] = {0};
++   u_foreach_bit64(location, tes->info.outputs_written) {
++      const struct kk_polygon_point_output *output = &outputs[location];
++      assert(output->components && output->type != nir_type_invalid);
++      nir_def *addr = poly_vertex_output_address(
++         &b, vp, nir_imm_int64(&b, tes->info.outputs_written), record,
++         nir_imm_int(&b, location));
++      values[location] = nir_load_global(
++         &b, output->components, nir_alu_type_get_type_size(output->type),
++         addr, .align_mul = 4);
++   }
++
++   const struct nir_xfb_info *xfb = tes->xfb_info;
++   const unsigned vertices_per_primitive = mesa_vertices_per_prim(primitive);
++   nir_def *input_primitives = kk_load_xfb_geometry_param(
++      &b, gp, offsetof(struct poly_geometry_params, grid[0]), 32);
++   nir_def *index = nir_iadd(
++      &b, vertex, nir_imul_imm(
++         &b, nir_imul(&b, instance, input_primitives), vertices_per_primitive));
++   nir_def *capacity = kk_load_xfb_geometry_param(
++      &b, gp, offsetof(struct poly_geometry_params, xfb_verts[0]), 32);
++   nir_push_if(&b, nir_ult(&b, index, capacity));
++   for (unsigned i = 0; i < xfb->output_count; ++i) {
++      const nir_xfb_output_info output = xfb->outputs[i];
++      if (xfb->buffer_to_stream[output.buffer] != 0)
++         continue;
++
++      nir_def *value = values[output.location];
++      value = value ? nir_pad_vector_imm_int(&b, value, 0, 4)
++                    : nir_imm_ivec4(&b, 0, 0, 0, 0);
++      nir_def *addr = poly_xfb_vertex_address(
++         &b, gp, index, nir_imm_int(&b, output.buffer),
++         nir_imm_int(&b, xfb->buffers[output.buffer].stride),
++         nir_imm_int(&b, output.offset));
++      nir_store_global(&b, nir_channels(&b, value, output.component_mask), addr);
++   }
++   nir_pop_if(&b, NULL);
++
++   /* The following raster-only flat override must not alter these raw stores. */
++   u_foreach_bit64(location, tes->info.outputs_written) {
++      const struct kk_polygon_point_output *output = &outputs[location];
++      nir_store_output(
++         &b, values[location], nir_imm_int(&b, 0),
++         .write_mask = output->component_mask, .src_type = output->type,
++         .io_semantics = (nir_io_semantics){
++            .location = location, .num_slots = 1,
++         });
++   }
++   if (primitive == MESA_PRIM_POINTS)
++      nir_lower_default_point_size(nir);
++   nir_shader_gather_info(nir, b.impl);
++   return nir;
++}
++
+ static nir_shader *
+ kk_create_transform_feedback_passthrough(
+    const nir_shader *vs, enum mesa_prim primitive,
+@@ -3409,6 +3484,13 @@ kk_create_transform_feedback_passthrough(
+           !gs_info->prefix_sum);
+    ralloc_free(builder.shader);
+ 
++   if (vs->info.stage == MESA_SHADER_TESS_EVAL) {
++      assert(gs_info->shape == POLY_GS_SHAPE_STATIC_PER_INSTANCE &&
++             gs_info->max_indices == mesa_vertices_per_prim(primitive));
++      ralloc_free(raster);
++      raster = kk_create_tes_transform_feedback_raster(vs, primitive, outputs);
++   }
++
+    *pre_gs_out = pre_gs;
+    return raster;
+ }
+@@ -4080,16 +4162,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       if (info->nir->info.stage == MESA_SHADER_TESS_EVAL)
+          tess_eval_shader = i;
+ 
+-      if (info->nir->info.stage == MESA_SHADER_VERTEX &&
+-          info->nir->xfb_info != NULL && info->nir->xfb_info->output_count > 0)
+-         transform_feedback_emulation = true;
+    }
+ 
+-   /* The GL 3.x Zink path places XFB on the vertex shader.  Tessellation XFB
+-    * remains outside this targeted fast path until TES can be scheduled as an
+-    * additional software stage. */
+    const bool geometry_shader_emulation = geometry_shader != UINT32_MAX;
+-   transform_feedback_emulation &= !tess && !geometry_shader_emulation;
++   const uint32_t xfb_shader = tess ? tess_eval_shader : 0;
++   if (!geometry_shader_emulation && xfb_shader < shader_count) {
++      const nir_shader *producer = infos[xfb_shader].nir;
++      transform_feedback_emulation = producer->xfb_info &&
++                                     producer->xfb_info->output_count > 0;
++   }
+ 
+    const enum mesa_prim line_raster_prim =
+       state ? kk_graphics_raster_primitive(shader_count, infos, state)
+@@ -4161,7 +4242,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+          ((polygon_point_emulation || line_raster_emulation) &&
+           nir->info.stage == MESA_SHADER_VERTEX) ||
+          (transform_feedback_emulation &&
+-          nir->info.stage == MESA_SHADER_VERTEX);
++          (nir->info.stage == MESA_SHADER_VERTEX ||
++           nir->info.stage == MESA_SHADER_TESS_EVAL));
+ 
+       /* With a geometry shader, fragment PrimitiveID is the value authored by
+        * that shader, not Metal's rasterizer-generated primitive ID.  Expose it
+@@ -4343,16 +4425,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       geometry_pre_gs_shader = total_shaders;
+       nir_shaders[total_shaders++] = pre_gs;
+    } else if (transform_feedback_emulation) {
+-      assert(nir_shaders[0]->info.stage == MESA_SHADER_VERTEX);
++      nir_shader *producer = nir_shaders[xfb_shader];
++      const struct vk_shader_compile_info *producer_compile =
++         &infos[xfb_shader];
+ 
+       nir_shader *pre_gs = NULL;
+       nir_shader *raster = kk_create_transform_feedback_passthrough(
+-         nir_shaders[0],
+-         vk_topology_to_mesa(state->ia->primitive_topology),
++         producer, line_raster_prim,
+          &transform_feedback_info, &pre_gs);
+       kk_lower_xfb_raster_flat_outputs(
+-         raster, nir_shaders[0], nir_shaders[total_shaders - 1u],
+-         vk_topology_to_mesa(state->ia->primitive_topology),
++         raster, producer, nir_shaders[total_shaders - 1u], line_raster_prim,
+          &transform_feedback_info);
+       NIR_PASS(_, raster, kk_nir_lower_poly, pipeline_statistics);
+ 
+@@ -4365,6 +4447,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+          nir_shaders[total_shaders - 1u],
+       };
+       if (!line_raster_materialize) {
++         raster_stages[1]->info.prev_stage = MESA_SHADER_VERTEX;
+          nir_opt_varyings_bulk(raster_stages, ARRAY_SIZE(raster_stages), true,
+                                UINT32_MAX, UINT32_MAX, nir_opts, NULL);
+       }
+@@ -4372,6 +4455,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       if (line_raster_materialize) {
+          line_source_clone = nir_shader_clone(NULL, raster);
+          line_source = line_source_clone;
++         line_source_compile = producer_compile;
+          nir_shader *materialize =
+             kk_create_line_materialize_shader(line_source);
+          NIR_PASS(_, materialize, kk_nir_lower_poly, pipeline_statistics);
+@@ -4379,8 +4463,10 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+                                         dev->disabled_workarounds);
+          /* Unlike application GS/TES NIR, the synthetic XFB pass-through
+           * has not passed through the driver's IO/descriptor lowering. */
+-         kk_lower_nir(dev, materialize, false, pipeline_statistics, infos[0].robustness,
+-                      infos[0].set_layout_count, infos[0].set_layouts, state);
++         kk_lower_nir(dev, materialize, false, pipeline_statistics,
++                      producer_compile->robustness,
++                      producer_compile->set_layout_count,
++                      producer_compile->set_layouts, state);
+          line_raster_materialize_shader = total_shaders;
+          nir_shaders[total_shaders++] = materialize;
+       }
+@@ -4390,19 +4476,38 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       }
+ 
+       msl_preprocess_nir_workarounds(pre_gs, dev->disabled_workarounds);
+-      kk_lower_nir(dev, pre_gs, false, pipeline_statistics, infos[0].robustness,
+-                   infos[0].set_layout_count, infos[0].set_layouts, state);
++      kk_lower_nir(dev, pre_gs, false, pipeline_statistics,
++                   producer_compile->robustness,
++                   producer_compile->set_layout_count,
++                   producer_compile->set_layouts, state);
+       transform_feedback_pre_gs_shader = total_shaders;
+       nir_shaders[total_shaders++] = pre_gs;
+ 
++      /* The application IA still contains patches for TES.  This synthetic
++       * final vertex stage consumes the tessellator's decomposed primitive,
++       * including its point size, clipping and depth-clamp semantics. */
++      struct vk_input_assembly_state raster_ia = *state->ia;
++      if (tess) {
++         raster_ia.primitive_topology =
++            line_raster_prim == MESA_PRIM_POINTS
++               ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST
++            : line_raster_prim == MESA_PRIM_LINES
++               ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
++               : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
++      }
++      struct vk_graphics_pipeline_state raster_state = *state;
++      raster_state.ia = &raster_ia;
+       msl_preprocess_nir_workarounds(raster, dev->disabled_workarounds);
+-      kk_lower_nir(dev, raster, false, pipeline_statistics, infos[0].robustness,
+-                   infos[0].set_layout_count, infos[0].set_layouts, state);
++      kk_lower_nir(dev, raster, false, pipeline_statistics,
++                   producer_compile->robustness,
++                   producer_compile->set_layout_count,
++                   producer_compile->set_layouts, &raster_state);
+       transform_feedback_raster_shader = total_shaders;
+       nir_shaders[total_shaders++] = raster;
+    }
+ 
+-   if (line_raster_materialize && tess && !geometry_shader_emulation) {
++   if (line_raster_materialize && tess && !geometry_shader_emulation &&
++       !transform_feedback_emulation) {
+       line_source = nir_shaders[tess_eval_shader];
+       line_source_compile = &infos[tess_eval_shader];
+       nir_shader *materialize =
+@@ -4503,7 +4608,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       force_sw_vs |= geometry_shader_emulation &&
+                      (i == 0 ||
+                       nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL);
+-      force_sw_vs |= line_raster_materialize &&
++      force_sw_vs |= (line_raster_materialize || transform_feedback_emulation) &&
+                      nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL;
+ 
+       mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
+diff --git a/src/poly/cl/tessellation.cl b/src/poly/cl/tessellation.cl
+index d0004cb..aef5b82 100644
+--- a/src/poly/cl/tessellation.cl
++++ b/src/poly/cl/tessellation.cl
+@@ -40,7 +40,7 @@ poly_load_tes_index(constant struct poly_tess_params *p, uint32_t index)
+    /* Swap second and third vertices of each triangle to flip winding order
+     * dynamically if needed.
+     */
+-   if (p->ccw) {
++   if (p->ccw && !p->winding_in_index_buffer) {
+       uint id = index % 3;
+ 
+       if (id == 1)
+diff --git a/src/poly/cl/tessellator.h b/src/poly/cl/tessellator.h
+index f46081c..2701009 100644
+--- a/src/poly/cl/tessellator.h
++++ b/src/poly/cl/tessellator.h
+@@ -90,6 +90,7 @@ struct INDEX_PATCH_CONTEXT2 {
+ struct CHWTessellator {
+    enum poly_tess_mode mode;
+    uint index_bias;
++   bool ccw;
+ 
+    // array where we will store u/v's for the points we generate
+    global struct poly_tess_point *Point;
+@@ -319,7 +320,9 @@ DefineTriangle(private struct CHWTessellator *ctx, int index0, int index1,
+    index1 = PatchIndexValue(ctx, index1);
+    index2 = PatchIndexValue(ctx, index2);
+ 
+-   vstore3(ctx->index_bias + (uint3)(index0, index1, index2), 0,
++   uint3 indices = ctx->ccw ? (uint3)(index0, index2, index1)
++                            : (uint3)(index0, index1, index2);
++   vstore3(ctx->index_bias + indices, 0,
+            (global uint *)ctx->Index + indexStorageBaseOffset);
+ }
+ 
+@@ -834,6 +837,7 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+    struct CHWTessellator ctx = {
+       .mode = mode,
+       .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
++      .ccw = p->winding_in_index_buffer && p->ccw,
+    };
+ 
+    // Is the patch culled? NaN will pass.
+@@ -1163,6 +1167,7 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+    struct CHWTessellator ctx = {
+       .mode = mode,
+       .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
++      .ccw = p->winding_in_index_buffer && p->ccw,
+    };
+ 
+    // Is the patch culled?
+diff --git a/src/poly/tessellator.h b/src/poly/tessellator.h
+index 6087d97..06dbae1 100644
+--- a/src/poly/tessellator.h
++++ b/src/poly/tessellator.h
+@@ -95,11 +95,14 @@ struct poly_tess_params {
+    uint32_t points_mode;
+    uint32_t isolines;
+ 
+-   /* When fed into a geometry shader, triangles should be counter-clockwise.
+-    * The tessellator always produces clockwise triangles, but we can swap
+-    * dynamically in the TES.
+-    */
++   /* Reverse the tessellator's clockwise triangle order. */
+    uint32_t ccw;
++
++   /* Apply winding while emitting indices, so hardware TES, software TES and
++    * transform feedback consume the same primitive vertices. Other consumers
++    * retain the legacy software-TES-only winding correction when zero.
++    */
++   uint32_t winding_in_index_buffer;
+ } PACKED;
+-static_assert(sizeof(struct poly_tess_params) == 34 * 4,
+-              "struct poly_tess_params must be 34 words");
++static_assert(sizeof(struct poly_tess_params) == 35 * 4,
++              "struct poly_tess_params must be 35 words");

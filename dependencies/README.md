@@ -28,6 +28,9 @@ The dependency products are:
   `.build/dependencies/macos-arm64`;
 - `apple-gpu`: common ANGLE/Metal, libepoxy, and virglrenderer inputs for
   macOS, Simulator, and device;
+- `apple-gpu-vulkan-experiment`: the macOS-only experimental composition that
+  extends that same matrix with pinned Mesa, Vulkan-Headers, and
+  Venus-protocol sources;
 - `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
@@ -69,6 +72,10 @@ dependencies/build-apple-gpu.sh --platform macos
 dependencies/build-apple-gpu.sh --platform ios-simulator
 dependencies/build-apple-gpu.sh --platform ios
 
+dependencies/prepare.sh --product apple-gpu-vulkan-experiment
+dependencies/build-apple-gpu.sh \
+  --product apple-gpu-vulkan-experiment --platform macos
+
 dependencies/prepare.sh --product ios-network
 dependencies/build-ios-network.sh
 dependencies/build-ios-network.sh --platform ios
@@ -103,6 +110,51 @@ absence of undeclared or legacy providers.
 Product-specific prefixes compare only the manifest rows consumed by that
 product. Adding an unrelated dependency does not invalidate an accepted
 prefix, while any change to one of its own rows still requires a rebuild.
+
+## Experimental Vulkan composition
+
+`apple-gpu-vulkan-experiment` is a separately named macOS-only product. It
+reuses the `apple-gpu` source matrix and adds Mesa, which supplies the
+KosmicKrisp Vulkan driver, plus the standalone Vulkan SDK headers and the
+Venus protocol generator. It never alters or replaces `apple-gpu`, and no
+accepted product gains Venus or KosmicKrisp.
+
+Its format-4 platform contract keeps `gl_provider=angle-metal` and adds an
+independent `vk_provider=venus-kosmickrisp`. The build compiles KosmicKrisp as
+`KosmicKrisp.framework`, injects its `vkGetInstanceProcAddr` directly into
+Venus, and disables host Vulkan-loader discovery and downstream downloads.
+Prefix and runtime verification require exactly that provider set and reject a
+second Vulkan provider, an ambient loader, a platform mismatch, a stale
+generated series, or a duplicate framework copy. Host builds generate and test
+the protocol from the authenticated SDK registry before compiling Venus;
+generated codecs are build outputs rather than installed payload, and the
+prefix records the generator source commit and generated-header digest.
+
+The maintained virglrenderer series and the guest Mesa series under
+`tools/rootfs/vulkan/` form one compatibility epoch. The host translates
+KosmicKrisp's unified native memory type into distinct guest-visible
+device-local and host-visible choices, and the paired guest exposes a shared
+host allocation through virtio-gpu opaque-fd and dma-buf handles without a CPU
+staging copy. Changing either side invalidates the experimental prefix and the
+Vulkan rootfs receipt. This pairing is local to this project and is not a
+formal Vulkan conformance claim.
+
+The Venus protocol series is owned by
+`tools/rootfs/vulkan/patches/venus-protocol`. The manifest's explicit
+`rootfs-vulkan:` namespace references that single owner without permitting
+parent-directory paths, unknown owners, or symlink traversal; no second copy
+exists under `patches/`.
+
+KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
+`-Db_ndebug=false` and selected with
+`meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
+regressions use `--suite vulkan`. Assertions must stay active in those builds.
+
+`MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
+diagnostics on stderr: an opaque device identity, GPU start and end host
+seconds, and the commit error code for the whole committed command-buffer
+batch. It is not a Vulkan timestamp-query result, adds no GPU commands, and is
+absent from the disabled path.
 
 The iOS storage build exports only the two file-oriented C entry points used by
 Kernarium. Its archive excludes every GPT fdisk command-line front end and

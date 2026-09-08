@@ -16,7 +16,9 @@ uml_add_tooling_test(
     NAME dependency-build-manifest
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_build_manifest.sh
     LABELS dependency
-    TIMEOUT 30)
+    # Six manifest checks each authenticate every generated patch byte, and the
+    # experimental Vulkan product adds two large series to that inventory.
+    TIMEOUT 180)
 
 uml_add_tooling_test(
     NAME dependency-product-manifest-verifier
@@ -37,6 +39,12 @@ uml_add_tooling_test(
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh
     LABELS dependency gpu
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME dependency-apple-gpu-vulkan-prefix-verifier
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh
+    LABELS dependency gpu
+    TIMEOUT 45)
 
 uml_add_tooling_test(
     NAME dependency-runtime-closure

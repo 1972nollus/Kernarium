@@ -4,6 +4,7 @@ set -eu
 
 BINARY=
 APPLE_GPU_PREFIX=
+APPLE_GPU_PRODUCT=apple-gpu
 FRAMEWORK_DIRECTORY=
 
 fail()
@@ -24,6 +25,11 @@ while [ "$#" -gt 0 ]; do
 		APPLE_GPU_PREFIX=$2
 		shift 2
 		;;
+	--apple-gpu-product)
+		[ "$#" -ge 2 ] || fail "--apple-gpu-product requires a value"
+		APPLE_GPU_PRODUCT=$2
+		shift 2
+		;;
 	--framework-directory)
 		[ "$#" -ge 2 ] || fail "--framework-directory requires a path"
 		FRAMEWORK_DIRECTORY=$2
@@ -32,6 +38,12 @@ while [ "$#" -gt 0 ]; do
 	*) fail "unknown option: $1" ;;
 	esac
 done
+
+case "$APPLE_GPU_PRODUCT" in
+apple-gpu) VULKAN_ENABLED=0 ;;
+apple-gpu-vulkan-experiment) VULKAN_ENABLED=1 ;;
+*) fail "unsupported Apple GPU product: $APPLE_GPU_PRODUCT" ;;
+esac
 
 [ -f "$BINARY" ] || fail "linked production executable is missing: $BINARY"
 case "$APPLE_GPU_PREFIX:$FRAMEWORK_DIRECTORY" in
@@ -50,7 +62,8 @@ STRINGS=$(xcrun --find strings)
 forbidden_dependency()
 {
 	case "$1" in
-	*OpenGL*|*OpenGLES*|*MoltenVK*|*Vulkan*) return 0 ;;
+	*OpenGL*|*OpenGLES*|*Vulkan*) return 0 ;;
+	*KosmicKrisp*) [ "$VULKAN_ENABLED" -eq 0 ] && return 0 ;;
 	esac
 	return 1
 }
@@ -67,6 +80,10 @@ while IFS= read -r dependency; do
 	/System/Library/*|/usr/lib/*) ;;
 	@rpath/EGL.framework/EGL|@rpath/GLESv2.framework/GLESv2)
 		[ -n "$APPLE_GPU_PREFIX" ] ||
+			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
+		;;
+	@rpath/KosmicKrisp.framework/KosmicKrisp)
+		[ "$VULKAN_ENABLED" -eq 1 ] && [ -n "$APPLE_GPU_PREFIX" ] ||
 			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
 		;;
 	*) fail "production executable has a non-system dynamic dependency: $dependency" ;;
@@ -107,28 +124,36 @@ embedded_frameworks=$(
 	cd "$FRAMEWORK_DIRECTORY"
 	find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
 )
+frameworks='EGL GLESv2'
 expected_frameworks='./EGL.framework
 ./GLESv2.framework'
+if [ "$VULKAN_ENABLED" -eq 1 ]; then
+	frameworks="$frameworks KosmicKrisp"
+	expected_frameworks="$expected_frameworks
+./KosmicKrisp.framework"
+fi
 [ "$embedded_frameworks" = "$expected_frameworks" ] ||
 	fail "embedded Apple GPU framework set is not exact: $embedded_frameworks"
 
-for framework in EGL GLESv2; do
+for framework in $frameworks; do
 	source="$SOURCE_FRAMEWORKS/$framework.framework"
 	embedded="$FRAMEWORK_DIRECTORY/$framework.framework"
 	[ -d "$source" ] && [ -d "$embedded" ] ||
 		fail "$framework.framework is missing from the source or runtime"
-	for directory in "$source" "$embedded"; do
-		payload=$(
-			cd "$directory"
-			find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
-		)
-		expected_payload="./$framework
-./Info.plist"
-		[ "$payload" = "$expected_payload" ] ||
-			fail "$framework.framework payload is not exact: $payload"
-	done
-	for file in "$framework" Info.plist; do
-		cmp -s "$source/$file" "$embedded/$file" ||
+	source_payload=$(
+		cd "$source"
+		find . -mindepth 1 -print | LC_ALL=C sort
+	)
+	embedded_payload=$(
+		cd "$embedded"
+		find . -mindepth 1 -print | LC_ALL=C sort
+	)
+	[ "$source_payload" = "$embedded_payload" ] ||
+		fail "$framework.framework payload is not exact: $embedded_payload"
+	printf '%s\n' "$source_payload" |
+	while IFS= read -r relative; do
+		[ -f "$source/$relative" ] || continue
+		cmp -s "$source/$relative" "$embedded/$relative" ||
 			fail "embedded $framework.framework does not match the authenticated prefix"
 	done
 
@@ -148,6 +173,7 @@ for framework in EGL GLESv2; do
 		@rpath/$framework.framework/$framework|\
 		/usr/lib/libc++.1.dylib|/usr/lib/libSystem.B.dylib|\
 		/usr/lib/libobjc.A.dylib|/usr/lib/libz.1.dylib|\
+		/System/Library/Frameworks/AppKit.framework/*|\
 		/System/Library/Frameworks/CoreFoundation.framework/*|\
 		/System/Library/Frameworks/CoreGraphics.framework/*|\
 		/System/Library/Frameworks/Foundation.framework/*|\
@@ -165,7 +191,7 @@ for framework in EGL GLESv2; do
 		fail "runtime must contain exactly one $framework.framework copy"
 done
 
-for framework in EGL GLESv2; do
+for framework in $frameworks; do
 	count=$(printf '%s\n' "$binary_dependencies" |
 		awk -v expected="@rpath/$framework.framework/$framework" \
 			'$0 == expected { count++ } END { print count + 0 }')

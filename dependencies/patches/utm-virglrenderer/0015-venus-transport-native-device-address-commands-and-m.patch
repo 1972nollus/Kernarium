@@ -1,0 +1,729 @@
+From 652554bc2f8ac4038b2721b972442ecd32d06923 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 17:23:49 +0900
+Subject: [PATCH 15/15] venus: transport native device-address commands and
+ maintenance
+
+---
+ meson.build                            |  62 ++++++-
+ meson_options.txt                      |   7 +
+ src/venus/vkr_acceleration_structure.c |  12 +-
+ src/venus/vkr_allocator.c              |   2 +-
+ src/venus/vkr_command_buffer.c         | 222 +++++++++++++++++++++++++
+ src/venus/vkr_common.c                 |   5 +-
+ src/venus/vkr_common.h                 |   4 +-
+ src/venus/vkr_context.c                |   2 +-
+ src/venus/vkr_context.h                |   4 +-
+ src/venus/vkr_descriptor_heap.c        |   2 +-
+ src/venus/vkr_device.c                 |   2 +-
+ src/venus/vkr_device.h                 |   2 +-
+ src/venus/vkr_device_memory.c          |   2 +-
+ src/venus/vkr_device_object.json       |   8 +-
+ src/venus/vkr_device_object.py         |   4 +-
+ src/venus/vkr_host_copy.c              |   2 +-
+ src/venus/vkr_instance.c               |   2 +-
+ src/venus/vkr_instance.h               |   2 +-
+ src/venus/vkr_library.h                |   2 +-
+ src/venus/vkr_physical_device.c        |   2 +-
+ src/venus/vkr_physical_device.h        |   2 +-
+ src/venus/vkr_queue.c                  |   2 +-
+ src/venus/vkr_renderer.c               |   2 +-
+ src/venus/vkr_ring.c                   |   2 +-
+ src/venus/vkr_ring.h                   |   2 +-
+ src/venus/vkr_transport.c              |   4 +-
+ 26 files changed, 334 insertions(+), 30 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index 8563881..9800461 100644
+--- a/meson.build
++++ b/meson.build
+@@ -373,17 +373,73 @@ if metal_dep.found() and with_host_darwin
+ endif
+ 
+ if with_venus
+-   venus_dep = []
++   fs = import('fs')
++   venus_protocol_dir = get_option('venus-protocol-dir')
++   vulkan_include_dir = get_option('vulkan-include-dir')
++   if not fs.is_absolute(venus_protocol_dir) or not fs.is_absolute(vulkan_include_dir)
++      error('Venus requires explicit absolute generated protocol and Vulkan include directories')
++   endif
++   venus_headers = []
++   foreach header : [
++      'vn_protocol_renderer.h',
++      'vn_protocol_renderer_acceleration_structure.h',
++      'vn_protocol_renderer_buffer.h',
++      'vn_protocol_renderer_buffer_view.h',
++      'vn_protocol_renderer_command_buffer.h',
++      'vn_protocol_renderer_command_pool.h',
++      'vn_protocol_renderer_cs.h',
++      'vn_protocol_renderer_defines.h',
++      'vn_protocol_renderer_descriptor_heap.h',
++      'vn_protocol_renderer_descriptor_pool.h',
++      'vn_protocol_renderer_descriptor_set.h',
++      'vn_protocol_renderer_descriptor_set_layout.h',
++      'vn_protocol_renderer_descriptor_update_template.h',
++      'vn_protocol_renderer_device.h',
++      'vn_protocol_renderer_device_memory.h',
++      'vn_protocol_renderer_dispatches.h',
++      'vn_protocol_renderer_event.h',
++      'vn_protocol_renderer_fence.h',
++      'vn_protocol_renderer_framebuffer.h',
++      'vn_protocol_renderer_handles.h',
++      'vn_protocol_renderer_host_copy.h',
++      'vn_protocol_renderer_image.h',
++      'vn_protocol_renderer_image_view.h',
++      'vn_protocol_renderer_info.h',
++      'vn_protocol_renderer_instance.h',
++      'vn_protocol_renderer_pipeline.h',
++      'vn_protocol_renderer_pipeline_cache.h',
++      'vn_protocol_renderer_pipeline_layout.h',
++      'vn_protocol_renderer_private_data_slot.h',
++      'vn_protocol_renderer_query_pool.h',
++      'vn_protocol_renderer_queue.h',
++      'vn_protocol_renderer_render_pass.h',
++      'vn_protocol_renderer_sampler.h',
++      'vn_protocol_renderer_sampler_ycbcr_conversion.h',
++      'vn_protocol_renderer_semaphore.h',
++      'vn_protocol_renderer_shader_module.h',
++      'vn_protocol_renderer_structs.h',
++      'vn_protocol_renderer_transport.h',
++      'vn_protocol_renderer_types.h',
++      'vn_protocol_renderer_util.h',
++   ]
++      venus_headers += files(venus_protocol_dir / header)
++   endforeach
++   foreach header : ['vulkan/vulkan.h', 'vulkan/vulkan_core.h', 'vulkan/vulkan_metal.h']
++      venus_headers += files(vulkan_include_dir / header)
++   endforeach
++   venus_dep = [declare_dependency(
++      sources : venus_headers,
++      include_directories : include_directories(venus_protocol_dir,
++         vulkan_include_dir, vulkan_include_dir / 'vulkan'),
++   )]
+    if get_option('vulkan-dload')
+       conf_data.set('ENABLE_VULKAN_DLOAD', 1)
+    elif with_host_darwin
+-      vulkan_include_dir = get_option('vulkan-include-dir')
+       vulkan_library_file = get_option('vulkan-library-file')
+       if vulkan_include_dir == '' or vulkan_library_file == ''
+          error('Darwin Venus requires explicit Vulkan headers and provider binary')
+       endif
+       venus_dep += declare_dependency(
+-         compile_args : ['-I' + vulkan_include_dir],
+          link_args : [vulkan_library_file],
+       )
+    else
+diff --git a/meson_options.txt b/meson_options.txt
+index 0236b5f..2bbfc23 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -45,6 +45,13 @@ option(
+   description : 'enable support for venus'
+ )
+ 
++option(
++  'venus-protocol-dir',
++  type : 'string',
++  value : '',
++  description : 'explicit build directory containing generated Venus renderer headers'
++)
++
+ option(
+   'vulkan-dload',
+   type : 'boolean',
+diff --git a/src/venus/vkr_acceleration_structure.c b/src/venus/vkr_acceleration_structure.c
+index 2c9cb80..f9ce115 100644
+--- a/src/venus/vkr_acceleration_structure.c
++++ b/src/venus/vkr_acceleration_structure.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_acceleration_structure.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_acceleration_structure.h"
++#include <vn_protocol_renderer_acceleration_structure.h>
+ 
+ #include "vkr_acceleration_structure_gen.h"
+ #include "vkr_context.h"
+@@ -19,6 +19,14 @@ vkr_dispatch_vkCreateAccelerationStructureKHR(
+    vkr_acceleration_structure_create_and_add(dispatch->data, args);
+ }
+ 
++static void
++vkr_dispatch_vkCreateAccelerationStructure2KHR(
++   struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCreateAccelerationStructure2KHR *args)
++{
++   vkr_acceleration_structure2_create_and_add(dispatch->data, args);
++}
++
+ static void
+ vkr_dispatch_vkDestroyAccelerationStructureKHR(
+    struct vn_dispatch_context *dispatch,
+@@ -73,6 +81,8 @@ vkr_context_init_acceleration_structure_dispatch(struct vkr_context *ctx)
+ 
+    dispatch->dispatch_vkCreateAccelerationStructureKHR =
+       vkr_dispatch_vkCreateAccelerationStructureKHR;
++   dispatch->dispatch_vkCreateAccelerationStructure2KHR =
++      vkr_dispatch_vkCreateAccelerationStructure2KHR;
+    dispatch->dispatch_vkDestroyAccelerationStructureKHR =
+       vkr_dispatch_vkDestroyAccelerationStructureKHR;
+    dispatch->dispatch_vkGetAccelerationStructureBuildSizesKHR =
+diff --git a/src/venus/vkr_allocator.c b/src/venus/vkr_allocator.c
+index 3461e6c..fc18052 100644
+--- a/src/venus/vkr_allocator.c
++++ b/src/venus/vkr_allocator.c
+@@ -31,7 +31,7 @@
+ 
+ #include "util/list.h"
+ #include "util/macros.h"
+-#include "venus-protocol/vulkan.h"
++#include <vulkan/vulkan.h>
+ #include "virgl_resource.h"
+ 
+ #include "vkr_library.h"
+diff --git a/src/venus/vkr_command_buffer.c b/src/venus/vkr_command_buffer.c
+index dc42c5a..6756773 100644
+--- a/src/venus/vkr_command_buffer.c
++++ b/src/venus/vkr_command_buffer.c
+@@ -1267,6 +1267,184 @@ vkr_dispatch_vkCmdPushDataEXT(UNUSED struct vn_dispatch_context *dispatch,
+    VKR_CMD_CALL(CmdPushDataEXT, args, args->pPushDataInfo);
+ }
+ 
++static void
++vkr_dispatch_vkCmdEndRendering2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdEndRendering2KHR *args)
++{
++   VKR_CMD_CALL(CmdEndRendering2KHR, args, args->pRenderingEndInfo);
++}
++
++static void
++vkr_dispatch_vkCmdBindIndexBuffer3KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdBindIndexBuffer3KHR *args)
++{
++   VKR_CMD_CALL(CmdBindIndexBuffer3KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdBindVertexBuffers3KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdBindVertexBuffers3KHR *args)
++{
++   VKR_CMD_CALL(CmdBindVertexBuffers3KHR, args, args->firstBinding,
++                args->bindingCount, args->pBindingInfos);
++}
++
++static void
++vkr_dispatch_vkCmdDrawIndirect2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawIndirect2KHR *args)
++{
++   VKR_CMD_CALL(CmdDrawIndirect2KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdDrawIndexedIndirect2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawIndexedIndirect2KHR *args)
++{
++   VKR_CMD_CALL(CmdDrawIndexedIndirect2KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdDispatchIndirect2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDispatchIndirect2KHR *args)
++{
++   VKR_CMD_CALL(CmdDispatchIndirect2KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdCopyMemoryKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdCopyMemoryKHR *args)
++{
++   VKR_CMD_CALL(CmdCopyMemoryKHR, args, args->pCopyMemoryInfo);
++}
++
++static void
++vkr_dispatch_vkCmdCopyMemoryToImageKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdCopyMemoryToImageKHR *args)
++{
++   VKR_CMD_CALL(CmdCopyMemoryToImageKHR, args, args->pCopyMemoryInfo);
++}
++
++static void
++vkr_dispatch_vkCmdCopyImageToMemoryKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdCopyImageToMemoryKHR *args)
++{
++   VKR_CMD_CALL(CmdCopyImageToMemoryKHR, args, args->pCopyMemoryInfo);
++}
++
++static void
++vkr_dispatch_vkCmdUpdateMemoryKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdUpdateMemoryKHR *args)
++{
++   VKR_CMD_CALL(CmdUpdateMemoryKHR, args, args->pDstRange, args->dstFlags,
++                args->dataSize, args->pData);
++}
++
++static void
++vkr_dispatch_vkCmdFillMemoryKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdFillMemoryKHR *args)
++{
++   VKR_CMD_CALL(CmdFillMemoryKHR, args, args->pDstRange, args->dstFlags, args->data);
++}
++
++static void
++vkr_dispatch_vkCmdCopyQueryPoolResultsToMemoryKHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdCopyQueryPoolResultsToMemoryKHR *args)
++{
++   VKR_CMD_CALL(CmdCopyQueryPoolResultsToMemoryKHR, args, args->queryPool,
++                args->firstQuery, args->queryCount, args->pDstRange, args->dstFlags,
++                args->queryResultFlags);
++}
++
++static void
++vkr_dispatch_vkCmdDrawIndirectCount2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawIndirectCount2KHR *args)
++{
++   VKR_CMD_CALL(CmdDrawIndirectCount2KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdDrawIndexedIndirectCount2KHR(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawIndexedIndirectCount2KHR *args)
++{
++   VKR_CMD_CALL(CmdDrawIndexedIndirectCount2KHR, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdBeginConditionalRendering2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdBeginConditionalRendering2EXT *args)
++{
++   VKR_CMD_CALL(CmdBeginConditionalRendering2EXT, args,
++                args->pConditionalRenderingBegin);
++}
++
++static void
++vkr_dispatch_vkCmdBindTransformFeedbackBuffers2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdBindTransformFeedbackBuffers2EXT *args)
++{
++   VKR_CMD_CALL(CmdBindTransformFeedbackBuffers2EXT, args, args->firstBinding,
++                args->bindingCount, args->pBindingInfos);
++}
++
++static void
++vkr_dispatch_vkCmdBeginTransformFeedback2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdBeginTransformFeedback2EXT *args)
++{
++   VKR_CMD_CALL(CmdBeginTransformFeedback2EXT, args, args->firstCounterRange,
++                args->counterRangeCount, args->pCounterInfos);
++}
++
++static void
++vkr_dispatch_vkCmdEndTransformFeedback2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdEndTransformFeedback2EXT *args)
++{
++   VKR_CMD_CALL(CmdEndTransformFeedback2EXT, args, args->firstCounterRange,
++                args->counterRangeCount, args->pCounterInfos);
++}
++
++static void
++vkr_dispatch_vkCmdDrawIndirectByteCount2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawIndirectByteCount2EXT *args)
++{
++   VKR_CMD_CALL(CmdDrawIndirectByteCount2EXT, args, args->instanceCount,
++                args->firstInstance, args->pCounterInfo, args->counterOffset,
++                args->vertexStride);
++}
++
++static void
++vkr_dispatch_vkCmdDrawMeshTasksIndirect2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawMeshTasksIndirect2EXT *args)
++{
++   VKR_CMD_CALL(CmdDrawMeshTasksIndirect2EXT, args, args->pInfo);
++}
++
++static void
++vkr_dispatch_vkCmdDrawMeshTasksIndirectCount2EXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdDrawMeshTasksIndirectCount2EXT *args)
++{
++   VKR_CMD_CALL(CmdDrawMeshTasksIndirectCount2EXT, args, args->pInfo);
++}
++
+ void
+ vkr_context_init_command_pool_dispatch(struct vkr_context *ctx)
+ {
+@@ -1523,6 +1701,50 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
+    dispatch->dispatch_vkCmdDrawMeshTasksIndirectCountEXT =
+       vkr_dispatch_vkCmdDrawMeshTasksIndirectCountEXT;
+ 
++   /* VK_KHR_device_address_commands and VK_KHR_maintenance10 */
++   dispatch->dispatch_vkCmdEndRendering2KHR =
++      vkr_dispatch_vkCmdEndRendering2KHR;
++   dispatch->dispatch_vkCmdBindIndexBuffer3KHR =
++      vkr_dispatch_vkCmdBindIndexBuffer3KHR;
++   dispatch->dispatch_vkCmdBindVertexBuffers3KHR =
++      vkr_dispatch_vkCmdBindVertexBuffers3KHR;
++   dispatch->dispatch_vkCmdDrawIndirect2KHR =
++      vkr_dispatch_vkCmdDrawIndirect2KHR;
++   dispatch->dispatch_vkCmdDrawIndexedIndirect2KHR =
++      vkr_dispatch_vkCmdDrawIndexedIndirect2KHR;
++   dispatch->dispatch_vkCmdDispatchIndirect2KHR =
++      vkr_dispatch_vkCmdDispatchIndirect2KHR;
++   dispatch->dispatch_vkCmdCopyMemoryKHR =
++      vkr_dispatch_vkCmdCopyMemoryKHR;
++   dispatch->dispatch_vkCmdCopyMemoryToImageKHR =
++      vkr_dispatch_vkCmdCopyMemoryToImageKHR;
++   dispatch->dispatch_vkCmdCopyImageToMemoryKHR =
++      vkr_dispatch_vkCmdCopyImageToMemoryKHR;
++   dispatch->dispatch_vkCmdUpdateMemoryKHR =
++      vkr_dispatch_vkCmdUpdateMemoryKHR;
++   dispatch->dispatch_vkCmdFillMemoryKHR =
++      vkr_dispatch_vkCmdFillMemoryKHR;
++   dispatch->dispatch_vkCmdCopyQueryPoolResultsToMemoryKHR =
++      vkr_dispatch_vkCmdCopyQueryPoolResultsToMemoryKHR;
++   dispatch->dispatch_vkCmdDrawIndirectCount2KHR =
++      vkr_dispatch_vkCmdDrawIndirectCount2KHR;
++   dispatch->dispatch_vkCmdDrawIndexedIndirectCount2KHR =
++      vkr_dispatch_vkCmdDrawIndexedIndirectCount2KHR;
++   dispatch->dispatch_vkCmdBeginConditionalRendering2EXT =
++      vkr_dispatch_vkCmdBeginConditionalRendering2EXT;
++   dispatch->dispatch_vkCmdBindTransformFeedbackBuffers2EXT =
++      vkr_dispatch_vkCmdBindTransformFeedbackBuffers2EXT;
++   dispatch->dispatch_vkCmdBeginTransformFeedback2EXT =
++      vkr_dispatch_vkCmdBeginTransformFeedback2EXT;
++   dispatch->dispatch_vkCmdEndTransformFeedback2EXT =
++      vkr_dispatch_vkCmdEndTransformFeedback2EXT;
++   dispatch->dispatch_vkCmdDrawIndirectByteCount2EXT =
++      vkr_dispatch_vkCmdDrawIndirectByteCount2EXT;
++   dispatch->dispatch_vkCmdDrawMeshTasksIndirect2EXT =
++      vkr_dispatch_vkCmdDrawMeshTasksIndirect2EXT;
++   dispatch->dispatch_vkCmdDrawMeshTasksIndirectCount2EXT =
++      vkr_dispatch_vkCmdDrawMeshTasksIndirectCount2EXT;
++
+    /* VK_EXT_descriptor_heap */
+    dispatch->dispatch_vkCmdBindSamplerHeapEXT = vkr_dispatch_vkCmdBindSamplerHeapEXT;
+    dispatch->dispatch_vkCmdBindResourceHeapEXT = vkr_dispatch_vkCmdBindResourceHeapEXT;
+diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
+index 8ff62c7..25634a5 100644
+--- a/src/venus/vkr_common.c
++++ b/src/venus/vkr_common.c
+@@ -9,7 +9,7 @@
+ #include <stdio.h>
+ 
+ #include "util/u_debug.h"
+-#include "venus-protocol/vn_protocol_renderer_info.h"
++#include <vn_protocol_renderer_info.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_cs.h"
+@@ -116,12 +116,15 @@ static const struct vn_info_extension_table vkr_extension_table = {
+    .KHR_cooperative_matrix = true,
+    .KHR_deferred_host_operations = false, /* implementation in driver */
+    .KHR_depth_clamp_zero_one = true,
++   .KHR_device_address_commands = true,
+    .KHR_external_fence_fd = true,
+    .KHR_external_memory_fd = true,
+    .KHR_external_semaphore_fd = true,
+    .KHR_fragment_shader_barycentric = true,
+    .KHR_fragment_shading_rate = true,
+    .KHR_maintenance7 = true,
++   .KHR_maintenance8 = true,
++   .KHR_maintenance10 = true,
+    .KHR_pipeline_library = true,
+    .KHR_ray_query = true,
+    .KHR_ray_tracing_maintenance1 = true,
+diff --git a/src/venus/vkr_common.h b/src/venus/vkr_common.h
+index 283794b..f047227 100644
+--- a/src/venus/vkr_common.h
++++ b/src/venus/vkr_common.h
+@@ -28,8 +28,8 @@
+ #include "util/u_memory.h"
+ #include "util/u_pointer.h"
+ #include "util/u_thread.h"
+-#include "venus-protocol/vulkan.h"
+-#include "venus-protocol/vulkan_metal.h"
++#include <vulkan/vulkan.h>
++#include <vulkan/vulkan_metal.h>
+ #include "virgl_context.h"
+ #include "virgl_util.h"
+ #include "virglrenderer.h"
+diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
+index 144d605..48d3b52 100644
+--- a/src/venus/vkr_context.c
++++ b/src/venus/vkr_context.c
+@@ -10,7 +10,7 @@
+ #include <unistd.h>
+ 
+ #include "util/anon_file.h"
+-#include "venus-protocol/vn_protocol_renderer_dispatches.h"
++#include <vn_protocol_renderer_dispatches.h>
+ 
+ #define XXH_INLINE_ALL
+ #include "util/xxhash.h"
+diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
+index 9d351f3..57c9586 100644
+--- a/src/venus/vkr_context.h
++++ b/src/venus/vkr_context.h
+@@ -9,8 +9,8 @@
+ #include "vkr_common.h"
+ #include "vkr_library.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_defines.h"
+-#include "venus-protocol/vn_protocol_renderer_util.h"
++#include <vn_protocol_renderer_defines.h>
++#include <vn_protocol_renderer_util.h>
+ #include "virgl_resource.h"
+ 
+ #include "vkr_cs.h"
+diff --git a/src/venus/vkr_descriptor_heap.c b/src/venus/vkr_descriptor_heap.c
+index 3d3b57b..0c92125 100644
+--- a/src/venus/vkr_descriptor_heap.c
++++ b/src/venus/vkr_descriptor_heap.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_descriptor_heap.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_descriptor_heap.h"
++#include <vn_protocol_renderer_descriptor_heap.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_device.h"
+diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+index 1c7ddeb..c2870a0 100644
+--- a/src/venus/vkr_device.c
++++ b/src/venus/vkr_device.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_device.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_device.h"
++#include <vn_protocol_renderer_device.h>
+ 
+ #include "vkr_command_buffer.h"
+ #include "vkr_context.h"
+diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
+index 94e7b41..7af0a20 100644
+--- a/src/venus/vkr_device.h
++++ b/src/venus/vkr_device.h
+@@ -8,7 +8,7 @@
+ 
+ #include "vkr_common.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_util.h"
++#include <vn_protocol_renderer_util.h>
+ 
+ #include "vkr_context.h"
+ 
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index aeb7374..7935230 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -11,7 +11,7 @@
+ #include <stdlib.h>
+ 
+ #include "util/anon_file.h"
+-#include "venus-protocol/vn_protocol_renderer_transport.h"
++#include <vn_protocol_renderer_transport.h>
+ 
+ #include "vkr_device_memory_gen.h"
+ #include "vkr_host_memory.h"
+diff --git a/src/venus/vkr_device_object.json b/src/venus/vkr_device_object.json
+index 5a52181..5cc414f 100644
+--- a/src/venus/vkr_device_object.json
++++ b/src/venus/vkr_device_object.json
+@@ -332,7 +332,13 @@
+                 "create_info": "pCreateInfo",
+                 "create_obj": "pAccelerationStructure",
+                 "destroy_cmd": "vkDestroyAccelerationStructureKHR",
+-                "destroy_obj": "accelerationStructure"
++                "destroy_obj": "accelerationStructure",
++                "variants": [
++                    {
++                        "create_func_name": "acceleration_structure2",
++                        "create_cmd": "vkCreateAccelerationStructure2KHR"
++                    }
++                ]
+             }
+         ]
+     }
+diff --git a/src/venus/vkr_device_object.py b/src/venus/vkr_device_object.py
+index dd84467..5ec55ea 100644
+--- a/src/venus/vkr_device_object.py
++++ b/src/venus/vkr_device_object.py
+@@ -491,10 +491,10 @@ def file_header_generator(json_file):
+ 
+     include_filenames = []
+     for json_obj in json_file['objects']:
+-        name = 'venus-protocol/vn_protocol_renderer_{}.h'.format(
++        name = 'vn_protocol_renderer_{}.h'.format(
+             json_obj['vkr_type'])
+         include_filenames.append(name)
+-    protocol_includes = '#include "' + '"\n#include "'.join(include_filenames) + '"'
++    protocol_includes = '#include <' + '>\n#include <'.join(include_filenames) + '>'
+ 
+     return FILE_HEADER_TEMPL.format(script=script, guard=guard,
+             protocol_includes=protocol_includes).lstrip()
+diff --git a/src/venus/vkr_host_copy.c b/src/venus/vkr_host_copy.c
+index 44d84ab..757e049 100644
+--- a/src/venus/vkr_host_copy.c
++++ b/src/venus/vkr_host_copy.c
+@@ -9,7 +9,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#include "venus-protocol/vn_protocol_renderer_host_copy.h"
++#include <vn_protocol_renderer_host_copy.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_device.h"
+diff --git a/src/venus/vkr_instance.c b/src/venus/vkr_instance.c
+index 6c21e09..36c0459 100644
+--- a/src/venus/vkr_instance.c
++++ b/src/venus/vkr_instance.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_instance.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_instance.h"
++#include <vn_protocol_renderer_instance.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_physical_device.h"
+diff --git a/src/venus/vkr_instance.h b/src/venus/vkr_instance.h
+index e742124..0ac5318 100644
+--- a/src/venus/vkr_instance.h
++++ b/src/venus/vkr_instance.h
+@@ -8,7 +8,7 @@
+ 
+ #include "vkr_common.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_util.h"
++#include <vn_protocol_renderer_util.h>
+ 
+ struct vkr_instance {
+    struct vkr_object base;
+diff --git a/src/venus/vkr_library.h b/src/venus/vkr_library.h
+index 48e1e09..d279891 100644
+--- a/src/venus/vkr_library.h
++++ b/src/venus/vkr_library.h
+@@ -8,7 +8,7 @@
+ 
+ #include <stdbool.h>
+ 
+-#include "venus-protocol/vulkan.h"
++#include <vulkan/vulkan.h>
+ 
+ struct vulkan_library {
+    void *handle;
+diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+index 70c61bc..18e0121 100644
+--- a/src/venus/vkr_physical_device.c
++++ b/src/venus/vkr_physical_device.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_physical_device.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_device.h"
++#include <vn_protocol_renderer_device.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_device.h"
+diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
+index 0c0dd21..553503c 100644
+--- a/src/venus/vkr_physical_device.h
++++ b/src/venus/vkr_physical_device.h
+@@ -8,7 +8,7 @@
+ 
+ #include "vkr_common.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_util.h"
++#include <vn_protocol_renderer_util.h>
+ 
+ struct vkr_physical_device {
+    struct vkr_object base;
+diff --git a/src/venus/vkr_queue.c b/src/venus/vkr_queue.c
+index 91f6ec3..a0f9b3f 100644
+--- a/src/venus/vkr_queue.c
++++ b/src/venus/vkr_queue.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_queue.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_queue.h"
++#include <vn_protocol_renderer_queue.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_physical_device.h"
+diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
+index fbac7e1..52ef342 100644
+--- a/src/venus/vkr_renderer.c
++++ b/src/venus/vkr_renderer.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vkr_common.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_info.h"
++#include <vn_protocol_renderer_info.h>
+ #include "virtgpu_drm.h"
+ #include "venus_hw.h"
+ 
+diff --git a/src/venus/vkr_ring.c b/src/venus/vkr_ring.c
+index dc6b578..2644648 100644
+--- a/src/venus/vkr_ring.c
++++ b/src/venus/vkr_ring.c
+@@ -9,7 +9,7 @@
+ #include <sys/resource.h>
+ #include <time.h>
+ 
+-#include "venus-protocol/vn_protocol_renderer_dispatches.h"
++#include <vn_protocol_renderer_dispatches.h>
+ 
+ #include "vkr_context.h"
+ 
+diff --git a/src/venus/vkr_ring.h b/src/venus/vkr_ring.h
+index cd70c14..15adc6f 100644
+--- a/src/venus/vkr_ring.h
++++ b/src/venus/vkr_ring.h
+@@ -8,7 +8,7 @@
+ 
+ #include "vkr_common.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_defines.h"
++#include <vn_protocol_renderer_defines.h>
+ 
+ /* We read from the ring buffer to a temporary buffer for
+  * vkr_context_submit_cmd.  Until that is changed, we want to put a limit
+diff --git a/src/venus/vkr_transport.c b/src/venus/vkr_transport.c
+index 85c0294..61167bb 100644
+--- a/src/venus/vkr_transport.c
++++ b/src/venus/vkr_transport.c
+@@ -5,8 +5,8 @@
+ 
+ #include "vkr_transport.h"
+ 
+-#include "venus-protocol/vn_protocol_renderer_dispatches.h"
+-#include "venus-protocol/vn_protocol_renderer_transport.h"
++#include <vn_protocol_renderer_dispatches.h>
++#include <vn_protocol_renderer_transport.h>
+ 
+ #include "vkr_context.h"
+ #include "vkr_ring.h"

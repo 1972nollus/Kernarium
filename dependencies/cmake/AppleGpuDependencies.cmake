@@ -2,15 +2,32 @@
 
 include_guard(GLOBAL)
 
+set(UML_APPLE_GPU_PRODUCT "apple-gpu" CACHE STRING
+    "Verified Apple GPU dependency product")
+set_property(CACHE UML_APPLE_GPU_PRODUCT PROPERTY STRINGS
+    apple-gpu apple-gpu-vulkan-experiment)
+if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu")
+    set(_uml_apple_gpu_vulkan FALSE)
+elseif(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+    set(_uml_apple_gpu_vulkan TRUE)
+    if(NOT UML_APPLE_PLATFORM STREQUAL "macos")
+        message(FATAL_ERROR
+            "The KosmicKrisp Vulkan product currently supports macOS only")
+    endif()
+else()
+    message(FATAL_ERROR
+        "Unsupported Apple GPU dependency product: ${UML_APPLE_GPU_PRODUCT}")
+endif()
+
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_gpu_default_prefix
-        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu/macos-arm64")
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/macos-arm64")
 elseif(UML_APPLE_PLATFORM STREQUAL "ios")
     set(_uml_apple_gpu_default_prefix
-        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu/ios-device-arm64")
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/ios-device-arm64")
 elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
     set(_uml_apple_gpu_default_prefix
-        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu/ios-simulator-arm64")
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/ios-simulator-arm64")
 else()
     message(FATAL_ERROR
         "The Apple GPU product does not support ${UML_APPLE_PLATFORM}")
@@ -32,6 +49,14 @@ set(_uml_apple_gpu_inputs
     "${_uml_apple_gpu_include}/virgl/virgl_hw.h"
     "${_uml_apple_gpu_frameworks}/EGL.framework/EGL"
     "${_uml_apple_gpu_frameworks}/GLESv2.framework/GLESv2")
+if(_uml_apple_gpu_vulkan)
+    list(APPEND _uml_apple_gpu_inputs
+        "${_uml_apple_gpu_include}/vulkan/vulkan.h"
+        "${_uml_apple_gpu_include}/vulkan/vulkan_core.h"
+        "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv"
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/Modules/module.modulemap")
+endif()
 foreach(_uml_apple_gpu_input IN LISTS _uml_apple_gpu_inputs)
     if(NOT EXISTS "${_uml_apple_gpu_input}")
         message(FATAL_ERROR
@@ -46,6 +71,7 @@ execute_process(
         -DPREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
         -DPLATFORM=${UML_APPLE_PLATFORM}
+        -DPRODUCT=${UML_APPLE_GPU_PRODUCT}
         -P ${CMAKE_CURRENT_LIST_DIR}/VerifyAppleGpuPrefix.cmake
     COMMAND_ERROR_IS_FATAL ANY)
 
@@ -74,12 +100,26 @@ set_target_properties(uml_third_party_epoxy PROPERTIES
         "UML::ThirdPartyAngleEgl;UML::ThirdPartyAngleGles")
 add_library(UML::ThirdPartyEpoxy ALIAS uml_third_party_epoxy)
 
+if(_uml_apple_gpu_vulkan)
+    add_library(uml_third_party_kosmickrisp SHARED IMPORTED GLOBAL)
+    set_target_properties(uml_third_party_kosmickrisp PROPERTIES
+        IMPORTED_LOCATION
+            "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
+        INTERFACE_INCLUDE_DIRECTORIES "${_uml_apple_gpu_include}")
+    add_library(UML::ThirdPartyKosmicKrisp ALIAS
+        uml_third_party_kosmickrisp)
+endif()
+
+set(_uml_apple_gpu_virgl_links
+    UML::ThirdPartyEpoxy Threads::Threads "${_uml_apple_gpu_math}")
+if(_uml_apple_gpu_vulkan)
+    list(APPEND _uml_apple_gpu_virgl_links UML::ThirdPartyKosmicKrisp)
+endif()
 add_library(uml_third_party_virglrenderer STATIC IMPORTED GLOBAL)
 set_target_properties(uml_third_party_virglrenderer PROPERTIES
     IMPORTED_LOCATION "${_uml_apple_gpu_lib}/libvirglrenderer.a"
     INTERFACE_INCLUDE_DIRECTORIES "${_uml_apple_gpu_include}/virgl"
-    INTERFACE_LINK_LIBRARIES
-        "UML::ThirdPartyEpoxy;Threads::Threads;${_uml_apple_gpu_math}")
+    INTERFACE_LINK_LIBRARIES "${_uml_apple_gpu_virgl_links}")
 add_library(UML::ThirdPartyVirglrenderer ALIAS
     uml_third_party_virglrenderer)
 
@@ -88,6 +128,7 @@ add_custom_target(uml_apple_gpu_prefix_verify
         -DPREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
         -DPLATFORM=${UML_APPLE_PLATFORM}
+        -DPRODUCT=${UML_APPLE_GPU_PRODUCT}
         -P ${CMAKE_CURRENT_LIST_DIR}/VerifyAppleGpuPrefix.cmake
     DEPENDS ${_uml_apple_gpu_inputs}
     COMMENT "Checking the common ${UML_APPLE_PLATFORM} Apple GPU prefix"
@@ -104,3 +145,8 @@ endif()
 set(UML_APPLE_GPU_FRAMEWORK_DIRECTORY
     "${_uml_apple_gpu_frameworks}"
     CACHE INTERNAL "Verified Apple GPU runtime framework directory")
+if(_uml_apple_gpu_vulkan)
+    set(UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework"
+        CACHE INTERNAL "Verified KosmicKrisp runtime framework")
+endif()

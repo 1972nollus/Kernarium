@@ -1,0 +1,96 @@
+From d3a70cf7e2959f906dc9689f848c110cfc6624fa Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 18:00:57 +0900
+Subject: [PATCH 12/15] venus: expose host memory for linear images
+
+---
+ src/venus/vkr_image.c | 17 +++++++++++++----
+ src/venus/vkr_image.h |  1 +
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
+index 53f76d6..5036b68 100644
+--- a/src/venus/vkr_image.c
++++ b/src/venus/vkr_image.c
+@@ -12,6 +12,7 @@ static void
+ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+                            struct vn_command_vkCreateImage *args)
+ {
++   const VkImageTiling tiling = args->pCreateInfo->tiling;
+    /* XXX If VkExternalMemoryImageCreateInfo is chained by the app, all is
+     * good.  If it is not chained, we might still bind an external memory to
+     * the image, because vkr_dispatch_vkAllocateMemory makes any HOST_VISIBLE
+@@ -31,7 +32,9 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+     * situation because the app does not consider the memory external.
+     */
+ 
+-   vkr_image_create_and_add(dispatch->data, args);
++   struct vkr_image *image = vkr_image_create_and_add(dispatch->data, args);
++   if (image)
++      image->tiling = tiling;
+ }
+ 
+ static void
+@@ -48,12 +51,14 @@ vkr_dispatch_vkGetImageMemoryRequirements(
+ {
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vn_device_proc_table *vk = &dev->proc_table;
++   struct vkr_image *image = vkr_image_from_handle(args->image);
+ 
+    vn_replace_vkGetImageMemoryRequirements_args_handle(args);
+    vk->GetImageMemoryRequirements(args->device, args->image, args->pMemoryRequirements);
+    args->pMemoryRequirements->memoryTypeBits =
+       vkr_physical_device_get_guest_memory_type_bits(
+-         dev->physical_device, args->pMemoryRequirements->memoryTypeBits, false);
++         dev->physical_device, args->pMemoryRequirements->memoryTypeBits,
++         image->tiling == VK_IMAGE_TILING_LINEAR);
+ }
+ 
+ static void
+@@ -63,13 +68,15 @@ vkr_dispatch_vkGetImageMemoryRequirements2(
+ {
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vn_device_proc_table *vk = &dev->proc_table;
++   struct vkr_image *image = vkr_image_from_handle(args->pInfo->image);
+ 
+    vn_replace_vkGetImageMemoryRequirements2_args_handle(args);
+    vk->GetImageMemoryRequirements2(args->device, args->pInfo, args->pMemoryRequirements);
+    args->pMemoryRequirements->memoryRequirements.memoryTypeBits =
+       vkr_physical_device_get_guest_memory_type_bits(
+          dev->physical_device,
+-         args->pMemoryRequirements->memoryRequirements.memoryTypeBits, false);
++         args->pMemoryRequirements->memoryRequirements.memoryTypeBits,
++         image->tiling == VK_IMAGE_TILING_LINEAR);
+ }
+ 
+ static void
+@@ -230,6 +237,8 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+ {
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vn_device_proc_table *vk = &dev->proc_table;
++   const bool linear =
++      args->pInfo->pCreateInfo->tiling == VK_IMAGE_TILING_LINEAR;
+ 
+    vn_replace_vkGetDeviceImageMemoryRequirements_args_handle(args);
+    vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo,
+@@ -237,7 +246,7 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+    args->pMemoryRequirements->memoryRequirements.memoryTypeBits =
+       vkr_physical_device_get_guest_memory_type_bits(
+          dev->physical_device,
+-         args->pMemoryRequirements->memoryRequirements.memoryTypeBits, false);
++         args->pMemoryRequirements->memoryRequirements.memoryTypeBits, linear);
+ }
+ 
+ static void
+diff --git a/src/venus/vkr_image.h b/src/venus/vkr_image.h
+index 70a9800..a491b8d 100644
+--- a/src/venus/vkr_image.h
++++ b/src/venus/vkr_image.h
+@@ -10,6 +10,7 @@
+ 
+ struct vkr_image {
+    struct vkr_object base;
++   VkImageTiling tiling;
+ };
+ VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
+ 

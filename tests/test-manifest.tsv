@@ -698,6 +698,7 @@ dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tool
 dependency-product-manifest-verifier	tests/tooling/dependencies/test_manifest_product_verifier.cmake	tooling	retained
 dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained
 dependency-apple-gpu-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh	tooling	retained
+dependency-apple-gpu-vulkan-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh	tooling	retained
 dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained
 guest-overlay-systemd-smoke	tests/integration	integration	retained
 guest-interpreter-smoke	tests/integration/jit	integration	retained

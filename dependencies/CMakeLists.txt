@@ -31,8 +31,14 @@ foreach(_uml_dependency_manifest_row IN LISTS _uml_dependency_manifest_rows)
             _uml_dependency_series_relative)
         if(NOT _uml_dependency_manifest_name STREQUAL "name" AND
                 NOT _uml_dependency_series_relative STREQUAL "-")
-            set(_uml_dependency_series
-                "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_dependency_series_relative}")
+            if(_uml_dependency_series_relative STREQUAL
+                    "rootfs-vulkan:patches/venus-protocol/series.tsv")
+                set(_uml_dependency_series
+                    "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv")
+            else()
+                set(_uml_dependency_series
+                    "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_dependency_series_relative}")
+            endif()
             list(APPEND _uml_dependency_patch_inputs
                 "${_uml_dependency_series}")
             get_filename_component(_uml_dependency_series_directory

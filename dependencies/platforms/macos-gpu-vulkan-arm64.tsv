@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+field	value
+format	4
+product	apple-gpu-vulkan-experiment
+platform	macos
+architecture	arm64
+deployment_target	26.0
+linkage	static-and-framework
+payload	static-libepoxy,static-libvirglrenderer,dynamic-EGL-framework,dynamic-GLESv2-framework,dynamic-KosmicKrisp-framework,Vulkan-Headers
+gl_provider	angle-metal
+vk_provider	venus-kosmickrisp
+graphics_api	ANGLE-EGL-GLES,Vulkan
+presentation_api	Metal
+renderer_features	gles,venus,native-share-texture,render-server-thread,direct-vulkan-entrypoint,video-h264-decode,video-hevc-decode,video-jpeg-decode
+components	utm-webkit,utm-libepoxy,utm-virglrenderer,mesa,vulkan-headers,venus-protocol
+source_manifest	dependencies/manifest.tsv
+common_recipe	apple-gpu-vulkan-experiment-v3
+kosmickrisp_linkage	dynamic-framework
+vulkan_entrypoint	direct-vkGetInstanceProcAddr
+venus_dynamic_loading	disabled
+helper_process	disabled
