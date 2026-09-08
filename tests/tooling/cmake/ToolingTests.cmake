@@ -28,6 +28,13 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME git-identity-environment-contract
+    COMMAND
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_git_identity_contract.sh
+    LABELS audit;kernel;dependency;android
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME apple-xcframework-staging
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_create_apple_xcframework.sh
         ${PROJECT_SOURCE_DIR}/scripts/create-apple-xcframework.py
