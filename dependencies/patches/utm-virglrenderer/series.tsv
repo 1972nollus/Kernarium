@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	2ce8c1816046e1ea035f1c5df31661decdee8d14f2a00413e80784634a4fdafc	vrend: support GLES 3.0 MSAA on iOS Metal
-2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	be2d5acd342e2c90ec95b50d680dd47393f4fd95847d74c36789e0a7169023da	vrend: map GLES separate transform feedback buffers
-3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	9aa9b3d3c24ba441f6e22716720cf9d4320df58ca46c70b3cd56998841c322df	vrend: stop advertising emulated GLES Z32_UNORM
-4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	abc20b54d535226323d10684884ebf4c117ae1d03c148120c78bb495e95c7093	vrend: add VideoToolbox decode backend
-5	0005-vrend-use-base-instance-path-for-base-vertex-draws.patch	50d4b7e5608821a16639edcaa0ec14c8954fce63	150d3e3e4a63f1465f36067730c4657881e41b9139052e0d762a737a891ddb2c	vrend: use base-instance path for base-vertex draws
-6	0006-venus-require-an-explicit-Darwin-Vulkan-provider.patch	abdd831ed0d0a744969b56bd5dfc4508ffe79a44	3e650a9b566e6cff389cb28a9740feee042a2dacd80495d9d00a1ee4c9a65b40	venus: require an explicit Darwin Vulkan provider
-7	0007-venus-use-truthful-Apple-external-memory-capabilitie.patch	6cceced89453b051d3b747fe022982fbfccab535	acfc9a9474fd511c9f5f79f1863762774b6beff7f1c8cd24bf33a7796b952c93	venus: use truthful Apple external-memory capabilities
-8	0008-util-fall-back-to-app-tmpdir-for-iOS-shmem.patch	31c415f86b7cc15bfe6a5c1f9f40d5249eaf6528	1e0bd06f84fd9bc06cb805bbbe86b5fa911af0b5f774a3b9a0387310f322a955	util: fall back to app tmpdir for iOS shmem
-9	0009-venus-keep-pipelines-created-before-a-failure.patch	045dd1146284e9b7bab93c9015b2d58807a58ed2	bad930b0c41590e288e6ab828904032d74d0720eee67eca5da208d0ee4aab46b	venus: keep pipelines created before a failure
-10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	59d5257f9cb3d8f4ee5ef0d7ec57fa020d7846a3d6fdac86fa0c65efc88c5596	venus: stage the host image copy reply
-11	0011-venus-separate-host-imports-from-optimal-images.patch	96a7d31b77d68b3e1a753d2d506bc0078d4edbe4	6eaa6e950c70485f089a8749d1dc8a5fbdc3b8c542eb3b168de5e1b1e5d8f140	venus: separate host imports from optimal images
-12	0012-venus-expose-host-memory-for-linear-images.patch	f100e52c20faaa397a8478d3644b75ceae2765e1	5c49e22d679a3a8e97eb835e7d3f8ae7e4949861165d610a22020da15bd3f11f	venus: expose host memory for linear images
-13	0013-venus-bridge-host-memory-through-guest-dma-bufs.patch	220e193b0b20cab518c038f5ef35b9b9aacd657e	75fce243a7474be66b11043e2d15ded3c155ab83855b0c04f30cb78ec3d4c2a8	venus: bridge host memory through guest dma-bufs
-14	0014-venus-present-native-Metal-scanouts.patch	65bd998e314450c82e500f6c48392a15e4749dcc	4c8d37e9fd950a0124b790b3b9b77bb8cb63724cad2bf335546dad8dfe3be60d	venus: present native Metal scanouts
-15	0015-venus-transport-native-device-address-commands-and-m.patch	319477bee92e3cf25b7f28125273082aabda6f67	fa8742c3eb49652264e8e3f73336cbec61366d6cf59f15bd41bc2e7421a9503e	venus: transport native device-address commands and maintenance
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	68fa020d7ce087f03f601bf59998f07f0b36deb713999494879d157024a38591	vrend: support GLES 3.0 MSAA on iOS Metal
+2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	3810d2599e26f8e8f7a72d440a5a8730bd5f45c7dd7a8f77f597090f1fd3748e	vrend: map GLES separate transform feedback buffers
+3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	2109bce26a193ba7e0e2802054207a4237aa415b5efc22b9f8efb523d3815989	vrend: stop advertising emulated GLES Z32_UNORM
+4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	571c23d21e22e5d5fcca5b89ebe540cb7b23faa35d06df18610aa6f931ad11d5	vrend: add VideoToolbox decode backend
+5	0005-vrend-use-base-instance-path-for-base-vertex-draws.patch	50d4b7e5608821a16639edcaa0ec14c8954fce63	43ac77811534abbfe2426a3a426aa65d49274fd5f852a1027bfe8d5f1faa4763	vrend: use base-instance path for base-vertex draws
+6	0006-venus-require-an-explicit-Darwin-Vulkan-provider.patch	abdd831ed0d0a744969b56bd5dfc4508ffe79a44	b23244f43a04f977757f446e747c381b9c76aa587ac89cf9bb365ad5af778988	venus: require an explicit Darwin Vulkan provider
+7	0007-venus-use-truthful-Apple-external-memory-capabilitie.patch	6cceced89453b051d3b747fe022982fbfccab535	1d38df69b8ca023e2f4bfac9482a12f376a4b2aa6c2256d384702c9bf29dadc4	venus: use truthful Apple external-memory capabilities
+8	0008-util-fall-back-to-app-tmpdir-for-iOS-shmem.patch	31c415f86b7cc15bfe6a5c1f9f40d5249eaf6528	4ee2d8660fef9635e141c9868385b4a1bf9b60418f772859a8113fdefc394ad9	util: fall back to app tmpdir for iOS shmem
+9	0009-venus-keep-pipelines-created-before-a-failure.patch	045dd1146284e9b7bab93c9015b2d58807a58ed2	e1fe97ad7c093965c9b02b3eecb961b0957cc8bbaa97ff4c279194fad180fba6	venus: keep pipelines created before a failure
+10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	1e43961ed5659d90af6114dda4282076a3e02cc15e3b0f14dc7cd0f4857635cd	venus: stage the host image copy reply
+11	0011-venus-separate-host-imports-from-optimal-images.patch	96a7d31b77d68b3e1a753d2d506bc0078d4edbe4	85c83754dbfa67bcca3f41733bbe1eec0583bf9fba30da3f93f71c65cac81c93	venus: separate host imports from optimal images
+12	0012-venus-expose-host-memory-for-linear-images.patch	f100e52c20faaa397a8478d3644b75ceae2765e1	51d6d89e369bfb3d97d7500525924c99be1269f7e809e872a9e26753f2508dfd	venus: expose host memory for linear images
+13	0013-venus-bridge-host-memory-through-guest-dma-bufs.patch	220e193b0b20cab518c038f5ef35b9b9aacd657e	6748736bbe468de3288f85f7755c04ea3c0b30683e3e7bef47ac167f168cabba	venus: bridge host memory through guest dma-bufs
+14	0014-venus-present-native-Metal-scanouts.patch	65bd998e314450c82e500f6c48392a15e4749dcc	c44a7be79733e922278ade4f8e8fc15688d8436a82759a2a3cad68154951a2ed	venus: present native Metal scanouts
+15	0015-venus-transport-native-device-address-commands-and-m.patch	319477bee92e3cf25b7f28125273082aabda6f67	386c4bd2960b99da2aba640b15a3a9af1c4f29b4ec762c2500f6bdb84882ac66	venus: transport native device-address commands and maintenance

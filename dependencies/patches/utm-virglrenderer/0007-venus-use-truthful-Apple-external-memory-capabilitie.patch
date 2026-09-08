@@ -1,4 +1,4 @@
-From a916daaccaee1a1bf8e4a65ea4fb25b42bb7b5b9 Mon Sep 17 00:00:00 2001
+From a70790ce5830e6a99847c91733ce2bc363e15039 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:04:14 +0900
 Subject: [PATCH 07/15] venus: use truthful Apple external-memory capabilities

@@ -1,4 +1,4 @@
-From 67ac54c65ec0a16108d178780f44b2cee43dcd3b Mon Sep 17 00:00:00 2001
+From 0f28489520ca128eaac31de8afcfa9721b097efb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 08:00:36 +0900
 Subject: [PATCH 10/15] venus: stage the host image copy reply

@@ -1,4 +1,4 @@
-From e18c1ae59a7c0eaf9a605348a3a1728657a09b50 Mon Sep 17 00:00:00 2001
+From 3a287efdc4a33178345950d883aa288bd794453d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 05:26:27 +0900
 Subject: [PATCH 03/15] vrend: stop advertising emulated GLES Z32_UNORM

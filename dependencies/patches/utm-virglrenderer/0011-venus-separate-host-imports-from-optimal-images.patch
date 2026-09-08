@@ -1,4 +1,4 @@
-From 4c886f9046efba93bfc1b989b09d23ee2bcab039 Mon Sep 17 00:00:00 2001
+From b9a1dfe040aab2caca98ec4d721ab705d59dca6d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
 Subject: [PATCH 11/15] venus: separate host imports from optimal images
