@@ -1,5 +1,5 @@
 From 3bc292722491628f8a24ca2cbc6232255e8ff89f Mon Sep 17 00:00:00 2001
-From: Kernarium Android Builder <android-build@kernarium.local>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 26 Aug 2026 06:15:50 +0000
 Subject: [PATCH 1/4] UML-ANDROID-LOCAL: Settings omit unavailable radio
  controls

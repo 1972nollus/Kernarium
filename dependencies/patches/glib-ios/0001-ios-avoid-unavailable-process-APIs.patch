@@ -1,5 +1,5 @@
 From c2626c62512f16deae9fee3faad6454295f1bd20 Mon Sep 17 00:00:00 2001
-From: Kernarium <kernarium@example.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 00:30:00 +0900
 Subject: [PATCH] ios: avoid unavailable process APIs
 

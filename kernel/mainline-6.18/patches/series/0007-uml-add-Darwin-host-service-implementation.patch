@@ -1,5 +1,5 @@
 From fc21cf0bbb062483c633950fd77c72d6fc9d6b13 Mon Sep 17 00:00:00 2001
-From: Darwin UML maintainers <uml-darwin@example.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
 Subject: [PATCH 07/29] uml: add Darwin host service implementation
 

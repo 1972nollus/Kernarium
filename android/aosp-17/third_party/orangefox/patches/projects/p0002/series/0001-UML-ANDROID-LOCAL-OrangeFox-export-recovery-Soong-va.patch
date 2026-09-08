@@ -1,6 +1,5 @@
 From 951961dd6d48ee1d2ebd092568f85ab21c8079b9 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin Android patch maintainer
- <noreply@linux-um-darwin.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 03:41:57 +0000
 Subject: [PATCH] UML-ANDROID-LOCAL: OrangeFox export recovery Soong variables
 

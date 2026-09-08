@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-ios-avoid-unavailable-process-APIs.patch	bcb4358e04aa65f03bd19b5577d6c84d571bce21	2ff5f7dbd1454417b674b1cbeabcd893dcca80b49e65c66d30841d26a0aa45e5	ios: avoid unavailable process APIs
+1	0001-ios-avoid-unavailable-process-APIs.patch	bcb4358e04aa65f03bd19b5577d6c84d571bce21	537a2e789c053bc7d0fd651315f9152e1c80c0250ec7994f6aec472d8273474d	ios: avoid unavailable process APIs

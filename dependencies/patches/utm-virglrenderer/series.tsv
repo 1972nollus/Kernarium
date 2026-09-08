@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	68fa020d7ce087f03f601bf59998f07f0b36deb713999494879d157024a38591	vrend: support GLES 3.0 MSAA on iOS Metal
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	9067153557b9bf6d9c512d223031fba0c7f871dcd25219714b7b67421f5bfaaa	vrend: support GLES 3.0 MSAA on iOS Metal
 2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	3810d2599e26f8e8f7a72d440a5a8730bd5f45c7dd7a8f77f597090f1fd3748e	vrend: map GLES separate transform feedback buffers
 3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	2109bce26a193ba7e0e2802054207a4237aa415b5efc22b9f8efb523d3815989	vrend: stop advertising emulated GLES Z32_UNORM
 4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	571c23d21e22e5d5fcca5b89ebe540cb7b23faa35d06df18610aa6f931ad11d5	vrend: add VideoToolbox decode backend
@@ -9,7 +9,7 @@ order	patch	stable_patch_id	sha256	subject
 7	0007-venus-use-truthful-Apple-external-memory-capabilitie.patch	6cceced89453b051d3b747fe022982fbfccab535	1d38df69b8ca023e2f4bfac9482a12f376a4b2aa6c2256d384702c9bf29dadc4	venus: use truthful Apple external-memory capabilities
 8	0008-util-fall-back-to-app-tmpdir-for-iOS-shmem.patch	31c415f86b7cc15bfe6a5c1f9f40d5249eaf6528	4ee2d8660fef9635e141c9868385b4a1bf9b60418f772859a8113fdefc394ad9	util: fall back to app tmpdir for iOS shmem
 9	0009-venus-keep-pipelines-created-before-a-failure.patch	045dd1146284e9b7bab93c9015b2d58807a58ed2	e1fe97ad7c093965c9b02b3eecb961b0957cc8bbaa97ff4c279194fad180fba6	venus: keep pipelines created before a failure
-10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	1e43961ed5659d90af6114dda4282076a3e02cc15e3b0f14dc7cd0f4857635cd	venus: stage the host image copy reply
+10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	6d869b437e1a71292ecd1e727f2b3948490bdb42476daf331d9628b2128d42be	venus: stage the host image copy reply
 11	0011-venus-separate-host-imports-from-optimal-images.patch	96a7d31b77d68b3e1a753d2d506bc0078d4edbe4	85c83754dbfa67bcca3f41733bbe1eec0583bf9fba30da3f93f71c65cac81c93	venus: separate host imports from optimal images
 12	0012-venus-expose-host-memory-for-linear-images.patch	f100e52c20faaa397a8478d3644b75ceae2765e1	51d6d89e369bfb3d97d7500525924c99be1269f7e809e872a9e26753f2508dfd	venus: expose host memory for linear images
 13	0013-venus-bridge-host-memory-through-guest-dma-bufs.patch	220e193b0b20cab518c038f5ef35b9b9aacd657e	6748736bbe468de3288f85f7755c04ea3c0b30683e3e7bef47ac167f168cabba	venus: bridge host memory through guest dma-bufs

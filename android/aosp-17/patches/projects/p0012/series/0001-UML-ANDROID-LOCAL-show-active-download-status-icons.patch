@@ -1,6 +1,5 @@
 From 7014299d57bdad98cdda0048cf811f344671e965 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin Android patch maintainer
- <noreply@linux-um-darwin.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 13:40:36 +0000
 Subject: [PATCH 1/1] UML-ANDROID-LOCAL: show active download status icons
 

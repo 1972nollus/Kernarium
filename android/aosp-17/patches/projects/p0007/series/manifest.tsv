@@ -3,6 +3,6 @@
 order	filename	stable_patch_id	sha256	subject
 1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	14bc5636845e1c0ad8b3cfa7d4bad1378d626176093c2ea4f3d5f0ddc7087b70	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
 2	0002-UML-ANDROID-LOCAL-audio-make-assistant-default-confi.patch	7f895c9222f43b36b91a719b0ab69b73ee086144	666b13c75f44305aca5e2d38ef0868ea90391a5137e98be879de988f5c776a0b	UML-ANDROID-LOCAL: audio: make assistant default configurable
-3	0003-UML-ANDROID-LOCAL-enable-configurable-developer-defa.patch	157c49692a91307ebeecc70915b74df65590e5a1	4c19a5235f309d97777502b70e45cd364cf48305e145eee020f99b3fe7fdb7f0	UML-ANDROID-LOCAL: enable configurable developer defaults
+3	0003-UML-ANDROID-LOCAL-enable-configurable-developer-defa.patch	157c49692a91307ebeecc70915b74df65590e5a1	71c3b254b749a39054abf9acbb0221093d4150c7d73e31c3eb5fbe621a405fd3	UML-ANDROID-LOCAL: enable configurable developer defaults
 4	0004-UML-ANDROID-LOCAL-notification-show-silent-status-ic.patch	f811015715eef6d3983fa44291ca1e9fa06ceaea	99190a6396582ead4db9fd21d1d7b6a857271e9f4ca677e041bd3acd5d80db27	UML-ANDROID-LOCAL: notification: show silent status icons by default
 5	0005-UML-ANDROID-LOCAL-support-wireless-debugging-over-Et.patch	827abc97f400c0d9b82657037c897957b87ea722	ba4753191cd525c4657984e6a57381f0d2a0c8b588a135b02d25c20bd4282abb	UML-ANDROID-LOCAL: support wireless debugging over Ethernet

@@ -1,6 +1,5 @@
 From 6e8fe684bb6bc094b31977278aad2fa76693bcd8 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin kernel patch maintainer
- <noreply@linux-um-darwin.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
 Subject: [PATCH 24/29] UML-DARWIN-LOCAL: um: batch UBD discard ranges
 

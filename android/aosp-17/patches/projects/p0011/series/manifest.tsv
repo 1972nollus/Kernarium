@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-allow-boot-time-ADB-auth-bypass.patch	97418a3b30cc4447bfd2dcdbbd905bd5e55c973a	5ba1e8f1fe002f7c9d285fa2c8790fc02d3c9cb2aeb7d744416073646453313f	UML-ANDROID-LOCAL: allow boot-time ADB auth bypass
+1	0001-UML-ANDROID-LOCAL-allow-boot-time-ADB-auth-bypass.patch	97418a3b30cc4447bfd2dcdbbd905bd5e55c973a	64bcbdcffa8905d40d618c4a435331089be4f42d0ab32a2e5fa7c180fc8d4417	UML-ANDROID-LOCAL: allow boot-time ADB auth bypass

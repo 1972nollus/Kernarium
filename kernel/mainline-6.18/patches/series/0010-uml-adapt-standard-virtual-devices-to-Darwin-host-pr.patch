@@ -1,5 +1,5 @@
 From cb73ea653a2911f11946af578febb84a74c5e860 Mon Sep 17 00:00:00 2001
-From: Darwin UML maintainers <uml-darwin@example.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:11 +0900
 Subject: [PATCH 10/29] uml: adapt standard virtual devices to Darwin host
  providers

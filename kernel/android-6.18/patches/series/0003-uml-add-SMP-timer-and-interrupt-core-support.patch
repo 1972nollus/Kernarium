@@ -1,5 +1,5 @@
 From 67a953e6ab24ea2422e5f9dd54e45519aecb861a Mon Sep 17 00:00:00 2001
-From: Darwin UML maintainers <uml-darwin@example.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
 Subject: [PATCH 03/40] uml: add SMP timer and interrupt core support
 

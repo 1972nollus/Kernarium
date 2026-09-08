@@ -1,6 +1,5 @@
 From aff44d027f795116c62d29f1bee7534fe3db285c Mon Sep 17 00:00:00 2001
-From: linux-um-darwin Android patch maintainer
- <noreply@linux-um-darwin.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 03:41:57 +0000
 Subject: [PATCH] UML-ANDROID-LOCAL: OrangeFox add recovery build hooks
 

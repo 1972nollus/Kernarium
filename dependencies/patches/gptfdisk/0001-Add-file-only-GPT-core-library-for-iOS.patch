@@ -1,5 +1,5 @@
 From e2260b5a65432cb7319a8d8342dc6d5f8eec0fc9 Mon Sep 17 00:00:00 2001
-From: linux-um-darwin dependency patches <noreply@linux-um-darwin.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 15:31:43 +0900
 Subject: [PATCH] Add file-only GPT core library for iOS
 

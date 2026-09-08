@@ -1,5 +1,5 @@
 From 980e88ca48c562e1c29b3da0c57d7e9bc4cadd29 Mon Sep 17 00:00:00 2001
-From: Darwin UML maintainers <uml-darwin@example.invalid>
+From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
 Subject: [PATCH 08/40] uml: define the Darwin fixed-arity host bridge ABI
 
