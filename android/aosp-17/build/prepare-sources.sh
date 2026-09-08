@@ -107,8 +107,8 @@ prepare_jelly()
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 			git -C "$JELLY_STAGING" \
 			-c core.hooksPath=/dev/null \
-			-c user.name='linux-um-darwin Android patch maintainer' \
-			-c user.email='noreply@linux-um-darwin.invalid' \
+			-c user.name='Yi Xie' \
+			-c user.email='imxieyi@users.noreply.github.com' \
 			am --committer-date-is-author-date "$patch"
 	done < "$ROOT_DIR/android/aosp-17/third_party/jelly/series/manifest.tsv"
 

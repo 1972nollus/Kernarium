@@ -95,8 +95,8 @@ trap cleanup 0 HUP INT TERM
 audit_git()
 {
 	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git \
-		-c user.name='linux-um-darwin next-version audit' \
-		-c user.email='noreply@linux-um-darwin.invalid' \
+		-c user.name='Yi Xie' \
+		-c user.email='imxieyi@users.noreply.github.com' \
 		-c core.hooksPath=/dev/null "$@"
 }
 

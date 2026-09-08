@@ -380,8 +380,8 @@ while IFS="$tab" read -r order filename patch_id digest subject; do
 	esac
 	if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 		git -C "$SOURCE_DIR" \
-			-c user.name='linux-um-darwin patch replay' \
-			-c user.email='noreply@linux-um-darwin.invalid' \
+			-c user.name='Yi Xie' \
+			-c user.email='imxieyi@users.noreply.github.com' \
 			-c core.hooksPath=/dev/null \
 			am --3way --no-gpg-sign "$PATCH_DIR/$filename"; then
 		git -C "$SOURCE_DIR" am --abort >/dev/null 2>&1 || true

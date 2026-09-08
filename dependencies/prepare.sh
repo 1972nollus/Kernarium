@@ -838,8 +838,8 @@ prepare_repository()
 			esac
 			if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 				git -C "$staged_repository" \
-				-c user.name='linux-um-darwin dependency replay' \
-				-c user.email='noreply@linux-um-darwin.invalid' \
+				-c user.name='Yi Xie' \
+				-c user.email='imxieyi@users.noreply.github.com' \
 				-c core.hooksPath=/dev/null am --3way --no-gpg-sign \
 				"$series_directory/$patch_file" >/dev/null; then
 				git -C "$staged_repository" am --abort >/dev/null 2>&1 || true

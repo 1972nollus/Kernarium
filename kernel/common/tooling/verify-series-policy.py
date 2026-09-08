@@ -500,8 +500,8 @@ def verify_next_version(root: Path, source: Path, base: str) -> None:
 
         applied = git_check(
             source,
-            "-c", "user.name=linux-um-darwin next-version audit",
-            "-c", "user.email=noreply@linux-um-darwin.invalid",
+            "-c", "user.name=Yi Xie",
+            "-c", "user.email=imxieyi@users.noreply.github.com",
             "-c", "core.hooksPath=/dev/null",
             "am", "--3way", "--no-gpg-sign", str(patch),
         )

@@ -22,8 +22,8 @@ UPSTREAM="$WORK_DIRECTORY/upstream"
 FIXTURE="$WORK_DIRECTORY/fixture"
 mkdir -p "$UPSTREAM" "$FIXTURE/kernel/mainline-6.18/patches/series"
 git -C "$UPSTREAM" init -q
-git -C "$UPSTREAM" config user.name 'next-version policy fixture'
-git -C "$UPSTREAM" config user.email 'noreply@linux-um-darwin.invalid'
+git -C "$UPSTREAM" config user.name 'Yi Xie'
+git -C "$UPSTREAM" config user.email 'imxieyi@users.noreply.github.com'
 printf '%s\n' old > "$UPSTREAM/fix.txt"
 printf '%s\n' old > "$UPSTREAM/host.txt"
 printf '%s\n' old > "$UPSTREAM/port.txt"

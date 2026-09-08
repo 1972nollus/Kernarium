@@ -72,8 +72,8 @@ while IFS="$(printf '\t')" read -r route_id checkout_path series_dir; do
 		patch="$ANDROID_ROOT/$series_dir/$filename"
 		if ! git -C "$checkout" \
 			-c core.hooksPath=/dev/null \
-			-c user.name='linux-um-darwin Android patch maintainer' \
-			-c user.email='noreply@linux-um-darwin.invalid' \
+			-c user.name='Yi Xie' \
+			-c user.email='imxieyi@users.noreply.github.com' \
 			am --committer-date-is-author-date "$patch"; then
 			git -C "$checkout" am --abort || true
 			fail "could not apply $route_id patch: $filename"

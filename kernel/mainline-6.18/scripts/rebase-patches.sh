@@ -119,8 +119,8 @@ fi
 # is a no-op, so series regeneration always follows an explicit rebase step.
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 	git -C "$SOURCE" -c core.hooksPath=/dev/null \
-		-c user.name='linux-um-darwin kernel patch maintainer' \
-		-c user.email='noreply@linux-um-darwin.invalid' \
+		-c user.name='Yi Xie' \
+		-c user.email='imxieyi@users.noreply.github.com' \
 		rebase --onto "$BASE_COMMIT" "$REBASE_OLD_BASE"
 
 if [ "$UML_KERNEL_SLICE" = x86_64 ] &&

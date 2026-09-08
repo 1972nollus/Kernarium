@@ -16,8 +16,8 @@ SOURCE="$WORK_DIRECTORY/source"
 FIXTURE="$WORK_DIRECTORY/fixture"
 mkdir -p "$SOURCE" "$FIXTURE/kernel/mainline-6.18/patches/series"
 git -C "$SOURCE" init -q
-git -C "$SOURCE" config user.name 'series topology test'
-git -C "$SOURCE" config user.email 'noreply@linux-um-darwin.invalid'
+git -C "$SOURCE" config user.name 'Yi Xie'
+git -C "$SOURCE" config user.email 'imxieyi@users.noreply.github.com'
 printf '%s\n' base > "$SOURCE/base"
 git -C "$SOURCE" add base
 git -C "$SOURCE" commit -q -m base

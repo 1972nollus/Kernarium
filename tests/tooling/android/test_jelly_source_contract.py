@@ -15,8 +15,8 @@ from pathlib import Path
 
 
 REPOSITORY = "https://github.com/LineageOS/android_packages_apps_Jelly"
-MAINTAINER_NAME = "linux-um-darwin Android patch maintainer"
-MAINTAINER_EMAIL = "noreply@linux-um-darwin.invalid"
+MAINTAINER_NAME = "Yi Xie"
+MAINTAINER_EMAIL = "imxieyi@users.noreply.github.com"
 
 
 def run(
