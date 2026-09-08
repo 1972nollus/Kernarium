@@ -1,7 +1,7 @@
-From 98b22f63d203cb86b887e1855c8b7328a2b6f7ce Mon Sep 17 00:00:00 2001
+From 694fa4f03073839bbb3be7d5b4216a7a39dde3e2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 02:19:23 +0900
-Subject: [PATCH 23/44] kosmickrisp: implement RGB32 uniform texel buffers
+Subject: [PATCH 23/47] kosmickrisp: implement RGB32 uniform texel buffers
 
 ---
  src/kosmickrisp/vulkan/kk_buffer_view.c       |  24 +-
@@ -167,7 +167,7 @@ index 9b4a16d..9de7300 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 52711d6..fae0cb3 100644
+index df16b9e..8d48ef2 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -343,7 +343,7 @@ index 52711d6..fae0cb3 100644
     }
  
     /* LOD bias is passed in the descriptor set, rather than embedded into
-@@ -845,7 +963,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -846,7 +964,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  static bool
  try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
  {
@@ -352,7 +352,7 @@ index 52711d6..fae0cb3 100644
  
     switch (instr->type) {
     case nir_instr_type_tex:
-@@ -857,6 +975,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
+@@ -858,6 +976,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
     }
  }
  
@@ -381,7 +381,7 @@ index 52711d6..fae0cb3 100644
  static bool
  lower_ssbo_resource_index(nir_builder *b, nir_intrinsic_instr *intrin,
                            const struct lower_descriptors_ctx *ctx)
-@@ -1040,8 +1180,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1041,8 +1181,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
      * TODO: See if we can unify this, not sure if the fast path matters on
      * Apple. This is inherited from NVK.
      */

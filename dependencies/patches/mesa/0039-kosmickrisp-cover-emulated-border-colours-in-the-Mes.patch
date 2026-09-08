@@ -1,7 +1,7 @@
-From 985e77a565cfbc69ac272ffb8260b51cfa95ebef Mon Sep 17 00:00:00 2001
+From 056af192e238a662b0e5c0af067393f1f1a8eac4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
-Subject: [PATCH 39/44] kosmickrisp: cover emulated border colours in the Meson
+Subject: [PATCH 39/47] kosmickrisp: cover emulated border colours in the Meson
  suite
 
 The custom border emulation reconstructs a Vulkan border colour from two
@@ -19,16 +19,16 @@ border-colour topic itself.
 (cherry picked from commit 037fef4a0161344cb62a15bf9a44aaecb4cd9d64)
 (cherry picked from commit 9e2d7bb793a7c26af266ba749dad2513d8eb7054)
 ---
- src/kosmickrisp/vulkan/meson.build            |  21 ++
- .../tests/test_custom_border_lowering.c       | 253 ++++++++++++++++++
- 2 files changed, 274 insertions(+)
+ src/kosmickrisp/vulkan/meson.build            |  22 ++
+ .../tests/test_custom_border_lowering.c       | 286 ++++++++++++++++++
+ 2 files changed, 308 insertions(+)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4021f15..abb571d 100644
+index b72c84c..d27e806 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -545,6 +545,27 @@ if with_tests
+@@ -566,6 +566,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -39,6 +39,7 @@ index 4021f15..abb571d 100644
 +      files(
 +        'tests/test_custom_border_lowering.c',
 +        'kk_nir_lower_custom_border.c',
++        'kk_nir_lower_descriptors.c',
 +      ),
 +      include_directories : kk_test_include_directories,
 +      dependencies : [
@@ -58,10 +59,10 @@ index 4021f15..abb571d 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 new file mode 100644
-index 0000000..2cdd389
+index 0000000..79f3734
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,286 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -75,6 +76,8 @@ index 0000000..2cdd389
 + */
 +
 +#include "kosmickrisp/vulkan/kk_descriptor_types.h"
++#include "kosmickrisp/vulkan/kk_descriptor_set_layout.h"
++#include "vulkan/runtime/vk_pipeline.h"
 +#include "kosmickrisp/vulkan/kk_shader.h"
 +
 +#include "compiler/glsl_types.h"
@@ -119,11 +122,10 @@ index 0000000..2cdd389
 +               stats->border_queries++;
 +               break;
 +            case nir_texop_has_custom_border_color_agx:
-+               /* An integer query asks for the packed compare operation. */
-+               if (tex->dest_type == nir_type_uint32)
-+                  stats->compare_op_queries++;
-+               else
-+                  stats->has_border_queries++;
++               stats->has_border_queries++;
++               break;
++            case nir_texop_sampler_descriptor_amd:
++               stats->compare_op_queries++;
 +               break;
 +            default:
 +               stats->samples++;
@@ -185,11 +187,40 @@ index 0000000..2cdd389
 +}
 +
 +static void
++check_descriptor_queries_are_lowered(nir_shader *shader)
++{
++   struct kk_descriptor_set_layout *layout =
++      calloc(1, sizeof(*layout) + sizeof(layout->binding[0]));
++   CHECK(layout != NULL);
++   layout->binding_count = 1;
++   layout->binding[0] = (struct kk_descriptor_set_binding_layout){
++      .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
++      .array_size = 1,
++      .stride = sizeof(struct kk_sampled_image_descriptor),
++   };
++   struct vk_descriptor_set_layout *set_layouts[] = {&layout->vk};
++   const struct vk_pipeline_robustness_state robustness = {
++      .uniform_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED,
++      .storage_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED,
++      .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED,
++   };
++   CHECK(kk_nir_lower_descriptors(shader, &robustness, 1, set_layouts, false));
++   nir_validate_shader(shader, "custom border descriptor lowering regression");
++   struct lowering_stats stats = {0};
++   collect_stats(shader, &stats);
++   CHECK(stats.compare_op_queries == 0);
++   CHECK(stats.has_border_queries == 0);
++   CHECK(stats.border_queries == 0);
++   free(layout);
++}
++
++static void
 +check_shadow_gather_is_lowered(void)
 +{
 +   nir_shader *shader = build_gather(true);
 +
 +   CHECK(kk_nir_lower_custom_border(shader));
++   nir_validate_shader(shader, "custom border lowering regression");
 +
 +   struct lowering_stats stats = {0};
 +   collect_stats(shader, &stats);
@@ -204,6 +235,7 @@ index 0000000..2cdd389
 +   CHECK(stats.border_queries == 1);
 +   CHECK(stats.ifs == 1);
 +
++   check_descriptor_queries_are_lowered(shader);
 +   ralloc_free(shader);
 +   printf("custom border lowering PASS shadow-gather\n");
 +}
@@ -214,6 +246,7 @@ index 0000000..2cdd389
 +   nir_shader *shader = build_gather(false);
 +
 +   CHECK(kk_nir_lower_custom_border(shader));
++   nir_validate_shader(shader, "custom border lowering regression");
 +
 +   struct lowering_stats stats = {0};
 +   collect_stats(shader, &stats);
@@ -226,6 +259,7 @@ index 0000000..2cdd389
 +   CHECK(stats.border_queries == 1);
 +   CHECK(stats.ifs == 1);
 +
++   check_descriptor_queries_are_lowered(shader);
 +   ralloc_free(shader);
 +   printf("custom border lowering PASS colour-gather\n");
 +}

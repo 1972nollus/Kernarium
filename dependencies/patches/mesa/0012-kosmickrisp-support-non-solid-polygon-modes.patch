@@ -1,7 +1,7 @@
-From 5e49a86a9e3322031ca72de42a3389449ce7ac00 Mon Sep 17 00:00:00 2001
+From 699fdc357779309db18bd72593987017636a2698 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:59 +0900
-Subject: [PATCH 12/44] kosmickrisp: support non-solid polygon modes
+Subject: [PATCH 12/47] kosmickrisp: support non-solid polygon modes
 
 ---
  src/kosmickrisp/bridge/mtl_encoder.h        |   6 +

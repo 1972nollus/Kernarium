@@ -1,7 +1,7 @@
-From baa89cc610deaab2abfb5bc65a04ca48bba83d54 Mon Sep 17 00:00:00 2001
+From 86cd6ecd0deb90e30b51db951f32f6294c40c9ec Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:42:15 +0900
-Subject: [PATCH 05/44] kosmickrisp: compile application shaders with safe math
+Subject: [PATCH 05/47] kosmickrisp: compile application shaders with safe math
 
 ---
  src/kosmickrisp/vulkan/kk_shader.c | 12 ++++++------

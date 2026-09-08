@@ -1,7 +1,7 @@
-From ccb8041646c93361554c1b5291c1874966d95b5e Mon Sep 17 00:00:00 2001
+From 95517cdc2abc3e6d1eaea5ce147f2467d05b24fa Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 01:28:14 +0900
-Subject: [PATCH 22/44] kosmickrisp: implement non-seamless cube maps
+Subject: [PATCH 22/47] kosmickrisp: implement non-seamless cube maps
 
 ---
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |   3 +
@@ -112,7 +112,7 @@ index e9927f9..3c4447d 100644
        uint64_t input_gpu_resource_id;
     } planes[3];
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 6fcaeec..52711d6 100644
+index af7c0ce..df16b9e 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -10,6 +10,7 @@
@@ -224,7 +224,7 @@ index 6fcaeec..52711d6 100644
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
        if (tex->op == nir_texop_txs) {
-@@ -657,8 +736,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -658,8 +737,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
     }
  
     {
@@ -240,7 +240,7 @@ index 6fcaeec..52711d6 100644
  
        nir_def *resource_addr = load_resource_addr(
           b, 1, 64, nir_src_as_deref(nir_src_for_ssa(texture)),
-@@ -666,15 +750,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -667,15 +751,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  
        nir_def *handle = NULL;
        if (tex->is_shadow) {
@@ -297,7 +297,7 @@ index 6fcaeec..52711d6 100644
     }
  
     if (sampler != NULL) {
-@@ -893,7 +1014,8 @@ bool
+@@ -894,7 +1015,8 @@ bool
  kk_nir_lower_descriptors(nir_shader *nir,
                           const struct vk_pipeline_robustness_state *rs,
                           uint32_t set_layout_count,
@@ -307,7 +307,7 @@ index 6fcaeec..52711d6 100644
  {
     struct lower_descriptors_ctx ctx = {
        .clamp_desc_array_bounds =
-@@ -904,6 +1026,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -905,6 +1027,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
           rs->images != VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED,
        .ssbo_addr_format = kk_buffer_addr_format(rs->storage_buffers),
        .ubo_addr_format = kk_buffer_addr_format(rs->uniform_buffers),

@@ -1,7 +1,7 @@
-From 44dc50044781d42533ed6168506d4ffd3cde1a56 Mon Sep 17 00:00:00 2001
+From 45e0a73e8566d028c91fd26d968d482492d086fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:10:24 +0900
-Subject: [PATCH 18/44] kosmickrisp: implement single-texel buffer alignment
+Subject: [PATCH 18/47] kosmickrisp: implement single-texel buffer alignment
 
 ---
  src/kosmickrisp/bridge/mtl_device.h           |  2 +
@@ -197,7 +197,7 @@ index 88a8176..9c2620f 100644
  struct kk_buffer_address {
     uint64_t base_addr;
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 1a31475..6fcaeec 100644
+index 50a1b08..af7c0ce 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -391,9 +391,39 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,

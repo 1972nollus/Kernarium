@@ -1,21 +1,21 @@
-From 407484298601a15ab3ae26dcec535690755c9893 Mon Sep 17 00:00:00 2001
+From c47922f42b04ae7af4244a91cf23e875e1fa3cd8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:44 +0900
-Subject: [PATCH 11/44] kosmickrisp: emulate custom border colors on Metal
+Subject: [PATCH 11/47] kosmickrisp: emulate custom border colors on Metal
 
 (cherry picked from commit a89fd62d3eeb828371891de5eb940b64c80a956f)
 ---
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |  19 +-
  src/kosmickrisp/vulkan/kk_descriptor_types.h  |  73 ++++++-
- .../vulkan/kk_nir_lower_custom_border.c       | 196 ++++++++++++++++++
- .../vulkan/kk_nir_lower_descriptors.c         |  40 +++-
+ .../vulkan/kk_nir_lower_custom_border.c       | 202 ++++++++++++++++++
+ .../vulkan/kk_nir_lower_descriptors.c         |  41 +++-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   5 +
  src/kosmickrisp/vulkan/kk_sampler.c           |  44 +++-
  src/kosmickrisp/vulkan/kk_sampler.h           |   2 +
  src/kosmickrisp/vulkan/kk_shader.c            |   4 +
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
  src/kosmickrisp/vulkan/meson.build            |   1 +
- 10 files changed, 371 insertions(+), 19 deletions(-)
+ 10 files changed, 378 insertions(+), 19 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
@@ -153,10 +153,10 @@ index 5296366..6f5d204 100644
  #endif /* KK_DESCRIPTOR_TYPES */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 new file mode 100644
-index 0000000..4f08a43
+index 0000000..fd69d73
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,202 @@
 +/*
 + * Copyright 2025 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -189,14 +189,20 @@ index 0000000..4f08a43
 +                                  1, nir_type_bool1, false, false);
 +}
 +
-+/* The packed border word also carries the sampler's compare operation, which
-+ * only a depth-compare sample needs.  An integer query asks for it. */
++/* The raw sampler descriptor carries the packed border word in its third
++ * dword.  Keep the has-custom-border query boolean and extract the integer
++ * compare operation from the descriptor instead.
++ */
 +static nir_def *
 +query_border_compare_op(nir_builder *b, nir_tex_instr *tex)
 +{
-+   return nir_build_texture_query(b, tex,
-+                                  nir_texop_has_custom_border_color_agx, 1,
-+                                  nir_type_uint32, false, false);
++   nir_def *descriptor = nir_build_texture_query(
++      b, tex, nir_texop_sampler_descriptor_amd, 4, nir_type_uint32,
++      false, false);
++   nir_def *packed = nir_channel(b, descriptor, 2);
++   return nir_iand_imm(
++      b, nir_ushr_imm(b, packed, KK_BORDER_COMPARE_OP_SHIFT),
++      KK_BORDER_COMPARE_OP_MASK);
 +}
 +
 +/* Evaluate "reference <op> value" the way the sampler's compare operation
@@ -354,46 +360,47 @@ index 0000000..4f08a43
 +                              NULL);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 49f40a4..1fb092d 100644
+index 49f40a4..79ba814 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-@@ -518,17 +518,26 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -518,17 +518,27 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
     //    return true;
     // }
  
 -   // if (tex->op == nir_texop_has_custom_border_color_agx) {
 -   //    unsigned offs = offsetof(struct kk_sampled_image_descriptor,
 -   //                             clamp_0_sampler_index_or_negative);
-+   if (tex->op == nir_texop_has_custom_border_color_agx) {
-+      unsigned offs = offsetof(struct kk_sampled_image_descriptor,
-+                               clamp_0_sampler_index_or_negative);
++   if (tex->op == nir_texop_sampler_descriptor_amd) {
++      /* The four sampler dwords start after the image resource ID. */
++      nir_def *descriptor = load_resource_deref_desc(
++         b, 4, 32, sampler_deref,
++         plane_offset_B + offsetof(struct kk_sampled_image_descriptor,
++                                    sampler_index), ctx);
++      nir_def_replace(&tex->def, descriptor);
++      return true;
++   }
  
 -   //    nir_def *res = load_resource_deref_desc(
 -   //       b, 1, 16, nir_src_as_deref(nir_src_for_ssa(sampler)),
 -   //       plane_offset_B + offs, ctx);
-+      nir_def *res = load_resource_deref_desc(
-+         b, 1, 32, nir_src_as_deref(nir_src_for_ssa(sampler)),
-+         plane_offset_B + offs, ctx);
++   if (tex->op == nir_texop_has_custom_border_color_agx) {
++      unsigned offs = offsetof(struct kk_sampled_image_descriptor,
++                               clamp_0_sampler_index_or_negative);
  
 -   //    nir_def_replace(&tex->def, nir_ige_imm(b, res, 0));
 -   //    return true;
 -   // }
-+      /* An integer query asks for the packed compare operation instead of
-+       * whether the border is emulated. */
-+      if (tex->dest_type == nir_type_uint32) {
-+         nir_def_replace(
-+            &tex->def,
-+            nir_iand_imm(b, nir_ushr_imm(b, res, KK_BORDER_COMPARE_OP_SHIFT),
-+                         KK_BORDER_COMPARE_OP_MASK));
-+      } else {
-+         nir_def_replace(&tex->def, nir_ige_imm(b, res, 0));
-+      }
++      nir_def *res = load_resource_deref_desc(
++         b, 1, 32, nir_src_as_deref(nir_src_for_ssa(sampler)),
++         plane_offset_B + offs, ctx);
++
++      nir_def_replace(&tex->def, nir_ige_imm(b, res, 0));
 +      return true;
 +   }
  
     if (tex->op == nir_texop_custom_border_color_agx) {
        unsigned offs = offsetof(struct kk_sampled_image_descriptor, border);
-@@ -569,9 +578,20 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -569,9 +579,20 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
        unsigned offs =
           offsetof(struct kk_sampled_image_descriptor, sampler_index);
  

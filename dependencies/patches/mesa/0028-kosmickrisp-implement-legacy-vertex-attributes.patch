@@ -1,7 +1,7 @@
-From 43e105569e88ab18d8171e2a737506bad55d17e3 Mon Sep 17 00:00:00 2001
+From 069817f6135677e324d019e0f6deb2953c2d5557 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:43:58 +0900
-Subject: [PATCH 28/44] kosmickrisp: implement legacy vertex attributes
+Subject: [PATCH 28/47] kosmickrisp: implement legacy vertex attributes
 
 ---
  src/kosmickrisp/compiler/nir_to_msl.c         |   2 +-
@@ -10,17 +10,18 @@ Subject: [PATCH 28/44] kosmickrisp: implement legacy vertex attributes
  src/kosmickrisp/vulkan/kk_nir_lower_vbo.c     |  68 ++-
  src/kosmickrisp/vulkan/kk_nir_lower_vbo.h     |   6 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |  10 +-
- src/kosmickrisp/vulkan/kk_shader.c            | 513 +++++++++++++++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 547 ++++++++++++++++--
  src/kosmickrisp/vulkan/kk_shader.h            |   3 +
  src/kosmickrisp/vulkan/kk_shader_info.c       |  43 ++
  src/kosmickrisp/vulkan/kk_shader_info.h       |  15 +
  src/kosmickrisp/vulkan/meson.build            |  65 +++
- .../tests/dynamic_vertex_input_cache_state.c  |  15 +
- .../tests/dynamic_vertex_input_cache_state.h  |  21 +
- .../vulkan/tests/test_blend_pipeline_key.c    | 514 ++++++++++++++++++
- .../tests/test_dynamic_vertex_input_cache.cpp | 332 +++++++++++
+ .../tests/dynamic_vertex_input_cache_state.c  |  27 +
+ .../tests/dynamic_vertex_input_cache_state.h  |  24 +
+ .../vulkan/tests/test_blend_pipeline_key.c    | 514 ++++++++++++++++
+ .../tests/test_dynamic_vertex_input_cache.cpp | 350 +++++++++++
  .../tests/test_legacy_vertex_attributes.c     | 239 ++++++++
- 16 files changed, 1810 insertions(+), 45 deletions(-)
+ .../vulkan/tests/test_line_raster_cache.cpp   |  23 +-
+ 17 files changed, 1893 insertions(+), 52 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_shader_info.c
  create mode 100644 src/kosmickrisp/vulkan/kk_shader_info.h
  create mode 100644 src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c
@@ -264,7 +265,7 @@ index 8b24e45..6425c91 100644
        /* VK_EXT_map_memory_placed */
        .minPlacedMemoryMapAlignment = os_page_size,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 01e4881..47fb2ad 100644
+index 01e4881..89270ed 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -18,6 +18,7 @@
@@ -455,7 +456,7 @@ index 01e4881..47fb2ad 100644
        return kk_compile_shaders_single(device, shader_count, infos, state,
                                         enabled_features, pAllocator,
                                         shaders_out, defer_library_shaders);
-@@ -4008,9 +4017,33 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -4008,9 +4017,35 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                                    true);
  }
  
@@ -467,6 +468,8 @@ index 01e4881..47fb2ad 100644
 +
  struct kk_linked_graphics_pipeline {
     blake3_hash key;
++   /* Live VkPipeline owners; protected by linked_graphics_pipelines_lock. */
++   uint32_t refcount;
     struct kk_shader *shaders[MESA_SHADER_STAGES];
 +
 +   bool dynamic_vertex_input;
@@ -489,7 +492,7 @@ index 01e4881..47fb2ad 100644
  };
  
  static void
-@@ -4021,9 +4054,30 @@ kk_free_linked_graphics_pipeline(
+@@ -4021,9 +4056,30 @@ kk_free_linked_graphics_pipeline(
     struct kk_device *dev = container_of(vk_dev, struct kk_device, vk);
     struct kk_linked_graphics_pipeline *linked = linked_data;
  
@@ -523,7 +526,7 @@ index 01e4881..47fb2ad 100644
     }
  
     vk_free2(&dev->vk.alloc, pAllocator, linked);
-@@ -4041,6 +4095,124 @@ kk_linked_graphics_pipeline_equal(const void *a, const void *b)
+@@ -4041,6 +4097,123 @@ kk_linked_graphics_pipeline_equal(const void *a, const void *b)
     return memcmp(a, b, sizeof(blake3_hash)) == 0;
  }
  
@@ -571,10 +574,9 @@ index 01e4881..47fb2ad 100644
 +   _mesa_blake3_final(&hash, key);
 +}
 +
-+/* The device cache owns every dynamic vertex-input parent, so the parent, its
-+ * state copy, and its compiled variants outlive the VkPipeline that first
-+ * linked them.  They come from the device allocator rather than from a
-+ * pipeline-creation allocator.
++/* Live VkPipeline owners share each dynamic vertex-input parent until the
++ * last owner releases it.  The parent, state copy, and compiled variants use
++ * the device allocator because they may outlive the first pipeline owner.
 + */
 +static VkResult
 +kk_create_dynamic_vertex_input_pipeline(
@@ -648,7 +650,7 @@ index 01e4881..47fb2ad 100644
  VkResult
  kk_linked_graphics_pipeline_cache_init(struct kk_device *dev)
  {
-@@ -4066,6 +4238,85 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
+@@ -4066,6 +4239,85 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
     simple_mtx_destroy(&dev->linked_graphics_pipelines_lock);
  }
  
@@ -734,7 +736,7 @@ index 01e4881..47fb2ad 100644
  static void
  kk_linked_graphics_pipeline_key(
     struct vk_device *vk_dev, uint32_t shader_count,
-@@ -4104,12 +4355,41 @@ kk_linked_graphics_pipeline_key(
+@@ -4104,12 +4356,57 @@ kk_linked_graphics_pipeline_key(
     _mesa_blake3_final(&hash, key);
  }
  
@@ -767,17 +769,34 @@ index 01e4881..47fb2ad 100644
 +
  static void
  kk_destroy_linked_graphics_pipeline(
-    UNUSED struct vk_device *vk_dev, UNUSED void *linked_data,
+-   UNUSED struct vk_device *vk_dev, UNUSED void *linked_data,
++   struct vk_device *vk_dev, void *linked_data,
     UNUSED const VkAllocationCallbacks *pAllocator)
  {
 -   /* Entries remain reusable until device destruction. */
-+   /* Every linked pipeline, including a dynamic vertex-input parent, is shared
-+    * by the device cache and released when that cache is finished.
++   struct kk_device *dev = container_of(vk_dev, struct kk_device, vk);
++   struct kk_linked_graphics_pipeline *linked = linked_data;
++
++   simple_mtx_lock(&dev->linked_graphics_pipelines_lock);
++   assert(linked->refcount > 0);
++   bool last_owner = --linked->refcount == 0;
++   if (last_owner) {
++      struct hash_entry *entry =
++         _mesa_hash_table_search(dev->linked_graphics_pipelines, linked->key);
++      assert(entry != NULL && entry->data == linked);
++      _mesa_hash_table_remove(dev->linked_graphics_pipelines, entry);
++   }
++   simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
++
++   /* The lookup table is weak: obsolete programs and their native variants
++    * must not accumulate for the lifetime of a long-running device.
 +    */
++   if (last_owner)
++      kk_free_linked_graphics_pipeline(vk_dev, linked, &dev->vk.alloc);
  }
  
  static VkResult
-@@ -4130,6 +4410,68 @@ kk_link_graphics_pipeline(
+@@ -4130,6 +4427,74 @@ kk_link_graphics_pipeline(
        has_deferred |= shader->info.deferred;
     }
  
@@ -809,8 +828,11 @@ index 01e4881..47fb2ad 100644
 +      simple_mtx_lock(&dev->linked_graphics_pipelines_lock);
 +      struct hash_entry *dynamic_cached =
 +         _mesa_hash_table_search(dev->linked_graphics_pipelines, dynamic_key);
-+      if (dynamic_cached != NULL)
-+         *linked_data_out = dynamic_cached->data;
++      if (dynamic_cached != NULL) {
++         struct kk_linked_graphics_pipeline *shared = dynamic_cached->data;
++         shared->refcount++;
++         *linked_data_out = shared;
++      }
 +      simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
 +      if (dynamic_cached != NULL)
 +         return VK_SUCCESS;
@@ -823,6 +845,7 @@ index 01e4881..47fb2ad 100644
 +         return result;
 +
 +      memcpy(linked->key, dynamic_key, sizeof(linked->key));
++      linked->refcount = 1;
 +
 +      simple_mtx_lock(&dev->linked_graphics_pipelines_lock);
 +      dynamic_cached =
@@ -832,7 +855,9 @@ index 01e4881..47fb2ad 100644
 +                                 linked);
 +         *linked_data_out = linked;
 +      } else {
-+         *linked_data_out = dynamic_cached->data;
++         struct kk_linked_graphics_pipeline *shared = dynamic_cached->data;
++         shared->refcount++;
++         *linked_data_out = shared;
 +      }
 +      simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
 +
@@ -846,7 +871,37 @@ index 01e4881..47fb2ad 100644
     /* Monolithic pipelines and complete libraries already own their native
      * Metal pipeline in the vertex shader.
      */
-@@ -4545,6 +4887,99 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -4144,7 +4509,9 @@ kk_link_graphics_pipeline(
+    struct hash_entry *cached =
+       _mesa_hash_table_search(dev->linked_graphics_pipelines, key);
+    if (cached != NULL) {
+-      *linked_data_out = cached->data;
++      struct kk_linked_graphics_pipeline *shared = cached->data;
++      shared->refcount++;
++      *linked_data_out = shared;
+       simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
+       return VK_SUCCESS;
+    }
+@@ -4218,6 +4585,7 @@ kk_link_graphics_pipeline(
+    }
+ 
+    memcpy(linked->key, key, sizeof(linked->key));
++   linked->refcount = 1;
+ 
+    for (uint32_t i = 0; i < shader_count; i++) {
+       struct kk_shader *shader =
+@@ -4232,7 +4600,9 @@ kk_link_graphics_pipeline(
+                               linked);
+       *linked_data_out = linked;
+    } else {
+-      *linked_data_out = cached->data;
++      struct kk_linked_graphics_pipeline *shared = cached->data;
++      shared->refcount++;
++      *linked_data_out = shared;
+    }
+    simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
+ 
+@@ -4545,6 +4915,99 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     kk_cmd_use_graphics_shader(cmd, stage, shader);
  }
  
@@ -890,10 +945,10 @@ index 01e4881..47fb2ad 100644
 +   blake3_hash key;
 +   kk_dynamic_vertex_input_key(linked, vi, byte_strides, key);
 +
-+   /* The device cache owns this parent and the parent owns every variant, so
-+    * both outlive every VkPipeline that linked them and the table never
-+    * removes a variant.  A cached pointer therefore remains valid after the
-+    * lock is dropped.  In particular, never hold this lock while Metal
++   /* A live VkPipeline owns this parent during command recording.  The parent
++    * keeps every variant until its last pipeline owner is destroyed, so a
++    * cached pointer remains valid after the lock is dropped.  In particular,
++    * never hold this lock while Metal
 +    * compiles a variant: command buffers recorded concurrently for different
 +    * vertex-input states must not serialize on native shader and pipeline
 +    * creation.
@@ -946,7 +1001,7 @@ index 01e4881..47fb2ad 100644
  void
  kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
  {
-@@ -4576,6 +5011,11 @@ kk_cmd_bind_linked_graphics_pipeline(struct vk_command_buffer *cmd_buffer,
+@@ -4576,6 +5039,11 @@ kk_cmd_bind_linked_graphics_pipeline(struct vk_command_buffer *cmd_buffer,
        container_of(cmd_buffer, struct kk_cmd_buffer, vk);
     struct kk_linked_graphics_pipeline *linked = linked_data;
  
@@ -958,7 +1013,7 @@ index 01e4881..47fb2ad 100644
     for (uint32_t stage = 0; stage < MESA_SHADER_STAGES; stage++) {
        if (linked->shaders[stage] != NULL) {
           kk_cmd_bind_graphics_shader(cmd, stage, linked->shaders[stage]);
-@@ -4591,6 +5031,13 @@ kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
+@@ -4591,6 +5059,13 @@ kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
     struct kk_cmd_buffer *cmd =
        container_of(cmd_buffer, struct kk_cmd_buffer, vk);
  
@@ -1159,10 +1214,10 @@ index 433a82d..16f38c9 100644
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c
 new file mode 100644
-index 0000000..16e5724
+index 0000000..d4fc955
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,27 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -1171,6 +1226,8 @@ index 0000000..16e5724
 +#include "dynamic_vertex_input_cache_state.h"
 +
 +#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
++#include "kosmickrisp/vulkan/kk_device.h"
++#include "util/hash_table.h"
 +
 +const struct kk_shader *
 +kk_test_dynamic_vertex_input_shader(VkCommandBuffer command)
@@ -1178,12 +1235,22 @@ index 0000000..16e5724
 +   const struct kk_cmd_buffer *cmd = kk_cmd_buffer_from_handle(command);
 +   return cmd->state.gfx.bound_shaders[MESA_SHADER_VERTEX];
 +}
++
++unsigned
++kk_test_linked_graphics_pipeline_count(VkDevice device)
++{
++   struct kk_device *dev = kk_device_from_handle(device);
++   simple_mtx_lock(&dev->linked_graphics_pipelines_lock);
++   unsigned count = dev->linked_graphics_pipelines->entries;
++   simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
++   return count;
++}
 diff --git a/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h
 new file mode 100644
-index 0000000..d1c8081
+index 0000000..a9d0631
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,24 @@
 +/* SPDX-License-Identifier: MIT */
 +#pragma once
 +
@@ -1201,6 +1268,9 @@ index 0000000..d1c8081
 + */
 +const struct kk_shader *
 +kk_test_dynamic_vertex_input_shader(VkCommandBuffer command);
++
++unsigned
++kk_test_linked_graphics_pipeline_count(VkDevice device);
 +
 +#ifdef __cplusplus
 +}
@@ -1727,10 +1797,10 @@ index 0000000..38d6cb5
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
 new file mode 100644
-index 0000000..99fea8c
+index 0000000..65706eb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,350 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -1967,11 +2037,14 @@ index 0000000..99fea8c
 +              "dynamic vertex-input compile-required", result);
 +      require(unexpected == VK_NULL_HANDLE, "compile-required pipeline handle");
 +
++      const unsigned baseline = kk_test_linked_graphics_pipeline_count(device);
 +      pipeline_info.flags = 0;
 +      VkPipeline first = VK_NULL_HANDLE;
 +      result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
 +                                         &pipeline_info, nullptr, &first);
 +      require(result == VK_SUCCESS, "first pipeline", result);
++      require(kk_test_linked_graphics_pipeline_count(device) == baseline + 1,
++              "first pipeline adds one parent");
 +
 +      VkCommandPoolCreateInfo pool_info{
 +         VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -2045,6 +2118,8 @@ index 0000000..99fea8c
 +      result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
 +                                         &pipeline_info, nullptr, &second);
 +      require(result == VK_SUCCESS, "second pipeline", result);
++      require(kk_test_linked_graphics_pipeline_count(device) == baseline + 1,
++              "equivalent pipeline shares its parent");
 +      require(record_draw(second) == compiled,
 +              "equivalent pipeline reuses the compiled variant");
 +
@@ -2054,6 +2129,19 @@ index 0000000..99fea8c
 +              "shared variant survives destroying the first pipeline");
 +
 +      vkDestroyPipeline(device, second, nullptr);
++      require(kk_test_linked_graphics_pipeline_count(device) == baseline,
++              "last pipeline releases its parent and native variants");
++
++      for (unsigned i = 0; i < 8; ++i) {
++         VkPipeline transient = VK_NULL_HANDLE;
++         result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
++                                            &pipeline_info, nullptr, &transient);
++         require(result == VK_SUCCESS, "transient pipeline", result);
++         record_draw(transient);
++         vkDestroyPipeline(device, transient, nullptr);
++         require(kk_test_linked_graphics_pipeline_count(device) == baseline,
++                 "repeated pipeline destruction returns cache to baseline");
++      }
 +      vkDestroyCommandPool(device, pool, nullptr);
 +      vkDestroyPipelineLayout(device, layout, nullptr);
 +      for (auto module : modules)
@@ -2308,3 +2396,53 @@ index 0000000..52b911b
 +   check_robust_unaligned_fetch();
 +   return 0;
 +}
+diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
+index cbffca7..f998501 100644
+--- a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
++++ b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
+@@ -743,11 +743,12 @@ int main()
+             }
+          }
+ 
+-         /* GPL libraries serialize deferred NIR.  Final executable pairs are
+-          * cached for the device lifetime and reconstructed only on a cold
+-          * final link, not while creating a partial library or drawing. */
++         /* GPL libraries serialize deferred NIR. Final executable pairs are
++          * shared while an owner is live. After its last release a final link
++          * needs compilation, even when the library comes from a cache. */
+          std::vector<uint8_t> library_bytes;
+          const kk_shader *linked_owner = nullptr;
++         VkPipeline live_final = VK_NULL_HANDLE;
+          for (unsigned reload = 0; reload < 2; reload++) {
+             VkPipelineCacheCreateInfo library_cache_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+             library_cache_info.initialDataSize = library_bytes.size();
+@@ -789,6 +790,10 @@ int main()
+                                                nullptr, &final_pipeline);
+             require(result == (reload ? VK_SUCCESS : VK_PIPELINE_COMPILE_REQUIRED),
+                     "GPL final cache result", result);
++            if (reload) {
++               vkDestroyPipeline(device, live_final, nullptr);
++               live_final = VK_NULL_HANDLE;
++            }
+             if (!reload) {
+                final_info.flags = 0;
+                result = vkCreateGraphicsPipelines(device, library_cache, 1, &final_info,
+@@ -853,7 +858,17 @@ int main()
+             result = vkQueueWaitIdle(device_queue);
+             require(result == VK_SUCCESS, "GPL command completion", result);
+             vkDestroyCommandPool(device, pool, nullptr);
+-            vkDestroyPipeline(device, final_pipeline, nullptr);
++            if (!reload) {
++               live_final = final_pipeline;
++            } else {
++               vkDestroyPipeline(device, final_pipeline, nullptr);
++               VkPipeline cold = VK_NULL_HANDLE;
++               result = vkCreateGraphicsPipelines(device, library_cache, 1,
++                                                  &final_info, nullptr, &cold);
++               require(result == VK_PIPELINE_COMPILE_REQUIRED,
++                       "GPL final cache after last owner", result);
++               require(cold == VK_NULL_HANDLE, "GPL cold final result handle");
++            }
+             vkDestroyPipeline(device, library, nullptr);
+             size_t size = 0;
+             result = vkGetPipelineCacheData(device, library_cache, &size, nullptr);

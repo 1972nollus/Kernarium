@@ -1,7 +1,7 @@
-From 97d44c71294ff151388b70f10e0aa4767fdf89e0 Mon Sep 17 00:00:00 2001
+From 72c5fc6a224b09cae8dec58b7ad795af310a10c7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 18:21:12 +0900
-Subject: [PATCH 38/44] kosmickrisp: retire dead values before MSL translation
+Subject: [PATCH 38/47] kosmickrisp: retire dead values before MSL translation
 
 MSL type inference reaches a value only through its uses, so a value whose
 last consumer disappears keeps no type at all. The final copy propagation in
@@ -64,7 +64,7 @@ index 056a860..c16c4e9 100644
     return progress;
  }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 982a430..4021f15 100644
+index 366d06e..b72c84c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -344,6 +344,26 @@ if with_tests
@@ -92,7 +92,7 @@ index 982a430..4021f15 100644
 +      timeout : 120,
 +    )
      test(
-       'kosmickrisp_transform_feedback_builtins',
+       'kosmickrisp_raster_discard',
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag b/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag
 new file mode 100644

@@ -1,7 +1,7 @@
-From 994b45a1cb40b3e05d5e5fcba6ea0782a75acc1c Mon Sep 17 00:00:00 2001
+From 75cc3190523f35a332d66aa1b9991efd32c67a89 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
-Subject: [PATCH 41/44] kosmickrisp: survive Metal command queue timeouts
+Subject: [PATCH 41/47] kosmickrisp: survive Metal command queue timeouts
 
 Metal reports MTL4CommandQueueErrorTimeout when one submission exceeds the
 time the system allows, which is not the same as the GPU failing or the
@@ -526,7 +526,7 @@ index 0000000..f8e2b9c
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 88c1aef..e6a1274 100644
+index 1bd4e2a..695e96a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -547,7 +547,7 @@ index 88c1aef..e6a1274 100644
    'kk_sampler.h',
    'kk_sampler.c',
    'kk_shader.h',
-@@ -471,6 +475,32 @@ if with_tests
+@@ -492,6 +496,32 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

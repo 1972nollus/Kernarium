@@ -1,7 +1,7 @@
-From 4773c532f5c0bf61b25f4b233e7509b2f018c326 Mon Sep 17 00:00:00 2001
+From e823d026cf90c2955010980288d8a518f4db52db Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 02/44] kosmickrisp: reject unusable image memory
+Subject: [PATCH 02/47] kosmickrisp: reject unusable image memory
 
 ---
  src/kosmickrisp/vulkan/kk_image.c | 20 +++++++++++++++++++-

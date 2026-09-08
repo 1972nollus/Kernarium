@@ -1,7 +1,7 @@
-From f2abfafdb8b3dee603272219e98047bac103c4fa Mon Sep 17 00:00:00 2001
+From 84d3cbea97a670cc2d37a492ca45783f36176dcc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 16:16:25 +0900
-Subject: [PATCH 14/44] kosmickrisp: implement GPU transform feedback
+Subject: [PATCH 14/47] kosmickrisp: implement GPU transform feedback
 
 ---
  src/kosmickrisp/libkk/kk_draws.cl             |  12 +
@@ -599,10 +599,10 @@ index 783c5e3..3e1da33 100644
 +      counterBufferOffset, counterOffset, vertexStride);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index f996e8e..1a31475 100644
+index 2a78510..50a1b08 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-@@ -881,10 +881,30 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -882,10 +882,30 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return lower_sysval_to_per_draw(b, intrin, vertex_outputs);
     case nir_intrinsic_load_vertex_param_buffer_poly:
        return lower_sysval_to_per_draw(b, intrin, vertex_params);

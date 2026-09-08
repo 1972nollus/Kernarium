@@ -1,7 +1,7 @@
-From a3da74eb4808a8ad7975dbdd68f401345c4e7e12 Mon Sep 17 00:00:00 2001
+From f87fc14499dfafc55d8d61fa3b918df0967c9a67 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:21:53 +0900
-Subject: [PATCH 37/44] kosmickrisp: correct 2D array aliasing of 3D images
+Subject: [PATCH 37/47] kosmickrisp: correct 2D array aliasing of 3D images
 
 Metal cannot view a 3D texture as a 2D array, so a 3D image created with
 VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT also allocates an auxiliary 2D array
@@ -100,7 +100,7 @@ index ede8d59..f8ecaff 100644
  mtl_render_pass_attachment_descriptor_set_load_action(
     mtl_render_pass_attachment_descriptor *descriptor,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 5998509..b521422 100644
+index 639810e..34d0df1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -130,8 +130,13 @@ kk_fill_common_attachment_description(
@@ -234,7 +234,7 @@ index 9e601ea..bfddc6f 100644
     }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3a3b8ec..982a430 100644
+index a4f30f7..366d06e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -304,6 +304,26 @@ if with_tests

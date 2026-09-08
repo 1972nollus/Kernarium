@@ -1,27 +1,49 @@
-From 695b8daa9b8726a93e6f2e812cf52d00e06881b3 Mon Sep 17 00:00:00 2001
+From f16a3529cd46cd4db070f699aa5e12a5d60785e1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
-Subject: [PATCH 33/44] kosmickrisp: precompile bounded raster executable
+Subject: [PATCH 33/47] kosmickrisp: precompile bounded raster executable
  classes
 
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |   20 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   10 +
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  248 ++-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  259 ++-
  src/kosmickrisp/vulkan/kk_cmd_meta.c          |   12 +
+ src/kosmickrisp/vulkan/kk_line_raster.h       |    6 +
  src/kosmickrisp/vulkan/kk_physical_device.c   |    4 +-
  src/kosmickrisp/vulkan/kk_raster_edge.h       |   29 +
- src/kosmickrisp/vulkan/kk_raster_variant.h    |   99 +
- src/kosmickrisp/vulkan/kk_shader.c            | 1933 +++++++++++------
+ src/kosmickrisp/vulkan/kk_raster_variant.h    |  112 +
+ src/kosmickrisp/vulkan/kk_shader.c            | 1940 +++++++++++------
  src/kosmickrisp/vulkan/kk_shader.h            |   14 +-
- src/kosmickrisp/vulkan/meson.build            |   14 +
+ src/kosmickrisp/vulkan/meson.build            |   35 +
  .../vulkan/tests/line_raster_cache_state.h    |    1 +
  .../vulkan/tests/line_raster_cache_state.m    |  148 +-
+ .../tests/raster_discard_shaders/discard.frag |   13 +
+ .../raster_discard_shaders/discard.frag.h     |   35 +
+ .../tests/raster_discard_shaders/discard.geom |   17 +
+ .../raster_discard_shaders/discard.geom.h     |   80 +
+ .../tests/raster_discard_shaders/discard.vert |   15 +
+ .../raster_discard_shaders/discard.vert.h     |   58 +
+ .../tests/raster_discard_shaders/generate.sh  |    7 +
+ .../vulkan/tests/raster_discard_state.c       |   16 +
+ .../vulkan/tests/raster_discard_state.h       |   11 +
+ .../vulkan/tests/test_line_raster.c           |   12 +
  .../vulkan/tests/test_line_raster_cache.cpp   |    2 +
- .../vulkan/tests/test_raster_variant.c        |   76 +
- 14 files changed, 1871 insertions(+), 739 deletions(-)
+ .../vulkan/tests/test_raster_discard.cpp      |  500 +++++
+ .../vulkan/tests/test_raster_variant.c        |   80 +
+ 26 files changed, 2693 insertions(+), 743 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_edge.h
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_variant.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert.h
+ create mode 100755 src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_state.c
+ create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_state.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_raster_discard.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_raster_variant.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
@@ -140,7 +162,7 @@ index 497cb36..101f364 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index a0df6b4..2deeb00 100644
+index a0df6b4..c3fa39b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -15,6 +15,7 @@
@@ -226,7 +248,25 @@ index a0df6b4..2deeb00 100644
              vk_command_buffer_set_error(&cmd->vk,
                                          VK_ERROR_OUT_OF_DEVICE_MEMORY);
              return false;
-@@ -1537,7 +1563,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1498,13 +1524,16 @@ kk_rast_discard(struct kk_cmd_buffer *cmd)
+ {
+    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+ 
++   if (dyn->rs.rasterizer_discard_enable)
++      return true;
++
+    if (dyn->rs.rasterization_stream != 0) {
+       struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
+       return !vs || !vs->info.vs.geometry_shader_emulation ||
+              !vs->info.vs.geometry.multistream;
+    }
+ 
+-   return dyn->rs.rasterizer_discard_enable;
++   return false;
+ }
+ 
+ static void
+@@ -1537,7 +1566,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
  
     if (IS_DIRTY(RS_CULL_MODE) || IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) ||
         IS_SHADER_DIRTY(VERTEX)) {
@@ -236,7 +276,7 @@ index a0df6b4..2deeb00 100644
           /* Vulkan cull mode does not apply to line primitives.  The generated
            * raster primitive is a triangle only as an implementation detail. */
           gfx->is_cull_front_and_back = false;
-@@ -1604,9 +1631,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1604,9 +1634,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     if (IS_DIRTY(RS_FRONT_FACE) || IS_DIRTY(TS_DOMAIN_ORIGIN) ||
@@ -253,7 +293,7 @@ index a0df6b4..2deeb00 100644
           front_face_ccw ^= gfx->tess.info.ccw;
           front_face_ccw ^=
              dyn->ts.domain_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
-@@ -1616,8 +1648,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1616,8 +1651,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
                                           : MTL_WINDING_CLOCKWISE);
     }
  
@@ -265,7 +305,7 @@ index a0df6b4..2deeb00 100644
           mtl_set_depth_bias(enc, dyn->rs.depth_bias.constant_factor,
                              dyn->rs.depth_bias.slope_factor,
                              dyn->rs.depth_bias.clamp);
-@@ -1625,8 +1658,15 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1625,8 +1661,15 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           mtl_set_depth_bias(enc, 0.0f, 0.0f, 0.0f);
     }
  
@@ -283,7 +323,7 @@ index a0df6b4..2deeb00 100644
  
     if (IS_DIRTY(DS_STENCIL_REFERENCE))
        mtl_set_stencil_references(
-@@ -2367,7 +2407,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2367,7 +2410,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
                                     &gfx->per_draw_data.vertex_params))
           return false;
  
@@ -292,7 +332,7 @@ index a0df6b4..2deeb00 100644
           const uint32_t wg_size[3] = {64, 1, 1};
           struct poly_vertex_params line_params;
           poly_vertex_params_init(&line_params,
-@@ -2419,8 +2459,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2419,8 +2462,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        kk_upload_tess_params(cmd, tess_args.cpu, draw);
     }
  
@@ -302,7 +342,7 @@ index a0df6b4..2deeb00 100644
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.polygon_point_cull_mode = dyn->rs.cull_mode;
-@@ -2429,9 +2468,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2429,9 +2471,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_provoking_last =
           dyn->rs.provoking_vertex ==
           VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
@@ -333,7 +373,7 @@ index a0df6b4..2deeb00 100644
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.line_raster_topology =
-@@ -2450,6 +2507,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2450,6 +2510,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
           dyn->rs.line.stipple.pattern;
        gfx->per_draw_data.line_raster_run_starts_addr =
           draw->line_raster_run_starts_addr;
@@ -352,7 +392,7 @@ index a0df6b4..2deeb00 100644
  
        for (uint32_t i = 0; i < KK_MAX_VIEWPORTS; ++i) {
           const VkViewport *viewport =
-@@ -2464,6 +2533,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2464,6 +2536,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
              half_width != 0.0f ? 1.0f / half_width : 0.0f;
           gfx->per_draw_data.line_raster_viewports[i].inv_half_height =
              half_height != 0.0f ? 1.0f / half_height : 0.0f;
@@ -370,7 +410,7 @@ index a0df6b4..2deeb00 100644
        }
     }
  
-@@ -2598,65 +2678,6 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2598,65 +2681,6 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     return draw;
  }
  
@@ -436,7 +476,7 @@ index a0df6b4..2deeb00 100644
  
  static struct kk_draw_data
  kk_launch_line_raster(struct kk_cmd_buffer *cmd,
-@@ -2668,10 +2689,10 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2668,10 +2692,10 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
     const uint32_t view_count = kk_line_view_count(vs->info.vs.view_mask);
     uint32_t raster_vertex_count = 0;
  
@@ -449,7 +489,7 @@ index a0df6b4..2deeb00 100644
            vs->info.vs.line_raster_triangles ? 6 : 2,
            &raster_vertex_count)) {
        vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-@@ -2679,16 +2700,17 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2679,16 +2703,17 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
     }
  
     if (indirect) {
@@ -471,7 +511,7 @@ index a0df6b4..2deeb00 100644
           .index_buffer = draw.index.gpu.addr,
           .index_buffer_range_el =
              draw.index.el_size_B
-@@ -2698,20 +2720,22 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2698,20 +2723,22 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
           .vertex_outputs = vs->info.vs.outputs_written,
           .mode = prim,
           .vertices_per_line =
@@ -500,7 +540,7 @@ index a0df6b4..2deeb00 100644
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
-@@ -2734,6 +2758,7 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2734,6 +2761,7 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
     }
  
     const bool line_stipple_continuous =
@@ -508,7 +548,7 @@ index a0df6b4..2deeb00 100644
        kk_line_stipple_prefix_required(
           vs->info.vs.line_raster_stipple,
           gfx->per_draw_data.line_stipple_enable, prim,
-@@ -2754,6 +2779,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2754,6 +2782,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
        }
     }
  
@@ -518,7 +558,7 @@ index a0df6b4..2deeb00 100644
     draw.index.gpu = (struct kk_addr_range){0};
     draw.index.el_size_B = 0;
     draw.vertex_offset = 0;
-@@ -2844,12 +2872,14 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2844,12 +2875,14 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        lines.line_raster_run_starts_addr = source.line_raster_run_starts_addr;
     enum mesa_prim line_prim = u_decomposed_prim(source_prim);
  
@@ -536,7 +576,7 @@ index a0df6b4..2deeb00 100644
        kk_line_stipple_prefix_required(
           vs->info.vs.line_raster_stipple,
           gfx->per_draw_data.line_stipple_enable,
-@@ -2859,7 +2889,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2859,7 +2892,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        .heap = kk_heap(cmd),
        .vp = line_vp,
        .in_draw = lines.grid.addr,
@@ -545,7 +585,7 @@ index a0df6b4..2deeb00 100644
        .index_buffer = lines.index.gpu.addr,
        .index_buffer_range_el =
           lines.index.el_size_B
-@@ -2867,10 +2897,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2867,10 +2900,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
              : 0,
        .index_size_B = lines.index.el_size_B,
        .mode = line_prim,
@@ -561,7 +601,7 @@ index a0df6b4..2deeb00 100644
        .line_run_starts_addr = lines.line_raster_run_starts_addr,
     };
     libkk_line_raster_setup_indirect_struct(cmd, kk_grid_1d(1), true, setup);
-@@ -2886,7 +2918,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2886,7 +2921,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
           line_vp + offsetof(struct poly_vertex_params, line_stipple_grid));
     }
  
@@ -570,7 +610,7 @@ index a0df6b4..2deeb00 100644
     lines.index.gpu = (struct kk_addr_range){0};
     lines.index.el_size_B = 0;
     lines.vertex_offset = 0;
-@@ -3171,7 +3203,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3171,7 +3206,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
     bool geometry = vs && vs->info.vs.geometry_shader_emulation;
@@ -580,7 +620,7 @@ index a0df6b4..2deeb00 100644
     struct kk_draw_data draw = {
        .index.gpu = data->index_buffer,
        .index.el_size_B = data->index_buffer_el_size_B,
-@@ -3197,7 +3230,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3197,7 +3233,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
        draw.vertex_offset = draw_cmd.vertexOffset;
  
        uint64_t index_offset =
@@ -589,8 +629,13 @@ index a0df6b4..2deeb00 100644
        draw.index.gpu.addr += index_offset;
        draw.index.gpu.range = index_offset < draw.index.gpu.range
                                  ? draw.index.gpu.range - index_offset
-@@ -3242,8 +3275,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3239,11 +3275,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+       return;
+ 
+    bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
++   const bool rasterize = !kk_rast_discard(cmd);
     const bool polygon_as_points =
++      rasterize &&
        cmd->vk.dynamic_graphics_state.rs.polygon_mode == VK_POLYGON_MODE_POINT;
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
 -   const bool emulate_polygon_points =
@@ -599,7 +644,16 @@ index a0df6b4..2deeb00 100644
     const bool emulate_line_raster = vs->info.vs.line_raster_emulation;
     const bool materialize_line_raster =
        vs->info.vs.line_raster_materialize;
-@@ -3271,7 +3303,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3254,7 +3291,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+       cmd->vk.dynamic_graphics_state.rs.provoking_vertex ==
+       VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    const bool rewrite_direct_provoking =
+-      provoking_last && !tess && !emulate_geometry &&
++      rasterize && provoking_last && !tess && !emulate_geometry &&
+       !emulate_transform_feedback && !emulate_polygon_points &&
+       !emulate_line_raster &&
+       u_reduced_prim(data->prim) != MESA_PRIM_POINTS;
+@@ -3271,7 +3308,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
          data->prim == MESA_PRIM_TRIANGLE_FAN) ||
         (emulate_transform_feedback && data->indexed && data->restart) ||
         (emulate_geometry && data->indexed && data->restart) ||
@@ -609,7 +663,7 @@ index a0df6b4..2deeb00 100644
          data->restart) ||
         (!emulate_geometry && !emulate_polygon_points && polygon_as_points &&
          is_polygon_primitive(data->prim) &&
-@@ -3307,8 +3340,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3307,8 +3345,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        } else if (emulate_transform_feedback)
           draw_data =
              kk_launch_transform_feedback(cmd, draw_data, data->prim);
@@ -618,7 +672,7 @@ index a0df6b4..2deeb00 100644
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3318,7 +3349,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3318,7 +3354,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        if (materialize_line_raster) {
           draw_data = kk_launch_materialized_line_raster(
              cmd, draw_data, source_raster_prim);
@@ -627,13 +681,14 @@ index a0df6b4..2deeb00 100644
           draw_data =
              kk_launch_line_raster(cmd, draw_data, data->prim);
        }
-@@ -3331,12 +3362,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3331,12 +3367,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        /* The XFB pass-through raster shader sources flat outputs from the
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
 -      if (provoking_last && !emulate_line_raster &&
-+      if (provoking_last && !emulate_line_raster && !emulate_polygon_points &&
-           (emulate_geometry || tess))
+-          (emulate_geometry || tess))
++      if (rasterize && provoking_last && !emulate_line_raster &&
++          !emulate_polygon_points && (emulate_geometry || tess))
           draw_data =
              kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
  
@@ -701,6 +756,35 @@ index c1c5bd4..30c4e4a 100644
  
        cmd->state.gfx.vb.addr_range[0] = save->vb0;
        cmd->state.gfx.dirty |= KK_DIRTY_VB;
+diff --git a/src/kosmickrisp/vulkan/kk_line_raster.h b/src/kosmickrisp/vulkan/kk_line_raster.h
+index f4b7b01..8af7caf 100644
+--- a/src/kosmickrisp/vulkan/kk_line_raster.h
++++ b/src/kosmickrisp/vulkan/kk_line_raster.h
+@@ -29,11 +29,15 @@ struct kk_line_raster_key {
+    bool dynamic_stipple_enable;
+    bool stipple_enable;
+    bool dynamic_topology;
++   bool dynamic_rasterizer_discard;
++   bool rasterizer_discard;
+ };
+ 
+ static inline struct kk_line_raster_key
+ kk_line_raster_key(const struct vk_graphics_pipeline_state *state)
+ {
++   const bool discard =
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
+    const bool polygon =
+       BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_POLYGON_MODE);
+    const bool provoking =
+@@ -57,6 +61,8 @@ kk_line_raster_key(const struct vk_graphics_pipeline_state *state)
+       .stipple_enable = !stipple && state->rs->line.stipple.enable,
+       .dynamic_topology =
+          BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY),
++      .dynamic_rasterizer_discard = discard,
++      .rasterizer_discard = !discard && state->rs->rasterizer_discard_enable,
+    };
+ }
+ 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
 index 957eb2f..28294b6 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
@@ -753,10 +837,10 @@ index 0000000..5b91c9a
 +               "raster edge records must remain compact");
 diff --git a/src/kosmickrisp/vulkan/kk_raster_variant.h b/src/kosmickrisp/vulkan/kk_raster_variant.h
 new file mode 100644
-index 0000000..a3981f5
+index 0000000..9b21bfd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_raster_variant.h
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,112 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -769,13 +853,16 @@ index 0000000..a3981f5
 +/* Executable classes, not a Cartesian product of dynamic API states.  The
 + * base class keeps fills and eligible native lines on the direct Metal path.
 + * Provoking vertex, stipple enable, and depth clipping stay dynamic within a
-+ * class; only changes to the actual raster shader require another class. */
++ * class; only changes to the actual raster shader require another class.
++ * Discard retains application stages and transform feedback without raster
++ * materialization, coverage generation, or provoking-vertex conversion. */
 +enum kk_raster_variant {
 +   KK_RASTER_BASE,
 +   KK_RASTER_POINT,
 +   KK_RASTER_LINE,
 +   KK_RASTER_RECTANGULAR,
 +   KK_RASTER_SMOOTH,
++   KK_RASTER_DISCARD,
 +   KK_RASTER_VARIANT_COUNT,
 +};
 +
@@ -783,6 +870,9 @@ index 0000000..a3981f5
 +kk_raster_variant_select(enum mesa_prim primitive,
 +                         const struct vk_rasterization_state *rs)
 +{
++   if (rs->rasterizer_discard_enable)
++      return KK_RASTER_DISCARD;
++
 +   const enum mesa_prim reduced = u_reduced_prim(primitive);
 +   if (reduced == MESA_PRIM_TRIANGLES) {
 +      if (rs->polygon_mode == VK_POLYGON_MODE_POINT)
@@ -809,6 +899,11 @@ index 0000000..a3981f5
 +                       enum mesa_prim primitive, bool fixed_primitive)
 +{
 +   const struct vk_rasterization_state *rs = state->rs;
++   const bool dynamic_discard =
++      BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
++   if (!dynamic_discard && rs->rasterizer_discard_enable)
++      return BITFIELD_BIT(KK_RASTER_DISCARD);
++
 +   const enum mesa_prim reduced = u_reduced_prim(primitive);
 +   const bool triangles = reduced == MESA_PRIM_TRIANGLES;
 +   const bool polygon = triangles &&
@@ -821,6 +916,8 @@ index 0000000..a3981f5
 +      (triangles && (polygon || rs->polygon_mode == VK_POLYGON_MODE_LINE));
 +   uint32_t mask = (fill || (!point && !line))
 +                      ? BITFIELD_BIT(KK_RASTER_BASE) : 0;
++   if (dynamic_discard)
++      mask |= BITFIELD_BIT(KK_RASTER_DISCARD);
 +   if (point)
 +      mask |= BITFIELD_BIT(KK_RASTER_POINT);
 +   if (!line)
@@ -857,7 +954,7 @@ index 0000000..a3981f5
 +   return mask;
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index c99592f..d2f630a 100644
+index 7237d4c..e6d9993 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -15,6 +15,7 @@
@@ -878,10 +975,18 @@ index c99592f..d2f630a 100644
  }
  
  static void
-@@ -986,10 +986,13 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
-             kk_shader_destroy(vk_dev, shader->statistics_variant_shaders[stage],
-                               pAllocator);
-       }
+@@ -158,6 +158,7 @@ kk_populate_vs_key(struct kk_vs_key *key,
+    rs.provoking_vertex = key->raster.provoking_vertex;
+    rs.line.mode = key->raster.line_mode;
+    rs.line.stipple.enable = key->raster.stipple_enable;
++   rs.rasterizer_discard_enable = key->raster.rasterizer_discard;
+    struct vk_input_assembly_state ia = *state->ia;
+    if (key->raster.dynamic_topology)
+       ia.primitive_topology = kk_vk_topology_class(ia.primitive_topology);
+@@ -981,10 +982,13 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+       mtl_release(pipe->cs);
+       pipe->cs = NULL;
+    } else if (shader->info.stage == MESA_SHADER_VERTEX) {
 -      u_foreach_bit(stage, shader->info.vs.line_variant_stages) {
 -         if (shader->line_variant_shaders[stage])
 -            kk_shader_destroy(vk_dev, shader->line_variant_shaders[stage],
@@ -896,7 +1001,7 @@ index c99592f..d2f630a 100644
        }
  
        /* Pre-render compute pipelines. */
-@@ -1460,172 +1463,581 @@ kk_load_polygon_point_output(nir_builder *b, nir_def *vertex_params,
+@@ -1455,172 +1459,581 @@ kk_load_polygon_point_output(nir_builder *b, nir_def *vertex_params,
                            .align_mul = sizeof(uint32_t), .align_offset = 0);
  }
  
@@ -1589,7 +1694,7 @@ index c99592f..d2f630a 100644
     return nir;
  }
  
-@@ -1750,6 +2162,13 @@ kk_lower_line_fs(nir_shader *fs, bool smooth, bool stipple,
+@@ -1745,6 +2158,13 @@ kk_lower_line_fs(nir_shader *fs, bool smooth, bool stipple,
           &b, nir_fsub(&b,
                        nir_fadd_imm(&b, nir_channel(&b, line, 1), 0.5f),
                        nir_fabs(&b, nir_channel(&b, line, 0))));
@@ -1603,7 +1708,7 @@ index c99592f..d2f630a 100644
        struct kk_smooth_line_store_state state = {.coverage = coverage};
        nir_shader_intrinsics_pass(fs, kk_lower_smooth_line_store,
                                   nir_metadata_control_flow, &state);
-@@ -1842,27 +2261,6 @@ kk_line_raster_viewport_for_vertex(nir_builder *b, nir_def *vertex_params,
+@@ -1837,27 +2257,6 @@ kk_line_raster_viewport_for_vertex(nir_builder *b, nir_def *vertex_params,
     return nir_umin_imm(b, viewport, KK_MAX_VIEWPORTS - 1);
  }
  
@@ -1631,7 +1736,7 @@ index c99592f..d2f630a 100644
  
  static nir_def *
  kk_line_primitive_count(nir_builder *b, nir_def *topology, nir_def *vertices)
-@@ -2033,8 +2431,13 @@ static nir_shader *
+@@ -2028,8 +2427,13 @@ static nir_shader *
  kk_create_line_materialize_shader(const nir_shader *source)
  {
     nir_shader *nir = nir_shader_clone(NULL, source);
@@ -1647,7 +1752,7 @@ index c99592f..d2f630a 100644
  
     NIR_PASS(_, nir, nir_shader_intrinsics_pass,
              kk_lower_line_materialize_instr, nir_metadata_control_flow, nir);
-@@ -2050,373 +2453,636 @@ kk_create_line_materialize_shader(const nir_shader *source)
+@@ -2045,373 +2449,636 @@ kk_create_line_materialize_shader(const nir_shader *source)
     return nir;
  }
  
@@ -2606,7 +2711,7 @@ index c99592f..d2f630a 100644
     return nir;
  }
  
-@@ -2938,13 +3604,13 @@ gather_graphics_pipeline_create_info(
+@@ -2933,13 +3600,13 @@ gather_graphics_pipeline_create_info(
            MTL_PRIMITIVE_TOPOLOGY_CLASS_TRIANGLE)
        topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
  
@@ -2622,7 +2727,7 @@ index c99592f..d2f630a 100644
         (info->vs.geometry_shader_emulation ||
          info->vs.transform_feedback_emulation)) {
        const struct poly_gs_info *gsi = info->vs.geometry_shader_emulation
-@@ -3134,7 +3800,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3129,7 +3796,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
           return VK_ERROR_INVALID_SHADER_NV;
     }
  
@@ -2631,7 +2736,7 @@ index c99592f..d2f630a 100644
        result = kk_compile_compute_pipeline(
           device, &vs->line_stipple_prefix_msl, 1,
           &pipe->gfx.line_stipple_prefix);
-@@ -3358,14 +4024,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3353,22 +4020,23 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     const bool geometry_shader_emulation = geometry_shader != UINT32_MAX;
     transform_feedback_emulation &= !tess && !geometry_shader_emulation;
  
@@ -2643,14 +2748,25 @@ index c99592f..d2f630a 100644
        state ? kk_graphics_raster_primitive(shader_count, infos, state)
              : MESA_PRIM_POINTS;
  
++   const bool rasterize = state && !state->rs->rasterizer_discard_enable;
 +   const bool polygon_point_emulation =
-+      state && state->rs->polygon_mode == VK_POLYGON_MODE_POINT &&
++      rasterize && state->rs->polygon_mode == VK_POLYGON_MODE_POINT &&
 +      u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES;
 +
     const bool line_raster_polygon_edges =
-       state && u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES &&
+-      state && u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES &&
++      rasterize && u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES &&
        state->rs->polygon_mode == VK_POLYGON_MODE_LINE;
-@@ -3385,15 +4051,19 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+    const bool line_raster_input =
+       u_reduced_prim(line_raster_prim) == MESA_PRIM_LINES ||
+       line_raster_polygon_edges;
+    const bool line_raster_emulation =
+-      state && line_raster_input &&
++      rasterize && line_raster_input &&
+       (mesa_prim_has_adjacency(line_raster_prim) ||
+        state->rs->provoking_vertex ==
+           VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ||
+@@ -3380,15 +4048,19 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         state->rs->line.stipple.enable ||
         BITSET_TEST(state->dynamic,
                     MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE));
@@ -2672,7 +2788,7 @@ index c99592f..d2f630a 100644
        line_raster_emulation && kk_line_raster_uses_triangles(state);
     const bool line_raster_smooth =
        line_raster_emulation &&
-@@ -3430,7 +4100,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3425,7 +4097,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         * that shader, not Metal's rasterizer-generated primitive ID.  Expose it
         * as a flat varying before the original GS->FS link so the varying
         * optimizer relocates both sides to a matching user slot. */
@@ -2681,7 +2797,7 @@ index c99592f..d2f630a 100644
            nir->info.stage == MESA_SHADER_FRAGMENT) {
           const nir_lower_sysvals_to_varyings_options sysvals = {
              .primitive_id = true,
-@@ -3444,10 +4114,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3439,10 +4111,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
         * it is linked exactly once to the final generated raster stage below. */
        if (line_raster_emulation &&
            nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -2696,7 +2812,7 @@ index c99592f..d2f630a 100644
  
        msl_preprocess_nir_workarounds(nir, dev->disabled_workarounds);
        kk_lower_nir(dev, nir, emulated_stage, pipeline_statistics, info->robustness,
-@@ -3476,17 +4148,28 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3471,17 +4145,28 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           get_empty_nir(dev, MESA_SHADER_FRAGMENT, state);
        if (line_raster_emulation) {
           kk_lower_line_fs(nir_shaders[shader_count], line_raster_smooth,
@@ -2727,7 +2843,7 @@ index c99592f..d2f630a 100644
     nir_opt_varyings_bulk(nir_shaders, initial_link_count, true, UINT32_MAX,
                           UINT32_MAX, nir_opts, NULL);
     /* Second pass is required because some dEQP-VK.glsl.matrix.sub.dynamic.*
-@@ -3495,7 +4178,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3490,7 +4175,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     nir_opt_varyings_bulk(nir_shaders, initial_link_count, true, UINT32_MAX,
                           UINT32_MAX, nir_opts, NULL);
  
@@ -2735,7 +2851,7 @@ index c99592f..d2f630a 100644
     uint32_t line_raster_shader = UINT32_MAX;
     uint32_t line_raster_materialize_shader = UINT32_MAX;
     uint32_t line_stipple_prefix_shader = UINT32_MAX;
-@@ -3509,6 +4191,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3504,6 +4188,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     nir_shader *line_source = nir_shaders[0];
     nir_shader *line_source_clone = NULL;
     uint64_t line_raster_outputs = 0;
@@ -2744,7 +2860,7 @@ index c99592f..d2f630a 100644
     const struct vk_shader_compile_info *line_source_compile = &infos[0];
     if (geometry_shader_emulation) {
        const struct vk_shader_compile_info *gs_compile =
-@@ -3649,19 +4333,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3644,19 +4330,6 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                     infos[0].set_layout_count, infos[0].set_layouts, state);
        transform_feedback_raster_shader = total_shaders;
        nir_shaders[total_shaders++] = raster;
@@ -2764,7 +2880,7 @@ index c99592f..d2f630a 100644
     }
  
     if (line_raster_materialize && tess && !geometry_shader_emulation) {
-@@ -3676,7 +4347,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3671,7 +4344,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        nir_shaders[total_shaders++] = materialize;
     }
  
@@ -2773,7 +2889,7 @@ index c99592f..d2f630a 100644
        assert(nir_shaders[0]->info.stage == MESA_SHADER_VERTEX);
  
        nir_shader *fs = nir_shaders[shader_count - 1u];
-@@ -3684,17 +4355,23 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3679,17 +4352,23 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           fs = nir_shaders[shader_count];
        assert(fs->info.stage == MESA_SHADER_FRAGMENT);
  
@@ -2802,7 +2918,7 @@ index c99592f..d2f630a 100644
           ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
           : VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
        struct vk_rasterization_state line_rs = *state->rs;
-@@ -3702,6 +4379,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3697,6 +4376,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        struct vk_graphics_pipeline_state line_state = *state;
        line_state.ia = &line_ia;
        line_state.rs = &line_rs;
@@ -2816,7 +2932,7 @@ index c99592f..d2f630a 100644
        kk_lower_nir(dev, line, false, pipeline_statistics, line_source_compile->robustness,
                     line_source_compile->set_layout_count,
                     line_source_compile->set_layouts, &line_state);
-@@ -3718,11 +4402,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3713,11 +4399,12 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        line_raster_shader = total_shaders;
        nir_shaders[total_shaders++] = line;
  
@@ -2834,7 +2950,7 @@ index c99592f..d2f630a 100644
           msl_preprocess_nir_workarounds(prefix, dev->disabled_workarounds);
           kk_lower_nir(dev, prefix, false, pipeline_statistics, line_source_compile->robustness,
                        line_source_compile->set_layout_count,
-@@ -3732,12 +4417,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3727,12 +4414,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        }
  
        line_raster_outputs = line_source->info.outputs_written;
@@ -2850,7 +2966,7 @@ index c99592f..d2f630a 100644
            i == line_raster_materialize_shader ||
            i == line_stipple_prefix_shader ||
            i == transform_feedback_raster_shader)
-@@ -3753,7 +4440,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3748,7 +4437,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                       nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL;
  
        mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
@@ -2859,7 +2975,7 @@ index c99592f..d2f630a 100644
            i == line_raster_shader ||
            i == transform_feedback_raster_shader)
           logical_stage = MESA_SHADER_GEOMETRY;
-@@ -3764,7 +4451,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3759,7 +4448,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           dev, nir_shaders[i], logical_stage, prev_stage, vertex_robustness,
           state, force_sw_vs,
           i == geometry_shader || i == transform_feedback_raster_shader,
@@ -2868,7 +2984,7 @@ index c99592f..d2f630a 100644
           state && enabled_features &&
              enabled_features->legacyVertexAttributes &&
              BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_VI),
-@@ -3787,14 +4474,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3782,14 +4471,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
  
        if (i == 0 && polygon_point_emulation)
           shaders[i]->info.vs.polygon_point_emulation = true;
@@ -2889,7 +3005,7 @@ index c99592f..d2f630a 100644
           shaders[i]->info.vs.line_raster_stipple = line_raster_stipple;
           shaders[i]->info.vs.line_raster_materialize =
              line_raster_materialize;
-@@ -3805,6 +4494,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3800,6 +4491,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                       : line_raster_prim)
                 : line_raster_prim;
           shaders[i]->info.vs.line_raster_outputs = line_raster_outputs;
@@ -2898,7 +3014,7 @@ index c99592f..d2f630a 100644
        }
  
        if (i == 0 && transform_feedback_emulation) {
-@@ -3951,11 +4642,9 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -3946,11 +4639,9 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
                          struct vk_shader **shaders_out,
                          bool defer_library_shaders, bool pipeline_statistics)
  {
@@ -2913,7 +3029,7 @@ index c99592f..d2f630a 100644
     if (!state || !kk_graphics_state_is_complete(state) || shader_count == 0 ||
         infos[0].stage != MESA_SHADER_VERTEX ||
         (defer_library_shaders &&
-@@ -3979,83 +4668,96 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -3974,83 +4665,101 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
                           infos[i].stage == MESA_SHADER_GEOMETRY;
     const enum mesa_prim primitive =
        kk_graphics_raster_primitive(shader_count, infos, state);
@@ -2983,8 +3099,10 @@ index c99592f..d2f630a 100644
 -      return result;
 -   }
 +      struct vk_rasterization_state rs = *state->rs;
++      rs.rasterizer_discard_enable = variant == KK_RASTER_DISCARD;
 +      rs.polygon_mode = variant == KK_RASTER_POINT ? VK_POLYGON_MODE_POINT
 +                        : variant != KK_RASTER_BASE &&
++                             variant != KK_RASTER_DISCARD &&
 +                             u_reduced_prim(primitive) == MESA_PRIM_TRIANGLES
 +                           ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
 +      rs.line.mode = variant == KK_RASTER_RECTANGULAR
@@ -2994,9 +3112,12 @@ index c99592f..d2f630a 100644
 +                        : VK_LINE_RASTERIZATION_MODE_DEFAULT_KHR;
 +      struct vk_graphics_pipeline_state executable = *state;
 +      executable.rs = &rs;
++      BITSET_CLEAR(executable.dynamic,
++                   MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
 +      BITSET_CLEAR(executable.dynamic, MESA_VK_DYNAMIC_RS_POLYGON_MODE);
 +      BITSET_CLEAR(executable.dynamic, MESA_VK_DYNAMIC_RS_LINE_MODE);
-+      if (variant == KK_RASTER_BASE || variant == KK_RASTER_POINT) {
++      if (variant == KK_RASTER_BASE || variant == KK_RASTER_POINT ||
++          variant == KK_RASTER_DISCARD) {
 +         rs.line.stipple.enable = false;
 +         BITSET_CLEAR(executable.dynamic, MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE);
 +         if (u_reduced_prim(primitive) == MESA_PRIM_LINES) {
@@ -3077,18 +3198,7 @@ index c99592f..d2f630a 100644
  }
  
  static VkResult
-@@ -4073,7 +4775,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
-    if (!enabled_features->pipelineStatisticsQuery || !state ||
-        !kk_graphics_state_is_complete(state) || shader_count == 0 ||
-        infos[0].stage != MESA_SHADER_VERTEX ||
--       (defer_library_shaders && infos[0].defer_graphics_pipeline_link))
-+       (defer_library_shaders &&
-+        (infos[0].defer_graphics_pipeline_link ||
-+         BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_VI))))
-       return kk_compile_line_variants(device, shader_count, infos, state,
-                                       enabled_features, pAllocator, shaders_out,
-                                       defer_library_shaders, false);
-@@ -4756,7 +5460,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4738,7 +5447,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
        if (shader->info.vs.line_raster_materialize)
           kk_msl_data_serialize(&shader->line_raster_materialize_msl, blob);
  
@@ -3097,7 +3207,7 @@ index c99592f..d2f630a 100644
           kk_msl_data_serialize(&shader->line_stipple_prefix_msl, blob);
  
        if (shader->info.vs.geometry_shader_emulation) {
-@@ -4767,11 +5471,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4749,11 +5458,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
           kk_msl_data_serialize(&shader->geometry_pre_gs_msl, blob);
        }
  
@@ -3115,9 +3225,9 @@ index c99592f..d2f630a 100644
 +               return false;
 +         }
        }
+    }
  
-       u_foreach_bit(stage, shader->info.vs.statistics_variant_stages) {
-@@ -4828,11 +5535,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4803,11 +5515,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
     if (blob->overrun || (unsigned)info.stage >= MESA_SHADER_STAGES)
        return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
  
@@ -3134,8 +3244,8 @@ index c99592f..d2f630a 100644
 +          !(info.vs.raster_variant_stages & BITFIELD_BIT(MESA_SHADER_VERTEX)))
           return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
     }
-    if (info.stage == MESA_SHADER_VERTEX && info.vs.statistics_variant_stages) {
-@@ -4902,7 +5612,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+ 
+@@ -4870,7 +5585,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -3144,14 +3254,14 @@ index c99592f..d2f630a 100644
           result = kk_msl_data_deserialize(blob,
                                            &shader->line_stipple_prefix_msl);
           if (result != VK_SUCCESS)
-@@ -4927,19 +5637,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4895,19 +5610,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
 -      u_foreach_bit(stage, shader->info.vs.line_variant_stages) {
 -         struct vk_shader *variant = NULL;
 -         result = kk_deserialize_shader_impl(vk_dev, blob, binary_version,
--                                             pAllocator, &variant, false, false);
+-                                             pAllocator, &variant, false);
 -         if (result != VK_SUCCESS)
 -            goto fail;
 -         struct kk_shader *line = container_of(variant, struct kk_shader, vk);
@@ -3166,7 +3276,7 @@ index c99592f..d2f630a 100644
 +         u_foreach_bit(stage, shader->info.vs.raster_variant_stages) {
 +            struct vk_shader *child = NULL;
 +            result = kk_deserialize_shader_impl(vk_dev, blob, binary_version,
-+                                                pAllocator, &child, false, false);
++                                                pAllocator, &child, false);
 +            if (result != VK_SUCCESS)
 +               goto fail;
 +            struct kk_shader *raster = container_of(child, struct kk_shader, vk);
@@ -3179,8 +3289,8 @@ index c99592f..d2f630a 100644
 +            }
           }
        }
- 
-@@ -5153,10 +5866,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
+    }
+@@ -5100,10 +5818,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
     const enum mesa_prim primitive = fixed_primitive
                                        ? owner->info.vs.raster_primitive
                                        : vk_topology_to_mesa(dyn->ia.primitive_topology);
@@ -3200,7 +3310,7 @@ index c99592f..d2f630a 100644
     for (uint32_t stage = 0; stage <= MESA_SHADER_FRAGMENT; stage++) {
        struct kk_shader *shader = selected[stage];
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 19070fb..777eb6c 100644
+index ba8c6d0..de64dbe 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -10,6 +10,7 @@
@@ -3222,10 +3332,10 @@ index 19070fb..777eb6c 100644
 +         uint32_t raster_variant_mask;
 +         uint32_t raster_variant_stages;
 +         enum kk_raster_variant raster_variant_class;
-          /* One instrumented alternative, independent of the query mask. */
-          uint32_t statistics_variant_stages;
  
-@@ -85,11 +89,14 @@ struct kk_shader_info {
+          uint32_t tess_local_thread_size;
+ 
+@@ -83,11 +87,14 @@ struct kk_shader_info {
           /* Final application primitive, before polygon/line expansion. */
           enum mesa_prim raster_primitive;
           bool polygon_point_emulation;
@@ -3240,18 +3350,18 @@ index 19070fb..777eb6c 100644
           enum mesa_prim line_raster_prim;
           uint64_t line_raster_outputs;
           bool transform_feedback_emulation;
-@@ -184,7 +191,8 @@ struct kk_shader {
+@@ -182,7 +189,8 @@ struct kk_shader {
     /* struct kk_attachment_variant, owned by this shader. */
     struct util_dynarray attachment_variants;
     struct kk_shader_info info;
 -   struct kk_shader *line_variant_shaders[MESA_SHADER_STAGES];
 +   struct kk_shader *raster_variant_shaders[KK_RASTER_VARIANT_COUNT]
 +                                            [MESA_SHADER_STAGES];
-    struct kk_shader *statistics_variant_shaders[MESA_SHADER_STAGES];
     struct vk_pipeline_robustness_state deferred_robustness;
     struct blob deferred_nir;
+    struct msl_compile_data msl_data[MESA_SHADER_STAGES];
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 696f617..73b780c 100644
+index 696f617..4150dd5 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -91,6 +91,8 @@ kk_files = files(
@@ -3263,7 +3373,35 @@ index 696f617..73b780c 100644
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -364,6 +366,7 @@ if with_tests
+@@ -308,6 +310,27 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 120,
+     )
++    test(
++      'kosmickrisp_raster_discard',
++      executable(
++        'test_kosmickrisp_raster_discard',
++        files('tests/test_raster_discard.cpp', 'tests/raster_discard_state.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_mtl_bridge,
++          idep_nir,
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_with : libvulkan_kosmickrisp,
++        override_options : ['cpp_std=c++20'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 120,
++    )
+     test(
+       'kosmickrisp_transform_feedback_builtins',
+       executable(
+@@ -364,6 +387,7 @@ if with_tests
                'tests/line_raster_cache_state.m'),
          include_directories : kk_test_include_directories,
          dependencies : [
@@ -3271,7 +3409,7 @@ index 696f617..73b780c 100644
            idep_nir,
            idep_vulkan_runtime_headers,
            idep_vulkan_util_headers,
-@@ -435,6 +438,17 @@ if with_tests
+@@ -435,6 +459,17 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -3504,8 +3642,337 @@ index 95aabcc..fd6ab1b 100644
                     : cmd->state.gfx.bound_shaders[stage];
        assert(cmd->state.shaders[stage] == expected);
     }
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
+new file mode 100644
+index 0000000..e2c4d39
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: MIT */
++#version 450
++#extension GL_EXT_buffer_reference : require
++layout(buffer_reference, std430, buffer_reference_align = 4) buffer Memory {
++   uint words[];
++};
++layout(push_constant) uniform Push {
++   Memory memory;
++} pc;
++void main()
++{
++   atomicAdd(pc.memory.words[1024], 1u);
++}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag.h b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag.h
+new file mode 100644
+index 0000000..addef09
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag.h
+@@ -0,0 +1,35 @@
++{0x07230203,0x00010600,0x000d000b,0x00000018,
++0x00000000,0x00020011,0x00000001,0x00020011,
++0x000014e3,0x0006000b,0x00000001,0x4c534c47,
++0x6474732e,0x3035342e,0x00000000,0x0003000e,
++0x000014e4,0x00000001,0x0006000f,0x00000004,
++0x00000004,0x6e69616d,0x00000000,0x0000000c,
++0x00030010,0x00000004,0x00000007,0x00030047,
++0x00000007,0x00000002,0x00050048,0x00000007,
++0x00000000,0x00000023,0x00000000,0x00040047,
++0x00000009,0x00000006,0x00000004,0x00030047,
++0x0000000a,0x00000002,0x00050048,0x0000000a,
++0x00000000,0x00000023,0x00000000,0x00020013,
++0x00000002,0x00030021,0x00000003,0x00000002,
++0x00030027,0x00000006,0x000014e5,0x0003001e,
++0x00000007,0x00000006,0x00040015,0x00000008,
++0x00000020,0x00000000,0x0003001d,0x00000009,
++0x00000008,0x0003001e,0x0000000a,0x00000009,
++0x00040020,0x00000006,0x000014e5,0x0000000a,
++0x00040020,0x0000000b,0x00000009,0x00000007,
++0x0004003b,0x0000000b,0x0000000c,0x00000009,
++0x00040015,0x0000000d,0x00000020,0x00000001,
++0x0004002b,0x0000000d,0x0000000e,0x00000000,
++0x00040020,0x0000000f,0x00000009,0x00000006,
++0x0004002b,0x0000000d,0x00000012,0x00000400,
++0x00040020,0x00000013,0x000014e5,0x00000008,
++0x0004002b,0x00000008,0x00000015,0x00000001,
++0x0004002b,0x00000008,0x00000016,0x00000000,
++0x00050036,0x00000002,0x00000004,0x00000000,
++0x00000003,0x000200f8,0x00000005,0x00050041,
++0x0000000f,0x00000010,0x0000000c,0x0000000e,
++0x0004003d,0x00000006,0x00000011,0x00000010,
++0x00060041,0x00000013,0x00000014,0x00000011,
++0x0000000e,0x00000012,0x000700ea,0x00000008,
++0x00000017,0x00000014,0x00000015,0x00000016,
++0x00000015,0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom
+new file mode 100644
+index 0000000..27b38bf
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: MIT */
++#version 450
++layout(points) in;
++layout(line_strip, max_vertices = 204) out;
++layout(location = 0, xfb_buffer = 0, xfb_offset = 0, xfb_stride = 4) flat out int primitive_id;
++void main()
++{
++   for (int i = 0; i < 102; ++i) {
++      gl_Position = gl_in[0].gl_Position;
++      primitive_id = gl_PrimitiveIDIn;
++      EmitVertex();
++      gl_Position = gl_in[0].gl_Position + vec4(1.0, 0.0, 0.0, 0.0);
++      primitive_id = gl_PrimitiveIDIn;
++      EmitVertex();
++      EndPrimitive();
++   }
++}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom.h b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom.h
+new file mode 100644
+index 0000000..7e53d95
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.geom.h
+@@ -0,0 +1,80 @@
++{0x07230203,0x00010600,0x000d000b,0x00000035,
++0x00000000,0x00020011,0x00000002,0x00020011,
++0x00000035,0x0006000b,0x00000001,0x4c534c47,
++0x6474732e,0x3035342e,0x00000000,0x0003000e,
++0x00000000,0x00000001,0x0009000f,0x00000003,
++0x00000004,0x6e69616d,0x00000000,0x0000001a,
++0x0000001e,0x00000025,0x00000027,0x00030010,
++0x00000004,0x0000000b,0x00030010,0x00000004,
++0x00000013,0x00040010,0x00000004,0x00000000,
++0x00000001,0x00030010,0x00000004,0x0000001c,
++0x00040010,0x00000004,0x0000001a,0x000000cc,
++0x00030047,0x00000018,0x00000002,0x00050048,
++0x00000018,0x00000000,0x0000000b,0x00000000,
++0x00050048,0x00000018,0x00000001,0x0000000b,
++0x00000001,0x00050048,0x00000018,0x00000002,
++0x0000000b,0x00000003,0x00050048,0x00000018,
++0x00000003,0x0000000b,0x00000004,0x00040047,
++0x0000001a,0x00000024,0x00000000,0x00040047,
++0x0000001a,0x00000025,0x00000004,0x00030047,
++0x0000001b,0x00000002,0x00050048,0x0000001b,
++0x00000000,0x0000000b,0x00000000,0x00050048,
++0x0000001b,0x00000001,0x0000000b,0x00000001,
++0x00050048,0x0000001b,0x00000002,0x0000000b,
++0x00000003,0x00050048,0x0000001b,0x00000003,
++0x0000000b,0x00000004,0x00030047,0x00000025,
++0x0000000e,0x00040047,0x00000025,0x0000001e,
++0x00000000,0x00040047,0x00000025,0x00000023,
++0x00000000,0x00040047,0x00000025,0x00000024,
++0x00000000,0x00040047,0x00000025,0x00000025,
++0x00000004,0x00040047,0x00000027,0x0000000b,
++0x00000007,0x00020013,0x00000002,0x00030021,
++0x00000003,0x00000002,0x00040015,0x00000006,
++0x00000020,0x00000001,0x0004002b,0x00000006,
++0x00000009,0x00000000,0x0004002b,0x00000006,
++0x00000010,0x00000066,0x00020014,0x00000011,
++0x00030016,0x00000013,0x00000020,0x00040017,
++0x00000014,0x00000013,0x00000004,0x00040015,
++0x00000015,0x00000020,0x00000000,0x0004002b,
++0x00000015,0x00000016,0x00000001,0x0004001c,
++0x00000017,0x00000013,0x00000016,0x0006001e,
++0x00000018,0x00000014,0x00000013,0x00000017,
++0x00000017,0x00040020,0x00000019,0x00000003,
++0x00000018,0x0004003b,0x00000019,0x0000001a,
++0x00000003,0x0006001e,0x0000001b,0x00000014,
++0x00000013,0x00000017,0x00000017,0x0004001c,
++0x0000001c,0x0000001b,0x00000016,0x00040020,
++0x0000001d,0x00000001,0x0000001c,0x0004003b,
++0x0000001d,0x0000001e,0x00000001,0x00040020,
++0x0000001f,0x00000001,0x00000014,0x00040020,
++0x00000022,0x00000003,0x00000014,0x00040020,
++0x00000024,0x00000003,0x00000006,0x0004003b,
++0x00000024,0x00000025,0x00000003,0x00040020,
++0x00000026,0x00000001,0x00000006,0x0004003b,
++0x00000026,0x00000027,0x00000001,0x0004002b,
++0x00000013,0x0000002b,0x3f800000,0x0004002b,
++0x00000013,0x0000002c,0x00000000,0x0007002c,
++0x00000014,0x0000002d,0x0000002b,0x0000002c,
++0x0000002c,0x0000002c,0x0004002b,0x00000006,
++0x00000032,0x00000001,0x00050036,0x00000002,
++0x00000004,0x00000000,0x00000003,0x000200f8,
++0x00000005,0x000200f9,0x0000000a,0x000200f8,
++0x0000000a,0x000700f5,0x00000006,0x00000034,
++0x00000009,0x00000005,0x00000033,0x0000000b,
++0x000500b1,0x00000011,0x00000012,0x00000034,
++0x00000010,0x000400f6,0x0000000c,0x0000000b,
++0x00000000,0x000400fa,0x00000012,0x0000000b,
++0x0000000c,0x000200f8,0x0000000b,0x00060041,
++0x0000001f,0x00000020,0x0000001e,0x00000009,
++0x00000009,0x0004003d,0x00000014,0x00000021,
++0x00000020,0x00050041,0x00000022,0x00000023,
++0x0000001a,0x00000009,0x0003003e,0x00000023,
++0x00000021,0x0004003d,0x00000006,0x00000028,
++0x00000027,0x0003003e,0x00000025,0x00000028,
++0x000100da,0x00050081,0x00000014,0x0000002e,
++0x00000021,0x0000002d,0x0003003e,0x00000023,
++0x0000002e,0x0003003e,0x00000025,0x00000028,
++0x000100da,0x000100db,0x00050080,0x00000006,
++0x00000033,0x00000034,0x00000032,0x000200f9,
++0x0000000a,0x000200f8,0x0000000c,0x000100fd,
++0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert
+new file mode 100644
+index 0000000..4ab12b6
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert
+@@ -0,0 +1,15 @@
++/* SPDX-License-Identifier: MIT */
++#version 450
++#extension GL_EXT_buffer_reference : require
++layout(buffer_reference, std430, buffer_reference_align = 4) buffer Memory {
++   uint words[];
++};
++layout(push_constant) uniform Push {
++   Memory memory;
++} pc;
++layout(location = 0) in vec4 position;
++void main()
++{
++   pc.memory.words[gl_VertexIndex] = uint(gl_VertexIndex) + 1u;
++   gl_Position = position;
++}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert.h b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert.h
+new file mode 100644
+index 0000000..eb1c9b9
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.vert.h
+@@ -0,0 +1,58 @@
++{0x07230203,0x00010600,0x000d000b,0x00000026,
++0x00000000,0x00020011,0x00000001,0x00020011,
++0x000014e3,0x0006000b,0x00000001,0x4c534c47,
++0x6474732e,0x3035342e,0x00000000,0x0003000e,
++0x000014e4,0x00000001,0x0009000f,0x00000000,
++0x00000004,0x6e69616d,0x00000000,0x0000000c,
++0x00000013,0x00000020,0x00000022,0x00030047,
++0x00000007,0x00000002,0x00050048,0x00000007,
++0x00000000,0x00000023,0x00000000,0x00040047,
++0x00000009,0x00000006,0x00000004,0x00030047,
++0x0000000a,0x00000002,0x00050048,0x0000000a,
++0x00000000,0x00000023,0x00000000,0x00040047,
++0x00000013,0x0000000b,0x0000002a,0x00030047,
++0x0000001e,0x00000002,0x00050048,0x0000001e,
++0x00000000,0x0000000b,0x00000000,0x00050048,
++0x0000001e,0x00000001,0x0000000b,0x00000001,
++0x00050048,0x0000001e,0x00000002,0x0000000b,
++0x00000003,0x00050048,0x0000001e,0x00000003,
++0x0000000b,0x00000004,0x00040047,0x00000022,
++0x0000001e,0x00000000,0x00020013,0x00000002,
++0x00030021,0x00000003,0x00000002,0x00030027,
++0x00000006,0x000014e5,0x0003001e,0x00000007,
++0x00000006,0x00040015,0x00000008,0x00000020,
++0x00000000,0x0003001d,0x00000009,0x00000008,
++0x0003001e,0x0000000a,0x00000009,0x00040020,
++0x00000006,0x000014e5,0x0000000a,0x00040020,
++0x0000000b,0x00000009,0x00000007,0x0004003b,
++0x0000000b,0x0000000c,0x00000009,0x00040015,
++0x0000000d,0x00000020,0x00000001,0x0004002b,
++0x0000000d,0x0000000e,0x00000000,0x00040020,
++0x0000000f,0x00000009,0x00000006,0x00040020,
++0x00000012,0x00000001,0x0000000d,0x0004003b,
++0x00000012,0x00000013,0x00000001,0x0004002b,
++0x00000008,0x00000017,0x00000001,0x00040020,
++0x00000019,0x000014e5,0x00000008,0x00030016,
++0x0000001b,0x00000020,0x00040017,0x0000001c,
++0x0000001b,0x00000004,0x0004001c,0x0000001d,
++0x0000001b,0x00000017,0x0006001e,0x0000001e,
++0x0000001c,0x0000001b,0x0000001d,0x0000001d,
++0x00040020,0x0000001f,0x00000003,0x0000001e,
++0x0004003b,0x0000001f,0x00000020,0x00000003,
++0x00040020,0x00000021,0x00000001,0x0000001c,
++0x0004003b,0x00000021,0x00000022,0x00000001,
++0x00040020,0x00000024,0x00000003,0x0000001c,
++0x00050036,0x00000002,0x00000004,0x00000000,
++0x00000003,0x000200f8,0x00000005,0x00050041,
++0x0000000f,0x00000010,0x0000000c,0x0000000e,
++0x0004003d,0x00000006,0x00000011,0x00000010,
++0x0004003d,0x0000000d,0x00000014,0x00000013,
++0x0004007c,0x00000008,0x00000016,0x00000014,
++0x00050080,0x00000008,0x00000018,0x00000016,
++0x00000017,0x00060041,0x00000019,0x0000001a,
++0x00000011,0x0000000e,0x00000014,0x0005003e,
++0x0000001a,0x00000018,0x00000002,0x00000004,
++0x0004003d,0x0000001c,0x00000023,0x00000022,
++0x00050041,0x00000024,0x00000025,0x00000020,
++0x0000000e,0x0003003e,0x00000025,0x00000023,
++0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
+new file mode 100755
+index 0000000..a4f84f7
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
+@@ -0,0 +1,7 @@
++#!/bin/sh
++# SPDX-License-Identifier: MIT
++set -eu
++cd -- "$(dirname -- "$0")"
++for shader in discard.vert discard.geom discard.frag; do
++   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
++done
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_state.c b/src/kosmickrisp/vulkan/tests/raster_discard_state.c
+new file mode 100644
+index 0000000..509d80a
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_state.c
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: MIT */
++#include "raster_discard_state.h"
++#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
++
++void
++kk_test_assert_raster_discard(VkCommandBuffer command, bool discard)
++{
++   const struct kk_cmd_buffer *cmd = kk_cmd_buffer_from_handle(command);
++   const struct kk_shader *shader = cmd->state.shaders[MESA_SHADER_VERTEX];
++   assert((shader->info.vs.raster_variant_class == KK_RASTER_DISCARD) == discard);
++   if (discard) {
++      assert(!shader->info.vs.line_raster_materialize);
++      assert(!shader->info.vs.line_raster_emulation);
++      assert(!shader->info.vs.polygon_point_emulation);
++   }
++}
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_state.h b/src/kosmickrisp/vulkan/tests/raster_discard_state.h
+new file mode 100644
+index 0000000..cc7a02a
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/raster_discard_state.h
+@@ -0,0 +1,11 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#include <stdbool.h>
++#include <vulkan/vulkan.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++void kk_test_assert_raster_discard(VkCommandBuffer command, bool discard);
++#ifdef __cplusplus
++}
++#endif
+diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster.c b/src/kosmickrisp/vulkan/tests/test_line_raster.c
+index d6623ec..6b88eff 100644
+--- a/src/kosmickrisp/vulkan/tests/test_line_raster.c
++++ b/src/kosmickrisp/vulkan/tests/test_line_raster.c
+@@ -85,6 +85,18 @@ main(void)
+       rs.line.stipple.enable = true;
+       const struct kk_line_raster_key ignored = kk_line_raster_key(&state);
+       assert(memcmp(&dynamic, &ignored, sizeof(dynamic)) == 0);
++
++      const struct kk_line_raster_key rasterized = kk_line_raster_key(&state);
++      rs.rasterizer_discard_enable = true;
++      const struct kk_line_raster_key discarded = kk_line_raster_key(&state);
++      assert(memcmp(&rasterized, &discarded, sizeof(discarded)) != 0);
++      BITSET_SET(state.dynamic, MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
++      const struct kk_line_raster_key dynamic_discard = kk_line_raster_key(&state);
++      rs.rasterizer_discard_enable = false;
++      const struct kk_line_raster_key ignored_discard = kk_line_raster_key(&state);
++      assert(memcmp(&dynamic_discard, &ignored_discard, sizeof(dynamic_discard)) == 0);
++      assert(memcmp(&rasterized, &dynamic_discard, sizeof(dynamic_discard)) != 0);
++
+    }
+ 
+    /* Final GS/TES/XFB line output and polygon edges share the center-sample
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
-index cbffca7..7ecccc9 100644
+index f998501..07f5d05 100644
 --- a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 @@ -432,6 +432,8 @@ int main()
@@ -3517,12 +3984,518 @@ index cbffca7..7ecccc9 100644
           auto plain_ms = ms;
           plain_ms.rasterizationSamples = VK_SAMPLE_COUNT_2_BIT;
           plain_info.pMultisampleState = &plain_ms;
+diff --git a/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp b/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp
+new file mode 100644
+index 0000000..b489230
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp
+@@ -0,0 +1,500 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++
++#define VK_NO_PROTOTYPES
++#include <vulkan/vulkan.h>
++#include "raster_discard_state.h"
++
++#include <algorithm>
++#include <array>
++#include <cstdio>
++#include <cstdlib>
++#include <span>
++#include <vector>
++
++extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++
++static void require(bool ok, const char *operation, VkResult result = VK_SUCCESS)
++{
++   if (!ok) {
++      std::fprintf(stderr, "%s: %d\n", operation, result);
++      std::exit(1);
++   }
++}
++
++template <typename T> static T load(VkInstance instance, const char *name)
++{
++   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
++   require(function != nullptr, name);
++   return function;
++}
++
++#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
++#define LOAD_D(name) \
++   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
++   require(name != nullptr, #name)
++
++static const uint32_t vertex_spirv[] =
++#include "raster_discard_shaders/discard.vert.h"
++;
++static const uint32_t geometry_spirv[] =
++#include "raster_discard_shaders/discard.geom.h"
++;
++static const uint32_t fragment_spirv[] =
++#include "raster_discard_shaders/discard.frag.h"
++;
++
++static const uint32_t stream_geometry_spirv[] =
++#include "statistics_shaders/streams.geom.h"
++;
++
++struct Buffer {
++   VkBuffer buffer = VK_NULL_HANDLE;
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   void *mapped = nullptr;
++};
++
++int main()
++{
++   std::setvbuf(stdout, nullptr, _IONBF, 0);
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
++   app.pApplicationName = "raster-discard";
++   app.apiVersion = VK_API_VERSION_1_3;
++   VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
++   instance_info.pApplicationInfo = &app;
++   auto result = vkCreateInstance(&instance_info, nullptr, &instance);
++   require(result == VK_SUCCESS, "create instance", result);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
++   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   uint32_t physical_count = 0;
++   result = vkEnumeratePhysicalDevices(instance, &physical_count, nullptr);
++   require(result == VK_SUCCESS && physical_count, "physical device count", result);
++   std::vector<VkPhysicalDevice> physicals(physical_count);
++   result = vkEnumeratePhysicalDevices(instance, &physical_count, physicals.data());
++   require(result == VK_SUCCESS, "physical devices", result);
++
++   for (VkPhysicalDevice physical : physicals) {
++      uint32_t queue_count = 0;
++      vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
++      std::vector<VkQueueFamilyProperties> queues(queue_count);
++      vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, queues.data());
++      uint32_t queue = 0;
++      while (queue < queue_count && !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
++         ++queue;
++      require(queue < queue_count, "graphics queue");
++      float priority = 1.0f;
++      VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
++      queue_info.queueFamilyIndex = queue;
++      queue_info.queueCount = 1;
++      queue_info.pQueuePriorities = &priority;
++      VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT restart{
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT};
++      restart.primitiveTopologyListRestart = VK_TRUE;
++      VkPhysicalDeviceProvokingVertexFeaturesEXT provoking{
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT};
++      provoking.pNext = &restart;
++      provoking.provokingVertexLast = VK_TRUE;
++      VkPhysicalDeviceTransformFeedbackFeaturesEXT xfb{
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};
++      xfb.pNext = &provoking;
++      xfb.transformFeedback = VK_TRUE;
++      xfb.geometryStreams = VK_TRUE;
++      VkPhysicalDeviceVulkan12Features features12{
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
++      features12.pNext = &xfb;
++      features12.bufferDeviceAddress = VK_TRUE;
++      VkPhysicalDeviceVulkan13Features features13{
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
++      features13.pNext = &features12;
++      features13.dynamicRendering = VK_TRUE;
++      features13.pipelineCreationCacheControl = VK_TRUE;
++      VkPhysicalDeviceFeatures features{};
++      features.geometryShader = VK_TRUE;
++      features.shaderTessellationAndGeometryPointSize = VK_TRUE;
++      features.vertexPipelineStoresAndAtomics = VK_TRUE;
++      features.fragmentStoresAndAtomics = VK_TRUE;
++      features.pipelineStatisticsQuery = VK_TRUE;
++      const char *extensions[] = {
++         VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,
++         VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME,
++         VK_EXT_PRIMITIVE_TOPOLOGY_LIST_RESTART_EXTENSION_NAME};
++      VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
++      device_info.pNext = &features13;
++      device_info.queueCreateInfoCount = 1;
++      device_info.pQueueCreateInfos = &queue_info;
++      device_info.enabledExtensionCount = std::size(extensions);
++      device_info.ppEnabledExtensionNames = extensions;
++      device_info.pEnabledFeatures = &features;
++      VkDevice device = VK_NULL_HANDLE;
++      result = vkCreateDevice(physical, &device_info, nullptr, &device);
++      require(result == VK_SUCCESS, "create device", result);
++      LOAD_D(vkDestroyDevice);
++      LOAD_D(vkCreateShaderModule);
++      LOAD_D(vkDestroyShaderModule);
++      LOAD_D(vkCreatePipelineLayout);
++      LOAD_D(vkDestroyPipelineLayout);
++      LOAD_D(vkCreateGraphicsPipelines);
++      LOAD_D(vkDestroyPipeline);
++      LOAD_D(vkCreatePipelineCache);
++      LOAD_D(vkDestroyPipelineCache);
++      LOAD_D(vkGetPipelineCacheData);
++      LOAD_D(vkCreateCommandPool);
++      LOAD_D(vkDestroyCommandPool);
++      LOAD_D(vkResetCommandPool);
++      LOAD_D(vkAllocateCommandBuffers);
++      LOAD_D(vkBeginCommandBuffer);
++      LOAD_D(vkEndCommandBuffer);
++      LOAD_D(vkCmdBeginRendering);
++      LOAD_D(vkCmdEndRendering);
++      LOAD_D(vkCmdBindPipeline);
++      LOAD_D(vkCmdSetRasterizerDiscardEnable);
++      LOAD_D(vkCmdBindVertexBuffers);
++      LOAD_D(vkCmdBindIndexBuffer);
++      LOAD_D(vkCmdPushConstants);
++      LOAD_D(vkCmdDraw);
++      LOAD_D(vkCmdDrawIndexed);
++      LOAD_D(vkGetDeviceQueue);
++      LOAD_D(vkQueueSubmit);
++      LOAD_D(vkCreateFence);
++      LOAD_D(vkDestroyFence);
++      LOAD_D(vkResetFences);
++      LOAD_D(vkWaitForFences);
++      LOAD_D(vkCreateBuffer);
++      LOAD_D(vkDestroyBuffer);
++      LOAD_D(vkGetBufferMemoryRequirements);
++      LOAD_D(vkAllocateMemory);
++      LOAD_D(vkFreeMemory);
++      LOAD_D(vkBindBufferMemory);
++      LOAD_D(vkGetBufferDeviceAddress);
++      LOAD_D(vkMapMemory);
++      LOAD_D(vkUnmapMemory);
++      LOAD_D(vkCmdBindTransformFeedbackBuffersEXT);
++      LOAD_D(vkCmdBeginTransformFeedbackEXT);
++      LOAD_D(vkCmdEndTransformFeedbackEXT);
++      LOAD_D(vkCmdPipelineBarrier);
++      LOAD_D(vkCreateQueryPool);
++      LOAD_D(vkDestroyQueryPool);
++      LOAD_D(vkCmdResetQueryPool);
++      LOAD_D(vkCmdBeginQuery);
++      LOAD_D(vkCmdEndQuery);
++      LOAD_D(vkGetQueryPoolResults);
++      VkQueue device_queue = VK_NULL_HANDLE;
++      vkGetDeviceQueue(device, queue, 0, &device_queue);
++
++      VkPhysicalDeviceMemoryProperties memory_properties{};
++      vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
++      const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage) {
++         Buffer buffer;
++         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
++         info.size = size;
++         info.usage = usage;
++         result = vkCreateBuffer(device, &info, nullptr, &buffer.buffer);
++         require(result == VK_SUCCESS, "create buffer", result);
++         VkMemoryRequirements requirements{};
++         vkGetBufferMemoryRequirements(device, buffer.buffer, &requirements);
++         constexpr auto properties =
++            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++         uint32_t type = 0;
++         while (type < memory_properties.memoryTypeCount &&
++                (!(requirements.memoryTypeBits & (1u << type)) ||
++                 (memory_properties.memoryTypes[type].propertyFlags & properties) != properties))
++            ++type;
++         require(type < memory_properties.memoryTypeCount, "host-coherent memory");
++         VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
++         flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
++         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++         allocation.pNext = usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ? &flags : nullptr;
++         allocation.allocationSize = requirements.size;
++         allocation.memoryTypeIndex = type;
++         result = vkAllocateMemory(device, &allocation, nullptr, &buffer.memory);
++         require(result == VK_SUCCESS, "allocate buffer", result);
++         result = vkBindBufferMemory(device, buffer.buffer, buffer.memory, 0);
++         require(result == VK_SUCCESS, "bind buffer", result);
++         result = vkMapMemory(device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped);
++         require(result == VK_SUCCESS, "map buffer", result);
++         return buffer;
++      };
++      constexpr uint32_t input_count = 1024;
++      constexpr uint32_t output_count = 204;
++      constexpr uint32_t guard_words = 256;
++      constexpr uint32_t capture_words = input_count * output_count;
++      constexpr uint32_t sentinel = 0xdeadbeef;
++      auto capture = make_buffer((capture_words + 2 * guard_words) * sizeof(uint32_t),
++                                 VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT);
++      auto vertices = make_buffer(input_count * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
++      auto indices = make_buffer((input_count + 2) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
++      auto effects = make_buffer((input_count + 1) * sizeof(uint32_t),
++                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
++                                 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
++      auto *positions = static_cast<float *>(vertices.mapped);
++      for (uint32_t i = 0; i < input_count; ++i) {
++         positions[4 * i] = -0.5f;
++         positions[4 * i + 1] = 0.125f;
++         positions[4 * i + 2] = 0.5f;
++         positions[4 * i + 3] = 1.0f;
++      }
++      positions[4] = 0.5f;
++      auto *index = static_cast<uint32_t *>(indices.mapped);
++      index[0] = 0;
++      index[1] = UINT32_MAX;
++      index[2] = 1;
++      index[3] = UINT32_MAX;
++      for (uint32_t i = 2; i < input_count; ++i)
++         index[i + 2] = i;
++      VkBufferDeviceAddressInfo address_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
++      address_info.buffer = effects.buffer;
++      const VkDeviceAddress address = vkGetBufferDeviceAddress(device, &address_info);
++      require(address != 0, "shader effects address");
++
++      const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
++                                     0, sizeof(address)};
++      VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++      layout_info.pushConstantRangeCount = 1;
++      layout_info.pPushConstantRanges = &push;
++      VkPipelineLayout layout = VK_NULL_HANDLE;
++      result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
++      require(result == VK_SUCCESS, "create layout", result);
++      const std::span<const uint32_t> sources[] = {
++         vertex_spirv, geometry_spirv, fragment_spirv, stream_geometry_spirv};
++      std::array<VkShaderModule, 4> modules{};
++      for (uint32_t i = 0; i < modules.size(); ++i) {
++         VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
++         module_info.codeSize = sources[i].size_bytes();
++         module_info.pCode = sources[i].data();
++         result = vkCreateShaderModule(device, &module_info, nullptr, &modules[i]);
++         require(result == VK_SUCCESS, "create shader", result);
++      }
++      VkVertexInputBindingDescription binding{0, 4 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
++      VkVertexInputAttributeDescription attribute{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
++      VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
++      vi.vertexBindingDescriptionCount = 1;
++      vi.pVertexBindingDescriptions = &binding;
++      vi.vertexAttributeDescriptionCount = 1;
++      vi.pVertexAttributeDescriptions = &attribute;
++      VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
++      VkPipelineRasterizationProvokingVertexStateCreateInfoEXT provoking_state{
++         VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT};
++      provoking_state.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
++      VkPipelineRasterizationStateStreamCreateInfoEXT stream_state{
++         VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT};
++      provoking_state.pNext = &stream_state;
++      VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
++      rs.pNext = &provoking_state;
++      rs.lineWidth = 1.0f;
++      const VkViewport viewport{0, 0, 8, 8, 0, 1};
++      const VkRect2D scissor{{0, 0}, {8, 8}};
++      VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
++      vp.viewportCount = 1;
++      vp.pViewports = &viewport;
++      vp.scissorCount = 1;
++      vp.pScissors = &scissor;
++      VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
++      ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
++      const VkDynamicState dynamic_discard = VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE;
++      VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
++      dynamic.dynamicStateCount = 1;
++      dynamic.pDynamicStates = &dynamic_discard;
++      VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
++      VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
++      pipeline_info.pNext = &rendering;
++      pipeline_info.pVertexInputState = &vi;
++      pipeline_info.pInputAssemblyState = &ia;
++      pipeline_info.pRasterizationState = &rs;
++      pipeline_info.pViewportState = &vp;
++      pipeline_info.pMultisampleState = &ms;
++      pipeline_info.layout = layout;
++      VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++      pool_info.queueFamilyIndex = queue;
++      VkCommandPool pool = VK_NULL_HANDLE;
++      result = vkCreateCommandPool(device, &pool_info, nullptr, &pool);
++      require(result == VK_SUCCESS, "create command pool", result);
++      VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++      allocate.commandPool = pool;
++      allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++      allocate.commandBufferCount = 1;
++      VkCommandBuffer command = VK_NULL_HANDLE;
++      result = vkAllocateCommandBuffers(device, &allocate, &command);
++      require(result == VK_SUCCESS, "allocate command", result);
++      VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++      VkFence fence = VK_NULL_HANDLE;
++      result = vkCreateFence(device, &fence_info, nullptr, &fence);
++      require(result == VK_SUCCESS, "create fence", result);
++      VkQueryPoolCreateInfo query_info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
++      query_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
++      query_info.queryCount = 1;
++      query_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
++         VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS_BIT |
++         VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT |
++         VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT |
++         VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT |
++         VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
++      VkQueryPool query = VK_NULL_HANDLE;
++      result = vkCreateQueryPool(device, &query_info, nullptr, &query);
++      require(result == VK_SUCCESS, "create query pool", result);
++      VkPipelineCacheCreateInfo cache_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
++      VkPipelineCache cache = VK_NULL_HANDLE;
++      result = vkCreatePipelineCache(device, &cache_info, nullptr, &cache);
++      require(result == VK_SUCCESS, "create cache", result);
++      std::vector<uint8_t> cache_data;
++      auto *captured = static_cast<uint32_t *>(capture.mapped);
++      auto *written = static_cast<uint32_t *>(effects.mapped);
++
++      for (unsigned reload = 0; reload < 2; ++reload) {
++         if (reload) {
++            cache_info.initialDataSize = cache_data.size();
++            cache_info.pInitialData = cache_data.data();
++            result = vkCreatePipelineCache(device, &cache_info, nullptr, &cache);
++            require(result == VK_SUCCESS, "reload cache", result);
++         }
++         for (unsigned producer = 0; producer < 3; ++producer) {
++            const bool geometry = producer != 0;
++            const bool streams = producer == 2;
++            stream_state.rasterizationStream = streams ? 1 : 0;
++            std::vector<VkPipelineShaderStageCreateInfo> stages;
++            const VkShaderStageFlagBits stage_flags[] = {
++               VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
++            for (uint32_t i = 0; i < std::size(stage_flags); ++i) {
++               if (i == 1 && !geometry)
++                  continue;
++               VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
++               stage.stage = stage_flags[i];
++               stage.module = modules[streams && i == 1 ? 3 : i];
++               stage.pName = "main";
++               stages.push_back(stage);
++            }
++            pipeline_info.stageCount = stages.size();
++            pipeline_info.pStages = stages.data();
++            ia.topology = geometry ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
++            ia.primitiveRestartEnable = geometry && !streams;
++            for (bool dynamic_state : {false, true}) {
++               pipeline_info.pDynamicState = dynamic_state ? &dynamic : nullptr;
++               /* A changed ignored create value must still hit a dynamic cache entry. */
++               rs.rasterizerDiscardEnable = !reload || !dynamic_state;
++               pipeline_info.flags = reload ? VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT : 0;
++               VkPipeline pipeline = VK_NULL_HANDLE;
++               result = vkCreateGraphicsPipelines(device, cache, 1, &pipeline_info, nullptr, &pipeline);
++               require(result == VK_SUCCESS, "create discard pipeline", result);
++               for (unsigned iteration = 0; iteration < 4; ++iteration) {
++                  const bool discard = !dynamic_state || iteration % 2 == 0;
++                  const uint32_t inputs = streams ? 3 : geometry ? discard ? input_count : 1 : 2;
++                  const uint32_t outputs = geometry && !streams ? inputs * output_count : 0;
++                  std::fill_n(captured, capture_words + 2 * guard_words, sentinel);
++                  std::fill_n(written, input_count + 1, 0);
++                  result = vkResetCommandPool(device, pool, 0);
++                  require(result == VK_SUCCESS, "reset command pool", result);
++                  result = vkResetFences(device, 1, &fence);
++                  require(result == VK_SUCCESS, "reset fence", result);
++                  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++                  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++                  result = vkBeginCommandBuffer(command, &begin);
++                  require(result == VK_SUCCESS, "begin command", result);
++                  vkCmdResetQueryPool(command, query, 0, 1);
++                  VkRenderingInfo render{VK_STRUCTURE_TYPE_RENDERING_INFO};
++                  render.renderArea.extent = {8, 8};
++                  render.layerCount = 1;
++                  vkCmdBeginRendering(command, &render);
++                  vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
++                  if (dynamic_state)
++                     vkCmdSetRasterizerDiscardEnable(command, discard);
++                  vkCmdPushConstants(command, layout, push.stageFlags, 0, sizeof(address), &address);
++                  const VkDeviceSize zero = 0;
++                  vkCmdBindVertexBuffers(command, 0, 1, &vertices.buffer, &zero);
++                  vkCmdBeginQuery(command, query, 0, 0);
++                  if (geometry && !streams) {
++                     const VkDeviceSize offset = guard_words * sizeof(uint32_t);
++                     const VkDeviceSize size = outputs * sizeof(uint32_t);
++                     vkCmdBindTransformFeedbackBuffersEXT(command, 0, 1, &capture.buffer, &offset, &size);
++                     vkCmdBeginTransformFeedbackEXT(command, 0, 0, nullptr, nullptr);
++                     if (discard) {
++                        vkCmdBindIndexBuffer(command, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
++                        vkCmdDrawIndexed(command, input_count + 2, 1, 0, 0, 0);
++                     } else {
++                        vkCmdDraw(command, inputs, 1, 0, 0);
++                     }
++                     vkCmdEndTransformFeedbackEXT(command, 0, 0, nullptr, nullptr);
++                  } else {
++                     vkCmdDraw(command, inputs, 1, 0, 0);
++                  }
++                  kk_test_assert_raster_discard(command, discard);
++                  vkCmdEndQuery(command, query, 0);
++                  vkCmdEndRendering(command);
++                  VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++                  barrier.srcAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT | VK_ACCESS_SHADER_WRITE_BIT;
++                  barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
++                  vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
++                                       VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
++                  result = vkEndCommandBuffer(command);
++                  require(result == VK_SUCCESS, "end command", result);
++                  VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++                  submit.commandBufferCount = 1;
++                  submit.pCommandBuffers = &command;
++                  result = vkQueueSubmit(device_queue, 1, &submit, fence);
++                  require(result == VK_SUCCESS, "submit command", result);
++                  result = vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000ull);
++                  require(result == VK_SUCCESS, "wait fence", result);
++                  for (uint32_t i = 0; i < input_count; ++i)
++                     require(written[i] == (i < inputs ? i + 1 : 0), "application VS stores survive discard");
++                  require(discard ? written[input_count] == 0 : written[input_count] > 0,
++                          "dynamic discard controls fragment execution");
++                  for (uint32_t i = 0; i < capture_words + 2 * guard_words; ++i) {
++                     const uint32_t expected = i >= guard_words && i < guard_words + outputs
++                                                  ? (i - guard_words) / output_count : sentinel;
++                     require(captured[i] == expected, "XFB values and guards survive discard");
++                  }
++                  std::array<uint64_t, 6> statistics{};
++                  result = vkGetQueryPoolResults(device, query, 0, 1, sizeof(statistics),
++                                                statistics.data(), sizeof(statistics),
++                                                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
++                  require(result == VK_SUCCESS, "read pipeline statistics", result);
++                  require(statistics[0] == inputs, "VS invocation statistics survive discard");
++                  require(statistics[1] == (streams ? 2 * inputs : geometry ? inputs : 0),
++                          "GS invocation statistics survive discard");
++                  require(statistics[2] == (streams ? 6 * inputs : geometry ? outputs / 2 : 0),
++                          "GS primitive statistics survive discard");
++                  if (discard)
++                     require(statistics[3] == 0 && statistics[4] == 0 && statistics[5] == 0,
++                             "discard suppresses clipping and fragment statistics");
++                  else
++                     require(statistics[5] > 0, "restored rasterization invokes fragments");
++                  std::printf("reload=%u producer=%u dynamic=%u discard=%u: VS=%llu GS=%llu XFB=%u FS=%u passed\n",
++                              reload, producer, dynamic_state, discard,
++                              static_cast<unsigned long long>(statistics[0]),
++                              static_cast<unsigned long long>(statistics[1]), outputs, written[input_count]);
++               }
++               vkDestroyPipeline(device, pipeline, nullptr);
++            }
++         }
++         if (!reload) {
++            size_t size = 0;
++            result = vkGetPipelineCacheData(device, cache, &size, nullptr);
++            require(result == VK_SUCCESS, "cache size", result);
++            cache_data.resize(size);
++            result = vkGetPipelineCacheData(device, cache, &size, cache_data.data());
++            require(result == VK_SUCCESS, "serialize cache", result);
++            cache_data.resize(size);
++         }
++         vkDestroyPipelineCache(device, cache, nullptr);
++      }
++      vkDestroyQueryPool(device, query, nullptr);
++      vkDestroyFence(device, fence, nullptr);
++      vkDestroyCommandPool(device, pool, nullptr);
++      for (auto buffer : {capture, vertices, indices, effects}) {
++         vkUnmapMemory(device, buffer.memory);
++         vkDestroyBuffer(device, buffer.buffer, nullptr);
++         vkFreeMemory(device, buffer.memory, nullptr);
++      }
++      for (auto module : modules)
++         vkDestroyShaderModule(device, module, nullptr);
++      vkDestroyPipelineLayout(device, layout, nullptr);
++      vkDestroyDevice(device, nullptr);
++   }
++   vkDestroyInstance(instance, nullptr);
++   return 0;
++}
 diff --git a/src/kosmickrisp/vulkan/tests/test_raster_variant.c b/src/kosmickrisp/vulkan/tests/test_raster_variant.c
 new file mode 100644
-index 0000000..c5a9cde
+index 0000000..a656b43
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_raster_variant.c
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,80 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -3547,6 +4520,7 @@ index 0000000..c5a9cde
 +      MESA_VK_DYNAMIC_RS_PROVOKING_VERTEX,
 +      MESA_VK_DYNAMIC_RS_LINE_STIPPLE_ENABLE,
 +      MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY,
++      MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE,
 +   };
 +
 +   /* Independently enumerate all reachable API states. The compiler's mask
@@ -3554,14 +4528,15 @@ index 0000000..c5a9cde
 +    * ignored state combinations. Fixed GS/TES outputs ignore dynamic IA. */
 +   for (unsigned p = 0; p < ARRAY_SIZE(primitives); p++) {
 +      for (unsigned fixed = 0; fixed < 2; fixed++) {
-+         for (unsigned dynamic = 0; dynamic < 32; dynamic++) {
-+            for (unsigned initial = 0; initial < 48; initial++) {
++         for (unsigned dynamic = 0; dynamic < 64; dynamic++) {
++            for (unsigned initial = 0; initial < 96; initial++) {
 +               struct vk_input_assembly_state ia = {0};
 +               struct vk_rasterization_state rs = {
 +                  .polygon_mode = initial % 3,
 +                  .line.mode = (initial / 3) % 4,
 +                  .provoking_vertex = (initial / 12) % 2,
-+                  .line.stipple.enable = initial / 24,
++                  .line.stipple.enable = (initial / 24) % 2,
++                  .rasterizer_discard_enable = initial / 48,
 +               };
 +               struct vk_graphics_pipeline_state state = {
 +                  .ia = &ia, .rs = &rs,
@@ -3575,7 +4550,7 @@ index 0000000..c5a9cde
 +                  if (u_reduced_prim(primitives[q]) !=
 +                      u_reduced_prim(primitives[p]))
 +                     continue;
-+                  for (unsigned live = 0; live < 48; live++) {
++                  for (unsigned live = 0; live < 96; live++) {
 +                     struct vk_rasterization_state draw = rs;
 +                     if (dynamic & 1)
 +                        draw.polygon_mode = live % 3;
@@ -3584,7 +4559,9 @@ index 0000000..c5a9cde
 +                     if (dynamic & 4)
 +                        draw.provoking_vertex = (live / 12) % 2;
 +                     if (dynamic & 8)
-+                        draw.line.stipple.enable = live / 24;
++                        draw.line.stipple.enable = (live / 24) % 2;
++                     if (dynamic & 32)
++                        draw.rasterizer_discard_enable = live / 48;
 +                     expected |= BITFIELD_BIT(
 +                        kk_raster_variant_select(primitives[q], &draw));
 +                  }

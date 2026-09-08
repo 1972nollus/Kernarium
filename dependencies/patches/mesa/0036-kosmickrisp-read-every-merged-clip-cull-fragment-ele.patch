@@ -1,7 +1,7 @@
-From 1350057338106a948622bf6bc4aeb27075ab2941 Mon Sep 17 00:00:00 2001
+From 7dc558b39de4b4c8e4fd352a7e683f55e4a45fa2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 22:58:59 +0900
-Subject: [PATCH 36/44] kosmickrisp: read every merged clip/cull fragment
+Subject: [PATCH 36/47] kosmickrisp: read every merged clip/cull fragment
  element
 
 A fragment shader reads gl_ClipDistance and gl_CullDistance through the one
@@ -68,10 +68,10 @@ index 8699ead..2c837a0 100644
     NIR_PASS(_, nir, nir_separate_merged_clip_cull_io);
     if (nir->info.stage == MESA_SHADER_FRAGMENT)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c1a752e..3a3b8ec 100644
+index 26f2125..a4f30f7 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -547,6 +547,20 @@ if with_tests
+@@ -568,6 +568,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

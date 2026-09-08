@@ -1,7 +1,7 @@
-From b18fabc23acbc44915ef2993c1b1cf93fec5d101 Mon Sep 17 00:00:00 2001
+From 3c48b0fd32402012fa67d59d98e5c9cadbb89298 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
-Subject: [PATCH 42/44] kosmickrisp: restrict the coherency workaround to loops
+Subject: [PATCH 42/47] kosmickrisp: restrict the coherency workaround to loops
 
 Large compute kernels miscompile on macOS 26 when a global access is marked
 coherent: part way through the kernel every device load starts returning zero,
@@ -160,10 +160,10 @@ index 92be4b4..0101968 100644
                                    ? "coherent device"
                                    : "device";
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e6a1274..d3ddc2e 100644
+index 695e96a..62fc86d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -382,6 +382,20 @@ if with_tests
+@@ -403,6 +403,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

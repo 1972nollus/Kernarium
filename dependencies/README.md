@@ -155,6 +155,25 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+Linked graphics pipelines share native programs and dynamic vertex-input
+variants only while a live Vulkan pipeline owns them. The lookup cache drops
+its entry and releases those resources when the last pipeline owner is
+destroyed, so obsolete programs do not accumulate until device teardown.
+Pipeline statistics use draw-time guards in the same executable, including
+its bounded raster variants; query begin and end never compile or retain a
+second shader tree. A discard variant preserves application shader effects and
+transform feedback without raster-only materialization or provoking-vertex
+conversion. Dynamic discard changes select the corresponding precompiled
+variant, including after pipeline-cache reload.
+Metal bridge constructors return one owned, initialized object. Callers release
+that object once; constructors must not initialize it again after `new`.
+
+One-time command submissions transfer native command buffers and allocators to
+completion-owned storage, which releases their capacity after the GPU finishes.
+Vulkan command-buffer reset with `RELEASE_RESOURCES` also drops allocator
+capacity; later recording recreates it. Feedback reporting remains valid after
+Vulkan device teardown through a separate reference-counted context.
+
 `MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
 diagnostics on stderr: an opaque device identity, GPU start and end host
 seconds, and the commit error code for the whole committed command-buffer
