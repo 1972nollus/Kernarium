@@ -143,7 +143,9 @@ uml_arm64_jit_tlb_translate_preserving_fpmr(Tlb *tlb,
 
 class JitSemanticMemory final : public ::uml::memory::GuestAddressSpace {
 public:
-  explicit JitSemanticMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
+  explicit JitSemanticMemory(Tlb &tlb,
+                             bool scalar_ordered_atomics = false) noexcept
+      : tlb_{tlb}, scalar_ordered_atomics_{scalar_ordered_atomics} {}
 
   bool read(std::uint64_t address, std::span<std::byte> destination) override {
     if (jit_pair_read(tlb_, address, destination))
@@ -192,10 +194,32 @@ public:
    * Returning no direct pointer deliberately selects the interpreter's
    * ordinary-load/store atomic fallback. Host exclusive instructions cannot
    * be restarted safely after a Darwin shadow-map protection fault.
+   *
+   * A scalar ordered store is the single exception, and only
+   * uml_arm64_jit_execute_ordered enables it. That form lowers to one plain
+   * release store rather than an exclusive sequence, so it is restartable,
+   * and it must be single-copy atomic: guest memory shared with a native host
+   * thread - the Venus command ring reached through the vhost-user
+   * shared-memory aperture - is read there with real atomics, and the
+   * byte-wise fallback lets that reader observe a half-updated word that was
+   * never architecturally visible.
    */
-  std::byte *atomic_pointer(std::uint64_t, std::size_t,
-                            ::uml::memory::MemoryAccess) override {
-    return nullptr;
+  std::byte *atomic_pointer(std::uint64_t address, std::size_t size,
+                            ::uml::memory::MemoryAccess access) override {
+    if (!scalar_ordered_atomics_ || size == 0 ||
+        size > sizeof(std::uint64_t) || (size & (size - 1U)) != 0 ||
+        (address & (size - 1U)) != 0)
+      return nullptr;
+    const auto direction = ::uml::memory::translated_access(access);
+    /*
+     * The dynamic loader can change COW permissions within the same page
+     * between ordered stores. Revalidate the write translation at this cold
+     * helper boundary instead of retaining a pre-transition host pointer,
+     * exactly as the byte-wise path does before it copies.
+     */
+    if (direction == Access::write)
+      tlb_.discard(address);
+    return tlb_.translate(address, direction);
   }
 
   std::byte *reservation_pointer(
@@ -240,6 +264,7 @@ private:
   }
 
   Tlb &tlb_;
+  bool scalar_ordered_atomics_{};
   ::uml::memory::MemoryFault fault_{};
   bool fault_recorded_{};
 };
@@ -317,17 +342,12 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
   return execute();
 }
 
-extern "C" std::uint64_t
-uml_arm64_jit_execute_memory_with_syndrome(
-    CpuState *cpu, Tlb *tlb, std::uint32_t instruction,
-    std::uint32_t *syndrome) noexcept {
-  if (syndrome != nullptr)
-    *syndrome = 0;
-  if (cpu == nullptr || tlb == nullptr)
-    return pack_jit_result(Event::fatal, 0);
-  materialize_semantic_cpu_state(*cpu);
-  JitSemanticMemory memory{*tlb};
-  const auto result = arm64::Dispatcher{}.execute(*cpu, memory, instruction);
+[[nodiscard]] std::uint64_t execute_semantic_instruction(
+    CpuState &cpu, Tlb &tlb, std::uint32_t instruction,
+    std::uint32_t *syndrome, bool scalar_ordered_atomics) noexcept {
+  materialize_semantic_cpu_state(cpu);
+  JitSemanticMemory memory{tlb, scalar_ordered_atomics};
+  const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
   if (syndrome != nullptr)
     *syndrome = result.syndrome;
   switch (result.reason) {
@@ -335,7 +355,7 @@ uml_arm64_jit_execute_memory_with_syndrome(
   case arm64::StopReason::budget_exhausted:
     return pack_jit_result(Event::continued, result.instructions);
   case arm64::StopReason::memory_fault:
-    record_semantic_fault(*tlb, memory, result);
+    record_semantic_fault(tlb, memory, result);
     return pack_jit_result(Event::memory_fault, result.instructions);
   case arm64::StopReason::gcs_fault:
     return pack_jit_result(Event::gcs_fault, result.instructions);
@@ -352,6 +372,18 @@ uml_arm64_jit_execute_memory_with_syndrome(
     return pack_jit_result(Event::illegal_instruction, result.instructions);
   }
   return pack_jit_result(Event::fatal, 0);
+}
+
+extern "C" std::uint64_t
+uml_arm64_jit_execute_memory_with_syndrome(
+    CpuState *cpu, Tlb *tlb, std::uint32_t instruction,
+    std::uint32_t *syndrome) noexcept {
+  if (syndrome != nullptr)
+    *syndrome = 0;
+  if (cpu == nullptr || tlb == nullptr)
+    return pack_jit_result(Event::fatal, 0);
+  return execute_semantic_instruction(*cpu, *tlb, instruction, syndrome,
+                                      false);
 }
 
 extern "C" std::uint64_t
@@ -507,16 +539,45 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
   return pack_jit_result(Event::continued, 1);
 }
 
+/*
+ * Scalar ordered accesses are single-copy atomic, with acquire or release
+ * ordering where selected by the instruction. Guest memory shared with a
+ * native host thread - the Venus command ring is reached over the vhost-user
+ * shared-memory aperture - is observed by that thread with real atomics, so a
+ * byte-wise copy here races: the renderer can load a tail word mid-store and
+ * see a value that was never architecturally visible. Perform the access as
+ * one host atomic whenever the translation is suitably aligned. The stronger
+ * sequentially-consistent host order also covers every scalar ordered form
+ * routed through this helper.
+ */
+template <typename Integer>
+[[nodiscard]] std::uint64_t ordered_load_at(void *pointer) noexcept {
+  return std::atomic_ref<Integer>{*static_cast<Integer *>(pointer)}.load(
+      std::memory_order_seq_cst);
+}
+
+[[nodiscard]] bool ordered_access_is_atomic(const void *pointer,
+                                            std::size_t size) noexcept {
+  return size <= sizeof(std::uint64_t) &&
+         (reinterpret_cast<std::uintptr_t>(pointer) & (size - 1U)) == 0;
+}
+
 extern "C" std::uint64_t
 uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
                               std::uint32_t instruction) noexcept {
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
   const bool load = (instruction & 0x0040'0000U) != 0;
-  // Ordered stores must invalidate software reservations even when an alias
-  // writes the same bits. The semantic store also revalidates write access.
+  /*
+   * Ordered stores must invalidate software reservations even when an alias
+   * writes the same bits, and must revalidate write access. The reference
+   * semantics own both rules, so route the store there; asking for direct
+   * scalar atomics makes that path store the value with one host release
+   * store instead of copying it a byte at a time.
+   */
   if (!load)
-    return uml_arm64_jit_execute_memory(cpu, tlb, instruction);
+    return execute_semantic_instruction(*cpu, *tlb, instruction, nullptr,
+                                        true);
   materialize_semantic_cpu_state(*cpu);
   const unsigned size_shift = instruction >> 30;
   const std::size_t size = std::size_t{1} << size_shift;
@@ -533,8 +594,17 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   if (source == nullptr)
     return pack_jit_result(Event::memory_fault, 0);
   std::uint64_t value = 0;
-  std::memcpy(&value, source, size);
-  std::atomic_thread_fence(std::memory_order_acquire);
+  if (ordered_access_is_atomic(source, size)) {
+    switch (size) {
+    case 1: value = ordered_load_at<std::uint8_t>(source); break;
+    case 2: value = ordered_load_at<std::uint16_t>(source); break;
+    case 4: value = ordered_load_at<std::uint32_t>(source); break;
+    default: value = ordered_load_at<std::uint64_t>(source); break;
+    }
+  } else {
+    std::memcpy(&value, source, size);
+    std::atomic_thread_fence(std::memory_order_acquire);
+  }
   cpu->write_register(transfer, value, false);
   cpu->pc += sizeof(instruction);
   return pack_jit_result(Event::continued, 1);
