@@ -26,6 +26,10 @@ struct MetalScanout {
     std::uint32_t sourceY {};
     std::uint32_t width {};
     std::uint32_t height {};
+    std::uint32_t damageX {};
+    std::uint32_t damageY {};
+    std::uint32_t damageWidth {};
+    std::uint32_t damageHeight {};
 };
 
 /* A direct presentation either cannot be expressed by this display at all, or
@@ -126,8 +130,8 @@ public:
         std::uint32_t width,
         std::uint32_t height) = 0;
     virtual void fillSelfTestPattern() = 0;
-    /* ANGLE's Metal backend exposes a virgl scanout as the native MTLTexture
-     * it already renders into. The opaque pointer keeps AppKit, UIKit, and
+    /* Apple renderer backends expose a scanout as the native MTLTexture they
+     * already render into. The opaque pointer keeps AppKit, UIKit, and
      * Objective-C types out of the platform-neutral device contract. */
     [[nodiscard]] virtual PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept

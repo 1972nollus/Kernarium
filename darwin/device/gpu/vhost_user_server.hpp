@@ -111,6 +111,7 @@ private:
     void configureKick(VhostUserMessage& message);
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
+    void dispatchSharedMemoryActions();
     void drainQueueCompletions();
     void signalPendingConfigChange();
     void completeRequest(

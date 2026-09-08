@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -617,6 +618,305 @@ void configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement()
     });
 }
 
+class SharedMemoryDevice final : public uml::virtio::VhostUserDevice {
+public:
+    explicit SharedMemoryDevice(std::size_t actionCount = 1)
+        : actionCount_(actionCount)
+    {
+    }
+
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "shared-memory fixture";
+    }
+    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
+    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
+    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
+    {
+        return {};
+    }
+    void writeConfiguration(
+        std::uint32_t,
+        std::uint32_t,
+        std::span<const std::uint8_t>) override
+    {
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t,
+        std::uint64_t,
+        std::span<const std::uint8_t>,
+        std::size_t) override
+    {
+        return {.action = uml::virtio::VhostUserQueueAction::retry};
+    }
+    void reset() noexcept override {}
+    void prepareReset() noexcept override
+    {
+        if (actionIssued_)
+            return;
+        actionIssued_ = true;
+        try {
+            actions_.reserve(actionCount_);
+            for (std::size_t index = 0; index < actionCount_; ++index) {
+                FILE* file = std::tmpfile();
+                if (file == nullptr)
+                    return;
+                const int descriptor = ::dup(::fileno(file));
+                const bool sized = descriptor >= 0 &&
+                    ::ftruncate(descriptor, 0x8000) == 0;
+                std::fclose(file);
+                if (!sized) {
+                    if (descriptor >= 0)
+                        ::close(descriptor);
+                    return;
+                }
+                actions_.push_back(
+                    uml::virtio::VhostUserSharedMemoryAction {
+                        .type = uml::virtio::VhostUserSharedMemoryAction::Type::map,
+                        .actionId = 77 + index,
+                        .regionId = protocol::hostVisibleSharedMemoryRegionId,
+                        .descriptorOffset = 0x4000,
+                        .regionOffset = 0x8000 + index * 0x4000,
+                        .length = 0x4000,
+                        .writable = true,
+                        .descriptor = UniqueDescriptor {descriptor},
+                    });
+            }
+        } catch (...) {
+            actions_.clear();
+        }
+    }
+    [[nodiscard]] std::optional<uml::virtio::VhostUserSharedMemoryRegion>
+        sharedMemoryRegion() const noexcept override
+    {
+        return uml::virtio::VhostUserSharedMemoryRegion {
+            .id = protocol::hostVisibleSharedMemoryRegionId,
+            .size = protocol::hostVisibleSharedMemoryRegionSize,
+        };
+    }
+    [[nodiscard]] bool takeSharedMemoryAction(
+        uml::virtio::VhostUserSharedMemoryAction& action) override
+    {
+        if (actions_.empty())
+            return false;
+        action = std::move(actions_.front());
+        actions_.erase(actions_.begin());
+        return true;
+    }
+    void completeSharedMemoryAction(
+        std::uint64_t actionId,
+        bool success) noexcept override
+    {
+        completedAction_ = actionId;
+        ++completedActionCount_;
+        actionSucceeded_ = actionSucceeded_ && success;
+    }
+    [[nodiscard]] std::uint64_t completedAction() const noexcept
+    {
+        return completedAction_;
+    }
+    [[nodiscard]] bool actionSucceeded() const noexcept
+    {
+        return actionSucceeded_;
+    }
+    [[nodiscard]] std::size_t completedActionCount() const noexcept
+    {
+        return completedActionCount_;
+    }
+
+private:
+    std::size_t actionCount_;
+    std::vector<uml::virtio::VhostUserSharedMemoryAction> actions_;
+    bool actionIssued_ {};
+    std::uint64_t completedAction_ {};
+    std::size_t completedActionCount_ {};
+    bool actionSucceeded_ {true};
+};
+
+void sharedMemoryRequiresBackendAcknowledgements()
+{
+    auto device = std::make_unique<SharedMemoryDevice>();
+    VhostUserServer server {std::move(device)};
+    expectRejected(server, [](int socket) {
+        constexpr std::uint64_t deviceFeatures =
+            protocol::vhostFeatureProtocol;
+        sendRequest(
+            socket,
+            protocol::VhostRequest::setFeatures,
+            bytesOf(deviceFeatures),
+            {},
+            false);
+        constexpr std::uint64_t incompleteFeatures =
+            protocol::protocolFeatureSharedMemoryMap |
+            protocol::protocolFeatureSlaveRequest;
+        sendRequest(
+            socket,
+            protocol::VhostRequest::setProtocolFeatures,
+            bytesOf(incompleteFeatures));
+    });
+}
+
+void sharedMemoryConfigurationRequiresNegotiation()
+{
+    auto device = std::make_unique<SharedMemoryDevice>();
+    VhostUserServer server {std::move(device)};
+    expectRejected(server, [](int socket) {
+        sendRequest(
+            socket,
+            protocol::VhostRequest::getSharedMemoryConfig,
+            {},
+            {},
+            false);
+    });
+}
+
+void standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply()
+{
+    auto device = std::make_unique<SharedMemoryDevice>(2);
+    auto* observed = device.get();
+    VhostUserServer server {std::move(device)};
+    withServerConnection(server, [&](int socket) {
+        sendRequest(
+            socket,
+            protocol::VhostRequest::getProtocolFeatures,
+            {},
+            {},
+            false);
+        const auto offered = readValueReply<std::uint64_t>(
+            socket, protocol::VhostRequest::getProtocolFeatures);
+        require((offered & protocol::protocolFeatureSharedMemoryMap) != 0);
+
+        constexpr std::uint64_t deviceFeatures =
+            protocol::vhostFeatureProtocol;
+        sendRequest(
+            socket,
+            protocol::VhostRequest::setFeatures,
+            bytesOf(deviceFeatures),
+            {},
+            false);
+        constexpr std::uint64_t protocolFeatures =
+            protocol::protocolFeatureReplyAck |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureSharedMemoryMap;
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setProtocolFeatures,
+            bytesOf(protocolFeatures));
+
+        std::array<int, 2> backendSockets {-1, -1};
+        require(::socketpair(
+            AF_UNIX, SOCK_STREAM, 0, backendSockets.data()) == 0);
+        UniqueDescriptor backendClient {backendSockets[0]};
+        UniqueDescriptor backendServer {backendSockets[1]};
+        const std::array backendDescriptors {backendServer.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setSlaveRequestFd,
+            {},
+            backendDescriptors);
+
+        sendRequest(
+            socket,
+            protocol::VhostRequest::getSharedMemoryConfig,
+            {},
+            {},
+            false);
+        const auto config = readValueReply<protocol::SharedMemoryConfig>(
+            socket, protocol::VhostRequest::getSharedMemoryConfig);
+        require(config.regionCount == 1);
+        require(config.regionSizes[0] == 0);
+        require(config.regionSizes[protocol::hostVisibleSharedMemoryRegionId] ==
+            protocol::hostVisibleSharedMemoryRegionSize);
+
+        sendRequest(
+            socket, protocol::VhostRequest::resetOwner, {});
+        for (std::size_t index = 0; index < 2; ++index) {
+            pollfd prematureReply {.fd = socket, .events = POLLIN};
+            require(::poll(&prematureReply, 1, 50) == 0);
+
+            VhostUserMessage backendMessage;
+            require(receiveVhostUserMessage(
+                backendClient.get(), backendMessage));
+            require(backendMessage.header.request == static_cast<std::uint32_t>(
+                protocol::VhostSlaveRequest::sharedMemoryMap));
+            require(backendMessage.header.flags ==
+                (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
+            require(backendMessage.descriptors.size() == 1);
+            require(backendMessage.payload.size() ==
+                sizeof(protocol::SharedMemoryMap));
+            protocol::SharedMemoryMap map {};
+            std::memcpy(&map, backendMessage.payload.data(), sizeof(map));
+            require(map.regionId == protocol::hostVisibleSharedMemoryRegionId);
+            require(map.descriptorOffset == 0x4000);
+            require(map.regionOffset == 0x8000 + index * 0x4000);
+            require(map.length == 0x4000);
+            require(map.flags == protocol::sharedMemoryMapReadWrite);
+
+            const std::uint64_t status = 0;
+            const protocol::VhostHeader reply {
+                .request = backendMessage.header.request,
+                .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
+                .size = sizeof(status),
+            };
+            sendMessageWithDescriptors(
+                backendClient.get(), reply, {}, bytesOf(status));
+        }
+        readAcknowledgement(socket, protocol::VhostRequest::resetOwner);
+        sendRequest(
+            socket, protocol::VhostRequest::getFeatures, {}, {}, false);
+        (void)readValueReply<std::uint64_t>(
+            socket, protocol::VhostRequest::getFeatures);
+        require(observed->completedAction() == 78);
+        require(observed->completedActionCount() == 2);
+        require(observed->actionSucceeded());
+    });
+}
+
+void rejectedSharedMemoryActionClosesBackendChannel()
+{
+    auto device = std::make_unique<SharedMemoryDevice>();
+    auto* observed = device.get();
+    VhostUserServer server {std::move(device)};
+    withServerConnection(server, [&](int socket) {
+        constexpr std::uint64_t protocolFeatures =
+            protocol::protocolFeatureReplyAck |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureSharedMemoryMap;
+        negotiateProtocolFeatures(socket, protocolFeatures);
+
+        std::array<int, 2> backendSockets {-1, -1};
+        require(::socketpair(
+            AF_UNIX, SOCK_STREAM, 0, backendSockets.data()) == 0);
+        UniqueDescriptor backendClient {backendSockets[0]};
+        UniqueDescriptor backendServer {backendSockets[1]};
+        const std::array backendDescriptors {backendServer.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setSlaveRequestFd,
+            {},
+            backendDescriptors);
+        backendServer.reset();
+
+        sendRequest(socket, protocol::VhostRequest::resetOwner, {});
+        VhostUserMessage backendMessage;
+        require(receiveVhostUserMessage(
+            backendClient.get(), backendMessage));
+        require(backendMessage.descriptors.size() == 1);
+
+        const std::uint64_t status = 1;
+        const protocol::VhostHeader reply {
+            .request = backendMessage.header.request,
+            .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
+            .size = sizeof(status),
+        };
+        sendMessageWithDescriptors(
+            backendClient.get(), reply, {}, bytesOf(status));
+        waitForConnectionClose(backendClient.get());
+        require(observed->completedAction() == 77);
+        require(!observed->actionSucceeded());
+    });
+}
+
 void deferredCompletionSupportsFourQueues()
 {
     auto device = std::make_unique<DeferredQueueDevice>();
@@ -711,6 +1011,10 @@ void deferredCompletionSupportsFourQueues()
         sendRequestAndReadAcknowledgement(
             socket, protocol::VhostRequest::setVringKick,
             bytesOf(encodedQueue), kickDescriptors);
+        sendRequest(
+            socket, protocol::VhostRequest::getFeatures, {}, {}, false);
+        (void)readValueReply<std::uint64_t>(
+            socket, protocol::VhostRequest::getFeatures);
 
         auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
             memory.data() + usedOffset + sizeof(std::uint16_t));
@@ -1341,6 +1645,8 @@ void misalignedTranslatedRingsAreRejected(VhostUserServer& server)
             socket,
             protocol::VhostRequest::setVringKick,
             bytesOf(pollingQueue));
+        readAcknowledgement(
+            socket, protocol::VhostRequest::setVringKick);
     });
 }
 
@@ -1611,7 +1917,6 @@ void queueNotificationProcessesQueue(
                 socket,
                 protocol::VhostRequest::vringKick,
                 bytesOf(kick));
-
             protocol::VhostHeader notification {};
             protocol::VringState notifiedQueue {};
             readExact(
@@ -1647,6 +1952,10 @@ void queueNotificationProcessesQueue(
                 bytesOf(status));
             readAcknowledgement(
                 socket, protocol::VhostRequest::vringKick);
+            sendRequest(
+                socket, protocol::VhostRequest::getFeatures, {}, {}, false);
+            (void)readValueReply<std::uint64_t>(
+                socket, protocol::VhostRequest::getFeatures);
         } else if (scenario.descriptorNotification) {
             constexpr std::uint64_t kick = 1;
             require(::write(kickWrite.get(), &kick, sizeof(kick)) ==
@@ -1670,8 +1979,8 @@ void queueNotificationProcessesQueue(
             return;
         }
         if (scenario.inbandNotification) {
-            // The backend-request acknowledgement above is the completion
-            // synchronization point.
+            // The subsequent main-channel reply above is the completion
+            // synchronization point after the backend acknowledgement.
         } else if (scenario.pollingCompletion || scenario.suppressInterrupt) {
             const auto deadline = std::chrono::steady_clock::now() +
                 std::chrono::seconds(2);
@@ -1805,6 +2114,10 @@ void runVhostUserProtocolTests()
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
+    sharedMemoryRequiresBackendAcknowledgements();
+    sharedMemoryConfigurationRequiresNegotiation();
+    standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply();
+    rejectedSharedMemoryActionClosesBackendChannel();
     {
         VhostUserServer server {
             {}, "127.0.0.1", 0, {}, 64, 64, false};

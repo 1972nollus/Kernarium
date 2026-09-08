@@ -2,6 +2,7 @@
 #pragma once
 
 #include "protocol.hpp"
+#include "unique_descriptor.hpp"
 #include "virgl_renderer.hpp"
 #include "display.hpp"
 
@@ -42,18 +43,37 @@ public:
         std::vector<std::uint8_t> response;
         std::optional<DeferredFence> fence;
     };
+
+    struct SharedMemoryAction {
+        enum class Type : std::uint8_t {
+            map,
+            unmap,
+        };
+
+        Type type {};
+        std::uint64_t actionId {};
+        std::uint32_t resourceId {};
+        std::uint8_t regionId {};
+        std::uint64_t descriptorOffset {};
+        std::uint64_t regionOffset {};
+        std::uint64_t length {};
+        bool writable {};
+        UniqueDescriptor descriptor;
+    };
 #if UML_GPU_DEVICE_TESTING
     VirtioGpuDevice(
         testing::VirtioGpuDeviceDependencies& dependencies,
         GuestReader guestReader,
         GuestMapper guestMapper,
-        std::uint32_t dotsPerInch = 0);
+        std::uint32_t dotsPerInch = 0,
+        bool experimentalVulkan = false);
 #else
     VirtioGpuDevice(
         Display& display,
         GuestReader guestReader,
         GuestMapper guestMapper,
-        std::uint32_t dotsPerInch = 0);
+        std::uint32_t dotsPerInch = 0,
+        bool experimentalVulkan = false);
 #endif
     ~VirtioGpuDevice();
 
@@ -79,6 +99,12 @@ public:
         std::uint32_t contextId) noexcept;
     [[nodiscard]] int contextFenceStatus(
         const DeferredFence& fence) noexcept;
+    [[nodiscard]] std::optional<SharedMemoryAction>
+        takeSharedMemoryAction() noexcept;
+    void completeSharedMemoryAction(
+        std::uint64_t actionId,
+        bool success) noexcept;
+    void prepareReset() noexcept;
 
 private:
     struct BackingEntry {
@@ -101,6 +127,27 @@ private:
         std::uint32_t height {};
         std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
+    };
+
+    struct BlobResource {
+        enum class MappingState : std::uint8_t {
+            unmapped,
+            mapping,
+            mapped,
+            unmapping,
+        };
+
+        std::uint32_t contextId {};
+        std::uint32_t memory {};
+        std::uint32_t flags {};
+        std::uint64_t size {};
+        std::uint64_t chargedSize {};
+        std::uint64_t regionOffset {};
+        std::uint64_t pendingActionId {};
+        std::vector<BackingEntry> backing;
+        std::vector<iovec> vectors;
+        MappingState mappingState {MappingState::unmapped};
+        bool retireAfterAction {};
     };
 
     [[nodiscard]] std::vector<std::uint8_t> response(
@@ -129,6 +176,10 @@ private:
         bool cursorQueue,
         std::uint64_t fenceCookie,
         std::optional<DeferredFence>* deferredFence);
+    void releaseBlobScanout() noexcept;
+    void clearScanout() noexcept;
+    [[nodiscard]] std::span<std::uint32_t> blobMappingPages(
+        std::uint64_t offset, std::uint64_t size) noexcept;
 
 #if UML_GPU_DEVICE_TESTING
     testing::VirtioGpuDeviceDependencies& dependencies_;
@@ -138,20 +189,34 @@ private:
     GuestReader guestReader_;
     GuestMapper guestMapper_;
     std::uint32_t dotsPerInch_;
+    bool experimentalVulkan_ {};
 #if !UML_GPU_DEVICE_TESTING
     VirglRenderer renderer_;
 #endif
     std::unordered_map<std::uint32_t, Resource> resources_;
     std::unordered_map<std::uint32_t, VirglResource> virglResources_;
+    std::unordered_map<std::uint32_t, BlobResource> blobResources_;
+    std::vector<std::uint32_t> blobMappingOwners_;
     std::unordered_set<std::uint32_t> contexts_;
+    std::unordered_set<std::uint32_t> venusContexts_;
     std::vector<std::uint8_t> transferStaging_;
     std::vector<std::uint8_t> readbackStaging_;
     const std::atomic_bool* stopRequested_ {};
     std::uint64_t displayGeneration_ {};
     std::uint64_t reportedDisplayGeneration_ {};
     std::uint64_t clearedDisplayGeneration_ {};
+    std::vector<SharedMemoryAction> sharedMemoryActions_;
+    std::uint64_t nextSharedMemoryActionId_ {1};
     std::uint32_t scanoutResource_ {};
     protocol::GpuRectangle scanoutRectangle_ {};
+    protocol::GpuFormat scanoutFormat_ {};
+    std::uint32_t scanoutWidth_ {};
+    std::uint32_t scanoutHeight_ {};
+    std::uint32_t scanoutStride_ {};
+    std::uint32_t scanoutOffset_ {};
+    void* scanoutTexture_ {};
+    void* scanoutMapping_ {};
+    std::uint64_t scanoutMappingSize_ {};
 };
 
 } // namespace uml::gpu

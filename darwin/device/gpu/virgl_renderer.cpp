@@ -42,6 +42,7 @@ constexpr auto maximumFenceWait = std::chrono::seconds(60);
 // Stable Virtio-GPU ABI identifiers consumed by virgl_renderer_get_cap_set().
 constexpr std::uint32_t virglCapsetId = 1;
 constexpr std::uint32_t virgl2CapsetId = 2;
+constexpr std::uint32_t venusCapsetId = 4;
 
 std::atomic_bool missingGlEntryPoint;
 std::atomic_bool rendererInstanceActive;
@@ -50,6 +51,16 @@ std::atomic_bool rendererInstanceActive;
 {
     const char* value = std::getenv("UML_GPU_CAPABILITY_REPORT");
     return value != nullptr && std::strcmp(value, "1") == 0;
+}
+
+[[nodiscard]] bool experimentalVulkanEnabled() noexcept
+{
+#if UML_GPU_VULKAN_EXPERIMENT
+    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+#else
+    return false;
+#endif
 }
 
 [[nodiscard]] std::string hexEncode(std::span<const std::uint8_t> bytes)
@@ -179,6 +190,7 @@ VirglRenderer::VirglRenderer()
     }
     bool initialized = false;
     try {
+        const bool enableExperimentalVulkan = experimentalVulkanEnabled();
         epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
         // virgl_renderer_init() retains this pointer until cleanup rather than
         // copying the callback table. Keep it alive for the process lifetime
@@ -198,10 +210,23 @@ VirglRenderer::VirglRenderer()
         // The common Apple path supplies an external ANGLE EGLDisplay backed
         // by Metal. Native-share resources are MTLTexture objects on macOS,
         // Simulator, and device alike.
-        constexpr int rendererFlags =
+        int rendererFlags =
             VIRGL_RENDERER_USE_GLES |
             VIRGL_RENDERER_USE_VIDEO |
             VIRGL_RENDERER_NATIVE_SHARE_TEXTURE;
+        if (enableExperimentalVulkan) {
+            /*
+             * The render server publishes each context's per-ring timeline
+             * sequence numbers in shared memory, so virgl_renderer_context_poll
+             * retires Venus fences and invokes the fence callback on the
+             * polling thread. VIRGL_RENDERER_ASYNC_FENCE_CB would instead move
+             * retirement onto renderer-owned sync threads, forbid that poll,
+             * and make Virgl fence delivery asynchronous too.
+             */
+            rendererFlags |=
+                VIRGL_RENDERER_VENUS |
+                VIRGL_RENDERER_RENDER_SERVER;
+        }
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
         const int checkedResult = checkGlDispatchResult(result);
@@ -223,6 +248,8 @@ VirglRenderer::VirglRenderer()
                 reportContextProbe(provider_->probeContext(major, minor));
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
+            if (enableExperimentalVulkan)
+                reportCapset(venusCapsetId, capset(venusCapsetId));
         }
     } catch (...) {
         if (initialized)
@@ -288,6 +315,11 @@ int VirglRenderer::createContext(
         if (createResult == 0)
             virgl_renderer_context_destroy(contextId);
         return checkedResult;
+    }
+
+    if ((flags & VIRGL_RENDERER_CONTEXT_FLAG_CAPSET_ID_MASK) ==
+        venusCapsetId) {
+        return 0;
     }
 
     /*
@@ -385,6 +417,89 @@ int VirglRenderer::createResource3d(
     if (createResult == 0 && checkedResult != 0)
         virgl_renderer_resource_unref(resource.resourceId);
     return checkedResult;
+}
+
+int VirglRenderer::createResourceBlob(
+    const ResourceBlob& resource) noexcept
+{
+    if (resource.backing.size() >
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        return EINVAL;
+    }
+    virgl_renderer_resource_create_blob_args arguments {
+        .res_handle = resource.resourceId,
+        .ctx_id = resource.contextId,
+        .blob_mem = resource.memory,
+        .blob_flags = resource.flags,
+        .blob_id = resource.blobId,
+        .size = resource.size,
+        .iovecs = resource.backing.data(),
+        .num_iovs = static_cast<std::uint32_t>(resource.backing.size()),
+    };
+    return virgl_renderer_resource_create_blob(&arguments);
+}
+
+int VirglRenderer::exportResourceBlob(
+    std::uint32_t resourceId,
+    std::uint32_t& descriptorType,
+    int& descriptor) noexcept
+{
+    descriptorType = 0;
+    descriptor = -1;
+    return virgl_renderer_resource_export_blob(
+        resourceId, &descriptorType, &descriptor);
+}
+
+int VirglRenderer::resourceMapInfo(
+    std::uint32_t resourceId,
+    std::uint32_t& mapInfo) noexcept
+{
+    mapInfo = 0;
+    return virgl_renderer_resource_get_map_info(resourceId, &mapInfo);
+}
+
+int VirglRenderer::mapResource(
+    std::uint32_t resourceId,
+    void*& mapping,
+    std::uint64_t& size) noexcept
+{
+    mapping = nullptr;
+    size = 0;
+    return virgl_renderer_resource_map(resourceId, &mapping, &size);
+}
+
+void VirglRenderer::unmapResource(std::uint32_t resourceId) noexcept
+{
+    (void)virgl_renderer_resource_unmap(resourceId);
+}
+
+int VirglRenderer::createBlobScanout(
+    std::uint32_t resourceId,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t format,
+    std::uint32_t stride,
+    std::uint32_t offset,
+    void*& texture) noexcept
+{
+    texture = nullptr;
+    const auto type = virgl_renderer_create_handle_for_scanout(
+        resourceId, width, height, format, 0, stride, offset, &texture);
+    if (type != VIRGL_NATIVE_HANDLE_METAL_TEXTURE || texture == nullptr) {
+        if (type != VIRGL_NATIVE_HANDLE_NONE && texture != nullptr)
+            virgl_renderer_release_handle_for_scanout(type, texture);
+        texture = nullptr;
+        return ENOTSUP;
+    }
+    return 0;
+}
+
+void VirglRenderer::releaseBlobScanout(void* texture) noexcept
+{
+    if (texture != nullptr) {
+        virgl_renderer_release_handle_for_scanout(
+            VIRGL_NATIVE_HANDLE_METAL_TEXTURE, texture);
+    }
 }
 
 int VirglRenderer::transferResource(
@@ -608,8 +723,14 @@ int VirglRenderer::createContextFence(
     std::uint64_t fenceCookie) noexcept
 {
     try {
-        if (contextId == 0 || ringIndex != 0 || fenceCookie == 0)
+        /* Venus places each guest ring on its own fence timeline, so the ring
+         * index is bounded by the ring count the Venus protocol allows rather
+         * than pinned to the single virgl ring. */
+        if (contextId == 0 ||
+            ringIndex >= protocol::venusContextRingCount ||
+            fenceCookie == 0) {
             return EINVAL;
+        }
         if (fenceCallbackFailed_.load(std::memory_order_acquire))
             return EIO;
 
@@ -656,8 +777,11 @@ int VirglRenderer::contextFenceStatus(
     std::uint64_t fenceCookie) noexcept
 {
     try {
-        if (contextId == 0 || ringIndex != 0 || fenceCookie == 0)
+        if (contextId == 0 ||
+            ringIndex >= protocol::venusContextRingCount ||
+            fenceCookie == 0) {
             return EINVAL;
+        }
         if (fenceCallbackFailed_.load(std::memory_order_acquire))
             return EIO;
         const auto key = contextRingKey(contextId, ringIndex);

@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <pthread.h>
@@ -21,6 +23,20 @@ extern "C" {
 }
 
 namespace uml::gpu {
+
+namespace {
+
+[[nodiscard]] bool experimentalVulkanEnabled() noexcept
+{
+#if UML_GPU_VULKAN_EXPERIMENT
+    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+#else
+    return false;
+#endif
+}
+
+} // namespace
 namespace {
 
 namespace vnc_input = uml::input::vnc;
@@ -209,12 +225,20 @@ VncDisplay::VncDisplay(
     testing::eventThreadStartCheckpoint(
         static_cast<std::uint16_t>(screen_->port));
 #endif
+    if (experimentalVulkanEnabled()) {
+        metalReadback_ = std::make_unique<MetalReadback>(
+            [this](const MetalReadbackFrame& frame) noexcept {
+                publishMetalFrame(frame);
+            });
+    }
     eventThread_ = std::thread(&VncDisplay::eventLoop, this);
     screenGuard.release();
 }
 
 VncDisplay::~VncDisplay()
 {
+    if (metalReadback_)
+        metalReadback_->shutdown();
     running_.store(false, std::memory_order_release);
     if (eventThread_.joinable())
         eventThread_.join();
@@ -335,12 +359,17 @@ PresentOutcome VncDisplay::presentMetal(
     const MetalScanout& scanout) noexcept
 {
     /* With no remote consumer, accepting and dropping the scanout avoids the
-     * synchronous Metal-to-CPU readback. Once a client exists, unsupported
-     * deliberately selects the ordinary CPU framebuffer path. */
+     * Metal-to-CPU readback entirely. */
     if (stateClientCount(
             clientState_.load(std::memory_order_acquire)) == 0) {
         return PresentOutcome::dropped;
     }
+    /* A Venus scanout is a Metal texture with no guest-visible virgl
+     * resource, so the CPU framebuffer path cannot reach it. The readback
+     * converts it off the guest timeline; without it, unsupported
+     * deliberately selects the ordinary CPU framebuffer path. */
+    if (metalReadback_)
+        return metalReadback_->present(scanout);
     cpuFallbackExtent_.store(
         makeExtent(
             std::min(scanout.width, framebuffer_.width()),
@@ -411,6 +440,67 @@ void VncDisplay::recordFullFrame(const std::uint32_t epoch) noexcept
                std::memory_order_relaxed)) {
     }
 }
+
+DisplayStatistics VncDisplay::statistics() const noexcept
+{
+    return metalReadback_ ? metalReadback_->statistics()
+                          : DisplayStatistics {};
+}
+
+void VncDisplay::recordCpuFallbackFrame() noexcept
+{
+    if (metalReadback_)
+        metalReadback_->recordCpuFallbackFrame();
+}
+
+void VncDisplay::publishMetalFrame(
+    const MetalReadbackFrame& frame) noexcept
+{
+    try {
+        const auto rectangle = framebuffer_.update(
+            frame.pixels,
+            frame.width,
+            frame.height,
+            frame.rowBytes,
+            frame.format,
+            0,
+            0,
+            frame.destinationX,
+            frame.destinationY,
+            frame.width,
+            frame.height);
+        if (rectangle.width == 0 || rectangle.height == 0)
+            return;
+        std::lock_guard lock(framebuffer_);
+        rfbMarkRectAsModified(
+            screen_,
+            static_cast<int>(rectangle.x),
+            static_cast<int>(rectangle.y),
+            static_cast<int>(rectangle.x + rectangle.width),
+            static_cast<int>(rectangle.y + rectangle.height));
+    } catch (...) {
+    }
+}
+
+#if UML_GPU_VNC_STARTUP_TESTING
+std::array<std::uint8_t, 4> VncDisplay::pixelForTesting(
+    std::uint32_t x, std::uint32_t y) noexcept
+{
+    if (x >= width() || y >= height())
+        return {};
+    std::lock_guard lock(framebuffer_);
+    const auto pixels = framebuffer_.pixels();
+    const auto offset =
+        (static_cast<std::size_t>(y) * width() + x) *
+        protocol::gpuBytesPerPixel;
+    return {
+        pixels[offset],
+        pixels[offset + 1U],
+        pixels[offset + 2U],
+        pixels[offset + 3U],
+    };
+}
+#endif
 
 void VncDisplay::handleKey(bool down, std::uint32_t keySymbol) noexcept
 {

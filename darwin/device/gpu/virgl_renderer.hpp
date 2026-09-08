@@ -23,6 +23,8 @@ class HostGlProvider;
 // this public class layout.
 class VirglRenderer {
 public:
+    static constexpr std::uint32_t sharedMemoryBlobDescriptor = 3;
+
     struct Capset {
         std::uint32_t maximumVersion {};
         std::vector<std::uint8_t> data;
@@ -51,6 +53,16 @@ public:
         std::uint32_t depth {};
     };
 
+    struct ResourceBlob {
+        std::uint32_t resourceId {};
+        std::uint32_t contextId {};
+        std::uint32_t memory {};
+        std::uint32_t flags {};
+        std::uint64_t blobId {};
+        std::uint64_t size {};
+        std::span<iovec> backing;
+    };
+
     VirglRenderer();
     ~VirglRenderer();
 
@@ -69,6 +81,29 @@ public:
         std::span<const std::uint8_t> command) noexcept;
     [[nodiscard]] int createResource3d(
         const Resource3d& resource) noexcept;
+    [[nodiscard]] int createResourceBlob(
+        const ResourceBlob& resource) noexcept;
+    [[nodiscard]] int exportResourceBlob(
+        std::uint32_t resourceId,
+        std::uint32_t& descriptorType,
+        int& descriptor) noexcept;
+    [[nodiscard]] int resourceMapInfo(
+        std::uint32_t resourceId,
+        std::uint32_t& mapInfo) noexcept;
+    [[nodiscard]] int mapResource(
+        std::uint32_t resourceId,
+        void*& mapping,
+        std::uint64_t& size) noexcept;
+    void unmapResource(std::uint32_t resourceId) noexcept;
+    [[nodiscard]] int createBlobScanout(
+        std::uint32_t resourceId,
+        std::uint32_t width,
+        std::uint32_t height,
+        std::uint32_t format,
+        std::uint32_t stride,
+        std::uint32_t offset,
+        void*& texture) noexcept;
+    void releaseBlobScanout(void* texture) noexcept;
     [[nodiscard]] int transferResource(
         bool toHost,
         std::uint32_t resourceId,

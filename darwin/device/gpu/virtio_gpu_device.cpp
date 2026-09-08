@@ -8,13 +8,46 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 namespace uml::gpu {
 namespace {
+
+[[nodiscard]] constexpr std::uint64_t alignHostVisibleSize(
+    std::uint64_t size) noexcept
+{
+    constexpr auto alignment = protocol::hostVisibleSharedMemoryAlignment;
+    return (size + alignment - 1U) & ~(alignment - 1U);
+}
+
+[[nodiscard]] bool headerPaddingIsZero(
+    const protocol::GpuControlHeader& header) noexcept
+{
+    return std::all_of(
+        header.padding.begin(), header.padding.end(),
+        [](std::uint8_t value) { return value == 0; });
+}
+
+[[nodiscard]] bool validVenusFenceHeader(
+    const protocol::GpuControlHeader& header) noexcept
+{
+    constexpr auto validFlags =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    const bool fenced = (header.flags & protocol::gpuFlagFence) != 0;
+    const bool namesRing =
+        (header.flags & protocol::gpuFlagInfoRingIndex) != 0;
+    return (header.flags & ~validFlags) == 0 &&
+        (!namesRing || fenced) &&
+        (namesRing
+            ? header.ringIndex < protocol::venusContextRingCount
+            : header.ringIndex == 0) &&
+        headerPaddingIsZero(header);
+}
 
 #if UML_GPU_DEVICE_TESTING
 #define UML_GPU_RENDERER dependencies_
@@ -64,6 +97,26 @@ bool rectangleFits(
         rectangle.x <= width && rectangle.y <= height &&
         rectangle.width <= width - rectangle.x &&
         rectangle.height <= height - rectangle.y;
+}
+
+bool linearImageRangeFits(
+    std::uint64_t size,
+    std::uint32_t offset,
+    std::uint32_t stride,
+    std::uint32_t width,
+    std::uint32_t height)
+{
+    if (width == 0 || height == 0)
+        return false;
+    const auto rowBytes =
+        static_cast<std::uint64_t>(width) * protocol::gpuBytesPerPixel;
+    if (stride < rowBytes || offset > size)
+        return false;
+    const auto remaining = size - offset;
+    const auto precedingRows = static_cast<std::uint64_t>(height - 1U);
+    return precedingRows <=
+            (std::numeric_limits<std::uint64_t>::max() - rowBytes) / stride &&
+        precedingRows * stride + rowBytes <= remaining;
 }
 
 std::optional<std::size_t> pixelBufferSize(
@@ -237,30 +290,79 @@ VirtioGpuDevice::VirtioGpuDevice(
     testing::VirtioGpuDeviceDependencies& dependencies,
     GuestReader guestReader,
     GuestMapper guestMapper,
-    std::uint32_t dotsPerInch)
+    std::uint32_t dotsPerInch,
+    bool experimentalVulkan)
     : dependencies_(dependencies)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
     , dotsPerInch_(dotsPerInch)
+    , experimentalVulkan_(experimentalVulkan)
 {
+    if (experimentalVulkan_) {
+        sharedMemoryActions_.reserve(
+            protocol::maximumHostVisibleBlobResources);
+        blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
+    }
 }
 #else
 VirtioGpuDevice::VirtioGpuDevice(
     Display& display,
     GuestReader guestReader,
     GuestMapper guestMapper,
-    std::uint32_t dotsPerInch)
+    std::uint32_t dotsPerInch,
+    bool experimentalVulkan)
     : display_(display)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
     , dotsPerInch_(dotsPerInch)
+    , experimentalVulkan_(experimentalVulkan)
 {
+    if (experimentalVulkan_) {
+        sharedMemoryActions_.reserve(
+            protocol::maximumHostVisibleBlobResources);
+        blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
+    }
 }
 #endif
 
 VirtioGpuDevice::~VirtioGpuDevice()
 {
     reset();
+}
+
+std::span<std::uint32_t> VirtioGpuDevice::blobMappingPages(
+    std::uint64_t offset, std::uint64_t size) noexcept
+{
+    // Callers validate alignment and extent before reserving an aperture range.
+    return std::span {blobMappingOwners_}.subspan(
+        offset / protocol::hostVisibleSharedMemoryAlignment,
+        size / protocol::hostVisibleSharedMemoryAlignment);
+}
+
+void VirtioGpuDevice::releaseBlobScanout() noexcept
+{
+    if (scanoutMapping_ != nullptr) {
+        UML_GPU_RENDERER.unmapResource(scanoutResource_);
+        scanoutMapping_ = nullptr;
+        scanoutMappingSize_ = 0;
+    }
+    if (scanoutTexture_ != nullptr) {
+        UML_GPU_RENDERER.releaseBlobScanout(scanoutTexture_);
+        scanoutTexture_ = nullptr;
+    }
+    scanoutFormat_ = {};
+    scanoutWidth_ = 0;
+    scanoutHeight_ = 0;
+    scanoutStride_ = 0;
+    scanoutOffset_ = 0;
+}
+
+void VirtioGpuDevice::clearScanout() noexcept
+{
+    releaseBlobScanout();
+    scanoutResource_ = protocol::invalidResourceId;
+    scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.clear();
 }
 
 protocol::GpuConfig VirtioGpuDevice::config() const noexcept
@@ -272,7 +374,9 @@ protocol::GpuConfig VirtioGpuDevice::config() const noexcept
         .eventsRead = events,
         .eventsClear = 0,
         .scanoutCount = protocol::primaryScanoutId + 1U,
-        .capsetCount = protocol::virgl2CapsetIndex + 1U,
+        .capsetCount = experimentalVulkan_
+            ? protocol::venusCapsetIndex + 1U
+            : protocol::virgl2CapsetIndex + 1U,
     };
 }
 
@@ -323,6 +427,7 @@ void VirtioGpuDevice::reset() noexcept
      * mappings. Release them before the transport unmaps those regions. Each
      * tracked renderer object is retired once, then all host bookkeeping is
      * returned to the pristine connection state. */
+    releaseBlobScanout();
     for (auto& [resourceId, resource] : virglResources_) {
         if (!resource.vectors.empty()) {
             try {
@@ -337,6 +442,12 @@ void VirtioGpuDevice::reset() noexcept
             // Reset is also used by teardown and must finish clearing owners.
         }
     }
+    for (auto& [resourceId, resource] : blobResources_) {
+        try {
+            UML_GPU_RENDERER.unrefResource(resourceId);
+        } catch (...) {
+        }
+    }
     for (const auto contextId : contexts_) {
         try {
             UML_GPU_RENDERER.destroyContext(contextId);
@@ -346,13 +457,18 @@ void VirtioGpuDevice::reset() noexcept
     }
     UML_GPU_RENDERER.resetFenceState();
     contexts_.clear();
+    venusContexts_.clear();
     virglResources_.clear();
+    blobResources_.clear();
+    std::fill(blobMappingOwners_.begin(), blobMappingOwners_.end(),
+        protocol::invalidResourceId);
     resources_.clear();
     transferStaging_.clear();
     readbackStaging_.clear();
     displayGeneration_ = 0;
     reportedDisplayGeneration_ = 0;
     clearedDisplayGeneration_ = 0;
+    sharedMemoryActions_.clear();
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
     UML_GPU_DISPLAY.resetGuestSession();
@@ -513,11 +629,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
     information.header.flags &=
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
     if (request.capsetIndex == protocol::virglCapsetIndex ||
-        request.capsetIndex == protocol::virgl2CapsetIndex) {
+        request.capsetIndex == protocol::virgl2CapsetIndex ||
+        (experimentalVulkan_ &&
+         request.capsetIndex == protocol::venusCapsetIndex)) {
         information.capsetId =
             request.capsetIndex == protocol::virglCapsetIndex
             ? protocol::virglCapsetId
-            : protocol::virgl2CapsetId;
+            : request.capsetIndex == protocol::virgl2CapsetIndex
+                ? protocol::virgl2CapsetId
+                : protocol::venusCapsetId;
         const auto virglCapset =
             UML_GPU_RENDERER.capset(information.capsetId);
         information.maximumVersion = virglCapset.maximumVersion;
@@ -532,8 +652,11 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
 std::vector<std::uint8_t> VirtioGpuDevice::capset(
     const protocol::GpuGetCapset& request) const
 {
-    if (request.capsetId != protocol::virglCapsetId &&
-        request.capsetId != protocol::virgl2CapsetId) {
+    if ((request.capsetId != protocol::virglCapsetId &&
+         request.capsetId != protocol::virgl2CapsetId &&
+         request.capsetId != protocol::venusCapsetId) ||
+        (request.capsetId == protocol::venusCapsetId &&
+         !experimentalVulkan_)) {
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
     }
@@ -667,7 +790,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 protocol::maximumContextDebugNameLength ||
             (requestedCapset != 0 &&
              requestedCapset != protocol::virglCapsetId &&
-             requestedCapset != protocol::virgl2CapsetId) ||
+             requestedCapset != protocol::virgl2CapsetId &&
+             requestedCapset != protocol::venusCapsetId) ||
+            (requestedCapset == protocol::venusCapsetId &&
+             !experimentalVulkan_) ||
             (create->contextInit & ~protocol::contextInitCapsetMask) != 0 ||
             contexts_.contains(create->header.contextId)) {
             return response(
@@ -679,11 +805,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             create->debugName.data(), create->nameLength);
         auto success = response(*header, protocol::GpuResponse::okNoData);
         contexts_.insert(create->header.contextId);
+        if (requestedCapset == protocol::venusCapsetId) {
+            venusContexts_.insert(create->header.contextId);
+        }
         if (UML_GPU_RENDERER.createContext(
                 create->header.contextId,
                 rendererContextInit,
                 debugName) != 0) {
             contexts_.erase(create->header.contextId);
+            venusContexts_.erase(create->header.contextId);
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
@@ -699,6 +829,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         auto success = response(*header, protocol::GpuResponse::okNoData);
         UML_GPU_RENDERER.destroyContext(header->contextId);
         contexts_.erase(header->contextId);
+        venusContexts_.erase(header->contextId);
         return success;
     }
 
@@ -716,13 +847,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::errorInvalidContext);
             }
             if (!virglResources_.contains(contextResource->resourceId) &&
+                !blobResources_.contains(contextResource->resourceId) &&
                 !resources_.contains(contextResource->resourceId)) {
                 return response(
                     *header, protocol::GpuResponse::errorInvalidResource);
             }
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-            if (virglResources_.contains(contextResource->resourceId)) {
+            if (virglResources_.contains(contextResource->resourceId) ||
+                blobResources_.contains(contextResource->resourceId)) {
                 if (UML_GPU_RENDERER.attachResource(
                         header->contextId,
                         contextResource->resourceId) != 0) {
@@ -740,7 +873,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
         if (contexts_.contains(header->contextId) &&
-            virglResources_.contains(contextResource->resourceId)) {
+            (virglResources_.contains(contextResource->resourceId) ||
+             blobResources_.contains(contextResource->resourceId))) {
             /*
              * RESOURCE_UNREF asks virglrenderer to detach the resource from
              * every context before removing it, and context destruction may
@@ -765,17 +899,34 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             submit->size > protocol::maximumGpuSubmitSize ||
             submit->size % protocol::gpuCommandWordSize != 0 ||
             sizeof(*submit) > request.size() ||
-            submit->size > request.size() - sizeof(*submit)) {
+            submit->size != request.size() - sizeof(*submit) ||
+            (venusContexts_.contains(header->contextId) &&
+             !validVenusFenceHeader(*header))) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (!contexts_.contains(header->contextId))
+        if (!contexts_.contains(header->contextId)) {
+            std::fprintf(
+                stderr,
+                "Virtio-GPU submit rejected unknown context: id=%u bytes=%u\n",
+                header->contextId,
+                submit->size);
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
+        }
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        if (UML_GPU_RENDERER.submit(
+        const int submitResult = UML_GPU_RENDERER.submit(
+            header->contextId,
+            request.subspan(sizeof(*submit), submit->size));
+        if (submitResult != 0) {
+            std::fprintf(
+                stderr,
+                "Virtio-GPU renderer submit failed: context=%u bytes=%u "
+                "result=%d venus=%u\n",
                 header->contextId,
-                request.subspan(sizeof(*submit), submit->size)) != 0) {
+                submit->size,
+                submitResult,
+                venusContexts_.contains(header->contextId) ? 1U : 0U);
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
@@ -784,8 +935,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                 ? header->ringIndex
                 : 0;
+            /* Venus places each guest ring on its own fence timeline, so a
+             * non-zero ring index is deferrable once the experiment is on.
+             * Ring indexes are already bounded by validVenusFenceHeader(). */
             if (deferredFence != nullptr && fenceCookie != 0 &&
-                header->contextId != 0 && ringIndex == 0) {
+                header->contextId != 0 &&
+                (ringIndex == 0 || experimentalVulkan_)) {
                 if (UML_GPU_RENDERER.createContextFence(
                         header->contextId, ringIndex, fenceCookie) != 0) {
                     return response(
@@ -816,7 +971,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             create->width == 0 || create->height == 0 ||
             create->depth == 0 || create->arraySize == 0 ||
             resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId)) {
+            virglResources_.contains(create->resourceId) ||
+            blobResources_.contains(create->resourceId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
@@ -854,6 +1010,225 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
         return success;
+    }
+
+    case protocol::GpuCommand::resourceCreateBlob: {
+        const auto* create =
+            readStructure<protocol::GpuResourceCreateBlob>(request);
+        const auto chargedSize = create == nullptr || create->size == 0 ||
+                create->size > protocol::hostVisibleSharedMemoryRegionSize
+            ? 0U
+            : alignHostVisibleSize(create->size);
+        if (!experimentalVulkan_ || create == nullptr ||
+            create->resourceId == protocol::invalidResourceId ||
+            create->header.flags != 0 ||
+            create->header.fenceId != 0 ||
+            create->header.ringIndex != 0 ||
+            !headerPaddingIsZero(create->header) ||
+            create->size == 0 ||
+            create->size > protocol::hostVisibleSharedMemoryRegionSize ||
+            chargedSize == 0 ||
+            (create->flags & ~protocol::blobFlagMask) != 0 ||
+            create->memory != protocol::blobMemoryHost3d ||
+            create->entryCount != 0 ||
+            resources_.contains(create->resourceId) ||
+            virglResources_.contains(create->resourceId) ||
+            blobResources_.contains(create->resourceId)) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        /* Renderer-owned blob storage is not resident in the guest-visible
+         * aperture until RESOURCE_MAP_BLOB. Bound the control-plane objects
+         * here; map-time range and overlap checks bound aperture residency. */
+        if (blobResources_.size() >=
+            protocol::maximumHostVisibleBlobResources) {
+            return response(
+                *header, protocol::GpuResponse::errorOutOfMemory);
+        }
+        if (!venusContexts_.contains(header->contextId)) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidContext);
+        }
+        if (request.size() != sizeof(*create)) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+
+        try {
+            auto [iterator, inserted] = blobResources_.emplace(
+                create->resourceId,
+                BlobResource {
+                    .contextId = header->contextId,
+                    .memory = create->memory,
+                    .flags = create->flags,
+                    .size = create->size,
+                    .chargedSize = chargedSize,
+                });
+            if (!inserted) {
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidResource);
+            }
+            const VirglRenderer::ResourceBlob resource {
+                .resourceId = create->resourceId,
+                .contextId = header->contextId,
+                .memory = create->memory,
+                .flags = create->flags,
+                .blobId = create->blobId,
+                .size = create->size,
+                .backing = iterator->second.vectors,
+            };
+            if (UML_GPU_RENDERER.createResourceBlob(resource) != 0) {
+                blobResources_.erase(iterator);
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
+            }
+            return response(*header, protocol::GpuResponse::okNoData);
+        } catch (const std::bad_alloc&) {
+            return response(
+                *header, protocol::GpuResponse::errorOutOfMemory);
+        }
+    }
+
+    case protocol::GpuCommand::resourceMapBlob: {
+        const auto* map =
+            readStructure<protocol::GpuResourceMapBlob>(request);
+        if (!experimentalVulkan_ || map == nullptr ||
+            request.size() != sizeof(*map) ||
+            map->header.flags != 0 ||
+            map->header.fenceId != 0 ||
+            map->header.contextId != 0 ||
+            map->header.ringIndex != 0 ||
+            !headerPaddingIsZero(map->header) ||
+            map->padding != 0 ||
+            map->offset % protocol::hostVisibleSharedMemoryAlignment != 0) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        const auto iterator = blobResources_.find(map->resourceId);
+        if (iterator == blobResources_.end()) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidResource);
+        }
+        auto& resource = iterator->second;
+        if ((resource.flags & protocol::blobFlagMappable) == 0 ||
+            resource.mappingState != BlobResource::MappingState::unmapped ||
+            map->offset > protocol::hostVisibleSharedMemoryRegionSize ||
+            resource.chargedSize >
+                protocol::hostVisibleSharedMemoryRegionSize - map->offset) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        const auto pages = blobMappingPages(map->offset, resource.chargedSize);
+        if (std::any_of(pages.begin(), pages.end(), [](std::uint32_t owner) {
+                return owner != protocol::invalidResourceId;
+            })) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+
+        std::uint32_t descriptorType = 0;
+        int descriptor = -1;
+        const int exportResult = UML_GPU_RENDERER.exportResourceBlob(
+            map->resourceId, descriptorType, descriptor);
+        UniqueDescriptor ownedDescriptor {descriptor};
+        if (exportResult != 0 || descriptor < 0 ||
+            descriptorType != VirglRenderer::sharedMemoryBlobDescriptor) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
+        }
+        std::uint32_t mapInfo = 0;
+        if (UML_GPU_RENDERER.resourceMapInfo(
+                map->resourceId, mapInfo) != 0 ||
+            (mapInfo & ~protocol::mapCacheMask) != 0 ||
+            (mapInfo & protocol::mapCacheMask) >
+                protocol::mapCacheWriteCombined) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
+        }
+
+        if (nextSharedMemoryActionId_ == 0) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
+        }
+        const auto actionId = nextSharedMemoryActionId_++;
+        try {
+            sharedMemoryActions_.push_back(SharedMemoryAction {
+                .type = SharedMemoryAction::Type::map,
+                .actionId = actionId,
+                .resourceId = map->resourceId,
+                .regionId = protocol::hostVisibleSharedMemoryRegionId,
+                .descriptorOffset = 0,
+                .regionOffset = map->offset,
+                .length = resource.chargedSize,
+                .writable = true,
+                .descriptor = std::move(ownedDescriptor),
+            });
+        } catch (const std::bad_alloc&) {
+            return response(
+                *header, protocol::GpuResponse::errorOutOfMemory);
+        }
+        resource.mappingState = BlobResource::MappingState::mapping;
+        resource.regionOffset = map->offset;
+        resource.pendingActionId = actionId;
+        std::fill(pages.begin(), pages.end(), map->resourceId);
+
+        protocol::GpuMapInfo information {};
+        information.header = *header;
+        information.header.type =
+            static_cast<std::uint32_t>(protocol::GpuResponse::okMapInfo);
+        information.header.flags &=
+            protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+        information.mapInfo = mapInfo;
+        std::vector<std::uint8_t> bytes(sizeof(information));
+        std::memcpy(bytes.data(), &information, sizeof(information));
+        return bytes;
+    }
+
+    case protocol::GpuCommand::resourceUnmapBlob: {
+        const auto* unmap =
+            readStructure<protocol::GpuResourceUnmapBlob>(request);
+        if (!experimentalVulkan_ || unmap == nullptr ||
+            request.size() != sizeof(*unmap) ||
+            unmap->header.flags != 0 ||
+            unmap->header.fenceId != 0 ||
+            unmap->header.contextId != 0 ||
+            unmap->header.ringIndex != 0 ||
+            !headerPaddingIsZero(unmap->header) ||
+            unmap->padding != 0) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        const auto iterator = blobResources_.find(unmap->resourceId);
+        if (iterator == blobResources_.end()) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidResource);
+        }
+        auto& resource = iterator->second;
+        if (resource.mappingState != BlobResource::MappingState::mapped) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        if (nextSharedMemoryActionId_ == 0) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
+        }
+        const auto actionId = nextSharedMemoryActionId_++;
+        try {
+            sharedMemoryActions_.push_back(SharedMemoryAction {
+                .type = SharedMemoryAction::Type::unmap,
+                .actionId = actionId,
+                .resourceId = unmap->resourceId,
+                .regionId = protocol::hostVisibleSharedMemoryRegionId,
+                .regionOffset = resource.regionOffset,
+                .length = resource.chargedSize,
+            });
+        } catch (const std::bad_alloc&) {
+            return response(
+                *header, protocol::GpuResponse::errorOutOfMemory);
+        }
+        resource.mappingState = BlobResource::MappingState::unmapping;
+        resource.pendingActionId = actionId;
+        return response(*header, protocol::GpuResponse::okNoData);
     }
 
     case protocol::GpuCommand::transferToHost3d:
@@ -908,8 +1283,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                 ? header->ringIndex
                 : 0;
+            /* Venus places each guest ring on its own fence timeline, so a
+             * non-zero ring index is deferrable once the experiment is on.
+             * Ring indexes are already bounded by validVenusFenceHeader(). */
             if (deferredFence != nullptr && fenceCookie != 0 &&
-                header->contextId != 0 && ringIndex == 0) {
+                header->contextId != 0 &&
+                (ringIndex == 0 || experimentalVulkan_)) {
                 if (UML_GPU_RENDERER.createContextFence(
                         header->contextId, ringIndex, fenceCookie) != 0) {
                     return response(
@@ -942,7 +1321,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(*header, protocol::GpuResponse::errorInvalidParameter);
         }
         if (resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId)) {
+            virglResources_.contains(create->resourceId) ||
+            blobResources_.contains(create->resourceId)) {
             return response(*header, protocol::GpuResponse::errorInvalidResource);
         }
         const auto size = pixelBufferSize(create->width, create->height);
@@ -973,9 +1353,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         auto success = response(*header, protocol::GpuResponse::okNoData);
         if (resources_.erase(reference->resourceId) != 0) {
             if (scanoutResource_ == reference->resourceId) {
-                scanoutResource_ = protocol::invalidResourceId;
-                scanoutRectangle_ = {};
-                UML_GPU_DISPLAY.clear();
+                clearScanout();
             }
             return success;
         }
@@ -986,10 +1364,46 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             UML_GPU_RENDERER.unrefResource(reference->resourceId);
             virglResources_.erase(virgl);
             if (scanoutResource_ == reference->resourceId) {
-                scanoutResource_ = protocol::invalidResourceId;
-                scanoutRectangle_ = {};
-                UML_GPU_DISPLAY.clear();
+                clearScanout();
             }
+            return success;
+        }
+        if (const auto blob = blobResources_.find(reference->resourceId);
+            blob != blobResources_.end()) {
+            auto& resource = blob->second;
+            if (scanoutResource_ == reference->resourceId)
+                clearScanout();
+            if (resource.mappingState == BlobResource::MappingState::mapping ||
+                resource.mappingState == BlobResource::MappingState::unmapping) {
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
+            }
+            if (resource.mappingState == BlobResource::MappingState::mapped) {
+                if (nextSharedMemoryActionId_ == 0) {
+                    return response(
+                        *header, protocol::GpuResponse::errorUnspecified);
+                }
+                const auto actionId = nextSharedMemoryActionId_++;
+                try {
+                    sharedMemoryActions_.push_back(SharedMemoryAction {
+                        .type = SharedMemoryAction::Type::unmap,
+                        .actionId = actionId,
+                        .resourceId = reference->resourceId,
+                        .regionId = protocol::hostVisibleSharedMemoryRegionId,
+                        .regionOffset = resource.regionOffset,
+                        .length = resource.chargedSize,
+                    });
+                } catch (const std::bad_alloc&) {
+                    return response(
+                        *header, protocol::GpuResponse::errorOutOfMemory);
+                }
+                resource.mappingState = BlobResource::MappingState::unmapping;
+                resource.pendingActionId = actionId;
+                resource.retireAfterAction = true;
+                return success;
+            }
+            UML_GPU_RENDERER.unrefResource(reference->resourceId);
+            blobResources_.erase(blob);
             return success;
         }
         return response(*header, protocol::GpuResponse::errorInvalidResource);
@@ -1168,9 +1582,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         if (scanout->resourceId == protocol::invalidResourceId) {
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-            scanoutResource_ = protocol::invalidResourceId;
-            scanoutRectangle_ = {};
-            UML_GPU_DISPLAY.clear();
+            clearScanout();
             return success;
         }
         std::uint32_t width = 0;
@@ -1235,8 +1647,69 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
         if (replaceReadback)
             readbackStaging_.swap(replacementReadback);
+        releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
+        return success;
+    }
+
+    case protocol::GpuCommand::setScanoutBlob: {
+        const auto* scanout =
+            readStructure<protocol::GpuSetScanoutBlob>(request);
+        if (!experimentalVulkan_ || scanout == nullptr ||
+            request.size() != sizeof(*scanout) ||
+            scanout->scanoutId != protocol::primaryScanoutId) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidScanout);
+        }
+        if (scanout->resourceId == protocol::invalidResourceId) {
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
+            clearScanout();
+            return success;
+        }
+        const auto blob = blobResources_.find(scanout->resourceId);
+        if (blob == blobResources_.end()) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidResource);
+        }
+        const bool unusedPlanesAreZero = std::all_of(
+            scanout->strides.begin() + 1, scanout->strides.end(),
+            [](std::uint32_t value) { return value == 0; }) &&
+            std::all_of(
+                scanout->offsets.begin() + 1, scanout->offsets.end(),
+                [](std::uint32_t value) { return value == 0; });
+        if (!supportedFormat(scanout->format) || scanout->padding != 0 ||
+            !unusedPlanesAreZero ||
+            !rectangleFits(
+                scanout->rectangle, scanout->width, scanout->height) ||
+            !linearImageRangeFits(
+                blob->second.size, scanout->offsets[0],
+                scanout->strides[0], scanout->width, scanout->height)) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        void* texture = nullptr;
+        const int scanoutResult = UML_GPU_RENDERER.createBlobScanout(
+            scanout->resourceId, scanout->width, scanout->height,
+            scanout->format, scanout->strides[0], scanout->offsets[0],
+            texture);
+        if (scanoutResult != 0 || texture == nullptr) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+
+        releaseBlobScanout();
+        scanoutResource_ = scanout->resourceId;
+        scanoutRectangle_ = scanout->rectangle;
+        scanoutFormat_ = static_cast<protocol::GpuFormat>(scanout->format);
+        scanoutWidth_ = scanout->width;
+        scanoutHeight_ = scanout->height;
+        scanoutStride_ = scanout->strides[0];
+        scanoutOffset_ = scanout->offsets[0];
+        scanoutTexture_ = texture;
         return success;
     }
 
@@ -1314,6 +1787,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     .sourceY = scanoutRectangle_.y,
                     .width = scanoutRectangle_.width,
                     .height = scanoutRectangle_.height,
+                    .damageX = damage->x,
+                    .damageY = damage->y,
+                    .damageWidth = damage->width,
+                    .damageHeight = damage->height,
                 }))) {
                 /* A dropped frame is success for the guest: it renders on its
                  * own timeline and the host presents the newest frame it can. */
@@ -1368,11 +1845,182 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return success;
         }
 
+        if (blobResources_.contains(flush->resourceId)) {
+            if (flush->resourceId != scanoutResource_)
+                return response(
+                    *header, protocol::GpuResponse::okNoData);
+            if (!rectangleFits(
+                    flush->rectangle, scanoutWidth_, scanoutHeight_)) {
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
+            }
+            const auto damage = intersectRectangles(
+                flush->rectangle, scanoutRectangle_);
+            if (!damage)
+                return response(
+                    *header, protocol::GpuResponse::okNoData);
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
+            if (scanoutTexture_ != nullptr &&
+                presentAccepted(UML_GPU_DISPLAY.presentMetal(MetalScanout {
+                    .texture = scanoutTexture_,
+                    .sourceWidth = scanoutWidth_,
+                    .sourceHeight = scanoutHeight_,
+                    .sourceX = scanoutRectangle_.x,
+                    .sourceY = scanoutRectangle_.y,
+                    .width = scanoutRectangle_.width,
+                    .height = scanoutRectangle_.height,
+                    .damageX = damage->x,
+                    .damageY = damage->y,
+                    .damageWidth = damage->width,
+                    .damageHeight = damage->height,
+                }))) {
+                return success;
+            }
+
+            UML_GPU_DISPLAY.recordCpuFallbackFrame();
+            if (scanoutMapping_ == nullptr) {
+                void* mapping = nullptr;
+                std::uint64_t mappingSize = 0;
+                if (UML_GPU_RENDERER.mapResource(
+                        flush->resourceId, mapping, mappingSize) != 0 ||
+                    mapping == nullptr ||
+                    !linearImageRangeFits(
+                        mappingSize, scanoutOffset_, scanoutStride_,
+                        scanoutWidth_, scanoutHeight_)) {
+                    if (mapping != nullptr)
+                        UML_GPU_RENDERER.unmapResource(flush->resourceId);
+                    return response(
+                        *header, protocol::GpuResponse::errorUnspecified);
+                }
+                scanoutMapping_ = mapping;
+                scanoutMappingSize_ = mappingSize;
+            }
+
+            try {
+                const auto* pixels = static_cast<const std::uint8_t*>(
+                    scanoutMapping_);
+                UML_GPU_DISPLAY.update(
+                    std::span<const std::uint8_t>(
+                        pixels + scanoutOffset_,
+                        static_cast<std::size_t>(
+                            scanoutMappingSize_ - scanoutOffset_)),
+                    scanoutWidth_,
+                    scanoutHeight_,
+                    scanoutStride_,
+                    scanoutFormat_,
+                    damage->x,
+                    damage->y,
+                    damage->x - scanoutRectangle_.x,
+                    damage->y - scanoutRectangle_.y,
+                    damage->width,
+                    damage->height);
+            } catch (const std::bad_alloc&) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            } catch (...) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
+            return success;
+        }
+
         return response(*header, protocol::GpuResponse::errorInvalidResource);
     }
 
     default:
         return response(*header, protocol::GpuResponse::errorUnspecified);
+    }
+}
+
+std::optional<VirtioGpuDevice::SharedMemoryAction>
+VirtioGpuDevice::takeSharedMemoryAction() noexcept
+{
+    if (sharedMemoryActions_.empty())
+        return std::nullopt;
+    auto action = std::move(sharedMemoryActions_.front());
+    sharedMemoryActions_.erase(sharedMemoryActions_.begin());
+    return action;
+}
+
+void VirtioGpuDevice::completeSharedMemoryAction(
+    std::uint64_t actionId,
+    bool success) noexcept
+{
+    try {
+        for (auto iterator = blobResources_.begin();
+             iterator != blobResources_.end();
+             ++iterator) {
+            auto& resource = iterator->second;
+            if (resource.pendingActionId != actionId)
+                continue;
+            resource.pendingActionId = 0;
+            if (resource.mappingState == BlobResource::MappingState::mapping) {
+                resource.mappingState = success
+                    ? BlobResource::MappingState::mapped
+                    : BlobResource::MappingState::unmapped;
+                if (!success) {
+                    const auto pages = blobMappingPages(
+                        resource.regionOffset, resource.chargedSize);
+                    std::fill(pages.begin(), pages.end(), protocol::invalidResourceId);
+                    resource.regionOffset = 0;
+                }
+                return;
+            }
+            if (resource.mappingState ==
+                BlobResource::MappingState::unmapping) {
+                if (!success) {
+                    resource.mappingState = BlobResource::MappingState::mapped;
+                    return;
+                }
+                resource.mappingState = BlobResource::MappingState::unmapped;
+                const auto pages = blobMappingPages(
+                    resource.regionOffset, resource.chargedSize);
+                std::fill(pages.begin(), pages.end(), protocol::invalidResourceId);
+                resource.regionOffset = 0;
+                if (resource.retireAfterAction) {
+                    const auto resourceId = iterator->first;
+                    UML_GPU_RENDERER.unrefResource(resourceId);
+                    blobResources_.erase(iterator);
+                }
+                return;
+            }
+            return;
+        }
+    } catch (...) {
+    }
+}
+
+void VirtioGpuDevice::prepareReset() noexcept
+{
+    try {
+        std::size_t mappedCount = 0;
+        for (const auto& entry : blobResources_) {
+            if (entry.second.mappingState ==
+                BlobResource::MappingState::mapped) {
+                ++mappedCount;
+            }
+        }
+        sharedMemoryActions_.reserve(
+            sharedMemoryActions_.size() + mappedCount);
+        for (auto& [resourceId, resource] : blobResources_) {
+            if (resource.mappingState != BlobResource::MappingState::mapped)
+                continue;
+            if (nextSharedMemoryActionId_ == 0)
+                return;
+            const auto actionId = nextSharedMemoryActionId_++;
+            sharedMemoryActions_.push_back(SharedMemoryAction {
+                .type = SharedMemoryAction::Type::unmap,
+                .actionId = actionId,
+                .resourceId = resourceId,
+                .regionId = protocol::hostVisibleSharedMemoryRegionId,
+                .regionOffset = resource.regionOffset,
+                .length = resource.chargedSize,
+            });
+            resource.mappingState = BlobResource::MappingState::unmapping;
+            resource.pendingActionId = actionId;
+        }
+    } catch (...) {
     }
 }
 

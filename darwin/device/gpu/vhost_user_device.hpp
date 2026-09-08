@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "unique_descriptor.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -23,6 +26,27 @@ struct VhostUserQueueResult final {
 struct VhostUserQueueCompletion final {
     std::uint64_t requestId {};
     std::vector<std::uint8_t> response;
+};
+
+struct VhostUserSharedMemoryRegion final {
+    std::uint8_t id {};
+    std::uint64_t size {};
+};
+
+struct VhostUserSharedMemoryAction final {
+    enum class Type : std::uint8_t {
+        map,
+        unmap,
+    };
+
+    Type type {};
+    std::uint64_t actionId {};
+    std::uint8_t regionId {};
+    std::uint64_t descriptorOffset {};
+    std::uint64_t regionOffset {};
+    std::uint64_t length {};
+    bool writable {};
+    uml::gpu::UniqueDescriptor descriptor;
 };
 
 class VhostUserDevice {
@@ -48,6 +72,23 @@ public:
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) = 0;
     virtual void reset() noexcept = 0;
+    virtual void prepareReset() noexcept {}
+
+    [[nodiscard]] virtual std::optional<VhostUserSharedMemoryRegion>
+        sharedMemoryRegion() const noexcept
+    {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual bool takeSharedMemoryAction(
+        VhostUserSharedMemoryAction&)
+    {
+        return false;
+    }
+    virtual void completeSharedMemoryAction(
+        std::uint64_t,
+        bool) noexcept
+    {
+    }
 
     // A device with asynchronous device-to-driver data can expose one
     // readiness descriptor. The transport drains it on its worker and then

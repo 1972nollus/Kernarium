@@ -74,6 +74,19 @@ fragment float4 displayFragment(
         textureSampler, coordinate);
     return float4(color.rgb, 1.0);
 }
+
+fragment float4 displayArrayFragment(
+    RasterData input [[stage_in]],
+    texture2d_array<float> scanout [[texture(0)]])
+{
+    constexpr sampler textureSampler(
+        mag_filter::nearest,
+        min_filter::nearest,
+        address::clamp_to_edge);
+    const float4 color = scanout.sample(
+        textureSampler, input.textureCoordinate, 0);
+    return float4(color.rgb, 1.0);
+}
 )metal";
 
 std::string description(NSError* error)
@@ -128,21 +141,27 @@ struct MetalPresentationState final :
         id<MTLFunction> vertex = [library newFunctionWithName:@"displayVertex"];
         id<MTLFunction> fragment =
             [library newFunctionWithName:@"displayFragment"];
-        if (vertex == nil || fragment == nil)
+        id<MTLFunction> arrayFragment =
+            [library newFunctionWithName:@"displayArrayFragment"];
+        if (vertex == nil || fragment == nil || arrayFragment == nil)
             throw std::runtime_error("Metal display shader entry is missing");
-        MTLRenderPipelineDescriptor* descriptor =
-            [[MTLRenderPipelineDescriptor alloc] init];
-        descriptor.vertexFunction = vertex;
-        descriptor.fragmentFunction = fragment;
-        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-        pipeline = [device
-            newRenderPipelineStateWithDescriptor:descriptor
-            error:&error];
-        if (pipeline == nil) {
+        const auto makePipeline = [&](id<MTLFunction> selectedFragment) {
+            MTLRenderPipelineDescriptor* descriptor =
+                [[MTLRenderPipelineDescriptor alloc] init];
+            descriptor.vertexFunction = vertex;
+            descriptor.fragmentFunction = selectedFragment;
+            descriptor.colorAttachments[0].pixelFormat =
+                MTLPixelFormatBGRA8Unorm;
+            return [device
+                newRenderPipelineStateWithDescriptor:descriptor
+                error:&error];
+        };
+        pipeline = makePipeline(fragment);
+        arrayPipeline = makePipeline(arrayFragment);
+        if (pipeline == nil || arrayPipeline == nil)
             throw std::runtime_error(
                 "Metal display pipeline creation failed: " +
                 description(error));
-        }
 
         fallbackTexture = makeFallbackTexture(width, height);
         if (fallbackTexture == nil)
@@ -278,7 +297,13 @@ struct MetalPresentationState final :
                 return PresentOutcome::unsupported;
             }
             id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
-            if (texture == nil || texture.device != device)
+            const bool supportedType = texture != nil &&
+                (texture.textureType == MTLTextureType2D ||
+                 (texture.textureType == MTLTextureType2DArray &&
+                  texture.arrayLength == 1));
+            if (!supportedType || texture.device != device ||
+                texture.width < scanout.sourceWidth ||
+                texture.height < scanout.sourceHeight)
                 return PresentOutcome::unsupported;
             bool superseded = false;
             {
@@ -439,6 +464,8 @@ struct MetalPresentationState final :
                     .zfar = 1.0,
                 };
                 [encoder setRenderPipelineState:pipeline];
+                if (sourceTexture.textureType == MTLTextureType2DArray)
+                    [encoder setRenderPipelineState:arrayPipeline];
                 [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
                 const auto shaderRotation =
@@ -550,6 +577,7 @@ struct MetalPresentationState final :
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
     id<MTLRenderPipelineState> pipeline;
+    id<MTLRenderPipelineState> arrayPipeline;
     id<MTLTexture> fallbackTexture;
     id<MTLTexture> latestTexture;
     std::mutex callbackMutex;

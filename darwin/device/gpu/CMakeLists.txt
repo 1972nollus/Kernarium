@@ -9,6 +9,62 @@ function(uml_configure_gpu_component target)
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 endfunction()
 
+if(TARGET uml_third_party_kosmickrisp)
+    add_library(uml_gpu_kosmickrisp_capability_probe STATIC
+        kosmickrisp_capability_probe.mm)
+    add_library(UML::GpuKosmicKrispCapabilityProbe ALIAS
+        uml_gpu_kosmickrisp_capability_probe)
+    uml_configure_gpu_component(uml_gpu_kosmickrisp_capability_probe)
+    set_target_properties(uml_gpu_kosmickrisp_capability_probe PROPERTIES
+        OBJCXX_STANDARD 20)
+    target_compile_definitions(uml_gpu_kosmickrisp_capability_probe PRIVATE
+        VK_ENABLE_BETA_EXTENSIONS=1)
+    target_compile_options(uml_gpu_kosmickrisp_capability_probe PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_link_libraries(uml_gpu_kosmickrisp_capability_probe PRIVATE
+        UML::ThirdPartyKosmicKrisp
+        "-framework Foundation"
+        "-framework Metal")
+    add_dependencies(uml_gpu_kosmickrisp_capability_probe
+        uml_dependency_prefix_verify)
+
+    add_executable(uml-kosmickrisp-capability-probe
+        kosmickrisp_capability_probe_main.cpp)
+    uml_declare_architecture_target(
+        uml-kosmickrisp-capability-probe device)
+    target_compile_features(uml-kosmickrisp-capability-probe PRIVATE
+        cxx_std_20)
+    target_compile_options(uml-kosmickrisp-capability-probe PRIVATE
+        -Wall -Wextra -Werror)
+    target_link_libraries(uml-kosmickrisp-capability-probe PRIVATE
+        UML::GpuKosmicKrispCapabilityProbe)
+    add_dependencies(uml-kosmickrisp-capability-probe
+        uml_dependency_prefix_verify)
+    set_property(TARGET uml-kosmickrisp-capability-probe APPEND PROPERTY
+        LINK_DEPENDS
+        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/KosmicKrisp
+        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/Info.plist)
+    set_target_properties(uml-kosmickrisp-capability-probe PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "@executable_path/Frameworks"
+        INSTALL_RPATH_USE_LINK_PATH FALSE)
+    set_target_properties(uml-kosmickrisp-capability-probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY
+            ${PROJECT_BINARY_DIR}/probes/kosmickrisp)
+    set(_uml_kosmickrisp_probe_frameworks
+        $<TARGET_FILE_DIR:uml-kosmickrisp-capability-probe>/Frameworks)
+    add_custom_command(TARGET uml-kosmickrisp-capability-probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+            ${_uml_kosmickrisp_probe_frameworks}/KosmicKrisp.framework
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${_uml_kosmickrisp_probe_frameworks}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
+            ${_uml_kosmickrisp_probe_frameworks}/KosmicKrisp.framework
+        COMMENT "Staging the maintained KosmicKrisp probe framework"
+        VERBATIM)
+endif()
+
 # Keep the renderer, display, protocol device, transport, and in-process
 # service as independently owned units. Their dependency direction follows
 # the data path and contains no reverse service callbacks.
@@ -17,7 +73,8 @@ add_library(uml_gpu_renderer STATIC
     virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
-    VIRGL_RENDERER_UNSTABLE_APIS)
+    VIRGL_RENDERER_UNSTABLE_APIS
+    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>)
 target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
 target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework CoreFoundation"
@@ -29,6 +86,52 @@ target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework VideoToolbox")
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
+if(TARGET uml_third_party_kosmickrisp)
+    add_executable(uml-venus-backend-probe
+        venus_backend_probe_main.cpp)
+    uml_declare_architecture_target(uml-venus-backend-probe device)
+    target_compile_features(uml-venus-backend-probe PRIVATE cxx_std_20)
+    target_compile_options(uml-venus-backend-probe PRIVATE
+        -Wall -Wextra -Werror)
+    target_link_libraries(uml-venus-backend-probe PRIVATE
+        UML::ThirdPartyVirglrenderer
+        UML::GpuKosmicKrispCapabilityProbe
+        "-framework Foundation"
+        "-framework Metal"
+        "-framework QuartzCore")
+    add_dependencies(uml-venus-backend-probe
+        uml_dependency_prefix_verify)
+    set_property(TARGET uml-venus-backend-probe APPEND PROPERTY
+        LINK_DEPENDS
+        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/KosmicKrisp
+        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/Info.plist)
+    set_target_properties(uml-venus-backend-probe PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "@executable_path/Frameworks"
+        INSTALL_RPATH_USE_LINK_PATH FALSE)
+    set_target_properties(uml-venus-backend-probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY
+            ${PROJECT_BINARY_DIR}/probes/venus)
+    set(_uml_venus_probe_frameworks
+        $<TARGET_FILE_DIR:uml-venus-backend-probe>/Frameworks)
+    add_custom_command(TARGET uml-venus-backend-probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+            ${_uml_venus_probe_frameworks}
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${_uml_venus_probe_frameworks}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework
+            ${_uml_venus_probe_frameworks}/EGL.framework
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework
+            ${_uml_venus_probe_frameworks}/GLESv2.framework
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
+            ${_uml_venus_probe_frameworks}/KosmicKrisp.framework
+        COMMENT "Staging the maintained Venus backend probe frameworks"
+        VERBATIM)
+endif()
+
 set(_uml_gpu_display_sources
     display_geometry.cpp
     display_resize_notifier.cpp
@@ -37,6 +140,7 @@ set(_uml_gpu_display_sources
     scanout_framebuffer.cpp)
 if(UML_TARGET_MACOS)
     list(APPEND _uml_gpu_display_sources
+        metal_readback.mm
         native_display.mm
         vnc_display.cpp)
 else()
@@ -83,7 +187,8 @@ uml_configure_gpu_component(uml_gpu_transport_wire)
 add_library(uml_gpu_transport STATIC vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)
 target_compile_definitions(uml_gpu_transport PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
+    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>
+    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>)
 target_link_libraries(uml_gpu_transport PUBLIC
     UML::DeviceSocketPaths
     UML::MemorySharedBacking

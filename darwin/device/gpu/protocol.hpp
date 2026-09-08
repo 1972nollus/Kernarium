@@ -33,11 +33,14 @@ enum class VhostRequest : std::uint32_t {
     setConfig = 25,
     // In-band queue notification enabled by PROTOCOL_F_INBAND_NOTIFICATIONS.
     vringKick = 35,
+    getSharedMemoryConfig = 44,
 };
 
 enum class VhostSlaveRequest : std::uint32_t {
     configChange = 2,
     vringCall = 4,
+    sharedMemoryMap = 9,
+    sharedMemoryUnmap = 10,
 };
 
 constexpr std::uint64_t vhostFeatureProtocol = 1ULL << 30U;
@@ -45,12 +48,14 @@ constexpr std::uint64_t virtioFeatureVersion1 = 1ULL << 32U;
 // Virtio-GPU device feature bits from include/uapi/linux/virtio_gpu.h.
 constexpr std::uint64_t virtioGpuFeatureVirgl = 1ULL << 0U;
 constexpr std::uint64_t virtioGpuFeatureEdid = 1ULL << 1U;
+constexpr std::uint64_t virtioGpuFeatureResourceBlob = 1ULL << 3U;
 constexpr std::uint64_t virtioGpuFeatureContextInit = 1ULL << 4U;
 constexpr std::uint64_t protocolFeatureMultipleQueues = 1ULL << 0U;
 constexpr std::uint64_t protocolFeatureReplyAck = 1ULL << 3U;
 constexpr std::uint64_t protocolFeatureSlaveRequest = 1ULL << 5U;
 constexpr std::uint64_t protocolFeatureConfig = 1ULL << 9U;
 constexpr std::uint64_t protocolFeatureInbandNotifications = 1ULL << 14U;
+constexpr std::uint64_t protocolFeatureSharedMemoryMap = 1ULL << 22U;
 
 struct [[gnu::packed]] VhostHeader {
     std::uint32_t request;
@@ -89,6 +94,26 @@ struct [[gnu::packed]] ConfigHeader {
     std::uint32_t size;
     std::uint32_t flags;
 };
+
+constexpr std::size_t maximumSharedMemoryRegions = 256;
+
+struct [[gnu::packed]] SharedMemoryConfig {
+    std::uint32_t regionCount;
+    std::uint32_t padding;
+    std::array<std::uint64_t, maximumSharedMemoryRegions> regionSizes;
+};
+
+struct [[gnu::packed]] SharedMemoryMap {
+    std::uint8_t regionId;
+    std::array<std::uint8_t, 7> padding;
+    std::uint64_t descriptorOffset;
+    std::uint64_t regionOffset;
+    std::uint64_t length;
+    std::uint64_t flags;
+};
+
+constexpr std::uint64_t sharedMemoryMapReadOnly = 0;
+constexpr std::uint64_t sharedMemoryMapReadWrite = 1;
 
 struct [[gnu::packed]] VirtqueueDescriptor {
     std::uint64_t address;
@@ -134,6 +159,8 @@ enum class GpuCommand : std::uint32_t {
     getCapsetInfo = 0x0108,
     getCapset = 0x0109,
     getEdid = 0x010a,
+    resourceCreateBlob = 0x010c,
+    setScanoutBlob = 0x010d,
     contextCreate = 0x0200,
     contextDestroy = 0x0201,
     contextAttachResource = 0x0202,
@@ -142,6 +169,8 @@ enum class GpuCommand : std::uint32_t {
     transferToHost3d = 0x0205,
     transferFromHost3d = 0x0206,
     submit3d = 0x0207,
+    resourceMapBlob = 0x0208,
+    resourceUnmapBlob = 0x0209,
     updateCursor = 0x0300,
     moveCursor = 0x0301,
 };
@@ -152,6 +181,7 @@ enum class GpuResponse : std::uint32_t {
     okCapsetInfo = 0x1102,
     okCapset = 0x1103,
     okEdid = 0x1104,
+    okMapInfo = 0x1106,
     errorUnspecified = 0x1200,
     errorOutOfMemory = 0x1201,
     errorInvalidScanout = 0x1202,
@@ -184,9 +214,12 @@ constexpr std::uint32_t invalidContextId = 0;
 // Virgl capsets from the stable Virtio-GPU ABI.
 constexpr std::uint32_t virglCapsetId = 1;
 constexpr std::uint32_t virgl2CapsetId = 2;
+constexpr std::uint32_t venusCapsetId = 4;
 constexpr std::uint32_t virglCapsetIndex = 0;
 constexpr std::uint32_t virgl2CapsetIndex = 1;
+constexpr std::uint32_t venusCapsetIndex = 2;
 constexpr std::uint32_t contextInitCapsetMask = 0xffU;
+constexpr std::uint32_t venusContextRingCount = 64;
 constexpr std::size_t maximumContextDebugNameLength = 64;
 constexpr std::size_t gpuCommandWordSize = sizeof(std::uint32_t);
 constexpr std::size_t maximumGpuSubmitSize = 16U * 1024U * 1024U;
@@ -197,6 +230,25 @@ constexpr std::uint32_t maximumDisplayDimension = 8192;
 constexpr std::uint32_t referenceDotsPerInch = 96;
 // Defensive bound for the variable-size RESOURCE_ATTACH_BACKING request.
 constexpr std::uint32_t maximumResourceBackingEntries = 16'384;
+constexpr std::uint32_t blobMemoryGuest = 0x0001;
+constexpr std::uint32_t blobMemoryHost3d = 0x0002;
+constexpr std::uint32_t blobMemoryHost3dGuest = 0x0003;
+constexpr std::uint32_t blobFlagMappable = 0x0001;
+constexpr std::uint32_t blobFlagShareable = 0x0002;
+constexpr std::uint32_t blobFlagCrossDevice = 0x0004;
+constexpr std::uint32_t blobFlagMask =
+    blobFlagMappable | blobFlagShareable | blobFlagCrossDevice;
+constexpr std::uint32_t mapCacheMask = 0x0f;
+constexpr std::uint32_t mapCacheNone = 0x00;
+constexpr std::uint32_t mapCacheCached = 0x01;
+constexpr std::uint32_t mapCacheUncached = 0x02;
+constexpr std::uint32_t mapCacheWriteCombined = 0x03;
+constexpr std::uint8_t hostVisibleSharedMemoryRegionId = 1;
+constexpr std::uint64_t hostVisibleSharedMemoryRegionSize =
+    1024ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t hostVisibleSharedMemoryAlignment = 16ULL * 1024ULL;
+constexpr std::size_t maximumHostVisibleBlobResources =
+    hostVisibleSharedMemoryRegionSize / hostVisibleSharedMemoryAlignment;
 
 struct [[gnu::packed]] GpuControlHeader {
     std::uint32_t type;
@@ -367,6 +419,48 @@ struct [[gnu::packed]] GpuResourceCreate3d {
     std::uint32_t padding;
 };
 
+struct [[gnu::packed]] GpuResourceCreateBlob {
+    GpuControlHeader header;
+    std::uint32_t resourceId;
+    std::uint32_t memory;
+    std::uint32_t flags;
+    std::uint32_t entryCount;
+    std::uint64_t blobId;
+    std::uint64_t size;
+};
+
+struct [[gnu::packed]] GpuSetScanoutBlob {
+    GpuControlHeader header;
+    GpuRectangle rectangle;
+    std::uint32_t scanoutId;
+    std::uint32_t resourceId;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t format;
+    std::uint32_t padding;
+    std::array<std::uint32_t, 4> strides;
+    std::array<std::uint32_t, 4> offsets;
+};
+
+struct [[gnu::packed]] GpuResourceMapBlob {
+    GpuControlHeader header;
+    std::uint32_t resourceId;
+    std::uint32_t padding;
+    std::uint64_t offset;
+};
+
+struct [[gnu::packed]] GpuResourceUnmapBlob {
+    GpuControlHeader header;
+    std::uint32_t resourceId;
+    std::uint32_t padding;
+};
+
+struct [[gnu::packed]] GpuMapInfo {
+    GpuControlHeader header;
+    std::uint32_t mapInfo;
+    std::uint32_t padding;
+};
+
 struct [[gnu::packed]] GpuCursorPosition {
     std::uint32_t scanoutId;
     std::uint32_t x;
@@ -387,6 +481,8 @@ static_assert(sizeof(VhostHeader) == 12);
 static_assert(sizeof(VringAddress) == 40);
 static_assert(sizeof(MemoryTableHeader) == 8);
 static_assert(sizeof(MemoryRegion) == 32);
+static_assert(sizeof(SharedMemoryConfig) == 2056);
+static_assert(sizeof(SharedMemoryMap) == 40);
 static_assert(sizeof(VirtqueueDescriptor) == 16);
 static_assert(sizeof(GpuControlHeader) == 24);
 static_assert(sizeof(GpuDisplayInfo) == 408);
@@ -394,6 +490,11 @@ static_assert(sizeof(GpuCapsetInfo) == 40);
 static_assert(sizeof(GpuGetEdid) == 32);
 static_assert(sizeof(GpuEdid) == 1056);
 static_assert(sizeof(GpuContextCreate) == 96);
+static_assert(sizeof(GpuResourceCreateBlob) == 56);
+static_assert(sizeof(GpuSetScanoutBlob) == 96);
+static_assert(sizeof(GpuResourceMapBlob) == 40);
+static_assert(sizeof(GpuResourceUnmapBlob) == 32);
+static_assert(sizeof(GpuMapInfo) == 32);
 static_assert(sizeof(GpuConfig) == 16);
 
 } // namespace uml::gpu::protocol

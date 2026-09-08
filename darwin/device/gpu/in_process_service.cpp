@@ -5,7 +5,11 @@
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 
-#if UML_GPU_STARTUP_TESTING
+#ifndef UML_GPU_SERVICE_TRANSPORT_TESTING
+#define UML_GPU_SERVICE_TRANSPORT_TESTING 0
+#endif
+
+#if UML_GPU_STARTUP_TESTING || UML_GPU_SERVICE_TRANSPORT_TESTING
 #include "in_process_service_testing.hpp"
 #endif
 
@@ -213,6 +217,18 @@ private:
              * thread; provider context creation is serialized, while current
              * context and guest submission stay on this one thread.
              */
+            const auto ready = [this] {
+                {
+                    std::lock_guard lock(stateMutex_);
+                    ready_ = true;
+                }
+                stateChanged_.notify_one();
+            };
+#if UML_GPU_SERVICE_TRANSPORT_TESTING
+            auto server = testing::makeTransportTestServer();
+            server->runConnected(
+                descriptors_[0].release(), stopRequested_, ready);
+#else
             VhostUserServer server(
                 {},
                 options_.vncBindAddress,
@@ -230,13 +246,9 @@ private:
                 options_.dotsPerInch,
                 options_.pointerMode,
                 options_.autoResizeGuest);
-            server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
-                {
-                    std::lock_guard lock(stateMutex_);
-                    ready_ = true;
-                }
-                stateChanged_.notify_one();
-            });
+            server.runConnected(
+                descriptors_[0].release(), stopRequested_, ready);
+#endif
         } catch (...) {
             {
                 std::lock_guard lock(stateMutex_);

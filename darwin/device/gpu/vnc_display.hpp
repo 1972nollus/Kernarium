@@ -2,6 +2,7 @@
 #pragma once
 
 #include "display.hpp"
+#include "metal_readback.hpp"
 #include "scanout_framebuffer.hpp"
 
 #include <array>
@@ -71,8 +72,15 @@ public:
     [[nodiscard]] PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept override;
     [[nodiscard]] bool needsFullCpuFallback() const noexcept override;
+    [[nodiscard]] DisplayStatistics statistics() const noexcept override;
+    void recordCpuFallbackFrame() noexcept override;
+#if UML_GPU_VNC_STARTUP_TESTING
+    [[nodiscard]] std::array<std::uint8_t, 4> pixelForTesting(
+        std::uint32_t x, std::uint32_t y) noexcept;
+#endif
 
 private:
+    void publishMetalFrame(const MetalReadbackFrame& frame) noexcept;
     void eventLoop();
     [[nodiscard]] bool clientConnected() noexcept;
     void clientDisconnected() noexcept;
@@ -98,6 +106,7 @@ private:
     std::atomic_bool running_ {true};
     std::atomic_bool inputFailureReported_ {};
     std::thread eventThread_;
+    std::unique_ptr<MetalReadback> metalReadback_;
 };
 
 } // namespace uml::gpu

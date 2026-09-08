@@ -52,6 +52,29 @@ public:
         std::span<const std::uint8_t> command) noexcept = 0;
     [[nodiscard]] virtual int createResource3d(
         const VirglRenderer::Resource3d& resource) noexcept = 0;
+    [[nodiscard]] virtual int createResourceBlob(
+        const VirglRenderer::ResourceBlob& resource) noexcept = 0;
+    [[nodiscard]] virtual int exportResourceBlob(
+        std::uint32_t resourceId,
+        std::uint32_t& descriptorType,
+        int& descriptor) noexcept = 0;
+    [[nodiscard]] virtual int resourceMapInfo(
+        std::uint32_t resourceId,
+        std::uint32_t& mapInfo) noexcept = 0;
+    [[nodiscard]] virtual int mapResource(
+        std::uint32_t resourceId,
+        void*& mapping,
+        std::uint64_t& size) noexcept = 0;
+    virtual void unmapResource(std::uint32_t resourceId) noexcept = 0;
+    [[nodiscard]] virtual int createBlobScanout(
+        std::uint32_t resourceId,
+        std::uint32_t width,
+        std::uint32_t height,
+        std::uint32_t format,
+        std::uint32_t stride,
+        std::uint32_t offset,
+        void*& texture) noexcept = 0;
+    virtual void releaseBlobScanout(void* texture) noexcept = 0;
     [[nodiscard]] virtual int transferResource(
         bool toHost,
         std::uint32_t resourceId,

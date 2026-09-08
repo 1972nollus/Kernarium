@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "gpu_test_support.hpp"
+#include "in_process_service_testing.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -62,11 +63,9 @@ void verifyControlRetry(VhostUserServer& server)
 {
     int exitStatus = EXIT_SUCCESS;
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
-        // Compare against the live server's stable ownership. LibVNCServer and
-        // the renderer may retain process-lifetime runtime descriptors after
-        // first initialization, which are unrelated to a transport frame.
+        auto server = makeTransportTestServer();
+        // Compare against the live server stable ownership so a partial
+        // transport frame cannot leak a descriptor into the next connection.
         const auto before = descriptorCount();
         {
             auto sockets = makeSocketPair();
@@ -76,7 +75,7 @@ void verifyControlRetry(VhostUserServer& server)
             std::atomic_bool ready {};
             std::atomic_bool finished {};
             std::thread worker {[&] {
-                server.runConnected(
+                server->runConnected(
                     sockets.descriptors[1].release(),
                     stopRequested,
                     [&] { ready.store(true, std::memory_order_release); });
@@ -125,7 +124,7 @@ void verifyControlRetry(VhostUserServer& server)
                 std::_Exit(101);
             worker.join();
         }
-        verifyControlRetry(server);
+        verifyControlRetry(*server);
         const auto after = descriptorCount();
         if (after != before) {
             std::fprintf(
@@ -458,8 +457,7 @@ void configureQueueForOneRequest(
 [[noreturn]] void runClosedNotificationDescriptorChild()
 {
     (void)::signal(SIGPIPE, SIG_DFL);
-    VhostUserServer server {
-        {}, "127.0.0.1", 0, {}, 64, 64, false};
+    auto server = makeTransportTestServer();
     auto memoryDescriptor = openMemoryDescriptor();
     void* mapped = ::mmap(
         nullptr,
@@ -471,7 +469,7 @@ void configureQueueForOneRequest(
     require(mapped != MAP_FAILED);
     auto memory = std::span {
         static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
-    withServerConnection(server, [&](int socket) {
+    withServerConnection(*server, [&](int socket) {
         constexpr std::uint64_t deviceFeatures =
             protocol::vhostFeatureProtocol;
         sendRequest(
@@ -501,6 +499,7 @@ void configureQueueForOneRequest(
             socket,
             protocol::VhostRequest::vringKick,
             bytesOf(kick));
+        readAcknowledgement(socket, protocol::VhostRequest::vringKick);
         waitForConnectionClose(socket);
     });
     require(::munmap(mapped, 4096) == 0);

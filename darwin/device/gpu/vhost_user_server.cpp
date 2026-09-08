@@ -15,9 +15,12 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
+#include <deque>
+#include <mutex>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <sys/mman.h>
 #include <sys/event.h>
 #include <sys/socket.h>
@@ -46,7 +49,7 @@ static_assert(socketPollTimeoutMilliseconds > 0);
 constexpr std::uint64_t transportFeatures =
     protocol::vhostFeatureProtocol |
     protocol::virtioFeatureVersion1;
-constexpr std::uint64_t offeredProtocolFeatures =
+constexpr std::uint64_t baseOfferedProtocolFeatures =
     protocol::protocolFeatureMultipleQueues |
     protocol::protocolFeatureReplyAck |
     protocol::protocolFeatureSlaveRequest |
@@ -221,6 +224,84 @@ void writeFrame(
     }
 }
 
+void writeFrameWithDescriptor(
+    int socket,
+    const protocol::VhostHeader& header,
+    std::span<const std::uint8_t> payload,
+    int transferredDescriptor,
+    const std::atomic_bool* stopRequested)
+{
+    if (transferredDescriptor < 0)
+        throw std::runtime_error("invalid vhost-user transfer descriptor");
+    std::vector<std::uint8_t> frame(sizeof(header) + payload.size());
+    std::memcpy(frame.data(), &header, sizeof(header));
+    std::memcpy(frame.data() + sizeof(header), payload.data(), payload.size());
+
+    for (;;) {
+        if (stopRequested != nullptr &&
+            stopRequested->load(std::memory_order_acquire)) {
+            throw ConnectionStopped {};
+        }
+        pollfd output {
+            .fd = socket,
+            .events = POLLOUT,
+            .revents = 0,
+        };
+        const int pollResult = ::poll(
+            &output, 1, socketPollTimeoutMilliseconds);
+        if (pollResult < 0) {
+            if (errno == EINTR)
+                continue;
+            throw std::runtime_error("vhost-user descriptor poll failed");
+        }
+        if (pollResult == 0)
+            continue;
+
+        iovec vector {
+            .iov_base = frame.data(),
+            .iov_len = frame.size(),
+        };
+        alignas(cmsghdr) std::array<
+            std::uint8_t, CMSG_SPACE(sizeof(int))> control {};
+        msghdr message {
+            .msg_name = nullptr,
+            .msg_namelen = 0,
+            .msg_iov = &vector,
+            .msg_iovlen = 1,
+            .msg_control = control.data(),
+            .msg_controllen = control.size(),
+            .msg_flags = 0,
+        };
+        auto* ancillary = CMSG_FIRSTHDR(&message);
+        ancillary->cmsg_level = SOL_SOCKET;
+        ancillary->cmsg_type = SCM_RIGHTS;
+        ancillary->cmsg_len = CMSG_LEN(sizeof(int));
+        std::memcpy(
+            CMSG_DATA(ancillary),
+            &transferredDescriptor,
+            sizeof(transferredDescriptor));
+        const auto count = ::sendmsg(socket, &message, MSG_DONTWAIT);
+        if (count < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            throw std::runtime_error(
+                "vhost-user descriptor send failed: " +
+                std::string(std::strerror(errno)));
+        }
+        if (count == 0)
+            throw std::runtime_error("short vhost-user descriptor send");
+        const auto consumed = static_cast<std::size_t>(count);
+        if (consumed < frame.size()) {
+            writeExact(
+                socket,
+                frame.data() + consumed,
+                frame.size() - consumed,
+                stopRequested);
+        }
+        return;
+    }
+}
+
 template<typename Payload>
 void writeEmulatorMessage(
     int socket,
@@ -311,6 +392,16 @@ void requireNoDescriptors(
     requireDescriptorCount(message, 0, request);
 }
 
+[[nodiscard]] bool experimentalVulkanEnabled() noexcept
+{
+#if UML_GPU_VULKAN_EXPERIMENT
+    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+#else
+    return false;
+#endif
+}
+
 class GpuVhostUserDevice final : public uml::virtio::VhostUserDevice {
 public:
     GpuVhostUserDevice(
@@ -318,12 +409,14 @@ public:
         VirtioGpuDevice::GuestReader reader,
         VirtioGpuDevice::GuestMapper mapper,
         std::uint32_t dotsPerInch)
-        : display_(display)
+        : experimentalVulkan_(experimentalVulkanEnabled())
+        , display_(display)
         , gpu_(
               display,
               std::move(reader),
               std::move(mapper),
-              dotsPerInch)
+              dotsPerInch,
+              experimentalVulkan_)
         , hasEdid_(dotsPerInch != 0)
         , eventQueue_(::kqueue())
     {
@@ -364,6 +457,9 @@ public:
     {
         return protocol::virtioGpuFeatureVirgl |
             (hasEdid_ ? protocol::virtioGpuFeatureEdid : 0U) |
+            (experimentalVulkan_
+                ? protocol::virtioGpuFeatureResourceBlob
+                : 0U) |
             protocol::virtioGpuFeatureContextInit;
     }
 
@@ -535,12 +631,33 @@ public:
         if (!fenceTimerReady || pendingFences_.empty())
             return;
 
-        /* The pinned non-threaded Virgl renderer checks every context fence
-         * from virgl_renderer_context_poll(). Polling each pending context
-         * would repeat the same GL sync scan and context switching work. */
+        /* A Virgl context retires through the renderer-wide fence scan, so
+         * one poll drains every Virgl context. A Venus context owns its own
+         * render-server timeline and retires only when it is polled itself,
+         * so each distinct pending context needs its own poll. */
         if (gpu_.pollContextFences(
                 pendingFences_.front().fence.contextId) != 0) {
             throw std::runtime_error("polling GPU fences failed");
+        }
+        if (experimentalVulkan_) {
+            for (std::size_t index = 1; index < pendingFences_.size();
+                 ++index) {
+                const auto contextId = pendingFences_[index].fence.contextId;
+                const auto previous = std::find_if(
+                    pendingFences_.begin(),
+                    pendingFences_.begin() +
+                        static_cast<std::ptrdiff_t>(index),
+                    [contextId](const PendingFence& pending) {
+                        return pending.fence.contextId == contextId;
+                    });
+                if (previous !=
+                    pendingFences_.begin() +
+                        static_cast<std::ptrdiff_t>(index)) {
+                    continue;
+                }
+                if (gpu_.pollContextFences(contextId) != 0)
+                    throw std::runtime_error("polling GPU fences failed");
+            }
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -607,6 +724,51 @@ public:
         configChangePending_ = false;
     }
 
+    void prepareReset() noexcept override
+    {
+        gpu_.prepareReset();
+    }
+
+    [[nodiscard]] std::optional<uml::virtio::VhostUserSharedMemoryRegion>
+        sharedMemoryRegion() const noexcept override
+    {
+        if (!experimentalVulkan_)
+            return std::nullopt;
+        return uml::virtio::VhostUserSharedMemoryRegion {
+            .id = protocol::hostVisibleSharedMemoryRegionId,
+            .size = protocol::hostVisibleSharedMemoryRegionSize,
+        };
+    }
+
+    [[nodiscard]] bool takeSharedMemoryAction(
+        uml::virtio::VhostUserSharedMemoryAction& destination) override
+    {
+        auto action = gpu_.takeSharedMemoryAction();
+        if (!action)
+            return false;
+        destination = uml::virtio::VhostUserSharedMemoryAction {
+            .type = action->type ==
+                    VirtioGpuDevice::SharedMemoryAction::Type::map
+                ? uml::virtio::VhostUserSharedMemoryAction::Type::map
+                : uml::virtio::VhostUserSharedMemoryAction::Type::unmap,
+            .actionId = action->actionId,
+            .regionId = action->regionId,
+            .descriptorOffset = action->descriptorOffset,
+            .regionOffset = action->regionOffset,
+            .length = action->length,
+            .writable = action->writable,
+            .descriptor = std::move(action->descriptor),
+        };
+        return true;
+    }
+
+    void completeSharedMemoryAction(
+        std::uint64_t actionId,
+        bool success) noexcept override
+    {
+        gpu_.completeSharedMemoryAction(actionId, success);
+    }
+
     void setStopRequest(
         const std::atomic_bool* stopRequested) noexcept override
     {
@@ -633,6 +795,43 @@ public:
                 requestHeader.type,
                 responseHeader.type,
                 response.size());
+            if (requestHeader.type == static_cast<std::uint32_t>(
+                    protocol::GpuCommand::resourceCreateBlob) &&
+                request.size() >= sizeof(protocol::GpuResourceCreateBlob)) {
+                const auto create =
+                    loadUnaligned<protocol::GpuResourceCreateBlob>(
+                        request.data());
+                std::fprintf(
+                    stderr,
+                    "Virtio-GPU blob create resource=%u size=%llu "
+                    "blob=%llu flags=0x%x\n",
+                    create.resourceId,
+                    static_cast<unsigned long long>(create.size),
+                    static_cast<unsigned long long>(create.blobId),
+                    create.flags);
+            } else if (requestHeader.type == static_cast<std::uint32_t>(
+                           protocol::GpuCommand::resourceMapBlob) &&
+                       request.size() >=
+                           sizeof(protocol::GpuResourceMapBlob)) {
+                const auto map = loadUnaligned<protocol::GpuResourceMapBlob>(
+                    request.data());
+                std::fprintf(
+                    stderr,
+                    "Virtio-GPU blob map resource=%u offset=%llu\n",
+                    map.resourceId,
+                    static_cast<unsigned long long>(map.offset));
+            } else if (requestHeader.type == static_cast<std::uint32_t>(
+                           protocol::GpuCommand::resourceUnmapBlob) &&
+                       request.size() >=
+                           sizeof(protocol::GpuResourceUnmapBlob)) {
+                const auto unmap =
+                    loadUnaligned<protocol::GpuResourceUnmapBlob>(
+                        request.data());
+                std::fprintf(
+                    stderr,
+                    "Virtio-GPU blob unmap resource=%u\n",
+                    unmap.resourceId);
+            }
         }
 #else
         (void)index;
@@ -659,9 +858,9 @@ private:
     static constexpr std::uintptr_t fenceTimerIdentifier = 1;
     static constexpr std::intptr_t fencePollMicroseconds = 100;
 
-    [[nodiscard]] static bool canDeferFence(
+    [[nodiscard]] bool canDeferFence(
         bool cursorQueue,
-        std::span<const std::uint8_t> request) noexcept
+        std::span<const std::uint8_t> request) const noexcept
     {
         if (cursorQueue || request.size() < sizeof(protocol::GpuControlHeader))
             return false;
@@ -677,8 +876,11 @@ private:
             command == protocol::GpuCommand::submit3d ||
             command == protocol::GpuCommand::transferToHost3d ||
             command == protocol::GpuCommand::transferFromHost3d;
+        /* Virgl retires one fence timeline per context, so only ring zero
+         * is meaningful there. Venus gives every guest ring its own timeline,
+         * and the device rejects a ring index the capset does not allow. */
         return pipelineCommand && fence && header.contextId != 0 &&
-            ringIndex == 0;
+            (ringIndex == 0 || experimentalVulkan_);
     }
 
     [[nodiscard]] static bool canProcessWhileFencesPending(
@@ -740,6 +942,7 @@ private:
         }
     }
 
+    bool experimentalVulkan_ {};
     Display& display_;
     VirtioGpuDevice gpu_;
     bool hasEdid_;
@@ -829,6 +1032,15 @@ void VhostUserServer::resetConnection() noexcept
 
 void VhostUserServer::resetDeviceState() noexcept
 {
+    device_->prepareReset();
+    try {
+        dispatchSharedMemoryActions();
+    } catch (...) {
+        // Fail closed if an acknowledgement is missing or negative. Closing
+        // the backend-request channel makes the front-end revoke every map;
+        // local teardown must still retire each renderer owner below.
+        slaveRequestDescriptor_.reset();
+    }
     device_->reset();
     pendingRequests_.clear();
 }
@@ -1142,8 +1354,9 @@ void VhostUserServer::signalQueue(std::uint32_t index)
             connectionStopRequested_);
         return;
     }
-    if (queues_[index].callPolling)
+    if (queues_[index].callPolling) {
         return;
+    }
     constexpr std::uint64_t requiredInbandFeatures =
         protocol::protocolFeatureInbandNotifications |
         protocol::protocolFeatureSlaveRequest |
@@ -1366,6 +1579,128 @@ void VhostUserServer::drainQueueCompletions()
     }
 }
 
+void VhostUserServer::dispatchSharedMemoryActions()
+{
+    uml::virtio::VhostUserSharedMemoryAction action;
+    while (device_->takeSharedMemoryAction(action)) {
+        bool completed = false;
+        try {
+            constexpr std::uint64_t requiredSharedMemoryFeatures =
+                protocol::protocolFeatureSharedMemoryMap |
+                protocol::protocolFeatureSlaveRequest |
+                protocol::protocolFeatureReplyAck;
+            if ((negotiatedProtocolFeatures_ &
+                 requiredSharedMemoryFeatures) !=
+                    requiredSharedMemoryFeatures ||
+                slaveRequestDescriptor_.get() < 0) {
+                throw std::runtime_error(
+                    "GPU shared-memory action was not negotiated");
+            }
+            const auto region = device_->sharedMemoryRegion();
+            if (!region || action.regionId != region->id ||
+                action.length == 0 ||
+                (action.descriptorOffset |
+                 action.regionOffset |
+                 action.length) %
+                    protocol::hostVisibleSharedMemoryAlignment != 0 ||
+                action.regionOffset > region->size ||
+                action.length > region->size - action.regionOffset) {
+                throw std::runtime_error(
+                    "invalid GPU shared-memory action range");
+            }
+            const bool map = action.type ==
+                uml::virtio::VhostUserSharedMemoryAction::Type::map;
+            if (map) {
+                struct stat descriptorStatus {};
+                if (action.descriptor.get() < 0 ||
+                    ::fstat(action.descriptor.get(), &descriptorStatus) != 0 ||
+                    descriptorStatus.st_size < 0 ||
+                    action.descriptorOffset >
+                        static_cast<std::uint64_t>(descriptorStatus.st_size) ||
+                    action.length >
+                        static_cast<std::uint64_t>(descriptorStatus.st_size) -
+                            action.descriptorOffset) {
+                    throw std::runtime_error(
+                        "invalid GPU shared-memory action descriptor");
+                }
+            } else if (action.descriptor.get() >= 0 ||
+                       action.descriptorOffset != 0 || action.writable) {
+                throw std::runtime_error(
+                    "invalid GPU shared-memory unmap action");
+            }
+            const protocol::SharedMemoryMap payload {
+                .regionId = action.regionId,
+                .descriptorOffset = action.descriptorOffset,
+                .regionOffset = action.regionOffset,
+                .length = action.length,
+                .flags = action.writable
+                    ? protocol::sharedMemoryMapReadWrite
+                    : protocol::sharedMemoryMapReadOnly,
+            };
+            const protocol::VhostHeader header {
+                .request = static_cast<std::uint32_t>(map
+                    ? protocol::VhostSlaveRequest::sharedMemoryMap
+                    : protocol::VhostSlaveRequest::sharedMemoryUnmap),
+                .flags = protocol::vhostUserVersion |
+                    protocol::vhostUserNeedReply,
+                .size = sizeof(payload),
+            };
+            const auto bytes = std::span {
+                reinterpret_cast<const std::uint8_t*>(&payload),
+                sizeof(payload),
+            };
+            if (map) {
+                writeFrameWithDescriptor(
+                    slaveRequestDescriptor_.get(),
+                    header,
+                    bytes,
+                    action.descriptor.get(),
+                    connectionStopRequested_);
+            } else {
+                writeFrame(
+                    slaveRequestDescriptor_.get(),
+                    header,
+                    bytes,
+                    connectionStopRequested_);
+            }
+
+            // Do not expose the Virtio-GPU mapping transition until the
+            // front-end has installed or revoked the corresponding GPA range.
+            VhostUserMessage reply;
+            if (!receiveVhostUserMessage(
+                    slaveRequestDescriptor_.get(),
+                    reply,
+                    connectionStopRequested_)) {
+                if (connectionStopRequested_ != nullptr &&
+                    connectionStopRequested_->load(
+                        std::memory_order_acquire)) {
+                    throw ConnectionStopped {};
+                }
+                throw std::runtime_error(
+                    "closed vhost-user shared-memory acknowledgement channel");
+            }
+            constexpr std::uint32_t expectedReplyFlags =
+                protocol::vhostUserVersion | protocol::vhostUserReply;
+            if (reply.header.request != header.request ||
+                reply.header.flags != expectedReplyFlags ||
+                reply.payload.size() != sizeof(std::uint64_t) ||
+                !reply.descriptors.empty() ||
+                payloadAs<std::uint64_t>(reply.payload) != 0) {
+                throw std::runtime_error(
+                    "invalid vhost-user shared-memory acknowledgement");
+            }
+            device_->completeSharedMemoryAction(action.actionId, true);
+            completed = true;
+        } catch (...) {
+            if (!completed) {
+                device_->completeSharedMemoryAction(action.actionId, false);
+            }
+            throw;
+        }
+        action = {};
+    }
+}
+
 void VhostUserServer::processQueue(std::uint32_t index)
 {
     if (index >= queues_.size())
@@ -1472,6 +1807,9 @@ void VhostUserServer::processQueue(std::uint32_t index)
         try {
             result = device_->processQueue(
                 index, requestId, request, responseCapacity);
+            // Map/unmap backend requests must be visible before the matching
+            // Virtio-GPU control response is published to the guest.
+            dispatchSharedMemoryActions();
         } catch (...) {
             pendingRequests_.erase(position);
             throw;
@@ -1518,7 +1856,34 @@ void VhostUserServer::handleMessage(
         static_cast<protocol::VhostRequest>(message.header.request);
     const std::uint64_t offeredFeatures =
         transportFeatures | device_->features();
+    const auto sharedMemoryRegion = device_->sharedMemoryRegion();
+    if (sharedMemoryRegion && sharedMemoryRegion->size == 0) {
+        throw std::runtime_error("invalid shared-memory region declaration");
+    }
+    const std::uint64_t offeredProtocolFeatures =
+        baseOfferedProtocolFeatures |
+        (sharedMemoryRegion
+            ? protocol::protocolFeatureSharedMemoryMap
+            : 0U);
     bool sentReply = false;
+    const auto acknowledgeAcceptedRequest = [&] {
+        if (sentReply ||
+            (message.header.flags & protocol::vhostUserNeedReply) == 0) {
+            return;
+        }
+        sendAcknowledgement(socket, message.header, 0);
+        sentReply = true;
+    };
+    const auto processAcceptedQueue = [&](std::uint32_t index) {
+        try {
+            processQueue(index);
+        } catch (...) {
+            // Once a kick is accepted, release the front-end's synchronous
+            // sender before the connection is closed for a queue-side error.
+            acknowledgeAcceptedRequest();
+            throw;
+        }
+    };
     switch (request) {
     case protocol::VhostRequest::getFeatures:
         requirePayloadSize(message, 0, "GET_FEATURES");
@@ -1568,6 +1933,17 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error(
                 "in-band notifications require backend requests and reply ack");
         }
+        constexpr std::uint64_t requiredSharedMemoryFeatures =
+            protocol::protocolFeatureSharedMemoryMap |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureReplyAck;
+        if ((requestedProtocolFeatures &
+             protocol::protocolFeatureSharedMemoryMap) != 0 &&
+            (requestedProtocolFeatures & requiredSharedMemoryFeatures) !=
+                requiredSharedMemoryFeatures) {
+            throw std::runtime_error(
+                "shared-memory mapping requires backend requests and reply ack");
+        }
         negotiatedProtocolFeatures_ = requestedProtocolFeatures;
         break;
     }
@@ -1580,6 +1956,26 @@ void VhostUserServer::handleMessage(
         sendIntegerReply(socket, message.header, queues_.size());
         sentReply = true;
         break;
+    case protocol::VhostRequest::getSharedMemoryConfig: {
+        requirePayloadSize(message, 0, "GET_SHMEM_CONFIG");
+        requireNoDescriptors(message, "GET_SHMEM_CONFIG");
+        if (!sharedMemoryRegion ||
+            (negotiatedProtocolFeatures_ &
+             protocol::protocolFeatureSharedMemoryMap) == 0) {
+            throw std::runtime_error(
+                "GET_SHMEM_CONFIG was not negotiated");
+        }
+        protocol::SharedMemoryConfig config {};
+        // num_regions counts non-zero entries; the array index remains the
+        // Virtio shared-memory region identifier.
+        config.regionCount = 1;
+        config.regionSizes[sharedMemoryRegion->id] = sharedMemoryRegion->size;
+        const auto bytes = std::span {
+            reinterpret_cast<const std::uint8_t*>(&config), sizeof(config)};
+        sendReply(socket, message.header, bytes);
+        sentReply = true;
+        break;
+    }
     case protocol::VhostRequest::setOwner:
         requirePayloadSize(message, 0, "SET_OWNER");
         requireNoDescriptors(message, "SET_OWNER");
@@ -1698,16 +2094,17 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("SET_VRING_ENABLE was not negotiated");
         if (state.index >= queues_.size() || state.value > 1)
             throw std::runtime_error("invalid SET_VRING_ENABLE");
-        if (state.value == 0 && !pendingRequests_.empty())
+        if (state.value == 0 && !pendingRequests_.empty()) {
             resetDeviceState();
+        }
         queues_[state.index].enabled = state.value != 0;
         if (queues_[state.index].enabled)
-            processQueue(state.index);
+            processAcceptedQueue(state.index);
         break;
     }
     case protocol::VhostRequest::setVringKick:
         configureKick(message);
-        processQueue(static_cast<std::uint32_t>(
+        processAcceptedQueue(static_cast<std::uint32_t>(
             payloadAs<std::uint64_t>(message.payload) &
             protocol::vhostVringIndexMask));
         break;
@@ -1726,7 +2123,7 @@ void VhostUserServer::handleMessage(
         if (state.index >= queues_.size() || state.value != 0)
             throw std::runtime_error("invalid VRING_KICK");
         queues_[state.index].started = true;
-        processQueue(state.index);
+        processAcceptedQueue(state.index);
         break;
     }
     case protocol::VhostRequest::setVringCall: {
