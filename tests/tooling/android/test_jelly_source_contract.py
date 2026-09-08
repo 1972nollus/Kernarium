@@ -15,8 +15,6 @@ from pathlib import Path
 
 
 REPOSITORY = "https://github.com/LineageOS/android_packages_apps_Jelly"
-MAINTAINER_NAME = "Yi Xie"
-MAINTAINER_EMAIL = "imxieyi@users.noreply.github.com"
 
 
 def run(
@@ -50,7 +48,17 @@ def commit(topic: Path, path: str, payload: str, subject: str, timestamp: int) -
     date = f"{timestamp} +0000"
     environment["GIT_AUTHOR_DATE"] = date
     environment["GIT_COMMITTER_DATE"] = date
-    run("git", "commit", "-q", "-m", subject, cwd=topic, env=environment)
+    run(
+        "git",
+        "-c",
+        "user.useConfigOnly=true",
+        "commit",
+        "-q",
+        "-m",
+        subject,
+        cwd=topic,
+        env=environment,
+    )
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -66,8 +74,6 @@ def parse_env(path: Path) -> dict[str, str]:
 
 def write_fixture(android_root: Path, topic: Path, verifier: Path) -> str:
     run("git", "init", "-q", str(topic))
-    run("git", "config", "user.name", MAINTAINER_NAME, cwd=topic)
-    run("git", "config", "user.email", MAINTAINER_EMAIL, cwd=topic)
     run("git", "switch", "-q", "-c", "kernarium-android17", cwd=topic)
     commit(topic, "app/base.txt", "base\n", "Jelly fixture base", 1700000000)
     base_commit = run("git", "rev-parse", "HEAD", cwd=topic)
@@ -115,6 +121,15 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
+    # The fixture topic and its deterministic replay commit with whatever
+    # identity the environment supplies. Stop with the shared advice rather
+    # than pass silently when none is configured.
+    sys.path.insert(0, str(source_root / "scripts"))
+    import git_identity
+
+    git_identity.require_git_identity(
+        "tests/tooling/android/test_jelly_source_contract.py"
+    )
     generator = source_root / "android/aosp-17/tools/regenerate-jelly-patches.py"
     verifier = source_root / "android/aosp-17/tools/verify-jelly-source.py"
 
@@ -165,9 +180,7 @@ def main() -> None:
             run(
                 "git",
                 "-c",
-                f"user.name={MAINTAINER_NAME}",
-                "-c",
-                f"user.email={MAINTAINER_EMAIL}",
+                "user.useConfigOnly=true",
                 "am",
                 "--committer-date-is-author-date",
                 str(patch),

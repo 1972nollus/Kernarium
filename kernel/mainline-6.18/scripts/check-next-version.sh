@@ -9,6 +9,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 SERIES_POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 fail()
 {
@@ -65,6 +66,10 @@ done
 [ -n "$WORK_ROOT" ] || fail "--work-root is required"
 [ -n "$UPSTREAM_REF" ] || fail "--ref is required"
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
+[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'kernel/mainline-6.18/scripts/check-next-version.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
@@ -95,8 +100,7 @@ trap cleanup 0 HUP INT TERM
 audit_git()
 {
 	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git \
-		-c user.name='Yi Xie' \
-		-c user.email='imxieyi@users.noreply.github.com' \
+		-c user.useConfigOnly=true \
 		-c core.hooksPath=/dev/null "$@"
 }
 

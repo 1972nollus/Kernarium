@@ -7,6 +7,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 TOOLCHAIN_MANIFEST=${UML_DEPENDENCY_TOOLCHAIN_MANIFEST:-"$ROOT_DIR/dependencies/toolchains.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
@@ -106,6 +107,11 @@ esac
 case "$TOOLCHAIN" in
 *[!A-Za-z0-9._+-]*) fail "unsafe dependency toolchain: $TOOLCHAIN" ;;
 esac
+
+[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'dependencies/prepare.sh'
 
 sha256_file()
 {
@@ -838,8 +844,7 @@ prepare_repository()
 			esac
 			if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 				git -C "$staged_repository" \
-				-c user.name='Yi Xie' \
-				-c user.email='imxieyi@users.noreply.github.com' \
+				-c user.useConfigOnly=true \
 				-c core.hooksPath=/dev/null am --3way --no-gpg-sign \
 				"$series_directory/$patch_file" >/dev/null; then
 				git -C "$staged_repository" am --abort >/dev/null 2>&1 || true

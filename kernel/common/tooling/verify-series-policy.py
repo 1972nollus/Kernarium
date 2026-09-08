@@ -475,7 +475,22 @@ def git_check(source: Path, *arguments: str) -> bool:
     return result.returncode == 0
 
 
+def require_git_identity() -> None:
+    """Replaying the series creates commits; refuse to invent an identity."""
+    repository = Path(__file__).resolve().parents[3]
+    helper = repository / "scripts/git_identity.py"
+    if not helper.is_file():
+        fail(f"missing Git identity helper: {helper}")
+    sys.path.insert(0, str(helper.parent))
+    import git_identity
+
+    git_identity.require_git_identity(
+        "kernel/common/tooling/verify-series-policy.py"
+    )
+
+
 def verify_next_version(root: Path, source: Path, base: str) -> None:
+    require_git_identity()
     rows = manifest(root)
     verify_policy(root, None, "", "HEAD")
     actual_head = run("git", "-C", str(source), "rev-parse", "HEAD").strip()
@@ -500,8 +515,7 @@ def verify_next_version(root: Path, source: Path, base: str) -> None:
 
         applied = git_check(
             source,
-            "-c", "user.name=Yi Xie",
-            "-c", "user.email=imxieyi@users.noreply.github.com",
+            "-c", "user.useConfigOnly=true",
             "-c", "core.hooksPath=/dev/null",
             "am", "--3way", "--no-gpg-sign", str(patch),
         )

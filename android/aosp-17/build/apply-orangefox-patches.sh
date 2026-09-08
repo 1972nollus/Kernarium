@@ -5,6 +5,8 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 PROJECTS="$ANDROID_ROOT/third_party/orangefox/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
 DEVICE_SYNC="$ANDROID_ROOT/tools/sync-orangefox-device.py"
@@ -58,6 +60,10 @@ esac
 [ -f "$PROJECTS" ] || fail "OrangeFox route table is missing"
 [ -x "$VERIFIER" ] || fail "OrangeFox source verifier is missing"
 [ -x "$DEVICE_SYNC" ] || fail "OrangeFox device sync tool is missing"
+[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'android/aosp-17/build/apply-orangefox-patches.sh'
 
 "$VERIFIER" --android-root "$ANDROID_ROOT"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
@@ -72,8 +78,7 @@ while IFS="$(printf '\t')" read -r route_id checkout_path series_dir; do
 		patch="$ANDROID_ROOT/$series_dir/$filename"
 		if ! git -C "$checkout" \
 			-c core.hooksPath=/dev/null \
-			-c user.name='Yi Xie' \
-			-c user.email='imxieyi@users.noreply.github.com' \
+			-c user.useConfigOnly=true \
 			am --committer-date-is-author-date "$patch"; then
 			git -C "$checkout" am --abort || true
 			fail "could not apply $route_id patch: $filename"

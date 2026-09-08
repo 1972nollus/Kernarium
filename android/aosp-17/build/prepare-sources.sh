@@ -9,6 +9,7 @@ AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 JELLY_METADATA="$ROOT_DIR/android/aosp-17/third_party/jelly/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -107,8 +108,7 @@ prepare_jelly()
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 			git -C "$JELLY_STAGING" \
 			-c core.hooksPath=/dev/null \
-			-c user.name='Yi Xie' \
-			-c user.email='imxieyi@users.noreply.github.com' \
+			-c user.useConfigOnly=true \
 			am --committer-date-is-author-date "$patch"
 	done < "$ROOT_DIR/android/aosp-17/third_party/jelly/series/manifest.tsv"
 
@@ -168,6 +168,10 @@ esac
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
 [ -f "$JELLY_METADATA" ] || fail "missing Jelly metadata: $JELLY_METADATA"
 [ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
+[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'android/aosp-17/build/prepare-sources.sh'
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
 # shellcheck disable=SC1090

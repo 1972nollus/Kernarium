@@ -7,10 +7,13 @@ DEPLOYMENT_TARGET=14.0
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-prefix.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 DEPENDENCY_DIR="$TEST_ROOT/dependencies"
-mkdir -p "$DEPENDENCY_DIR"
+mkdir -p "$DEPENDENCY_DIR" "$TEST_ROOT/scripts"
 cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$SOURCE_DEPENDENCY_DIR/prepare.sh" \
 	"$DEPENDENCY_DIR/"
+# Preparation resolves its Git identity contract from the tree it ships in,
+# so the fixture tree carries the real helper too.
+cp "$SOURCE_DEPENDENCY_DIR/../scripts/git-identity.sh" "$TEST_ROOT/scripts/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
 

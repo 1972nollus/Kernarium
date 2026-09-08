@@ -10,6 +10,7 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 REQUESTED_SOURCE=
 SLICE=arm64
 
@@ -53,6 +54,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
+[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'kernel/mainline-6.18/scripts/rebase-patches.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" allow-stale-parent ||
@@ -119,8 +124,7 @@ fi
 # is a no-op, so series regeneration always follows an explicit rebase step.
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 	git -C "$SOURCE" -c core.hooksPath=/dev/null \
-		-c user.name='Yi Xie' \
-		-c user.email='imxieyi@users.noreply.github.com' \
+		-c user.useConfigOnly=true \
 		rebase --onto "$BASE_COMMIT" "$REBASE_OLD_BASE"
 
 if [ "$UML_KERNEL_SLICE" = x86_64 ] &&

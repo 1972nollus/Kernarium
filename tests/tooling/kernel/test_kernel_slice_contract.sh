@@ -11,6 +11,7 @@ SLICE_METADATA="$SLICE_ROOT/patches/metadata.env"
 SLICE_SERIES="$SLICE_ROOT/patches/series"
 SLICE_COMPOSITION="$SLICE_ROOT/patches/composition.tsv"
 SERIES_POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 KERNEL_ARTIFACT_MODULE="$ROOT_DIR/kernel/common/artifacts/kernel_artifact.py"
 KERNEL_PUBLISHER="$LINE_ROOT/build/publish-artifact.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-slices.XXXXXX")
@@ -471,8 +472,12 @@ mkdir -p \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts" \
 	"$PREPARE_FIXTURE/kernel/common/abi" \
 	"$PREPARE_FIXTURE/kernel/common/tooling" \
+	"$PREPARE_FIXTURE/scripts" \
 	"$PREPARE_GIT_BIN"
 cp "$PREPARE_SOURCE" "$PREPARE_SCRIPT"
+# The replay helper resolves its Git identity contract from the tree it
+# ships in, so the fixture tree carries the real helper too.
+cp "$GIT_IDENTITY" "$PREPARE_FIXTURE/scripts/git-identity.sh"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/select-slice.sh"
 for stub in \
@@ -776,7 +781,9 @@ mkdir -p \
 	"$REBASE_FIXTURE/kernel/common/tooling" \
 	"$REBASE_FIXTURE/kernel/mainline-6.18/scripts" \
 	"$REBASE_FIXTURE/kernel/mainline-6.18/patches/series" \
-	"$REBASE_FIXTURE/kernel/mainline-6.18/slices/x86_64/patches"
+	"$REBASE_FIXTURE/kernel/mainline-6.18/slices/x86_64/patches" \
+	"$REBASE_FIXTURE/scripts"
+cp "$GIT_IDENTITY" "$REBASE_FIXTURE/scripts/git-identity.sh"
 cp "$LINE_ROOT/scripts/rebase-patches.sh" \
 	"$REBASE_FIXTURE/kernel/mainline-6.18/scripts/rebase-patches.sh"
 cp "$LINE_ROOT/scripts/select-slice.sh" \

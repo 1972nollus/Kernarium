@@ -30,6 +30,12 @@ Preparation uses the pinned Git cache and creates the managed replay branch.
 replace only a clean stale managed replay; it never replaces an arbitrary
 checkout.
 
+Replay, rebase, and next-base commits are made with the Git identity the
+environment supplies, through `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` or a
+configured `user.name`/`user.email`. These tools carry no identity of their own
+and refuse to run before doing any work when none is configured, rather than
+letting Git invent one from the account and host names.
+
 `verify-replay.sh` starts from the pinned upstream commit, verifies the shared
 series, branches and verifies the x86_64 overlay, and by default builds arm64
 16 KiB, arm64 4 KiB, and x86_64-userspace 4 KiB kernels. Use `--skip-build`

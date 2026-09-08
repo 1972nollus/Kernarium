@@ -4,6 +4,7 @@ set -eu
 
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 VERIFIER="$REPOSITORY/kernel/common/tooling/verify-series-policy.py"
+GIT_IDENTITY="$REPOSITORY/scripts/git-identity.sh"
 WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/uml-next-version-policy.XXXXXX")
 
 cleanup()
@@ -18,12 +19,18 @@ fail()
 	exit 1
 }
 
+# The fixture commits with whatever identity the environment supplies, so
+# the suite must stop with the tool's own advice rather than pass silently
+# when none is configured.
+[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'next-version policy fixture'
+
 UPSTREAM="$WORK_DIRECTORY/upstream"
 FIXTURE="$WORK_DIRECTORY/fixture"
 mkdir -p "$UPSTREAM" "$FIXTURE/kernel/mainline-6.18/patches/series"
 git -C "$UPSTREAM" init -q
-git -C "$UPSTREAM" config user.name 'Yi Xie'
-git -C "$UPSTREAM" config user.email 'imxieyi@users.noreply.github.com'
 printf '%s\n' old > "$UPSTREAM/fix.txt"
 printf '%s\n' old > "$UPSTREAM/host.txt"
 printf '%s\n' old > "$UPSTREAM/port.txt"

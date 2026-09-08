@@ -12,6 +12,7 @@ MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
 SERIES_POLICY="$COMMON_ROOT/tooling/verify-series-policy.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 fail()
 {
@@ -88,6 +89,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
+[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'kernel/mainline-6.18/scripts/prepare-source.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 SELECT_PARENT_MODE=strict
@@ -370,8 +375,9 @@ if [ "$branch_exists" -eq 0 ]; then
 	git -C "$SOURCE_DIR" switch -c "$CREATE_BRANCH" "$BASE_COMMIT"
 fi
 # Patch authors and author dates come from the checked-in mail patches. The
-# replay committer identity is explicit and its timestamp is the real replay
-# time; neither generated commit ID is treated as a source identity.
+# replay committer identity comes from the environment and its timestamp is
+# the real replay time; neither generated commit ID is treated as a source
+# identity.
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 tab=$(printf '\t')
 while IFS="$tab" read -r order filename patch_id digest subject; do
@@ -380,8 +386,7 @@ while IFS="$tab" read -r order filename patch_id digest subject; do
 	esac
 	if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 		git -C "$SOURCE_DIR" \
-			-c user.name='Yi Xie' \
-			-c user.email='imxieyi@users.noreply.github.com' \
+			-c user.useConfigOnly=true \
 			-c core.hooksPath=/dev/null \
 			am --3way --no-gpg-sign "$PATCH_DIR/$filename"; then
 		git -C "$SOURCE_DIR" am --abort >/dev/null 2>&1 || true

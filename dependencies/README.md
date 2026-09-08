@@ -101,6 +101,11 @@ dependencies/prepare.sh --product x86-conformance
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
 read-only checks. Each script's `--help` owns non-default paths and options.
 
+Series replay commits with the Git identity the environment supplies and
+refuses to run when none is configured. See
+[`kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) for the
+shared contract.
+
 An invalid prepared tree or installed prefix is never replaced automatically.
 Review the diagnostic and move the old path aside before rebuilding. Prefix
 verification checks manifest/series identity, architecture, Apple platform and
