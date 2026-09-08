@@ -149,6 +149,14 @@ and implement the missing instruction semantics before continuing the campaign.
 Every CTest has exactly one primary suite: `unit`, `tooling`, or `integration`.
 Keep the current-state `tests/test-manifest.tsv` synchronized.
 
+Every wait on a long-running run, agent, or external service has a hard time
+bound: `timeout` on the process, or a deadline inside the polling loop, chosen
+from the expected duration. Never wait solely for a marker line, file, or
+process exit, because a wrong or missing signal then waits forever. A report
+command run after a wait must not read stdin (give `awk`, `grep`, and similar a
+real file or `</dev/null`), or an empty path variable blocks it on the harness
+pipe.
+
 ## Documentation policy
 
 Documentation records durable current contracts and concise historical
