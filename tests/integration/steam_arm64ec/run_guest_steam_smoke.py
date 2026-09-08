@@ -113,6 +113,15 @@ def main() -> int:
             f"test -x {STEAM}/steamrtarm64/steam && "
             "test -c /dev/dri/renderD128 && uname -a")
         print("PASS systemd boot, ARM64 userspace, 4 KiB pages, virtio GPU\n" + output, flush=True)
+        manifest_check = (
+            "import runpy; from pathlib import Path; "
+            "Vdf = runpy.run_path('/usr/local/libexec/kernarium-compat.py')['Vdf']; "
+            f"manifest = Vdf(Path('{PROTON}/toolmanifest.vdf').read_text()); "
+            "assert manifest.get(('manifest', 'require_tool_appid')) in (None, '0'); "
+            "assert manifest.get(('manifest', 'commandline')) == '/proton %verb%'"
+        )
+        success(guest, "python3 -B -c " + shlex.quote(manifest_check))
+        print("PASS bundled Proton uses the image runtime", flush=True)
         success(guest, "Xvfb :99 -screen 0 1280x800x24 >/tmp/steam-xvfb.log 2>&1 & :")
         success(guest, "timeout 30 sh -c 'until DISPLAY=:99 xdpyinfo >/dev/null 2>&1; do sleep 1; done'", 40)
         env = f"env DISPLAY=:99 WINEDEBUG={WINE_DEBUG} WINEDLLOVERRIDES=winedbg.exe=d WINEPREFIX=/home/uml/.wine-smoke"

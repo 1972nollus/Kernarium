@@ -107,10 +107,21 @@ class ImageAudit(unittest.TestCase):
         rule.parent.mkdir(parents=True)
         rule.write_text('SUBSYSTEM=="video4linux", SYMLINK+="video-dec%n"\n')
         (self.root / image.PROTON / "version").write_text("test-proton-version\n")
+        (self.root / image.PROTON / "toolmanifest.vdf").write_text(
+            '"manifest" { "commandline" "/proton %verb%" }\n')
         version = hashlib.sha256(b"test-proton-version\n").hexdigest()
         for relative in ("dist.lock", "files/share/default_pfx", "files/share/default_pfx_arm64"):
             path = self.root / image.PROTON / relative
             path.symlink_to(f"/home/uml/.local/share/proton-{version}-{path.name}")
+
+    def test_proton_rejects_downloadable_runtime(self) -> None:
+        manifest = self.root / image.PROTON / "toolmanifest.vdf"
+        for appid in ("4185400", "4183110"):
+            with self.subTest(appid=appid):
+                manifest.write_text('"manifest" { "commandline" "/proton %verb%" '
+                                    f'"require_tool_appid" "{appid}" }}\n')
+                with self.assertRaisesRegex(RuntimeError, "downloadable Steam runtime"):
+                    image.inventory(self.root)
 
     def test_proton_writable_state_requires_data_partition(self) -> None:
         path = self.root / image.PROTON / "dist.lock"

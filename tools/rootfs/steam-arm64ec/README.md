@@ -89,7 +89,7 @@ the existing development appliances. The EROFS root remains read-only. A separat
 partition, mounted at `/userdata`; its `home`, `var`, and `root` directories
 are bind-mounted at `/home`, `/var`, and `/root`. `/run` and `/tmp` are tmpfs.
 There is no root OverlayFS. Package metadata and the source-built Proton tool
-remain image-owned, while Steam client updates, downloaded ARM64 runtimes, games, settings,
+remain image-owned, while Steam client updates, games, settings,
 saves, and prefixes live on the data partition.
 Proton's generated default prefixes and distribution lock also live in home,
 keyed by its build identity so a replacement Proton build gets fresh templates.
@@ -105,8 +105,9 @@ This follows Steam Deck's separation of an immutable system and persistent
 home; it does not implement the Deck's hardware-specific A/B boot layout.
 
 Before starting Steam, the image selects its bundled `proton-uml-arm64ec`
-compatibility tool globally and for existing game mappings. Steam's ARM64
-runtime dependency remains managed by Steam. Queued downloadable Proton and
+compatibility tool globally and for existing game mappings. Its tool manifest
+uses the image-supplied native Linux runtime without a Steam runtime download
+dependency; the image audit rejects such dependencies. Queued downloadable Proton and
 FEX tool manifests move into `steamapps/kernarium-disabled-tools`; their exact
 metadata and downloaded files are retained. The original client configuration
 is backed up before its compatibility entries change. Account settings and

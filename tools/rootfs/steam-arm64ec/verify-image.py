@@ -21,6 +21,12 @@ assert spec is not None and spec.loader is not None
 wine_pe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wine_pe)
 
+compat_spec = importlib.util.spec_from_file_location(
+    "steam_compat", HERE / "overlay/usr/local/libexec/kernarium-compat.py")
+assert compat_spec is not None and compat_spec.loader is not None
+compat = importlib.util.module_from_spec(compat_spec)
+compat_spec.loader.exec_module(compat)
+
 STEAM = "usr/share/uml-steam/home/uml/.local/share/Steam/"
 PROTON = "opt/proton-uml-arm64ec/"
 STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
@@ -104,6 +110,11 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
     decoder_rule = root / "etc/udev/rules.d/70-uml-virtio-video.rules"
     if not decoder_rule.is_file() or 'SYMLINK+="video-dec%n"' not in decoder_rule.read_text():
         raise RuntimeError("V4L2 decoder discovery rule is absent or invalid")
+    manifest = compat.Vdf((root / PROTON / "toolmanifest.vdf").read_text())
+    if manifest.get(("manifest", "require_tool_appid")) not in (None, "0"):
+        raise RuntimeError("bundled Proton requires a downloadable Steam runtime")
+    if manifest.get(("manifest", "commandline")) != "/proton %verb%":
+        raise RuntimeError("bundled Proton command line is invalid")
     version = hashlib.sha256((root / PROTON / "version").read_bytes()).hexdigest()
     for relative in ("dist.lock", "files/share/default_pfx", "files/share/default_pfx_arm64"):
         path = root / PROTON / relative

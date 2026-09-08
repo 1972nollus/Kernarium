@@ -1,13 +1,14 @@
-From 82ad6ea04097212c21b623db8071060b2ea328cb Mon Sep 17 00:00:00 2001
+From c6140cc10abab471da1695f4d37ec30bda520764 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 16:43:38 +0900
 Subject: [PATCH 1/2] Use UML CPU translation and create ARM64 prefixes in the
  guest
 
 ---
- Makefile.in | 49 +++----------------------------------------------
- proton      | 11 ++---------
- 2 files changed, 5 insertions(+), 55 deletions(-)
+ Makefile.in            | 49 +++---------------------------------------
+ proton                 | 11 ++--------
+ toolmanifest_arm64.vdf |  2 +-
+ 3 files changed, 6 insertions(+), 56 deletions(-)
 
 diff --git a/Makefile.in b/Makefile.in
 index 5e477c7..4b06622 100644
@@ -105,3 +106,16 @@ index 2463695..dacb855 100755
  
      def run_proc(self, args, local_env=None):
          if local_env is None:
+diff --git a/toolmanifest_arm64.vdf b/toolmanifest_arm64.vdf
+index 9267f25..6dd096b 100644
+--- a/toolmanifest_arm64.vdf
++++ b/toolmanifest_arm64.vdf
+@@ -2,7 +2,7 @@
+ {
+   "version" "2"
+   "commandline" "/proton %verb%"
+-  "require_tool_appid" "4185400"
++  // The UML image supplies the native Linux runtime.
+   "use_sessions" "1"
+   "compatmanager_layer_name" "proton"
+ }
