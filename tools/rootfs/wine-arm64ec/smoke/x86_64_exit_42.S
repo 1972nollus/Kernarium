@@ -12,6 +12,12 @@ main:
     subq $56, %rsp
     .seh_stackalloc 56
     .seh_endprologue
+    /* INT 2e must reach Wine's Windows syscall dispatcher. An out-of-range
+     * number returns STATUS_INVALID_SYSTEM_SERVICE, never SIGILL. */
+    movl $0xffffffff, %eax
+    int $0x2e
+    cmpl $0xc000001c, %eax
+    jne 1f
     leaq uml_once(%rip), %rcx
     leaq uml_once_callback(%rip), %rdx
     leaq uml_callback_parameter(%rip), %r8

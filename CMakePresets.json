@@ -209,6 +209,16 @@
       }
     },
     {
+      "name": "steam-arm64ec-macos-stack",
+      "displayName": "Steam ARM64EC macOS boot and graphics limitation validation",
+      "inherits": "wine-arm64ec-macos-stack",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_TEST_STEAM_ARM64EC": true,
+        "UML_INTEGRATION_ROOTFS": "${sourceDir}/.build/rootfs/steam-arm64ec-gaming.erofs"
+      }
+    },
+    {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
       "inherits": "macos-unit-16k",
@@ -467,6 +477,11 @@
       "targets": ["integration-test-binaries", "tooling-test-binaries", "architecture-audit"]
     },
     {
+      "name": "steam-arm64ec-macos-stack",
+      "configurePreset": "steam-arm64ec-macos-stack",
+      "targets": ["integration-test-binaries", "tooling-test-binaries", "architecture-audit"]
+    },
+    {
       "name": "macos-android17",
       "configurePreset": "macos-android17",
       "targets": ["uml-darwin-android17", "tooling-test-binaries", "architecture-audit"]
@@ -715,6 +730,20 @@
       "execution": {
         "jobs": 1,
         "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "steam-arm64ec-macos-stack",
+      "inherits": "wine-arm64ec-macos-stack",
+      "configurePreset": "steam-arm64ec-macos-stack",
+      "output": {
+        "verbosity": "verbose",
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^guest-steam-arm64ec-smoke$"
+        }
       }
     },
     {
@@ -977,6 +1006,14 @@
         {"type": "build", "name": "macos-integration-venus-4k"},
         {"type": "test", "name": "tooling-integration-venus-4k"},
         {"type": "test", "name": "integration-fast-venus-4k"}
+      ]
+    },
+    {
+      "name": "check-steam-arm64ec-macos",
+      "steps": [
+        {"type": "configure", "name": "steam-arm64ec-macos-stack"},
+        {"type": "build", "name": "steam-arm64ec-macos-stack"},
+        {"type": "test", "name": "steam-arm64ec-macos-stack"}
       ]
     },
     {

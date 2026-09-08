@@ -11,6 +11,11 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+option(UML_TEST_STEAM_ARM64EC "Qualify the Steam gaming rootfs instead of the Wine XFCE rootfs" OFF)
+if(UML_TEST_STEAM_ARM64EC AND NOT UML_BUILD_WINE_ARM64EC)
+    message(FATAL_ERROR "Steam rootfs qualification requires the ARM64EC Wine emulator")
+endif()
+
 if(UML_BUILD_WINE_ARM64EC)
     set(_uml_integration_emulator uml-darwin-wine-arm64ec)
 else()
@@ -281,7 +286,19 @@ done'"
         RESOURCE_GROUPS cpus:10,gpus:1)
 endif()
 
-if(UML_BUILD_WINE_ARM64EC)
+if(UML_BUILD_WINE_ARM64EC AND UML_TEST_STEAM_ARM64EC)
+    uml_add_guest_integration_test(
+        NAME guest-steam-arm64ec-smoke
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/integration/steam_arm64ec/run_guest_steam_smoke.py
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --log ${CMAKE_BINARY_DIR}/reports/steam-arm64ec-guest.log
+        LABELS guest;steam;wine;arm64ec;gpu;smoke
+        TIMEOUT 1800
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4,gpus:1)
+elseif(UML_BUILD_WINE_ARM64EC)
     uml_add_guest_integration_test(
         NAME guest-wine-arm64ec-smoke
         COMMAND ${Python3_EXECUTABLE}

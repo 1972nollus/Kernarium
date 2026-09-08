@@ -135,6 +135,13 @@ present. The dedicated
 and `KRuntime_Wine_6_18_4K` iOS framework keep it distinct from ordinary 4 KiB
 products.
 
+The [Steam rootfs](../tools/rootfs/steam-arm64ec/README.md) reuses this 4 KiB
+runtime with native ARM64 Steam and source-built Proton, without a desktop
+environment. Bundled x86 Linux Steam assets remain inert compatibility files;
+the appliance provides no x86 Linux execution engine. Standard Mesa packages
+stand in for the unfinished Vulkan driver, so its macOS gate qualifies CPU
+execution and the expected Gamescope Vulkan initialization failure.
+
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
 guest identity and relocatable code only; executor-owned link state is rebuilt

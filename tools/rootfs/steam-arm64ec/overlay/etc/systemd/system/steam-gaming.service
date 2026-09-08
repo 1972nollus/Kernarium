@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+[Unit]
+Description=Steam gaming session
+After=systemd-user-sessions.service network.target
+Wants=network.target
+Conflicts=getty@tty1.service
+
+[Service]
+User=uml
+PAMName=login
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+WorkingDirectory=/home/uml
+TTYPath=/dev/tty1
+StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+ExecStart=/usr/local/bin/steam-gaming-session
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

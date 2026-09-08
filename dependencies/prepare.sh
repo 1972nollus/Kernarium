@@ -41,7 +41,7 @@ Usage: dependencies/prepare.sh [options]
 
 Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
-                  ios-x86, wine-arm64ec-rootfs, apple-gpu,
+                  ios-x86, wine-arm64ec-rootfs, steam-arm64ec-rootfs, apple-gpu,
                   apple-gpu-vulkan-experiment, x86-conformance, or all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
@@ -150,6 +150,14 @@ esac
 if [ -z "$ARCHIVE_MANIFEST" ] && [ -z "$RESOLVE_REPOSITORY" ] &&
 	[ -z "$TAG_REPOSITORY" ]; then
 	uml_require_git_identity 'dependencies/prepare.sh'
+fi
+if [ "$PRODUCT" = steam-arm64ec-rootfs ]; then
+	[ -z "$TOOLCHAIN" ] || fail "Steam preparation selects its own SDK"
+	set -- --root "$DEPENDENCY_ROOT"
+	[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] || set -- "$@" --validate-manifest-only
+	[ "$VERIFY_ONLY" -eq 0 ] || set -- "$@" --verify
+	[ "$FETCH" -eq 1 ] || set -- "$@" --no-fetch
+	exec python3 -B "$ROOT_DIR/tools/rootfs/steam-arm64ec/prepare-inputs.py" "$@"
 fi
 
 sha256_file()

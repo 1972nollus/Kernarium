@@ -370,17 +370,11 @@ NTSTATUS WINAPI BTCpuProcessInit(void)
 
 void WINAPI BTCpuProcessTerm( HANDLE process, BOOL after, NTSTATUS status )
 {
-    struct uml_wine_cpu_request request;
+    /* NtTerminateProcess(NULL) leaves the calling thread alive to run DLL
+     * shutdown callbacks, including Unix calls through this dispatcher. */
     (void)process;
     (void)after;
     (void)status;
-    if (!service_capabilities) return;
-    initialise_request( &request );
-    request.operation = UML_WINE_CPU_OPERATION_RESET;
-    request.status = UML_WINE_CPU_STATUS_PENDING;
-    uml_wow64_hostcall( &request );
-    service_capabilities = 0;
-    unix_call_dispatcher = NULL;
 }
 
 void *WINAPI BTCpuGetBopCode(void)

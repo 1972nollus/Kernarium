@@ -1,0 +1,12 @@
+{
+  "proton_repository": "https://github.com/ValveSoftware/Proton.git",
+  "proton_commit": "5b89db940e0ebe3a137a6009a3589232fe084c09",
+  "piper_phonemize_commit": "5ecbb9b59abcffe03a9775ae82491c9ac5037f4d",
+  "sdk": "registry.gitlab.steamos.cloud/proton/steamrt4/sdk/arm64-llvm@sha256:99db33ac7a587feb12e91150787b5e7ca5380d5506ae019574b44d3c7b611f7a",
+  "steam_channel": "steamdeck_publicbeta",
+  "steam_runtime_repository": "https://repo.steampowered.com/steamrt3c/images",
+  "sdk_tag": "registry.gitlab.steamos.cloud/proton/steamrt4/sdk/arm64-llvm:4.0.20260331.220802-2",
+  "steam_runtime_snapshot": "3c.0.20260729.253765",
+  "steam_manifest_sha256": "a609d5d1407c6d947fdb9a9c806a0ef9f085312296f76d79b87f398115c36319",
+  "steam_runtime_sha256": "d0e21db9538bcbdfa51b46f0acbba8a3dcbd6e5f345ae410a6b89d9b90b7d09e"
+}

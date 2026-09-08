@@ -10,6 +10,15 @@ same engine and dispatches Windows system and Wine Unix calls back to native
 ARM64 Wine. The i386 tier is PE-only: there is no x86 Linux userspace,
 foreign Debian architecture, or nested emulator.
 
+Both bridges remain usable through DLL shutdown callbacks after
+`NtTerminateProcess(NULL)`. Their dispatcher state and return mappings live
+until the process address space is destroyed.
+The ARM64EC bridge handles Windows `INT 0x2e` syscall transitions through
+Wine's native dispatcher, preserving the interrupt's register semantics.
+ARM64EC thread state reserves stack space beyond Wine's CPU metadata, saved
+context, and extended-context header, including layouts that place them at
+the reported stack limit.
+
 Prepare the pinned Wine source and ARM64EC compiler through the dependency
 workflow, then run the producer on native AArch64 Debian as an ordinary user
 with passwordless sudo, `debootstrap`, Wine's build dependencies, and
@@ -34,7 +43,8 @@ The adjacent package, ELF, PE, and provenance inventories are part of the
 artifact. ELF verification permits only AArch64. PE verification recognizes
 ARM64EC images from their validated CHPE metadata, permits native ARM64,
 ARM64EC, ARM64X, and Wine-owned i386 PE images, and requires both CPU bridge
-DLLs. The only pure AMD64 image is the installed exit-code-42 probe; it calls a
+DLLs. The only pure AMD64 image is the installed exit-code-42 probe; it checks
+the `INT 0x2e` invalid-system-service return, calls a
 seven-argument WinAPI and receives a native-to-AMD64 callback so both
 directions of the ARM64EC entry/exit-thunk stack contract are mandatory. The
 installed i386 exit-code-43 probe independently qualifies WoW64. LightDM

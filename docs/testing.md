@@ -153,6 +153,13 @@ Wine to return exit code 42 from the AMD64 PE probe and 43 from the i386 WoW64
 probe. iOS Simulator and physical-device packaging and launch validation
 follow only after this macOS gate passes.
 
+The separate gaming-only Steam image uses
+`cmake --workflow --preset check-steam-arm64ec-macos`. It qualifies systemd
+boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
+expected Gamescope Vulkan initialization failure with stock Mesa installed.
+The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
+binary audit, startup contract, and continuing graphics limitation.
+
 ## Apple builds and Kernarium
 
 Build the general Apple libraries with:

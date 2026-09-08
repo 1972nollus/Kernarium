@@ -1,0 +1,52 @@
+From acc3242578120563a909cfd5e2e1ff92fd4f7a85 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 8 Sep 2026 11:14:29 +0900
+Subject: [PATCH 2/2] Provide a readable ARM64 signal restorer for UML
+ unwinding
+
+---
+ dlls/ntdll/unix/signal_arm64.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index c18e650..ffa8609 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -1452,6 +1452,25 @@ void signal_free_thread( TEB *teb )
+ /**********************************************************************
+  *		signal_init_process
+  */
++#ifdef __linux__
++/* UML's default signal-return address is a synthetic host entry point.
++ * libgcc reads the restorer instructions while unwinding pthread_exit(),
++ * so supply the standard Linux sequence in readable executable memory.
++ * Leave it without an FDE so libgcc recognizes the Linux signal frame;
++ * the preceding nop keeps the return-address lookup out of an earlier FDE. */
++extern void uml_rt_sigreturn(void);
++asm( ".text\n\t"
++     ".balign 16\n\t"
++     "nop\n\t"
++     ".globl uml_rt_sigreturn\n\t"
++     ".hidden uml_rt_sigreturn\n\t"
++     ".type uml_rt_sigreturn,%function\n"
++     "uml_rt_sigreturn:\n\t"
++     "mov x8, #139\n\t"
++     "svc #0\n\t"
++     ".size uml_rt_sigreturn,.-uml_rt_sigreturn" );
++#endif
++
+ void signal_init_process(void)
+ {
+     struct sigaction sig_act;
+@@ -1464,6 +1483,11 @@ void signal_init_process(void)
+ 
+     sig_act.sa_mask = server_block_set;
+     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
++#ifdef __linux__
++    /* glibc forwards SA_RESTORER on AArch64 without declaring the flag. */
++    sig_act.sa_flags |= 0x04000000;
++    sig_act.sa_restorer = uml_rt_sigreturn;
++#endif
+ 
+     sig_act.sa_sigaction = int_handler;
+     if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
