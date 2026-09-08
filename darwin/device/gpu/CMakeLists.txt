@@ -93,12 +93,17 @@ if(TARGET uml_third_party_kosmickrisp)
     target_compile_features(uml-venus-backend-probe PRIVATE cxx_std_20)
     target_compile_options(uml-venus-backend-probe PRIVATE
         -Wall -Wextra -Werror)
+    # The renderer archive carries the VideoToolbox decode backend for both
+    # Apple GPU products, so this direct consumer needs the same frameworks.
     target_link_libraries(uml-venus-backend-probe PRIVATE
         UML::ThirdPartyVirglrenderer
         UML::GpuKosmicKrispCapabilityProbe
+        "-framework CoreMedia"
+        "-framework CoreVideo"
         "-framework Foundation"
         "-framework Metal"
-        "-framework QuartzCore")
+        "-framework QuartzCore"
+        "-framework VideoToolbox")
     add_dependencies(uml-venus-backend-probe
         uml_dependency_prefix_verify)
     set_property(TARGET uml-venus-backend-probe APPEND PROPERTY
