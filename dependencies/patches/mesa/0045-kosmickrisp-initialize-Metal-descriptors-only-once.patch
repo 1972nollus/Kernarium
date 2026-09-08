@@ -1,4 +1,4 @@
-From 5d5d5bbb1e37a9e2c6d9d2bb7f42bfff99df18f5 Mon Sep 17 00:00:00 2001
+From 1baeb7afd20b3f69735d9389781ad559b4820379 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 00:55:03 +0900
 Subject: [PATCH 45/48] kosmickrisp: initialize Metal descriptors only once
@@ -13,7 +13,7 @@ Subject: [PATCH 45/48] kosmickrisp: initialize Metal descriptors only once
  create mode 100644 src/kosmickrisp/bridge/tests/test_descriptor_lifetime.c
 
 diff --git a/src/kosmickrisp/bridge/meson.build b/src/kosmickrisp/bridge/meson.build
-index 8cbfbc91..6a819142 100644
+index 8cbfbc9..6a81914 100644
 --- a/src/kosmickrisp/bridge/meson.build
 +++ b/src/kosmickrisp/bridge/meson.build
 @@ -64,3 +64,20 @@ libmtl_bridge = static_library(
@@ -38,7 +38,7 @@ index 8cbfbc91..6a819142 100644
 +  )
 +endif
 diff --git a/src/kosmickrisp/bridge/mtl_argument_table.m b/src/kosmickrisp/bridge/mtl_argument_table.m
-index 32b83759..5253055b 100644
+index 32b8375..5253055 100644
 --- a/src/kosmickrisp/bridge/mtl_argument_table.m
 +++ b/src/kosmickrisp/bridge/mtl_argument_table.m
 @@ -13,7 +13,7 @@
@@ -51,7 +51,7 @@ index 32b83759..5253055b 100644
  }
  
 diff --git a/src/kosmickrisp/bridge/mtl_command_queue.m b/src/kosmickrisp/bridge/mtl_command_queue.m
-index a43bb13c..ac67d6da 100644
+index a43bb13..ac67d6d 100644
 --- a/src/kosmickrisp/bridge/mtl_command_queue.m
 +++ b/src/kosmickrisp/bridge/mtl_command_queue.m
 @@ -14,7 +14,7 @@
@@ -64,7 +64,7 @@ index a43bb13c..ac67d6da 100644
  }
  
 diff --git a/src/kosmickrisp/bridge/mtl_render_state.m b/src/kosmickrisp/bridge/mtl_render_state.m
-index 5dd010f8..9a441c85 100644
+index 5dd010f..9a441c8 100644
 --- a/src/kosmickrisp/bridge/mtl_render_state.m
 +++ b/src/kosmickrisp/bridge/mtl_render_state.m
 @@ -22,7 +22,7 @@
@@ -96,7 +96,7 @@ index 5dd010f8..9a441c85 100644
  
 diff --git a/src/kosmickrisp/bridge/tests/test_descriptor_lifetime.c b/src/kosmickrisp/bridge/tests/test_descriptor_lifetime.c
 new file mode 100644
-index 00000000..157d890a
+index 0000000..157d890
 --- /dev/null
 +++ b/src/kosmickrisp/bridge/tests/test_descriptor_lifetime.c
 @@ -0,0 +1,61 @@

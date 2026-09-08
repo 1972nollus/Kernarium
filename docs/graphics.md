@@ -21,6 +21,10 @@ scanout flushes retire without a synchronous GPU-to-CPU readback; the first
 frame after a zero-client interval refreshes the complete active scanout.
 The experimental Vulkan product compiles native Metal readback into the VNC
 display target and enables it with the same explicit runtime opt-in as Venus.
+Images shared through native Metal heaps retain tiled storage but disable
+usage-dependent lossless compression. A compositor can therefore import a
+render target for sampling without reinterpreting its compression metadata as
+pixels. Ordinary Vulkan images keep their eligible texture optimizations.
 
 Fenced Virgl submissions and host transfers from ordinary guest contexts may
 remain in flight together. Their descriptor chains retire only after the

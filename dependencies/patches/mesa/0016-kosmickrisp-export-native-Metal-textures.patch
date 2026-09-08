@@ -1,15 +1,17 @@
-From 6c01a2f32fb1d19add493629c3951edc520238e6 Mon Sep 17 00:00:00 2001
+From 8bcd65645511ff4a0958c22c4e6a3f266342a0c0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:09 +0900
 Subject: [PATCH 16/48] kosmickrisp: export native Metal textures
 
 ---
- src/kosmickrisp/vulkan/kk_image.c           | 30 +++++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_image.c           | 36 +++++++++++++++++++--
+ src/kosmickrisp/vulkan/kk_image_layout.c    | 15 +++++++--
+ src/kosmickrisp/vulkan/kk_image_layout.h    |  3 +-
  src/kosmickrisp/vulkan/kk_physical_device.c |  1 +
- 2 files changed, 31 insertions(+)
+ 4 files changed, 50 insertions(+), 5 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 5b4dd8f4..53888598 100644
+index 5b4dd8f..13e3fac 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -21,6 +21,8 @@
@@ -21,7 +23,22 @@ index 5b4dd8f4..53888598 100644
  static VkFormatFeatureFlags2
  kk_get_image_plane_format_features(struct kk_physical_device *pdev,
                                     VkFormat vk_format, VkImageTiling tiling,
-@@ -982,6 +984,34 @@ kk_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
+@@ -497,10 +499,12 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+           * is the same both with and without host transfer usage */
+          bool with_host_transfer = kk_image_layout_can_optimize(
+             pImageFormatInfo->usage, pImageFormatInfo->tiling,
+-            pImageFormatInfo->flags, p_format);
++            pImageFormatInfo->flags, p_format,
++            external_info ? external_info->handleType : 0);
+          bool without_host_transfer = kk_image_layout_can_optimize(
+             pImageFormatInfo->usage & ~VK_IMAGE_USAGE_HOST_TRANSFER_BIT,
+-            pImageFormatInfo->tiling, pImageFormatInfo->flags, p_format);
++            pImageFormatInfo->tiling, pImageFormatInfo->flags, p_format,
++            external_info ? external_info->handleType : 0);
+          host_props->optimalDeviceAccess =
+             with_host_transfer == without_host_transfer;
+          host_props->identicalMemoryLayout = host_props->optimalDeviceAccess;
+@@ -982,6 +986,34 @@ kk_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
     return first_error_or_success;
  }
  
@@ -56,8 +73,56 @@ index 5b4dd8f4..53888598 100644
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_GetImageOpaqueCaptureDescriptorDataEXT(
     VkDevice _device, const VkImageCaptureDescriptorDataInfoEXT *pInfo,
+diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
+index f65cb2c..8ddd58b 100644
+--- a/src/kosmickrisp/vulkan/kk_image_layout.c
++++ b/src/kosmickrisp/vulkan/kk_image_layout.c
+@@ -77,8 +77,18 @@ vk_image_usage_flags_to_mtl_texture_usage(VkImageUsageFlags usage_flags,
+ 
+ bool
+ kk_image_layout_can_optimize(VkImageUsageFlags usage, VkImageTiling tiling,
+-                             VkImageCreateFlags flags, enum pipe_format format)
++                             VkImageCreateFlags flags, enum pipe_format format,
++                             VkExternalMemoryHandleTypeFlags external_types)
+ {
++   /* Metal lossless compression depends on texture usage. External native
++    * heaps are reopened by consumers with different usage (for example a
++    * render target becomes a sampled compositor input). Keep their tiled
++    * storage alias-compatible instead of interpreting compression metadata
++    * as texels. Ordinary images retain their optimized contents.
++    */
++   if (external_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT)
++      return false;
++
+    /* Can only optimize if tiling is optimal */
+    if (tiling != VK_IMAGE_TILING_OPTIMAL)
+       return false;
+@@ -214,7 +224,8 @@ kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
+    layout->levels = image->mip_levels;
+    layout->linear = image->tiling != VK_IMAGE_TILING_OPTIMAL;
+    layout->optimized_layout = kk_image_layout_can_optimize(
+-      image->usage, image->tiling, image->create_flags, format);
++      image->usage, image->tiling, image->create_flags, format,
++      image->external_handle_types);
+    layout->usage = vk_image_usage_flags_to_mtl_texture_usage(
+       image->usage, image->create_flags, supported_format->atomic);
+    layout->create_flags = image->create_flags;
+diff --git a/src/kosmickrisp/vulkan/kk_image_layout.h b/src/kosmickrisp/vulkan/kk_image_layout.h
+index b49c188..8c9a81d 100644
+--- a/src/kosmickrisp/vulkan/kk_image_layout.h
++++ b/src/kosmickrisp/vulkan/kk_image_layout.h
+@@ -212,7 +212,8 @@ kk_get_level_size_B(const struct kk_image_layout *layout, unsigned level)
+ 
+ bool kk_image_layout_can_optimize(VkImageUsageFlags usage, VkImageTiling tiling,
+                                   VkImageCreateFlags flags,
+-                                  enum pipe_format format);
++                                  enum pipe_format format,
++                                  VkExternalMemoryHandleTypeFlags external_types);
+ 
+ void kk_image_layout_init(const struct kk_device *dev,
+                           const struct vk_image *image, enum pipe_format format,
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 29838898..b268e555 100644
+index 2983889..b268e55 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -170,6 +170,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

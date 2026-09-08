@@ -8,7 +8,7 @@ Subject: [PATCH 05/48] kosmickrisp: compile application shaders with safe math
  1 file changed, 6 insertions(+), 6 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index c3583d73..463c743c 100644
+index c3583d7..463c743 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -980,8 +980,8 @@ kk_compile_compute_pipeline(struct kk_device *device,

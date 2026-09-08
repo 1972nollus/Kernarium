@@ -15,7 +15,7 @@ Subject: [PATCH 08/48] kosmickrisp: make timestamp queries reliable
  8 files changed, 116 insertions(+), 51 deletions(-)
 
 diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.h b/src/kosmickrisp/bridge/mtl_command_buffer.h
-index 0d7dab68..fbb71c63 100644
+index 0d7dab6..fbb71c6 100644
 --- a/src/kosmickrisp/bridge/mtl_command_buffer.h
 +++ b/src/kosmickrisp/bridge/mtl_command_buffer.h
 @@ -20,6 +20,8 @@ void mtl_end_command_buffer(mtl_command_buffer *command_buffer);
@@ -29,7 +29,7 @@ index 0d7dab68..fbb71c63 100644
  
  #endif /* MTL_COMMAND_BUFFER_H */
 diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.m b/src/kosmickrisp/bridge/mtl_command_buffer.m
-index 9f0edc5d..334c2180 100644
+index 9f0edc5..334c218 100644
 --- a/src/kosmickrisp/bridge/mtl_command_buffer.m
 +++ b/src/kosmickrisp/bridge/mtl_command_buffer.m
 @@ -43,7 +43,9 @@
@@ -54,7 +54,7 @@ index 9f0edc5d..334c2180 100644
     }
  }
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
-index 433cced8..a1942ff8 100644
+index 433cced..a1942ff 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.m
 +++ b/src/kosmickrisp/bridge/mtl_encoder.m
 @@ -449,7 +449,7 @@
@@ -76,7 +76,7 @@ index 433cced8..a1942ff8 100644
                                  intoHeap:h
                                   atIndex:index];
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
-index 72278149..d87a8dc0 100644
+index 7227814..d87a8dc 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
 @@ -25,6 +25,8 @@ mtl_end_command_buffer(mtl_command_buffer *command_buffer)
@@ -90,7 +90,7 @@ index 72278149..d87a8dc0 100644
  {
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 5360ef0d..737a004d 100644
+index 5360ef0..737a004 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -64,8 +64,11 @@ kk_destroy_encoder_state(struct kk_encoder_state *es)
@@ -183,7 +183,7 @@ index 5360ef0d..737a004d 100644
     mtl_end_command_buffer(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 19928d1a..2406b63b 100644
+index 19928d1..2406b63 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -203,6 +203,18 @@ struct kk_ts_resolve {
@@ -218,7 +218,7 @@ index 19928d1a..2406b63b 100644
  
  struct kk_cmd_buffer {
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 3e7dd25b..de0ea874 100644
+index 3e7dd25..de0ea87 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -186,8 +186,6 @@ kk_CreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo *pCreateInfo,
@@ -325,7 +325,7 @@ index 3e7dd25b..de0ea874 100644
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.h b/src/kosmickrisp/vulkan/kk_query_pool.h
-index 2fe4c76c..0670fd59 100644
+index 2fe4c76..0670fd5 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.h
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.h
 @@ -10,21 +10,13 @@

@@ -9,7 +9,7 @@ Subject: [PATCH 10/48] kosmickrisp: stop advertising unreliable float16
  1 file changed, 7 insertions(+), 4 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 227273d1..51714d10 100644
+index 227273d..51714d1 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -278,7 +278,10 @@ kk_get_device_features(

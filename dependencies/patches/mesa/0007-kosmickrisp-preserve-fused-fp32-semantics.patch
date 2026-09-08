@@ -8,7 +8,7 @@ Subject: [PATCH 07/48] kosmickrisp: preserve fused fp32 semantics
  1 file changed, 111 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 975c7237..2ca8a7b2 100644
+index 975c723..2ca8a7b 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -32,6 +32,111 @@ get_entrypoint_name(nir_shader *shader)

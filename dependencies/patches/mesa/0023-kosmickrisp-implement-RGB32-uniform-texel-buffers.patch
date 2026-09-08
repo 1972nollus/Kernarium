@@ -1,4 +1,4 @@
-From 694fa4f03073839bbb3be7d5b4216a7a39dde3e2 Mon Sep 17 00:00:00 2001
+From 8177a417dfeccae7d9150512861235439e9aa736 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 02:19:23 +0900
 Subject: [PATCH 23/48] kosmickrisp: implement RGB32 uniform texel buffers
@@ -16,7 +16,7 @@ Subject: [PATCH 23/48] kosmickrisp: implement RGB32 uniform texel buffers
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 2a169448..4c8f4de9 100644
+index 2a16944..4c8f4de 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -8,6 +8,7 @@
@@ -72,7 +72,7 @@ index 2a169448..4c8f4de9 100644
        kk_buffer_absolute_offset(buffer, view->vk.offset);
     const uint64_t aligned_offset_B = absolute_offset_B & ~(mtl_alignment_B - 1);
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index 50045f7f..25be2ec5 100644
+index 50045f7..25be2ec 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -232,11 +232,19 @@ write_buffer_view_desc(struct kk_descriptor_set *set,
@@ -99,7 +99,7 @@ index 50045f7f..25be2ec5 100644
     }
     write_desc(set, binding, elem, &desc, sizeof(desc));
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9b4a16df..9de73007 100644
+index 9b4a16d..9de7300 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -77,9 +77,61 @@ struct kk_storage_image_descriptor {
@@ -167,7 +167,7 @@ index 9b4a16df..9de73007 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index df16b9e6..8d48ef26 100644
+index df16b9e..8d48ef2 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -394,7 +394,7 @@ index df16b9e6..8d48ef26 100644
     bool pass_lower_ssbo = nir_shader_intrinsics_pass(
        nir, lower_ssbo_descriptor, nir_metadata_control_flow, &ctx);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index cfd82532..74d30652 100644
+index cfd8253..74d3065 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -258,4 +258,39 @@ if with_tests
@@ -439,7 +439,7 @@ index cfd82532..74d30652 100644
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
 new file mode 100644
-index 00000000..c94eb370
+index 0000000..c94eb37
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
 @@ -0,0 +1,65 @@
@@ -510,7 +510,7 @@ index 00000000..c94eb370
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 new file mode 100644
-index 00000000..e96a628c
+index 0000000..e96a628
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 @@ -0,0 +1,307 @@

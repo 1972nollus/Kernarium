@@ -1,4 +1,4 @@
-From 49ecb68f8341aae7156cbaae1ea4074ce4b17074 Mon Sep 17 00:00:00 2001
+From 0f89729e7847d4bca7f8b97921a0cd7a1a55aa1c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 19:28:45 +0900
 Subject: [PATCH 30/48] vulkan: preserve trailing bytes when lowering
@@ -15,7 +15,7 @@ Add a dispatch-level regression test linked to the production command-buffer obj
  create mode 100644 src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 
 diff --git a/src/vulkan/runtime/meson.build b/src/vulkan/runtime/meson.build
-index 7da99c88..84b2d805 100644
+index 7da99c8..84b2d80 100644
 --- a/src/vulkan/runtime/meson.build
 +++ b/src/vulkan/runtime/meson.build
 @@ -339,3 +339,19 @@ idep_vulkan_runtime = declare_dependency(
@@ -40,7 +40,7 @@ index 7da99c88..84b2d805 100644
 +endif
 diff --git a/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c b/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 new file mode 100644
-index 00000000..cd936e1d
+index 0000000..cd936e1
 --- /dev/null
 +++ b/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 @@ -0,0 +1,104 @@
@@ -149,7 +149,7 @@ index 00000000..cd936e1d
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_command_buffer.c b/src/vulkan/runtime/vk_command_buffer.c
-index f23ad4b0..3ce8d414 100644
+index f23ad4b0..3ce8d41 100644
 --- a/src/vulkan/runtime/vk_command_buffer.c
 +++ b/src/vulkan/runtime/vk_command_buffer.c
 @@ -935,8 +935,14 @@ vk_common_CmdFillBuffer(

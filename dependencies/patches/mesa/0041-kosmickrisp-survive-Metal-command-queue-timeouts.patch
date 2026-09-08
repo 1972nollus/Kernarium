@@ -1,4 +1,4 @@
-From 75cc3190523f35a332d66aa1b9991efd32c67a89 Mon Sep 17 00:00:00 2001
+From 89c3aca2188b4485193b8111da6a6d68d1a8b05f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 41/48] kosmickrisp: survive Metal command queue timeouts
@@ -74,7 +74,7 @@ land as their own topic rather than perturbing an unrelated topic's patch.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 4c8f4de9..24dd5058 100644
+index 4c8f4de..24dd505 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -12,6 +12,7 @@
@@ -113,10 +113,10 @@ index 4c8f4de9..24dd5058 100644
        buffer->mtl_handle, &layout, aligned_offset_B);
     if (!view->mtl_texel_buffer_handle) {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 405b303c..0bc236ea 100644
+index 0ad75f5..3cbb68e 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -565,9 +565,24 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -567,9 +567,24 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
           ycbcr_info ? ycbcr_info->planes[plane].denominator_scales[0] : 1;
        const uint8_t height_scale =
           ycbcr_info ? ycbcr_info->planes[plane].denominator_scales[1] : 1;
@@ -144,7 +144,7 @@ index 405b303c..0bc236ea 100644
     }
  
     return VK_SUCCESS;
-@@ -740,11 +755,14 @@ kk_GetDeviceImageMemoryRequirements(VkDevice device,
+@@ -742,11 +757,14 @@ kk_GetDeviceImageMemoryRequirements(VkDevice device,
                                      VkMemoryRequirements2 *pMemoryRequirements)
  {
     VK_FROM_HANDLE(kk_device, dev, device);
@@ -162,7 +162,7 @@ index 405b303c..0bc236ea 100644
  
     const VkImageAspectFlags aspects =
        image.disjoint ? pInfo->planeAspect : image.vk.aspects;
-@@ -823,11 +841,14 @@ kk_GetDeviceImageSubresourceLayoutKHR(
+@@ -825,11 +843,14 @@ kk_GetDeviceImageSubresourceLayoutKHR(
     VkSubresourceLayout2KHR *pLayout)
  {
     VK_FROM_HANDLE(kk_device, dev, device);
@@ -182,7 +182,7 @@ index 405b303c..0bc236ea 100644
  
 diff --git a/src/kosmickrisp/vulkan/kk_image_extent.c b/src/kosmickrisp/vulkan/kk_image_extent.c
 new file mode 100644
-index 00000000..a430f775
+index 0000000..a430f77
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_image_extent.c
 @@ -0,0 +1,15 @@
@@ -203,7 +203,7 @@ index 00000000..a430f775
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_image_extent.h b/src/kosmickrisp/vulkan/kk_image_extent.h
 new file mode 100644
-index 00000000..f2e928c3
+index 0000000..f2e928c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_image_extent.h
 @@ -0,0 +1,34 @@
@@ -242,7 +242,7 @@ index 00000000..f2e928c3
 +
 +#endif /* KK_IMAGE_EXTENT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
-index f65cb2c3..b7467202 100644
+index 8ddd58b..fba8ad9 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.c
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.c
 @@ -8,6 +8,7 @@
@@ -253,7 +253,7 @@ index f65cb2c3..b7467202 100644
  
  #include "kosmickrisp/bridge/mtl_bridge.h"
  #include "kosmickrisp/bridge/mtl_format.h"
-@@ -200,7 +201,7 @@ kk_image_layout_calc_tiled(const struct kk_device *dev,
+@@ -210,7 +211,7 @@ kk_image_layout_calc_tiled(const struct kk_device *dev,
     assert(layout->level_offsets_B[layout->levels] <= layout->layer_stride_B);
  }
  
@@ -262,7 +262,7 @@ index f65cb2c3..b7467202 100644
  kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
                       enum pipe_format format, const uint8_t width_scale,
                       const uint8_t height_scale, struct kk_image_layout *layout)
-@@ -235,9 +236,27 @@ kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
+@@ -246,9 +247,27 @@ kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
        layout->usage |= MTL_TEXTURE_USAGE_PIXEL_FORMAT_VIEW;
     }
  
@@ -291,12 +291,12 @@ index f65cb2c3..b7467202 100644
 +   return VK_SUCCESS;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.h b/src/kosmickrisp/vulkan/kk_image_layout.h
-index 6b936653..c8776dd8 100644
+index 57b7fa1..ecfcfef 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.h
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.h
-@@ -229,9 +229,13 @@ bool kk_image_layout_can_optimize(VkImageUsageFlags usage, VkImageTiling tiling,
-                                   VkImageCreateFlags flags,
-                                   enum pipe_format format);
+@@ -230,9 +230,13 @@ bool kk_image_layout_can_optimize(VkImageUsageFlags usage, VkImageTiling tiling,
+                                   enum pipe_format format,
+                                   VkExternalMemoryHandleTypeFlags external_types);
  
 -void kk_image_layout_init(const struct kk_device *dev,
 -                          const struct vk_image *image, enum pipe_format format,
@@ -313,7 +313,7 @@ index 6b936653..c8776dd8 100644
  
  #endif /* KK_IMAGE_LAYOUT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index c9d180dc..52f85b40 100644
+index c9d180d..52f85b4 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -11,6 +11,7 @@
@@ -356,7 +356,7 @@ index c9d180dc..52f85b40 100644
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 00000000..b9fb4fd1
+index 0000000..b9fb4fd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
 @@ -0,0 +1,102 @@
@@ -464,7 +464,7 @@ index 00000000..b9fb4fd1
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 00000000..f8e2b9c1
+index 0000000..f8e2b9c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
 @@ -0,0 +1,57 @@
@@ -526,7 +526,7 @@ index 00000000..f8e2b9c1
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1bd4e2a8..695e96a1 100644
+index 1bd4e2a..695e96a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -582,7 +582,7 @@ index 1bd4e2a8..695e96a1 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_image_extent.c b/src/kosmickrisp/vulkan/tests/test_image_extent.c
 new file mode 100644
-index 00000000..b34363d6
+index 0000000..b34363d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_image_extent.c
 @@ -0,0 +1,112 @@
@@ -700,7 +700,7 @@ index 00000000..b34363d6
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_queue_error.c b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 new file mode 100644
-index 00000000..1e333fd2
+index 0000000..1e333fd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 @@ -0,0 +1,278 @@

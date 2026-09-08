@@ -1,4 +1,4 @@
-From 069817f6135677e324d019e0f6deb2953c2d5557 Mon Sep 17 00:00:00 2001
+From 69f56b44e709b871ff4db1bb89160b50ee94fddf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:43:58 +0900
 Subject: [PATCH 28/48] kosmickrisp: implement legacy vertex attributes
@@ -31,7 +31,7 @@ Subject: [PATCH 28/48] kosmickrisp: implement legacy vertex attributes
  create mode 100644 src/kosmickrisp/vulkan/tests/test_legacy_vertex_attributes.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 2ca8a7b2..056a8603 100644
+index 2ca8a7b..056a860 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -1678,7 +1678,7 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
@@ -44,7 +44,7 @@ index 2ca8a7b2..056a8603 100644
           P(ctx, "%s(*(constant packed_%s*)(((constant %s*)", type, type,
             no_component_type);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index d1905a75..df91bf44 100644
+index d1905a7..df91bf4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -309,6 +309,7 @@ struct kk_cmd_buffer {
@@ -56,7 +56,7 @@ index d1905a75..df91bf44 100644
         * We are trying to be nice to ourselves. */
        uint64_t root_addr;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4e1b451c..b64a4638 100644
+index 4e1b451..b64a463 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -3057,6 +3057,14 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
@@ -75,7 +75,7 @@ index 4e1b451c..b64a4638 100644
     data->upload_mask = build_per_draw_upload_mask(cmd);
     kk_flush_gfx_state(cmd);
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
-index 6d56e566..1217364b 100644
+index 6d56e56..1217364 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
 @@ -18,6 +18,7 @@
@@ -196,7 +196,7 @@ index 6d56e566..1217364b 100644
     return nir_shader_intrinsics_pass(nir, pass, nir_metadata_control_flow,
                                       &ctx);
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
-index af47837e..7cb1ed3d 100644
+index af47837..7cb1ed3 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
 @@ -36,10 +36,12 @@ struct kk_attribute {
@@ -216,7 +216,7 @@ index af47837e..7cb1ed3d 100644
 \ No newline at end of file
 +#endif
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 8b24e457..6425c91a 100644
+index 8b24e45..6425c91 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -179,6 +179,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -265,7 +265,7 @@ index 8b24e457..6425c91a 100644
        /* VK_EXT_map_memory_placed */
        .minPlacedMemoryMapAlignment = os_page_size,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 01e48812..89270ed9 100644
+index 01e4881..89270ed 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -18,6 +18,7 @@
@@ -1028,7 +1028,7 @@ index 01e48812..89270ed9 100644
        struct kk_shader *shader = container_of(shaders[i], struct kk_shader, vk);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 04fc7113..2ef4f12a 100644
+index 04fc711..2ef4f12 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -23,6 +23,7 @@
@@ -1049,7 +1049,7 @@ index 04fc7113..2ef4f12a 100644
  #endif /* KK_SHADER_H */
 diff --git a/src/kosmickrisp/vulkan/kk_shader_info.c b/src/kosmickrisp/vulkan/kk_shader_info.c
 new file mode 100644
-index 00000000..d9190453
+index 0000000..d919045
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_shader_info.c
 @@ -0,0 +1,43 @@
@@ -1098,7 +1098,7 @@ index 00000000..d9190453
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader_info.h b/src/kosmickrisp/vulkan/kk_shader_info.h
 new file mode 100644
-index 00000000..49e8a4e5
+index 0000000..49e8a4e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_shader_info.h
 @@ -0,0 +1,15 @@
@@ -1118,7 +1118,7 @@ index 00000000..49e8a4e5
 +
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 433a82d6..16f38c90 100644
+index 433a82d..16f38c9 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -111,6 +111,8 @@ kk_files = files(
@@ -1214,7 +1214,7 @@ index 433a82d6..16f38c90 100644
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c
 new file mode 100644
-index 00000000..d4fc955b
+index 0000000..d4fc955
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.c
 @@ -0,0 +1,27 @@
@@ -1247,7 +1247,7 @@ index 00000000..d4fc955b
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h
 new file mode 100644
-index 00000000..a9d06319
+index 0000000..a9d0631
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/dynamic_vertex_input_cache_state.h
 @@ -0,0 +1,24 @@
@@ -1277,7 +1277,7 @@ index 00000000..a9d06319
 +#endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_blend_pipeline_key.c b/src/kosmickrisp/vulkan/tests/test_blend_pipeline_key.c
 new file mode 100644
-index 00000000..38d6cb51
+index 0000000..38d6cb5
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_blend_pipeline_key.c
 @@ -0,0 +1,514 @@
@@ -1797,7 +1797,7 @@ index 00000000..38d6cb51
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
 new file mode 100644
-index 00000000..65706eb0
+index 0000000..65706eb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
 @@ -0,0 +1,350 @@
@@ -2153,7 +2153,7 @@ index 00000000..65706eb0
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_legacy_vertex_attributes.c b/src/kosmickrisp/vulkan/tests/test_legacy_vertex_attributes.c
 new file mode 100644
-index 00000000..52b911ba
+index 0000000..52b911b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_legacy_vertex_attributes.c
 @@ -0,0 +1,239 @@
@@ -2397,7 +2397,7 @@ index 00000000..52b911ba
 +   return 0;
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
-index cbffca7a..f998501a 100644
+index cbffca7..f998501 100644
 --- a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 @@ -743,11 +743,12 @@ int main()

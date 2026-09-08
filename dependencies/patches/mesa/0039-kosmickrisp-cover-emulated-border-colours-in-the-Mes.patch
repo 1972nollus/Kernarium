@@ -1,4 +1,4 @@
-From 056af192e238a662b0e5c0af067393f1f1a8eac4 Mon Sep 17 00:00:00 2001
+From 118e71ff1102afabc44f58737aa37a66701840db Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
 Subject: [PATCH 39/48] kosmickrisp: cover emulated border colours in the Meson
@@ -25,7 +25,7 @@ border-colour topic itself.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b72c84c5..d27e8062 100644
+index b72c84c..d27e806 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -566,6 +566,28 @@ if with_tests
@@ -59,7 +59,7 @@ index b72c84c5..d27e8062 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 new file mode 100644
-index 00000000..79f37341
+index 0000000..79f3734
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 @@ -0,0 +1,286 @@

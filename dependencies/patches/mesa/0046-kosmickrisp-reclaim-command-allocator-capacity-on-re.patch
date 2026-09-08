@@ -1,4 +1,4 @@
-From 0d3eb2f687c75d2bcc3f0e5b22b47401a2209ca9 Mon Sep 17 00:00:00 2001
+From 76c900be9b955ff0b59e5e9e788d318b3cd99f0f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 02:34:30 +0900
 Subject: [PATCH 46/48] kosmickrisp: reclaim command allocator capacity on
@@ -16,7 +16,7 @@ Add native coverage for release, reset, recycling and trim, with real GPU fill r
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index a4d3adf7..5d025ea6 100644
+index a4d3adf..5d025ea 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -176,7 +176,8 @@ alloc_fail:
@@ -92,7 +92,7 @@ index a4d3adf7..5d025ea6 100644
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_pool.c b/src/kosmickrisp/vulkan/kk_cmd_pool.c
-index 9962c952..e505acdf 100644
+index 9962c95..e505acd 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_pool.c
 @@ -11,6 +11,8 @@
@@ -153,7 +153,7 @@ index 9962c952..e505acdf 100644
  kk_TrimCommandPool(VkDevice device, VkCommandPool commandPool,
                     VkCommandPoolTrimFlags flags)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ef21c047..7fe73092 100644
+index ef21c04..7fe7309 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -493,6 +493,28 @@ if with_tests
@@ -187,7 +187,7 @@ index ef21c047..7fe73092 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_pool_release.m b/src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 new file mode 100644
-index 00000000..f92d7dfc
+index 0000000..f92d7df
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 @@ -0,0 +1,223 @@

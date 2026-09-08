@@ -31,7 +31,7 @@ sudo -n chroot "$root" apt-get update
 sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --no-install-recommends \
 	systemd-sysv systemd-resolved udev kmod dbus dbus-user-session \
-	polkitd pkexec ca-certificates sudo procps util-linux e2fsprogs iproute2 \
+	polkitd pkexec ca-certificates sudo procps lsof util-linux e2fsprogs iproute2 \
 	iputils-ping netbase locales python3 curl xz-utils zstd \
 	xwayland xauth xvfb x11-xserver-utils x11-utils fonts-dejavu-core \
 	libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools mesa-utils \
@@ -43,7 +43,7 @@ sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	libavcodec61 libavformat61 libavutil59 \
 	pipewire pipewire-pulse wireplumber libnss3 libnspr4 \
 	libatomic1 libcurl4t64 libgtk-3-0t64 libgtk2.0-0t64 libsdl3-0 libsm6 libice6 \
-	libxtst6 libgdk-pixbuf-2.0-0 libva2 libvdpau1
+	libxtst6 libgdk-pixbuf-2.0-0 libva2 libvdpau1 libopenal1 libnm0
 sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --no-install-recommends -t trixie-backports gamescope
 test -z "$(sudo -n chroot "$root" dpkg --audit)"

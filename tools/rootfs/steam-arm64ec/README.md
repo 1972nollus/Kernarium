@@ -13,7 +13,9 @@ only the Virtio ICD. Its receipt is included in the image provenance. This
 qualifies neither game rendering nor Vulkan conformance.
 The Vulkan gaming session selects Zink for Xwayland and OpenGL clients so
 their native-heap buffers can be imported by Venus. VirGL buffers cannot cross
-that sharing boundary. The native Steam UI requires both GTK 2 and GTK 3.
+that sharing boundary. The native Steam UI includes GTK 2, GTK 3, OpenAL,
+and libnm; the binary audit checks its required native library aliases.
+`lsof` is required for Steam to authenticate its loopback WebUI connections.
 
 The image uses the existing dedicated 4 KiB ARM64EC Wine kernel and emulator.
 There is no 16 KiB Steam product. Apple builds consume the accepted prebuilt
@@ -133,9 +135,11 @@ register its XR24 framebuffer through Mesa's private scanout-image path.
 The native allocation remains optimal and carries a logical pitch for DRM.
 Direct Vulkan color scanout reaches VNC through native Metal readback.
 AR24 client buffers may still be rejected for direct KMS scanout and require
-composition. Composed Vulkan-cube output is visibly corrupted; a nonblank VNC
-frame alone is not evidence of correct rendering or a working Steam login UI.
-Steam completes its client update and reaches UI-module loading, where
-`vgui2_s` cannot load because `libopenal.so.1` is absent. The native client
-module closure also lacks `libnm.so.0`. Login and game launch remain
-unqualified.
+composition. Shared Metal heaps use compatible texture storage across render
+target and compositor usages; the composed Vulkan cube renders correctly.
+Steam completes its client update, loads its native UI modules, authenticates
+the web-helper connection, and renders the SteamOS startup animation. Setup
+does not reach a usable screen: black frames occur after the animation, while
+CEF reports an unsupported video pixel format and an unavailable
+`/dev/video-dec0` decoder. Those messages do not establish the cause of the
+setup failure. Login and game launch remain unqualified.

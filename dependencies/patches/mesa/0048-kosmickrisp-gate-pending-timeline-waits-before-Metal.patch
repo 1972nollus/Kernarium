@@ -1,4 +1,4 @@
-From db890f93e2555efbcc45459406936dfc09819605 Mon Sep 17 00:00:00 2001
+From ad24436a16e5a88f1a0d50b386eec1c72dd64fb5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
 Subject: [PATCH 48/48] kosmickrisp: gate pending timeline waits before Metal
@@ -22,7 +22,7 @@ Keep absolute CPU wait deadlines while observing device loss, wake queue drains 
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 09c0985e..fe6f29da 100644
+index 09c0985..fe6f29d 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -298,6 +298,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -65,7 +65,7 @@ index 09c0985e..fe6f29da 100644
     assert(list_is_empty(&dev->address_space.allocations));
     simple_mtx_destroy(&dev->address_space.mutex);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 28294b60..ef600810 100644
+index 28294b6..ef60081 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -1188,6 +1188,7 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
@@ -77,7 +77,7 @@ index 28294b60..ef600810 100644
     pdev->sync_types[st_idx++] = &kk_sync_type;
     pdev->sync_types[st_idx++] = &pdev->sync_binary_type.sync;
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index c4c41aea..9ee88f65 100644
+index c4c41ae..9ee88f6 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -287,6 +287,9 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
@@ -97,7 +97,7 @@ index c4c41aea..9ee88f65 100644
 -   vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index f44200c3..4e1e0bdf 100644
+index f44200c..4e1e0bd 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -7,6 +7,7 @@
@@ -195,7 +195,7 @@ index f44200c3..4e1e0bdf 100644
     .finish = kk_timeline_finish,
     .signal = kk_timeline_signal,
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index da4f1499..fd9081eb 100644
+index da4f149..fd9081e 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
 @@ -20,4 +20,7 @@ struct kk_sync_timeline {
@@ -207,7 +207,7 @@ index da4f1499..fd9081eb 100644
 +
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c0b1fc74..e4b30e14 100644
+index c0b1fc7..e4b30e1 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -493,6 +493,63 @@ if with_tests
@@ -276,7 +276,7 @@ index c0b1fc74..e4b30e14 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 new file mode 100644
-index 00000000..8998f9a9
+index 0000000..8998f9a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 @@ -0,0 +1,348 @@
@@ -630,7 +630,7 @@ index 00000000..8998f9a9
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 new file mode 100644
-index 00000000..7b8dd8bc
+index 0000000..7b8dd8b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 @@ -0,0 +1,182 @@
@@ -817,7 +817,7 @@ index 00000000..7b8dd8bc
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_queue.c b/src/vulkan/runtime/vk_queue.c
-index b6b8ba7e..65c03393 100644
+index b6b8ba7..65c0339 100644
 --- a/src/vulkan/runtime/vk_queue.c
 +++ b/src/vulkan/runtime/vk_queue.c
 @@ -729,6 +729,18 @@ done:

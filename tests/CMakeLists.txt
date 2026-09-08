@@ -212,6 +212,10 @@ endif()
 if(TARGET uml_gpu_host_gl_provider_tests)
     list(APPEND _uml_required_conditional_tests gpu-host-gl-provider-lifetime)
 endif()
+if(TARGET uml_gpu_kosmickrisp_external_image_alias_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-external-image-alias)
+endif()
 if(TARGET uml_gpu_kosmickrisp_timestamp_availability_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-kosmickrisp-timestamp-availability)

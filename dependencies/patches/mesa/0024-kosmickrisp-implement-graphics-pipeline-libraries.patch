@@ -1,4 +1,4 @@
-From 667adcf8ec17f124893007c60c30c803f982a161 Mon Sep 17 00:00:00 2001
+From ac2d9235314dfac6ff4406190eb85ab854b9755c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:49:11 +0900
 Subject: [PATCH 24/48] kosmickrisp: implement graphics pipeline libraries
@@ -19,7 +19,7 @@ Subject: [PATCH 24/48] kosmickrisp: implement graphics pipeline libraries
  create mode 100644 src/kosmickrisp/vulkan/tests/test_gpl_state.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 8361e4f5..a7e75231 100644
+index 8361e4f..a7e7523 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -311,11 +311,15 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -57,7 +57,7 @@ index 8361e4f5..a7e75231 100644
  
     vk_device_finish(&dev->vk);
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index cb6aa034..d00c2a4d 100644
+index cb6aa03..d00c2a4 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -94,6 +94,10 @@ struct kk_device {
@@ -82,7 +82,7 @@ index cb6aa034..d00c2a4d 100644
                                                mtl_heap *heap);
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
 new file mode 100644
-index 00000000..6ffdd35f
+index 0000000..6ffdd35
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
 @@ -0,0 +1,114 @@
@@ -201,7 +201,7 @@ index 00000000..6ffdd35f
 +
 +#endif /* KK_GPL_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 9b5aa165..cb59b6d1 100644
+index 9b5aa16..cb59b6d 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -143,6 +143,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -241,7 +241,7 @@ index 9b5aa165..cb59b6d1 100644
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7f0ff51e..ea3fe351 100644
+index 7f0ff51..ea3fe35 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -12,6 +12,7 @@
@@ -835,7 +835,7 @@ index 7f0ff51e..ea3fe351 100644
     .cmd_set_dynamic_graphics_state = vk_cmd_set_dynamic_graphics_state,
     .cmd_bind_shaders = kk_cmd_bind_shaders,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 0d758794..bc206eba 100644
+index 0d75879..bc206eb 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -14,6 +14,7 @@
@@ -864,7 +864,7 @@ index 0d758794..bc206eba 100644
     struct msl_compile_data transform_feedback_pre_gs_msl;
     struct msl_compile_data geometry_main_msl;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 74d30652..63bf44e9 100644
+index 74d3065..63bf44e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -81,6 +81,7 @@ kk_files = files(
@@ -894,7 +894,7 @@ index 74d30652..63bf44e9 100644
      'kosmickrisp_rgb32_texel_format',
 diff --git a/src/kosmickrisp/vulkan/tests/test_gpl_state.c b/src/kosmickrisp/vulkan/tests/test_gpl_state.c
 new file mode 100644
-index 00000000..c99a9547
+index 0000000..c99a954
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_gpl_state.c
 @@ -0,0 +1,168 @@
@@ -1067,7 +1067,7 @@ index 00000000..c99a9547
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_pipeline.c b/src/vulkan/runtime/vk_pipeline.c
-index 4c06e7db..6b51eb64 100644
+index 4c06e7d..6b51eb6 100644
 --- a/src/vulkan/runtime/vk_pipeline.c
 +++ b/src/vulkan/runtime/vk_pipeline.c
 @@ -1143,6 +1143,9 @@ struct vk_graphics_pipeline {
@@ -1172,7 +1172,7 @@ index 4c06e7db..6b51eb64 100644
     pipeline->set_layout_count = compile_info.set_layout_count;
     for (uint32_t i = 0; i < compile_info.set_layout_count; i++) {
 diff --git a/src/vulkan/runtime/vk_shader.h b/src/vulkan/runtime/vk_shader.h
-index 4e0d4dc8..688f28be 100644
+index 4e0d4dc..688f28b 100644
 --- a/src/vulkan/runtime/vk_shader.h
 +++ b/src/vulkan/runtime/vk_shader.h
 @@ -76,6 +76,8 @@ int vk_shader_cmp_rt_stages(mesa_shader_stage a, mesa_shader_stage b);

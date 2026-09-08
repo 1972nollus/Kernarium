@@ -1,4 +1,4 @@
-From 72c5fc6a224b09cae8dec58b7ad795af310a10c7 Mon Sep 17 00:00:00 2001
+From 24a24b378abf2ffdb7dc52f3fdfd743b6506e702 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 18:21:12 +0900
 Subject: [PATCH 38/48] kosmickrisp: retire dead values before MSL translation
@@ -48,7 +48,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_integer_point_target.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 056a8603..c16c4e9f 100644
+index 056a860..c16c4e9 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -2420,6 +2420,11 @@ msl_optimize_nir(struct nir_shader *nir)
@@ -64,7 +64,7 @@ index 056a8603..c16c4e9f 100644
     return progress;
  }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 366d06e3..b72c84c5 100644
+index 366d06e..b72c84c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -344,6 +344,26 @@ if with_tests
@@ -96,7 +96,7 @@ index 366d06e3..b72c84c5 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag b/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag
 new file mode 100644
-index 00000000..be9663a8
+index 0000000..be9663a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag
 @@ -0,0 +1,8 @@
@@ -110,7 +110,7 @@ index 00000000..be9663a8
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag.h b/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag.h
 new file mode 100644
-index 00000000..8b2bcdfb
+index 0000000..8b2bcdf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/constant.frag.h
 @@ -0,0 +1,19 @@
@@ -135,7 +135,7 @@ index 00000000..8b2bcdfb
 +0x00000009,0x0000000c,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh
 new file mode 100755
-index 00000000..a16f8af8
+index 0000000..a16f8af
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -148,7 +148,7 @@ index 00000000..a16f8af8
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag b/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag
 new file mode 100644
-index 00000000..549773fa
+index 0000000..549773f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag
 @@ -0,0 +1,8 @@
@@ -162,7 +162,7 @@ index 00000000..549773fa
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag.h b/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag.h
 new file mode 100644
-index 00000000..e824b5fe
+index 0000000..e824b5f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/passthrough.frag.h
 @@ -0,0 +1,21 @@
@@ -189,7 +189,7 @@ index 00000000..e824b5fe
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert b/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert
 new file mode 100644
-index 00000000..9b33145a
+index 0000000..9b33145
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert
 @@ -0,0 +1,10 @@
@@ -205,7 +205,7 @@ index 00000000..9b33145a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert.h b/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert.h
 new file mode 100644
-index 00000000..1951355f
+index 0000000..1951355
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/integer_point_shaders/point.vert.h
 @@ -0,0 +1,47 @@
@@ -258,7 +258,7 @@ index 00000000..1951355f
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_integer_point_target.c b/src/kosmickrisp/vulkan/tests/test_integer_point_target.c
 new file mode 100644
-index 00000000..a1d76970
+index 0000000..a1d7697
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_integer_point_target.c
 @@ -0,0 +1,449 @@

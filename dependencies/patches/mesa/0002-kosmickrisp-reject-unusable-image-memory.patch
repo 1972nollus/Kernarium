@@ -8,7 +8,7 @@ Subject: [PATCH 02/48] kosmickrisp: reject unusable image memory
  1 file changed, 19 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 5f9b7877..5b4dd8f4 100644
+index 5f9b787..5b4dd8f 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -855,12 +855,21 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,

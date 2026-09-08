@@ -14,6 +14,19 @@ uml_add_unit_test(
     LABELS gpu;vulkan)
 
 if(TARGET uml_gpu_kosmickrisp_capability_probe)
+    add_executable(uml_gpu_kosmickrisp_external_image_alias_tests
+        kosmickrisp_external_image_alias_tests.cpp)
+    target_link_libraries(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE
+        UML::ThirdPartyKosmicKrisp)
+    target_compile_features(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(
+        NAME gpu-kosmickrisp-external-image-alias
+        COMMAND uml_gpu_kosmickrisp_external_image_alias_tests
+        LABELS gpu;vulkan
+        TIMEOUT 120)
+
     add_executable(uml_gpu_kosmickrisp_timestamp_availability_tests
         kosmickrisp_timestamp_availability_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_timestamp_availability_tests PRIVATE

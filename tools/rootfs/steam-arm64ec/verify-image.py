@@ -28,6 +28,7 @@ STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
 ))
 ELF_MACHINES = {3: "I386", 62: "AMD64", 183: "AArch64"}
 REQUIRED_ELF = (
+    "usr/bin/lsof",
     "usr/games/gamescope",
     "usr/games/gamescopereaper",
     PROTON + "files/bin-arm64/wine",
@@ -35,7 +36,11 @@ REQUIRED_ELF = (
     STEAM + "steamrtarm64/steam",
     STEAM + "steamrtarm64/steamwebhelper",
 )
-REQUIRED_LIBRARIES = ("usr/lib/aarch64-linux-gnu/libgtk-x11-2.0.so.0",)
+REQUIRED_LIBRARIES = (
+    "usr/lib/aarch64-linux-gnu/libgtk-x11-2.0.so.0",
+    "usr/lib/aarch64-linux-gnu/libopenal.so.1",
+    "usr/lib/aarch64-linux-gnu/libnm.so.0",
+)
 REQUIRED_PE = {
     PROTON + "files/lib/wine/aarch64-windows/xtajit64.dll": "ARM64EC",
     PROTON + "files/lib/wine/aarch64-windows/xtajit.dll": "ARM64",

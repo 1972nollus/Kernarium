@@ -73,9 +73,14 @@ class ImageAudit(unittest.TestCase):
             image.inventory(self.root)
 
     def test_steam_ui_library_required(self) -> None:
-        (self.root / image.REQUIRED_LIBRARIES[0]).unlink()
-        with self.assertRaisesRegex(RuntimeError, "required native Linux library"):
-            image.inventory(self.root)
+        for relative in image.REQUIRED_LIBRARIES:
+            with self.subTest(library=relative):
+                library = self.root / relative
+                target = library.readlink()
+                library.unlink()
+                with self.assertRaisesRegex(RuntimeError, "required native Linux library"):
+                    image.inventory(self.root)
+                library.symlink_to(target)
 
     def test_native_stack_and_bundled_foreign_steam_assets(self) -> None:
         write_elf(self.root / image.STEAM / "steamrt64/pv-runtime/lib/libc.so", 62)
