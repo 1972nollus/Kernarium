@@ -309,9 +309,9 @@ class GraphicsCampaignTests(unittest.TestCase):
     def test_cli_rejects_resource_and_selector_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             args = self.arguments(Path(temporary))
-            self.assertEqual(campaign.parse_arguments(args).jobs, 4)
+            self.assertEqual(campaign.parse_arguments(args).jobs, 6)
             self.assertEqual(campaign.parse_arguments(args).console_stall_busy_timeout, 3600)
-            for extra in (["--jobs", "5"], ["--cpus", "8"], ["--memory", "8G"],
+            for extra in (["--jobs", "7"], ["--cpus", "8"], ["--memory", "8G"],
                           ["--case", "dEQP-VK.info.build"], ["--fraction-count", "16"],
                           ["--guest-timeout", "1"], ["--verify-only", "--dry-run"],
                           ["--console-stall-busy-timeout", "599"],
@@ -531,11 +531,11 @@ class GraphicsCampaignTests(unittest.TestCase):
             with self.assertRaises(gl.CampaignError):
                 campaign.read_artifacts(run, names)
 
-    def test_pool_refills_without_waiting_for_three_slow_workers(self) -> None:
+    def test_pool_refills_without_waiting_for_five_slow_workers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             definition = spec(Path(temporary))
             definition["suites"] = ["vulkan"]
-            first = threading.Barrier(4)
+            first = threading.Barrier(6)
             refilled = threading.Event()
             guard = threading.Lock()
             active = peak = 0
@@ -546,11 +546,11 @@ class GraphicsCampaignTests(unittest.TestCase):
                     active += 1
                     peak = max(peak, active)
                 try:
-                    if key.index < 4:
+                    if key.index < 6:
                         first.wait(timeout=5)
                         if key.index != 0 and not refilled.wait(timeout=5):
                             raise AssertionError("pool did not refill the freed slot")
-                    elif key.index == 4:
+                    elif key.index == 6:
                         refilled.set()
                     return {"cases": 1, "status_totals": {"Pass": 1}}
                 finally:
@@ -560,9 +560,9 @@ class GraphicsCampaignTests(unittest.TestCase):
             complete, failures = {}, {}
             with mock.patch.object(campaign, "run_shard", side_effect=worker), contextlib.redirect_stdout(io.StringIO()):
                 campaign.run_pending(Path(temporary), definition, list(campaign.shards(definition)),
-                                     4, False, threading.Event(), complete, failures)
+                                     6, False, threading.Event(), complete, failures)
             self.assertTrue(refilled.is_set())
-            self.assertEqual(peak, 4)
+            self.assertEqual(peak, 6)
             self.assertEqual(len(complete), 8)
             self.assertFalse(failures)
 

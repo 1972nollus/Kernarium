@@ -304,7 +304,7 @@ emulator, image, and provider (`--config-inventory gl46`, replayed with
 
 `tests/integration/gpu/run_graphics_cts_campaign.py` coordinates both suites:
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
-most four owned guests at a time (`--jobs` may only lower that), immediately
+most six owned guests at a time (`--jobs` may only lower that), immediately
 refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
 selection, and timeout identities; resumes only never-attempted shards;
 reverifies completed ones; and never overwrites or retries a failed, truncated,

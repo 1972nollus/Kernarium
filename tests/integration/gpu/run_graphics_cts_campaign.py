@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run eight receipt-bound Vulkan and/or Zink GL fractions in a four-guest pool.
+"""Run eight receipt-bound Vulkan and/or Zink GL fractions in a six-guest pool.
 
 GL runs come from authenticated XML and an ordered runtime EGL inventory. This is project
 qualification, never a conformance submission or an all-features-supported claim.
@@ -35,7 +35,7 @@ import run_vk_gl_cts as common  # noqa: E402
 import run_vk_cts as vk  # noqa: E402
 
 FRACTIONS = 8
-MAX_JOBS = 4
+MAX_JOBS = 6
 CPUS = 4
 MEMORY = "4G"
 KIND = "uml-venus-zink-graphics-cts-campaign"
@@ -691,7 +691,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                         help="verified run.json from Zink CTS-Configs.gl46 on these exact inputs")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--jobs", type=common.positive_integer, default=MAX_JOBS,
-                        help="concurrent owned guests, 1 through 4 (default: 4); each is 4 CPU/4 GiB")
+                        help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB")
     parser.add_argument("--shard-timeout", type=common.positive_integer, default=21600)
     parser.add_argument("--guest-timeout", type=common.positive_integer, default=22200)
     parser.add_argument("--console-stall-busy-timeout", type=common.positive_integer, default=3600,
@@ -707,7 +707,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--dry-run", action="store_true", help="verify inputs and print commands without writing or launching")
     options = parser.parse_args(arguments)
     if options.jobs > MAX_JOBS:
-        parser.error("--jobs may not exceed 4")
+        parser.error(f"--jobs may not exceed {MAX_JOBS}")
     if options.console_stall_busy_timeout < options.console_stall_timeout:
         parser.error("--console-stall-busy-timeout must be at least --console-stall-timeout")
     if options.guest_timeout <= options.shard_timeout:
