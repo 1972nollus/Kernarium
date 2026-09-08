@@ -1157,18 +1157,28 @@ private:
 			return {};
 		const BackingKey key{static_cast<std::uint64_t>(status.st_dev),
 				     static_cast<std::uint64_t>(status.st_ino)};
+		/* Darwin POSIX shared-memory descriptors report st_dev == 0 and
+		 * st_ino == 0 for every distinct object.  Such an inode cannot identify
+		 * a backing across descriptors: Venus, for example, exports its ring and
+		 * reply buffers as separate shm objects with that same stat tuple.  Keep
+		 * descriptor-local reuse, but never merge an inode-less object with a
+		 * different descriptor. */
+		const bool stable_identity = key.inode != 0;
 		std::lock_guard lock{backing_mutex_};
-		if (auto found = backings_.find(key); found != backings_.end()) {
-			if (auto backing = found->second.lock()) {
-				descriptor_backings_.insert_or_assign(fd, backing);
-				if (batch.depth != 0 && batch.address_space == this)
-					batch.backings.insert_or_assign(fd, backing);
-				return backing;
+		if (stable_identity) {
+			if (auto found = backings_.find(key); found != backings_.end()) {
+				if (auto backing = found->second.lock()) {
+					descriptor_backings_.insert_or_assign(fd, backing);
+					if (batch.depth != 0 && batch.address_space == this)
+						batch.backings.insert_or_assign(fd, backing);
+					return backing;
+				}
 			}
 		}
 		auto backing = MappedBacking::create(fd, status);
 		if (backing) {
-			backings_.insert_or_assign(key, backing);
+			if (stable_identity)
+				backings_.insert_or_assign(key, backing);
 			descriptor_backings_.insert_or_assign(fd, backing);
 			if (batch.depth != 0 && batch.address_space == this)
 				batch.backings.insert_or_assign(fd, backing);

@@ -94,6 +94,44 @@ private:
 	int fd_{-1};
 };
 
+class PosixSharedMemoryBacking final {
+public:
+	PosixSharedMemoryBacking()
+	{
+		static std::atomic_uint sequence{};
+		char name[64];
+		const int count = std::snprintf(name, sizeof(name),
+			"/uml-static-shm-%ld-%u", static_cast<long>(getpid()),
+			sequence.fetch_add(1, std::memory_order_relaxed));
+		require(count > 0 && static_cast<std::size_t>(count) < sizeof(name));
+		fd_ = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+		require(fd_ >= 0);
+		require(shm_unlink(name) == 0);
+		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
+		mapping_ = mmap(nullptr, DARWIN_UML_GUEST_PAGE_SIZE,
+			PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+		require(mapping_ != MAP_FAILED);
+	}
+
+	PosixSharedMemoryBacking(const PosixSharedMemoryBacking &) = delete;
+	PosixSharedMemoryBacking &operator=(const PosixSharedMemoryBacking &) = delete;
+
+	~PosixSharedMemoryBacking()
+	{
+		if (mapping_ != MAP_FAILED)
+			munmap(mapping_, DARWIN_UML_GUEST_PAGE_SIZE);
+		if (fd_ >= 0)
+			close(fd_);
+	}
+
+	[[nodiscard]] int fd() const noexcept { return fd_; }
+	[[nodiscard]] void *data() const noexcept { return mapping_; }
+
+private:
+	int fd_{-1};
+	void *mapping_{MAP_FAILED};
+};
+
 static void uml_static_entry_bridge()
 {
 	constexpr unsigned long generation = 77;
@@ -638,6 +676,51 @@ static void uml_static_descriptor_reuse_invalidation()
 	require(darwin_uml_close(descriptor) == 0);
 	require(darwin_uml_static_vm_destroy(first_generation) == 0);
 	require(darwin_uml_static_vm_destroy(second_generation) == 0);
+}
+
+static void uml_static_inode_less_backings_remain_distinct()
+{
+	constexpr unsigned long generation = 110;
+	constexpr std::uint64_t base = 0x5'0000;
+	constexpr std::uint64_t first_value = 0x1122'3344'5566'7788ULL;
+	constexpr std::uint64_t second_value = 0x8877'6655'4433'2211ULL;
+	constexpr std::uint64_t first_replacement = 0x1234'5678'9abc'def0ULL;
+	constexpr std::uint64_t second_replacement = 0x0fed'cba9'8765'4321ULL;
+	PosixSharedMemoryBacking first;
+	PosixSharedMemoryBacking second;
+	std::memcpy(first.data(), &first_value, sizeof(first_value));
+	std::memcpy(second.data(), &second_value, sizeof(second_value));
+
+	/* Distinct Darwin shm objects currently share a zero stat identity; their
+	 * contents must remain independent. */
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(base),
+		first.fd(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
+	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(
+		base + DARWIN_UML_GUEST_PAGE_SIZE), second.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	void *first_host = nullptr;
+	void *second_host = nullptr;
+	require(darwin_uml_static_vm_translate(generation, base,
+		DARWIN_UML_STATIC_READ, &first_host) == DARWIN_UML_STATIC_TRANSLATED);
+	require(darwin_uml_static_vm_translate(generation,
+		base + DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_STATIC_READ,
+		&second_host) == DARWIN_UML_STATIC_TRANSLATED);
+	std::uint64_t actual_first = 0;
+	std::uint64_t actual_second = 0;
+	std::memcpy(&actual_first, first_host, sizeof(actual_first));
+	std::memcpy(&actual_second, second_host, sizeof(actual_second));
+	require(actual_first == first_value);
+	require(actual_second == second_value);
+
+	std::memcpy(first_host, &first_replacement, sizeof(first_replacement));
+	std::memcpy(second_host, &second_replacement, sizeof(second_replacement));
+	std::memcpy(&actual_first, first.data(), sizeof(actual_first));
+	std::memcpy(&actual_second, second.data(), sizeof(actual_second));
+	require(actual_first == first_replacement);
+	require(actual_second == second_replacement);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
 static void uml_static_host_interrupt_sequence()
@@ -1234,6 +1317,7 @@ int main()
 	uml_static_x86_64_x87_task_state();
 #endif
 	uml_static_descriptor_reuse_invalidation();
+	uml_static_inode_less_backings_remain_distinct();
 	uml_static_host_interrupt_sequence();
 	uml_static_signal_return_bridge();
 	uml_static_permission_fault();
