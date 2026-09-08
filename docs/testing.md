@@ -51,6 +51,16 @@ cmake --workflow --preset check-loader-asan-ubsan
 cmake --workflow --preset check-jitprof
 ```
 
+The experimental macOS Vulkan lane is separately named and opt-in. It needs the
+`apple-gpu-vulkan-experiment` dependency prefix and a private prefix built at
+its raised deployment target, and it is required only when a change crosses the
+Venus or KosmicKrisp boundary:
+
+```sh
+cmake --workflow --preset check-gpu-venus
+cmake --workflow --preset check-integration-venus
+```
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh

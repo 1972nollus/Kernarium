@@ -213,6 +213,31 @@ layer keeps the newest frame and at most one command buffer in flight. A
 backpressured presentation may drop a superseded frame; only unsupported
 resource shapes use CPU readback. See [`graphics.md`](graphics.md).
 
+The separately configured macOS Vulkan experiment adds an independent route:
+
+```text
+Linux Vulkan -> Mesa Venus -> virglrenderer capset 4
+    -> directly linked Mesa KosmicKrisp -> Metal
+```
+
+That route exists only in the verified `apple-gpu-vulkan-experiment` product
+and is enabled at runtime only by `UML_GPU_EXPERIMENTAL_VULKAN=1`. It does not
+replace or enter the GL facade, and no iOS runtime or application target
+contains the experimental provider. Its fences ride the same deferred
+fence pipeline the default path uses: the device creates a context fence per
+pipelined request, and the transport retires it from the queue-worker timer.
+Venus gives each guest ring its own timeline, so a Venus context is polled
+individually while one poll still drains every Virgl context.
+
+The experiment keeps shareable Zink scanouts in their renderer-optimal Metal
+layout. An unlinked vnode-backed identity descriptor reconnects each guest
+dma-buf with its in-process MTLHeap and native MTLTexture; the descriptor never
+stores pixel data. Native presentation samples that texture directly. The VNC
+consumer instead performs a damage-bounded asynchronous Metal blit into one
+shared staging buffer, keeps at most one newer pending frame, and publishes to
+LibVNCServer only after GPU completion, so neither readback nor encoding blocks
+the guest flush timeline.
+
 Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
 Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
 serial terminal view. Android additionally receives the Apple host's battery
