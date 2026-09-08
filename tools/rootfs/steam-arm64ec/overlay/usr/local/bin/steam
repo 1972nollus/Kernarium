@@ -3,4 +3,5 @@
 set -eu
 steam=${HOME:?}/.local/share/Steam
 export LD_LIBRARY_PATH="$steam/steamrtarm64:$steam/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+python3 -B /usr/local/libexec/kernarium-compat.py
 exec "$steam/steamrtarm64/steam" "$@"

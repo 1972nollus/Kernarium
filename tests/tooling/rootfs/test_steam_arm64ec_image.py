@@ -36,6 +36,7 @@ spec.loader.exec_module(image)
 boot = load_tool("steam_boot", "tools/rootfs/steam-arm64ec/boot.py")
 storage = load_tool("steam_storage", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-storage.py")
 installer = load_tool("steam_installer", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-steam.py")
+compat = load_tool("steam_compat", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-compat.py")
 
 
 def write_elf(path: Path, machine: int) -> None:
@@ -44,6 +45,39 @@ def write_elf(path: Path, machine: int) -> None:
     data[18:20] = machine.to_bytes(2, "little")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+
+
+class CompatibilityPolicy(unittest.TestCase):
+    def test_targeted_config_preserves_unrelated_values(self) -> None:
+        original = '// retained comment\n"Root" { "opaque" "a\\\\b" "Map" { "name" "old" } }\n'
+        result = compat.update(original, ("Root", "Map", "name"), "bundled")
+        self.assertEqual(result, original.replace('"old"', '"bundled"'))
+        result = compat.update(result, ("Root", "New", "value"), "250")
+        self.assertEqual(compat.Vdf(result).get(("root", "new", "value")), "250")
+        with self.assertRaises(ValueError):
+            compat.update('"Root" { "broken"', ("Root", "x"), "y")
+
+    def test_policy_preserves_game_data_and_suspends_only_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            steam = Path(temporary)
+            apps = steam / "steamapps"
+            apps.mkdir()
+            for appid, name in (("602520", "Game"), ("1493710", "Proton Experimental"), ("3127680", "FEX")):
+                (apps / f"appmanifest_{appid}.acf").write_text(f'"AppState" {{ "appid" "{appid}" "name" "{name}" }}')
+            game = (apps / "appmanifest_602520.acf").read_bytes()
+            (apps / "game-save").write_bytes(b"save data")
+            compat.apply(steam)
+            config = compat.Vdf((steam / "config/config.vdf").read_text())
+            path = ("InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping")
+            for appid in ("0", "602520"):
+                self.assertEqual(config.get((*path, appid, "name")), compat.TOOL)
+                self.assertEqual(config.get((*path, appid, "priority")), "250")
+            self.assertEqual((apps / "appmanifest_602520.acf").read_bytes(), game)
+            self.assertEqual((apps / "game-save").read_bytes(), b"save data")
+            self.assertEqual(len(list((apps / "kernarium-disabled-tools").glob("*.acf"))), 2)
+            before = (steam / "config/config.vdf").read_bytes()
+            compat.apply(steam)
+            self.assertEqual((steam / "config/config.vdf").read_bytes(), before)
 
 
 class ImageAudit(unittest.TestCase):
@@ -245,6 +279,9 @@ class PersistentStorage(unittest.TestCase):
 
     def test_launcher_has_no_overlay_and_distinct_data_device(self) -> None:
         argv = boot.command(Path("/emulator"), Path("/new-root.erofs"), Path("/data.img"), "8G", "graphical.target", [])
+        self.assertIn("--execution-engine=gadgets", argv)
+        with self.assertRaisesRegex(ValueError, "launcher controls"):
+            boot.command(Path("/emulator"), Path("/root"), Path("/data"), "8G", "graphical.target", ["--execution-engine=interpreter"])
         self.assertIn("ubd0rc=/new-root.erofs", argv)
         self.assertIn("ubd1=/data.img", argv)
         self.assertIn("ro", argv)

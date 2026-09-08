@@ -73,7 +73,7 @@ def main() -> int:
     def boot(rootfs: Path) -> Guest:
         return Guest(args.emulator.resolve(), rootfs, args.memory, "tmpfs",
                      kernel_arguments=(f"ubd1={disk}", "--video", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
-                     systemd_image_init="/usr/local/libexec/kernarium-init", engine="jit")
+                     systemd_image_init="/usr/local/libexec/kernarium-init", engine="gadgets")
 
     guest = boot(args.rootfs.resolve())
     try:

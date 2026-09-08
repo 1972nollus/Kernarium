@@ -6,7 +6,6 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import json
 import os
 from pathlib import Path
 import shutil
@@ -14,13 +13,13 @@ import subprocess
 import time
 
 SEED = Path("/usr/share/uml-steam")
-STATUS = Path("/run/kernarium-progress.json")
+STATUS = Path("/run/kernarium-progress.status")
 NEW_DISK = b"KERNARIUM NEW USER DATA v1\n"
 
 
 def status(message: str, fraction: float | None = None) -> None:
     temporary = STATUS.with_suffix(".new")
-    temporary.write_text(json.dumps({"message": message, "fraction": fraction}))
+    temporary.write_text(f"{fraction if fraction is not None else -1}\n{message.replace(chr(10), chr(32))}\n")
     temporary.replace(STATUS)
 
 
@@ -114,7 +113,7 @@ def prepare() -> None:
 def main() -> None:
     status("Starting Kernarium")
     Path("/run/kernarium-cache").mkdir(exist_ok=True)
-    splash = subprocess.Popen(["/usr/bin/python3", "-B", "/usr/local/libexec/kernarium-screen.py", "--framebuffer"],
+    splash = subprocess.Popen(["/usr/local/libexec/kernarium-screen", "--framebuffer"],
                               env={**os.environ, "XDG_CACHE_HOME": "/run/kernarium-cache"})
     Path("/run/kernarium-splash.pid").write_text(str(splash.pid))
     try:

@@ -28,6 +28,7 @@ STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
 ))
 ELF_MACHINES = {3: "I386", 62: "AMD64", 183: "AArch64"}
 REQUIRED_ELF = (
+    "usr/local/libexec/kernarium-screen",
     "usr/bin/lsof",
     "usr/games/gamescope",
     "usr/games/gamescopereaper",

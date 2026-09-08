@@ -6,7 +6,6 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import json
 import os
 from pathlib import Path
 import re
@@ -59,15 +58,15 @@ def stop(process: subprocess.Popen) -> None:
 
 def main() -> int:
     steam = Path.home() / ".local/share/Steam"
-    state = Path(os.environ["XDG_RUNTIME_DIR"]) / "kernarium-install.json"
+    state = Path(os.environ["XDG_RUNTIME_DIR"]) / "kernarium-install.status"
 
     def display(message: str, fraction: float | None = None) -> None:
         staged = state.with_suffix(".new")
-        staged.write_text(json.dumps({"message": message, "fraction": fraction}))
+        staged.write_text(f"{fraction if fraction is not None else -1}\n{message.replace(chr(10), chr(32))}\n")
         staged.replace(state)
 
     display("Starting Steam")
-    screen = subprocess.Popen(["python3", "-B", "/usr/local/libexec/kernarium-screen.py", "--status", str(state)])
+    screen = subprocess.Popen(["/usr/local/libexec/kernarium-screen", "--status", str(state)])
     client = None
     log = steam / "logs/bootstrap_log.txt"
     try:
@@ -108,7 +107,7 @@ def main() -> int:
                 return client.returncode
             display("Steam updated • starting Big Picture")
             if screen.poll() is not None:
-                screen = subprocess.Popen(["python3", "-B", "/usr/local/libexec/kernarium-screen.py", "--status", str(state)])
+                screen = subprocess.Popen(["/usr/local/libexec/kernarium-screen", "--status", str(state)])
         display("Steam repeatedly requested a restart. Please restart the guest.")
         return 1
     finally:

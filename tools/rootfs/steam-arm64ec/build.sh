@@ -129,6 +129,11 @@ sudo -n systemctl --root="$root" mask getty@tty1.service
 sdk=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdk"])' "$inputs/inputs.json")
 "$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
 	-v "$repository:$repository:ro" -v "$work:$work" "$sdk" \
+	sh -eu -c 'cd "$1/splash"; cmake --preset steam-sdk -B "$2/splash-build"; cmake --build "$2/splash-build"' \
+	sh "$here" "$work"
+sudo -n install -m 0755 "$work/splash-build/kernarium-screen" "$root/usr/local/libexec/kernarium-screen"
+"$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
+	-v "$repository:$repository:ro" -v "$work:$work" "$sdk" \
 	x86_64-w64-mingw32-gcc -O2 "$repository/tools/rootfs/wine-arm64ec/smoke/x86_64_exit_42.S" -o "$work/x86_64-exit-42.exe"
 "$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
 	-v "$repository:$repository:ro" -v "$work:$work" "$sdk" \

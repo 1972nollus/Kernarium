@@ -89,7 +89,7 @@ the existing development appliances. The EROFS root remains read-only. A separat
 partition, mounted at `/userdata`; its `home`, `var`, and `root` directories
 are bind-mounted at `/home`, `/var`, and `/root`. `/run` and `/tmp` are tmpfs.
 There is no root OverlayFS. Package metadata and the source-built Proton tool
-remain image-owned, while Steam updates, downloaded runtimes, games, settings,
+remain image-owned, while Steam client updates, downloaded ARM64 runtimes, games, settings,
 saves, and prefixes live on the data partition.
 Proton's generated default prefixes and distribution lock also live in home,
 keyed by its build identity so a replacement Proton build gets fresh templates.
@@ -104,10 +104,25 @@ Replacing the rootfs therefore retains the client installation and user data.
 This follows Steam Deck's separation of an immutable system and persistent
 home; it does not implement the Deck's hardware-specific A/B boot layout.
 
+Before starting Steam, the image selects its bundled `proton-uml-arm64ec`
+compatibility tool globally and for existing game mappings. Steam's ARM64
+runtime dependency remains managed by Steam. Queued downloadable Proton and
+FEX tool manifests move into `steamapps/kernarium-disabled-tools`; their exact
+metadata and downloaded files are retained. The original client configuration
+is backed up before its compatibility entries change. Account settings and
+game files are preserved. A second invocation leaves a running client's
+configuration alone.
+
 The Kernarium splash appears on the boot framebuffer while storage is checked
 and the seed is copied. Gamescope then displays a matching installation screen
 with actual Steam download bytes and extraction/verification stages. Steam's
-completed updater restart is handled automatically. The screen yields when
+completed updater restart is handled automatically. Its C++20 renderer is built with CMake/Ninja in the verified Steam SDK.
+OpenGL ES draws the background, cached glyph textures, and animated bar on the
+GPU: GBM/EGL page flips provide the boot scanout and EGL swaps present inside
+Gamescope. Glyph rasterization happens once at startup; progress frames do not
+rasterize text or copy a CPU framebuffer. Busy animation is paced at 30 frames per
+second; unchanged determinate progress does not redraw. Status is read at 5 Hz.
+The renderer rejects software rendering. The screen yields when
 the Big Picture window becomes visible. Console diagnostics remain available
 on `ttyS0`; the graphical screen has no getty or distribution branding.
 
@@ -153,7 +168,7 @@ python3 tools/rootfs/steam-arm64ec/boot.py \
   -- --video --gpu-display=native
 ```
 
-The launcher needs Python 3 and `sgdisk`. It creates a sparse GPT disk only
+The launcher explicitly selects the `gadgets` execution engine and needs Python 3 and `sgdisk`. It creates a sparse GPT disk only
 when `--userdata` is absent on disk and holds an exclusive launch lock. The
 size option applies only at creation; it never resizes or resets existing
 data. Reuse the same `--userdata` path when selecting a replacement EROFS.
@@ -174,4 +189,5 @@ including the username/password and QR-code panels. The launcher uses
 not provide. The Virtio video service supplies the V4L2 decoder and the image's
 udev rule provides `/dev/video-dec0`. A separate V4L2 probe verifies hardware
 decoding and output pixels; the UI observation alone does not establish that
-CEF used hardware decoding. Account login and game launch remain unqualified.
+CEF used hardware decoding. Account login and a complete game download have been verified. Game launch
+remains unqualified.
