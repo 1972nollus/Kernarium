@@ -15,12 +15,9 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
-#include <deque>
-#include <mutex>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <sys/mman.h>
 #include <sys/event.h>
 #include <sys/socket.h>
