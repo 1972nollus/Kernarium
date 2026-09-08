@@ -4539,11 +4539,11 @@ enum class VectorFloatKind {
  * sign, zero and signed-order conditions transfer unchanged; the conditions
  * that read CF do not, because a cleared ARM C reads as "borrowed".
  * The narrow widths arrive zero-extended into a host register, so their host
- * flags describe a 32-bit operation rather than the guest's, and only 32 and
- * 64 qualify.
+ * flags describe a 32-bit operation; only the zero condition transfers.
  */
 enum class HostFlags : std::uint8_t {
 	none,
+	zero_only,
 	subtract,
 	logical,
 };
@@ -4553,16 +4553,15 @@ enum class HostFlags : std::uint8_t {
 	if (instruction.destination.kind == OperandKind::memory ||
 		instruction.source.kind == OperandKind::memory)
 		return HostFlags::none;
-	if (instruction.destination.width != OperandWidth::dword &&
-		instruction.destination.width != OperandWidth::qword)
-		return HostFlags::none;
+	const bool narrow = instruction.destination.width == OperandWidth::byte ||
+		instruction.destination.width == OperandWidth::word;
 	switch (instruction.operation) {
 	case Operation::subtract:
 	case Operation::compare:
-		return HostFlags::subtract;
+		return narrow ? HostFlags::zero_only : HostFlags::subtract;
 	case Operation::bit_and:
 	case Operation::test:
-		return HostFlags::logical;
+		return narrow ? HostFlags::zero_only : HostFlags::logical;
 	default:
 		return HostFlags::none;
 	}
@@ -4573,6 +4572,8 @@ enum class HostFlags : std::uint8_t {
 {
 	if (flags == HostFlags::none)
 		return false;
+	if (flags == HostFlags::zero_only)
+		return condition == Condition::equal || condition == Condition::not_equal;
 	switch (condition) {
 	/* Parity has no representation in NZCV. */
 	case Condition::parity:

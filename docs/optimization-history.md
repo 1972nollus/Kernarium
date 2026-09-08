@@ -390,6 +390,12 @@ another 53 percent of them changed nothing. What is left of stream re-entry is
 the exits that miss the program cache or re-arm a cooled link, so further work
 belongs in translation and validation rather than in the count of returns.
 
+## x86 equality conditions in Wine
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Avoid full flag evaluation for equality-only consumers | Accepted. Startup profiling exposed full flag materialization in narrow compare and conditional-move loops. Register CMOVE/CMOVNE now read the deferred zero result while retaining the other pending flags; adjacent 8- and 16-bit CMP/SUB/TEST/AND consumers can reuse the host zero flag. Differential condition tests preserve the full later flag result. Removing this work allowed a timed game startup to proceed, but launches remained close to its fixed deadline, so this is not a reliability or general application speedup claim. |
+
 ## Graphics backend investigations
 
 | Attempt | Disposition and lesson |

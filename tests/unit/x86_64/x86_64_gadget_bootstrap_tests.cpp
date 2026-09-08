@@ -1385,6 +1385,71 @@ read_test_sequences(void *context) noexcept
 			"JNE ignored a clear architectural zero flag");
 }
 
+[[nodiscard]] bool zero_conditional_moves_preserve_pending_flags()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
+		for (const unsigned width : {16U, 32U, 64U}) {
+			if (mode == ExecutionMode::compat32 && width == 64)
+				continue;
+			for (const bool not_equal : {false, true}) {
+				const auto opcode = static_cast<std::uint8_t>(not_equal ? 0x45 : 0x44);
+				if (width == 16)
+					memory.load(0, {0x66, 0x0f, opcode, 0xc3});
+				else if (width == 64)
+					memory.load(0, {0x48, 0x0f, opcode, 0xc3});
+				else
+					memory.load(0, {0x0f, opcode, 0xc3});
+				const auto block = gadgets::build(memory, 0, mode, 1);
+				if (!expect(block.status == gadgets::BuildStatus::built,
+					"zero conditional move did not build"))
+					return false;
+				for (unsigned state = 0; state != 6; ++state) {
+					CpuState cpu{};
+					cpu.execution_mode = mode;
+					cpu.gpr(Register::rax) = 0x76543210;
+					cpu.gpr(Register::rbx) = 0xfedcba987654abcdULL;
+					cpu.rflags |= rflags_carry | rflags_overflow;
+					if (state & 1U)
+						cpu.rflags |= rflags_zero;
+					if (state >= 2) {
+						cpu.deferred_flags = {0, (state & 1U),
+							(state & 1U) ? 0xffffU : 0U,
+							DeferredFlagOperation::subtract, 2};
+					}
+					if (state >= 4) {
+						cpu.deferred_flags.override_mask = rflags_zero;
+						cpu.deferred_flags.override_value =
+							(state & 1U) ? rflags_zero : 0;
+					}
+					auto reference = cpu;
+					materialize_flags(reference);
+					const bool take = ((reference.rflags & rflags_zero) != 0) != not_equal;
+					const auto mask = width == 64 ? ~std::uint64_t{} :
+						(std::uint64_t{1} << width) - 1;
+					const auto expected = take ?
+						(cpu.gpr(Register::rax) & ~mask) |
+						(cpu.gpr(Register::rbx) & mask) : cpu.gpr(Register::rax);
+					const auto pending = cpu.deferred_flags;
+					const auto result = gadgets::execute(block.program, cpu, memory, 1);
+					if (!expect(result.retired_instructions == 1 &&
+						cpu.gpr(Register::rax) == expected &&
+						cpu.deferred_flags.operation == pending.operation &&
+						cpu.deferred_flags.override_mask == pending.override_mask,
+						"conditional move changed pending flags or selected the wrong operand"))
+						return false;
+					materialize_flags(cpu);
+					if (!expect(cpu.rflags == reference.rflags,
+						"conditional move lost flags needed by a later consumer"))
+						return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 /* glibc's i386 futex wait rejects a positive syscall result with this exact
  * TEST EAX,EAX; JG sequence.  The kernel bridge stores syscall returns in the
  * 64-bit backing slot, so retain upper garbage here and prove that compat32
@@ -2602,9 +2667,8 @@ read_test_sequences(void *context) noexcept
 	}
 	return true;
 }
-/* A 32- or 64-bit CMP, SUB, TEST or AND leaves host flags that describe the
- * x86 flags it defined, and the builder lets the very next condition read them
- * directly. The slot after that reads the same flags through the deferred
+/* CMP, SUB, TEST and AND leave compatible host flags for the next condition:
+ * only zero at narrow widths, and the supported NZCV conditions at 32/64 bits. The slot after that reads the same flags through the deferred
  * record instead, so the two bytes a pair of identical SETcc write must agree
  * for every producer, width, operand pair and condition. That equality is the
  * whole correctness claim of the fused path, and it needs no reference model:
@@ -2621,7 +2685,7 @@ read_test_sequences(void *context) noexcept
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
 	};
 	for (const auto &producer : producers) {
-		for (const unsigned width : {32U, 64U}) {
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				for (const auto left : values) {
 					for (const auto right : values) {
@@ -2629,9 +2693,11 @@ read_test_sequences(void *context) noexcept
 						const auto push = [&code](unsigned byte) {
 							code.push_back(static_cast<std::byte>(byte));
 						};
+						if (width == 16U)
+							push(0x66);
 						if (width == 64U)
 							push(0x48);
-						push(producer);
+						push(width == 8U ? producer - 1U : producer);
 						push(0xd8);
 						/* SYSCALL writes its return address to RCX and
 						 * the flags to R11, so the two results live in RDX
@@ -2698,8 +2764,9 @@ read_test_sequences(void *context) noexcept
 					condition >= 6U && condition <= 7U;
 				const bool parity = condition >= 10U && condition <= 11U;
 				const bool wide = width >= 32U;
-				const bool expected_fusion = wide && !parity &&
-					!(logical && (carry_condition || ordered_carry));
+				const bool expected_fusion = wide ? !parity &&
+					!(logical && (carry_condition || ordered_carry)) :
+					condition == 4U || condition == 5U;
 				std::vector<std::byte> fused;
 				std::vector<std::byte> plain;
 				const auto emit = [&](std::vector<std::byte> &code,
@@ -3533,6 +3600,7 @@ int main()
 		carry_branches_match_the_reference() &&
 		execute_absolute_memory_test_branch() &&
 		execute_lazy_zero_branches() &&
+		zero_conditional_moves_preserve_pending_flags() &&
 		execute_compat32_test_greater_after_syscall() &&
 		execute_compat32_futex_result_validator() &&
 		shifts_overlay_lazy_arithmetic_flags() &&

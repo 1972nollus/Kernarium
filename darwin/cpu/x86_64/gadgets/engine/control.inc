@@ -133,11 +133,19 @@ gadget set_\condition\()_m
 
 .macro conditional_move condition, width, load, store, load_register, store_register
 gadget cmov_\condition\()_\width\()_rr
+	.ifc \condition,e
+	evaluate_deferred_zero \condition
+	.else
+	.ifc \condition,ne
+	evaluate_deferred_zero \condition
+	.else
 	bl uml_x86_64_gadget_materialize_flags
+	evaluate_condition \condition
+	.endif
+	.endif
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x13, x8, #16, #16
-	evaluate_condition \condition
 	cbz w11, .Lx86_cmov_done\@
 	\load \load_register\()12, [_cpu, x13]
 	\store \store_register\()12, [_cpu, x9]

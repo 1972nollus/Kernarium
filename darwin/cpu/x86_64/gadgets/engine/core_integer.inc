@@ -52,18 +52,19 @@ scalar_arithmetic_rr \operation\()_\width\()_rr, \instruction, \flag_operation, 
 scalar_arithmetic_ri \operation\()_\width\()_ri, \instruction, \flag_operation, \writes, \load, \store, \host_register, \store_register, \width
 .endm
 
-/* At 8 and 16 bits the operands arrive zero-extended, so a host subtract
- * of them carries the flags of a 32-bit operation rather than the guest's.
- * Only 32 and 64 use the flag-setting host form, and only those two widths
- * are fusable producers.
+/* Narrow operands are zero-extended, so subtraction and logical operations
+ * preserve the guest zero condition in NZCV. Other narrow conditions still
+ * require the deferred record because host sign and overflow use bit 31.
  */
 .macro arithmetic_family operation, instruction, flag_operation, writes, host_flags=0
-arithmetic_width \operation, \instruction, \flag_operation, \writes, 8, ldrb, strb, w, w
-arithmetic_width \operation, \instruction, \flag_operation, \writes, 16, ldrh, strh, w, w
 .if \host_flags
+arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 8, ldrb, strb, w, w
+arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 16, ldrh, strh, w, w
 arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 32, ldr, str, w, x
 arithmetic_width \operation, \instruction\()s, \flag_operation, \writes, 64, ldr, str, x, x
 .else
+arithmetic_width \operation, \instruction, \flag_operation, \writes, 8, ldrb, strb, w, w
+arithmetic_width \operation, \instruction, \flag_operation, \writes, 16, ldrh, strh, w, w
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 32, ldr, str, w, x
 arithmetic_width \operation, \instruction, \flag_operation, \writes, 64, ldr, str, x, x
 .endif
