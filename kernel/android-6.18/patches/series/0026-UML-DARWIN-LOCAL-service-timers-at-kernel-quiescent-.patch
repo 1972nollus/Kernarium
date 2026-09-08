@@ -1,7 +1,7 @@
-From 5893161e6f2644eb9c176a4e5b86a5e03b98e54f Mon Sep 17 00:00:00 2001
+From 0c11bcd9e0c3903c382d68c9aa2fa9c98aa8bdd7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 07:02:10 +0000
-Subject: [PATCH 26/38] UML-DARWIN-LOCAL: service timers at kernel quiescent
+Subject: [PATCH 26/39] UML-DARWIN-LOCAL: service timers at kernel quiescent
  boundaries
 
 Change-Id: I6bc7c0c28b1a469acf97c28621804cb2e7f0ecab
@@ -27,10 +27,10 @@ index b9d97a673570b97db1170f6a24a4d3063b0e276d..960950e4030b167de0f480ac09b5d74b
  
  extern void uml_pm_wake(void);
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c..ec0850650af93f9e97380b05244aceb81dd19e9a 100644
+index dd5c811dc1ae5977285b778f49ae8599f98c53ff..038516878f1fac87aa32cd83e78f8560eb5a69c6 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -179,7 +179,7 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -196,7 +196,7 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #ifdef UML_HOST_DARWIN
  static void darwin_uaccess_checkpoint(bool may_resched)
  {
@@ -39,7 +39,7 @@ index 5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c..ec0850650af93f9e97380b05244aceb8
  		return;
  
  	/*
-@@ -187,9 +187,15 @@ static void darwin_uaccess_checkpoint(bool may_resched)
+@@ -204,9 +204,15 @@ static void darwin_uaccess_checkpoint(bool may_resched)
  	 * sibling changes the same mm.  Native preemption normally bounds that
  	 * kernel loop.  Darwin's cooperative PREEMPT_NONE carriers instead need
  	 * an explicit safe point after all mmap and page-table locks have gone.

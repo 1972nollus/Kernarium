@@ -57,6 +57,29 @@ Physical iOS wires the complete anonymous RAM root before guest start. macOS
 and Simulator retain demand allocation. Normal image descriptors remain
 file-backed.
 
+A pagefault-disabled uaccess never reports mmap-lock contention as a fault.
+`mmap_read_trylock()` refuses to barge past a queued writer while the faulting
+retry of the same task still steals the lock, so answering the try with a fault
+made `futex_wait_setup()` alternate a failing atomic read with a succeeding
+faulting one and never yield the CPU that writer needs. The contended atomic
+walk runs under RCU, which `MMU_GATHER_RCU_TABLE_FREE` keeps safe, and the
+page-table lock still samples the entry. This is the same source change the
+mainline line carries, and it is independent of the cooperative-checkpoint safe
+point this line already has.
+
+A synchronous host fault is interpreted only by its owner. Signal dispositions
+are process-wide, so the emulator's device and renderer threads share UML's
+`SIGSEGV` and `SIGBUS` handlers even though they own no Linux task; such a fault
+now leaves the guest path, is reported with its real host thread and literal
+addresses, and terminates under the default host disposition. This too is the
+same source change the mainline line carries.
+
+The standardized vhost-user shared-memory-region transport the mainline line
+adds for host-visible Virtio-GPU blobs has no Android product: this line does
+not negotiate `VHOST_USER_PROTOCOL_F_SHMEM_MAP` or reserve the guarded
+guest-physical aperture, so that topic and its mapping-capacity policy stay
+outside the ACK series.
+
 ## Build and artifact boundary
 
 The standalone ACK replay and build are owned by

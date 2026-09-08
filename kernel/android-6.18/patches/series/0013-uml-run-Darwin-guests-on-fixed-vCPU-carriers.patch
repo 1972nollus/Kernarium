@@ -1,7 +1,7 @@
-From a599fba660fe775a92b168e905e82fd33c3d5d00 Mon Sep 17 00:00:00 2001
+From eefb9a91d9e27c7d51270265e5c91d1a1378e2ed Mon Sep 17 00:00:00 2001
 From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
 Date: Thu, 13 Aug 2026 16:08:25 +0900
-Subject: [PATCH 13/38] uml: run Darwin guests on fixed vCPU carriers
+Subject: [PATCH 13/39] uml: run Darwin guests on fixed vCPU carriers
 
 iOS limits an application to a small fixed host-thread population. The Darwin scheduler currently creates one detached pthread for every Linux task, so a normal Chromium workload reaches pthread_create failure long before guest resources are exhausted.
 

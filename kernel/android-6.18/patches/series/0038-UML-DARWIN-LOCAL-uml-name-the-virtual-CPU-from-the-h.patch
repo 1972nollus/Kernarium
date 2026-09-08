@@ -1,8 +1,8 @@
-From 35d5f9a6e11dc9f0455870c80b69d28b5abda34e Mon Sep 17 00:00:00 2001
+From 0461949638b55b8d767ff5fd7a15dee7d89b7c81 Mon Sep 17 00:00:00 2001
 From: linux-um-darwin kernel patch maintainer
  <noreply@linux-um-darwin.invalid>
 Date: Thu, 3 Sep 2026 11:52:15 +0000
-Subject: [PATCH 38/38] UML-DARWIN-LOCAL: uml: name the virtual CPU from the
+Subject: [PATCH 38/39] UML-DARWIN-LOCAL: uml: name the virtual CPU from the
  host emulator
 
 /proc/cpuinfo reported "UML" as the model name on every configuration.  That
