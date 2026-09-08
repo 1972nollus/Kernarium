@@ -4,7 +4,9 @@ uml_add_tooling_test(
     NAME dependency-source-preparer
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_prepare.sh
     LABELS dependency
-    TIMEOUT 30)
+    # The paired Vulkan coverage prepares two further fixture repositories and
+    # replays their series through several rejection cases.
+    TIMEOUT 180)
 
 uml_add_tooling_test(
     NAME dependency-patch-regenerator
