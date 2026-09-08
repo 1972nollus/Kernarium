@@ -117,3 +117,16 @@ add_custom_target(gadget-ceiling-binaries
     DEPENDS uml-gadget-ceiling-bench uml-gadget-ceiling-native)
 
 add_subdirectory(scalar_ceiling EXCLUDE_FROM_ALL)
+
+# Manual native GPU benchmark: not a CTest or a suite-binary dependency.
+if(TARGET UML::ThirdPartyKosmicKrisp)
+    add_executable(uml-kosmickrisp-rgb32-texel-bench EXCLUDE_FROM_ALL
+        kosmickrisp_rgb32_texel_bench.cpp)
+    target_link_libraries(uml-kosmickrisp-rgb32-texel-bench PRIVATE
+        UML::ThirdPartyKosmicKrisp)
+    target_include_directories(uml-kosmickrisp-rgb32-texel-bench PRIVATE
+        "${PROJECT_SOURCE_DIR}/tests/unit/gpu")
+    target_compile_features(uml-kosmickrisp-rgb32-texel-bench PRIVATE cxx_std_20)
+    target_compile_options(uml-kosmickrisp-rgb32-texel-bench PRIVATE
+        -Wall -Wextra -Werror)
+endif()
