@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_library(uml_console_device STATIC
+    connected_socket_channel.cpp
     in_process_service.cpp
     unix_socket_channel.cpp
     virtio_console_device.cpp)

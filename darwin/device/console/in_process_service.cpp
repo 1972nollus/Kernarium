@@ -2,6 +2,7 @@
 
 #include "in_process_service.hpp"
 
+#include "connected_socket_channel.hpp"
 #include "unique_descriptor.hpp"
 #include "unix_socket_channel.hpp"
 #include "vhost_user_server.hpp"
@@ -115,6 +116,23 @@ public:
         }
     }
 
+    Implementation(int connectedDescriptor, std::string portName)
+        : portName_(std::move(portName))
+        , descriptors_(makeSocketPair())
+        , stopDescriptor_(duplicateDescriptor(descriptors_[0].get()))
+        , connectedDescriptor_(duplicateDescriptor(connectedDescriptor))
+        , connectionName_("fd=" + std::to_string(descriptors_[1].get()))
+        , thread_([this] { run(); })
+    {
+        std::unique_lock lock(stateMutex_);
+        stateChanged_.wait(lock, [this] { return ready_ || failure_; });
+        if (failure_) {
+            lock.unlock();
+            thread_.join();
+            std::rethrow_exception(failure_);
+        }
+    }
+
     ~Implementation() { stop(); }
 
     std::string takeConnectionName()
@@ -142,8 +160,13 @@ private:
     {
         (void)::pthread_setname_np("uml-console");
         try {
-            auto channel =
-                std::make_unique<UnixSocketChannel>(socketPath_);
+            std::unique_ptr<ConsoleChannel> channel;
+            if (connectedDescriptor_.get() >= 0) {
+                channel = std::make_unique<ConnectedSocketChannel>(
+                    connectedDescriptor_.release());
+            } else {
+                channel = std::make_unique<UnixSocketChannel>(socketPath_);
+            }
             auto device = portName_.empty() ?
                 std::make_unique<VirtioConsoleDevice>(std::move(channel)) :
                 std::make_unique<VirtioConsoleDevice>(
@@ -170,6 +193,7 @@ private:
     std::string portName_;
     DescriptorPair descriptors_;
     uml::gpu::UniqueDescriptor stopDescriptor_;
+    uml::gpu::UniqueDescriptor connectedDescriptor_;
     std::string connectionName_;
     std::atomic_bool stopRequested_ {};
     std::mutex stateMutex_;
@@ -186,6 +210,15 @@ InProcessConsoleService::InProcessConsoleService(
     ScopedGuestTimerBlock timerBlock;
     implementation_ = std::make_unique<Implementation>(
         std::move(socketPath), std::move(portName));
+}
+
+InProcessConsoleService::InProcessConsoleService(
+    int connectedDescriptor,
+    std::string portName)
+{
+    ScopedGuestTimerBlock timerBlock;
+    implementation_ = std::make_unique<Implementation>(
+        connectedDescriptor, std::move(portName));
 }
 
 InProcessConsoleService::~InProcessConsoleService() = default;

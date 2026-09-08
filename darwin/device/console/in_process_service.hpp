@@ -12,6 +12,8 @@ public:
     explicit InProcessConsoleService(
         std::filesystem::path socketPath,
         std::string portName = {});
+    // Duplicates an already-connected SOCK_STREAM descriptor.
+    InProcessConsoleService(int connectedDescriptor, std::string portName);
     ~InProcessConsoleService();
 
     InProcessConsoleService(const InProcessConsoleService&) = delete;

@@ -111,23 +111,33 @@ public:
             address.sun_path,
             socketPath_.c_str(),
             socketPath_.string().size() + 1U);
-        if (::bind(
-                listener_.get(),
-                reinterpret_cast<const sockaddr*>(&address),
-                sizeof(address)) != 0) {
+        /*
+         * The harness accepts the socket only when it first observes mode
+         * 0600, so the file must never exist with a wider mode.  Create it
+         * under a private umask instead of narrowing it after the fact, and
+         * narrow it again before listen() makes it connectable.
+         */
+        const mode_t previousMask = ::umask(0177);
+        const int bound = ::bind(
+            listener_.get(),
+            reinterpret_cast<const sockaddr*>(&address),
+            sizeof(address));
+        const int bindError = errno;
+        ::umask(previousMask);
+        if (bound != 0) {
             throw std::runtime_error(
                 "Virtio console bind failed: " +
-                std::string(std::strerror(errno)));
+                std::string(std::strerror(bindError)));
         }
         cleanup_.adopt();
-        if (::listen(listener_.get(), 1) != 0) {
-            throw std::runtime_error(
-                "Virtio console listen failed: " +
-                std::string(std::strerror(errno)));
-        }
         if (::chmod(socketPath_.c_str(), 0600) != 0) {
             throw std::runtime_error(
                 "Virtio console socket permission update failed: " +
+                std::string(std::strerror(errno)));
+        }
+        if (::listen(listener_.get(), 1) != 0) {
+            throw std::runtime_error(
+                "Virtio console listen failed: " +
                 std::string(std::strerror(errno)));
         }
         std::fprintf(

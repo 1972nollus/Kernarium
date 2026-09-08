@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "channel.hpp"
+#include "connected_socket_channel.hpp"
 #include "in_process_service.hpp"
 #include "protocol.hpp"
 #include "unique_descriptor.hpp"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fcntl.h>
 #include <memory>
 #include <poll.h>
 #include <span>
@@ -20,6 +22,8 @@
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <atomic>
+#include <thread>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -385,6 +389,48 @@ void unixSocketChannelSupportsTailInputAndReconnect()
     require(::lstat(path.c_str(), &removed) != 0 && errno == ENOENT);
 }
 
+/*
+ * The harness accepts the artifact socket only when it first observes mode
+ * 0600.  Creating the file under the process umask and narrowing it after
+ * listen() exposed a wider mode for the bind-to-chmod window, which aborted
+ * guest launches on a loaded host.
+ */
+void unixSocketChannelNeverExposesAWiderModeWhileListening()
+{
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "console.sock";
+    const mode_t previous = ::umask(022);
+    ::umask(previous);
+
+    std::atomic<bool> stop {false};
+    std::atomic<int> widerObservations {0};
+    std::atomic<int> observations {0};
+    std::thread watcher([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            struct stat status {};
+            if (::lstat(path.c_str(), &status) == 0) {
+                observations.fetch_add(1, std::memory_order_relaxed);
+                if ((status.st_mode & 0777) != 0600) {
+                    widerObservations.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    });
+    {
+        uml::console::UnixSocketChannel channel(path);
+        struct stat status {};
+        require(::lstat(path.c_str(), &status) == 0);
+        require((status.st_mode & 0777) == 0600);
+        stop.store(true, std::memory_order_relaxed);
+        watcher.join();
+    }
+    require(observations.load() > 0);
+    require(widerObservations.load() == 0);
+    const mode_t restored = ::umask(previous);
+    ::umask(previous);
+    require(restored == previous);
+}
+
 void unixSocketChannelRejectsAClientThatClosedBeforeAccept()
 {
     TemporaryDirectory temporary;
@@ -412,6 +458,32 @@ void unixSocketChannelRejectsAClientThatClosedBeforeAccept()
     require(::recv(client.get(), received.data(), received.size(), 0) ==
             static_cast<ssize_t>(reply.size()));
     require(std::equal(reply.begin(), reply.end(), received.begin()));
+}
+
+void connectedSocketChannelIsNonblocking()
+{
+    std::array<int, 2> descriptors {-1, -1};
+    require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) == 0);
+    uml::gpu::UniqueDescriptor peer {descriptors[1]};
+    uml::console::ConnectedSocketChannel channel(descriptors[0]);
+
+    const int flags = ::fcntl(channel.eventDescriptor(), F_GETFL);
+    require(flags >= 0 && (flags & O_NONBLOCK) != 0);
+    require(channel.read(16).empty());
+
+    constexpr std::array<std::uint8_t, 5> input {'i', 'n', 'p', 'u', 't'};
+    require(::send(peer.get(), input.data(), input.size(), 0) ==
+            static_cast<ssize_t>(input.size()));
+    require(channel.read(input.size()) ==
+            std::vector<std::uint8_t>(input.begin(), input.end()));
+
+    constexpr std::array<std::uint8_t, 6> output {'o', 'u', 't', 'p', 'u', 't'};
+    channel.write(output);
+    waitReadable(peer.get());
+    std::array<std::uint8_t, 16> received {};
+    require(::recv(peer.get(), received.data(), received.size(), 0) ==
+            static_cast<ssize_t>(output.size()));
+    require(std::equal(output.begin(), output.end(), received.begin()));
 }
 
 void inProcessServicePublishesAndRemovesTheExternalSocket()
@@ -448,7 +520,9 @@ int main()
     deviceImplementsTheTwoQueueConsoleContract();
     deviceImplementsTheNamedSerialControlHandshake();
     unixSocketChannelSupportsTailInputAndReconnect();
+    unixSocketChannelNeverExposesAWiderModeWhileListening();
     unixSocketChannelRejectsAClientThatClosedBeforeAccept();
+    connectedSocketChannelIsNonblocking();
     inProcessServicePublishesAndRemovesTheExternalSocket();
     return EXIT_SUCCESS;
 }
