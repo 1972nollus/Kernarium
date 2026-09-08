@@ -89,31 +89,53 @@ set(_kernarium_cts_generator
     "${PROJECT_SOURCE_DIR}/Kernarium/scripts/generate-cts-campaign-header.py")
 set(_kernarium_cts_runner
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_vk_gl_cts.py")
+set(_kernarium_vulkan_cts_runner
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_vk_cts.py")
 set(_kernarium_cts_identity
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_identity.json")
+set(_kernarium_vulkan_cts_identity
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_identity.json")
 set(_kernarium_cts_campaigns
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_campaigns.json")
 set(_kernarium_cts_matrix
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_matrix.json")
 set(_kernarium_cts_derivative_receipt
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_derivative_rootfs.json")
+set(_kernarium_vulkan_cts_receipt
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_receipt.json")
+set(_kernarium_vulkan_cts_mandatory
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_mandatory_1_4_6_2.txt")
 set(_kernarium_cts_header
     "${CMAKE_CURRENT_BINARY_DIR}/KernariumCtsCampaigns.hpp")
+set(_kernarium_vulkan_cts_options)
+if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+    list(APPEND _kernarium_vulkan_cts_options
+        --experimental-venus
+        --vulkan-receipt "${_kernarium_vulkan_cts_receipt}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${_kernarium_vulkan_cts_receipt}"
+        "${_kernarium_vulkan_cts_mandatory}")
+endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_kernarium_cts_generator}"
     "${_kernarium_cts_runner}"
+    "${_kernarium_vulkan_cts_runner}"
     "${_kernarium_cts_identity}"
+    "${_kernarium_vulkan_cts_identity}"
     "${_kernarium_cts_campaigns}"
     "${_kernarium_cts_matrix}"
     "${_kernarium_cts_derivative_receipt}")
 execute_process(
     COMMAND "${_kernarium_python3}" -B "${_kernarium_cts_generator}"
         --runner "${_kernarium_cts_runner}"
+        --vulkan-runner "${_kernarium_vulkan_cts_runner}"
         --identity "${_kernarium_cts_identity}"
+        --vulkan-identity "${_kernarium_vulkan_cts_identity}"
         --campaigns "${_kernarium_cts_campaigns}"
         --matrix "${_kernarium_cts_matrix}"
         --derivative-receipt "${_kernarium_cts_derivative_receipt}"
         --page-size "${_kernarium_guest_page_size}"
+        ${_kernarium_vulkan_cts_options}
         --output "${_kernarium_cts_header}"
     RESULT_VARIABLE _kernarium_cts_result
     OUTPUT_VARIABLE _kernarium_cts_output
@@ -180,6 +202,7 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::AudioDevice
     UML::BatteryDevice
     UML::GpuDevice
+    UML::ConsoleDevice
     UML::VirtioInput
     UML::NetworkProvider
     UML::JitProfileConfiguration

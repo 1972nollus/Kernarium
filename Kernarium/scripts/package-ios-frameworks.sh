@@ -6,7 +6,18 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-OUTPUT=${KERNARIUM_XCFRAMEWORK_OUTPUT:-"$ROOT_DIR/.build/kernarium-xcframeworks"}
+PRODUCT=${UML_APPLE_GPU_PRODUCT:-apple-gpu}
+case "$PRODUCT" in
+apple-gpu)
+	DEFAULT_OUTPUT="$ROOT_DIR/.build/kernarium-xcframeworks"
+	;;
+*)
+	printf '%s\n' \
+		"Kernarium/scripts/package-ios-frameworks.sh: unsupported Apple GPU product: $PRODUCT" >&2
+	exit 1
+	;;
+esac
+OUTPUT=${KERNARIUM_XCFRAMEWORK_OUTPUT:-"$DEFAULT_OUTPUT"}
 
 fail()
 {
@@ -53,8 +64,8 @@ SIMULATOR_RUNTIME_WINE="$ROOT_DIR/.build/wine-arm64ec-runtime-ios-simulator-4k/K
 DEVICE_RUNTIME_WINE="$ROOT_DIR/.build/wine-arm64ec-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_WINE_4K.framework"
 SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
-SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64/Frameworks"
-DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
+SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-simulator-arm64/Frameworks"
+DEVICE_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 
@@ -62,9 +73,9 @@ ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 # contract, provenance, binary-platform, and provider-negative policy before
 # consuming either platform prefix.
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
-	--platform ios-simulator --verify-only
+	--product "$PRODUCT" --platform ios-simulator --verify-only
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
-	--platform ios --verify-only
+	--product "$PRODUCT" --platform ios --verify-only
 "$ROOT_DIR/dependencies/build-ios-x86.sh" \
 	--platform ios-simulator --verify-only
 "$ROOT_DIR/dependencies/build-ios-x86.sh" \

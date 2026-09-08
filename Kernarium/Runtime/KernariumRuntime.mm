@@ -8,6 +8,8 @@
 #include "audio/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
+#include "console/in_process_service.hpp"
+#include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -110,6 +112,7 @@ uml::input::virtio::InProcessInputService* activeKeyboard;
 class ConsoleBridge;
 ConsoleBridge* activeConsoleBridge;
 std::mutex consoleOutputCallbackMutex;
+std::mutex consoleStdoutMutex;
 kernarium_runtime_console_output_callback consoleOutputCallback;
 void* consoleOutputContext;
 
@@ -619,20 +622,23 @@ public:
                     if (received > 0) {
                         publishConsoleOutput(
                             buffer, static_cast<std::size_t>(received));
-                        std::string_view output(
-                            buffer, static_cast<std::size_t>(received));
-                        while (!output.empty()) {
-                            const ssize_t written = write(
-                                STDOUT_FILENO,
-                                output.data(),
-                                output.size());
-                            if (written > 0) {
-                                output.remove_prefix(
-                                    static_cast<std::size_t>(written));
-                            } else if (written < 0 && errno == EINTR) {
-                                continue;
-                            } else {
-                                break;
+                        {
+                            std::lock_guard outputLock(consoleStdoutMutex);
+                            std::string_view output(
+                                buffer, static_cast<std::size_t>(received));
+                            while (!output.empty()) {
+                                const ssize_t written = write(
+                                    STDOUT_FILENO,
+                                    output.data(),
+                                    output.size());
+                                if (written > 0) {
+                                    output.remove_prefix(
+                                        static_cast<std::size_t>(written));
+                                } else if (written < 0 && errno == EINTR) {
+                                    continue;
+                                } else {
+                                    break;
+                                }
                             }
                         }
                         if (!bootstrapDelivered) {
@@ -780,6 +786,233 @@ private:
     int guest_ {-1};
     int host_ {-1};
     std::mutex hostWriteMutex_;
+    std::thread relay_;
+};
+
+class CtsArtifactBridge final {
+public:
+    CtsArtifactBridge()
+    {
+        int descriptors[2] {-1, -1};
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
+            throw std::runtime_error(
+                "CTS artifact socketpair failed: " +
+                std::string(std::strerror(errno)));
+        }
+        try {
+            service_ = std::make_unique<
+                uml::console::InProcessConsoleService>(
+                descriptors[0],
+                std::string {
+                    uml::console::protocol::hostSerialPortName});
+            ::close(descriptors[0]);
+            descriptors[0] = -1;
+            host_ = descriptors[1];
+            descriptors[1] = -1;
+            relay_ = std::thread([this] { relay(); });
+        } catch (...) {
+            if (descriptors[0] >= 0)
+                ::close(descriptors[0]);
+            if (descriptors[1] >= 0)
+                ::close(descriptors[1]);
+            if (host_ >= 0) {
+                ::close(host_);
+                host_ = -1;
+            }
+            if (service_)
+                service_->stop();
+            throw;
+        }
+    }
+
+    ~CtsArtifactBridge()
+    {
+        if (service_)
+            service_->stop();
+        if (host_ >= 0)
+            (void)::shutdown(host_, SHUT_RDWR);
+        if (relay_.joinable())
+            relay_.join();
+        if (host_ >= 0)
+            ::close(host_);
+    }
+
+    CtsArtifactBridge(const CtsArtifactBridge&) = delete;
+    CtsArtifactBridge& operator=(const CtsArtifactBridge&) = delete;
+
+    [[nodiscard]] std::string takeConnectionName()
+    {
+        return service_->takeConnectionName();
+    }
+
+private:
+    static constexpr std::size_t maximumFrameBytes = 2048U;
+
+    [[nodiscard]] static bool decimal(std::string_view text) noexcept
+    {
+        return !text.empty() && std::ranges::all_of(
+            text, [](char character) {
+                return character >= '0' && character <= '9';
+            });
+    }
+
+    [[nodiscard]] static bool lowercaseHex(
+        std::string_view text,
+        std::size_t expectedSize) noexcept
+    {
+        return text.size() == expectedSize && std::ranges::all_of(
+            text, [](char character) {
+                return (character >= '0' && character <= '9') ||
+                    (character >= 'a' && character <= 'f');
+            });
+    }
+
+    [[nodiscard]] static bool base64(std::string_view text) noexcept
+    {
+        return !text.empty() && text.size() <= 1024U &&
+            std::ranges::all_of(text, [](char character) {
+                return (character >= 'A' && character <= 'Z') ||
+                    (character >= 'a' && character <= 'z') ||
+                    (character >= '0' && character <= '9') ||
+                    character == '+' || character == '/' || character == '=';
+            });
+    }
+
+    [[nodiscard]] static bool allowedArtifact(
+        std::string_view name) noexcept
+    {
+        for (const std::string_view allowed : {
+                 "renderer.txt",
+                 "selected.txt",
+                 "results.qpa",
+                 "summary.txt"}) {
+            if (name == allowed)
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] static std::vector<std::string_view> split(
+        std::string_view frame)
+    {
+        std::vector<std::string_view> fields;
+        while (true) {
+            const auto separator = frame.find('|');
+            fields.push_back(frame.substr(0, separator));
+            if (separator == std::string_view::npos)
+                break;
+            frame.remove_prefix(separator + 1U);
+        }
+        return fields;
+    }
+
+    [[nodiscard]] static std::string acknowledgement(
+        std::string_view frame)
+    {
+        const auto fields = split(frame);
+        if (fields.size() == 5U &&
+            fields[0] == "UML_CTS_ARTIFACT_BEGIN" &&
+            allowedArtifact(fields[1]) &&
+            fields[2] == "gzip+base64" && decimal(fields[3]) &&
+            lowercaseHex(fields[4], 64U)) {
+            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
+                "|begin\n";
+        }
+        if (fields.size() == 4U &&
+            fields[0] == "UML_CTS_ARTIFACT_CHUNK" &&
+            allowedArtifact(fields[1]) && decimal(fields[2]) &&
+            base64(fields[3])) {
+            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
+                "|" + std::string {fields[2]} + "\n";
+        }
+        if (fields.size() == 3U &&
+            fields[0] == "UML_CTS_ARTIFACT_END" &&
+            allowedArtifact(fields[1]) && decimal(fields[2])) {
+            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
+                "|end\n";
+        }
+        return {};
+    }
+
+    [[nodiscard]] static bool writeAll(
+        int descriptor,
+        std::string_view bytes) noexcept
+    {
+        while (!bytes.empty()) {
+            const ssize_t written = ::write(
+                descriptor, bytes.data(), bytes.size());
+            if (written > 0) {
+                bytes.remove_prefix(static_cast<std::size_t>(written));
+            } else if (written < 0 && errno == EINTR) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void report(std::string_view record) noexcept
+    {
+        std::lock_guard outputLock(consoleStdoutMutex);
+        (void)writeAll(STDOUT_FILENO, record);
+    }
+
+    void relay() noexcept
+    {
+        (void)::pthread_setname_np("uml-cts-artifacts");
+        std::string pending;
+        std::size_t frames = 0;
+        std::size_t acknowledgements = 0;
+        bool valid = true;
+        char buffer[4096];
+        for (;;) {
+            const ssize_t received = ::recv(host_, buffer, sizeof(buffer), 0);
+            if (received > 0) {
+                pending.append(buffer, static_cast<std::size_t>(received));
+                while (true) {
+                    const auto newline = pending.find('\n');
+                    if (newline == std::string::npos)
+                        break;
+                    std::string frame = pending.substr(0, newline);
+                    pending.erase(0, newline + 1U);
+                    if (!frame.empty() && frame.back() == '\r')
+                        frame.pop_back();
+                    const std::string ack = acknowledgement(frame);
+                    if (frame.size() > maximumFrameBytes || ack.empty()) {
+                        valid = false;
+                        break;
+                    }
+                    report(frame + "\n");
+                    ++frames;
+                    if (!writeAll(host_, ack)) {
+                        valid = false;
+                        break;
+                    }
+                    ++acknowledgements;
+                }
+                if (!valid || pending.size() > maximumFrameBytes)
+                    break;
+                continue;
+            }
+            if (received < 0 && errno == EINTR)
+                continue;
+            if (received < 0 && errno != ECONNRESET)
+                valid = false;
+            break;
+        }
+        if (!pending.empty())
+            valid = false;
+        if (!valid)
+            report("UML_VK_CTS_ERROR: invalid artifact relay frame\n");
+        report(
+            "UML_VK_CTS_RELAY|frames=" + std::to_string(frames) +
+            "|acks=" + std::to_string(acknowledgements) +
+            "|valid=" + std::to_string(valid ? 1U : 0U) + "\n");
+    }
+
+    int host_ {-1};
+    std::unique_ptr<uml::console::InProcessConsoleService> service_;
     std::thread relay_;
 };
 
@@ -1119,6 +1352,9 @@ int runtimeRun(
              * Android's init turns SysRq off, so state it here. */
             "sysrq_always_enabled",
         };
+        /* Only a CTS campaign creates the artifact relay, and only the Linux
+         * guest can request one, but the device argument below is shared. */
+        std::unique_ptr<CtsArtifactBridge> ctsArtifactBridge;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         const ConsoleBootMode bootMode = ConsoleBootMode::android;
         const kernarium::cts::Campaign* ctsCampaign = nullptr;
@@ -1206,6 +1442,8 @@ int runtimeRun(
             discardBenchmarkMode,
             ctsCampaign,
             derivativeRootfs};
+        if (ctsCampaign != nullptr && ctsCampaign->namedSerialArtifacts)
+            ctsArtifactBridge = std::make_unique<CtsArtifactBridge>();
         if (aquarium)
             std::fputs(
                 "Kernarium: WebGL Aquarium verification requested\n",
@@ -1242,6 +1480,12 @@ int runtimeRun(
         arguments.emplace_back(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
             std::to_string(uml::audio::protocol::deviceId));
+        if (ctsArtifactBridge) {
+            arguments.emplace_back(
+                "virtio_uml.device=" +
+                ctsArtifactBridge->takeConnectionName() + ":" +
+                std::to_string(uml::console::protocol::deviceId));
+        }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         arguments.emplace_back(
             "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
