@@ -1,7 +1,7 @@
-From e47696a979175f79d6699805ac869b1061d0e314 Mon Sep 17 00:00:00 2001
+From 52b529a70876886b76b546b30f11748f5914831c Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 05/39] uml: make core build rules portable across hosts
+Subject: [PATCH 05/40] uml: make core build rules portable across hosts
 
 Wire the split core objects and use a host-portable configuration transform in one build-only final-state topic.
 ---

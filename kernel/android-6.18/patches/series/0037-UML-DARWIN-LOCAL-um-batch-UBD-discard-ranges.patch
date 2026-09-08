@@ -1,8 +1,8 @@
-From 4848eeadd315d97c6d5b3caa342febc654eb0acd Mon Sep 17 00:00:00 2001
+From f7cd2fddfb2f23a1805fc076ed2de6725906462f Mon Sep 17 00:00:00 2001
 From: linux-um-darwin kernel patch maintainer
  <noreply@linux-um-darwin.invalid>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
-Subject: [PATCH 37/39] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+Subject: [PATCH 37/40] UML-DARWIN-LOCAL: um: batch UBD discard ranges
 
 Change-Id: Ibfe10abf7cf727ed09a62ce7f8403b5bcec33eac
 ---

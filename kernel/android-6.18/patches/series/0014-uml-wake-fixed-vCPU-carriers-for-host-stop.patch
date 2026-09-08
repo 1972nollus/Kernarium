@@ -1,7 +1,7 @@
-From 6430983b35030e4927c38087c346a625a965439f Mon Sep 17 00:00:00 2001
+From 4a09d1cb8d777ede67d5876a7236a73411b257e9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 17:47:44 +0900
-Subject: [PATCH 14/39] uml: wake fixed vCPU carriers for host stop
+Subject: [PATCH 14/40] uml: wake fixed vCPU carriers for host stop
 
 ---
  arch/um/os-Darwin/internal.h                |  2 ++

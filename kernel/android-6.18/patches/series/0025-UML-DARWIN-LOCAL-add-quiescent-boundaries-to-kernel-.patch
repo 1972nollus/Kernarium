@@ -1,7 +1,7 @@
-From b6a3df03607dccda43f9812a12dc56ff71da117b Mon Sep 17 00:00:00 2001
+From 20204b9a11cb7fe3860b6897b34ce4728ee04f08 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 06:05:22 +0000
-Subject: [PATCH 25/39] UML-DARWIN-LOCAL: add quiescent boundaries to kernel
+Subject: [PATCH 25/40] UML-DARWIN-LOCAL: add quiescent boundaries to kernel
  loops
 
 Change-Id: I01687563d5b0258fc18c4317c11cbb7c84f1a328
@@ -11,10 +11,10 @@ Change-Id: I01687563d5b0258fc18c4317c11cbb7c84f1a328
  2 files changed, 36 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index c85116f193dcd6bc852e69d9423353d684360b9b..dd5c811dc1ae5977285b778f49ae8599f98c53ff 100644
+index ff1ebe3c16d1ac223407b65674803aabbad67ebf..5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -193,6 +193,24 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -176,6 +176,24 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -39,7 +39,7 @@ index c85116f193dcd6bc852e69d9423353d684360b9b..dd5c811dc1ae5977285b778f49ae8599
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -201,10 +219,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -184,10 +202,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	unsigned long user_addr = addr;
  #endif
  	int n = -1;
@@ -58,7 +58,7 @@ index c85116f193dcd6bc852e69d9423353d684360b9b..dd5c811dc1ae5977285b778f49ae8599
  
  #ifdef CONFIG_64BIT
  #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -245,6 +270,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -228,6 +253,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		set_page_dirty_lock(page);
  out_put:
  	put_page(page);

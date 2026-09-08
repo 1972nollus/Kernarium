@@ -1,7 +1,7 @@
-From 2b4c17907a3c302ede38e70fdcc077be501d24f9 Mon Sep 17 00:00:00 2001
+From 67a953e6ab24ea2422e5f9dd54e45519aecb861a Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
-Subject: [PATCH 03/39] uml: add SMP timer and interrupt core support
+Subject: [PATCH 03/40] uml: add SMP timer and interrupt core support
 
 Keep CPU bring-up, per-CPU timing, interrupt dispatch, and the normal-mode
 nanosecond scheduler clock together as one reviewable final-state topic.
