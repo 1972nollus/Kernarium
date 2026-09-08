@@ -38,7 +38,7 @@ sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	libasound2t64 libcups2t64 libdbus-1-3 libfontconfig1 libfreetype6 \
 	libgl1 libgnutls30t64 libpulse0 libudev1 libunwind8 \
 	libx11-6 libxcomposite1 libxcursor1 libxext6 libxfixes3 libxi6 \
-	libxinerama1 libxrandr2 libxrender1 libxxf86vm1 \
+	libxinerama1 libxrandr2 libxrender1 libxxf86vm1 libxcb-keysyms1 \
 	libwayland-client0 libwayland-egl1 libxkbcommon0 \
 	libavcodec61 libavformat61 libavutil59 \
 	pipewire pipewire-pulse wireplumber libnss3 libnspr4 \

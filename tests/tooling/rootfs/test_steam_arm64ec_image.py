@@ -9,6 +9,8 @@ __import__("sys").dont_write_bytecode = True
 import importlib.util
 from pathlib import Path
 import tempfile
+import hashlib
+import json
 import unittest
 
 from test_wine_arm64ec_pe import write_arm64ec_pe, write_pe
@@ -48,6 +50,23 @@ class ImageAudit(unittest.TestCase):
         icd = self.root / "usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
         icd.parent.mkdir(parents=True)
         icd.write_text("{}")
+
+    def test_vulkan_receipt_rejects_modified_runtime(self) -> None:
+        library = self.root / "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
+        write_elf(library, 183)
+        metadata = self.root / "usr/share/uml-steam/vulkan-runtime.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(json.dumps({"installed_files": [{
+            "path": "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
+            "sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+        }], "symlinks": {}}))
+        icds = self.root / "usr/share/vulkan/icd.d"
+        (icds / "lvp_icd.aarch64.json").unlink()
+        (icds / "virtio_icd.json").write_text("{}")
+        self.assertTrue(image.inventory(self.root))
+        library.write_bytes(library.read_bytes() + b"modified")
+        with self.assertRaisesRegex(RuntimeError, "installed Vulkan runtime differs"):
+            image.inventory(self.root)
 
     def test_native_stack_and_bundled_foreign_steam_assets(self) -> None:
         write_elf(self.root / image.STEAM / "steamrt64/pv-runtime/lib/libc.so", 62)

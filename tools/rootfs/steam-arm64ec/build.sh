@@ -6,19 +6,22 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$here/../../.." && pwd)
 usage()
 {
-	printf '%s\n' 'Usage: build.sh --inputs PATH --proton PATH --work ABSENT_PATH --output ABSENT_PATH.erofs'
+	printf '%s\n' 'Usage: build.sh --inputs PATH --proton PATH --work ABSENT_PATH --output ABSENT_PATH.erofs [--vulkan-root PATH --vulkan-receipt PATH]'
 }
-inputs= proton= work= output=
+inputs= proton= work= output= vulkan_root= vulkan_receipt=
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--inputs) inputs=$2; shift 2 ;;
 	--proton) proton=$2; shift 2 ;;
 	--work) work=$2; shift 2 ;;
 	--output) output=$2; shift 2 ;;
+	--vulkan-root) vulkan_root=$2; shift 2 ;;
+	--vulkan-receipt) vulkan_receipt=$2; shift 2 ;;
 	-h|--help) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
 done
+[ -z "$vulkan_root$vulkan_receipt" ] || { [ -d "$vulkan_root" ] && [ -f "$vulkan_receipt" ]; }
 case "$inputs:$proton:$work:$output" in /*:/*:/*:/*.erofs) ;; *) usage >&2; exit 2 ;; esac
 case "$(basename "$output")" in steam-arm64ec-*.erofs) ;; *) exit 2 ;; esac
 [ "$(uname -s)/$(uname -m)" = Linux/aarch64 ]
@@ -118,4 +121,8 @@ sdk=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdk"])
 	i686-w64-mingw32-gcc -O2 "$repository/tools/rootfs/wine-arm64ec/smoke/i386_exit_43.S" -o "$work/i386-exit-43.exe"
 sudo -n install -d "$root/opt/uml-wine-smoke"
 sudo -n install -m 0755 "$work/"*-exit-*.exe "$root/opt/uml-wine-smoke/"
+if [ -n "$vulkan_root" ]; then
+	sudo -n python3 -B "$here/install-vulkan.py" --source "$vulkan_root" \
+		--receipt "$vulkan_receipt" --root "$root"
+fi
 "$here/seal-image.sh" "$inputs" "$work" "$output"

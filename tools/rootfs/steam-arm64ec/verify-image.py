@@ -8,6 +8,8 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -94,7 +96,21 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
         if (root / executable).exists():
             raise RuntimeError(f"desktop environment was installed: {executable}")
     if not list((root / "usr/share/vulkan/icd.d").glob("*.json")):
-        raise RuntimeError("Mesa Vulkan placeholder ICDs are absent")
+        raise RuntimeError("Mesa Vulkan ICDs are absent")
+    graphics = root / "usr/share/uml-steam/vulkan-runtime.json"
+    if graphics.is_file():
+        recorded = json.loads(graphics.read_text())
+        for record in recorded["installed_files"]:
+            path = root / record["path"].lstrip("/")
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if path.is_symlink() or digest != record["sha256"]:
+                raise RuntimeError(f"installed Vulkan runtime differs: {path}")
+        for relative, target in recorded["symlinks"].items():
+            if os.readlink(root / relative.lstrip("/")) != target:
+                raise RuntimeError(f"installed Vulkan link differs: {relative}")
+        if sorted(path.name for path in (root / "usr/share/vulkan/icd.d").glob("*.json")) != ["virtio_icd.json"]:
+            raise RuntimeError("Venus image contains an alternate Vulkan ICD")
     return sorted(entries)
 
 

@@ -287,6 +287,10 @@ done'"
 endif()
 
 if(UML_BUILD_WINE_ARM64EC AND UML_TEST_STEAM_ARM64EC)
+    set(_uml_steam_graphics_arguments)
+    if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+        list(APPEND _uml_steam_graphics_arguments --experimental-venus)
+    endif()
     uml_add_guest_integration_test(
         NAME guest-steam-arm64ec-smoke
         COMMAND ${Python3_EXECUTABLE} -B
@@ -294,6 +298,7 @@ if(UML_BUILD_WINE_ARM64EC AND UML_TEST_STEAM_ARM64EC)
             --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --log ${CMAKE_BINARY_DIR}/reports/steam-arm64ec-guest.log
+            ${_uml_steam_graphics_arguments}
         LABELS guest;steam;wine;arm64ec;gpu;smoke
         TIMEOUT 1800
         PROCESSORS 4

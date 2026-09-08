@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Qualify Steam rootfs boot, Proton CPU bridges, and the Mesa graphics limit."""
+"""Qualify Steam rootfs boot, Proton CPU bridges, and the gaming graphics boundary."""
 
 from __future__ import annotations
 
@@ -60,6 +60,7 @@ def main() -> int:
     parser.add_argument("--boot-timeout", type=int, default=120)
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--log", type=Path)
+    parser.add_argument("--experimental-venus", action="store_true")
     args = parser.parse_args()
     guest = Guest(args.emulator.resolve(), args.rootfs.resolve(), args.memory, "tmpfs",
                   kernel_arguments=("panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
@@ -95,6 +96,8 @@ def main() -> int:
             "printf 'vulkaninfo status=%s\\n' \"$?\"; "
             "grep -Ei 'ERROR|WARNING|deviceName|driverName|Vulkan Instance|llvmpipe|SIGILL|illegal instruction' /tmp/steam-vulkan.log", 90)
         print(graphics.output, flush=True)
+        if args.experimental_venus and not re.search(r"driverName\s*=\s*venus", graphics.output):
+            raise RuntimeError("the experimental guest did not expose the Venus Vulkan driver")
         guest.run_command("systemctl start steam-gaming.service", 60)
         deadline = time.monotonic() + 90
         state = ""
@@ -106,7 +109,7 @@ def main() -> int:
         # PAM moves the application into a session scope; its journal records
         # need not retain the system service's unit identity.
         journal = success(guest, "journalctl -b -u steam-gaming.service --no-pager -o cat")
-        journal += success(guest, "journalctl -b _COMM=gamescope --no-pager -o cat --grep='vulkan|Vulkan|SIGILL|illegal instruction'")
+        journal += success(guest, "journalctl -b _COMM=gamescope --no-pager -o cat --grep='selecting physical device|Error|Failed|SIGILL|illegal instruction'")
         faults = guest.run_command("journalctl -b --no-pager -o cat --grep='(?i)SIGILL|illegal instruction|undefined instruction|status=4/ILL'")
         # journalctl returns 1 with empty output when the filter has no hits.
         if faults.return_code != 0 and not (faults.return_code == 1 and not faults.output):
@@ -119,12 +122,21 @@ def main() -> int:
             raise RuntimeError("guest encountered an illegal instruction")
         if re.search(r"ExecMainCode=[23]", state) and "ExecMainStatus=4" in state:
             raise RuntimeError("gaming session terminated with an illegal instruction")
-        expected = re.search(
-            r"Failed to initialize Vulkan|No Vulkan devices|vulkan:.*(?:vkCreateDevice failed|failed to find physical device|failed to initialize|does not support)",
-            journal, re.I)
-        if not expected or "ActiveState=failed" not in state:
-            raise RuntimeError("gaming session did not reach the expected Vulkan graphics limitation")
-        print("PASS gaming session reached the expected Mesa/Vulkan graphics limitation", flush=True)
+        if args.experimental_venus:
+            scanout_failure = re.search(
+                r"Cannot import FB to DRM: format 0x34325241 and modifier "
+                r"0xFFFFFFFFFFFFFF not supported for scan-out", journal)
+            if not scanout_failure or not any(value in state for value in
+                    ("ActiveState=failed", "ActiveState=inactive")):
+                raise RuntimeError("gaming session did not reach the documented Venus scanout boundary")
+            print("OBSERVED GPU BLOCKER: Gamescope cannot scan out its Venus AR24 framebuffer; Steam UI not reached", flush=True)
+        else:
+            expected = re.search(
+                r"Failed to initialize Vulkan|No Vulkan devices|vulkan:.*(?:vkCreateDevice failed|failed to find physical device|failed to initialize|does not support)",
+                journal, re.I)
+            if not expected or "ActiveState=failed" not in state:
+                raise RuntimeError("gaming session did not reach the expected Vulkan graphics limitation")
+            print("PASS gaming session reached the expected Mesa/Vulkan graphics limitation", flush=True)
         if not guest.shutdown(30):
             raise RuntimeError("Steam guest did not shut down")
         return 0

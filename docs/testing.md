@@ -156,7 +156,9 @@ follow only after this macOS gate passes.
 The separate gaming-only Steam image uses
 `cmake --workflow --preset check-steam-arm64ec-macos`. It qualifies systemd
 boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
-expected Gamescope Vulkan initialization failure with stock Mesa installed.
+Gamescope Vulkan startup boundary. Stock Mesa and experimental Venus are
+separate image/renderer selections; a recorded GPU blocker is not proof of a
+working Steam login screen.
 The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
 binary audit, startup contract, and continuing graphics limitation.
 

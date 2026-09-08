@@ -5,16 +5,18 @@ Xwayland, the native ARM64 Steam client, and source-built Proton 11. It uses
 the emulator's `xtajit64` ARM64EC and `xtajit` i386 WoW64 CPU bridges, including
 ARM64EC DXVK and vkd3d-proton. It installs no desktop environment.
 
-Standard Debian Mesa GL and Vulkan packages are placeholders. The current
-macOS renderer does not expose the Vulkan device required by Gamescope.
-Qualification therefore requires working systemd and Proton CPU execution,
-followed by an observed Vulkan initialization failure from the gaming
-session. This image does not qualify game rendering or the unfinished Vulkan
-driver.
+The default build retains Debian Mesa. An experimental Vulkan build imports
+receipt-verified Mesa/Venus and Vulkan-Loader runtimes from the
+[maintained Vulkan guest](../vulkan/README.md). The importer checks the source
+epoch and each installed file, validates dynamic dependencies, and selects
+only the Virtio ICD. Its receipt is included in the image provenance. This
+qualifies neither game rendering nor Vulkan conformance.
 
 The image uses the existing dedicated 4 KiB ARM64EC Wine kernel and emulator.
 There is no 16 KiB Steam product. Apple builds consume the accepted prebuilt
-kernel; this workflow changes neither maintained kernel line. iOS packaging
+kernel; the Vulkan variant requires that current kernel source series built
+with the Wine profile, including the shared-memory GPU transport. This
+workflow changes neither maintained kernel line. iOS packaging
 and automatic image discovery are not part of this producer.
 
 ## Build on native ARM64 Linux
@@ -30,6 +32,12 @@ tools/rootfs/steam-arm64ec/build.sh --inputs /work/steam-inputs \
   --proton /work/proton-build/build/redist --work /work/steam-image \
   --output /work/steam-arm64ec-gaming.erofs
 ```
+
+For the Vulkan variant, add `--vulkan-root /work/vulkan/stage/rootfs-kosmickrisp`
+and `--vulkan-receipt /work/vulkan/output-kosmickrisp/rootfs-vulkan-venus.receipt.json`
+to the image build. These inputs are read-only; only the runtime is imported,
+without the CTS payload. Use fresh prepared inputs when the Debian package
+closure changes.
 
 Build work and output paths must be absent. Preparation reuses verified
 inputs. `dependencies/prepare.sh --product steam-arm64ec-rootfs --root
@@ -93,6 +101,15 @@ service and requires the known Vulkan limitation. Any illegal instruction,
 missing runtime dependency, prefix failure, or other gaming-session failure
 blocks the gate. Guest output is saved under the build's `reports/` directory.
 
+For experimental Venus, select `UML_APPLE_GPU_PRODUCT=apple-gpu-vulkan-experiment`,
+its verified `UML_APPLE_GPU_DEPENDENCY_PREFIX`, and macOS deployment target
+`26.0` in the local configure preset. Select the current Wine-profile kernel
+bundle and the Vulkan Steam image as complete inputs. Launch the workflow or
+interactive emulator with `UML_GPU_EXPERIMENTAL_VULKAN=1`. The smoke additionally
+requires `vulkaninfo` to identify Venus; the documented Gamescope scanout
+failure is reported as a GPU blocker, not a Steam UI success. A running session
+still requires visual verification of the login or setup screen.
+
 For an interactive boot with the same development account:
 
 ```sh
@@ -100,3 +117,15 @@ scripts/boot-overlay-systemd.sh --emulator /path/to/uml-darwin-wine-arm64ec \
   --rootfs /path/to/steam-arm64ec-gaming.erofs --unit graphical.target \
   -- --gpu-display=native
 ```
+
+## Current Venus startup boundary
+
+On macOS with Mesa 26.2.1 and the paired KosmicKrisp renderer, `vulkaninfo`
+identifies `Virtio-GPU Venus (Apple M1 Ultra)`. Gamescope selects that device
+and starts its Wayland compositor and Xwayland, but cannot import its AR24
+framebuffer into DRM: format `0x34325241`, modifier `0xFFFFFFFFFFFFFF`,
+`not supported for scan-out`, with `drmModeAddFB2 failed: Invalid argument`.
+The session deactivates before a Steam login or
+setup screen is visible. AMD64, i386, and Proton execution probes pass. The
+smoke records this exact GPU blocker; it does not qualify Steam UI startup or
+work around the driver's scanout behavior.

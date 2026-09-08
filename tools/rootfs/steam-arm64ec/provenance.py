@@ -32,6 +32,9 @@ def main() -> None:
                       here.parent / "wine-arm64ec/smoke", repository / "dependencies/steam-arm64ec"):
         sources += sorted(path for path in directory.rglob("*") if path.is_file() and path.name != "README.md")
     recorded["producer_sources"] = {path.relative_to(repository).as_posix(): digest(path) for path in sources}
+    graphics = args.root / "usr/share/uml-steam/vulkan-runtime.json"
+    if graphics.is_file():
+        recorded["vulkan_runtime"] = json.loads(graphics.read_text())
     proton = args.root / "opt/proton-uml-arm64ec"
     recorded["proton_version"] = (proton / "version").read_text().strip()
     recorded["proton_binaries"] = {
