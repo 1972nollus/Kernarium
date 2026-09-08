@@ -1,4 +1,4 @@
-From 8ede92cffd1dacc79bdb46b6935ff8b9695cf1aa Mon Sep 17 00:00:00 2001
+From 2889eebab63516440cea53805cdf56393154d6f2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
 Subject: [PATCH 07/30] uml: add Darwin host service implementation
@@ -11,7 +11,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/os-Darwin/file.c         |  544 +++++++++++++
  arch/um/os-Darwin/helper.c       |  204 +++++
  arch/um/os-Darwin/internal.h     |   61 ++
- arch/um/os-Darwin/irq.c          |  367 +++++++++
+ arch/um/os-Darwin/irq.c          |  351 +++++++++
  arch/um/os-Darwin/irq.h          |   10 +
  arch/um/os-Darwin/main.c         |   56 ++
  arch/um/os-Darwin/mem.c          |   41 +
@@ -27,7 +27,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/os-Darwin/tty.c          |   22 +
  arch/um/os-Darwin/umid.c         |   40 +
  arch/um/os-Darwin/util.c         |  133 ++++
- 22 files changed, 4197 insertions(+)
+ 22 files changed, 4181 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -1046,14 +1046,13 @@ index 000000000..400668265
 +#endif /* __UM_OS_DARWIN_INTERNAL_H */
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
 new file mode 100644
-index 000000000..3e471bede
+index 000000000..45aa9db0b
 --- /dev/null
 +++ b/arch/um/os-Darwin/irq.c
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,351 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
-+#include <poll.h>
 +#include <pthread.h>
 +#include <signal.h>
 +#include <string.h>
@@ -1072,7 +1071,6 @@ index 000000000..3e471bede
 +struct watched_fd {
 +	int fd;
 +	int events;
-+	int ready;
 +	void *data;
 +};
 +
@@ -1080,6 +1078,7 @@ index 000000000..3e471bede
 +static struct watched_fd triggered[DARWIN_MAX_EVENTS];
 +static int watched_count;
 +static int notification_kqueue = -1;
++static int dispatch_kqueue = -1;
 +static pthread_mutex_t idle_waiter_lock = PTHREAD_MUTEX_INITIALIZER;
 +static pthread_cond_t idle_waiter_ready = PTHREAD_COND_INITIALIZER;
 +static pthread_t idle_waiter;
@@ -1124,12 +1123,8 @@ index 000000000..3e471bede
 +			    events[index].ident == DARWIN_NOTIFICATION_STOP_IDENT)
 +				return NULL;
 +		pthread_mutex_lock(&idle_waiter_lock);
-+		/* kevent() removes an edge from the notification queue.  Do not
-+		 * discard it merely because the UML idle thread has not published
-+		 * itself yet: retain the wake here until there is a thread which can
-+		 * turn it into an fd IRQ.  Read filters are level-triggered below, so
-+		 * a descriptor which remains readable produces another wake after the
-+		 * idle thread has handled this one.
++		/* Keep the wake until an idle carrier can dispatch it.  Dispatch has
++		 * its own kqueue, so this helper never consumes the guest IRQ edge.
 +		 */
 +		while (!idle_waiter_valid && !notification_stopping)
 +			pthread_cond_wait(&idle_waiter_ready, &idle_waiter_lock);
@@ -1145,21 +1140,44 @@ index 000000000..3e471bede
 +	}
 +}
 +
-+static int update_notification_filter(int fd, short filter, int add)
++static int update_filter(int queue, int fd, short filter, int add, void *data)
 +{
 +	struct kevent change;
 +	int result;
 +
-+	if (notification_kqueue < 0)
++	if (queue < 0)
++		return 0;
++	/* Delete/add also rearms an unchanged ready descriptor, matching
++	 * EPOLL_CTL_MOD.  EV_CLEAR matches UML's EPOLLET registration: a
++	 * nested IRQ dispatch must not spin on data its outer handler owns.
++	 */
++	EV_SET(&change, (uintptr_t)fd, filter, EV_DELETE, 0, 0, NULL);
++	result = kevent(queue, &change, 1, NULL, 0, NULL);
++	if (result < 0 && errno != ENOENT)
++		return -errno;
++	if (!add)
 +		return 0;
 +	EV_SET(&change, (uintptr_t)fd, filter,
-+	       add ? EV_ADD | EV_ENABLE |
-+		     (filter == EVFILT_WRITE ? EV_CLEAR : 0) : EV_DELETE,
-+	       0, 0, NULL);
-+	result = kevent(notification_kqueue, &change, 1, NULL, 0, NULL);
-+	if (result < 0 && !add && errno == ENOENT)
-+		return 0;
-+	return result < 0 ? -errno : 0;
++	       EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, data);
++	return kevent(queue, &change, 1, NULL, 0, NULL) < 0 ? -errno : 0;
++}
++
++static int update_registration(int fd, int events, void *data)
++{
++	int queues[] = { dispatch_kqueue, notification_kqueue };
++	unsigned int index;
++	int error;
++
++	for (index = 0; index < sizeof(queues) / sizeof(queues[0]); index++) {
++		error = update_filter(queues[index], fd, EVFILT_READ,
++				      events & DARWIN_EVENT_READ, data);
++		if (error == 0)
++			error = update_filter(queues[index], fd, EVFILT_WRITE,
++					      events & DARWIN_EVENT_WRITE, data);
++		if (error < 0)
++			return error;
++	}
++	return 0;
 +}
 +
 +void darwin_irq_idle_begin(sigset_t *previous_mask)
@@ -1230,26 +1248,24 @@ index 000000000..3e471bede
 +		notification_kqueue = -1;
 +		return error;
 +	}
-+	/* IRQ-backed descriptors may be activated before the common UML IRQ
-+	 * layer creates its epoll replacement.  os_add_epoll_fd() retains those
-+	 * registrations in watched[], but update_notification_filter() is a
-+	 * deliberate no-op until a kqueue exists.  Replay them now; otherwise
-+	 * block and console completions are noticed only by the periodic polling
-+	 * fallback, serializing hundreds of operations at one timer tick each.
-+	 */
++	dispatch_kqueue = kqueue();
++	if (dispatch_kqueue < 0) {
++		error = -errno;
++		close(notification_kqueue);
++		notification_kqueue = -1;
++		return error;
++	}
++	/* Preserve registrations made before the common IRQ layer starts. */
 +	for (index = 0; index < watched_count; index++) {
-+		error = update_notification_filter(watched[index].fd,
-+			EVFILT_READ, watched[index].events & DARWIN_EVENT_READ);
-+		if (error == 0)
-+			error = update_notification_filter(watched[index].fd,
-+				EVFILT_WRITE,
-+				watched[index].events & DARWIN_EVENT_WRITE);
++		error = update_registration(watched[index].fd,
++					    watched[index].events, watched[index].data);
 +		if (error < 0) {
++			close(dispatch_kqueue);
++			dispatch_kqueue = -1;
 +			close(notification_kqueue);
 +			notification_kqueue = -1;
 +			return error;
 +		}
-+		watched[index].ready = 0;
 +	}
 +	pthread_mutex_lock(&idle_waiter_lock);
 +	notification_stopping = 0;
@@ -1257,6 +1273,8 @@ index 000000000..3e471bede
 +	error = pthread_create(&notification_worker, NULL,
 +			       notification_thread, NULL);
 +	if (error != 0) {
++		close(dispatch_kqueue);
++		dispatch_kqueue = -1;
 +		close(notification_kqueue);
 +		notification_kqueue = -1;
 +		return -error;
@@ -1267,68 +1285,44 @@ index 000000000..3e471bede
 +
 +int os_waiting_for_events_epoll(void)
 +{
-+	struct pollfd pollfds[DARWIN_MAX_EVENTS];
-+	int count = 0;
++	struct kevent events[DARWIN_MAX_EVENTS];
++	const struct timespec immediate = { 0, 0 };
++	int count;
 +	int index;
-+	int result;
 +
-+	for (index = 0; index < watched_count; index++) {
-+		pollfds[index].fd = watched[index].fd;
-+		pollfds[index].events =
-+			(watched[index].events & DARWIN_EVENT_READ ? POLLIN : 0) |
-+			(watched[index].events & DARWIN_EVENT_WRITE ? POLLOUT : 0);
-+		pollfds[index].revents = 0;
-+	}
-+	result = poll(pollfds, (nfds_t)watched_count, 0);
-+	if (result < 0)
++	if (dispatch_kqueue < 0)
++		return 0;
++	count = kevent(dispatch_kqueue, NULL, 0, events,
++		       DARWIN_MAX_EVENTS, &immediate);
++	if (count < 0)
 +		return errno == EINTR ? 0 : -errno;
-+	for (index = 0; index < watched_count; index++) {
-+		int events = 0;
-+		int delivered;
-+
-+		if (pollfds[index].revents & (POLLIN | POLLERR | POLLHUP))
-+			events |= DARWIN_EVENT_READ;
-+		if (pollfds[index].revents & POLLOUT)
-+			events |= DARWIN_EVENT_WRITE;
-+		/* Linux epoll is level-triggered by default.  Read handlers must be
-+		 * repeated until they drain the fd (the UML line driver deliberately
-+		 * consumes small chunks), while a perpetually writable tty must not
-+		 * keep the IRQ loop spinning after its output queue is empty.
-+		 */
-+		delivered = (events & DARWIN_EVENT_READ) |
-+			((events & DARWIN_EVENT_WRITE) & ~watched[index].ready);
-+		watched[index].ready = events;
-+		if (delivered != 0) {
-+			triggered[count] = watched[index];
-+			triggered[count].events = delivered;
-+			count++;
-+		}
++	for (index = 0; index < count; index++) {
++		triggered[index] = (struct watched_fd) {
++			.fd = (int)events[index].ident,
++			.events = events[index].filter == EVFILT_READ ?
++				DARWIN_EVENT_READ : DARWIN_EVENT_WRITE,
++			.data = events[index].udata,
++		};
 +	}
 +	return count;
 +}
 +
 +int os_add_epoll_fd(int events, int fd, void *data)
 +{
-+	int result;
++	int result = os_mod_epoll_fd(events, fd, data);
 +
++	if (result != -ENOENT)
++		return result;
 +	if (watched_count >= DARWIN_MAX_EVENTS)
 +		return -ENOSPC;
-+	if (os_mod_epoll_fd(events, fd, data) == 0)
-+		return 0;
++	result = update_registration(fd, events, data);
++	if (result < 0) {
++		(void)update_registration(fd, 0, NULL);
++		return result;
++	}
 +	watched[watched_count++] = (struct watched_fd) {
 +		.fd = fd, .events = events, .data = data,
 +	};
-+	result = update_notification_filter(fd, EVFILT_READ,
-+					    events & DARWIN_EVENT_READ);
-+	if (result == 0)
-+		result = update_notification_filter(fd, EVFILT_WRITE,
-+						    events & DARWIN_EVENT_WRITE);
-+	if (result < 0) {
-+		watched_count--;
-+		(void)update_notification_filter(fd, EVFILT_READ, 0);
-+		(void)update_notification_filter(fd, EVFILT_WRITE, 0);
-+		return result;
-+	}
 +	return 0;
 +}
 +
@@ -1338,27 +1332,14 @@ index 000000000..3e471bede
 +
 +	for (index = 0; index < watched_count; index++) {
 +		if (watched[index].fd == fd) {
-+			int previous = watched[index].events;
-+			int result;
++			int result = update_registration(fd, events, data);
 +
-+			if ((previous ^ events) & DARWIN_EVENT_READ) {
-+				result = update_notification_filter(fd, EVFILT_READ,
-+						 events & DARWIN_EVENT_READ);
-+				if (result < 0)
-+					return result;
-+			}
-+			if ((previous ^ events) & DARWIN_EVENT_WRITE) {
-+				result = update_notification_filter(fd, EVFILT_WRITE,
-+						 events & DARWIN_EVENT_WRITE);
-+				if (result < 0)
-+					return result;
++			if (result < 0) {
++				(void)update_registration(fd, watched[index].events,
++							  watched[index].data);
++				return result;
 +			}
 +			watched[index].events = events;
-+			/* EPOLL_CTL_MOD rearms readiness notification.  Keeping the
-+			 * previous ready mask loses tty output when POLLOUT was observed
-+			 * before the line discipline queued its next buffer.
-+			 */
-+			watched[index].ready = 0;
 +			watched[index].data = data;
 +			return 0;
 +		}
@@ -1372,8 +1353,7 @@ index 000000000..3e471bede
 +
 +	for (index = 0; index < watched_count; index++) {
 +		if (watched[index].fd == fd) {
-+			(void)update_notification_filter(fd, EVFILT_READ, 0);
-+			(void)update_notification_filter(fd, EVFILT_WRITE, 0);
++			(void)update_registration(fd, 0, NULL);
 +			memmove(&watched[index], &watched[index + 1],
 +				(size_t)(watched_count - index - 1) *
 +					sizeof(watched[0]));
@@ -1411,6 +1391,10 @@ index 000000000..3e471bede
 +			panic("Darwin: unable to join IRQ notification thread: %d",
 +			      error);
 +		notification_worker_joinable = 0;
++	}
++	if (dispatch_kqueue >= 0) {
++		close(dispatch_kqueue);
++		dispatch_kqueue = -1;
 +	}
 +	if (notification_kqueue >= 0) {
 +		close(notification_kqueue);

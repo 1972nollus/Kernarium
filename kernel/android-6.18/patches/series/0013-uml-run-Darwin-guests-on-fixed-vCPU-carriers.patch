@@ -1,4 +1,4 @@
-From 8d692a2d9316f898956be012f677c39b6599f802 Mon Sep 17 00:00:00 2001
+From 72b0a9e241bb98d9cc3df4e357e539ba4ff58eb3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 16:08:25 +0900
 Subject: [PATCH 13/41] uml: run Darwin guests on fixed vCPU carriers

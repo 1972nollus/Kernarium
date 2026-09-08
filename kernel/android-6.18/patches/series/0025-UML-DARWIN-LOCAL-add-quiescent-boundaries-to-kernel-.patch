@@ -1,4 +1,4 @@
-From 94d2750a91609ede84b99af826274dffb315f2a4 Mon Sep 17 00:00:00 2001
+From 22da56e386335d643683f8ffc97da548fdc7ef41 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 06:05:22 +0000
 Subject: [PATCH 25/41] UML-DARWIN-LOCAL: add quiescent boundaries to kernel

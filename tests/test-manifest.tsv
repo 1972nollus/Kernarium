@@ -10,6 +10,7 @@ test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cm
 symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained
 kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained
 kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained
+kernel-darwin-irq-edge	tests/tooling/kernel/test_darwin_irq_edge.py	tooling	retained
 arm64-engine-harness	tests/unit/arm64	unit	retained
 arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained
 arm64-deferred-fp-state	tests/unit/arm64	unit	retained

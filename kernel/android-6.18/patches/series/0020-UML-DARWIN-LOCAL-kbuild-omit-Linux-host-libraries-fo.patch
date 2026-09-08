@@ -1,4 +1,4 @@
-From dce443413400d6393b64f4dde52a14435718b175 Mon Sep 17 00:00:00 2001
+From f5240b6736883196a9ed63e24a4573e84d24a419 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 14:51:46 +0000
 Subject: [PATCH 20/41] UML-DARWIN-LOCAL: kbuild: omit Linux host libraries for

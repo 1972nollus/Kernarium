@@ -88,6 +88,12 @@ the latency-oriented Wine profile uses 250 Hz. Both use `NO_HZ_IDLE`. Darwin
 signals wake carriers but do not execute Linux IPIs asynchronously; IRQ-enabled
 spin checkpoints service pending IPIs.
 
+Darwin descriptor IRQs preserve Linux UML's edge-triggered epoll contract.
+Separate kqueues retain dispatch edges and wake idle carriers without consuming
+those edges. Reentrant dispatch cannot repeat a readable level while an outer
+handler owns it; modifying a registration rearms an already-ready descriptor.
+This contract is shared by mainline and Android kernels.
+
 Early UML calibration uses process-directed `SIGALRM`. Application and launcher
 threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
 deadlines take over. Kernarium runs the guest on its named `uml-launcher`

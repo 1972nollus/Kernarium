@@ -1,4 +1,4 @@
-From 7288dc03f1dc762b5ceb143b847327ff1106810e Mon Sep 17 00:00:00 2001
+From 4725ce1b53c83b83f1691b631dc1072b4e7474a4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
 Subject: [PATCH 37/41] UML-DARWIN-LOCAL: um: batch UBD discard ranges

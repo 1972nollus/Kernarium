@@ -1,4 +1,4 @@
-From 40054f56d1d9cb8a5d7b13a9f72d7b551d479820 Mon Sep 17 00:00:00 2001
+From d585441677347c9a07b1f6aae0bec26a0cc2bc62 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
 Subject: [PATCH 18/30] uml: raise irq work locally instead of at the tick
