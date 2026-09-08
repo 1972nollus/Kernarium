@@ -3455,6 +3455,10 @@ def build_harness_command(
         str(options.rootfs),
         "--rootfs-type",
         options.rootfs_type,
+        # The sealed CTS images are raw filesystems, not the partitioned
+        # starter disks the launcher's ext4 default assumes.
+        "--root-device",
+        "/dev/ubda",
         "--memory",
         options.memory,
         "--cpus",
@@ -3514,7 +3518,11 @@ def build_harness_command(
         ),
         "systemctl start --no-block uml-vk-gl-cts.service",
     )
-    additions = ["--artifact-root", str(artifact_directory / "guest")]
+    additions = [
+        "--artifact-root",
+        str(artifact_directory / "guest"),
+        f"--virtio-serial-socket={artifact_socket}",
+    ]
     for overlay_command in overlay_commands:
         additions.extend(("--command", overlay_command))
     command[separator:separator] = additions
@@ -3525,7 +3533,6 @@ def build_harness_command(
     )
     if options.display == "native":
         launch_environment.append("UML_GPU_FRAME_STATS=1")
-    command.append(f"--virtio-serial-socket={artifact_socket}")
     return ["env", *launch_environment, *command]
 
 

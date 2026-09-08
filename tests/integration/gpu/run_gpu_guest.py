@@ -188,12 +188,14 @@ def validate_rootfs_path(path: Path, rootfs_type: str) -> None:
 def validate_console_socket_paths(
     serial_socket: Path | None,
     virtio_console_socket: Path | None,
+    virtio_serial_socket: Path | None = None,
 ) -> None:
-    if (
-        serial_socket is not None
-        and virtio_console_socket is not None
-        and serial_socket == virtio_console_socket
-    ):
+    paths = [
+        path
+        for path in (serial_socket, virtio_console_socket, virtio_serial_socket)
+        if path is not None
+    ]
+    if len(set(paths)) != len(paths):
         raise SafetyError("serial and Virtio console sockets must be different")
 
 
@@ -282,6 +284,7 @@ def build_command(
     extra_arguments: Sequence[str],
     rootfs_type: str = "erofs",
     virtio_console_socket: Path | None = None,
+    virtio_serial_socket: Path | None = None,
 ) -> list[str]:
     validate_extra_arguments(extra_arguments)
     if rootfs_type not in ROOTFS_TYPES:
@@ -302,6 +305,11 @@ def build_command(
         *(
             [f"--virtio-console-socket={virtio_console_socket.resolve()}"]
             if virtio_console_socket is not None
+            else []
+        ),
+        *(
+            [f"--virtio-serial-socket={virtio_serial_socket.resolve()}"]
+            if virtio_serial_socket is not None
             else []
         ),
     ]
@@ -752,6 +760,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "reconnectable Unix-domain socket"
         ),
     )
+    parser.add_argument(
+        "--virtio-serial-socket",
+        type=Path,
+        help=(
+            "attach a named Virtio serial port and expose it at this "
+            "Unix-domain socket, which the caller owns and retires"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "kernel_arguments",
@@ -779,7 +795,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if options.virtio_console_socket is not None
         else None
     )
-    validate_console_socket_paths(serial_socket, virtio_console_socket)
+    virtio_serial_socket = (
+        options.virtio_serial_socket.resolve()
+        if options.virtio_serial_socket is not None
+        else None
+    )
+    validate_console_socket_paths(
+        serial_socket, virtio_console_socket, virtio_serial_socket
+    )
 
     docker_hello_world = None
     if options.docker_hello_world_binary is not None:
@@ -795,6 +818,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         options.kernel_arguments,
         rootfs_type=options.rootfs_type,
         virtio_console_socket=virtio_console_socket,
+        virtio_serial_socket=virtio_serial_socket,
     )
     test_script = make_test_script(
         options.command,
@@ -814,6 +838,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         result["serial_socket"] = str(serial_socket)
     if virtio_console_socket is not None:
         result["virtio_console_socket"] = str(virtio_console_socket)
+    if virtio_serial_socket is not None:
+        result["virtio_serial_socket"] = str(virtio_serial_socket)
     if options.docker_hello_world_binary is not None:
         result["docker_hello_world"] = str(
             options.docker_hello_world_binary.resolve()

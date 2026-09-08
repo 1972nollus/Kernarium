@@ -1370,6 +1370,7 @@ def build_harness_command(
         str(artifact_directory / "guest"),
         "--serial-socket",
         str(serial_socket_path),
+        f"--virtio-serial-socket={socket_path}",
         "--command",
         common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
         "--command",
@@ -1385,7 +1386,6 @@ def build_harness_command(
         "--gpu-vnc-port=0",
         "--gpu-width=1280",
         "--gpu-height=720",
-        f"--virtio-serial-socket={socket_path}",
     ]
     environment = ["env", "UML_GPU_CAPABILITY_REPORT=1"]
     if options.experimental_venus:
@@ -1433,6 +1433,10 @@ def build_receipt_harness_command(
             str(options.rootfs),
             "--rootfs-type",
             "ext4",
+            # The sealed Vulkan image is a raw filesystem, not the
+            # partitioned starter disk the launcher's ext4 default assumes.
+            "--root-device",
+            "/dev/ubda",
             "--memory",
             options.memory,
             "--cpus",
@@ -1456,11 +1460,14 @@ def build_receipt_harness_command(
             common.install_text(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE),
             "systemctl start --no-block uml-vulkan-cts.service",
         )
-        additions = ["--artifact-root", str(artifact_directory / "guest")]
+        additions = [
+            "--artifact-root",
+            str(artifact_directory / "guest"),
+            f"--virtio-serial-socket={socket_path}",
+        ]
         for overlay_command in overlay_commands:
             additions.extend(("--command", overlay_command))
         command[separator:separator] = additions
-        command.append(f"--virtio-serial-socket={socket_path}")
         return [*environment, *command]
     # The launcher records the CTS status in summary.txt and transfers every
     # artifact from its EXIT trap.  Keep the outer guest harness successful so
@@ -1486,6 +1493,7 @@ def build_receipt_harness_command(
         str(artifact_directory / "guest"),
         "--serial-socket",
         str(serial_socket_path),
+        f"--virtio-serial-socket={socket_path}",
         "--command",
         common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
         "--command",
@@ -1501,7 +1509,6 @@ def build_receipt_harness_command(
         "--gpu-vnc-port=0",
         "--gpu-width=1280",
         "--gpu-height=720",
-        f"--virtio-serial-socket={socket_path}",
     ]
     return [*environment, *command]
 
