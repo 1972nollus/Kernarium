@@ -63,6 +63,9 @@ if(TARGET uml_console_device)
     add_subdirectory(console)
 endif()
 add_subdirectory(gpu)
+if(TARGET uml_video_device)
+    add_subdirectory(video)
+endif()
 
 get_property(_uml_registered_unit_binary_targets GLOBAL PROPERTY
     UML_UNIT_TEST_BINARY_TARGETS)

@@ -3,6 +3,8 @@
 #include "audio/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
+#include "video/in_process_service.hpp"
+#include "video/virtio_video_device.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
@@ -246,6 +248,7 @@ struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
 	bool battery {};
+	bool video {};
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
@@ -295,6 +298,8 @@ PreparedArguments prepare_host_arguments(
 			prepared.audio = true;
 		} else if (argument == "--battery") {
 			prepared.battery = true;
+		} else if (argument == "--video") {
+			prepared.video = true;
 		} else if (argument.starts_with("--virtio-console-socket=")) {
 			if (!prepared.console_socket.empty())
 				throw std::invalid_argument(
@@ -541,6 +546,21 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::video::InProcessVideoService> video_service;
+	if (prepared.video && !informational(argc, argv)) {
+		if (has_virtio_device_argument(prepared.kernel, uml::video::deviceId)) {
+			std::fputs("--video cannot be combined with an explicit Virtio video transport argument\n", stderr);
+			return 1;
+		}
+		try {
+			video_service = std::make_unique<uml::video::InProcessVideoService>();
+			prepared.kernel.emplace_back("virtio_uml.device=" +
+				video_service->takeConnectionName() + ":" + std::to_string(uml::video::deviceId));
+		} catch (const std::exception& error) {
+			std::fprintf(stderr, "Unable to start in-process Virtio video: %s\n", error.what());
+			return 1;
+		}
+	}
 	std::unique_ptr<uml::audio::InProcessAudioService> audio_service;
 	if (prepared.audio && !informational(argc, argv)) {
 		if (has_virtio_device_argument(
@@ -647,6 +667,8 @@ int uml::app::runEmbeddedKernel(
 		audio_service->stop();
 	if (battery_service)
 		battery_service->stop();
+	if (video_service)
+		video_service->stop();
 	if (console_service)
 		console_service->stop();
 	if (gpu_service)

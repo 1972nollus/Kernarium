@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_capabilities.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <stdexcept>
+
+namespace uml::video {
+namespace {
+template<class T> void append(std::vector<std::uint8_t>& bytes, const T& value)
+{
+    const auto offset = bytes.size();
+    bytes.resize(offset + sizeof(value));
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+}
+
+std::uint32_t wireCodec(uml::platform::VideoCodec codec)
+{
+    using enum uml::platform::VideoCodec;
+    switch (codec) {
+    case h264: return VIRTIO_VIDEO_FORMAT_H264;
+    case hevc: return VIRTIO_VIDEO_FORMAT_HEVC;
+    case jpeg: return VIRTIO_VIDEO_FORMAT_MJPEG;
+    }
+    throw std::invalid_argument("invalid codec");
+}
+
+std::uint32_t wireProfile(uml::platform::VideoProfile profile)
+{
+    using enum uml::platform::VideoProfile;
+    switch (profile) {
+    case h264Baseline: return VIRTIO_VIDEO_PROFILE_H264_BASELINE;
+    case h264ConstrainedBaseline: return VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE;
+    case h264Main: return VIRTIO_VIDEO_PROFILE_H264_MAIN;
+    case h264High: return VIRTIO_VIDEO_PROFILE_H264_HIGH;
+    case h264High10: return VIRTIO_VIDEO_PROFILE_H264_HIGH10PROFILE;
+    case hevcMain: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN;
+    case hevcMain10: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN10;
+    case jpegBaseline: return 0;
+    }
+    throw std::invalid_argument("invalid video profile");
+}
+
+std::vector<std::uint32_t> profileValues(
+    std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t format)
+{
+    std::vector<std::uint32_t> values;
+    for (const auto& cap : capabilities) {
+        if (wireCodec(cap.codec) == format && wireProfile(cap.profile))
+            values.push_back(wireProfile(cap.profile));
+    }
+    return values;
+}
+
+std::vector<std::uint8_t> capabilityResponse(
+    std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t queue)
+{
+    if (queue != VIRTIO_VIDEO_QUEUE_TYPE_INPUT && queue != VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT)
+        throw std::invalid_argument("invalid video queue");
+    std::vector<std::uint32_t> coded;
+    bool tenBit = false;
+    for (const auto& cap : capabilities) {
+        const auto format = wireCodec(cap.codec);
+        if (std::find(coded.begin(), coded.end(), format) == coded.end()) coded.push_back(format);
+        tenBit |= cap.bitDepth == 10;
+    }
+    std::vector<std::uint32_t> raw {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420};
+    if (tenBit) raw.push_back(VIRTIO_VIDEO_FORMAT_P010);
+    const auto& formats = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? coded : raw;
+    virtio_video_query_capability_resp header {};
+    header.hdr.type = VIRTIO_VIDEO_RESP_OK_QUERY_CAPABILITY;
+    header.num_descs = std::uint32_t(formats.size());
+    std::vector<std::uint8_t> result;
+    append(result, header);
+    for (const auto format : formats) {
+        std::uint32_t width = 0, height = 0;
+        std::uint64_t mask = 0;
+        for (const auto& cap : capabilities) {
+            const bool input = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+            if (input && wireCodec(cap.codec) != format) continue;
+            if (!input && cap.bitDepth != (format == VIRTIO_VIDEO_FORMAT_P010 ? 10u : 8u)) continue;
+            width = std::max(width, cap.maximumWidth);
+            height = std::max(height, cap.maximumHeight);
+            if (input) {
+                mask |= cap.bitDepth == 10 ? 4 : 3;
+            } else {
+                const auto found = std::find(coded.begin(), coded.end(), wireCodec(cap.codec));
+                mask |= std::uint64_t(1) << std::size_t(found - coded.begin());
+            }
+        }
+        virtio_video_format_desc desc {};
+        desc.mask = mask;
+        desc.format = format;
+        desc.planes_layout = format == VIRTIO_VIDEO_FORMAT_NV12 || format == VIRTIO_VIDEO_FORMAT_YUV420
+            ? VIRTIO_VIDEO_PLANES_LAYOUT_PER_PLANE : VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER;
+        desc.plane_align = 1;
+        desc.num_frames = 1;
+        append(result, desc);
+        virtio_video_format_frame frame {};
+        frame.width.min = frame.height.min = 64;
+        frame.width.max = width;
+        frame.height.max = height;
+        frame.width.step = frame.height.step = 1;
+        frame.num_rates = 1;
+        append(result, frame);
+        virtio_video_format_range rate {};
+        rate.min = 1;
+        rate.max = 240;
+        rate.step = 1;
+        append(result, rate);
+    }
+    return result;
+}
+} // namespace uml::video

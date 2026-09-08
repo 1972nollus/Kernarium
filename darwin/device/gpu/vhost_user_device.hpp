@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -51,6 +52,7 @@ struct VhostUserSharedMemoryAction final {
 
 class VhostUserDevice {
 public:
+    using GuestMapper = std::function<std::span<std::uint8_t>(std::uint64_t, std::size_t)>;
     virtual ~VhostUserDevice() = default;
 
     [[nodiscard]] virtual const char* name() const noexcept = 0;
@@ -73,6 +75,9 @@ public:
         std::size_t responseCapacity) = 0;
     virtual void reset() noexcept = 0;
     virtual void prepareReset() noexcept {}
+    // Called only on the transport worker. Returned spans are borrowed until
+    // reset; devices must release all retained guest state in reset().
+    virtual void setGuestMapper(GuestMapper) {}
 
     [[nodiscard]] virtual std::optional<VhostUserSharedMemoryRegion>
         sharedMemoryRegion() const noexcept

@@ -200,6 +200,7 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::AndroidBoot
     UML::GuestPageConfiguration
     UML::AudioDevice
+    UML::VideoDevice
     UML::BatteryDevice
     UML::GpuDevice
     UML::ConsoleDevice

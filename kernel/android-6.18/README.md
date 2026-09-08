@@ -9,6 +9,11 @@ It is independent of both mainline page profiles. Mainline patch bytes are not
 this line's source of truth, even when a topic implements the same Darwin
 contract.
 
+The shared stateful Virtio video decoder is built in for every product in this
+line. Its [wire contract](../common/video/README.md) is synchronized from the
+canonical header and its implementation is maintained as a local media topic.
+The host exposes hardware decoding through V4L2 independently of the GPU.
+
 ## Product contract
 
 The line has one 16 KiB ARM64 configuration in

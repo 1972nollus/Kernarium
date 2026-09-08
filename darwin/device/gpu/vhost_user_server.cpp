@@ -986,6 +986,10 @@ VhostUserServer::VhostUserServer(
     if (!device_ || device_->queueCount() == 0 ||
         device_->queueCount() > maximumQueueCount)
         throw std::invalid_argument("invalid vhost-user device queue count");
+    device_->setGuestMapper([this](std::uint64_t address, std::size_t length) {
+        auto* pointer = translate(address, length, false);
+        return pointer ? std::span(pointer, length) : std::span<std::uint8_t>{};
+    });
     queues_.resize(device_->queueCount());
 }
 
@@ -2242,6 +2246,10 @@ void VhostUserServer::serveConnection(
                     processQueue(index);
                 }
             }
+            // Queue work can complete an earlier deferred request without an
+            // external readiness edge (for example a decoder produces a frame
+            // for a capture buffer already queued by the guest).
+            drainQueueCompletions();
 
             descriptors[0] = {
                 .fd = ownedConnection.get(),

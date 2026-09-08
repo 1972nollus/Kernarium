@@ -63,10 +63,11 @@ def main() -> int:
     parser.add_argument("--experimental-venus", action="store_true")
     args = parser.parse_args()
     guest = Guest(args.emulator.resolve(), args.rootfs.resolve(), args.memory, "tmpfs",
-                  kernel_arguments=("panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
+                  kernel_arguments=("--video", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
                   systemd_overlay=True, systemd_overlay_size="16G", engine="jit")
     try:
         guest.boot_and_login(args.boot_timeout)
+        success(guest, "test -c /dev/video-dec0 && runuser -u uml -- test -w /dev/video-dec0")
         output = success(guest,
             "test \"$(uname -m)\" = aarch64 && test \"$(getconf PAGESIZE)\" = 4096 && "
             "test -z \"$(dpkg --print-foreign-architectures)\" && "
@@ -109,7 +110,7 @@ def main() -> int:
                 break
             if args.experimental_venus:
                 client = guest.run_command(
-                    f"pgrep -u uml -f '^{STEAM}/steamrtarm64/steam -steamdeck -gamepadui$' >/dev/null", 15)
+                    f"pgrep -u uml -f '^{STEAM}/steamrtarm64/steam -gamepadui$' >/dev/null", 15)
                 if client.return_code == 0:
                     if steam_seen_at is None:
                         steam_seen_at = time.monotonic()
@@ -156,8 +157,10 @@ def main() -> int:
             if not expected or "ActiveState=failed" not in state:
                 raise RuntimeError("gaming session did not reach the expected Vulkan graphics limitation")
             print("PASS gaming session reached the expected Mesa/Vulkan graphics limitation", flush=True)
-        if not guest.shutdown(30):
+        if not guest.shutdown(30) or guest.return_code != 0:
             raise RuntimeError("Steam guest did not shut down")
+        if re.search(r"Kernel panic|BUG:|Oops:|detected stalls on CPUs", guest.output()):
+            raise RuntimeError("Steam guest reported a kernel failure")
         return 0
     except BaseException:
         print(guest.output(), file=sys.stderr)

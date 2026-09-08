@@ -634,6 +634,7 @@ virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	condit
 virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional
 virtio-battery-protocol	tests/unit/battery/virtio_battery_tests.cpp	unit	conditional
 platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained
+platform-video-decoder	tests/unit/platform/video_decoder_tests.cpp	unit	retained
 android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained
 device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained
 guest-console-suspend-timeout	tests/unit/mconsole/guest_console_tests.cpp	unit	retained
@@ -722,3 +723,5 @@ guest-docker-hello-world	tests/integration	integration	conditional
 guest-external-network	tests/integration/network	integration	conditional
 guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional
 guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional
+virtio-video-protocol	tests/unit/video	unit	conditional
+guest-v4l2-decode	tests/integration/video	integration	conditional

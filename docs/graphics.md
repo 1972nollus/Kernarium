@@ -57,6 +57,12 @@ decoder. Guests use unmodified upstream Mesa and libva through the standard
 VA-API path; applications, including Chromium builds, must enable Linux VA-API
 decoding themselves.
 
+Applications that use stateful V4L2 decoding can instead use the independent
+[Virtio video service](../darwin/device/video/README.md). It exposes the same
+host codec profile set through the shared Linux and Android driver and copies
+decoded planes into guest memory. Its protocol and buffer ownership do not
+depend on Virgl or VA-API.
+
 H.264 High10 is advertised only on Apple targets where a profile-specific
 VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
 10-bit bi-planar output. A session-only probe on macOS is insufficient: native

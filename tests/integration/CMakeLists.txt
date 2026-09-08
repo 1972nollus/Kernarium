@@ -26,6 +26,28 @@ if(NOT TARGET "${_uml_integration_emulator}")
         "Integration emulator target is unavailable: ${_uml_integration_emulator}")
 endif()
 
+set(UML_V4L2_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest V4L2 regression executable built from tests/integration/video/v4l2_decode_probe.cpp")
+if(UML_V4L2_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_PROBE_BINARY}" OR NOT TARGET uml_video_device)
+        message(FATAL_ERROR "V4L2 qualification requires its guest probe and video provider")
+    endif()
+    if(UML_GUEST_16K_PAGES)
+        set(_uml_video_page_size 16384)
+    else()
+        set(_uml_video_page_size 4096)
+    endif()
+    uml_add_integration_test(NAME guest-v4l2-decode
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/video/run_v4l2_decode.py"
+            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --rootfs "${UML_INTEGRATION_ROOTFS}"
+            --probe "${UML_V4L2_PROBE_BINARY}"
+            --page-size "${_uml_video_page_size}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
+        LABELS video TIMEOUT 600)
+endif()
+
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
    NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     message(FATAL_ERROR "Integration tests require a selected kernel artifact")

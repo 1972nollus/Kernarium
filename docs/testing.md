@@ -61,6 +61,17 @@ cmake --workflow --preset check-gpu-venus
 cmake --workflow --preset check-integration-venus
 ```
 
+The optional `guest-v4l2-decode` test qualifies the
+[Virtio video decoder](../darwin/device/video/README.md). Build
+`tests/integration/video/v4l2_decode_probe.cpp` as a static C++20 executable for
+the guest architecture and configure an integration preset with
+`UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`, `tar`,
+`sha256sum`, `timeout`, and either `curl` or `wget`. The test boots a disposable
+overlay, transfers generated fixtures over the local SLiRP endpoint, checks
+every advertised profile's pixels, raw layouts, timestamps, source-change and
+EOS events, and rejects kernel faults or failed shutdown. Run it on both Linux
+page profiles; Android uses its own 16 KiB guest and deployment workflow.
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh

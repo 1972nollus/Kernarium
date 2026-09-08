@@ -125,7 +125,7 @@ For an interactive boot with the same development account:
 ```sh
 scripts/boot-overlay-systemd.sh --emulator /path/to/uml-darwin-wine-arm64ec \
   --rootfs /path/to/steam-arm64ec-gaming.erofs --unit graphical.target \
-  -- --gpu-display=native
+  -- --video --gpu-display=native
 ```
 
 ## Current Venus startup boundary
@@ -137,9 +137,10 @@ Direct Vulkan color scanout reaches VNC through native Metal readback.
 AR24 client buffers may still be rejected for direct KMS scanout and require
 composition. Shared Metal heaps use compatible texture storage across render
 target and compositor usages; the composed Vulkan cube renders correctly.
-Steam completes its client update, loads its native UI modules, authenticates
-the web-helper connection, and renders the SteamOS startup animation. Setup
-does not reach a usable screen: black frames occur after the animation, while
-CEF reports an unsupported video pixel format and an unavailable
-`/dev/video-dec0` decoder. Those messages do not establish the cause of the
-setup failure. Login and game launch remain unqualified.
+Steam completes its client update and renders the Big Picture sign-in screen,
+including the username/password and QR-code panels. The launcher uses
+`-gamepadui`; Steam Deck hardware onboarding requires devices this guest does
+not provide. The Virtio video service supplies the V4L2 decoder and the image's
+udev rule provides `/dev/video-dec0`. A separate V4L2 probe verifies hardware
+decoding and output pixels; the UI observation alone does not establish that
+CEF used hardware decoding. Account login and game launch remain unqualified.

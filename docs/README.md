@@ -8,6 +8,7 @@ investigation date.
 | Architecture, dependency direction, runtime boundaries | [`architecture.md`](architecture.md) |
 | Build, test, guest, sanitizer, and package entry points | [`testing.md`](testing.md) |
 | Apple graphics support and limits | [`graphics.md`](graphics.md) |
+| Virtio video decoding and private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |

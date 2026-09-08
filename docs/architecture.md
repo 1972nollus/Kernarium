@@ -206,8 +206,14 @@ Runtime frameworks receive only the resulting ordinary disk image.
 ## Devices and graphics
 
 The vhost-user transport owns connection, queue framing, and deferred used-ring
-publication. GPU, input, sound, console, battery, and network providers own
+publication. GPU, video, input, sound, console, battery, and network providers own
 their protocol behavior independently.
+
+The [Virtio video device](../darwin/device/video/README.md) bridges the shared
+mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
+own vhost-user connection and requires no GPU context. The
+[private wire header](../kernel/common/video/README.md) is separate from both
+the public API and the host/kernel bridge ABI.
 
 The Apple graphics path is:
 

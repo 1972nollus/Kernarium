@@ -54,6 +54,10 @@ class ImageAudit(unittest.TestCase):
         icd = self.root / "usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
         icd.parent.mkdir(parents=True)
         icd.write_text("{}")
+        rule = self.root / "etc/udev/rules.d/70-uml-virtio-video.rules"
+        rule.parent.mkdir(parents=True)
+        rule.write_text('SUBSYSTEM=="video4linux", SYMLINK+="video-dec%n"\n')
+
 
     def test_vulkan_receipt_rejects_modified_runtime(self) -> None:
         library = self.root / "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
@@ -70,6 +74,11 @@ class ImageAudit(unittest.TestCase):
         self.assertTrue(image.inventory(self.root))
         library.write_bytes(library.read_bytes() + b"modified")
         with self.assertRaisesRegex(RuntimeError, "installed Vulkan runtime differs"):
+            image.inventory(self.root)
+
+    def test_decoder_discovery_rule_required(self) -> None:
+        (self.root / "etc/udev/rules.d/70-uml-virtio-video.rules").unlink()
+        with self.assertRaisesRegex(RuntimeError, "decoder discovery rule"):
             image.inventory(self.root)
 
     def test_steam_ui_library_required(self) -> None:

@@ -11,6 +11,11 @@ userspace slice branches from its final tree and owns only its config and patch
 overlay under [`slices/x86_64`](slices/x86_64). Those machine-readable files
 are the source of truth; replay commit IDs and binary hashes are observations.
 
+The shared stateful Virtio video decoder is built in for every product in this
+line. Its [wire contract](../common/video/README.md) is synchronized from the
+canonical header and its implementation is maintained as a local media topic.
+The host exposes hardware decoding through V4L2 independently of the GPU.
+
 ## Source preparation and replay
 
 Linux must be checked out on a case-sensitive filesystem. Copy

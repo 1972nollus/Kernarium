@@ -97,6 +97,9 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
     for relative, architecture in REQUIRED_PE.items():
         if observed.get(relative) != ("PE", architecture):
             raise RuntimeError(f"required {architecture} Windows image is absent or invalid: {relative}")
+    decoder_rule = root / "etc/udev/rules.d/70-uml-virtio-video.rules"
+    if not decoder_rule.is_file() or 'SYMLINK+="video-dec%n"' not in decoder_rule.read_text():
+        raise RuntimeError("V4L2 decoder discovery rule is absent or invalid")
     wine_inf = (root / PROTON / "files/share/wine/wine.inf").read_text()
     for name in ("libarm64ecfex.dll", "libwow64fex.dll"):
         if name in wine_inf:
