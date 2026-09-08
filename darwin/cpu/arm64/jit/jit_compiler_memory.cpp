@@ -24,15 +24,12 @@ void JitCompiler::emit_translate(unsigned address, Access access,
     }
 
     /*
-     * The TLB tag is the page-aligned guest address. A single encodable
-     * logical immediate is exactly equivalent to the former LSR+LSL pair and
-     * saves one instruction on every translated memory access.
+     * The TLB tag is the guest page number, as the shared
+     * `uml::memory::TlbEntry` contract and the gadget engine both store it.
+     * One shift produces it, and the backing delta the hit path applies is
+     * still relative to the page-aligned address.
      */
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-    emitter_.emit(0x9272'c401U | ((address & 31U) << 5)); // and x1, Xn, #-16K
-#else
-    emitter_.emit(0x9274'cc01U | ((address & 31U) << 5)); // and x1, Xn, #-4K
-#endif
+    emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
     emitter_.ubfm(0, address, page_shift,
                   page_shift + ::uml::memory::tlb_index_bits - 1U);

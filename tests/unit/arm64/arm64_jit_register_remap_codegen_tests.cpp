@@ -347,7 +347,7 @@ void ordinary_memory_names_resident_data_registers_directly() {
   require_ordinary_memory_chain(unscaled_guest, code_base + 0x2000);
 }
 
-void tlb_page_tag_uses_one_logical_mask() {
+void tlb_page_tag_uses_one_page_number_shift() {
   constexpr std::array guest{
       unsigned_memory(true, 0, 1), // ldr x1, [x0]
   };
@@ -356,13 +356,17 @@ void tlb_page_tag_uses_one_logical_mask() {
           "JIT did not compile the TLB page-tag shape test");
   const auto hot =
       std::span<const std::uint32_t>{compiled.words}.first(compiled.hot_words);
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  constexpr std::uint32_t page_mask = 0x9272'c501U;
-#else
-  constexpr std::uint32_t page_mask = 0x9274'cd01U;
-#endif
-  require(std::ranges::count(hot, page_mask) == 1,
-          "JIT did not form the TLB page tag with one logical mask");
+  /*
+   * `uml::memory::TlbEntry` keys its ways by the guest page number, so the
+   * generated tag must be one right shift of the address register. A tag in
+   * any other form can never match a filled way, and every translated access
+   * would silently take the preserving miss bridge.
+   */
+  constexpr std::uint32_t page_number_shift =
+      0xd340'0000U | ((DARWIN_UML_GUEST_PAGE_SHIFT & 63U) << 16U) |
+      (63U << 10U) | (8U << 5U) | 1U; // lsr x1, x8, #page shift
+  require(std::ranges::count(hot, page_number_shift) == 1,
+          "JIT did not form the TLB page tag with one page-number shift");
 }
 
 void literal_load_names_its_resident_destination_directly() {
@@ -587,7 +591,7 @@ int main() {
   checksum_dependency_chain_is_direct_and_resident();
   thread_pointer_transfers_keep_guest_gprs_resident();
   ordinary_memory_names_resident_data_registers_directly();
-  tlb_page_tag_uses_one_logical_mask();
+  tlb_page_tag_uses_one_page_number_shift();
   literal_load_names_its_resident_destination_directly();
   cross_domain_chain_is_direct_and_resident();
   javascript_conversion_writes_a_resident_gpr_directly();
