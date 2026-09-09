@@ -1988,6 +1988,39 @@ read_test_sequences(void *context) noexcept
 			"compat32 INT 80h did not publish its syscall convention or EIP");
 }
 
+[[nodiscard]] bool execute_compat32_pushfd_popfd()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x9c,                         // pushfd
+		0x58,                         // pop eax
+		0x35, 0x00, 0x00, 0x20, 0x00, // xor eax, 0x200000 (toggle ID flag)
+		0x50,                         // push eax
+		0x9d,                         // popfd
+		0x9c,                         // pushfd
+		0x5b,                         // pop ebx
+	});
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	cpu.gpr(Register::rsp) = 0x200;
+	cpu.rflags = 0x2;
+	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"compat32 pushfd/popfd block did not build"))
+		return false;
+	const auto result = gadgets::execute(built.program, cpu, memory, 7);
+	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 7,
+		"compat32 pushfd/popfd block did not retire all instructions"))
+		return false;
+	return expect((cpu.rflags & 0x200000ULL) != 0,
+		"compat32 popfd did not set the ID flag in EFLAGS") &&
+		expect((cpu.gpr(Register::rbx) & 0x200000ULL) != 0,
+		"compat32 pushfd did not observe the updated ID flag");
+}
+
+
 [[nodiscard]] bool execute_compat32_legacy_segment_stack()
 {
 	using namespace uml::cpu::x86_64;
@@ -3542,6 +3575,7 @@ int main()
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
 		execute_compat32_stack_and_int80() &&
+		execute_compat32_pushfd_popfd() &&
 		execute_compat32_legacy_segment_stack() &&
 		execute_long64_interrupt_return_stack_switch() &&
 		expose_consistent_xsave_cpuid_state() &&

@@ -296,7 +296,7 @@ gadget pop_flags_\width
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x4dd5
-	.if \width == 64
+	.if \width != 16
 	movk x10, #0x24, lsl #16
 	.endif
 	bic x9, x9, x10
