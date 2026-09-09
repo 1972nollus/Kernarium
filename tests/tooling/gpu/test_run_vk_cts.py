@@ -402,7 +402,13 @@ class VulkanCtsToolingTests(unittest.TestCase):
         receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
         artifacts = {
             "renderer.txt": (
-                "x11_server=xwayland\n"
+                "x11_server=xorg\n"
+                "x11_dri3=1\n"
+                "x11_present=1\n"
+                "x11_glamor=1\n"
+                "x11_connected=1\n"
+                "x11_drm_fd=1\n"
+                "wayland_server=kwin-x11\n"
                 "device=/dev/dri/card0\n"
                 "device=/dev/dri/renderD128\n"
                 "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
@@ -725,9 +731,15 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 hashlib.sha256(b"stale").hexdigest(),
             )
 
-    def test_full_receipt_fractions_use_xwayland_without_changing_selection(self) -> None:
+    def test_full_receipt_fractions_use_wsi_without_changing_selection(self) -> None:
         renderer = (
-            "x11_server=xwayland\n"
+            "x11_server=xorg\n"
+            "x11_dri3=1\n"
+            "x11_present=1\n"
+            "x11_glamor=1\n"
+            "x11_connected=1\n"
+            "x11_drm_fd=1\n"
+            "wayland_server=kwin-x11\n"
             "device=/dev/dri/card0\n"
             "device=/dev/dri/renderD128\n"
         )
@@ -739,7 +751,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 self.assertTrue(selection.generated_expected)
                 self.assertEqual(selection.source_cases, ())
                 self.assertEqual(selection.expected_cases, ())
-                self.assertTrue(cts.receipt_selection_uses_xwayland(selection))
+                self.assertTrue(cts.receipt_selection_uses_wsi(selection))
+                self.assertTrue(cts.receipt_selection_uses_wayland(selection))
                 for arguments in (
                     cts.receipt_deqp_arguments(self.receipt, selection, "/run/uml-vk-cts"),
                     cts.receipt_list_arguments(self.receipt, selection, "/run/uml-vk-cts"),
@@ -759,22 +772,22 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 command = cts.build_receipt_harness_command(
                     options, self.receipt, selection, Path("/tmp/receipt-full-wsi-test")
                 )
-                self.assertIn("graphical.target", command)
-                self.assertNotIn("multi-user.target", command)
+                self.assertIn("multi-user.target", command)
+                self.assertNotIn("graphical.target", command)
                 self.assertIn("--no-auto-poweroff", command)
                 self.assertIn("systemctl start --no-block uml-vulkan-cts.service", command)
                 self.assertIn("ncpus=4", command)
-                cts.validate_xwayland_wsi_operation(selection, {}, renderer)
+                cts.validate_wsi_operation(selection, {}, renderer)
                 for evidence in renderer.splitlines(keepends=True):
-                    with self.assertRaisesRegex(cts.CampaignError, "WSI evidence omits"):
-                        cts.validate_xwayland_wsi_operation(
+                    with self.assertRaisesRegex(cts.CampaignError, "WSI evidence"):
+                        cts.validate_wsi_operation(
                             selection, {}, renderer.replace(evidence, "")
                         )
 
         smoke = cts.resolve_receipt_selection("smoke", (), None, cts.Fraction(0, 1))
-        self.assertFalse(cts.receipt_selection_uses_xwayland(smoke))
+        self.assertFalse(cts.receipt_selection_uses_wsi(smoke))
 
-    def test_wsi_exact_family_uses_the_canonical_real_xwayland_session(self) -> None:
+    def test_wsi_exact_family_uses_the_canonical_native_xorg_session(self) -> None:
         cases = (
             "dEQP-VK.wsi.xcb.incremental_present.scale_none.fifo.identity."
             "inherit.reference",
@@ -784,16 +797,18 @@ class VulkanCtsToolingTests(unittest.TestCase):
         selection = cts.resolve_receipt_selection(
             "exact-family", cases, None, cts.Fraction(0, 1)
         )
-        self.assertTrue(cts.receipt_selection_uses_xwayland(selection))
+        self.assertTrue(cts.receipt_selection_uses_wsi(selection))
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
             page_size=16384,
             timeout=900,
             progress_timeout=600,
-            use_xwayland=True,
+            use_wsi=True,
         )
-        self.assertIn(cts.common.real_xwayland_setup(), launcher)
+        self.assertFalse(cts.receipt_selection_uses_wayland(selection))
+        self.assertIn(cts.common.native_x11_setup(), launcher)
+        self.assertNotIn("WAYLAND_DISPLAY=", launcher)
         self.assertIn('DISPLAY="$xdisplay"', launcher)
         self.assertIn('XAUTHORITY="$xauthority"', launcher)
         self.assertIn('pgrep -x Xvfb', launcher)
@@ -808,21 +823,32 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
         renderer = (
-            "x11_server=xwayland\n"
+            "x11_server=xorg\n"
+            "x11_dri3=1\n"
+            "x11_present=1\n"
+            "x11_glamor=1\n"
+            "x11_connected=1\n"
+            "x11_drm_fd=1\n"
+            "wayland_server=kwin-x11\n"
             "device=/dev/dri/card0\n"
             "device=/dev/dri/renderD128\n"
         )
         with self.assertRaisesRegex(cts.CampaignError, "Pass pair"):
-            cts.validate_xwayland_wsi_operation(
+            cts.validate_wsi_operation(
                 selection,
                 {case: "NotSupported" for case in cases},
                 renderer,
             )
-        cts.validate_xwayland_wsi_operation(
+        cts.validate_wsi_operation(
             selection,
             {case: "Pass" for case in cases},
             renderer,
         )
+        with self.assertRaisesRegex(cts.CampaignError, "forbidden"):
+            cts.validate_wsi_operation(
+                selection, {case: "Pass" for case in cases},
+                renderer + "x11_server=xwayland\n",
+            )
 
         options = cts.parse_arguments(
             (
@@ -840,7 +866,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
             selection,
             Path("/tmp/receipt-wsi-test"),
         )
-        self.assertIn("graphical.target", command)
+        self.assertIn("multi-user.target", command)
+        self.assertNotIn("graphical.target", command)
         self.assertIn("--no-auto-poweroff", command)
         self.assertIn(
             "systemctl start --no-block uml-vulkan-cts.service", command

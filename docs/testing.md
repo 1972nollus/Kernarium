@@ -284,6 +284,15 @@ Guest CTS qualification is opt-in, receipt-bound, and separate from the
 `*-venus*` workflows above, which never launch a guest or make a Vulkan support
 claim. Every campaign guest is JIT with exactly four vCPUs and 4 GiB.
 
+X11 CTS surfaces use native Xorg with virtio DRM modesetting and Virgl-backed
+glamor. The launchers verify the server executable, DRM file descriptor,
+DRI3 and Present extensions, connected output, and accelerated rendering;
+Xwayland and Xvfb are rejected. OpenGL explicitly selects X11 for EGL.
+Vulkan selections that include Wayland also start the image's unmodified
+KWin Wayland compositor nested on Xorg, without Xwayland, so mixed WSI cases
+retain their released traversal order and working Wayland surface support.
+The launchers stop their display processes before requesting guest shutdown.
+
 `tests/integration/gpu/run_vk_cts.py` owns the Vulkan lane. `--qualification`
 binds the run to `vulkan_cts_receipt.json`: the sealed image's receipt, the CTS
 and Mesa source locks, and the staged KosmicKrisp provider digest, which must

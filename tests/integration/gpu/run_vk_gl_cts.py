@@ -75,10 +75,6 @@ DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vk-gl-cts"
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import boot_kde_vnc  # noqa: E402
-
-
 MAX_COMPRESSED_ARTIFACT = 64 * 1024 * 1024
 MAX_UNCOMPRESSED_ARTIFACT = 512 * 1024 * 1024
 SHARD_ARTIFACTS = frozenset(
@@ -2358,27 +2354,44 @@ def validate_official_runner_results(
         )
 
 
+NATIVE_X11_MARKERS = (
+    "x11_server=xorg", "x11_dri3=1", "x11_present=1", "x11_glamor=1",
+    "x11_connected=1", "x11_drm_fd=1",
+    "device=/dev/dri/card0", "device=/dev/dri/renderD128",
+)
+
+
+def validate_native_x11_probe(text: str) -> None:
+    """Require evidence of native accelerated Xorg, never a substitute server."""
+    if re.search(r"xwayland|xvfb", text, re.IGNORECASE):
+        raise CampaignError("software or forbidden renderer: Xwayland/Xvfb")
+    lines = set(text.splitlines())
+    for marker in NATIVE_X11_MARKERS:
+        if marker not in lines:
+            raise CampaignError(f"native Xorg renderer probe omits {marker}")
+
+
 def validate_renderer_probe(
     text: str,
     expected_page_size: int | None = None,
     renderer_backend: str = "virgl",
 ) -> None:
     lower = text.lower()
-    for device in ("/dev/dri/card0", "/dev/dri/renderD128"):
-        if f"device={device}" not in text:
-            raise CampaignError(f"renderer probe did not prove {device}")
-    if "x11_server=xwayland" not in lower:
-        raise CampaignError("renderer probe did not prove the real Xwayland WSI")
+    validate_native_x11_probe(text)
     forbidden = SOFTWARE_RENDERERS.search(text)
     if forbidden is not None:
         raise CampaignError(f"software or forbidden renderer: {forbidden.group(0)}")
+    client_renderers = "\n".join(
+        line for line in lower.splitlines()
+        if line.startswith("opengl renderer string:")
+    )
     if renderer_backend == "virgl":
         if "zink" in lower:
             raise CampaignError("software or forbidden renderer: Zink")
-        if "virgl" not in lower:
+        if "virgl" not in client_renderers:
             raise CampaignError("renderer probe did not report Virgl")
     elif renderer_backend == "zink":
-        if "zink" not in lower or "virtio-gpu venus" not in lower:
+        if "zink" not in client_renderers or "virtio-gpu venus" not in client_renderers:
             raise CampaignError(
                 "renderer probe did not report Zink over Virtio-GPU Venus"
             )
@@ -2780,59 +2793,313 @@ def install_text(path: str, content: str, mode: str = "0644") -> str:
     )
 
 
-def real_xwayland_setup() -> str:
-    """Return the canonical guest-side real-Xwayland discovery contract."""
-    return r'''uml_uid=$(id -u uml)
-runtime="/run/user/$uml_uid"
-xdisplay=
-xauthority=
+def native_x11_setup(*, wayland: bool = False) -> str:
+    """Start authenticated, DRM-backed Xorg, optionally with nested Wayland."""
+    setup = r'''xorg_pid=
+xorg_stamp=
+xorg_launcher_pid=
+xorg_launcher_stamp=
+kwin_pid=
+kwin_stamp=
+kwin_launcher_pid=
+kwin_launcher_stamp=
 
-find_xwayland()
+native_process_state()
 {
-    candidates=$(pgrep -u "$uml_uid" -x Xwayland 2>/dev/null || true)
-    for candidate_pid in $candidates; do
-        command_line="/proc/$candidate_pid/cmdline"
-        [ -r "$command_line" ] || continue
-        candidate_display=$(tr '\000' '\n' < "$command_line" |
-            grep -E '^:[0-9]+$' | head -n 1 || true)
-        candidate_xauthority=$(tr '\000' '\n' < "$command_line" |
-            awk 'previous == "-auth" { print; exit } { previous = $0 }')
-        [ -n "$candidate_display" ] || continue
-        case "$candidate_xauthority" in
-        "$runtime"/xauth_*) ;;
-        *) continue ;;
-        esac
-        xsocket="/tmp/.X11-unix/X${candidate_display#:}"
-        [ -S "$xsocket" ] && [ -f "$candidate_xauthority" ] || continue
-        xdisplay=$candidate_display
-        xauthority=$candidate_xauthority
-        return 0
+    [ -r "/proc/$1/stat" ] || return 0
+    sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $1 ":" $20}'
+}
+
+native_process_alive()
+{
+    [ -n "$1" ] && [ -n "$2" ] || return 1
+    process_state=$(native_process_state "$1")
+    case "$process_state" in
+        Z:*|X:*|"") return 1 ;;
+    esac
+    [ "${process_state#*:}" = "$2" ]
+}
+
+native_stop_process()
+{
+    stop_pid=$1
+    stop_stamp=$2
+    stop_name=$3
+    native_process_alive "$stop_pid" "$stop_stamp" || return 0
+    stop_executable=
+    case "$stop_name" in
+        kwin) stop_executable=/usr/bin/kwin_wayland ;;
+        xorg) stop_executable=/usr/lib/xorg/Xorg ;;
+    esac
+    if [ -n "$stop_executable" ] && [ "$(readlink -f /proc/$stop_pid/exe)" != "$stop_executable" ]; then
+        printf 'UML_CTS_ERROR: native display process identity changed: %s\n' "$stop_name"
+        return 1
+    fi
+    printf 'UML_NATIVE_DISPLAY_CLEANUP|stop=%s|pid=%s\n' "$stop_name" "$stop_pid"
+    kill -TERM "$stop_pid" 2>/dev/null || return 1
+    stop_remaining=10
+    while native_process_alive "$stop_pid" "$stop_stamp"; do
+        [ "$stop_remaining" -gt 0 ] || break
+        stop_remaining=$((stop_remaining - 1))
+        sleep 1
+    done
+    native_process_alive "$stop_pid" "$stop_stamp" || return 0
+    printf 'UML_CTS_ERROR: native display cleanup timed out: %s\n' "$stop_name"
+    kill -KILL "$stop_pid" 2>/dev/null || true
+    stop_remaining=5
+    while native_process_alive "$stop_pid" "$stop_stamp"; do
+        [ "$stop_remaining" -gt 0 ] || break
+        stop_remaining=$((stop_remaining - 1))
+        sleep 1
     done
     return 1
 }
 
-remaining=600
-while [ ! -S "$runtime/bus" ] || ! find_xwayland; do
-    [ "$remaining" -gt 0 ] || {
-        echo 'UML_CTS_ERROR: graphical Xwayland session did not become ready'
-        exit 1
-    }
+native_display_child()
+{
+    child_frontier=$1
+    child_depth=8
+    while [ -n "$child_frontier" ] && [ "$child_depth" -gt 0 ]; do
+        child_next=
+        for child_parent in $child_frontier; do
+            child_list="/proc/$child_parent/task/$child_parent/children"
+            [ -r "$child_list" ] || continue
+            for child in $(cat "$child_list"); do
+                if [ "$(readlink -f /proc/$child/exe)" = "$2" ]; then
+                    printf '%s\n' "$child"
+                    return 0
+                fi
+                child_next="$child_next $child"
+            done
+        done
+        child_frontier=$child_next
+        child_depth=$((child_depth - 1))
+    done
+}
+
+native_display_cleanup()
+{
+    cleanup_status=0
+    # A startup failure can precede the readiness probe's PID capture. Only
+    # inspect descendants of our still-pinned launcher in that case.
+    if [ -z "$kwin_pid" ] && native_process_alive "$kwin_launcher_pid" "$kwin_launcher_stamp"; then
+        kwin_pid=$(native_display_child "$kwin_launcher_pid" /usr/bin/kwin_wayland)
+        if [ -n "$kwin_pid" ]; then
+            kwin_stamp=$(native_process_state "$kwin_pid")
+            kwin_stamp=${kwin_stamp#*:}
+        fi
+    fi
+    if [ -z "$xorg_pid" ] && native_process_alive "$xorg_launcher_pid" "$xorg_launcher_stamp"; then
+        xorg_pid=$(native_display_child "$xorg_launcher_pid" /usr/lib/xorg/Xorg)
+        if [ -n "$xorg_pid" ]; then
+            xorg_stamp=$(native_process_state "$xorg_pid")
+            xorg_stamp=${xorg_stamp#*:}
+        fi
+    fi
+    native_stop_process "$kwin_pid" "$kwin_stamp" kwin || cleanup_status=1
+    # Never tear down the parent display while its compositor is still alive.
+    if native_process_alive "$kwin_pid" "$kwin_stamp"; then return 1; fi
+    native_stop_process "$kwin_launcher_pid" "$kwin_launcher_stamp" kwin-wrapper || cleanup_status=1
+    if ! native_process_alive "$kwin_launcher_pid" "$kwin_launcher_stamp" && [ -n "$kwin_launcher_pid" ]; then
+        wait "$kwin_launcher_pid" 2>/dev/null || true
+    fi
+    native_stop_process "$xorg_pid" "$xorg_stamp" xorg || cleanup_status=1
+    if native_process_alive "$xorg_pid" "$xorg_stamp"; then return 1; fi
+    native_stop_process "$xorg_launcher_pid" "$xorg_launcher_stamp" xorg-wrapper || cleanup_status=1
+    if ! native_process_alive "$xorg_launcher_pid" "$xorg_launcher_stamp" && [ -n "$xorg_launcher_pid" ]; then
+        wait "$xorg_launcher_pid" 2>/dev/null || true
+    fi
+    printf 'UML_NATIVE_DISPLAY_CLEANUP|status=%s\n' "$cleanup_status"
+    return "$cleanup_status"
+}
+
+native_display="$output/native-display"
+install -d -m 0755 "$native_display"
+xdisplay=:0
+xauthority="$native_display/Xauthority"
+runtime="$native_display/runtime"
+install -d -m 0700 -o uml -g uml "$runtime"
+
+native_display_failure()
+{
+    for log in Xorg.log xorg-stderr.txt xdpyinfo.txt glxinfo.txt kwin.txt; do
+        if [ -f "$native_display/$log" ]; then
+            printf 'native_display_log=%s\n' "$log" >> "$renderer"
+            tail -n 40 "$native_display/$log" >> "$renderer"
+        fi
+    done
+    printf 'UML_CTS_ERROR: native GPU display initialization failed: %s\n' "${1:-surface checks}"
+    exit 1
+}
+
+# Display servers always use the image's Virgl path, independently of the
+# Zink/Venus environment selected for CTS clients.
+virgl_display()
+{
+    env -u MESA_LOADER_DRIVER_OVERRIDE -u GALLIUM_DRIVER \
+        -u VK_DRIVER_FILES -u VK_ICD_FILENAMES -u LIBGL_ALWAYS_SOFTWARE \
+        -u EGL_PLATFORM -u WAYLAND_DISPLAY \
+        MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu GALLIUM_DRIVER=virgl "$@"
+}
+
+if pgrep -x Xwayland >/dev/null || pgrep -x Xvfb >/dev/null; then
+    native_display_failure
+fi
+# The preceding ICD JSON need not have a final newline.
+printf '\n' >> "$renderer"
+for device in /dev/dri/card0 /dev/dri/renderD128; do
+    [ -c "$device" ] || native_display_failure "missing DRM node $device"
+    printf 'device=%s\n' "$device" >> "$renderer"
+    transport=$(readlink -f "/sys/class/drm/${device##*/}/device/driver")
+    printf 'drm_transport=%s:%s\n' "$device" "$transport" >> "$renderer"
+    # UML exposes the card and render nodes through its platform transport;
+    # the modesetting/glamor and open-card checks below prove the GPU path.
+    [ "$transport" = /sys/bus/platform/drivers/virtio-uml ] || \
+        native_display_failure "unexpected DRM transport $transport"
+done
+install -d -m 1777 /tmp/.X11-unix
+: > "$xauthority"
+xauth -f "$xauthority" add "$xdisplay" MIT-MAGIC-COOKIE-1 "$(mcookie)" || native_display_failure
+chown uml:uml "$xauthority"
+chmod 0600 "$xauthority"
+cat > "$native_display/xorg.conf" <<'XORG_CONFIG'
+Section "ServerFlags"
+    Option "AutoAddDevices" "false"
+EndSection
+Section "Device"
+    Identifier "Virtio"
+    Driver "modesetting"
+    Option "kmsdev" "/dev/dri/card0"
+    Option "AccelMethod" "glamor"
+EndSection
+Section "Screen"
+    Identifier "Screen"
+    Device "Virtio"
+    DefaultDepth 24
+EndSection
+XORG_CONFIG
+virgl_display /usr/lib/xorg/Xorg "$xdisplay" vt1 -noreset -nolisten tcp \
+    -auth "$xauthority" -config "$native_display/xorg.conf" \
+    -logfile "$native_display/Xorg.log" > "$native_display/xorg-stderr.txt" 2>&1 &
+xorg_launcher_pid=$!
+xorg_launcher_stamp=$(native_process_state "$xorg_launcher_pid")
+xorg_launcher_stamp=${xorg_launcher_stamp#*:}
+remaining=25
+until runuser -u uml -- env DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
+    timeout 1 xdpyinfo > "$native_display/xdpyinfo.txt" 2>&1; do
+    kill -0 "$xorg_launcher_pid" 2>/dev/null || native_display_failure
+    [ "$remaining" -gt 0 ] || native_display_failure
     remaining=$((remaining - 1))
     sleep 1
 done
-if pgrep -x Xvfb >/dev/null; then
-    echo 'UML_CTS_ERROR: Xvfb is forbidden'
-    exit 1
-fi
-for device in /dev/dri/card0 /dev/dri/renderD128; do
-    [ -e "$device" ] || {
-        echo "UML_CTS_ERROR: missing DRM device $device"
-        exit 1
-    }
-    printf 'device=%s\n' "$device" >> "$renderer"
+# The shell function can retain a parent process, so identify the actual
+# server by its executable and authenticated display argument.
+xorg_pid=
+for candidate in $(pgrep -x Xorg); do
+    [ "$(readlink -f /proc/$candidate/exe)" = /usr/lib/xorg/Xorg ] || continue
+    tr '\000' '\n' < /proc/$candidate/cmdline | grep -Fxq -- "$xauthority" || continue
+    xorg_pid=$candidate
+    break
 done
-printf 'x11_server=xwayland\n' >> "$renderer"
+[ -n "$xorg_pid" ] || native_display_failure
+xorg_stamp=$(native_process_state "$xorg_pid")
+xorg_stamp=${xorg_stamp#*:}
+printf 'x11_server=xorg\nx11_pid=%s\n' "$xorg_pid" >> "$renderer"
+card_open=0
+for fd in /proc/$xorg_pid/fd/*; do
+    if [ "$(readlink "$fd")" = /dev/dri/card0 ]; then card_open=1; break; fi
+done
+[ "$card_open" -eq 1 ] || native_display_failure
+grep -Eq '^[[:space:]]+DRI3$' "$native_display/xdpyinfo.txt" || native_display_failure
+printf 'x11_dri3=1\n' >> "$renderer"
+grep -Eq '^[[:space:]]+Present$' "$native_display/xdpyinfo.txt" || native_display_failure
+printf 'x11_present=1\n' >> "$renderer"
+grep -Eq 'modeset\(0\): glamor X acceleration enabled on virgl' "$native_display/Xorg.log" || native_display_failure
+printf 'x11_glamor=1\n' >> "$renderer"
+runuser -u uml -- env DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
+    timeout 10 xrandr --query > "$native_display/xrandr.txt" || native_display_failure
+grep -Eq ' connected( primary)? [0-9]+x[0-9]+\+' "$native_display/xrandr.txt" || native_display_failure
+printf 'x11_connected=1\nx11_drm_fd=1\n' >> "$renderer"
+virgl_display runuser -u uml -- env DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
+    XDG_RUNTIME_DIR="$runtime" timeout 10 glxinfo -B > "$native_display/glxinfo.txt" 2>&1 || native_display_failure
+grep -Eiq 'OpenGL renderer string: virgl' "$native_display/glxinfo.txt" || native_display_failure
+if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer' "$native_display/glxinfo.txt"; then
+    native_display_failure
+fi
+printf 'x11_display_renderer=virgl\n' >> "$renderer"
 '''
+    if wayland:
+        setup += r'''virgl_display runuser -u uml -- env HOME=/home/uml DISPLAY="$xdisplay" \
+    XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
+    dbus-run-session sh -c '
+        printf "%s\n" "$DBUS_SESSION_BUS_ADDRESS" > "$XDG_RUNTIME_DIR/dbus-address"
+        exec /usr/bin/kwin_wayland --x11-display "$DISPLAY" --socket wayland-0 --width 1280 --height 720
+    ' > "$native_display/kwin.txt" 2>&1 &
+kwin_launcher_pid=$!
+kwin_launcher_stamp=$(native_process_state "$kwin_launcher_pid")
+kwin_launcher_stamp=${kwin_launcher_stamp#*:}
+remaining=60
+while [ ! -S "$runtime/wayland-0" ] || [ ! -s "$runtime/dbus-address" ]; do
+    kill -0 "$kwin_launcher_pid" 2>/dev/null || native_display_failure
+    [ "$remaining" -gt 0 ] || native_display_failure
+    remaining=$((remaining - 1))
+    sleep 1
+done
+kwin_pid=
+for candidate in $(pgrep -u "$(id -u uml)" -x kwin_wayland); do
+    [ "$(readlink -f /proc/$candidate/exe)" = /usr/bin/kwin_wayland ] || continue
+    tr '\000' '\n' < /proc/$candidate/cmdline | grep -Fxq -- --x11-display || continue
+    tr '\000' '\n' < /proc/$candidate/environ | grep -Fxq "XDG_RUNTIME_DIR=$runtime" || continue
+    kwin_pid=$candidate
+    break
+done
+[ -n "$kwin_pid" ] || native_display_failure
+kwin_stamp=$(native_process_state "$kwin_pid")
+kwin_stamp=${kwin_stamp#*:}
+dbus_address=$(cat "$runtime/dbus-address")
+printf 'wayland_server=kwin-x11\nwayland_pid=%s\n' "$kwin_pid" >> "$renderer"
+'''
+    setup += r'''if pgrep -x Xwayland >/dev/null || pgrep -x Xvfb >/dev/null; then
+    native_display_failure
+fi
+'''
+    return setup
+
+
+def native_wsi_harness_command(
+    options: argparse.Namespace,
+    artifact_directory: Path,
+    overlay_commands: Sequence[str],
+    *,
+    width: int = 1280,
+    height: int = 720,
+    display: str = "vnc",
+    rootfs_type: str = "ext4",
+) -> list[str]:
+    """Boot the CTS service without a competing display manager."""
+    if display not in ("native", "vnc") or rootfs_type not in ("ext4", "erofs"):
+        raise CampaignError("unsupported native WSI display or root filesystem")
+    command = [
+        sys.executable, str(Path(__file__).with_name("run_gpu_guest.py")),
+        "--emulator", str(options.emulator), "--rootfs", str(options.rootfs),
+        "--rootfs-type", rootfs_type, "--root-device", "/dev/ubda",
+        "--memory", options.memory, "--unit", "multi-user.target",
+        "--timeout", "0", "--no-auto-poweroff",
+        "--artifact-root", str(artifact_directory / "guest"),
+        f"--virtio-serial-socket={artifact_socket_path(artifact_directory)}",
+    ]
+    for overlay_command in overlay_commands:
+        command.extend(("--command", overlay_command))
+    command.extend((
+        "--", f"ncpus={options.cpus}", f"--execution-engine={options.engine}",
+        "systemd.mask=display-manager.service", "systemd.mask=sddm.service",
+        "systemd.mask=getty@tty0.service", "systemd.mask=getty@tty1.service",
+        "ip=off", "--gpu", f"--gpu-display={display}",
+        f"--gpu-width={width}", f"--gpu-height={height}",
+    ))
+    if display == "vnc":
+        command.extend(("--gpu-vnc-bind=127.0.0.1", "--gpu-vnc-port=0"))
+    return command
 
 
 def build_guest_launcher(
@@ -2925,6 +3192,7 @@ actual_receipt_sha=$(sha256sum \
                         f"--deqp-caselist-export-file={export_pattern}",
                         f"--deqp-archive-dir={archive}",
                         "--deqp-gl-context-type=egl",
+                        "--deqp-egl-display-type=x11",
                         "--deqp-duplicate-case-name-check=enable",
                         f"--deqp-log-filename={qpa}",
                     ]
@@ -2973,6 +3241,8 @@ actual_receipt_sha=$(sha256sum \
             f"--deqp-base-seed={seed}",
             f"--deqp-log-filename={qpa}",
         ]
+    if not hierarchy_inventory:
+        command.append("--deqp-egl-display-type=x11")
     quoted_command = " \\\n    ".join(shlex.quote(argument) for argument in command)
     leaf_path = "" if selection is None else selection.leaf.path
     leaf_identity_check = ""
@@ -2983,8 +3253,8 @@ actual_receipt_sha=$(sha256sum \
         else "unset MESA_LOADER_DRIVER_OVERRIDE"
     )
     renderer_check = (
-        """grep -Eiq 'zink' "$renderer" &&
-grep -Eiq 'virtio-gpu venus' "$renderer" || {
+        """grep -Eiq '^OpenGL renderer string:.*zink' "$renderer" &&
+grep -Eiq '^OpenGL renderer string:.*virtio-gpu venus' "$renderer" || {
     echo 'UML_CTS_ERROR: renderer is not Zink over Virtio-GPU Venus'
     exit 1
 }
@@ -2993,7 +3263,7 @@ if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|xvfb' "$renderer"; th
     exit 1
 fi"""
         if renderer_backend == "zink"
-        else """grep -Eiq 'virgl' "$renderer" || {
+        else """grep -Eiq '^OpenGL renderer string:.*virgl' "$renderer" || {
     echo 'UML_CTS_ERROR: renderer is not Virgl'
     exit 1
 }
@@ -3341,6 +3611,9 @@ finish()
     if [ "$transfer_status" -ne 0 ]; then
         echo 'UML_CTS_ERROR: acknowledged artifact transfer failed'
     fi
+    if command -v native_display_cleanup >/dev/null; then
+        native_display_cleanup || echo 'UML_CTS_ERROR: native display cleanup failed'
+    fi
     sync
     systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1
 }}
@@ -3362,8 +3635,10 @@ actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
     exit 1
 }}
 
+{native_x11_setup()}
 {renderer_environment}
-{real_xwayland_setup()}
+unset WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS
+export EGL_PLATFORM=x11
 runuser -u uml -- env \
     HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" glxinfo -B >> "$renderer" 2>&1 || {{
@@ -3372,7 +3647,7 @@ runuser -u uml -- env \
     }}
 runuser -u uml -- env \
     HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
-    XDG_RUNTIME_DIR="$runtime" eglinfo -B -p gbm >> "$renderer" 2>&1 || true
+    XDG_RUNTIME_DIR="$runtime" eglinfo -B -p x11 >> "$renderer" 2>&1 || true
 {renderer_check}
 
 {prepare_command}
@@ -3391,9 +3666,8 @@ fi
 set +e
 if [ "$checkpoint_mode" -eq 1 ]; then
     runuser -u uml -- env \
-        HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
+        HOME=/home/uml DISPLAY="$xdisplay" EGL_PLATFORM=x11 \
         XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
         timeout --signal=TERM --kill-after=30 {timeout} \
         {quoted_command} &
     cts_pid=$!
@@ -3408,9 +3682,8 @@ if [ "$checkpoint_mode" -eq 1 ]; then
     fi
 else
     runuser -u uml -- env \
-        HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
+        HOME=/home/uml DISPLAY="$xdisplay" EGL_PLATFORM=x11 \
         XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
         timeout --signal=TERM --kill-after=30 {timeout} \
         {quoted_command}
     status=$?
@@ -3423,8 +3696,8 @@ exit "$status"
 
 CTS_SERVICE = """[Unit]
 Description=Darwin UML VK-GL-CTS campaign
-After=display-manager.service
-Wants=display-manager.service
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
 
 [Service]
 Type=oneshot
@@ -3434,7 +3707,7 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 """
 
 
@@ -3445,44 +3718,9 @@ def build_harness_command(
     *,
     resume_after: int = 0,
 ) -> list[str]:
-    artifact_socket = artifact_socket_path(artifact_directory)
-    launcher_arguments = [
-        "--display",
-        options.display,
-        "--emulator",
-        str(options.emulator),
-        "--rootfs",
-        str(options.rootfs),
-        "--rootfs-type",
-        options.rootfs_type,
-        # The sealed CTS images are raw filesystems, not the partitioned
-        # starter disks the launcher's ext4 default assumes.
-        "--root-device",
-        "/dev/ubda",
-        "--memory",
-        options.memory,
-        "--cpus",
-        str(options.cpus),
-        "--engine",
-        options.engine,
-        "--width",
-        str(options.width),
-        "--height",
-        str(options.height),
-    ]
-    if options.display == "vnc":
-        launcher_arguments.extend(("--port", "0"))
-    launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
-    command = boot_kde_vnc.build_harness_command(launcher_options)
-    separator = boot_kde_vnc.guest_argument_separator(command)
     applied_waivers = getattr(options, "applied_waivers", ())
     waiver_text = waiver_xml(applied_waivers) if applied_waivers else None
     overlay_commands = (
-        *(
-            ("systemctl set-environment MESA_LOADER_DRIVER_OVERRIDE=zink",)
-            if options.renderer == "zink"
-            else ()
-        ),
         *(
             (install_text(GUEST_WAIVER_PATH, waiver_text, "0644"),)
             if waiver_text is not None
@@ -3518,14 +3756,11 @@ def build_harness_command(
         ),
         "systemctl start --no-block uml-vk-gl-cts.service",
     )
-    additions = [
-        "--artifact-root",
-        str(artifact_directory / "guest"),
-        f"--virtio-serial-socket={artifact_socket}",
-    ]
-    for overlay_command in overlay_commands:
-        additions.extend(("--command", overlay_command))
-    command[separator:separator] = additions
+    command = native_wsi_harness_command(
+        options, artifact_directory, overlay_commands,
+        width=options.width, height=options.height,
+        display=options.display, rootfs_type=options.rootfs_type,
+    )
     launch_environment = (
         ["UML_GPU_EXPERIMENTAL_VULKAN=1"]
         if options.renderer == "zink"

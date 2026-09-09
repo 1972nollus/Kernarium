@@ -106,7 +106,7 @@
     "filesystem": "ext4",
     "filesystem_uuid": "2240061a-2b64-4626-b8bf-dd0f9993a4a9",
     "read_only": true,
-    "sha256": "4e14b730be231ab763ed1800d89aecabcfcddc758c218751252473ba39af6788",
+    "sha256": "622ffb2c7f2c3459188c6661dd197ab24495caa286bed13ae546a918960d3da9",
     "size": 8589934592
   },
   "exclusions": [

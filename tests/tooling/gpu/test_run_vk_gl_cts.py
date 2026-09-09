@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import socket
 import subprocess
+import shlex
 import struct
 import sys
 import tempfile
@@ -244,8 +245,8 @@ def write_config_inventory_evidence(
         payloads = {
             "results.qpa": payload,
             "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                             "x11_server=xwayland\nguest_page_size=16384\n"
-                             "zink over Virtio-GPU Venus\n").encode(),
+                             "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nguest_page_size=16384\n"
+                             "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode(),
             "summary.txt": b"cts_rc=0\n",
         }
         for name, content in payloads.items():
@@ -594,13 +595,11 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 options, selection, Path("/tmp/uml-zink-cts-test")
             )
             self.assertEqual(command[:2], ["env", "UML_GPU_EXPERIMENTAL_VULKAN=1"])
-            self.assertTrue(
-                any(
-                    "systemctl set-environment MESA_LOADER_DRIVER_OVERRIDE=zink"
-                    in argument
-                    for argument in command
-                )
+            self.assertFalse(
+                any("systemctl set-environment" in argument for argument in command)
             )
+            self.assertIn("systemd.mask=sddm.service", command)
+            self.assertIn("multi-user.target", command)
 
     def test_zink_gl_receipt_requires_each_source_identity(self) -> None:
         identity = cts.load_identity()
@@ -766,7 +765,12 @@ class VkGlCtsToolingTests(unittest.TestCase):
     def test_zink_renderer_probe_requires_venus_and_rejects_software(self) -> None:
         valid = """device=/dev/dri/card0
 device=/dev/dri/renderD128
-x11_server=xwayland
+x11_server=xorg
+x11_dri3=1
+x11_present=1
+x11_glamor=1
+x11_connected=1
+x11_drm_fd=1
 OpenGL renderer string: zink Vulkan 1.4 (Virtio-GPU Venus)
 """
         cts.validate_renderer_probe(valid, renderer_backend="zink")
@@ -1060,7 +1064,12 @@ registered_module=KHR-GLES3
     def test_renderer_probe_rejects_every_software_negative_control(self) -> None:
         valid = """device=/dev/dri/card0
 device=/dev/dri/renderD128
-x11_server=xwayland
+x11_server=xorg
+x11_dri3=1
+x11_present=1
+x11_glamor=1
+x11_connected=1
+x11_drm_fd=1
 OpenGL renderer string: virgl (Apple GPU)
 """
         cts.validate_renderer_probe(valid)
@@ -1074,8 +1083,104 @@ OpenGL renderer string: virgl (Apple GPU)
                 cts.validate_renderer_probe(valid + forbidden)
         with self.assertRaisesRegex(cts.CampaignError, "renderD128"):
             cts.validate_renderer_probe(valid.replace("device=/dev/dri/renderD128\n", ""))
-        with self.assertRaisesRegex(cts.CampaignError, "Xwayland"):
-            cts.validate_renderer_probe(valid.replace("x11_server=xwayland\n", ""))
+        with self.assertRaisesRegex(cts.CampaignError, "Xorg"):
+            cts.validate_renderer_probe(valid.replace("x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\n", ""))
+
+    def test_native_x11_probe_requires_each_gate_and_rejects_other_servers(self) -> None:
+        valid = "\n".join(cts.NATIVE_X11_MARKERS) + "\n"
+        cts.validate_native_x11_probe(valid)
+        for marker in cts.NATIVE_X11_MARKERS:
+            with self.subTest(marker=marker), self.assertRaises(cts.CampaignError):
+                cts.validate_native_x11_probe(valid.replace(marker + "\n", ""))
+        for forbidden in ("Xwayland", "Xvfb"):
+            with self.subTest(server=forbidden), self.assertRaises(cts.CampaignError):
+                cts.validate_native_x11_probe(valid + forbidden)
+
+    def test_display_virgl_does_not_substitute_for_client_renderer(self) -> None:
+        evidence = "\n".join(cts.NATIVE_X11_MARKERS) + "\nx11_display_renderer=virgl\n"
+        with self.assertRaisesRegex(cts.CampaignError, "did not report Virgl"):
+            cts.validate_renderer_probe(evidence)
+        with self.assertRaisesRegex(cts.CampaignError, "Zink over Virtio-GPU Venus"):
+            cts.validate_renderer_probe(evidence, renderer_backend="zink")
+
+    def test_native_x11_setup_separates_display_driver_and_wayland(self) -> None:
+        for wayland in (False, True):
+            with self.subTest(wayland=wayland):
+                setup = cts.native_x11_setup(wayland=wayland)
+                syntax = subprocess.run(
+                    ["sh", "-n"], input=setup, text=True, capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                self.assertIn("MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu", setup)
+                self.assertIn("GALLIUM_DRIVER=virgl", setup)
+                self.assertIn("-u VK_DRIVER_FILES", setup)
+                self.assertIn("/proc/$candidate/exe", setup)
+                self.assertIn("/proc/$xorg_pid/fd/*", setup)
+                self.assertIn('/sys/bus/platform/drivers/virtio-uml', setup)
+                self.assertIn('drm_transport=%s:%s', setup)
+                self.assertIn('unexpected DRM transport $transport', setup)
+                self.assertLess(
+                    setup.index("printf '\\n' >> \"$renderer\""),
+                    setup.index('for device in /dev/dri/card0'),
+                )
+                self.assertIn("timeout 1 xdpyinfo", setup)
+                self.assertIn("pgrep -x Xwayland", setup)
+                self.assertIn("pgrep -x Xvfb", setup)
+                self.assertEqual("exec /usr/bin/kwin_wayland" in setup, wayland)
+                self.assertEqual("dbus_address=" in setup, wayland)
+                self.assertNotIn(" --xwayland", setup)
+
+    def test_native_display_cleanup_is_ordered_and_bounded(self) -> None:
+        setup = cts.native_x11_setup(wayland=True)
+        cleanup = setup.split('native_display="$output/native-display"')[0]
+        # Model live recorded children and wrappers. Signals update their state;
+        # no real processes are signaled by this lifecycle test.
+        model = r"""
+xorg_pid=3; xorg_stamp=3; xorg_launcher_pid=4; xorg_launcher_stamp=4
+kwin_pid=1; kwin_stamp=1; kwin_launcher_pid=2; kwin_launcher_stamp=2
+live_1=1; live_2=1; live_3=1; live_4=1
+readlink() { case "$2" in /proc/1/exe) echo /usr/bin/kwin_wayland;; /proc/3/exe) echo /usr/lib/xorg/Xorg;; esac; }
+native_process_alive() { [ -n "$1" ] || return 1; eval '[ "$live_'"$1"'" -eq 1 ]'; }
+kill() { printf 'signal=%s:%s\n' "$1" "$2"; eval "live_$2=0"; }
+wait() { printf 'reaped=%s\n' "$1"; }
+native_display_cleanup
+"""
+        result = subprocess.run(["sh", "-eu"], input=cleanup + model,
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        signals = [line for line in result.stdout.splitlines() if line.startswith("signal=")]
+        self.assertEqual(signals, ["signal=-TERM:1", "signal=-TERM:2",
+                                  "signal=-TERM:3", "signal=-TERM:4"])
+        self.assertIn("reaped=2", result.stdout)
+        self.assertIn("reaped=4", result.stdout)
+        stuck = model.replace('eval "live_$2=0"', ':').replace(
+            'native_display_cleanup\n', 'sleep() { :; }\nnative_display_cleanup\n')
+        result = subprocess.run(["sh", "-eu"], input=cleanup + stuck,
+                                text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cleanup timed out: kwin", result.stdout)
+        self.assertIn("signal=-KILL:1", result.stdout)
+        self.assertNotIn("signal=-TERM:3", result.stdout)
+        partial = subprocess.run(["sh", "-eu"], input=cleanup + "native_display_cleanup\n",
+                                 text=True, capture_output=True, timeout=5)
+        self.assertEqual(partial.returncode, 0, partial.stderr)
+
+    def test_native_harness_has_no_competing_desktop(self) -> None:
+        options = cts.parse_arguments(["--inventory", "--dry-run"])
+        command = cts.native_wsi_harness_command(
+            options, Path("/tmp/native-wsi-test"), ("true",),
+            width=800, height=600, display="native", rootfs_type="erofs",
+        )
+        self.assertEqual(command[command.index("--unit") + 1], "multi-user.target")
+        self.assertIn("--no-auto-poweroff", command)
+        self.assertIn("systemd.mask=display-manager.service", command)
+        self.assertIn("systemd.mask=sddm.service", command)
+        self.assertIn("--gpu-width=800", command)
+        self.assertIn("--gpu-height=600", command)
+        self.assertNotIn("--gpu-vnc-port=0", command)
+        self.assertNotIn("display-manager.service", cts.CTS_SERVICE)
+        self.assertIn("WantedBy=multi-user.target", cts.CTS_SERVICE)
 
     def test_host_backend_refuses_cgl_and_requires_angle_metal(self) -> None:
         cts.validate_host_backend("Virgl ANGLE/Metal provider: hardware\n")
@@ -1335,7 +1440,7 @@ Kernarium: runtime returned 0
         self.assertIn("--deqp-test-oom=disable", launcher)
         self.assertIn("timeout --signal=TERM --kill-after=30 300", launcher)
         self.assertIn("runuser -u uml", launcher)
-        self.assertIn('pgrep -u "$uml_uid" -x Xwayland', launcher)
+        self.assertIn("pgrep -x Xwayland", launcher)
         self.assertIn(r"tr '\000' '\n'", launcher)
         self.assertNotIn("\0", launcher)
         self.assertIn('DISPLAY="$xdisplay"', launcher)
@@ -1435,6 +1540,19 @@ Kernarium: runtime returned 0
         self.assertIn("--deqp-log-filename=/run/uml-cts/results.qpa", launcher)
         self.assertIn("--deqp-case=KHR-GLES2.*", launcher)
         self.assertIn("--deqp-case=KHR-GLES3.*", launcher)
+        tokens = shlex.split(launcher.replace("\\\n", ""), comments=True)
+        inventory_shells = [
+            tokens[index + 2] for index, token in enumerate(tokens[:-2])
+            if token == "/bin/sh" and tokens[index + 1] == "-c"
+        ]
+        self.assertEqual(len(inventory_shells), 2)  # checkpoint and direct branches
+        for shell in inventory_shells:
+            modules = shell.split(" &&\n")
+            self.assertEqual(len(modules), len(cts.GLES_INVENTORY_MODULES))
+            for module in modules:
+                arguments = shlex.split(module)
+                self.assertEqual(arguments[0], "/opt/vk-gl-cts/openglcts/glcts")
+                self.assertIn("--deqp-egl-display-type=x11", arguments)
         self.assertLess(
             launcher.index("--deqp-case=KHR-GLES2.*"),
             launcher.index("--deqp-case=KHR-GLES3.*"),
@@ -1447,7 +1565,9 @@ Kernarium: runtime returned 0
         )
         self.assertIn("scope=gles2-gles3", launcher)
         self.assertIn('emit_artifact inventory.txt "$inventory_report"', launcher)
-        self.assertIn("x11_server=xwayland", launcher)
+        self.assertIn("x11_server=xorg", launcher)
+        self.assertIn("--deqp-egl-display-type=x11", launcher)
+        self.assertIn("export EGL_PLATFORM=x11", launcher)
         self.assertIn("systemctl poweroff", launcher)
         syntax = subprocess.run(
             ["sh", "-n"],
@@ -1657,7 +1777,7 @@ Kernarium: runtime returned 0
             self.assertIn("--deqp-caselist-file=/run/uml-cts/selected.txt", generated)
             self.assertIn("does not match 4096", generated)
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
-            self.assertIn("x11_server=xwayland", generated)
+            self.assertIn("x11_server=xorg", generated)
             self.assertIn("uml-vk-gl-cts.service", generated)
             self.assertIn("vulkan-info-development-v1", generated)
             self.assertIn("uml-vulkan-cts.service", generated)
@@ -1834,7 +1954,12 @@ Kernarium: runtime returned 0
         renderer = b"""guest_page_size=16384
 device=/dev/dri/card0
 device=/dev/dri/renderD128
-x11_server=xwayland
+x11_server=xorg
+x11_dri3=1
+x11_present=1
+x11_glamor=1
+x11_connected=1
+x11_drm_fd=1
 OpenGL renderer string: virgl
 """
         artifacts = {

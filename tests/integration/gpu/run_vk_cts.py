@@ -59,8 +59,8 @@ CTS_SERVICE_PATH = "/usr/local/libexec/uml-vulkan-cts"
 CTS_WSI_SERVICE_PATH = "/etc/systemd/system/uml-vulkan-cts.service"
 CTS_WSI_SERVICE = """[Unit]
 Description=Darwin UML Vulkan WSI CTS campaign
-After=display-manager.service
-Wants=display-manager.service
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
 
 [Service]
 Type=oneshot
@@ -70,7 +70,7 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 """
 # Keep each acknowledged frame below the 4 KiB virtio-console queue buffer.
 ARTIFACT_BASE64_LINE_LENGTH = 3 * 1024
@@ -114,7 +114,7 @@ class ReceiptSelection:
     generated_expected: bool
 
 
-def receipt_selection_uses_xwayland(selection: ReceiptSelection) -> bool:
+def receipt_selection_uses_wsi(selection: ReceiptSelection) -> bool:
     # The authenticated top-level list includes WSI. Its native fractions are
     # enumerated in the guest, so generated selections have no source_cases yet.
     return selection.generated_expected or any(
@@ -122,20 +122,26 @@ def receipt_selection_uses_xwayland(selection: ReceiptSelection) -> bool:
     )
 
 
-def validate_xwayland_wsi_operation(
+def receipt_selection_uses_wayland(selection: ReceiptSelection) -> bool:
+    return selection.generated_expected or any(
+        case.startswith("dEQP-VK.wsi.wayland.") for case in selection.source_cases
+    )
+
+
+def validate_wsi_operation(
     selection: ReceiptSelection,
     results: dict[str, str],
     renderer: str,
 ) -> None:
-    if not receipt_selection_uses_xwayland(selection):
+    if not receipt_selection_uses_wsi(selection):
         return
-    for expected in (
-        "x11_server=xwayland",
-        "device=/dev/dri/card0",
-        "device=/dev/dri/renderD128",
-    ):
-        if expected not in renderer:
-            raise CampaignError(f"Vulkan WSI evidence omits {expected}")
+    try:
+        common.validate_native_x11_probe(renderer)
+    except CampaignError as error:
+        raise CampaignError(f"Vulkan WSI evidence rejected: {error}") from error
+    if (receipt_selection_uses_wayland(selection)
+            and "wayland_server=kwin-x11" not in renderer.splitlines()):
+        raise CampaignError("Vulkan WSI evidence omits the nested Wayland server")
     if not any(
         ".incremental_present." in case for case in selection.source_cases
     ):
@@ -973,7 +979,7 @@ def build_receipt_guest_launcher(
     page_size: int,
     timeout: int,
     progress_timeout: int = 0,
-    use_xwayland: bool = False,
+    use_wsi: bool = False,
     receipt_path: Path = RECEIPT_PATH,
     resume_after: int = 0,
     checkpoint_bytes: int = common.QPA_CHECKPOINT_BYTES,
@@ -1083,15 +1089,23 @@ chown uml:uml \"$selected\"
         for row in verified_files
     )
     receipt_digest = _sha256_file(receipt_path)
-    xwayland_setup = common.real_xwayland_setup() if use_xwayland else ""
-    xwayland_environment = ""
+    use_wayland = use_wsi and receipt_selection_uses_wayland(selection)
+    wsi_setup = common.native_x11_setup(wayland=use_wayland) if use_wsi else ""
+    wsi_environment = ""
+    wsi_cleanup = ""
     poweroff = ""
-    if use_xwayland:
-        xwayland_environment = """    DISPLAY="$xdisplay" \\
-    WAYLAND_DISPLAY=wayland-0 \\
+    if use_wsi:
+        wsi_environment = """    DISPLAY="$xdisplay" \\
     XAUTHORITY="$xauthority" \\
     XDG_RUNTIME_DIR="$runtime" \\
-    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \\
+"""
+        if use_wayland:
+            wsi_environment += """    WAYLAND_DISPLAY=wayland-0 \\
+    DBUS_SESSION_BUS_ADDRESS="$dbus_address" \\
+"""
+        wsi_cleanup = """    if command -v native_display_cleanup >/dev/null 2>&1; then
+        native_display_cleanup || echo 'UML_VK_CTS_ERROR: native display cleanup failed'
+    fi
 """
         poweroff = (
             "    systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1\n"
@@ -1224,7 +1238,7 @@ finish()
         exec 3>&-
     fi
     [ "$transfer" -eq 0 ] || echo 'UML_VK_CTS_ERROR: artifact transfer failed'
-    sync
+{wsi_cleanup}    sync
 {poweroff}}}
 trap finish EXIT HUP INT TERM
 
@@ -1261,7 +1275,7 @@ verify_file()
 
 {verification_rows}
 
-{xwayland_setup}
+{wsi_setup}
 {expected_setup}
 : > "$cts_output"
 chown uml:uml "$cts_output"
@@ -1278,7 +1292,7 @@ emit_prerun || {{
 set +e
 runuser -u uml -- env \
     HOME=/home/uml \
-{xwayland_environment}    VK_DRIVER_FILES={shlex.quote(icd_path)} \
+{wsi_environment}    VK_DRIVER_FILES={shlex.quote(icd_path)} \
     timeout --signal=TERM --kill-after=30 {timeout} \
     {quoted_command} > "$cts_output" 2>&1 &
 cts_pid=$!
@@ -1408,14 +1422,14 @@ def build_receipt_harness_command(
     serial_socket_path = (
         Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
     )
-    uses_xwayland = receipt_selection_uses_xwayland(selection)
+    uses_wsi = receipt_selection_uses_wsi(selection)
     launcher = build_receipt_guest_launcher(
         receipt,
         selection,
         page_size=16384 if options.page_profile == "16k" else 4096,
         timeout=options.shard_timeout,
         progress_timeout=options.console_stall_timeout,
-        use_xwayland=uses_xwayland,
+        use_wsi=uses_wsi,
         resume_after=resume_after,
     )
     environment = [
@@ -1423,51 +1437,15 @@ def build_receipt_harness_command(
         "UML_GPU_CAPABILITY_REPORT=1",
         "UML_GPU_EXPERIMENTAL_VULKAN=1",
     ]
-    if uses_xwayland:
-        launcher_arguments = [
-            "--display",
-            "vnc",
-            "--emulator",
-            str(options.emulator),
-            "--rootfs",
-            str(options.rootfs),
-            "--rootfs-type",
-            "ext4",
-            # The sealed Vulkan image is a raw filesystem, not the
-            # partitioned starter disk the launcher's ext4 default assumes.
-            "--root-device",
-            "/dev/ubda",
-            "--memory",
-            options.memory,
-            "--cpus",
-            str(options.cpus),
-            "--engine",
-            options.engine,
-            "--width",
-            "1280",
-            "--height",
-            "720",
-            "--port",
-            "0",
-        ]
-        launcher_options = common.boot_kde_vnc.parse_arguments(
-            launcher_arguments
-        )
-        command = common.boot_kde_vnc.build_harness_command(launcher_options)
-        separator = common.boot_kde_vnc.guest_argument_separator(command)
+    if uses_wsi:
         overlay_commands = (
             common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
             common.install_text(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE),
             "systemctl start --no-block uml-vulkan-cts.service",
         )
-        additions = [
-            "--artifact-root",
-            str(artifact_directory / "guest"),
-            f"--virtio-serial-socket={socket_path}",
-        ]
-        for overlay_command in overlay_commands:
-            additions.extend(("--command", overlay_command))
-        command[separator:separator] = additions
+        command = common.native_wsi_harness_command(
+            options, artifact_directory, overlay_commands,
+        )
         return [*environment, *command]
     # The launcher records the CTS status in summary.txt and transfers every
     # artifact from its EXIT trap.  Keep the outer guest harness successful so
@@ -1711,7 +1689,7 @@ def validate_receipt_attempt(
         )
     if FORBIDDEN_SOFTWARE_ICD.search(renderer):
         raise CampaignError("receipt-backed renderer evidence selected a software ICD")
-    validate_xwayland_wsi_operation(selection, results, renderer)
+    validate_wsi_operation(selection, results, renderer)
     if not selection.generated_expected and not recorded:
         return {
             "outcome": "receipt-backed-cts",
