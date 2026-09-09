@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <malloc/malloc.h>
 #include <span>
 #include <string_view>
 #include <thread>
@@ -954,6 +955,26 @@ read_test_sequences(void *context) noexcept
 		expect(cpu.gpr(Register::rsp) == 16 &&
 			memory.qword(16) == 5 && memory.invalidations() == 1,
 			"overlapping-stack CALL lost its architectural stack write");
+}
+
+[[nodiscard]] bool short_blocks_retain_only_their_translated_storage()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 1,
+		"short allocation-regression block did not build"))
+		return false;
+	/* Allow allocator rounding, but not a maximum-size decoder reservation.
+	 * Inspect the actual allocation rather than an implementation counter. */
+	return expect(malloc_size(built.program.stream().data()) <=
+		2 * sizeof(gadgets::Gadget),
+		"short cached block retained the decoder's spare capacity") &&
+		expect(malloc_size(built.program.native_stream().data()) <=
+			2 * built.program.native_stream().size_bytes(),
+			"short cached block retained excess native stream capacity");
 }
 
 [[nodiscard]] bool executable_store_publishes_code_change()
@@ -3593,6 +3614,7 @@ int main()
 		an_unrelated_code_change_leaves_a_link_armed() &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
+		short_blocks_retain_only_their_translated_storage() &&
 		executable_store_publishes_code_change() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&

@@ -118,6 +118,14 @@ must match every consumed guest word before reuse. Shared gadget translations
 contain no executor-owned link pointers after publication; consumers relocate
 links into their own state.
 
+The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
+and `UML_GADGET_RESIDENT_GENERATIONS` controls: 65,536 slots, four ways,
+256-slot lazy slabs, and eight resident address spaces by default. Their
+payloads and mutable branch links remain ISA-specific. Cached x86 programs
+release spare decoder and native-stream capacity before publication. The
+optional arm64 cross-executor translation store remains disabled by default;
+its measured memory/performance tradeoff is recorded in G166.
+
 The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
 result in host `x0` between adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the

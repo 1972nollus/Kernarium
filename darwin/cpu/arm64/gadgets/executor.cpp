@@ -2,6 +2,7 @@
 #include "executor.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/gadget_cache_geometry.hpp"
 #include "shared_programs.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -209,13 +210,7 @@ void correct_fpcr_enable_instruction_count(
 
 } // namespace
 
-#ifndef UML_GADGET_CACHE_SLOTS
-#define UML_GADGET_CACHE_SLOTS 16384
-#endif
-#ifndef UML_GADGET_RESIDENT_GENERATIONS
-#define UML_GADGET_RESIDENT_GENERATIONS 8
-#endif
-constexpr std::size_t uml_gadget_cache_slots = UML_GADGET_CACHE_SLOTS;
+constexpr std::size_t uml_gadget_cache_slots = ::uml::cpu::gadget_cache::slots;
 /* How many address spaces may hold translations at once.
  *
  * Sharing one pool without a bound is not a cache: a guest that starts and
@@ -226,7 +221,7 @@ constexpr std::size_t uml_gadget_cache_slots = UML_GADGET_CACHE_SLOTS;
  * still running while costing almost no returns.
  */
 constexpr std::size_t uml_gadget_resident_generations =
-	UML_GADGET_RESIDENT_GENERATIONS;
+	::uml::cpu::gadget_cache::resident_generations;
 
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
@@ -682,10 +677,10 @@ public:
 	}
 
 private:
-	static constexpr std::size_t ways = 4;
+	static constexpr std::size_t ways = ::uml::cpu::gadget_cache::ways;
 	static constexpr std::size_t slot_count = uml_gadget_cache_slots;
 	static constexpr std::size_t set_count = slot_count / ways;
-	static constexpr std::size_t slab_slots = 256;
+	static constexpr std::size_t slab_slots = ::uml::cpu::gadget_cache::slab_slots;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
 	static constexpr unsigned stream_index_granule_shift = 6;
 	static constexpr std::size_t stream_index_ways = 4;

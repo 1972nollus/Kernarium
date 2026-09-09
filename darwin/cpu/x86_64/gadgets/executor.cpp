@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "cpu/gadget_cache_geometry.hpp"
+
 #include "native_entry.hpp"
 #include "native_symbols.hpp"
 
@@ -20,22 +22,16 @@ namespace {
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096,
 	"x86-64 gadgets are a 4 KiB guest product");
 inline constexpr std::size_t tlb_entry_count = native_tlb_entry_count;
-#ifndef UML_X86_64_GADGET_CACHE_SLOTS
-#define UML_X86_64_GADGET_CACHE_SLOTS 65536
-#endif
-#ifndef UML_X86_64_GADGET_RESIDENT_GENERATIONS
-#define UML_X86_64_GADGET_RESIDENT_GENERATIONS 8
-#endif
-inline constexpr std::size_t program_cache_ways = 4;
+inline constexpr std::size_t program_cache_ways = gadget_cache::ways;
 inline constexpr std::size_t program_cache_slots =
-	UML_X86_64_GADGET_CACHE_SLOTS;
+	gadget_cache::slots;
 inline constexpr std::size_t program_cache_sets =
 	program_cache_slots / program_cache_ways;
-inline constexpr std::size_t program_cache_slab_slots = 256;
+inline constexpr std::size_t program_cache_slab_slots = gadget_cache::slab_slots;
 inline constexpr std::size_t program_cache_slab_count =
 	program_cache_slots / program_cache_slab_slots;
 inline constexpr std::size_t resident_generation_limit =
-	UML_X86_64_GADGET_RESIDENT_GENERATIONS;
+	gadget_cache::resident_generations;
 inline constexpr std::size_t maximum_cached_source_bytes = 64U * 15U;
 /* A prepare that would walk more than this replays nothing and retires the
  * whole address space instead, which is cheaper than the walk. */

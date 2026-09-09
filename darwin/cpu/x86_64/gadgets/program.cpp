@@ -50,10 +50,18 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::vector<Gadget> gadgets, ProgramLinkResolver links)
 	: mode_{mode}, address_{normalize_instruction_pointer(mode, address)},
 	  byte_count_{byte_count}, gadgets_{std::move(gadgets)},
-	  native_stream_{build_native_stream(
-		  gadgets_, advance_instruction_pointer(mode_, address_, byte_count_),
-		  mode_, links)}
-{}
+	  native_stream_{}
+{
+	/* The decoder reserves the maximum block size before finding its first
+	 * branch. Retaining that capacity in every private cache costs nearly
+	 * 10 KiB even for a one-instruction block. Compact once, before publishing
+	 * any stream, so retained storage follows the actual instruction count. */
+	gadgets_.shrink_to_fit();
+	native_stream_ = build_native_stream(
+		gadgets_, advance_instruction_pointer(mode_, address_, byte_count_),
+		mode_, links);
+	native_stream_.shrink_to_fit();
+}
 
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, std::size_t maximum_instructions) noexcept
