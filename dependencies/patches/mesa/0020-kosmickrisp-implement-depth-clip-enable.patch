@@ -1,7 +1,7 @@
 From 20a2b328fec4fa7b2dbe979f0ba1a745505fffb1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:07:49 +0900
-Subject: [PATCH 20/48] kosmickrisp: implement depth clip enable
+Subject: [PATCH 20/49] kosmickrisp: implement depth clip enable
 
 ---
  docs/features.txt                             |   2 +-

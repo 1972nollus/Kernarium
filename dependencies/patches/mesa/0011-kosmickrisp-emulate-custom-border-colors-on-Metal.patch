@@ -1,7 +1,7 @@
 From c47922f42b04ae7af4244a91cf23e875e1fa3cd8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:44 +0900
-Subject: [PATCH 11/48] kosmickrisp: emulate custom border colors on Metal
+Subject: [PATCH 11/49] kosmickrisp: emulate custom border colors on Metal
 
 (cherry picked from commit a89fd62d3eeb828371891de5eb940b64c80a956f)
 ---

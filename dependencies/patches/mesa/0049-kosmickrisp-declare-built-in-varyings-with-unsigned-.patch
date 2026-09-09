@@ -1,0 +1,214 @@
+From d0329245d68d6b8afbe6cec1198664c5afaccda0 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 14:58:02 +0900
+Subject: [PATCH 49/49] kosmickrisp: declare built-in varyings with unsigned
+ integer types in MSL
+
+---
+ src/kosmickrisp/compiler/msl_iomap.c          | 67 ++++++++++------
+ .../vulkan/tests/test_msl_temporaries.c       | 78 +++++++++++++++++++
+ 2 files changed, 123 insertions(+), 22 deletions(-)
+
+diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
+index b3f40aa..988772d 100644
+--- a/src/kosmickrisp/compiler/msl_iomap.c
++++ b/src/kosmickrisp/compiler/msl_iomap.c
+@@ -168,6 +168,23 @@ const char *depth_layout_arg[8] = {
+    [FRAG_DEPTH_LAYOUT_UNCHANGED] = "any",
+ };
+ 
++static const char *
++varying_slot_type(unsigned location, nir_alu_type type)
++{
++   switch (location) {
++   case VARYING_SLOT_PRIMITIVE_ID:
++   case VARYING_SLOT_LAYER:
++   case VARYING_SLOT_VIEWPORT:
++      return "uint";
++   case VARYING_SLOT_PSIZ:
++      return "float";
++   case VARYING_SLOT_POS:
++      return type == nir_type_float16 ? "half" : "float";
++   default:
++      return alu_type_to_string(type);
++   }
++}
++
+ /* Generate the struct definition for the vertex shader return value */
+ static void
+ vs_output_block(nir_shader *shader, struct nir_to_msl_ctx *ctx)
+@@ -177,7 +194,7 @@ vs_output_block(nir_shader *shader, struct nir_to_msl_ctx *ctx)
+    u_foreach_bit64(location, shader->info.outputs_written) {
+       struct io_slot_info info = ctx->outputs_info[location];
+       bool scalarized = VARYING_SLOT_INFO[location].scalarized;
+-      const char *type = alu_type_to_string(info.type);
++      const char *type = varying_slot_type(location, info.type);
+       const char *vector_suffix =
+          scalarized ? "" : vector_suffixes[info.num_components];
+       unsigned components = scalarized ? info.num_components : 1;
+@@ -202,7 +219,7 @@ fs_input_interpolant(struct nir_to_msl_ctx *ctx, uint64_t location)
+ {
+    struct io_slot_info info = ctx->inputs_info[location];
+    bool scalarized = VARYING_SLOT_INFO[location].scalarized;
+-   const char *type = alu_type_to_string(info.type);
++   const char *type = varying_slot_type(location, info.type);
+    const char *vector_suffix =
+       scalarized ? "" : vector_suffixes[info.num_components];
+    unsigned components = scalarized ? info.num_components : 1;
+@@ -231,36 +248,42 @@ fs_input_no_interpolant(struct nir_to_msl_ctx *ctx, uint64_t location)
+ {
+    struct io_slot_info info = ctx->inputs_info[location];
+    bool scalarized = VARYING_SLOT_INFO[location].scalarized;
+-   const char *type = alu_type_to_string(info.type);
++   const char *type = varying_slot_type(location, info.type);
+    const char *vector_suffix =
+       scalarized ? "" : vector_suffixes[info.num_components];
+    unsigned components = scalarized ? info.num_components : 1;
+    const char *interp = "";
+-   switch (info.interpolation) {
+-   case INTERP_MODE_NOPERSPECTIVE:
+-      if (info.centroid)
+-         interp = "[[centroid_no_perspective]]";
+-      else if (info.sample)
+-         interp = "[[sample_no_perspective]]";
+-      else
+-         interp = "[[center_no_perspective]]";
+-      break;
+-   case INTERP_MODE_FLAT:
+-      interp = "[[flat]]";
+-      break;
+-   default:
+-      if (info.centroid)
+-         interp = "[[centroid_perspective]]";
+-      else if (info.sample)
+-         interp = "[[sample_perspective]]";
+-      break;
++   if (VARYING_SLOT_INFO[location].user) {
++      switch (info.interpolation) {
++      case INTERP_MODE_NOPERSPECTIVE:
++         if (info.centroid)
++            interp = "[[centroid_no_perspective]]";
++         else if (info.sample)
++            interp = "[[sample_no_perspective]]";
++         else
++            interp = "[[center_no_perspective]]";
++         break;
++      case INTERP_MODE_FLAT:
++         interp = "[[flat]]";
++         break;
++      default:
++         if (info.centroid)
++            interp = "[[centroid_perspective]]";
++         else if (info.sample)
++            interp = "[[sample_perspective]]";
++         break;
++      }
+    }
+    for (int c = 0; c < components; c++) {
+       P_IND(ctx, "%s%s ", type, vector_suffix);
+       varying_slot_name(ctx, location, c);
+       P(ctx, " ");
+       varying_slot_semantic(ctx, location, c);
+-      P(ctx, " %s;\n", interp);
++      if (*interp) {
++         P(ctx, " %s;\n", interp);
++      } else {
++         P(ctx, ";\n");
++      }
+    }
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
+index 0f65860..5360b0b 100644
+--- a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
++++ b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
+@@ -175,11 +175,89 @@ scan_msl(const char *msl, struct scan *scan)
+    }
+ }
+ 
++static void
++check_builtin_varyings(void)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, &kk_nir_options, "msl builtin varyings");
++   nir_shader *nir = b.shader;
++   nir->info.io_lowered = true;
++
++   nir_def *pos = nir_imm_vec4(&b, 0.0f, 0.0f, 0.0f, 1.0f);
++   nir_store_output(&b, pos, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_float32,
++                    .io_semantics.location = VARYING_SLOT_POS,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_POS);
++
++   nir_def *prim = nir_imm_int(&b, 42);
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_PRIMITIVE_ID,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_PRIMITIVE_ID);
++
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_LAYER,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_LAYER);
++
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_VIEWPORT,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_VIEWPORT);
++
++   nir_validate_shader(nir, "msl builtin varyings");
++
++   struct nir_to_msl_options options = {0};
++   char *msl = nir_to_msl(nir, &options);
++   CHECK(msl != NULL);
++
++   CHECK(strstr(msl, "uint primitive_id [[primitive_id]];") != NULL);
++   CHECK(strstr(msl, "uint render_target_array_index [[render_target_array_index]];") != NULL);
++   CHECK(strstr(msl, "uint viewport_array_index [[viewport_array_index]];") != NULL);
++   CHECK(strstr(msl, "int primitive_id") == NULL);
++
++   ralloc_free(msl);
++   ralloc_free(nir);
++
++   nir_builder fb = nir_builder_init_simple_shader(
++      MESA_SHADER_FRAGMENT, &kk_nir_options, "msl builtin fs inputs");
++   nir_shader *fnir = fb.shader;
++   fnir->info.io_lowered = true;
++   nir_def *in_prim = nir_load_input(&fb, 1, 32, nir_imm_int(&fb, 0),
++                                     .base = 0, .range = 1,
++                                     .dest_type = nir_type_int32,
++                                     .io_semantics.location = VARYING_SLOT_PRIMITIVE_ID,
++                                     .io_semantics.num_slots = 1);
++   fnir->info.inputs_read |= BITFIELD64_BIT(VARYING_SLOT_PRIMITIVE_ID);
++   nir_def *color = nir_vec4(&fb, nir_i2f32(&fb, in_prim), nir_imm_float(&fb, 0.0f),
++                             nir_imm_float(&fb, 0.0f), nir_imm_float(&fb, 1.0f));
++   nir_store_output(&fb, color, nir_imm_int(&fb, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_float32,
++                    .io_semantics.location = FRAG_RESULT_DATA0,
++                    .io_semantics.num_slots = 1);
++   fnir->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DATA0);
++   nir_validate_shader(fnir, "msl builtin fs inputs");
++
++   char *fmsl = nir_to_msl(fnir, &options);
++   CHECK(fmsl != NULL);
++   CHECK(strstr(fmsl, "uint primitive_id [[primitive_id]];") != NULL);
++   CHECK(strstr(fmsl, "[[primitive_id]] [[flat]]") == NULL);
++
++   ralloc_free(fmsl);
++   ralloc_free(fnir);
++}
++
+ int
+ main(void)
+ {
+    glsl_type_singleton_init_or_ref();
+ 
++   check_builtin_varyings();
++
+    nir_shader *nir = build_accumulating_fs();
+    msl_optimize_nir(nir);
+    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
