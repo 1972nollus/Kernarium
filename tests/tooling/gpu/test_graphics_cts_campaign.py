@@ -769,6 +769,120 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(stop.call_args.kwargs["ownership"][0],
                              root / "shards/vulkan-00of08" / gl.guest_process.JOURNAL_NAME)
 
+    def test_emulator_failure_cancels_keep_going_and_reaps_leaf(self) -> None:
+        for reason in ("stalled", "dirty-shutdown", None):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                definition = spec(root)
+                definition["suites"] = ["vulkan"]
+                launched = []
+                process = mock.Mock(pid=123456, returncode=1)
+                process.poll.return_value = 1
+
+                def spawn(*_args, **kwargs):
+                    launched.append(kwargs["env"])
+                    if reason is not None:
+                        setting = json.loads(kwargs["env"][gl.CAMPAIGN_FAILURE_ENV])
+                        Path(setting["path"]).write_text(json.dumps({
+                            "token": setting["token"], "reason": reason,
+                        }))
+                    return process
+
+                with mock.patch.object(campaign, "check_current_inputs"), mock.patch.object(
+                    campaign.subprocess, "Popen", side_effect=spawn
+                ), mock.patch.object(campaign, "group_exists", return_value=False), mock.patch.object(
+                    campaign, "stop_owned_group"
+                ) as stop, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    campaign.run_pending(root, definition, list(campaign.shards(definition)),
+                                         1, True, threading.Event(), {}, {})
+                self.assertEqual(len(launched), 1 if reason else 8)
+                self.assertEqual(stop.call_count, len(launched))
+                record = json.loads((campaign.attempt_path(root, campaign.Shard("vulkan", 0)) /
+                                     "attempt.json").read_text())
+                self.assertEqual(record["state"], "failed")
+                self.assertIn(f"emulator failure: {reason}" if reason else "leaf runner exited 1",
+                              record["error"])
+
+    def test_dirty_shutdown_notification_excludes_clean_cts_timeout(self) -> None:
+        for dirty in (False, True):
+            with self.subTest(dirty=dirty), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                notification = root / "emulator-failure.json"
+                transcript = gl.DARWIN_CLEAN_STOP + (gl.DIRTY_DRM_SHUTDOWN if dirty else "")
+                frames = fixtures.framed_artifact("summary.txt", b"cts_rc=124\n")
+                process = mock.Mock(returncode=0)
+                with mock.patch.dict(os.environ, {gl.CAMPAIGN_FAILURE_ENV: json.dumps({
+                    "path": str(notification), "token": "test-token",
+                })}), mock.patch.object(gl.guest_process, "managed_child", return_value=contextlib.nullcontext(process)), mock.patch.object(
+                    gl, "wait_for_guest", return_value=(transcript, frames)
+                ):
+                    if dirty:
+                        with self.assertRaisesRegex(gl.CampaignError, "emulator failure: dirty-shutdown"):
+                            gl.run_guest_session(["fixture"], root / "console.log", root / "transport.log",
+                                                 root / "artifact.sock", guest_timeout=1)
+                    else:
+                        result = gl.run_guest_session(["fixture"], root / "console.log", root / "transport.log",
+                                                      root / "artifact.sock", guest_timeout=1)
+                        self.assertEqual(result.outcome, "completed")
+                self.assertEqual(notification.exists(), dirty)
+
+    def test_host_deadline_cancels_even_after_owned_cleanup_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            cancelled = threading.Event()
+            process = mock.Mock(pid=123456, returncode=None)
+            process.poll.return_value = None
+            with mock.patch.object(campaign, "check_current_inputs"), mock.patch.object(
+                campaign.subprocess, "Popen", return_value=process
+            ), mock.patch.object(campaign.time, "monotonic", side_effect=[0, 10**9]), mock.patch.object(
+                campaign, "stop_owned_group"
+            ) as stop, self.assertRaisesRegex(gl.CampaignError, "leaf exceeded host deadline"):
+                campaign.run_shard(root, definition, campaign.Shard("vulkan", 0), cancelled)
+            self.assertTrue(cancelled.is_set())
+            stop.assert_called_once()
+
+    def test_stalled_leaf_retains_prefix_before_notifying_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            notification = root / "emulator-failure.json"
+            console = root / "console.log"
+            transport = root / gl.ARTIFACT_TRANSPORT_LOG
+            payload = b"retained partial QPA"
+            frames = fixtures.framed_artifact("results.qpa", payload)
+            process = mock.Mock(returncode=-2)
+            reaped = False
+
+            @contextlib.contextmanager
+            def managed(*_args, **_kwargs):
+                nonlocal reaped
+                try:
+                    yield process
+                finally:
+                    reaped = True
+
+            def notify(reason):
+                self.assertTrue(reaped)
+                self.assertEqual(transport.read_text(), frames)
+                self.assertEqual((root / "artifacts/results.qpa").read_bytes(), payload)
+                actual_notify(reason)
+
+            actual_notify = gl.report_campaign_emulator_failure
+            with mock.patch.dict(os.environ, {gl.CAMPAIGN_FAILURE_ENV: json.dumps({
+                "path": str(notification), "token": "test-token",
+            })}), mock.patch.object(gl.guest_process, "managed_child", managed), mock.patch.object(
+                gl, "wait_for_guest", side_effect=gl.GuestSessionInterrupted(
+                    "shutdown timeout", reason="stalled", transcript="CTS complete",
+                    artifact_transcript=frames,
+                )
+            ), mock.patch.object(gl, "report_campaign_emulator_failure", side_effect=notify), self.assertRaisesRegex(
+                gl.CampaignError, "emulator failure: stalled"
+            ):
+                gl.run_guest_session(["fixture"], console, transport, root / "artifact.sock",
+                                     guest_timeout=1)
+            self.assertEqual(json.loads(notification.read_text()),
+                             {"token": "test-token", "reason": "stalled"})
+
     def test_missing_nested_reap_ack_cancels_pool_after_leaf_group_exits(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -193,6 +193,21 @@ class CampaignError(RuntimeError):
     """A campaign input or result violated a fail-closed contract."""
 
 
+CAMPAIGN_FAILURE_ENV = "UML_CTS_CAMPAIGN_EMULATOR_FAILURE"
+
+
+def report_campaign_emulator_failure(reason: str) -> None:
+    """Notify the owning pool only about a host-observed emulator failure."""
+    setting = os.environ.get(CAMPAIGN_FAILURE_ENV)
+    if setting is None:
+        return
+    record = json.loads(setting)
+    path = Path(record["path"])
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"token": record["token"], "reason": reason}))
+    temporary.replace(path)
+
+
 class GuestSessionInterrupted(CampaignError, TimeoutError):
     """A guest session ended early; its partial evidence is still attached.
 
@@ -3979,11 +3994,28 @@ def run_guest_session(
         detail = str(error)
         return_code = process.returncode if process is not None else None
     transport_path.write_text(artifact_transcript, encoding="ascii")
-    artifacts = (
-        decode_artifacts(artifact_transcript, partial=outcome != "completed")
-        if artifact_transcript
-        else {}
-    )
+    failure = None
+    if os.environ.get(CAMPAIGN_FAILURE_ENV) is not None:
+        if DIRTY_DRM_SHUTDOWN in transcript:
+            failure = "dirty-shutdown"
+        elif outcome == "stalled":
+            failure = "stalled"
+    try:
+        artifacts = (
+            decode_artifacts(artifact_transcript, partial=outcome != "completed")
+            if artifact_transcript
+            else {}
+        )
+        if failure:
+            # Reap the guest and retain its transported prefix before asking
+            # the pool to cancel peers. Never resume a known-broken emulator.
+            write_artifacts(artifacts, console_path.parent / "artifacts")
+    finally:
+        # Malformed partial evidence must not hide a confirmed emulator stall.
+        if failure:
+            report_campaign_emulator_failure(failure)
+    if failure:
+        raise CampaignError(f"emulator failure: {failure}: {detail}")
     return RawSession(
         transcript, artifact_transcript, return_code, outcome, detail, artifacts
     )

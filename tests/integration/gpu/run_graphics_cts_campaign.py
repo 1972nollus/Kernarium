@@ -326,6 +326,19 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
     output.mkdir()
     command = child_command(spec, shard, output)
     ownership = (attempt / common.guest_process.JOURNAL_NAME, secrets.token_hex(16))
+    failure_path = attempt / "emulator-failure.json"
+
+    def check_emulator_failure() -> None:
+        if not failure_path.is_file():
+            return
+        failure = json.loads(failure_path.read_text())
+        if failure.get("token") != ownership[1] or failure.get("reason") not in {
+            "stalled", "dirty-shutdown",
+        }:
+            raise common.CampaignError("invalid emulator failure notification")
+        cancelled.set()
+        raise common.CampaignError(f"emulator failure: {failure['reason']}")
+
     record = {"shard": shard.name(), "command": command,
               "started_at": utc_now(), "state": "started",
               "guest_ownership_token": ownership[1]}
@@ -340,7 +353,10 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
                                        stderr=subprocess.STDOUT, start_new_session=True,
                                        env={**os.environ, common.guest_process.OWNERSHIP_ENV:
                                             json.dumps({"path": str(ownership[0]),
-                                                        "token": ownership[1]})})
+                                                        "token": ownership[1]}),
+                                            common.CAMPAIGN_FAILURE_ENV: json.dumps({
+                                                "path": str(failure_path),
+                                                "token": ownership[1]})})
             record.update({"pid": process.pid, "pgid": process.pid})
             write_json(attempt / "attempt.json", record)
             # Each resumption is a fresh guest with its own guest timeout.
@@ -348,10 +364,16 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
                 (spec["max_resumptions"] + 1) * spec["guest_timeout"] + 120
             )
             while process.poll() is None:
-                if cancelled.is_set() or time.monotonic() >= deadline:
-                    raise common.CampaignError("campaign cancelled or leaf exceeded host deadline")
+                check_emulator_failure()
+                if time.monotonic() >= deadline:
+                    cancelled.set()
+                    raise common.CampaignError("leaf exceeded host deadline")
+                if cancelled.is_set():
+                    raise common.CampaignError("campaign cancelled")
                 time.sleep(0.1)
+            check_emulator_failure()
             if group_exists(process.pid):
+                cancelled.set()
                 raise common.CampaignError("leaf exited with live owned descendants")
             if process.returncode != 0:
                 raise common.CampaignError(f"leaf runner exited {process.returncode}")
@@ -702,7 +724,9 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--max-resumptions", type=int, default=common.DEFAULT_MAX_RESUMPTIONS,
                         help="fresh guests a stalled or aborted shard may continue in "
                              f"(default: {common.DEFAULT_MAX_RESUMPTIONS}; 0 keeps one session)")
-    parser.add_argument("--keep-going", action="store_true", help="finish other fractions after failures; never retry")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="finish other fractions after CTS failures; emulator stalls "
+                             "or dirty shutdown always stop the pool")
     parser.add_argument("--verify-only", action="store_true", help="reparse every immutable attempt without launching guests")
     parser.add_argument("--dry-run", action="store_true", help="verify inputs and print commands without writing or launching")
     options = parser.parse_args(arguments)

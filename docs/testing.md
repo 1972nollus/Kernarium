@@ -317,7 +317,10 @@ most six owned guests at a time (`--jobs` may only lower that), immediately
 refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
 selection, and timeout identities; resumes only never-attempted shards;
 reverifies completed ones; and never overwrites or retries a failed, truncated,
-or interrupted attempt. `--verify-only` reparses all evidence without launching
+or interrupted attempt. Even with `--keep-going`, a host-observed emulator
+stall, shutdown timeout, or dirty DRM shutdown cancels the remaining pool
+through its owned-process cleanup and preserves the attempted shards' evidence.
+Ordinary CTS result failures retain `--keep-going` behavior. `--verify-only` reparses all evidence without launching
 a guest and `--dry-run` prints the derived shard commands. A leaf arms its
 ownership journal before creating a child, so a repeated interrupt cannot skip
 the wait/kill fallback, and the pool releases a slot only after a run-token
