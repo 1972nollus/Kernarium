@@ -3,6 +3,8 @@
 """Verify actual UML host-console input preservation after a Darwin Kbuild."""
 from __future__ import annotations
 
+__import__("sys").dont_write_bytecode = True
+
 import argparse
 import pathlib
 import platform
