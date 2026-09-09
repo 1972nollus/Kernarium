@@ -197,6 +197,22 @@ dictionary-builder, legacy-frame, deprecated, and command-line code. Both
 libraries use static framework slices so their Clang module maps remain
 separate when Xcode processes the XCFrameworks.
 
+Additional build-only archives use
+`dependencies/prepare.sh --archive-manifest PATH --cache CACHE`. The tab-separated
+manifest has `name`, `url`, and `sha256` columns; HTTPS downloads are verified
+before publication as `CACHE/archives/SHA256-NAME`. `--no-fetch` and `--verify`
+require those same authenticated cache entries. Archive preparation installs
+nothing; package installation belongs in an isolated build environment.
+
+To discover a release tag's immutable source identity, use
+`dependencies/prepare.sh --resolve-ref REPOSITORY refs/tags/TAG`. The result
+peels annotated tags; record that object ID in the source manifest before
+preparation. Ref discovery does not update a manifest or prepared checkout.
+When provenance requires the annotated tag object itself, use
+`dependencies/prepare.sh --materialize-tag REPOSITORY REF OBJECT COMMIT CHECKOUT`.
+It accepts an exact `refs/tags/` ref, verifies the pinned tag object and peeled
+commit, and publishes only that tag without changing the checkout's HEAD or files.
+
 ## Patch maintenance
 
 Patch files are generated mail artifacts. Modify the clean Git topic branch,

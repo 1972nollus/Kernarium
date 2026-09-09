@@ -19,6 +19,14 @@ TOOLCHAIN=
 VERIFY_ONLY=0
 FETCH=1
 VALIDATE_MANIFEST_ONLY=0
+RESOLVE_REPOSITORY=
+RESOLVE_REF=
+ARCHIVE_MANIFEST=
+TAG_REPOSITORY=
+TAG_REF=
+TAG_OBJECT=
+TAG_COMMIT=
+TAG_CHECKOUT=
 
 fail()
 {
@@ -46,6 +54,14 @@ Options:
   --no-fetch      Prepare only from commits already present in the Git cache
   --validate-manifest-only
                   Validate every source and patch-series identity only
+  --archive-manifest PATH
+                  Fetch SHA-256-pinned HTTPS archives into CACHE/archives
+  --resolve-ref REPOSITORY REF
+                  Print the object ID of one exact HTTPS branch/tag ref,
+                  peeling annotated tags; use it to pin a source manifest
+  --materialize-tag REPOSITORY REF OBJECT COMMIT CHECKOUT
+                  Fetch an exact annotated tag into an existing checkout,
+                  verifying both pinned identities before publishing its ref
   -h, --help      Show this help
 
 Preparation never replaces an existing, mismatched repository. Move it aside
@@ -93,6 +109,26 @@ while [ "$#" -gt 0 ]; do
 		VALIDATE_MANIFEST_ONLY=1
 		shift
 		;;
+	--archive-manifest)
+		[ "$#" -ge 2 ] || fail "--archive-manifest requires a path"
+		ARCHIVE_MANIFEST=$2
+		shift 2
+		;;
+	--resolve-ref)
+		[ "$#" -ge 3 ] || fail "--resolve-ref requires a repository and exact ref"
+		RESOLVE_REPOSITORY=$2
+		RESOLVE_REF=$3
+		shift 3
+		;;
+	--materialize-tag)
+		[ "$#" -ge 6 ] || fail "--materialize-tag requires repository, ref, object, commit, and checkout"
+		TAG_REPOSITORY=$2
+		TAG_REF=$3
+		TAG_OBJECT=$4
+		TAG_COMMIT=$5
+		TAG_CHECKOUT=$6
+		shift 6
+		;;
 	-h|--help)
 		usage
 		exit 0
@@ -111,7 +147,10 @@ esac
 [ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
 # shellcheck disable=SC1090
 . "$GIT_IDENTITY"
-uml_require_git_identity 'dependencies/prepare.sh'
+if [ -z "$ARCHIVE_MANIFEST" ] && [ -z "$RESOLVE_REPOSITORY" ] &&
+	[ -z "$TAG_REPOSITORY" ]; then
+	uml_require_git_identity 'dependencies/prepare.sh'
+fi
 
 sha256_file()
 {
@@ -254,6 +293,140 @@ PY
 	[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] ||
 		printf '%s\n' "validated dependency toolchain manifest: $TOOLCHAIN_MANIFEST"
 }
+
+if [ -n "$ARCHIVE_MANIFEST" ]; then
+	[ -z "$TOOLCHAIN" ] && [ -z "$RESOLVE_REPOSITORY" ] && [ -z "$TAG_REPOSITORY" ] ||
+		fail "archive preparation cannot be combined with toolchain or ref discovery"
+	python3 - "$ARCHIVE_MANIFEST" <<'PY_ARCHIVES'
+import csv
+import pathlib
+import re
+import sys
+import urllib.parse
+
+with pathlib.Path(sys.argv[1]).open() as stream:
+    rows = list(csv.reader((line for line in stream if not line.startswith("#")), delimiter="\t"))
+if not rows or rows[0] != ["name", "url", "sha256"] or len(rows) < 2:
+    raise SystemExit("invalid dependency archive manifest header")
+seen = set()
+for row in rows[1:]:
+    if len(row) != 3:
+        raise SystemExit("invalid dependency archive manifest row")
+    name, url, digest = row
+    parsed = urllib.parse.urlsplit(url)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+%~-]*", name) or name == "name" or name in seen:
+        raise SystemExit("unsafe or repeated dependency archive name")
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise SystemExit("dependency archives require HTTPS URLs without credentials")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SystemExit("dependency archives require SHA-256 identities")
+    seen.add(name)
+PY_ARCHIVES
+	if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
+		printf 'validated dependency archive manifest: %s\n' "$ARCHIVE_MANIFEST"
+		exit 0
+	fi
+	if [ "$VERIFY_ONLY" -eq 1 ]; then
+		[ -d "$CACHE_ROOT/archives" ] || fail "dependency archive cache is absent"
+	else
+		mkdir -p -- "$CACHE_ROOT/archives"
+	fi
+	tab=$(printf '\t')
+	while IFS="$tab" read -r archive_name archive_url archive_sha256; do
+		case "$archive_name" in \#*|name|'') continue ;; esac
+		archive="$CACHE_ROOT/archives/$archive_sha256-$archive_name"
+		if [ ! -f "$archive" ]; then
+			[ "$FETCH" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] ||
+				fail "dependency archive is absent: $archive"
+			temporary_archive=$(mktemp "$CACHE_ROOT/archives/.archive.XXXXXX")
+			if ! curl --fail --location --proto '=https' --proto-redir '=https' \
+				--retry 3 --connect-timeout 15 --max-time 300 \
+				--output "$temporary_archive" "$archive_url"; then
+				rm -f -- "$temporary_archive"
+				fail "dependency archive download failed: $archive_name"
+			fi
+			[ "$(sha256_file "$temporary_archive")" = "$archive_sha256" ] || {
+				rm -f -- "$temporary_archive"
+				fail "downloaded dependency archive hash differs: $archive_name"
+			}
+			mv -- "$temporary_archive" "$archive"
+		fi
+		[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
+			fail "cached dependency archive hash differs: $archive_name"
+		printf 'verified dependency archive: %s\n' "$archive"
+	done < "$ARCHIVE_MANIFEST"
+	exit 0
+fi
+
+if [ -n "$TAG_REPOSITORY" ]; then
+	[ "$FETCH" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] &&
+		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] && [ -z "$TOOLCHAIN" ] &&
+		[ -z "$RESOLVE_REPOSITORY" ] ||
+		fail "--materialize-tag cannot be combined with other preparation modes"
+	case "$TAG_REPOSITORY" in
+	https://?*) ;;
+	*) fail "--materialize-tag requires an HTTPS repository" ;;
+	esac
+	case "$TAG_REF" in
+	refs/tags/?*) ;;
+	*) fail "--materialize-tag requires an exact refs/tags/ name" ;;
+	esac
+	git check-ref-format "$TAG_REF" >/dev/null 2>&1 || fail "invalid tag ref"
+	for identity in "$TAG_OBJECT" "$TAG_COMMIT"; do
+		case "$identity" in
+		*[!0-9a-f]*|'') fail "tag identities must be SHA-1 object IDs" ;;
+		esac
+		[ "${#identity}" -eq 40 ] || fail "tag identities must be SHA-1 object IDs"
+	done
+	git -C "$TAG_CHECKOUT" rev-parse --git-dir >/dev/null 2>&1 ||
+		fail "tag destination is not an existing Git checkout"
+	existing=$(git -C "$TAG_CHECKOUT" rev-parse --verify "$TAG_REF" 2>/dev/null || true)
+	[ -z "$existing" ] || [ "$existing" = "$TAG_OBJECT" ] ||
+		fail "existing tag ref differs from its pinned object"
+	git -C "$TAG_CHECKOUT" fetch --no-tags "$TAG_REPOSITORY" "$TAG_REF" ||
+		fail "could not fetch pinned tag"
+	[ "$(git -C "$TAG_CHECKOUT" rev-parse FETCH_HEAD)" = "$TAG_OBJECT" ] &&
+		[ "$(git -C "$TAG_CHECKOUT" cat-file -t "$TAG_OBJECT")" = tag ] &&
+		[ "$(git -C "$TAG_CHECKOUT" rev-parse "$TAG_OBJECT^{commit}")" = "$TAG_COMMIT" ] ||
+		fail "fetched annotated tag differs from its pinned identities"
+	git -C "$TAG_CHECKOUT" update-ref "$TAG_REF" "$TAG_OBJECT" \
+		"${existing:-0000000000000000000000000000000000000000}"
+	printf 'verified dependency tag: %s %s %s\n' "$TAG_REF" "$TAG_OBJECT" "$TAG_COMMIT"
+	exit 0
+fi
+
+if [ -n "$RESOLVE_REPOSITORY" ]; then
+	[ "$FETCH" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] &&
+		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] && [ -z "$TOOLCHAIN" ] ||
+		fail "--resolve-ref cannot be combined with offline or preparation modes"
+	case "$RESOLVE_REPOSITORY" in
+	https://?*) ;;
+	*) fail "--resolve-ref requires an HTTPS repository" ;;
+	esac
+	case "$RESOLVE_REF" in
+	refs/heads/?*|refs/tags/?*) ;;
+	*) fail "--resolve-ref requires an exact refs/heads/ or refs/tags/ name" ;;
+	esac
+	git check-ref-format "$RESOLVE_REF" >/dev/null 2>&1 ||
+		fail "--resolve-ref has an invalid ref name"
+	resolved=$(git ls-remote --exit-code "$RESOLVE_REPOSITORY" \
+		"$RESOLVE_REF" "$RESOLVE_REF^{}") || fail "dependency ref was not found"
+	object=$(printf '%s\n' "$resolved" | awk -v ref="$RESOLVE_REF" '
+		$2 == ref { if (direct) exit 1; direct = $1; next }
+		$2 == ref "^{}" { if (peeled) exit 1; peeled = $1; next }
+		{ exit 1 }
+		END { if (!direct) exit 1; print peeled ? peeled : direct }
+	') || fail "dependency ref response was ambiguous"
+	case "$object" in
+	*[!0-9a-f]*|'') fail "dependency ref did not resolve to a Git object ID" ;;
+	esac
+	[ "${#object}" -eq 40 ] || fail "dependency ref object ID must be SHA-1"
+	ref_object=$(printf '%s\n' "$resolved" | awk -v ref="$RESOLVE_REF" '$2 == ref { print $1 }')
+	printf 'resolved %s %s: ref-object=%s peeled-object=%s\n' \
+		"$RESOLVE_REPOSITORY" "$RESOLVE_REF" "$ref_object" "$object" >&2
+	printf '%s\n' "$object"
+	exit 0
+fi
 
 if [ -n "$TOOLCHAIN" ]; then
 	prepare_toolchain

@@ -45,6 +45,60 @@ expect_failure()
 		fail "$description was rejected without a diagnostic"
 }
 
+# Hash-pinned archive acquisition publishes only authenticated bytes and
+# never installs packages. The curl fixture keeps this test fully offline.
+mkdir -p "$TEST_ROOT/archive-tools"
+cat >"$TEST_ROOT/archive-tools/curl" <<'EOF_ARCHIVE_CURL'
+#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	--output) destination=$2; shift 2 ;;
+	*) shift ;;
+	esac
+done
+cp "$UML_FIXTURE_ARCHIVE" "$destination"
+EOF_ARCHIVE_CURL
+chmod +x "$TEST_ROOT/archive-tools/curl"
+printf 'authenticated archive fixture\n' >"$TEST_ROOT/archive-payload"
+ARCHIVE_SHA=$(sha256_file "$TEST_ROOT/archive-payload")
+ARCHIVE_MANIFEST="$TEST_ROOT/archives.tsv"
+printf 'name\turl\tsha256\nfixture.deb\thttps://fixture.invalid/fixture.deb\t%s\n' \
+	"$ARCHIVE_SHA" >"$ARCHIVE_MANIFEST"
+env PATH="$TEST_ROOT/archive-tools:$PATH" \
+	UML_FIXTURE_ARCHIVE="$TEST_ROOT/archive-payload" \
+	"$PREPARE" --archive-manifest "$ARCHIVE_MANIFEST" \
+		--cache "$TEST_ROOT/archive-cache" >/dev/null
+"$PREPARE" --archive-manifest "$ARCHIVE_MANIFEST" \
+	--cache "$TEST_ROOT/archive-cache" --no-fetch >/dev/null
+cmp "$TEST_ROOT/archive-payload" \
+	"$TEST_ROOT/archive-cache/archives/$ARCHIVE_SHA-fixture.deb" >/dev/null ||
+	fail "archive publication changed authenticated bytes"
+printf corrupt >"$TEST_ROOT/archive-cache/archives/$ARCHIVE_SHA-fixture.deb"
+FAILURE_NUMBER=0
+expect_failure 'corrupt cached archive' "$PREPARE" \
+	--archive-manifest "$ARCHIVE_MANIFEST" --cache "$TEST_ROOT/archive-cache" --verify
+expect_failure 'absent offline archive' "$PREPARE" \
+	--archive-manifest "$ARCHIVE_MANIFEST" --cache "$TEST_ROOT/absent-archive-cache" --no-fetch
+expect_failure 'absent verification cache' "$PREPARE" \
+	--archive-manifest "$ARCHIVE_MANIFEST" --cache "$TEST_ROOT/absent-verify-cache" --verify
+[ ! -e "$TEST_ROOT/absent-verify-cache" ] || fail "archive verification created a cache"
+sed 's/fixture.deb/name/g' "$ARCHIVE_MANIFEST" >"$TEST_ROOT/reserved-archives.tsv"
+expect_failure 'reserved archive name' "$PREPARE" \
+	--archive-manifest "$TEST_ROOT/reserved-archives.tsv" --validate-manifest-only
+sed 's/fixture.deb/..\/fixture.deb/g' "$ARCHIVE_MANIFEST" >"$TEST_ROOT/unsafe-archives.tsv"
+expect_failure 'unsafe archive name' "$PREPARE" \
+	--archive-manifest "$TEST_ROOT/unsafe-archives.tsv" --validate-manifest-only
+sed "s/$ARCHIVE_SHA/0000000000000000000000000000000000000000000000000000000000000000/" \
+	"$ARCHIVE_MANIFEST" >"$TEST_ROOT/wrong-hash-archives.tsv"
+expect_failure 'archive download hash mismatch' \
+	env PATH="$TEST_ROOT/archive-tools:$PATH" \
+		UML_FIXTURE_ARCHIVE="$TEST_ROOT/archive-payload" "$PREPARE" \
+		--archive-manifest "$TEST_ROOT/wrong-hash-archives.tsv" \
+		--cache "$TEST_ROOT/rejected-archive-cache"
+[ -z "$(find "$TEST_ROOT/rejected-archive-cache/archives" -type f -print)" ] ||
+	fail "rejected archive left a published or temporary payload"
+
 CACHE="$TEST_ROOT/cache"
 METADATA="$TEST_ROOT/metadata"
 UPSTREAM="$TEST_ROOT/upstream"
@@ -66,6 +120,61 @@ printf '%s\n' unselected >"$UPSTREAM/other/unselected.txt"
 git -C "$UPSTREAM" add payload.txt sub/tool.sh other/unselected.txt
 git -C "$UPSTREAM" commit --quiet -m 'fixture: upstream base'
 BASE=$(git -C "$UPSTREAM" rev-parse HEAD)
+
+# Ref discovery stays in the network-owning workflow, but immutable source
+# preparation still accepts only a pinned commit. Redirect this test's HTTPS
+# endpoint to the local fixture without changing user Git configuration.
+git -C "$UPSTREAM" tag fixture-lightweight "$BASE"
+git -C "$UPSTREAM" tag -a fixture-annotated "$BASE" -m 'fixture tag'
+resolve_ref()
+{
+	env GIT_CONFIG_COUNT=1 \
+		GIT_CONFIG_KEY_0="url.file://$UPSTREAM.insteadOf" \
+		GIT_CONFIG_VALUE_0=https://fixture.invalid/upstream.git \
+		"$PREPARE" --resolve-ref https://fixture.invalid/upstream.git "$@"
+}
+for ref in fixture-lightweight fixture-annotated; do
+	[ "$(resolve_ref "refs/tags/$ref")" = "$BASE" ] ||
+		fail "dependency ref did not resolve to its peeled commit"
+done
+expect_failure 'missing dependency ref' resolve_ref refs/tags/absent
+expect_failure 'wildcard dependency ref' resolve_ref 'refs/tags/fixture-*'
+expect_failure 'unqualified dependency ref' resolve_ref fixture-lightweight
+expect_failure 'offline ref resolution' resolve_ref refs/tags/fixture-lightweight --no-fetch
+expect_failure 'non-HTTPS ref resolution' \
+	"$PREPARE" --resolve-ref "$UPSTREAM" refs/tags/fixture-lightweight
+
+TAG_DESTINATION="$TEST_ROOT/tag-destination"
+git clone --quiet --no-tags "$UPSTREAM" "$TAG_DESTINATION"
+TAG_OBJECT=$(git -C "$UPSTREAM" rev-parse refs/tags/fixture-annotated)
+materialize_tag()
+{
+	env GIT_CONFIG_COUNT=1 \
+		GIT_CONFIG_KEY_0="url.file://$UPSTREAM.insteadOf" \
+		GIT_CONFIG_VALUE_0=https://fixture.invalid/upstream.git \
+		"$PREPARE" --materialize-tag https://fixture.invalid/upstream.git "$@"
+}
+expect_failure 'wrong pinned tag object' materialize_tag \
+	refs/tags/fixture-annotated "$BASE" "$BASE" "$TAG_DESTINATION"
+expect_failure 'wrong peeled tag commit' materialize_tag \
+	refs/tags/fixture-annotated "$TAG_OBJECT" "$TAG_OBJECT" "$TAG_DESTINATION"
+if git -C "$TAG_DESTINATION" show-ref --verify refs/tags/fixture-annotated >/dev/null 2>&1; then
+	fail "failed tag verification published a tag ref"
+fi
+materialize_tag refs/tags/fixture-annotated "$TAG_OBJECT" "$BASE" "$TAG_DESTINATION"
+[ "$(git -C "$TAG_DESTINATION" rev-parse refs/tags/fixture-annotated)" = "$TAG_OBJECT" ] &&
+	[ "$(git -C "$TAG_DESTINATION" rev-parse HEAD)" = "$BASE" ] &&
+	[ -z "$(git -C "$TAG_DESTINATION" status --porcelain)" ] ||
+	fail "tag materialization changed the prepared checkout"
+expect_failure 'lightweight tag materialization' materialize_tag \
+	refs/tags/fixture-lightweight "$BASE" "$BASE" "$TAG_DESTINATION"
+expect_failure 'branch materialization' materialize_tag \
+	refs/heads/master "$BASE" "$BASE" "$TAG_DESTINATION"
+expect_failure 'offline tag materialization' materialize_tag \
+	refs/tags/fixture-annotated "$TAG_OBJECT" "$BASE" "$TAG_DESTINATION" --no-fetch
+git -C "$TAG_DESTINATION" update-ref refs/tags/fixture-annotated "$BASE"
+expect_failure 'existing mismatched tag' materialize_tag \
+	refs/tags/fixture-annotated "$TAG_OBJECT" "$BASE" "$TAG_DESTINATION"
 
 printf '%s\n' patched >"$UPSTREAM/payload.txt"
 git -C "$UPSTREAM" commit --quiet -am 'fixture: first maintained change'
