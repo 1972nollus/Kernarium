@@ -72,12 +72,15 @@ def main() -> int:
 
     def boot(rootfs: Path) -> Guest:
         return Guest(args.emulator.resolve(), rootfs, args.memory, "tmpfs",
-                     kernel_arguments=(f"ubd1={disk}", "--video", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
+                     kernel_arguments=(f"ubd1={disk}", "--video", "--audio", "panic=1", "--gpu-display=vnc", "--gpu-vnc-port=0"),
                      systemd_image_init="/usr/local/libexec/kernarium-init", engine="gadgets")
 
     guest = boot(args.rootfs.resolve())
     try:
         guest.boot_and_login(args.boot_timeout)
+        success(guest, "test -c /dev/snd/pcmC0D0p && "
+                "grep -q 'VirtIO SoundCard' /proc/asound/cards")
+        print("PASS virtio stereo playback device", flush=True)
         success(guest, "grep -Fq 'Name=\"Kernarium Touchscreen\"' /proc/bus/input/devices && "
                 "grep -Fq 'Name=\"Kernarium Keyboard\"' /proc/bus/input/devices && "
                 "for device in /sys/class/input/event*; do "

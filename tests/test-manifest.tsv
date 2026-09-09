@@ -726,3 +726,5 @@ guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional
 guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional
 virtio-video-protocol	tests/unit/video	unit	conditional
 guest-v4l2-decode	tests/integration/video	integration	conditional
+guest-futex-atomic	tests/integration/futex	integration	conditional
+apple-audio-playback	tests/integration/audio	integration	conditional

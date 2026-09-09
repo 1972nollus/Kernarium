@@ -1,4 +1,4 @@
-From 3753826cd0fbb472f38b86daba55a29b918563f6 Mon Sep 17 00:00:00 2001
+From 69f994a5b66cc9121c3a44d21001be3df16747f0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 07:02:10 +0000
 Subject: [PATCH 26/41] UML-DARWIN-LOCAL: service timers at kernel quiescent
@@ -27,7 +27,7 @@ index b9d97a673570b97db1170f6a24a4d3063b0e276d..960950e4030b167de0f480ac09b5d74b
  
  extern void uml_pm_wake(void);
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c..ec0850650af93f9e97380b05244aceb81dd19e9a 100644
+index a15af2959752599ecb5f211af2ca212c17cf3fee..be1a236d3f0be513e71cd0a12563060a0012b390 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -179,7 +179,7 @@ static struct page *maybe_map(unsigned long virt, int is_write)

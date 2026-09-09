@@ -60,7 +60,7 @@ def command(emulator: Path, rootfs: Path, userdata: Path, memory: str,
     for argument in extra:
         if argument.split("=", 1)[0] in {"root", "rootfstype", "init", "mem", "console", "systemd.unit", "--execution-engine"} or argument.startswith("ubd"):
             raise ValueError(f"launcher controls this argument: {argument}")
-    return [str(emulator), "--execution-engine=gadgets", f"ubd0rc={rootfs}", f"ubd1={userdata}", "root=/dev/ubda",
+    return [str(emulator), "--execution-engine=gadgets", "--audio", f"ubd0rc={rootfs}", f"ubd1={userdata}", "root=/dev/ubda",
             "rootfstype=erofs", "ro", "init=/usr/local/libexec/kernarium-init",
             f"mem={memory}", "console=ttyS0", "ip=off", "quiet", "loglevel=3",
             "systemd.show_status=false", f"systemd.unit={unit}", *extra]

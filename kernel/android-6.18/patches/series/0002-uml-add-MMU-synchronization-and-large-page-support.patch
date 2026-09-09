@@ -1,4 +1,4 @@
-From 1920b829e36151b9d2e64a6c458a128a001f0ee6 Mon Sep 17 00:00:00 2001
+From d1a7ef54781fa9f925cc99f2cb0b9271eb569e46 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
 Subject: [PATCH 02/41] uml: add MMU synchronization and large-page support
@@ -11,10 +11,10 @@ Keep page-table synchronization, large-page handling, same-process address-space
  arch/um/kernel/skas/mmu.c        |  33 +-
  arch/um/kernel/skas/mmu_darwin.c | 102 ++++++
  arch/um/kernel/skas/process.c    | 113 +++++-
- arch/um/kernel/skas/uaccess.c    | 231 ++++++++++--
+ arch/um/kernel/skas/uaccess.c    | 288 +++++++++++----
  arch/um/kernel/tlb.c             | 585 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  41 ++-
- 9 files changed, 1291 insertions(+), 82 deletions(-)
+ 9 files changed, 1323 insertions(+), 107 deletions(-)
  create mode 100644 arch/um/kernel/hugetlb.c
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
@@ -660,7 +660,7 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..b53004892d3424457ba0bd5ed3c7c31b
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aabbad67ebf 100644
+index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c286c32ad95 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -8,72 +8,197 @@
@@ -754,8 +754,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
 +		get_page(page);
 +		goto unlock_huge;
 +	}
- 
--	return pte_offset_kernel(pmd, addr);
++
 +	ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
 +	if (ptep != NULL) {
 +		pte_t value = ptep_get(ptep);
@@ -768,7 +767,8 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
 +		pte_unmap_unlock(ptep, ptl);
 +	}
 +	goto out;
-+
+ 
+-	return pte_offset_kernel(pmd, addr);
 +unlock_huge:
 +	spin_unlock(ptl);
 +out:
@@ -802,13 +802,16 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
 +	page = pin_user_mapping(current->mm, virt, is_write);
 +	if (page == NULL) {
 +		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code))
- 			return NULL;
--		pte = virt_to_pte(current->mm, virt);
++			return NULL;
 +		page = pin_user_mapping(current->mm, virt, is_write);
 +		if (page == NULL)
-+			return NULL;
-+	}
-+
+ 			return NULL;
+-		pte = virt_to_pte(current->mm, virt);
+ 	}
+-	if (!pte_present(*pte))
+-		pte = NULL;
+ 
+-	return pte;
 +#ifdef UML_HOST_DARWIN
 +	/* A task can resume inside a syscall after a child left a different mm
 +	 * active.  Restore the current generation and verify that a concurrently
@@ -840,14 +843,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
 +		if (darwin_uml_vm_sync_to_backing(virt) < 0)
 +			goto fail;
 +#endif
- 	}
--	if (!pte_present(*pte))
--		pte = NULL;
++	}
 +#endif
 +
 +	return page;
- 
--	return pte;
++
 +#ifdef UML_HOST_DARWIN
 +fail:
 +	put_page(page);
@@ -916,8 +916,13 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -253,17 +392,18 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
- 	int oldval, ret;
+@@ -250,20 +389,22 @@ EXPORT_SYMBOL(strnlen_user);
+ 
+ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+ {
+-	int oldval, ret;
++	u32 oldval, newval, observed;
++	int ret;
  	struct page *page;
  	unsigned long addr = (unsigned long) uaddr;
 -	pte_t *pte;
@@ -940,7 +945,64 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -302,8 +442,15 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -273,37 +414,51 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+ 		((unsigned long) addr & ~PAGE_MASK);
+ #endif
+ 	uaddr = (u32 *) addr;
+-	oldval = *uaddr;
+-
++	oldval = READ_ONCE(*uaddr);
+ 	ret = 0;
+-
+-	switch (op) {
+-	case FUTEX_OP_SET:
+-		*uaddr = oparg;
+-		break;
+-	case FUTEX_OP_ADD:
+-		*uaddr += oparg;
+-		break;
+-	case FUTEX_OP_OR:
+-		*uaddr |= oparg;
+-		break;
+-	case FUTEX_OP_ANDN:
+-		*uaddr &= ~oparg;
+-		break;
+-	case FUTEX_OP_XOR:
+-		*uaddr ^= oparg;
+-		break;
+-	default:
+-		ret = -ENOSYS;
++	/* Native userspace on another vCPU can modify this word concurrently. */
++	for (;;) {
++		switch (op) {
++		case FUTEX_OP_SET:
++			newval = oparg;
++			break;
++		case FUTEX_OP_ADD:
++			newval = oldval + oparg;
++			break;
++		case FUTEX_OP_OR:
++			newval = oldval | oparg;
++			break;
++		case FUTEX_OP_ANDN:
++			newval = oldval & ~oparg;
++			break;
++		case FUTEX_OP_XOR:
++			newval = oldval ^ oparg;
++			break;
++		default:
++			ret = -ENOSYS;
++			goto out_atomic;
++		}
++		observed = cmpxchg(uaddr, oldval, newval);
++		if (observed == oldval)
++			break;
++		oldval = observed;
+ 	}
++out_atomic:
+ #ifdef CONFIG_64BIT
+ 	pagefault_enable();
+ #else
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -957,7 +1019,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +478,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +486,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -982,7 +1044,19 @@ index 198269e384c43b174208d683ec4f18242d726fac..ff1ebe3c16d1ac223407b65674803aab
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -361,8 +509,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -350,9 +506,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+ 	uaddr = kmap_atomic(page) + ((unsigned long) uaddr & ~PAGE_MASK);
+ #endif
+ 
+-	*uval = *uaddr;
+-
+-	ret = cmpxchg(uaddr, oldval, newval);
++	/* Return the value observed by the atomic operation itself. */
++	*uval = cmpxchg(uaddr, oldval, newval);
+ 
+ #ifdef CONFIG_64BIT
+ 	pagefault_enable();
+@@ -361,8 +516,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  

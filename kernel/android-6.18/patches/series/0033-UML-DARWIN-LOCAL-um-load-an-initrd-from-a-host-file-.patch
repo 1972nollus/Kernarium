@@ -1,4 +1,4 @@
-From 7b256f702dd58b907326efd9cb9ae19340a86caa Mon Sep 17 00:00:00 2001
+From f5c9b61965361c1b80de12e4a4418fe4190477e4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 12:50:57 +0000
 Subject: [PATCH 33/41] UML-DARWIN-LOCAL: um: load an initrd from a host-file

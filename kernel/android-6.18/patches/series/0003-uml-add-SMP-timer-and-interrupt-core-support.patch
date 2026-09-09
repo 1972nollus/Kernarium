@@ -1,4 +1,4 @@
-From df1493ac566ac4c6c2c4149abc911e86688f1dc7 Mon Sep 17 00:00:00 2001
+From 4afb463a17224d0c63ea658837f76c8dba8c92f2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
 Subject: [PATCH 03/41] uml: add SMP timer and interrupt core support

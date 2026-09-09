@@ -1,4 +1,4 @@
-From afa4f21d2fae561071672476b2355913284d0cbe Mon Sep 17 00:00:00 2001
+From 727816f20ad371da3d93ceb77351797561e046bb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:28 +0900
 Subject: [PATCH 19/30] UML-DARWIN-LOCAL: service cooperative progress at
@@ -29,7 +29,7 @@ index 3daaa5c4b..960950e40 100644
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index ff1ebe3c1..ec0850650 100644
+index 1b4ec301b..be1a236d3 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -176,6 +176,30 @@ static struct page *maybe_map(unsigned long virt, int is_write)

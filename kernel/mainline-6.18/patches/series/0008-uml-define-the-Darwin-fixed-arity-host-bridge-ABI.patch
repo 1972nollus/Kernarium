@@ -1,4 +1,4 @@
-From b241b2a047ee091d758c7b6dfc81ed32413cb73c Mon Sep 17 00:00:00 2001
+From 0b059853d4e00d74bff035e4f5d83fe87a1dc246 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
 Subject: [PATCH 08/30] uml: define the Darwin fixed-arity host bridge ABI

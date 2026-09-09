@@ -1,4 +1,4 @@
-From 482d238c9796b2bd3487fb49b1e1d96bdff12397 Mon Sep 17 00:00:00 2001
+From 2bbedbdad9468a7e2443a71c25fa78760e0b611c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 08:09:54 +0000
 Subject: [PATCH 27/41] UML-DARWIN-LOCAL: poll timers before cond_resched

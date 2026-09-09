@@ -1,4 +1,4 @@
-From c18bbb2874e73444a7390b52133c3079ab9cbbf6 Mon Sep 17 00:00:00 2001
+From 63c24824abb820be25b2e5699ebc3786a2258543 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
 Subject: [PATCH 06/41] uml: keep Linux host services aligned with shared core

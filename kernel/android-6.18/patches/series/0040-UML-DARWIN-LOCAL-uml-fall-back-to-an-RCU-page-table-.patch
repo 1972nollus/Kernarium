@@ -1,4 +1,4 @@
-From 15c3791ea1dbfdfa3a408ba9b084ac8a90f48184 Mon Sep 17 00:00:00 2001
+From 6a5ce5dc4940b875a4e9d8f7ba219901d4c52eda Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 15:33:58 +0900
 Subject: [PATCH 40/41] UML-DARWIN-LOCAL: uml: fall back to an RCU page-table
@@ -26,7 +26,7 @@ line carries the same source as the mainline topic of the same name.
  1 file changed, 21 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index ec0850650af93f9e97380b05244aceb81dd19e9a..038516878f1fac87aa32cd83e78f8560eb5a69c6 100644
+index be1a236d3f0be513e71cd0a12563060a0012b390..7ff74a903d5f0b3db098f24e1f7c145505c3a0af 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -7,6 +7,7 @@

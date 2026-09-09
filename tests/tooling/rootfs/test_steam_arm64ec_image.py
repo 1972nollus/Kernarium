@@ -291,6 +291,7 @@ class PersistentStorage(unittest.TestCase):
     def test_launcher_has_no_overlay_and_distinct_data_device(self) -> None:
         argv = boot.command(Path("/emulator"), Path("/new-root.erofs"), Path("/data.img"), "8G", "graphical.target", [])
         self.assertIn("--execution-engine=gadgets", argv)
+        self.assertIn("--audio", argv)
         with self.assertRaisesRegex(ValueError, "launcher controls"):
             boot.command(Path("/emulator"), Path("/root"), Path("/data"), "8G", "graphical.target", ["--execution-engine=interpreter"])
         self.assertIn("ubd0rc=/new-root.erofs", argv)

@@ -72,6 +72,17 @@ every advertised profile's pixels, raw layouts, timestamps, source-change and
 EOS events, and rejects kernel faults or failed shutdown. Run it on both Linux
 page profiles; Android uses its own 16 KiB guest and deployment workflow.
 
+The optional `guest-futex-atomic` regression uses a static C++20 build of
+`tests/integration/futex/futex_atomic_probe.cpp`, selected through
+`UML_FUTEX_PROBE_BINARY`. It boots a disposable guest and checks concurrent
+userspace/kernel futex updates and robust priority-inheritance mutexes. Run
+it on both Linux page profiles and the maintained Android kernel. The guest
+needs the same shell and local-transfer tools as the video probe above.
+
+`UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
+low-volume stereo tone through the real macOS output and verifies completion
+and restart. It requires access to macOS audio services.
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh

@@ -1,4 +1,4 @@
-From da084725f6ba96f158ba57a83779a1938f2d6774 Mon Sep 17 00:00:00 2001
+From e948a285e109d10f7c9f295f88ffe84ca2f752e3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 02:20:10 +0900
 Subject: [PATCH 17/30] drm/virtio: shut down atomic state before unplug

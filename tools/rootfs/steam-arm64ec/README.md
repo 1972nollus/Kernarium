@@ -175,7 +175,9 @@ python3 tools/rootfs/steam-arm64ec/boot.py \
   -- --video --gpu-display=native
 ```
 
-The launcher explicitly selects the `gadgets` execution engine and needs Python 3 and `sgdisk`. It creates a sparse GPT disk only
+The launcher explicitly selects the `gadgets` execution engine and enables
+Virtio-Sound playback through the Apple audio output. It needs Python 3 and
+`sgdisk`. It creates a sparse GPT disk only
 when `--userdata` is absent on disk and holds an exclusive launch lock. The
 size option applies only at creation; it never resizes or resets existing
 data. Reuse the same `--userdata` path when selecting a replacement EROFS.

@@ -11,6 +11,11 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+option(UML_TEST_APPLE_AUDIO "Qualify the real Apple audio output with a short stereo tone" OFF)
+if(UML_TEST_APPLE_AUDIO)
+    add_subdirectory(audio)
+endif()
+
 option(UML_TEST_STEAM_ARM64EC "Qualify the Steam gaming rootfs instead of the Wine XFCE rootfs" OFF)
 if(UML_TEST_STEAM_ARM64EC AND NOT UML_BUILD_WINE_ARM64EC)
     message(FATAL_ERROR "Steam rootfs qualification requires the ARM64EC Wine emulator")
@@ -46,6 +51,28 @@ if(UML_V4L2_PROBE_BINARY)
             --page-size "${_uml_video_page_size}"
             --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
         LABELS video TIMEOUT 600)
+endif()
+
+set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest executable built from tests/integration/futex/futex_atomic_probe.cpp")
+if(UML_FUTEX_PROBE_BINARY)
+    if(NOT EXISTS "${UML_FUTEX_PROBE_BINARY}")
+        message(FATAL_ERROR "Futex qualification requires its compiled guest probe")
+    endif()
+    if(UML_GUEST_16K_PAGES)
+        set(_uml_futex_page_size 16384)
+    else()
+        set(_uml_futex_page_size 4096)
+    endif()
+    uml_add_integration_test(NAME guest-futex-atomic
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/futex/run_futex_atomic.py"
+            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --rootfs "${UML_INTEGRATION_ROOTFS}"
+            --probe "${UML_FUTEX_PROBE_BINARY}"
+            --page-size "${_uml_futex_page_size}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/futex-guest.log"
+        LABELS futex TIMEOUT 320)
 endif()
 
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR

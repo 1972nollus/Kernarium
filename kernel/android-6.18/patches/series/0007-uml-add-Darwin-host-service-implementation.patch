@@ -1,4 +1,4 @@
-From 0cac1466aa00ceb6f828f06d2487bb4f43d54bab Mon Sep 17 00:00:00 2001
+From 081edf55a6077ff7e448eddaf55c99412fb0c22e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
 Subject: [PATCH 07/41] uml: add Darwin host service implementation

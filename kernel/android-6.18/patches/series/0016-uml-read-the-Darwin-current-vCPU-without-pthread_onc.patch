@@ -1,4 +1,4 @@
-From d5242b47ab69f4499d62c399bf51e692c239c3f3 Mon Sep 17 00:00:00 2001
+From 9ed0d3f308f50465ff96f89d6352e8d5829a0f83 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 14:16:50 +0900
 Subject: [PATCH 16/41] uml: read the Darwin current vCPU without pthread_once

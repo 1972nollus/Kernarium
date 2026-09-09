@@ -1,4 +1,4 @@
-From fbf14ae02273e3e8e2ad901b947dd20955cda706 Mon Sep 17 00:00:00 2001
+From 5587a96db5dbb75f651182407eb0a07d698290b4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
 Subject: [PATCH 13/30] smack: use the connected socket for stream sendmsg

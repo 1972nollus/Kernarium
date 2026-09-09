@@ -1,4 +1,4 @@
-From dfe7e3432f850107c5b64a0f1cf040741ae2b13e Mon Sep 17 00:00:00 2001
+From 37f5a6e83fddeeca710ef4ea6411cf718d99be88 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 26 Aug 2026 03:28:07 +0000
 Subject: [PATCH 35/41] UML-DARWIN-LOCAL: power: add Kernarium host battery
