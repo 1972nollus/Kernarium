@@ -432,24 +432,26 @@ def read_artifacts(run: Path, names: set[str], merged: bool = False) -> dict[str
 
 
 def check_session_ownership(run: Path, metadata: dict[str, Any],
-                            token: Any) -> tuple[Path, bool]:
+                            token: Any) -> tuple[Path, bool, bool]:
     """Prove every continuation guest was reaped.
 
-    Returns the last session's console and whether that guest still owes a
-    clean stop marker, which it does unless the host recorded why it died: a
-    terminated case, or a shutdown stall after its complete evidence arrived.
+    Returns the last session's console, whether that guest still owes a clean
+    stop marker -- which it does unless the host recorded why it died: a
+    terminated case, or a shutdown stall after its complete evidence arrived --
+    and whether that stall is the recorded reason.
     """
     sessions = metadata.get("sessions")
     if not isinstance(sessions, list) or not sessions:
-        return run / "console.log", True
+        return run / "console.log", True, False
     for record in sessions[1:]:
         journal = record.get("ownership_journal")
         if not isinstance(journal, str):
             raise common.CampaignError("continuation guest omits its ownership journal")
         check_guest_ownership(run / journal, token, required=True)
+    stalled = bool(sessions[-1].get("shutdown_stall", False))
     return (run / str(sessions[-1]["console"]),
-            sessions[-1].get("terminated_case") is None
-            and not sessions[-1].get("shutdown_stall", False))
+            sessions[-1].get("terminated_case") is None and not stalled,
+            stalled)
 
 
 def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
@@ -487,7 +489,7 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
     })
     args = record["command"][3:]
     merged = metadata.get("artifacts_provenance") == "host-merged"
-    final_console, clean_stop = check_session_ownership(
+    final_console, clean_stop, shutdown_stall = check_session_ownership(
         run, metadata, record.get("guest_ownership_token"))
     require(metadata, {"max_resumptions": spec["max_resumptions"]})
     if shard.suite == "vulkan":
@@ -530,9 +532,18 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
             "fraction": [shard.index, FRACTIONS], "exact_cases": [],
             "seed": options.matrix_run.configuration.base_seed,
             "matrix": common.matrix_metadata(options),
-            "expected_cases": selection.expected_count, "emulator_return_code": 0,
+            "expected_cases": selection.expected_count,
             "command": common.build_harness_command(options, selection, run),
         })
+        if shutdown_stall:
+            # The host reaped a guest that missed its shutdown grace, so a zero
+            # status would contradict the stall recorded beside it.
+            if metadata.get("emulator_return_code") == 0:
+                raise common.CampaignError(
+                    "stalled shard reports a clean emulator exit"
+                )
+        else:
+            require(metadata, {"emulator_return_code": 0})
         artifacts = read_artifacts(run, set(common.SHARD_ARTIFACTS), merged)
         summary = artifacts["summary.txt"].decode("utf-8")
         if merged:

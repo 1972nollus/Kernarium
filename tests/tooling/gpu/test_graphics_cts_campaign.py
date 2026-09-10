@@ -891,12 +891,16 @@ class GraphicsCampaignTests(unittest.TestCase):
             (run / console).write_text("guest delivered its evidence and never stopped\n")
             metadata = {"sessions": [{"console": console, "terminated_case": None,
                                       "shutdown_stall": True}]}
-            final, clean_stop = campaign.check_session_ownership(run, metadata, "token")
+            final, clean_stop, stalled = campaign.check_session_ownership(
+                run, metadata, "token")
             self.assertEqual(final, run / console)
             self.assertFalse(clean_stop)
+            self.assertTrue(stalled)
             # The same session without a recorded stall still owes its marker.
             metadata["sessions"][0]["shutdown_stall"] = False
-            self.assertTrue(campaign.check_session_ownership(run, metadata, "token")[1])
+            self.assertEqual(
+                campaign.check_session_ownership(run, metadata, "token")[1:], (True, False)
+            )
 
     def test_delivered_shutdown_stall_keeps_the_pool_running(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
