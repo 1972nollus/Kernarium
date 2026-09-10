@@ -2339,7 +2339,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        raise SystemExit(common.report_campaign_leaf_exit(main()))
     except (CampaignError, TimeoutError, subprocess.CalledProcessError) as error:
         print(f"Vulkan CTS campaign failed: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
+        raise SystemExit(common.report_campaign_leaf_exit(1)) from error

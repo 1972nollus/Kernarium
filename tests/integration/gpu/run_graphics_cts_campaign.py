@@ -39,6 +39,8 @@ MAX_JOBS = 6
 CPUS = 4
 MEMORY = "4G"
 KIND = "uml-venus-zink-graphics-cts-campaign"
+SCHEMA_VERSION = 2
+LEAF_EXIT_NAME = "leaf-exit.json"
 RUNNERS = {
     "vulkan": Path(vk.__file__).resolve(),
     "gl46": Path(common.__file__).resolve(),
@@ -250,8 +252,72 @@ def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]
     return command
 
 
+PLAN_KEYS = ("suites", "fraction_count", "page_profile")
+
+
+def plan_identity(spec: dict[str, Any]) -> dict[str, Any]:
+    """The part of a specification that decides which shards must pass.
+
+    Everything else -- the emulator, the source tree, the execution bounds --
+    is a generation: it may be replaced between attempts, because a shard that
+    has already passed stays passed and a shard that has not is simply retried
+    on whatever is current. The shard set itself may never change, or "every
+    shard passed" would mean a different thing before and after the change.
+    """
+    plan: dict[str, Any] = {key: spec[key] for key in PLAN_KEYS}
+    if "vulkan" in spec["suites"]:
+        plan["vulkan"] = {"rootfs": spec["vulkan"]["rootfs"],
+                          "receipt_sha256": spec["vulkan"]["receipt_sha256"]}
+    if "gl46" in spec["suites"]:
+        item = spec["opengl"]
+        plan["opengl"] = {"rootfs": item["rootfs"],
+                          "receipt_sha256": item["receipt_sha256"],
+                          "egl_config_sha256": item["egl_config_sha256"],
+                          "runs": item["runs"]}
+    return plan
+
+
+def attempt_directory(campaign: Path, shard: Shard, ordinal: int) -> Path:
+    """Where attempt ``ordinal`` of a shard lives.
+
+    The first attempt keeps the original path. A recorded command names its
+    own output directory, so an attempt that is already on disk can never be
+    moved without invalidating it.
+    """
+    if ordinal < 1:
+        raise common.CampaignError("attempt ordinals start at one")
+    if ordinal == 1:
+        return campaign / "shards" / shard.name()
+    return campaign / "retries" / shard.name() / f"{ordinal:04d}"
+
+
 def attempt_path(campaign: Path, shard: Shard) -> Path:
-    return campaign / "shards" / shard.name()
+    return attempt_directory(campaign, shard, 1)
+
+
+def next_attempt_directory(campaign: Path, shard: Shard,
+                           attempts: int) -> Path:
+    """The first attempt directory this shard does not already own.
+
+    A pool that died between creating a directory and recording it leaves an
+    orphan behind. Skipping it costs one ordinal and keeps a catalogued
+    attempt whose directory is gone meaning exactly one thing: removal.
+    """
+    ordinal = attempts + 1
+    while os.path.lexists(attempt_directory(campaign, shard, ordinal)):
+        ordinal += 1
+    return attempt_directory(campaign, shard, ordinal)
+
+
+def attempt_is_live(attempt: Path) -> bool:
+    """Whether a leaf started by an earlier pool is still running."""
+    try:
+        record = load_json(attempt / "attempt.json")
+    except (common.CampaignError, OSError, ValueError):
+        return False
+    pgid = record.get("pgid")
+    return (record.get("state") == "started" and isinstance(pgid, int)
+            and pgid > 1 and group_exists(pgid))
 
 
 def group_exists(pgid: int) -> bool:
@@ -315,13 +381,23 @@ def stop_owned_group(process: subprocess.Popen[bytes],
     raise common.CampaignError(f"owned process group {process.pid} did not terminate")
 
 
+class CampaignDetached(common.CampaignError):
+    """The pool released a still-running shard instead of stopping it."""
+
+
 def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
-              cancelled: threading.Event) -> dict[str, Any]:
+              cancelled: threading.Event, attempt: Path | None = None,
+              detaching: threading.Event | None = None) -> dict[str, Any]:
+    if attempt is None:
+        attempt = attempt_path(campaign, shard)
+    if detaching is None:
+        detaching = threading.Event()
     if cancelled.is_set():
         raise common.CampaignError("campaign cancelled before launch")
     check_current_inputs(spec)
-    attempt = attempt_path(campaign, shard)
-    attempt.mkdir(parents=True, exist_ok=False)
+    attempt.mkdir(parents=True, exist_ok=True)
+    if (attempt / "attempt.json").exists():
+        raise common.CampaignError("attempt directory is already in use")
     output = attempt / "driver-output"
     output.mkdir()
     command = child_command(spec, shard, output)
@@ -356,6 +432,9 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
                                                         "token": ownership[1]}),
                                             common.CAMPAIGN_FAILURE_ENV: json.dumps({
                                                 "path": str(failure_path),
+                                                "token": ownership[1]}),
+                                            common.CAMPAIGN_EXIT_ENV: json.dumps({
+                                                "path": str(attempt / LEAF_EXIT_NAME),
                                                 "token": ownership[1]})})
             record.update({"pid": process.pid, "pgid": process.pid})
             write_json(attempt / "attempt.json", record)
@@ -368,6 +447,9 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
                 if time.monotonic() >= deadline:
                     cancelled.set()
                     raise common.CampaignError("leaf exceeded host deadline")
+                if detaching.is_set():
+                    raise CampaignDetached(
+                        "campaign detached with the shard still running")
                 if cancelled.is_set():
                     raise common.CampaignError("campaign cancelled")
                 time.sleep(0.1)
@@ -382,13 +464,18 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
     except BaseException as exception:
         error = exception
     finally:
-        if process is not None:
+        if process is not None and not isinstance(error, CampaignDetached):
             try:
                 stop_owned_group(process, ownership=ownership)
             except BaseException as exception:
                 # A surviving group cannot free a slot, even with --keep-going.
                 cancelled.set()
                 error = exception
+    if isinstance(error, CampaignDetached):
+        # Leave attempt.json in its started state: the running leaf, its guest
+        # and its emulator are handed to whichever pool opens this campaign
+        # next, which is the point of detaching rather than cancelling.
+        raise error
     record.update({
         "finished_at": utc_now(), "state": "failed" if error else "finished",
         "return_code": process.returncode if process is not None else None,
@@ -401,7 +488,53 @@ def run_shard(campaign: Path, spec: dict[str, Any], shard: Shard,
     write_json(attempt / "attempt.json", record)
     if error:
         raise error
-    return validate_attempt(campaign, spec, shard)
+    return validate_attempt(campaign, spec, shard, attempt)
+
+
+def adopt_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
+                  attempt: Path, cancelled: threading.Event,
+                  detaching: threading.Event) -> dict[str, Any]:
+    """Wait for a leaf an earlier pool started, then finish its bookkeeping.
+
+    The leaf is not this process's child, so its status cannot come from
+    wait(): it comes from the file the leaf itself wrote, and from the same
+    ownership journal and artifact evidence every attempt has to satisfy.
+    """
+    record = load_json(attempt / "attempt.json")
+    pgid = record.get("pgid")
+    if not isinstance(pgid, int) or pgid <= 1:
+        raise common.CampaignError("adopted attempt names no owned process group")
+    token = record.get("guest_ownership_token")
+    deadline = time.monotonic() + (
+        (spec["max_resumptions"] + 1) * spec["guest_timeout"] + 120)
+    while group_exists(pgid):
+        if detaching.is_set():
+            raise CampaignDetached("campaign detached with the shard still running")
+        if time.monotonic() >= deadline:
+            cancelled.set()
+            raise common.CampaignError("adopted leaf exceeded host deadline")
+        if cancelled.is_set():
+            raise common.CampaignError("campaign cancelled")
+        time.sleep(0.1)
+    exit_path = attempt / LEAF_EXIT_NAME
+    return_code = None
+    if exit_path.is_file():
+        exit_record = load_json(exit_path)
+        require(exit_record, {"token": token})
+        return_code = exit_record.get("return_code")
+        if return_code != 0:
+            raise common.CampaignError(f"adopted leaf exited {return_code}")
+    log = attempt / "runner.log"
+    ownership = attempt / common.guest_process.JOURNAL_NAME
+    record.update({
+        "finished_at": utc_now(), "state": "finished", "adopted": True,
+        "return_code": return_code, "error": None,
+        "runner_log_sha256": (common.sha256_file(log) if log.is_file() else None),
+        "guest_ownership_sha256": (common.sha256_file(ownership)
+                                   if ownership.is_file() else None),
+    })
+    write_json(attempt / "attempt.json", record)
+    return validate_attempt(campaign, spec, shard, attempt)
 
 
 def read_artifacts(run: Path, names: set[str], merged: bool = False) -> dict[str, bytes]:
@@ -455,8 +588,17 @@ def check_session_ownership(run: Path, metadata: dict[str, Any],
 
 
 def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
+                     attempt: Path | None = None,
                      *, include_results: bool = False) -> dict[str, Any]:
-    attempt = attempt_path(campaign, shard)
+    """Validate one attempt against the generation specification it ran under.
+
+    An attempt records the exact command it was launched with, including the
+    emulator it used, so it can only ever be judged against its own
+    generation. That is what lets a campaign span several emulators without
+    weakening what any single result means.
+    """
+    if attempt is None:
+        attempt = attempt_path(campaign, shard)
     if attempt.is_symlink() or not attempt.is_dir():
         raise common.CampaignError("invalid attempt directory")
     record = load_json(attempt / "attempt.json")
@@ -465,9 +607,17 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
     output = attempt / "driver-output"
     if output.is_symlink() or not output.is_dir():
         raise common.CampaignError("invalid driver output directory")
-    require(record, {"shard": shard.name(), "state": "finished", "return_code": 0,
+    require(record, {"shard": shard.name(), "state": "finished",
                      "error": None, "command": child_command(spec, shard, output),
                      "runner_log_sha256": common.sha256_file(log)})
+    if record.get("adopted"):
+        # A pool that did not fork the leaf has no wait() status for it. The
+        # leaf writes its own, and an older leaf that predates that file is
+        # held to the ownership journal and artifact evidence alone.
+        if record.get("return_code") not in (0, None):
+            raise common.CampaignError("adopted attempt reports a failing leaf")
+    else:
+        require(record, {"return_code": 0})
     ownership = attempt / common.guest_process.JOURNAL_NAME
     check_guest_ownership(ownership, record.get("guest_ownership_token"), required=True)
     require(record, {"guest_ownership_sha256": common.sha256_file(ownership)})
@@ -585,17 +735,30 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
     return value
 
 
-def aggregate(campaign: Path, spec: dict[str, Any]) -> dict[str, Any]:
+def passing_attempt(campaign: Path, passed: dict[str, dict[str, Any]],
+                    shard: Shard, *, include_results: bool = False
+                    ) -> dict[str, Any]:
+    """Reparse the attempt that passed, against the generation that ran it."""
+    entry = passed.get(shard.name())
+    if entry is None:
+        raise common.CampaignError(f"{shard.name()} has no passing attempt")
+    return validate_attempt(campaign, entry["spec"], shard, entry["path"],
+                            include_results=include_results)
+
+
+def aggregate(campaign: Path, spec: dict[str, Any],
+              passed: dict[str, dict[str, Any]]) -> dict[str, Any]:
     suites = {}
     for suite in spec["suites"]:
         if suite == "gl46":
-            suites[suite] = aggregate_opengl(campaign, spec)
+            suites[suite] = aggregate_opengl(campaign, spec, passed)
             continue
         counts: Counter[str] = Counter()
         totals: Counter[str] = Counter()
         first_status: dict[str, str] = {}
         for index in range(FRACTIONS):
-            result = validate_attempt(campaign, spec, Shard(suite, index), include_results=True)
+            result = passing_attempt(campaign, passed, Shard(suite, index),
+                                     include_results=True)
             rows = result["results"]
             totals.update(result["status_totals"])
             counts.update(rows.keys())
@@ -625,7 +788,8 @@ def aggregate(campaign: Path, spec: dict[str, Any]) -> dict[str, Any]:
             "suites": suites}
 
 
-def aggregate_opengl(campaign: Path, spec: dict[str, Any]) -> dict[str, Any]:
+def aggregate_opengl(campaign: Path, spec: dict[str, Any],
+                     passed: dict[str, dict[str, Any]]) -> dict[str, Any]:
     item = spec["opengl"]
     validate_opengl_run_plan(item)
     manifest = item["receipt"]["opengl_cts"]["mustpass"]
@@ -641,8 +805,9 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any]) -> dict[str, Any]:
         run_totals: Counter[str] = Counter()
         run_waived: set[str] = set()
         for index in range(min(FRACTIONS, leaf["case_count"])):
-            result = validate_attempt(
-                campaign, spec, Shard("gl46", index, run["index"]), include_results=True,
+            result = passing_attempt(
+                campaign, passed, Shard("gl46", index, run["index"]),
+                include_results=True,
             )
             rows = result["results"]
             expected = (leaf["case_count"] - index + FRACTIONS - 1) // FRACTIONS
@@ -685,26 +850,60 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any]) -> dict[str, Any]:
 def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
                 jobs: int, keep_going: bool, cancelled: threading.Event,
                 completed: dict[str, Any], failures: dict[str, str],
-                on_start: Callable[[Shard], None] | None = None) -> None:
-    running = {}
+                on_start: Callable[[Shard], Path] | None = None,
+                adoptions: Sequence[tuple[Shard, Path, dict[str, Any]]] = (),
+                detaching: threading.Event | None = None,
+                passed: dict[str, dict[str, Any]] | None = None) -> None:
+    """Finish the shards already running, then launch the ones still pending.
+
+    An adopted shard occupies a slot exactly like one this pool started: its
+    guest is real and holds real host resources, so counting it is what keeps
+    a restart from doubling the load on the machine.
+    """
+    if detaching is None:
+        detaching = threading.Event()
+    queue: list[tuple[Shard, Path, dict[str, Any] | None]] = [
+        (shard, attempt, generation_spec)
+        for shard, attempt, generation_spec in adoptions
+    ]
+    queue += [(shard, attempt_directory(campaign, shard, 1), None)
+              for shard in pending]
+    total = len(queue)
+    running: dict[Any, Shard] = {}
     next_heartbeat = time.monotonic() + 30
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         try:
-            while pending or running:
-                while pending and len(running) < jobs and not cancelled.is_set():
-                    shard = pending.pop(0)
-                    if on_start is not None:
-                        on_start(shard)
-                    running[executor.submit(run_shard, campaign, spec, shard, cancelled)] = shard
-                    print(f"Starting {shard.name()}", flush=True)
+            while queue or running:
+                while queue and len(running) < jobs and not cancelled.is_set():
+                    shard, attempt, generation_spec = queue.pop(0)
+                    if generation_spec is not None:
+                        future = executor.submit(
+                            adopt_attempt, campaign, generation_spec, shard,
+                            attempt, cancelled, detaching)
+                        print(f"Adopting {shard.name()}", flush=True)
+                    else:
+                        if on_start is not None:
+                            attempt = on_start(shard)
+                        future = executor.submit(
+                            run_shard, campaign, spec, shard, cancelled,
+                            attempt, detaching)
+                        print(f"Starting {shard.name()}", flush=True)
+                    running[future] = shard
                 if not running:
                     break
                 done, _ = wait(running, timeout=0.25, return_when=FIRST_COMPLETED)
                 for future in done:
                     shard = running.pop(future)
                     try:
-                        completed[shard.name()] = future.result()
-                        print(f"Verified {shard.name()}: {completed[shard.name()]}", flush=True)
+                        result = future.result()
+                        completed[shard.name()] = result
+                        failures.pop(shard.name(), None)
+                        if passed is not None:
+                            passed.setdefault(shard.name(), {})["result"] = result
+                        print(f"Verified {shard.name()}: {result}", flush=True)
+                    except CampaignDetached:
+                        print(f"Detached {shard.name()}: still running",
+                              flush=True)
                     except Exception as error:
                         failures[shard.name()] = str(error)
                         print(f"Failed {shard.name()}: {error}", file=sys.stderr, flush=True)
@@ -712,10 +911,12 @@ def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
                             cancelled.set()
                 if time.monotonic() >= next_heartbeat:
                     print(f"Graphics CTS: {len(completed)} verified, {len(failures)} failed, "
-                          f"{len(running)} active, {len(pending)} pending", flush=True)
+                          f"{len(running)} active, {len(queue)} pending "
+                          f"({total} this run)", flush=True)
                     next_heartbeat = time.monotonic() + 30
         finally:
-            cancelled.set()
+            if not detaching.is_set():
+                cancelled.set()
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -744,17 +945,27 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--keep-going", action="store_true",
                         help="finish other fractions after CTS failures; emulator stalls "
                              "or dirty shutdown always stop the pool")
+    parser.add_argument("--max-attempts", type=int, default=0,
+                        help="attempts a single shard may take across restarts "
+                             "(default: 0, unlimited)")
+    parser.add_argument("--detach-on-signal", action="store_true",
+                        help="on SIGINT/SIGTERM leave running shards alive for "
+                             "the next pool to adopt instead of stopping them")
     parser.add_argument("--verify-only", action="store_true", help="reparse every immutable attempt without launching guests")
     parser.add_argument("--dry-run", action="store_true", help="verify inputs and print commands without writing or launching")
     options = parser.parse_args(arguments)
     if options.jobs > MAX_JOBS:
         parser.error(f"--jobs may not exceed {MAX_JOBS}")
+    if options.detach_on_signal and options.verify_only:
+        parser.error("--detach-on-signal has nothing to detach with --verify-only")
     if options.console_stall_busy_timeout < options.console_stall_timeout:
         parser.error("--console-stall-busy-timeout must be at least --console-stall-timeout")
     if options.guest_timeout <= options.shard_timeout:
         parser.error("--guest-timeout must exceed --shard-timeout")
     if options.max_resumptions < 0:
         parser.error("--max-resumptions must not be negative")
+    if options.max_attempts < 0:
+        parser.error("--max-attempts must not be negative")
     if options.verify_only and options.dry_run:
         parser.error("--verify-only and --dry-run are mutually exclusive")
     if options.suite != "opengl" and options.vulkan_rootfs is None:
@@ -767,6 +978,86 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return options
 
 
+def migrate_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Read a campaign written before shards could be retried.
+
+    A schema-1 campaign holds one immutable attempt per shard and one
+    specification for all of them, which is exactly a schema-2 campaign with a
+    single generation and a single attempt per shard. Converting it in place
+    keeps everything such a campaign already proved.
+    """
+    version = record.get("schema_version")
+    if version == SCHEMA_VERSION:
+        return record
+    if version != 1:
+        raise common.CampaignError("unsupported campaign schema")
+    spec = record.get("spec")
+    attempted = record.get("attempted_shards")
+    if not isinstance(spec, dict) or not isinstance(attempted, list):
+        raise common.CampaignError("invalid schema-1 campaign record")
+    return {
+        "schema_version": SCHEMA_VERSION, "kind": record.get("kind"),
+        "plan": plan_identity(spec), "generations": [spec],
+        "attempts": {name: [{"path": f"shards/{name}", "generation": 0}]
+                     for name in attempted},
+        "created_at": record.get("created_at", utc_now()),
+        "state": record.get("state", "pending"),
+        "migrated_from_schema": 1,
+    }
+
+
+def classify_attempts(campaign: Path, spec: dict[str, Any],
+                      record: dict[str, Any]
+                      ) -> tuple[dict[str, dict[str, Any]],
+                                 list[tuple[Shard, Path, dict[str, Any]]],
+                                 dict[str, str], list[Shard]]:
+    """Sort every catalogued attempt into passed, still running, or to retry.
+
+    A shard is finished the moment one of its attempts validates, whichever
+    generation produced it. Everything else is work still to do, which is what
+    makes a restart cost only the shards that have not passed yet.
+    """
+    generations = record["generations"]
+    catalog = record["attempts"]
+    passed: dict[str, dict[str, Any]] = {}
+    adoptions: list[tuple[Shard, Path, dict[str, Any]]] = []
+    failures: dict[str, str] = {}
+    pending: list[Shard] = []
+    for shard in shards(spec):
+        entries = catalog.get(shard.name(), [])
+        live: tuple[Path, dict[str, Any]] | None = None
+        reason = None
+        for entry in entries:
+            attempt = campaign / entry["path"]
+            generation = generations[entry["generation"]]
+            if not os.path.lexists(attempt):
+                # Retrying a failed attempt is ordinary; a catalogued attempt
+                # whose evidence has been removed is not, and no later run can
+                # restore what it proved.
+                raise common.CampaignError(
+                    "attempt directory and launch catalog disagree")
+            if attempt_is_live(attempt):
+                live = (attempt, generation)
+                continue
+            try:
+                result = validate_attempt(campaign, generation, shard, attempt)
+            except (common.CampaignError, OSError, ValueError) as error:
+                reason = str(error)
+                continue
+            passed[shard.name()] = {"path": attempt, "spec": generation,
+                                    "result": result, "entry": entry}
+            break
+        if shard.name() in passed:
+            continue
+        if live is not None:
+            adoptions.append((shard, live[0], live[1]))
+            continue
+        if reason is not None:
+            failures[shard.name()] = reason
+        pending.append(shard)
+    return passed, adoptions, failures, pending
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     spec = build_spec(options)
@@ -775,12 +1066,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise common.CampaignError("campaign requires its own non-symlink directory")
     if options.dry_run:
         for shard in shards(spec):
-            print(json.dumps(child_command(spec, shard, attempt_path(campaign, shard) / "driver-output")))
+            print(json.dumps(child_command(
+                spec, shard, attempt_directory(campaign, shard, 1) / "driver-output")))
         return 0
     if options.verify_only and not campaign.is_dir():
         raise common.CampaignError("campaign does not exist")
     campaign.mkdir(parents=True, exist_ok=True)
-    allowed = {"campaign.json", "campaign.lock", "shards"}
+    allowed = {"campaign.json", "campaign.lock", "shards", "retries"}
     if any(entry.name not in allowed for entry in campaign.iterdir()):
         raise common.CampaignError("campaign directory contains unrelated files")
     flags = os.O_RDONLY if options.verify_only else os.O_RDWR | os.O_CREAT
@@ -788,82 +1080,122 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = campaign / "campaign.json"
+        attempt_roots = {"shards", "retries"}
         if path.exists():
-            record = load_json(path)
-            require(record, {"schema_version": 1, "kind": KIND, "spec": spec})
-        elif any(entry.name == "shards" for entry in campaign.iterdir()):
+            record = migrate_record(load_json(path))
+            require(record, {"kind": KIND, "plan": plan_identity(spec)})
+        elif any(entry.name in attempt_roots for entry in campaign.iterdir()):
             raise common.CampaignError("attempts exist without an original campaign specification")
         else:
             if options.verify_only:
                 raise common.CampaignError("campaign specification is missing")
-            record = {"schema_version": 1, "kind": KIND, "spec": spec,
-                      "created_at": utc_now(), "state": "pending", "attempted_shards": []}
-            write_json(path, record)
-        completed, failures, pending = {}, {}, []
+            record = {"schema_version": SCHEMA_VERSION, "kind": KIND,
+                      "plan": plan_identity(spec), "generations": [],
+                      "attempts": {}, "created_at": utc_now(),
+                      "state": "pending"}
+        generations = record["generations"]
+        catalog = record["attempts"]
         expected_names = {shard.name() for shard in shards(spec)}
-        attempted = record.get("attempted_shards")
-        if (not isinstance(attempted, list)
-                or any(not isinstance(name, str) for name in attempted)
-                or len(set(attempted)) != len(attempted)
-                or not set(attempted).issubset(expected_names)):
-            raise common.CampaignError("invalid immutable attempt catalog")
-        shard_root = campaign / "shards"
-        if shard_root.exists():
-            if shard_root.is_symlink() or not shard_root.is_dir():
-                raise common.CampaignError("invalid shard directory")
-            if any(entry.name not in expected_names for entry in shard_root.iterdir()):
-                raise common.CampaignError("campaign contains an unexpected shard")
-        for shard in shards(spec):
-            exists = os.path.lexists(attempt_path(campaign, shard))
-            if exists != (shard.name() in attempted):
-                failures[shard.name()] = "attempt directory and original launch catalog disagree"
-            elif exists:
-                try:
-                    completed[shard.name()] = validate_attempt(campaign, spec, shard)
-                except (common.CampaignError, OSError, ValueError) as error:
-                    failures[shard.name()] = str(error)
-            else:
-                pending.append(shard)
-        if failures:
-            raise common.CampaignError(f"campaign has immutable failed/incomplete attempts: {failures}")
+        if not isinstance(catalog, dict) or not set(catalog).issubset(expected_names):
+            raise common.CampaignError("invalid attempt catalog")
+        for entries in catalog.values():
+            if (not isinstance(entries, list) or not entries
+                    or any(not isinstance(entry, dict)
+                           or not isinstance(entry.get("path"), str)
+                           or entry["path"].startswith("/") or ".." in entry["path"]
+                           or not isinstance(entry.get("generation"), int)
+                           or not 0 <= entry["generation"] < len(generations)
+                           for entry in entries)):
+                raise common.CampaignError("invalid attempt catalog")
+        for name in attempt_roots:
+            root = campaign / name
+            if root.exists():
+                if root.is_symlink() or not root.is_dir():
+                    raise common.CampaignError("invalid shard directory")
+                if any(entry.name not in expected_names for entry in root.iterdir()):
+                    raise common.CampaignError("campaign contains an unexpected shard")
+        if not options.verify_only:
+            # A generation is one immutable set of inputs. Recording a new one
+            # never reinterprets an existing attempt: each is judged against
+            # the generation that ran it.
+            if not generations or generations[-1] != spec:
+                generations.append(spec)
+            record.update({"schema_version": SCHEMA_VERSION,
+                           "updated_at": utc_now()})
+            write_json(path, record)
+        generation = len(generations) - 1
+        passed, adoptions, failures, pending = classify_attempts(campaign, spec, record)
+        if options.max_attempts:
+            blocked = [shard for shard in pending
+                       if len(catalog.get(shard.name(), [])) >= options.max_attempts]
+            pending = [shard for shard in pending if shard not in blocked]
+            for shard in blocked:
+                failures.setdefault(shard.name(), "attempt limit reached")
         if options.verify_only:
-            if pending:
+            if pending or adoptions:
                 raise common.CampaignError("campaign is incomplete")
-            result = aggregate(campaign, spec)
+            result = aggregate(campaign, spec, passed)
             require(record, {"state": "complete", "aggregate": result})
             print(json.dumps(result, sort_keys=True))
             return 0
+        completed = {name: item["result"] for name, item in passed.items()}
+        print(f"Graphics CTS: {len(completed)} already passed, "
+              f"{len(adoptions)} running to adopt, {len(pending)} to run",
+              flush=True)
         cancelled = threading.Event()
+        detaching = threading.Event()
         received_signal = []
 
         def cancel(signum: int, _frame: Any) -> None:
             if not received_signal:
                 received_signal.append(signum)
+            if options.detach_on_signal:
+                # Hand the running guests to the next pool instead of ending
+                # them: their work is what a restart is meant to preserve.
+                detaching.set()
             cancelled.set()
 
         handlers = {number: signal.signal(number, cancel) for number in (signal.SIGINT, signal.SIGTERM)}
 
-        def mark_started(shard: Shard) -> None:
-            # Persist before creating even the worker. A crash in the following
-            # launch cannot turn an attempted shard back into a pending one.
-            attempted.append(shard.name())
+        def mark_started(shard: Shard) -> Path:
+            # Create the directory, then record it, then create the worker. A
+            # crash in the remaining window leaves an orphan directory that the
+            # next run skips; it can never turn an attempted shard back into a
+            # pending one, nor make a removed attempt look like an aborted one.
+            entries = catalog.setdefault(shard.name(), [])
+            attempt = next_attempt_directory(campaign, shard, len(entries))
+            attempt.mkdir(parents=True, exist_ok=False)
+            entries.append({"path": str(attempt.relative_to(campaign)),
+                            "generation": generation})
             record.update({"state": "running", "updated_at": utc_now()})
             write_json(path, record)
+            return attempt
 
         try:
             run_pending(campaign, spec, pending, options.jobs, options.keep_going,
-                        cancelled, completed, failures, mark_started)
+                        cancelled, completed, failures, mark_started,
+                        adoptions=adoptions, detaching=detaching, passed=passed)
         finally:
             for number, handler in handlers.items():
                 signal.signal(number, handler)
-        record.update({"updated_at": utc_now(), "completed": completed, "failures": failures,
-                       "state": "failed" if failures or pending or received_signal else "complete"})
-        if record["state"] == "complete":
+        outstanding = sorted(expected_names - set(completed))
+        state = ("detached" if detaching.is_set()
+                 else "complete" if not outstanding
+                 else "failed")
+        record.update({"updated_at": utc_now(), "completed": completed,
+                       "failures": failures, "outstanding": outstanding,
+                       "state": state})
+        if state == "complete":
             check_current_inputs(spec)
-            record["aggregate"] = aggregate(campaign, spec)
+            passed, _, _, _ = classify_attempts(campaign, spec, record)
+            record["aggregate"] = aggregate(campaign, spec, passed)
         write_json(path, record)
-        print(json.dumps(record.get("aggregate", {"state": record["state"], "failures": failures}), sort_keys=True))
-        return 128 + received_signal[0] if received_signal else int(record["state"] != "complete")
+        print(json.dumps(record.get("aggregate", {
+            "state": state, "failures": failures, "outstanding": outstanding}),
+            sort_keys=True))
+        if received_signal and not detaching.is_set():
+            return 128 + received_signal[0]
+        return int(state != "complete")
     finally:
         os.close(lock)
 

@@ -73,6 +73,7 @@ def spec(directory: Path) -> dict:
         "opengl": {"rootfs": str(directory / "rootfs-vulkan-zink-gl.ext4"), "receipt": receipt,
                    "receipt_path": str(path), "receipt_sha256": gl.sha256_file(path),
                    "config_inventory_run": str(inventory), "egl_configs": config_rows,
+                   "egl_config_sha256": "e" * 64,
                    "runs": plan_fixtures.plan.expand_runs(receipt["opengl_cts"]["mustpass"], config_rows)},
     }
 
@@ -273,6 +274,12 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     return run
 
 
+def every_shard_passed(definition, root=Path("/nonexistent")):
+    """Resolve every shard to a passing attempt of the current generation."""
+    return {shard.name(): {"path": root, "spec": definition, "result": {}}
+            for shard in campaign.shards(definition)}
+
+
 class GraphicsCampaignTests(unittest.TestCase):
     def setUp(self) -> None:
         provider = mock.patch.object(gl, "verify_staged_kosmickrisp", return_value="2" * 64)
@@ -381,14 +388,15 @@ class GraphicsCampaignTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             definition = spec(Path(temporary))
 
-            def verify(_root, _spec, key, **_kwargs):
+            def verify(_root, _spec, key, _attempt=None, **_kwargs):
                 rows = results(key)
                 return {"results": rows, "status_totals": gl.status_totals(rows)}
 
             with mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
                 campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
             ):
-                result = campaign.aggregate(Path(temporary), definition)
+                result = campaign.aggregate(
+                    Path(temporary), definition, every_shard_passed(definition))
             self.assertFalse(result["formal_conformance"])
             vk = result["suites"]["vulkan"]
             self.assertEqual(vk["unique_case_count"], 10)
@@ -408,7 +416,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             definition = spec(Path(temporary))
             waived = {}
 
-            def verify(_root, _spec, key, **_kwargs):
+            def verify(_root, _spec, key, _attempt=None, **_kwargs):
                 rows = results(key)
                 if key.suite == "gl46" and key.run_index == 0 and key.index == 0:
                     case = next(iter(rows))
@@ -419,7 +427,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             with mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
                 campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
             ):
-                result = campaign.aggregate(Path(temporary), definition)
+                result = campaign.aggregate(
+                    Path(temporary), definition, every_shard_passed(definition))
             self.assertEqual(len(waived), 1)
             case = next(iter(waived))
             self.assertFalse(result["unwaived_runner_success"])
@@ -442,7 +451,7 @@ class GraphicsCampaignTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             definition = spec(Path(temporary))
             for mutation in ("missing", "duplicate", "mandatory", "order"):
-                def verify(_root, _spec, key, **_kwargs):
+                def verify(_root, _spec, key, _attempt=None, **_kwargs):
                     rows = results(key)
                     if key.index == 7 and key.suite == "vulkan":
                         if mutation == "missing":
@@ -457,7 +466,8 @@ class GraphicsCampaignTests(unittest.TestCase):
                 with self.subTest(mutation=mutation), mock.patch.object(campaign, "validate_attempt", side_effect=verify), mock.patch.object(
                     campaign.vk, "receipt_mandatory_cases", return_value=("dEQP-VK.mandatory0", "dEQP-VK.mandatory1")
                 ), self.assertRaises(gl.CampaignError):
-                    campaign.aggregate(Path(temporary), definition)
+                    campaign.aggregate(
+                        Path(temporary), definition, every_shard_passed(definition))
 
     def test_gl_attempt_reparses_qpa_and_transport_and_provider(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -540,7 +550,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             guard = threading.Lock()
             active = peak = 0
 
-            def worker(_root, _spec, key, _cancelled):
+            def worker(_root, _spec, key, _cancelled, *_rest):
                 nonlocal active, peak
                 with guard:
                     active += 1
@@ -566,23 +576,223 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(len(complete), 8)
             self.assertFalse(failures)
 
-    def test_failed_attempts_are_never_retried(self) -> None:
+    def test_a_failed_attempt_is_retried_beside_the_evidence_it_left(self) -> None:
+        """A campaign ends when every shard has passed once, not when every
+        shard passed on the first try. The failed attempt stays exactly where
+        it is, so what it recorded is still readable afterwards."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             definition = spec(root)
+            definition["suites"] = ["vulkan"]
             location = root / "campaign"
             location.mkdir()
             (location / "campaign.lock").touch()
+            failed = campaign.Shard("vulkan", 0)
             (location / "campaign.json").write_text(json.dumps({
                 "schema_version": 1, "kind": campaign.KIND, "spec": definition,
-                "attempted_shards": ["vulkan-00of08"],
+                "attempted_shards": [failed.name()],
             }))
-            campaign.attempt_path(location, campaign.Shard("vulkan", 0)).mkdir(parents=True)
-            with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
-                campaign, "run_pending"
-            ) as launch, self.assertRaisesRegex(gl.CampaignError, "immutable failed/incomplete"):
+            first = campaign.attempt_path(location, failed)
+            first.mkdir(parents=True)
+            retried = []
+
+            def worker(_root, _spec, key, _cancelled, attempt=None, *_rest):
+                retried.append((key.name(), attempt))
+                return {"cases": 1, "status_totals": {"Pass": 1}}
+
+            def resolved(_root, _spec, key, attempt=None, **_kwargs):
+                if attempt == first:
+                    raise gl.CampaignError("leaf runner exited 1")
+                return {"cases": 1, "shard": key.name(), "attempt": str(attempt)}
+
+            with mock.patch.object(campaign, "build_spec", return_value=definition), \
+                    mock.patch.object(campaign, "run_shard", side_effect=worker), \
+                    mock.patch.object(campaign, "check_current_inputs"), \
+                    mock.patch.object(campaign, "validate_attempt", side_effect=resolved), \
+                    mock.patch.object(campaign, "aggregate", return_value={"complete": True}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(campaign.main(self.arguments(root)), 0)
+
+            names = [name for name, _ in retried]
+            self.assertIn(failed.name(), names)
+            second = dict(retried)[failed.name()]
+            self.assertEqual(second, location / "retries" / failed.name() / "0002")
+            self.assertTrue(first.is_dir())
+            catalog = campaign.load_json(location / "campaign.json")["attempts"]
+            self.assertEqual([entry["path"] for entry in catalog[failed.name()]],
+                             [f"shards/{failed.name()}",
+                              f"retries/{failed.name()}/0002"])
+
+    def test_a_new_emulator_opens_a_generation_and_keeps_passed_shards(self) -> None:
+        """Swapping the emulator must cost only the shards that have not passed
+        yet. The attempt that did pass keeps being judged against the inputs
+        that produced it, which is what makes spanning generations honest."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            location = root / "campaign"
+            location.mkdir()
+            done = campaign.Shard("vulkan", 0)
+            campaign.attempt_path(location, done).mkdir(parents=True)
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND,
+                "spec": copy.deepcopy(definition),
+                "attempted_shards": [done.name()], "state": "running",
+            }))
+            replaced = copy.deepcopy(definition)
+            replaced["emulator_sha256"] = "f" * 64
+            judged = []
+
+            def resolved(_root, generation, key, attempt=None, **_kwargs):
+                judged.append((key.name(), generation["emulator_sha256"]))
+                return {"cases": 1}
+
+            def worker(_root, _spec, key, _cancelled, *_rest):
+                return {"cases": 1}
+
+            with mock.patch.object(campaign, "build_spec", return_value=replaced), \
+                    mock.patch.object(campaign, "validate_attempt", side_effect=resolved), \
+                    mock.patch.object(campaign, "run_shard", side_effect=worker), \
+                    mock.patch.object(campaign, "check_current_inputs"), \
+                    mock.patch.object(campaign, "aggregate", return_value={"complete": True}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(campaign.main(self.arguments(root)), 0)
+
+            stored = campaign.load_json(location / "campaign.json")
+            self.assertEqual(stored["schema_version"], campaign.SCHEMA_VERSION)
+            self.assertEqual([item["emulator_sha256"] for item in stored["generations"]],
+                             [definition["emulator_sha256"], "f" * 64])
+            # The shard that already passed is reparsed against generation 0.
+            self.assertIn((done.name(), definition["emulator_sha256"]), judged)
+            self.assertEqual(len(stored["attempts"][done.name()]), 1)
+            self.assertEqual(stored["attempts"]["vulkan-01of08"][0]["generation"], 1)
+
+    def test_a_changed_plan_is_a_different_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND,
+                "spec": copy.deepcopy(definition), "attempted_shards": [],
+            }))
+            replaced = copy.deepcopy(definition)
+            replaced["page_profile"] = "4k"
+            with mock.patch.object(campaign, "build_spec", return_value=replaced), \
+                    mock.patch.object(campaign, "run_pending") as launch, \
+                    self.assertRaises(gl.CampaignError):
                 campaign.main(self.arguments(root))
             launch.assert_not_called()
+
+    def test_a_shard_left_running_is_adopted_rather_than_relaunched(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            location = root / "campaign"
+            location.mkdir()
+            live = campaign.Shard("vulkan", 0)
+            attempt = campaign.attempt_path(location, live)
+            attempt.mkdir(parents=True)
+            (attempt / "attempt.json").write_text(json.dumps({
+                "shard": live.name(), "state": "started",
+                "pid": os.getpid(), "pgid": os.getpgid(0),
+                "guest_ownership_token": "t" * 32,
+            }))
+            record = {"schema_version": campaign.SCHEMA_VERSION, "kind": campaign.KIND,
+                      "plan": campaign.plan_identity(definition),
+                      "generations": [copy.deepcopy(definition)],
+                      "attempts": {live.name(): [
+                          {"path": f"shards/{live.name()}", "generation": 0}]},
+                      "state": "running"}
+            passed, adoptions, failures, pending = campaign.classify_attempts(
+                location, definition, record)
+            self.assertFalse(passed)
+            self.assertFalse(failures)
+            self.assertNotIn(live, pending)
+            self.assertEqual([(shard.name(), path) for shard, path, _ in adoptions],
+                             [(live.name(), attempt)])
+
+    def test_an_adopted_leaf_is_judged_by_the_status_it_left_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            shard = campaign.Shard("vulkan", 0)
+            attempt = campaign.attempt_path(root, shard)
+            attempt.mkdir(parents=True)
+            (attempt / "runner.log").write_bytes(b"log\n")
+            (attempt / "attempt.json").write_text(json.dumps({
+                "shard": shard.name(), "state": "started", "pgid": 424242,
+                "guest_ownership_token": "t" * 32,
+            }))
+            (attempt / campaign.LEAF_EXIT_NAME).write_text(json.dumps(
+                {"token": "t" * 32, "return_code": 0}))
+            with mock.patch.object(campaign, "group_exists", return_value=False), \
+                    mock.patch.object(campaign, "validate_attempt",
+                                      return_value={"cases": 1}):
+                result = campaign.adopt_attempt(
+                    root, definition, shard, attempt,
+                    threading.Event(), threading.Event())
+            self.assertEqual(result, {"cases": 1})
+            stored = campaign.load_json(attempt / "attempt.json")
+            self.assertEqual(stored["state"], "finished")
+            self.assertTrue(stored["adopted"])
+            self.assertEqual(stored["return_code"], 0)
+
+            # A leaf that failed is not laundered by being adopted.
+            (attempt / campaign.LEAF_EXIT_NAME).write_text(json.dumps(
+                {"token": "t" * 32, "return_code": 1}))
+            with mock.patch.object(campaign, "group_exists", return_value=False), \
+                    self.assertRaisesRegex(gl.CampaignError, "adopted leaf exited 1"):
+                campaign.adopt_attempt(root, definition, shard, attempt,
+                                       threading.Event(), threading.Event())
+
+    def test_detaching_hands_over_the_running_leaf_instead_of_stopping_it(self) -> None:
+        """Detaching exists so a restart keeps hours of guest work. The leaf is
+        deliberately left running and its record left in the state the next
+        pool recognises."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            shard = campaign.Shard("vulkan", 0)
+            attempt = campaign.attempt_path(root, shard)
+            detaching = threading.Event()
+            process = mock.Mock(pid=999999)
+            process.poll.side_effect = lambda: detaching.set()
+            with mock.patch.object(campaign.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(campaign, "check_current_inputs"), \
+                    mock.patch.object(campaign, "stop_owned_group") as stop, \
+                    mock.patch.object(campaign, "group_exists", return_value=True), \
+                    self.assertRaises(campaign.CampaignDetached):
+                campaign.run_shard(root, definition, shard, threading.Event(),
+                                   attempt, detaching)
+            stop.assert_not_called()
+            self.assertEqual(
+                campaign.load_json(attempt / "attempt.json")["state"], "started")
+
+    def test_an_attempt_limit_stops_a_shard_from_retrying_forever(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            location = root / "campaign"
+            location.mkdir()
+            failed = campaign.Shard("vulkan", 0)
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
+                "attempted_shards": [failed.name()],
+            }))
+            campaign.attempt_path(location, failed).mkdir(parents=True)
+            with mock.patch.object(campaign, "build_spec", return_value=definition), \
+                    mock.patch.object(campaign, "run_pending") as launch, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    campaign.main(self.arguments(root) + ["--max-attempts", "1"]), 1)
+            pending = launch.call_args.args[2]
+            self.assertNotIn(failed, pending)
 
     def test_missing_attempt_directory_cannot_be_retried(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -615,8 +825,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             }))
             seen = []
 
-            def worker(_root, _spec, key, _cancelled):
-                catalog = campaign.load_json(location / "campaign.json")["attempted_shards"]
+            def worker(_root, _spec, key, _cancelled, *_rest):
+                catalog = campaign.load_json(location / "campaign.json")["attempts"]
                 self.assertIn(key.name(), catalog)
                 seen.append(key.name())
                 return {"cases": 1, "status_totals": {"Pass": 1}}
@@ -628,7 +838,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             ), mock.patch.object(campaign, "aggregate", return_value={"complete": True}), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(campaign.main(self.arguments(root)), 0)
             self.assertEqual(set(seen), {key.name() for key in campaign.shards(definition)} - {first.name()})
-            self.assertEqual(len(campaign.load_json(location / "campaign.json")["attempted_shards"]), 8)
+            self.assertEqual(len(campaign.load_json(location / "campaign.json")["attempts"]), 8)
 
     def test_pool_fail_fast_keep_going_and_prelaunch_cancellation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -640,7 +850,7 @@ class GraphicsCampaignTests(unittest.TestCase):
                     cancelled.set()
                 complete, failures, launched = {}, {}, []
 
-                def worker(_root, _spec, key, _cancelled):
+                def worker(_root, _spec, key, _cancelled, *_rest):
                     launched.append(key.index)
                     if key.index == 0:
                         raise gl.CampaignError("fixture leaf failed")

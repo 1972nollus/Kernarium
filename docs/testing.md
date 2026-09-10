@@ -315,9 +315,29 @@ emulator, image, and provider (`--config-inventory gl46`, replayed with
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
 most six owned guests at a time (`--jobs` may only lower that), immediately
 refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
-selection, and timeout identities; resumes only never-attempted shards;
-reverifies completed ones; and never overwrites or retries a failed, truncated,
-or interrupted attempt. Even with `--keep-going`, a host-observed emulator
+selection, and timeout identities per attempt, and reverifies completed ones.
+
+A campaign is complete when every shard has one attempt that validates, not
+when every shard passed on its first try. Restarting reruns only the shards
+that have not passed; a shard that failed is retried in a new directory beside
+the evidence its earlier attempt left, and `--max-attempts` bounds how often.
+The inputs that may change between attempts are the emulator and the source
+tree: each distinct set is recorded as a generation, and every attempt is
+judged only against the generation that ran it, so a campaign may span several
+emulators without any single result meaning less. What may never change is the
+plan -- the suites, page profile, images, receipts, and EGL configuration set
+that decide which shards exist -- because that is what "every shard passed"
+refers to. A catalogued attempt whose directory has been removed still fails
+closed: retrying a failure is ordinary, but no later run can restore what
+deleted evidence proved.
+
+With `--detach-on-signal`, an interrupted pool leaves its running leaves,
+guests, and emulators alive instead of stopping them, and the next pool over
+that campaign adopts them: they occupy their slots exactly as if it had started
+them, so restarting to pick up a new emulator costs no in-flight shard its
+work. An adopted leaf is not the adopting pool's child, so its exit status
+comes from the file the leaf writes for itself; an older leaf that predates
+that file is held to its ownership journal and artifact evidence alone. Even with `--keep-going`, a host-observed emulator
 stall or dirty DRM shutdown cancels the remaining pool through its owned-process
 cleanup and preserves the attempted shards' evidence. Ordinary CTS result
 failures retain `--keep-going` behavior. One stall is exempt: a guest that

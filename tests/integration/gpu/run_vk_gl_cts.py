@@ -208,6 +208,26 @@ def report_campaign_emulator_failure(reason: str) -> None:
     temporary.replace(path)
 
 
+CAMPAIGN_EXIT_ENV = "UML_CTS_CAMPAIGN_LEAF_EXIT"
+
+
+def report_campaign_leaf_exit(code: int) -> int:
+    """Leave this leaf's exit status where a later pool can still read it.
+
+    A pool that adopts a leaf started by an earlier pool is not its parent and
+    cannot wait() for it, so the status has to outlive the process table entry.
+    """
+    setting = os.environ.get(CAMPAIGN_EXIT_ENV)
+    if setting is not None:
+        record = json.loads(setting)
+        path = Path(record["path"])
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(
+            {"token": record["token"], "return_code": int(code)}))
+        temporary.replace(path)
+    return code
+
+
 class GuestSessionInterrupted(CampaignError, TimeoutError):
     """A guest session ended early; its partial evidence is still attached.
 
@@ -5426,10 +5446,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        raise SystemExit(report_campaign_leaf_exit(main()))
     except KeyboardInterrupt:
         print("run_vk_gl_cts.py: interrupted; guest stopped", file=sys.stderr)
-        raise SystemExit(130) from None
+        raise SystemExit(report_campaign_leaf_exit(130)) from None
     except (CampaignError, OSError, subprocess.SubprocessError, TimeoutError) as error:
         print(f"run_vk_gl_cts.py: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
+        raise SystemExit(report_campaign_leaf_exit(1)) from error
