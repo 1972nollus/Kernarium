@@ -883,6 +883,51 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(json.loads(notification.read_text()),
                              {"token": "test-token", "reason": "stalled"})
 
+    def test_a_recorded_shutdown_stall_waives_only_the_stop_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            console = f"{gl.SESSION_DIRECTORY}/00/console.log"
+            (run / console).parent.mkdir(parents=True)
+            (run / console).write_text("guest delivered its evidence and never stopped\n")
+            metadata = {"sessions": [{"console": console, "terminated_case": None,
+                                      "shutdown_stall": True}]}
+            final, clean_stop = campaign.check_session_ownership(run, metadata, "token")
+            self.assertEqual(final, run / console)
+            self.assertFalse(clean_stop)
+            # The same session without a recorded stall still owes its marker.
+            metadata["sessions"][0]["shutdown_stall"] = False
+            self.assertTrue(campaign.check_session_ownership(run, metadata, "token")[1])
+
+    def test_delivered_shutdown_stall_keeps_the_pool_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            notification = root / "emulator-failure.json"
+            frames = fixtures.framed_artifact("summary.txt", b"cts_rc=0\n")
+            process = mock.Mock(returncode=-15)
+            with mock.patch.dict(os.environ, {gl.CAMPAIGN_FAILURE_ENV: json.dumps({
+                "path": str(notification), "token": "test-token",
+            })}), mock.patch.object(
+                gl.guest_process, "managed_child",
+                return_value=contextlib.nullcontext(process),
+            ), mock.patch.object(
+                gl, "wait_for_guest", side_effect=gl.GuestSessionInterrupted(
+                    "guest did not stop", reason="stalled",
+                    transcript="CTS complete", artifact_transcript=frames,
+                    delivered=True,
+                )
+            ), contextlib.redirect_stderr(io.StringIO()) as reported:
+                result = gl.run_guest_session(
+                    ["fixture"], root / "console.log", root / "transport.log",
+                    root / "artifact.sock", guest_timeout=1,
+                )
+            # The evidence was complete before the guest refused to power off:
+            # the shard keeps it and its peers keep running.
+            self.assertTrue(result.shutdown_stall)
+            self.assertEqual(result.outcome, "stalled")
+            self.assertIn("shutdown stall", reported.getvalue())
+            self.assertFalse(notification.exists())
+            self.assertEqual(result.artifacts["summary.txt"], b"cts_rc=0\n")
+
     def test_missing_nested_reap_ack_cancels_pool_after_leaf_group_exits(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

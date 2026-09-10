@@ -318,9 +318,14 @@ refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
 selection, and timeout identities; resumes only never-attempted shards;
 reverifies completed ones; and never overwrites or retries a failed, truncated,
 or interrupted attempt. Even with `--keep-going`, a host-observed emulator
-stall, shutdown timeout, or dirty DRM shutdown cancels the remaining pool
-through its owned-process cleanup and preserves the attempted shards' evidence.
-Ordinary CTS result failures retain `--keep-going` behavior. `--verify-only` reparses all evidence without launching
+stall or dirty DRM shutdown cancels the remaining pool through its owned-process
+cleanup and preserves the attempted shards' evidence. Ordinary CTS result
+failures retain `--keep-going` behavior. One stall is exempt: a guest that
+transported and had acknowledged its final artifact frame and then missed its
+shutdown grace cost the shard no coverage, so the host reaps that guest, records
+a `shutdown_stall` beside the session and in `run.json`, keeps the complete
+evidence, and lets the pool continue. That transcript still has to prove a clean
+Virtio-GPU takedown; only the clean guest stop marker is waived for it. `--verify-only` reparses all evidence without launching
 a guest and `--dry-run` prints the derived shard commands. A leaf arms its
 ownership journal before creating a child, so a repeated interrupt cannot skip
 the wait/kill fallback, and the pool releases a slot only after a run-token

@@ -436,7 +436,8 @@ def check_session_ownership(run: Path, metadata: dict[str, Any],
     """Prove every continuation guest was reaped.
 
     Returns the last session's console and whether that guest still owes a
-    clean stop marker, which it does unless the host recorded why it died.
+    clean stop marker, which it does unless the host recorded why it died: a
+    terminated case, or a shutdown stall after its complete evidence arrived.
     """
     sessions = metadata.get("sessions")
     if not isinstance(sessions, list) or not sessions:
@@ -447,7 +448,8 @@ def check_session_ownership(run: Path, metadata: dict[str, Any],
             raise common.CampaignError("continuation guest omits its ownership journal")
         check_guest_ownership(run / journal, token, required=True)
     return (run / str(sessions[-1]["console"]),
-            sessions[-1].get("terminated_case") is None)
+            sessions[-1].get("terminated_case") is None
+            and not sessions[-1].get("shutdown_stall", False))
 
 
 def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
@@ -543,6 +545,10 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
             raise common.CampaignError("OpenGL CTS process failed")
         if clean_stop:
             common.validate_guest_shutdown(final_console.read_text(encoding="utf-8"))
+        else:
+            # A recorded stall or terminated case explains the missing stop
+            # marker; the Virtio-GPU takedown contract still holds.
+            common.validate_drm_shutdown(final_console.read_text(encoding="utf-8"))
         common.validate_renderer_probe(artifacts["renderer.txt"].decode("utf-8"),
                                       16384 if spec["page_profile"] == "16k" else 4096, "zink")
         selected = common.parse_case_list(artifacts["selected.txt"].decode("utf-8"))

@@ -87,9 +87,11 @@ class Step:
         return_code: int = 0,
         drop_trailer: bool = False,
         no_qpa: bool = False,
+        shutdown_stall: bool = False,
     ) -> None:
         self.outcome = outcome
         self.return_code = return_code
+        self.shutdown_stall = shutdown_stall
         self.console = console or (
             "Darwin UML stopped: result=0 exitcode=0\n"
             if outcome == "completed"
@@ -149,6 +151,7 @@ class ScriptedGuests:
             step.outcome,
             None,
             artifacts,
+            step.shutdown_stall,
         )
 
 
@@ -621,12 +624,39 @@ class ShutdownBoundTests(unittest.TestCase):
         # resumption is rebuilt from.
         self.assertIn(gl.FINAL_ARTIFACT_FRAME, caught.exception.artifact_transcript)
         self.assertIn("rcu:", caught.exception.transcript)
+        # A shard that already holds every acknowledged frame lost no coverage.
+        self.assertTrue(caught.exception.delivered)
 
     def test_the_bound_is_off_before_the_final_frame_and_when_disabled(self) -> None:
         for deliver, grace in ((False, 1), (True, 0)):
             with self.assertRaises(gl.GuestSessionInterrupted) as caught:
                 self.wait(deliver=deliver, grace=grace, timeout=2)
             self.assertIn("exceeded 2 seconds", str(caught.exception))
+            self.assertEqual(caught.exception.delivered, deliver)
+
+    def test_a_delivered_stall_completes_its_shard_and_stays_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            guests, sessions, expected, merged = drive(root, [
+                Step(
+                    outcome="stalled",
+                    cases=CASES,
+                    ended=True,
+                    selected=CASES,
+                    summary=b"cts_rc=0\n",
+                    console="guest delivered its evidence and never stopped\n",
+                    return_code=-15,
+                    shutdown_stall=True,
+                ),
+            ])
+            # One guest, no resumption, and every selected case kept.
+            self.assertEqual(len(guests.calls), 1)
+            self.assertEqual(expected, CASES)
+            self.assertEqual(tuple(merged), CASES)
+            self.assertEqual(sessions[0].outcome, "completed")
+            self.assertIsNone(sessions[0].terminated_case)
+            self.assertTrue(sessions[0].shutdown_stall)
+            self.assertTrue(sessions[0].record(root)["shutdown_stall"])
 
 
 class VulkanResumptionTests(unittest.TestCase):

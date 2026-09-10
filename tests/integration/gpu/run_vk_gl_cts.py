@@ -213,7 +213,9 @@ class GuestSessionInterrupted(CampaignError, TimeoutError):
 
     It stays a ``TimeoutError`` so every existing caller keeps its behaviour,
     and carries the console and acknowledged frames the guest had already
-    delivered so a shard can continue from real evidence.
+    delivered so a shard can continue from real evidence.  ``delivered``
+    records that the guest had already transported its final acknowledged
+    frame, so the interruption cost the shard no coverage at all.
     """
 
     def __init__(
@@ -223,6 +225,7 @@ class GuestSessionInterrupted(CampaignError, TimeoutError):
         reason: str,
         transcript: str,
         artifact_transcript: str,
+        delivered: bool = False,
     ) -> None:
         super().__init__(message)
         if reason not in {"stalled", "aborted"}:
@@ -230,6 +233,7 @@ class GuestSessionInterrupted(CampaignError, TimeoutError):
         self.reason = reason
         self.transcript = transcript
         self.artifact_transcript = artifact_transcript
+        self.delivered = delivered
 
 
 @dataclass(frozen=True)
@@ -257,6 +261,7 @@ class SessionEvidence:
     artifacts_directory: str
     return_code: int | None
     ownership_journal: str | None = None
+    shutdown_stall: bool = False
 
     def record(self, directory: Path) -> dict[str, Any]:
         artifacts = directory / self.artifacts_directory
@@ -278,6 +283,7 @@ class SessionEvidence:
             ),
             "artifacts_directory": self.artifacts_directory,
             "ownership_journal": self.ownership_journal,
+            "shutdown_stall": self.shutdown_stall,
             "artifact_sha256": {
                 path.name: sha256_file(path)
                 for path in sorted(artifacts.iterdir())
@@ -2644,11 +2650,15 @@ def parse_native_display_final(transcript: str) -> dict[str, int]:
     }
 
 
-def validate_guest_shutdown(transcript: str) -> None:
+def validate_drm_shutdown(transcript: str) -> None:
     if DIRTY_DRM_SHUTDOWN in transcript:
         raise CampaignError(
             "Virtio-GPU memory manager was not clean during guest shutdown"
         )
+
+
+def validate_guest_shutdown(transcript: str) -> None:
+    validate_drm_shutdown(transcript)
     if DARWIN_CLEAN_STOP not in transcript:
         raise CampaignError("campaign omitted the clean Darwin guest stop marker")
 
@@ -3827,6 +3837,7 @@ def wait_for_guest(
                 else ""
             ),
             artifact_transcript="".join(transport.lines),
+            delivered=delivered is not None,
         )
 
     try:
@@ -3921,6 +3932,7 @@ class RawSession:
     outcome: str
     detail: str | None
     artifacts: dict[str, bytes]
+    shutdown_stall: bool = False
 
 
 def session_environment(index: int, guest: Path) -> dict[str, str] | None:
@@ -3963,6 +3975,7 @@ def run_guest_session(
     detail: str | None = None
     artifact_transcript = ""
     return_code: int | None = None
+    shutdown_stall = False
     process: subprocess.Popen[bytes] | None = None
     try:
         with console_path.open("wb") as console:
@@ -3999,12 +4012,18 @@ def run_guest_session(
         outcome = error.reason
         detail = str(error)
         return_code = process.returncode if process is not None else None
+        # A guest that transported and had acknowledged its final frame before
+        # it refused to power off cost this shard no coverage.  Its evidence is
+        # complete, so the pool keeps running and the stall is recorded instead.
+        shutdown_stall = error.reason == "stalled" and error.delivered
+        if shutdown_stall:
+            print(f"VK-GL-CTS shutdown stall: {detail}", file=sys.stderr, flush=True)
     transport_path.write_text(artifact_transcript, encoding="ascii")
     failure = None
     if os.environ.get(CAMPAIGN_FAILURE_ENV) is not None:
         if DIRTY_DRM_SHUTDOWN in transcript:
             failure = "dirty-shutdown"
-        elif outcome == "stalled":
+        elif outcome == "stalled" and not shutdown_stall:
             failure = "stalled"
     try:
         artifacts = (
@@ -4023,7 +4042,8 @@ def run_guest_session(
     if failure:
         raise CampaignError(f"emulator failure: {failure}: {detail}")
     return RawSession(
-        transcript, artifact_transcript, return_code, outcome, detail, artifacts
+        transcript, artifact_transcript, return_code, outcome, detail, artifacts,
+        shutdown_stall,
     )
 
 
@@ -4116,7 +4136,13 @@ def run_shard_sessions(
                 "guest results left the expected traversal order at "
                 f"session {index}"
             )
-        finished = raw.outcome == "completed" and prefix.ended_session
+        # A shutdown stall arrives with the guest's complete acknowledged
+        # evidence, so its session ends the shard exactly like a clean stop.
+        # The stall itself stays recorded beside that session.
+        shutdown_stall = raw.shutdown_stall and prefix.ended_session
+        finished = prefix.ended_session and (
+            raw.outcome == "completed" or shutdown_stall
+        )
         outcome = "completed" if finished else raw.outcome
         if raw.outcome == "completed" and not prefix.ended_session:
             # The guest stopped cleanly but its CTS process did not finish the
@@ -4153,6 +4179,7 @@ def run_shard_sessions(
                 artifact_transport=relative_session_path(directory, transport_path),
                 artifacts_directory=relative_session_path(directory, artifact_path),
                 return_code=raw.return_code,
+                shutdown_stall=shutdown_stall,
                 ownership_journal=(
                     None
                     if environment is None
@@ -4397,6 +4424,7 @@ def validate_session_provenance(
                 artifact_transport=str(record["artifact_transport"]),
                 artifacts_directory=str(record["artifacts_directory"]),
                 return_code=record.get("return_code"),
+                shutdown_stall=bool(record.get("shutdown_stall", False)),
             )
         )
     # A shard may end on a guest that never stopped only when the host wrote
@@ -5217,6 +5245,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "console_stall_timeout": options.console_stall_timeout,
                     "console_stall_busy_timeout": options.console_stall_busy_timeout,
                     "artifacts_provenance": shard_provenance(rows),
+                    "shutdown_stalls": sum(1 for row in rows if row.shutdown_stall),
                     "sessions": session_records(rows, artifact_directory),
                     "host_recorded_results": host_recorded_results(rows),
                 }
@@ -5268,7 +5297,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         record_sessions(sessions)
         emulator_return_code = final.return_code
         if final.terminated_case is None:
-            validate_guest_shutdown(transcript)
+            if final.shutdown_stall:
+                # The guest transported every acknowledged frame and then failed
+                # to power off inside its shutdown grace.  The host reaped it and
+                # keeps the complete evidence, so only the memory-manager
+                # contract still applies to that transcript.
+                validate_drm_shutdown(transcript)
+            else:
+                validate_guest_shutdown(transcript)
     metadata["artifact_transport_sha256"] = sha256_file(artifact_log_path)
     metadata["console_sha256"] = sha256_file(log_path)
     if options.renderer == "virgl":
