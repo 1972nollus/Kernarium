@@ -2043,11 +2043,16 @@ def run_receipt_campaign(
     )
     common.validate_host_backend(transcript)
     if final.terminated_case is None:
-        common.validate_guest_shutdown(
-            (artifact_directory / final.console).read_text(
-                encoding="utf-8", errors="replace"
-            )
+        final_transcript = (artifact_directory / final.console).read_text(
+            encoding="utf-8", errors="replace"
         )
+        if final.shutdown_stall:
+            # The guest transported every acknowledged frame and then failed to
+            # power off inside its shutdown grace. Only the memory-manager
+            # contract still applies to a reaped guest's transcript.
+            common.validate_drm_shutdown(final_transcript)
+        else:
+            common.validate_guest_shutdown(final_transcript)
     artifact_path = artifact_directory / "artifacts"
     if common.shard_provenance(sessions) == "single-session-guest":
         artifacts = {

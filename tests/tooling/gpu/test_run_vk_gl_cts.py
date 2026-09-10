@@ -1278,6 +1278,10 @@ Kernarium: runtime returned 0
             cts.validate_guest_shutdown(
                 clean + "Memory manager not clean during takedown.\n"
             )
+        # A reaped guest owes no stop marker, but still owes a clean takedown.
+        cts.validate_drm_shutdown("")
+        with self.assertRaisesRegex(cts.CampaignError, "memory manager"):
+            cts.validate_drm_shutdown("Memory manager not clean during takedown.\n")
 
     def test_artifact_frames_round_trip_and_tolerate_console_prefixes(self) -> None:
         transcript = "".join(
