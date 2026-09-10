@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "vhost_user_server.hpp"
+#include "fence_deadline.hpp"
 #include "virtio_gpu_device.hpp"
 
 #include "socket_paths.hpp"
@@ -529,7 +530,7 @@ public:
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
             throw std::runtime_error("short Virtio-GPU response buffer");
         }
-        if (!pendingFences_.empty() &&
+        if (!pendingFences_.empty() && !fenceOrderingRelaxed_ &&
             !gpu_.canProcessWhileFencesPending(request, cursorQueue)) {
             return {.action = uml::virtio::VhostUserQueueAction::retry};
         }
@@ -573,6 +574,7 @@ public:
     {
         cancelFenceTimer();
         pendingFences_.clear();
+        fenceOrderingRelaxed_ = false;
         readyFences_.clear();
         gpu_.reset();
         configChangePending_ = false;
@@ -662,13 +664,23 @@ public:
             auto& pending = pendingFences_[index];
             const int status = gpu_.contextFenceStatus(pending.fence);
             if (status == EBUSY) {
-                if (now >= pending.deadline)
-                    throw std::runtime_error("GPU fence timed out");
-                ++index;
-                continue;
-            }
-            if (status != 0)
+                const auto action = classifyOverdueFence(
+                    now, pending.deadline, fenceOrderingRelaxed_);
+                if (action == OverdueFenceAction::wait) {
+                    ++index;
+                    continue;
+                }
+                if (action == OverdueFenceAction::releaseOrdering) {
+                    fenceOrderingRelaxed_ = true;
+                    reportOverdueFence(pending, "releasing queue ordering");
+                    pending.deadline = now + maximumFenceWait;
+                    ++index;
+                    continue;
+                }
+                reportOverdueFence(pending, "retiring without the renderer");
+            } else if (status != 0) {
                 throw std::runtime_error("reading GPU fence status failed");
+            }
             if (readyFences_.size() == protocol::maximumVirtqueueSize)
                 throw std::runtime_error("GPU fence completion overflow");
 
@@ -684,7 +696,9 @@ public:
             });
             pendingFences_.erase(pendingFences_.begin() + index);
         }
-        if (!pendingFences_.empty())
+        if (pendingFences_.empty())
+            fenceOrderingRelaxed_ = false;
+        else
             armFenceTimer();
     }
 
@@ -880,6 +894,21 @@ private:
             (ringIndex == 0 || experimentalVulkan_);
     }
 
+    /* One line per transition, never per poll: this shares the guest console
+     * and heavy logging is itself able to end a run. */
+    void reportOverdueFence(
+        const PendingFence& pending,
+        const char* action) const noexcept
+    {
+        std::fprintf(
+            stderr,
+            "GPU fence overdue: context=%u ring=%u command=0x%x: %s\n",
+            pending.fence.contextId,
+            pending.fence.ringIndex,
+            pending.requestHeader.type,
+            action);
+    }
+
     void armFenceTimer()
     {
         struct kevent change {};
@@ -925,6 +954,9 @@ private:
     UniqueDescriptor eventQueue_;
     std::vector<PendingFence> pendingFences_;
     std::vector<ReadyFence> readyFences_;
+    /* Set when an overdue fence releases queue ordering, and cleared once
+     * every pending fence has retired. */
+    bool fenceOrderingRelaxed_ {};
 };
 
 } // namespace

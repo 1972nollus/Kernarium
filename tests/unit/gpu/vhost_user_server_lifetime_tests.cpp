@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "fence_deadline.hpp"
 #include "gpu_test_support.hpp"
 #include "in_process_service_testing.hpp"
 
@@ -534,6 +535,35 @@ void closedNotificationDescriptorDoesNotSignalProcess(const char* executable)
     std::_Exit(126);
 }
 
+/* A renderer fence that stays busy must never cost the guest its GPU device:
+ * the signal it waits for can be sitting in a command that fence ordering is
+ * holding back, so ordering is released before the renderer is given up on.
+ * Tearing the connection down instead ends every workload in the session and
+ * leaves the guest unable to shut down cleanly. */
+void anOverdueFenceEscapesOrderingBeforeItIsRetired()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const auto later = now + std::chrono::seconds(1);
+
+    require(classifyOverdueFence(now, later, false) ==
+        OverdueFenceAction::wait);
+    require(classifyOverdueFence(now, later, true) ==
+        OverdueFenceAction::wait);
+
+    /* First expiry releases ordering rather than retiring the fence, so a
+     * held-back signal still has a chance to reach the renderer. */
+    require(classifyOverdueFence(later, now, false) ==
+        OverdueFenceAction::releaseOrdering);
+
+    /* Only once ordering has already been released does the fence retire. */
+    require(classifyOverdueFence(later, now, true) ==
+        OverdueFenceAction::retire);
+
+    /* The deadline itself is inclusive: reaching it is expiry, not waiting. */
+    require(classifyOverdueFence(now, now, false) ==
+        OverdueFenceAction::releaseOrdering);
+}
+
 void runVhostUserServerTests(const char* executable)
 {
     // Metal's compiler service is not a supported post-fork initialization
@@ -558,6 +588,7 @@ void runVhostUserServerTests(const char* executable)
     twoRegionFailureRollsBackEveryOwner();
     standaloneRunCanBeRetriedWithoutLeaking();
     standaloneRunDoesNotReplaceExistingPath();
+    anOverdueFenceEscapesOrderingBeforeItIsRetired();
 }
 
 } // namespace uml::gpu::testing
