@@ -3109,6 +3109,12 @@ def native_wsi_harness_command(
         "--", f"ncpus={options.cpus}", f"--execution-engine={options.engine}",
         "systemd.mask=display-manager.service", "systemd.mask=sddm.service",
         "systemd.mask=getty@tty0.service", "systemd.mask=getty@tty1.service",
+        # No suite uses the image's container runtime, and a short shard powers
+        # off while it is still starting.  Tearing its freshly loaded BPF
+        # programs down from that state leaves kworkers blocked in
+        # bpf_prog_free_deferred and the guest never reaches poweroff.
+        "systemd.mask=docker.service", "systemd.mask=docker.socket",
+        "systemd.mask=containerd.service",
         "ip=off", "--gpu", f"--gpu-display={display}",
         f"--gpu-width={width}", f"--gpu-height={height}",
     ))

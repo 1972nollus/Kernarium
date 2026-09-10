@@ -329,6 +329,13 @@ journal acknowledges that exact guest's reap and console/socket cleanup;
 complete accepted-status campaign is not an all-`Pass`, all-features-supported,
 or Khronos conformance claim.
 
+Every CTS guest masks the image's desktop stack and its container runtime
+(`docker.service`, `docker.socket`, `containerd.service`). No suite uses either,
+and a short shard powers off while the runtime is still starting: tearing its
+freshly loaded BPF programs down from that state leaves kworkers blocked in
+`bpf_prog_free_deferred`, with `systemd` blocked behind them and the guest never
+reaching poweroff.
+
 A shard is one or more guest sessions. The guest transports its growing QPA as
 ordered checkpoint segments, so a killed guest still leaves the prefix it
 produced, and the host reassembles the single `results.qpa` every consumer

@@ -1176,6 +1176,11 @@ native_display_cleanup
         self.assertIn("--no-auto-poweroff", command)
         self.assertIn("systemd.mask=display-manager.service", command)
         self.assertIn("systemd.mask=sddm.service", command)
+        # No suite uses the container runtime, and tearing its BPF programs
+        # down from a half-started state wedges a guest that is powering off.
+        self.assertIn("systemd.mask=docker.service", command)
+        self.assertIn("systemd.mask=docker.socket", command)
+        self.assertIn("systemd.mask=containerd.service", command)
         self.assertIn("--gpu-width=800", command)
         self.assertIn("--gpu-height=600", command)
         self.assertNotIn("--gpu-vnc-port=0", command)
