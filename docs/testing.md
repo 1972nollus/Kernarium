@@ -337,7 +337,16 @@ that campaign adopts them: they occupy their slots exactly as if it had started
 them, so restarting to pick up a new emulator costs no in-flight shard its
 work. An adopted leaf is not the adopting pool's child, so its exit status
 comes from the file the leaf writes for itself; an older leaf that predates
-that file is held to its ownership journal and artifact evidence alone. Even with `--keep-going`, a host-observed emulator
+that file is held to its ownership journal and artifact evidence alone.
+
+Each generation records the interpreter and leaf runners it launched, so the
+pool's own commands stay reproducible across checkouts. The guest harness
+command inside `run.json` is rebuilt by the leaf runner from its own module
+location, so revalidating an earlier generation's attempts requires the
+resuming pool to run from the same checkout path and interpreter as that
+generation. Resume a campaign by updating that checkout in place rather than
+by pointing a second checkout at it; the emulator is named separately and is
+free to come from anywhere. Even with `--keep-going`, a host-observed emulator
 stall or dirty DRM shutdown cancels the remaining pool through its owned-process
 cleanup and preserves the attempted shards' evidence. Ordinary CTS result
 failures retain `--keep-going` behavior. One stall is exempt: a guest that
