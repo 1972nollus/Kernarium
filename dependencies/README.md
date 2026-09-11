@@ -159,9 +159,17 @@ KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
 submission, using the common Vulkan runtime's on-demand submit worker. This
 keeps delayed host signals from outliving Metal's finite GPU event-wait window;
 `MESA_VK_ENABLE_SUBMIT_THREAD=false` still preserves that required fallback.
-Completed waits retain the immediate path. CPU waits preserve their absolute
-deadlines and observe device loss so pending submissions and queue drains can
-shut down before device resources are released.
+Only a wait whose signal has not been submitted is gated. A value already
+signalled on the CPU or enqueued on the queue's Metal timeline is pending, so
+ordinary dependencies keep the immediate path, the worker stays off, and
+`vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
+semaphore wait is pending by definition because its signal must have been
+submitted first. That distinction is what keeps a gated batch from blocking
+the caller that has to release it. A timeline wait whose signal is submitted
+later to the same queue remains unsupported: the device exposes one queue and
+submits in order. CPU waits preserve their absolute deadlines and observe
+device loss so pending submissions and queue drains can shut down before
+device resources are released.
 
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops

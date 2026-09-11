@@ -1,4 +1,4 @@
-From 694fa4f03073839bbb3be7d5b4216a7a39dde3e2 Mon Sep 17 00:00:00 2001
+From 67fd0d2747786026c0dabacbd17622a4bf9b13a3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 02:19:23 +0900
 Subject: [PATCH 23/48] kosmickrisp: implement RGB32 uniform texel buffers

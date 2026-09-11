@@ -1,4 +1,4 @@
-From 3c48b0fd32402012fa67d59d98e5c9cadbb89298 Mon Sep 17 00:00:00 2001
+From 1718e524a6037750a60be5d420d3c8ff4b5e9c92 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
 Subject: [PATCH 42/48] kosmickrisp: restrict the coherency workaround to loops

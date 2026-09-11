@@ -1,4 +1,4 @@
-From 0d3eb2f687c75d2bcc3f0e5b22b47401a2209ca9 Mon Sep 17 00:00:00 2001
+From c44c62615f095494ed449ba1395118c82943417d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 02:34:30 +0900
 Subject: [PATCH 46/48] kosmickrisp: reclaim command allocator capacity on

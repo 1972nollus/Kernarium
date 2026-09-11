@@ -1,4 +1,4 @@
-From 7dc558b39de4b4c8e4fd352a7e683f55e4a45fa2 Mon Sep 17 00:00:00 2001
+From 884184b2b82eb050ecc97a58d9ac55032ad9ea08 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 22:58:59 +0900
 Subject: [PATCH 36/48] kosmickrisp: read every merged clip/cull fragment

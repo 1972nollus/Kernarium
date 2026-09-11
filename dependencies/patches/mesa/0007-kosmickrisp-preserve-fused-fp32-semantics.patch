@@ -1,4 +1,4 @@
-From f0f594e7a389369b3e4d8b01ef447aafd1033b38 Mon Sep 17 00:00:00 2001
+From 5fc46ea3cd7a380a1d5c4b890cfa3a24b6659ea9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 18:52:26 +0900
 Subject: [PATCH 07/48] kosmickrisp: preserve fused fp32 semantics

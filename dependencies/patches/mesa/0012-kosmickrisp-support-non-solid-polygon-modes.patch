@@ -1,4 +1,4 @@
-From 699fdc357779309db18bd72593987017636a2698 Mon Sep 17 00:00:00 2001
+From 137911277ad6add50977cf1dab448c655bc18e3c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 09:44:59 +0900
 Subject: [PATCH 12/48] kosmickrisp: support non-solid polygon modes

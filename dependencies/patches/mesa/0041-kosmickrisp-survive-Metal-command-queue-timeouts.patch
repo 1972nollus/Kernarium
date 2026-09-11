@@ -1,4 +1,4 @@
-From 75cc3190523f35a332d66aa1b9991efd32c67a89 Mon Sep 17 00:00:00 2001
+From cdb627ece65d7fa376ad465d387b1b93c042c7e8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 41/48] kosmickrisp: survive Metal command queue timeouts

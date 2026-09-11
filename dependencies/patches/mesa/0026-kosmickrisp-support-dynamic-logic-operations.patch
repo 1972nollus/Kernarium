@@ -1,4 +1,4 @@
-From cc5046c212113e13850de39f10d92d3905d4acb7 Mon Sep 17 00:00:00 2001
+From 5f6445f5d58e233b20211e7042876f6481fe8169 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:59:33 +0900
 Subject: [PATCH 26/48] kosmickrisp: support dynamic logic operations

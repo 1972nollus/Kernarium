@@ -1,4 +1,4 @@
-From e823d026cf90c2955010980288d8a518f4db52db Mon Sep 17 00:00:00 2001
+From 209192867f601b65de243f2a2bc11fac557db759 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
 Subject: [PATCH 02/48] kosmickrisp: reject unusable image memory

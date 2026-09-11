@@ -1,4 +1,4 @@
-From 6730e4b8097afc94aee4a2849e66eaa3cdad91d9 Mon Sep 17 00:00:00 2001
+From 44ebea28e14814343e7d910c34b8bf8630c51e8a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:34:49 +0900
 Subject: [PATCH 44/48] kosmickrisp: compile emulated stages without a thread
