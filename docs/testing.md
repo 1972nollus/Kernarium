@@ -286,11 +286,20 @@ claim. Every campaign guest is JIT with exactly four vCPUs and 4 GiB.
 
 X11 CTS surfaces use native Xorg with virtio DRM modesetting and Virgl-backed
 glamor. The launchers verify the server executable, DRM file descriptor,
-DRI3 and Present extensions, connected output, and accelerated rendering;
-Xwayland and Xvfb are rejected. OpenGL explicitly selects X11 for EGL.
+DRI3 and Present extensions, connected output, accelerated rendering, and that
+screen blanking is off; Xwayland and Xvfb are rejected. A CTS guest receives no
+input, so a server left with its default screen-saver and DPMS timeouts blanks
+ten minutes into every run; a blanked screen has no active CRTC, the Present
+extension falls back to its one-second fake vblank, and every FIFO
+presentation after that costs a second per frame instead of a frame.
+OpenGL explicitly selects X11 for EGL.
 Vulkan selections that include Wayland also start the image's unmodified
-KWin Wayland compositor nested on Xorg, without Xwayland, so mixed WSI cases
-retain their released traversal order and working Wayland surface support.
+KWin Wayland compositor nested on Xorg, without Xwayland and without lock
+screen support, so mixed WSI cases retain their released traversal order and
+working Wayland surface support. An idle compositor lock is the Wayland
+equivalent of a blanked X screen: it occludes every client, and a surface the
+compositor is not painting is owed no frame callback, so each FIFO
+presentation waits out its whole bound instead of a frame.
 The launchers stop their display processes before requesting guest shutdown.
 
 `tests/integration/gpu/run_vk_cts.py` owns the Vulkan lane. `--qualification`

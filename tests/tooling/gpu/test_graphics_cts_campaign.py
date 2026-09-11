@@ -104,7 +104,7 @@ def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path
     rows = results(shard)
     artifacts = {
         "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                         "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nguest_page_size=16384\n"
+                         "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
                          "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode(),
         "summary.txt": b"cts_rc=0\n",
         "selected.txt": "".join(f"{case}\n" for case in rows).encode(),
@@ -169,7 +169,7 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     cases = list(rows)
     terminated = cases[1]
     renderer = ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nguest_page_size=16384\n"
+                "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
                 "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode()
     selected = "".join(f"{case}\n" for case in cases).encode()
     stalled_qpa = fixtures.qpa(

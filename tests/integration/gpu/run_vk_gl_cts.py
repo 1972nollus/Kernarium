@@ -2397,7 +2397,7 @@ def validate_official_runner_results(
 
 NATIVE_X11_MARKERS = (
     "x11_server=xorg", "x11_dri3=1", "x11_present=1", "x11_glamor=1",
-    "x11_connected=1", "x11_drm_fd=1",
+    "x11_connected=1", "x11_drm_fd=1", "x11_blanking=off",
     "device=/dev/dri/card0", "device=/dev/dri/renderD128",
 )
 
@@ -2967,7 +2967,7 @@ install -d -m 0700 -o uml -g uml "$runtime"
 
 native_display_failure()
 {
-    for log in Xorg.log xorg-stderr.txt xdpyinfo.txt glxinfo.txt kwin.txt; do
+    for log in Xorg.log xorg-stderr.txt xdpyinfo.txt xset.txt glxinfo.txt kwin.txt; do
         if [ -f "$native_display/$log" ]; then
             printf 'native_display_log=%s\n' "$log" >> "$renderer"
             tail -n 40 "$native_display/$log" >> "$renderer"
@@ -3010,6 +3010,15 @@ chmod 0600 "$xauthority"
 cat > "$native_display/xorg.conf" <<'XORG_CONFIG'
 Section "ServerFlags"
     Option "AutoAddDevices" "false"
+    # A CTS guest never receives input, so the screen saver and DPMS always
+    # expire. A blanked screen turns the CRTC off, the Present extension then
+    # has no CRTC to schedule against and falls back to its 1 Hz fake vblank,
+    # and every FIFO presentation - the client's and the nested compositor's
+    # alike - costs a second instead of a frame.
+    Option "BlankTime" "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime" "0"
 EndSection
 Section "Device"
     Identifier "Virtio"
@@ -3050,6 +3059,20 @@ done
 xorg_stamp=$(native_process_state "$xorg_pid")
 xorg_stamp=${xorg_stamp#*:}
 printf 'x11_server=xorg\nx11_pid=%s\n' "$xorg_pid" >> "$renderer"
+# Settle screen blanking from a client as well: the configuration above is
+# what the server starts with, and this is what it is still using when the
+# first presentation is scheduled. Both must hold, so prove it rather than
+# assume it.
+runuser -u uml -- env DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
+    timeout 10 xset s off -dpms || native_display_failure "screen blanking"
+runuser -u uml -- env DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
+    timeout 10 xset q > "$native_display/xset.txt" 2>&1 || \
+    native_display_failure "screen blanking"
+grep -Eq '^[[:space:]]*timeout:[[:space:]]+0([[:space:]]|$)' "$native_display/xset.txt" || \
+    native_display_failure "screen blanking"
+grep -Eq 'DPMS is Disabled' "$native_display/xset.txt" || \
+    native_display_failure "screen blanking"
+printf 'x11_blanking=off\n' >> "$renderer"
 card_open=0
 for fd in /proc/$xorg_pid/fd/*; do
     if [ "$(readlink "$fd")" = /dev/dri/card0 ]; then card_open=1; break; fi
@@ -3074,11 +3097,27 @@ fi
 printf 'x11_display_renderer=virgl\n' >> "$renderer"
 '''
     if wayland:
-        setup += r'''virgl_display runuser -u uml -- env HOME=/home/uml DISPLAY="$xdisplay" \
+        # The compositor's own idle locker has the same effect on Wayland that
+        # screen blanking has on X11: the lock screen occludes every client, a
+        # surface the compositor is not painting is owed no frame callback, and
+        # a FIFO presentation then waits out its whole bound per frame. A CTS
+        # guest never produces the input that would postpone the lock, so
+        # refuse lock screen support outright and settle the autolock
+        # configuration the compositor would otherwise inherit.
+        setup += r'''install -d -m 0755 -o uml -g uml /home/uml/.config
+cat > /home/uml/.config/kscreenlockerrc <<'KSCREENLOCKER_CONFIG'
+[Daemon]
+Autolock=false
+LockOnResume=false
+LockGrace=0
+Timeout=0
+KSCREENLOCKER_CONFIG
+chown uml:uml /home/uml/.config/kscreenlockerrc
+virgl_display runuser -u uml -- env HOME=/home/uml DISPLAY="$xdisplay" \
     XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
     dbus-run-session sh -c '
         printf "%s\n" "$DBUS_SESSION_BUS_ADDRESS" > "$XDG_RUNTIME_DIR/dbus-address"
-        exec /usr/bin/kwin_wayland --x11-display "$DISPLAY" --socket wayland-0 --width 1280 --height 720
+        exec /usr/bin/kwin_wayland --no-lockscreen --x11-display "$DISPLAY" --socket wayland-0 --width 1280 --height 720
     ' > "$native_display/kwin.txt" 2>&1 &
 kwin_launcher_pid=$!
 kwin_launcher_stamp=$(native_process_state "$kwin_launcher_pid")
@@ -3099,10 +3138,13 @@ for candidate in $(pgrep -u "$(id -u uml)" -x kwin_wayland); do
     break
 done
 [ -n "$kwin_pid" ] || native_display_failure
+tr '\000' '\n' < /proc/$kwin_pid/cmdline | grep -Fxq -- --no-lockscreen || \
+    native_display_failure "compositor lock screen"
 kwin_stamp=$(native_process_state "$kwin_pid")
 kwin_stamp=${kwin_stamp#*:}
 dbus_address=$(cat "$runtime/dbus-address")
-printf 'wayland_server=kwin-x11\nwayland_pid=%s\n' "$kwin_pid" >> "$renderer"
+printf 'wayland_server=kwin-x11\nwayland_lockscreen=off\nwayland_pid=%s\n' \
+    "$kwin_pid" >> "$renderer"
 '''
     setup += r'''if pgrep -x Xwayland >/dev/null || pgrep -x Xvfb >/dev/null; then
     native_display_failure

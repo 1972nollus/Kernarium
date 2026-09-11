@@ -245,7 +245,7 @@ def write_config_inventory_evidence(
         payloads = {
             "results.qpa": payload,
             "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                             "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nguest_page_size=16384\n"
+                             "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
                              "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode(),
             "summary.txt": b"cts_rc=0\n",
         }
@@ -771,6 +771,7 @@ x11_present=1
 x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
+x11_blanking=off
 OpenGL renderer string: zink Vulkan 1.4 (Virtio-GPU Venus)
 """
         cts.validate_renderer_probe(valid, renderer_backend="zink")
@@ -1070,6 +1071,7 @@ x11_present=1
 x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
+x11_blanking=off
 OpenGL renderer string: virgl (Apple GPU)
 """
         cts.validate_renderer_probe(valid)
@@ -1084,7 +1086,7 @@ OpenGL renderer string: virgl (Apple GPU)
         with self.assertRaisesRegex(cts.CampaignError, "renderD128"):
             cts.validate_renderer_probe(valid.replace("device=/dev/dri/renderD128\n", ""))
         with self.assertRaisesRegex(cts.CampaignError, "Xorg"):
-            cts.validate_renderer_probe(valid.replace("x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\n", ""))
+            cts.validate_renderer_probe(valid.replace("x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\n", ""))
 
     def test_native_x11_probe_requires_each_gate_and_rejects_other_servers(self) -> None:
         valid = "\n".join(cts.NATIVE_X11_MARKERS) + "\n"
@@ -1130,6 +1132,44 @@ OpenGL renderer string: virgl (Apple GPU)
                 self.assertEqual("exec /usr/bin/kwin_wayland" in setup, wayland)
                 self.assertEqual("dbus_address=" in setup, wayland)
                 self.assertNotIn(" --xwayland", setup)
+
+    def test_native_x11_setup_disables_screen_blanking(self) -> None:
+        # A CTS guest never receives input, so the screen saver and DPMS always
+        # expire mid-run. A blanked screen turns the CRTC off, the Present
+        # extension loses the CRTC it schedules against and falls back to its
+        # 1 Hz fake vblank, and every FIFO presentation - the CTS client's and
+        # the nested compositor's alike - then costs a second per frame.
+        for wayland in (False, True):
+            with self.subTest(wayland=wayland):
+                setup = cts.native_x11_setup(wayland=wayland)
+                for option in (
+                    "BlankTime", "StandbyTime", "SuspendTime", "OffTime",
+                ):
+                    self.assertIn(f'Option "{option}" "0"', setup)
+                self.assertIn("xset s off -dpms", setup)
+                self.assertIn("DPMS is Disabled", setup)
+                self.assertIn("x11_blanking=off", setup)
+                # The server must be proven unblankable before any client
+                # presents through it.
+                self.assertLess(
+                    setup.index("x11_blanking=off"),
+                    setup.index("timeout 10 glxinfo -B"),
+                )
+        self.assertIn("x11_blanking=off", cts.NATIVE_X11_MARKERS)
+
+    def test_nested_compositor_refuses_its_idle_lock_screen(self) -> None:
+        # The compositor's idle lock occludes every client, and an occluded
+        # surface is owed no frame callback, so a FIFO presentation waits out
+        # its whole bound per frame. A CTS guest never produces the input that
+        # would postpone the lock.
+        self.assertNotIn("lockscreen", cts.native_x11_setup(wayland=False))
+        setup = cts.native_x11_setup(wayland=True)
+        self.assertIn("kwin_wayland --no-lockscreen", setup)
+        self.assertIn("Autolock=false", setup)
+        self.assertIn("wayland_lockscreen=off", setup)
+        self.assertLess(
+            setup.index("Autolock=false"), setup.index("kwin_wayland --no-"),
+        )
 
     def test_native_display_cleanup_is_ordered_and_bounded(self) -> None:
         setup = cts.native_x11_setup(wayland=True)
@@ -1969,6 +2009,7 @@ x11_present=1
 x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
+x11_blanking=off
 OpenGL renderer string: virgl
 """
         artifacts = {

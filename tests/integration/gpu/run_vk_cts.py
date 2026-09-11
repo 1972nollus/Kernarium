@@ -139,9 +139,19 @@ def validate_wsi_operation(
         common.validate_native_x11_probe(renderer)
     except CampaignError as error:
         raise CampaignError(f"Vulkan WSI evidence rejected: {error}") from error
-    if (receipt_selection_uses_wayland(selection)
-            and "wayland_server=kwin-x11" not in renderer.splitlines()):
-        raise CampaignError("Vulkan WSI evidence omits the nested Wayland server")
+    if receipt_selection_uses_wayland(selection):
+        evidence = renderer.splitlines()
+        if "wayland_server=kwin-x11" not in evidence:
+            raise CampaignError(
+                "Vulkan WSI evidence omits the nested Wayland server"
+            )
+        # A compositor that locks its idle session stops painting its clients,
+        # and a surface the compositor is not painting is owed no frame
+        # callback: every FIFO presentation after that waits out its bound.
+        if "wayland_lockscreen=off" not in evidence:
+            raise CampaignError(
+                "Vulkan WSI evidence omits the compositor lock screen state"
+            )
     if not any(
         ".incremental_present." in case for case in selection.source_cases
     ):
