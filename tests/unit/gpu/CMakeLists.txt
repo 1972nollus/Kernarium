@@ -337,6 +337,21 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
+    # The renderer and the same-process render server share one fence table.
+    # Exercise that ownership without a device: it is a pure lifetime
+    # contract, and losing it faults the GPU thread.
+    add_executable(uml_gpu_virgl_fence_table_tests
+        virgl_fence_table_ownership_tests.cpp)
+    target_link_libraries(uml_gpu_virgl_fence_table_tests PRIVATE
+        UML::ThirdPartyVirglrenderer)
+    target_compile_features(uml_gpu_virgl_fence_table_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_virgl_fence_table_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME gpu-virgl-fence-table-ownership
+        COMMAND uml_gpu_virgl_fence_table_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu)
+
     add_executable(uml_gpu_transport_wire_tests
         gpu_allocation_failure.cpp
         vhost_user_message_test_main.cpp

@@ -134,6 +134,10 @@ bits alone do not raise that maximum.
 One renderer session owns virglrenderer's process-global lifetime. The
 ANGLE/Metal GL facade and the Venus/KosmicKrisp Vulkan facade share only that
 owner and bounded device resources; neither resolves or calls the other's API.
+The render server runs in that same address space, so it shares those
+process-global tables rather than owning a second copy of them. It takes and
+releases references to them, and the end of its last context never destroys
+state the renderer session still holds.
 
 The renderer implements:
 
