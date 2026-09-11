@@ -1,4 +1,4 @@
-From 55692ff872dd80913bdb62fb380e15beda7041eb Mon Sep 17 00:00:00 2001
+From d1192d26ba8c087abc653ff06442e34f6643ef9f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 02:18:00 +0900
 Subject: [PATCH 43/52] kosmickrisp: derive alpha to coverage without a colour
@@ -162,7 +162,7 @@ index 803ee64b..a983cade 100644
  bool msl_ensure_vertex_position_output(nir_shader *nir);
  bool msl_ensure_vertex_point_size_output(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index eeec44bf..8a33cdce 100644
+index 7c50bfe1..c1c985d7 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -565,6 +565,30 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
@@ -232,7 +232,7 @@ index eeec44bf..8a33cdce 100644
     if (state->cb)
        kk_lower_fs_blend(nir, state);
  
-@@ -3627,7 +3657,11 @@ gather_graphics_pipeline_create_info(
+@@ -3634,7 +3664,11 @@ gather_graphics_pipeline_create_info(
     if (info->vs.has_ms) {
        const struct vk_multisample_state *ms = state->ms;
        info->vs.sample_count = ms->rasterization_samples;
@@ -246,7 +246,7 @@ index eeec44bf..8a33cdce 100644
     }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 62fc86dc..b407aa26 100644
+index 6dcb857e..099a4cc9 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -274,6 +274,20 @@ if with_tests

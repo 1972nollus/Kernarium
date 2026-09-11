@@ -1,4 +1,4 @@
-From 884184b2b82eb050ecc97a58d9ac55032ad9ea08 Mon Sep 17 00:00:00 2001
+From 5e9bdee09f41dbda94c2715810bcf7dd18c19391 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 22:58:59 +0900
 Subject: [PATCH 36/52] kosmickrisp: read every merged clip/cull fragment
@@ -68,10 +68,10 @@ index 8699eada..2c837a01 100644
     NIR_PASS(_, nir, nir_separate_merged_clip_cull_io);
     if (nir->info.stage == MESA_SHADER_FRAGMENT)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 26f21254..a4f30f7c 100644
+index 57c6c79b..ded0dbf7 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -568,6 +568,20 @@ if with_tests
+@@ -582,6 +582,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -1,4 +1,4 @@
-From c44c62615f095494ed449ba1395118c82943417d Mon Sep 17 00:00:00 2001
+From 61e861352a90a9c79512f66f353522b11001661c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 02:34:30 +0900
 Subject: [PATCH 46/52] kosmickrisp: reclaim command allocator capacity on
@@ -153,10 +153,10 @@ index 9962c952..e505acdf 100644
  kk_TrimCommandPool(VkDevice device, VkCommandPool commandPool,
                     VkCommandPoolTrimFlags flags)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ef21c047..7fe73092 100644
+index 903e2472..61429f11 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -493,6 +493,28 @@ if with_tests
+@@ -507,6 +507,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

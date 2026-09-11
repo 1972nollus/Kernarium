@@ -1,4 +1,4 @@
-From 905c1e0101d80fe5cd122461fa882dd92fe3f11d Mon Sep 17 00:00:00 2001
+From 36a08911e347afa3d4658d817ccb7f1b412c0c82 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 07:09:27 +0900
 Subject: [PATCH 35/52] kosmickrisp: capture tessellation outputs on the GPU
@@ -216,10 +216,10 @@ index c3fa39bb..639810e9 100644
              kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index e6d99932..eeec44bf 100644
+index 0bddef0d..7c50bfe1 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1221,6 +1221,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1228,6 +1228,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
           NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
           nir->info.stage = MESA_SHADER_COMPUTE;
           memset(&nir->info.cs, 0, sizeof(nir->info.cs));
@@ -227,7 +227,7 @@ index e6d99932..eeec44bf 100644
        }
     }
  
-@@ -2428,10 +2429,8 @@ kk_create_line_materialize_shader(const nir_shader *source)
+@@ -2435,10 +2436,8 @@ kk_create_line_materialize_shader(const nir_shader *source)
  {
     nir_shader *nir = nir_shader_clone(NULL, source);
     if (nir->info.stage == MESA_SHADER_TESS_EVAL) {
@@ -240,7 +240,7 @@ index e6d99932..eeec44bf 100644
        NIR_PASS(_, nir, poly_nir_lower_tes, true);
     }
  
-@@ -3284,6 +3283,82 @@ kk_lower_xfb_raster_flat_outputs(nir_shader *raster, const nir_shader *vs,
+@@ -3291,6 +3290,82 @@ kk_lower_xfb_raster_flat_outputs(nir_shader *raster, const nir_shader *vs,
                                nir_metadata_control_flow, &state);
  }
  
@@ -323,7 +323,7 @@ index e6d99932..eeec44bf 100644
  static nir_shader *
  kk_create_transform_feedback_passthrough(
     const nir_shader *vs, enum mesa_prim primitive,
-@@ -3338,6 +3413,13 @@ kk_create_transform_feedback_passthrough(
+@@ -3345,6 +3420,13 @@ kk_create_transform_feedback_passthrough(
            !gs_info->prefix_sum);
     ralloc_free(builder.shader);
  
@@ -337,7 +337,7 @@ index e6d99932..eeec44bf 100644
     *pre_gs_out = pre_gs;
     return raster;
  }
-@@ -4009,16 +4091,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4016,16 +4098,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        if (info->nir->info.stage == MESA_SHADER_TESS_EVAL)
           tess_eval_shader = i;
  
@@ -360,7 +360,7 @@ index e6d99932..eeec44bf 100644
  
     const enum mesa_prim line_raster_prim =
        state ? kk_graphics_raster_primitive(shader_count, infos, state)
-@@ -4091,7 +4172,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4098,7 +4179,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           ((polygon_point_emulation || line_raster_emulation) &&
            nir->info.stage == MESA_SHADER_VERTEX) ||
           (transform_feedback_emulation &&
@@ -370,7 +370,7 @@ index e6d99932..eeec44bf 100644
  
        /* With a geometry shader, fragment PrimitiveID is the value authored by
         * that shader, not Metal's rasterizer-generated primitive ID.  Expose it
-@@ -4273,16 +4355,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4280,16 +4362,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        geometry_pre_gs_shader = total_shaders;
        nir_shaders[total_shaders++] = pre_gs;
     } else if (transform_feedback_emulation) {
@@ -392,7 +392,7 @@ index e6d99932..eeec44bf 100644
           &transform_feedback_info);
        NIR_PASS(_, raster, kk_nir_lower_poly, pipeline_statistics);
  
-@@ -4295,6 +4377,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4302,6 +4384,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           nir_shaders[total_shaders - 1u],
        };
        if (!line_raster_materialize) {
@@ -400,7 +400,7 @@ index e6d99932..eeec44bf 100644
           nir_opt_varyings_bulk(raster_stages, ARRAY_SIZE(raster_stages), true,
                                 UINT32_MAX, UINT32_MAX, nir_opts, NULL);
        }
-@@ -4302,6 +4385,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4309,6 +4392,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        if (line_raster_materialize) {
           line_source_clone = nir_shader_clone(NULL, raster);
           line_source = line_source_clone;
@@ -408,7 +408,7 @@ index e6d99932..eeec44bf 100644
           nir_shader *materialize =
              kk_create_line_materialize_shader(line_source);
           NIR_PASS(_, materialize, kk_nir_lower_poly, pipeline_statistics);
-@@ -4309,8 +4393,10 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4316,8 +4400,10 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                          dev->disabled_workarounds);
           /* Unlike application GS/TES NIR, the synthetic XFB pass-through
            * has not passed through the driver's IO/descriptor lowering. */
@@ -421,7 +421,7 @@ index e6d99932..eeec44bf 100644
           line_raster_materialize_shader = total_shaders;
           nir_shaders[total_shaders++] = materialize;
        }
-@@ -4320,19 +4406,38 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4327,19 +4413,38 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        }
  
        msl_preprocess_nir_workarounds(pre_gs, dev->disabled_workarounds);
@@ -465,7 +465,7 @@ index e6d99932..eeec44bf 100644
        line_source = nir_shaders[tess_eval_shader];
        line_source_compile = &infos[tess_eval_shader];
        nir_shader *materialize =
-@@ -4433,7 +4538,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4440,7 +4545,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        force_sw_vs |= geometry_shader_emulation &&
                       (i == 0 ||
                        nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL);

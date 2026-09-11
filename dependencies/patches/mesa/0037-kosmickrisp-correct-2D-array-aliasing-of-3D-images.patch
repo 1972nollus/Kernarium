@@ -1,4 +1,4 @@
-From d1c2a6aaefce905ec099af3a24af9b5c41df0f8a Mon Sep 17 00:00:00 2001
+From d9a4fb6ed855dcb133c8455356a79e97601869fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:21:53 +0900
 Subject: [PATCH 37/52] kosmickrisp: correct 2D array aliasing of 3D images
@@ -234,7 +234,7 @@ index 9e601ea3..bfddc6f0 100644
     }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a4f30f7c..366d06e3 100644
+index ded0dbf7..eac2f951 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -304,6 +304,26 @@ if with_tests

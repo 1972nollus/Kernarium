@@ -1,4 +1,4 @@
-From b566219ea67a46d21dc5f2c7937f7456febd25a5 Mon Sep 17 00:00:00 2001
+From e6ce3bbb9a47ce83b7e9790aa4d8ee3d6d32b7ec Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 04:50:34 +0900
 Subject: [PATCH 52/52] kosmickrisp: clamp the cube an array coordinate selects
@@ -155,10 +155,10 @@ index 5ecfc974..b492059e 100644
     nir_tex_instr *clone = clone_cube_sample(b, tex);
     clone->sampler_dim = GLSL_SAMPLER_DIM_2D;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a2524b1c..bce3d00d 100644
+index cece08a7..cf9a9584 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -785,6 +785,28 @@ if with_tests
+@@ -799,6 +799,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

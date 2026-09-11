@@ -1,4 +1,4 @@
-From e31f538a3a725ffa6ccf8c9db88191af07e5ef67 Mon Sep 17 00:00:00 2001
+From 6fb900b1ff704a8fd60992bb36b2409f9ba65568 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 00:55:03 +0900
 Subject: [PATCH 45/52] kosmickrisp: initialize Metal descriptors only once

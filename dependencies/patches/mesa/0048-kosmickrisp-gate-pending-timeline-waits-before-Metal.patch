@@ -1,4 +1,4 @@
-From ebc3e6bf424181a4329fba9f53f59b8ef7344eaf Mon Sep 17 00:00:00 2001
+From 465615bcb08fbbdeee15343a5ccf3db17b72aaba Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
 Subject: [PATCH 48/52] kosmickrisp: gate pending timeline waits before Metal
@@ -334,10 +334,10 @@ index da4f1499..a045d8ae 100644
 +
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c0b1fc74..112a2422 100644
+index 028739b9..e8d9a723 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -493,6 +493,81 @@ if with_tests
+@@ -507,6 +507,81 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

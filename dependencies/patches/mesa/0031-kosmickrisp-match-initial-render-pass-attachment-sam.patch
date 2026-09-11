@@ -1,4 +1,4 @@
-From 5e1c551445babb6e110454d966a89fb79a14ddb2 Mon Sep 17 00:00:00 2001
+From d32b215997716ba061a52fef5c7c1d14b69a22fb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:35:40 +0900
 Subject: [PATCH 31/52] kosmickrisp: match initial render pass attachment
@@ -39,7 +39,7 @@ index 105bd3a1..a0df6b4f 100644
     /* Render targets are always arrays */
     mtl_render_pass_descriptor_set_render_target_array_length(
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d3de9c5e..03498ab7 100644
+index b3f81c68..3b062b2f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -288,6 +288,26 @@ if with_tests

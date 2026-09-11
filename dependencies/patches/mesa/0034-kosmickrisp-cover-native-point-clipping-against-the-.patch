@@ -1,4 +1,4 @@
-From c5d3db8da0f65d383396b83daa51f9dcdd80cf45 Mon Sep 17 00:00:00 2001
+From 365a05dbb48454257eb679e35aafcdb3e138ee66 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 03:21:00 +0900
 Subject: [PATCH 34/52] kosmickrisp: cover native point clipping against the
@@ -34,7 +34,7 @@ vertex stage and through a point-emitting geometry stage.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4150dd51..26f21254 100644
+index 183fd30b..57c6c79b 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -270,6 +270,20 @@ if with_tests

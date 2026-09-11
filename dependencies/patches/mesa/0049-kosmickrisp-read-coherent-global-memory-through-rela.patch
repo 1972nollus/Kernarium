@@ -1,4 +1,4 @@
-From ba0026e9a6de415419f5bd78fa43e4abd4ffee59 Mon Sep 17 00:00:00 2001
+From a4b95adde072740545c2f93112594b828ee5c5aa Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:29:40 +0900
 Subject: [PATCH 49/52] kosmickrisp: read coherent global memory through
@@ -299,10 +299,10 @@ index 01019686..d679a62a 100644
     msl_emit_io_blocks(&ctx, shader);
     if (shader->info.stage == MESA_SHADER_FRAGMENT &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 112a2422..0a8151a3 100644
+index e8d9a723..909edb08 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -863,6 +863,20 @@ if with_tests
+@@ -877,6 +877,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

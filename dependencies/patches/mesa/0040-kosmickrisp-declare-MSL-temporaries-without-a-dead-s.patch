@@ -1,4 +1,4 @@
-From 83185b6f41c6cd6cc5164814a9d71b8ae109a8a7 Mon Sep 17 00:00:00 2001
+From 633752b405750f012f3ee7c7ffbce9107c00e5b2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 14:51:41 +0900
 Subject: [PATCH 40/52] kosmickrisp: declare MSL temporaries without a dead
@@ -65,10 +65,10 @@ index c16c4e9f..92be4b42 100644
        }
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d27e8062..1bd4e2a8 100644
+index 3f76669c..89f4d771 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -644,6 +644,20 @@ if with_tests
+@@ -658,6 +658,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

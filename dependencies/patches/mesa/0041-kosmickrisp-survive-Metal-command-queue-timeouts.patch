@@ -1,4 +1,4 @@
-From cdb627ece65d7fa376ad465d387b1b93c042c7e8 Mon Sep 17 00:00:00 2001
+From 09039f4db69506c9739aa45388870185e024500e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 41/52] kosmickrisp: survive Metal command queue timeouts
@@ -526,7 +526,7 @@ index 00000000..f8e2b9c1
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1bd4e2a8..695e96a1 100644
+index 89f4d771..5e5e6a52 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -547,7 +547,7 @@ index 1bd4e2a8..695e96a1 100644
    'kk_sampler.h',
    'kk_sampler.c',
    'kk_shader.h',
-@@ -492,6 +496,32 @@ if with_tests
+@@ -506,6 +510,32 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -1,4 +1,4 @@
-From 1718e524a6037750a60be5d420d3c8ff4b5e9c92 Mon Sep 17 00:00:00 2001
+From b5818f065ebef53390903afb597a3f57128b870b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
 Subject: [PATCH 42/52] kosmickrisp: restrict the coherency workaround to loops
@@ -160,7 +160,7 @@ index 92be4b42..01019686 100644
                                    ? "coherent device"
                                    : "device";
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 695e96a1..62fc86dc 100644
+index 5e5e6a52..6dcb857e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -403,6 +403,20 @@ if with_tests
