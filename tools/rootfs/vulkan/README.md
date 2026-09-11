@@ -48,7 +48,10 @@ sharing correctness fixes:
   compute state; and
 - bound the wait the X11 swapchain's event thread spends on Present events, so
   destroying a swapchain whose images the server still owns completes instead
-  of deadlocking.
+  of deadlocking; and
+- bound the wait a Wayland present spends throttling on the previous frame
+  callback, and spend an unbounded `vkWaitForPresentKHR` in observing slices
+  rather than one indefinite dispatch.
 
 The first fix prevents a rejected native pipeline from becoming a stale guest
 object and a later fatal command stream. The second prevents the renderer from
@@ -85,6 +88,18 @@ interrupted, either state deadlocked `vkDestroySwapchainKHR` on joining that
 thread. The thread now waits with a bound and re-reads the swapchain status,
 which costs one poll wakeup per interval only while an event is genuinely
 outstanding.
+The Wayland swapchain has the same shape of assumption. On a compositor without
+`wp_fifo_v1` a FIFO present is throttled with a `wl_surface.frame` callback, and
+common WSI waited for it without a bound. A compositor only sends frame
+callbacks for a surface it is painting, so an occluded or unpainted surface
+never releases that wait, and because Venus runs presents on its own thread the
+stall reaches the application as a `vkDestroySwapchainKHR` that never returns. A
+present now gives up on the callback after a second and proceeds un-throttled;
+the acquire still waits for a `wl_buffer.release`, so no more than the
+swapchain's images are ever in flight. An unbounded `vkWaitForPresentKHR` is
+still unbounded, as the specification requires, but is spent in observing
+slices, so a retired swapchain ends it with `VK_ERROR_OUT_OF_DATE_KHR` instead
+of waiting for a present id its successor owns.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also
