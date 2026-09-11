@@ -171,6 +171,13 @@ submits in order. CPU waits preserve their absolute deadlines and observe
 device loss so pending submissions and queue drains can shut down before
 device resources are released.
 
+A render pass clear depth reaches Metal already rounded to the attachment
+format's nearest representable value and offset inside that texel's interval.
+Metal converts the clear into a normalized-integer depth attachment by
+truncating, so an unrounded value would clear `D16_UNORM` one step low and
+disagree with the rasterizer's own depth writes, which round. Depth formats
+Metal stores as floats keep their exact value.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is

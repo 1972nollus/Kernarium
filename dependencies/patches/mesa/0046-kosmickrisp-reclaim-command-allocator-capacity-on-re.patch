@@ -1,7 +1,7 @@
 From c44c62615f095494ed449ba1395118c82943417d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 02:34:30 +0900
-Subject: [PATCH 46/49] kosmickrisp: reclaim command allocator capacity on
+Subject: [PATCH 46/50] kosmickrisp: reclaim command allocator capacity on
  release
 
 Metal allocator reset retains its high-water capacity. Drop allocators after RELEASE_RESOURCES discards a recording, including INITIAL command buffers, and recreate them at Begin. Return cached pool storage on pool release and initialize and bound its BO accounting.

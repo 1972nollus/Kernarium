@@ -1,7 +1,7 @@
 From b3306f170ec50c47c286edb575ae0387bb4e340d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 12:52:08 +0900
-Subject: [PATCH 01/49] kosmickrisp: support an embedded Apple build
+Subject: [PATCH 01/50] kosmickrisp: support an embedded Apple build
 
 ---
  src/kosmickrisp/vulkan/kk_instance.c | 10 ++++++++++
