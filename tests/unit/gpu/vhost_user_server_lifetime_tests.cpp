@@ -562,6 +562,33 @@ void anOverdueFenceEscapesOrderingBeforeItIsRetired()
     /* The deadline itself is inclusive: reaching it is expiry, not waiting. */
     require(classifyOverdueFence(now, now, false) ==
         OverdueFenceAction::releaseOrdering);
+
+    /* The escape is granted per fence, not per connection. Several fences
+     * enqueued together expire together, so passing a connection-wide
+     * "ordering is relaxed" flag here would retire every fence after the
+     * first one immediately, without the release step or the second window
+     * that the first fence received. Each fence carries its own bit. */
+    struct Fence {
+        std::chrono::steady_clock::time_point deadline;
+        bool orderingReleased;
+    };
+    Fence fences[] = {
+        {now, false},
+        {now, false},
+    };
+    bool connectionRelaxed = false;
+    for (auto& fence : fences) {
+        const auto action = classifyOverdueFence(
+            later, fence.deadline, fence.orderingReleased);
+        require(action == OverdueFenceAction::releaseOrdering);
+        fence.orderingReleased = true;
+        connectionRelaxed = true;
+    }
+    require(connectionRelaxed);
+    for (const auto& fence : fences) {
+        require(classifyOverdueFence(later, fence.deadline,
+                    fence.orderingReleased) == OverdueFenceAction::retire);
+    }
 }
 
 void runVhostUserServerTests(const char* executable)

@@ -237,7 +237,10 @@ A fence the renderer does not retire never costs the guest its GPU device.
 Because a held-back guest command can itself carry the signal a pending fence
 waits for, the first expiry releases that ordering and grants the fence a
 second window; only a second expiry retires the fence without its renderer
-work. Both transitions report one line naming the context, ring, and command.
+work. Each pending fence carries its own escape state, so fences that expire
+together each get the release step and the second window rather than being
+retired because another fence already relaxed ordering for the connection.
+Both transitions report one line naming the context, ring, and command.
 The transport keeps serving the connection either way, so a wedged submission
 fails the workload that owns it while the guest stays able to finish its
 remaining work and power off.

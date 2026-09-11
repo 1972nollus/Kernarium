@@ -665,12 +665,13 @@ public:
             const int status = gpu_.contextFenceStatus(pending.fence);
             if (status == EBUSY) {
                 const auto action = classifyOverdueFence(
-                    now, pending.deadline, fenceOrderingRelaxed_);
+                    now, pending.deadline, pending.orderingReleased);
                 if (action == OverdueFenceAction::wait) {
                     ++index;
                     continue;
                 }
                 if (action == OverdueFenceAction::releaseOrdering) {
+                    pending.orderingReleased = true;
                     fenceOrderingRelaxed_ = true;
                     reportOverdueFence(pending, "releasing queue ordering");
                     pending.deadline = now + maximumFenceWait;
@@ -858,6 +859,10 @@ private:
         std::vector<std::uint8_t> response;
         VirtioGpuDevice::DeferredFence fence;
         std::chrono::steady_clock::time_point deadline;
+        /* Whether this fence has already spent its ordering-release window.
+         * Connection-wide relaxation is a consequence of some fence escaping,
+         * not evidence that this one has had its second chance. */
+        bool orderingReleased {};
     };
 
     struct ReadyFence {
