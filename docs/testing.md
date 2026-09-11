@@ -346,7 +346,15 @@ location, so revalidating an earlier generation's attempts requires the
 resuming pool to run from the same checkout path and interpreter as that
 generation. Resume a campaign by updating that checkout in place rather than
 by pointing a second checkout at it; the emulator is named separately and is
-free to come from anywhere. Even with `--keep-going`, a host-observed emulator
+free to come from anywhere.
+
+The generated guest script is embedded in every recorded harness command, so
+changing it invalidates the attempts a campaign already holds. Anything that
+alters it therefore arrives as an option that is off by default and is recorded
+in the generation that asked for it, leaving earlier attempts byte-identical.
+`--relax-diagnostics` is the first: it reports Venus stuck-wait lines from the
+CTS process while a Vulkan shard is stalled, which is otherwise written to a
+guest file that never leaves the guest. Even with `--keep-going`, a host-observed emulator
 stall or dirty DRM shutdown cancels the remaining pool through its owned-process
 cleanup and preserves the attempted shards' evidence. Ordinary CTS result
 failures retain `--keep-going` behavior. One stall is exempt: a guest that

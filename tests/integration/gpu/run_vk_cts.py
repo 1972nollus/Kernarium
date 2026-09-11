@@ -984,9 +984,30 @@ def build_receipt_guest_launcher(
     resume_after: int = 0,
     checkpoint_bytes: int = common.QPA_CHECKPOINT_BYTES,
     progress_interval: int = 15,
+    relax_diagnostics: bool = False,
 ) -> str:
     if resume_after < 0 or checkpoint_bytes < 1 or progress_interval < 1:
         raise CampaignError("Vulkan shard resumption inputs are invalid")
+    # Venus reports a stuck wait on the CTS process's own stderr, which is
+    # redirected into a guest file and never leaves the guest. Surfacing it
+    # names what the guest is waiting on at the moment a shard stalls, which
+    # no host-side evidence can currently show. Off by default: the generated
+    # script is an input to every recorded harness command, so changing it
+    # unconditionally would invalidate the attempts a campaign already has.
+    relax_watch = """
+    if [ "$stalled_seconds" -gt 0 ]; then
+        relax_size=$(wc -c < "$cts_output" | tr -d ' ')
+        if [ "$relax_size" -gt "$relax_offset" ]; then
+            tail -c "+$((relax_offset + 1))" "$cts_output" 2>/dev/null | \
+                grep -a 'stuck in' | tail -n 5 | \
+                while IFS= read -r relax_line; do
+                    printf 'UML_VK_CTS_RELAX|%s\\n' "$relax_line"
+                done
+            relax_offset=$relax_size
+        fi
+    fi
+""" if relax_diagnostics else ""
+    relax_state = "relax_offset=0\n" if relax_diagnostics else ""
     output = "/run/uml-vk-cts"
     icd_path = "/usr/share/vulkan/icd.d/virtio_icd.json"
     library_path = "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
@@ -1125,7 +1146,7 @@ checkpoint_bytes={checkpoint_bytes}
 progress_timeout={progress_timeout}
 progress_interval={progress_interval}
 prerun_emitted=0
-qpa_offset=0
+{relax_state}qpa_offset=0
 qpa_segments=0
 progress_timed_out=0
 status=1
@@ -1311,7 +1332,7 @@ while kill -0 "$cts_pid" 2>/dev/null; do
     fi
     printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|case=%s\n' \
         "$current_qpa_size" "$stalled_seconds" "$current_case"
-    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ]; then
+{relax_watch}    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ]; then
         flush_qpa 0 || {{
             echo 'UML_VK_CTS_ERROR: artifact transfer failed'
             break
@@ -1431,6 +1452,7 @@ def build_receipt_harness_command(
         progress_timeout=options.console_stall_timeout,
         use_wsi=uses_wsi,
         resume_after=resume_after,
+        relax_diagnostics=getattr(options, "relax_diagnostics", False),
     )
     environment = [
         "env",
@@ -2116,6 +2138,13 @@ def run_receipt_campaign(
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="run a frozen Vulkan CTS development or receipt-backed lane"
+    )
+    parser.add_argument(
+        "--relax-diagnostics",
+        action="store_true",
+        help="report Venus stuck-wait lines from the CTS process while a shard "
+             "is stalled; changes the generated guest script, so a campaign "
+             "may only enable it for a new generation",
     )
     parser.add_argument(
         "--mode",

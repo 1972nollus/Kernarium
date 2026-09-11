@@ -668,6 +668,27 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(len(stored["attempts"][done.name()]), 1)
             self.assertEqual(stored["attempts"]["vulkan-01of08"][0]["generation"], 1)
 
+    def test_stuck_wait_reporting_only_reaches_the_generation_that_asked(self) -> None:
+        """The generated guest script is embedded in every recorded harness
+        command, so enabling this for a new generation must leave the commands
+        of earlier attempts exactly as they were."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            shard = campaign.Shard("vulkan", 0)
+            output = root / "driver-output"
+            before = campaign.child_command(definition, shard, output)
+            self.assertNotIn("--relax-diagnostics", before)
+
+            asked = dict(definition, relax_diagnostics=True)
+            after = campaign.child_command(asked, shard, output)
+            self.assertIn("--relax-diagnostics", after)
+
+            # An OpenGL shard is untouched either way.
+            gl_shard = campaign.Shard("gl46", 0, 0)
+            self.assertEqual(campaign.child_command(definition, gl_shard, output),
+                             campaign.child_command(asked, gl_shard, output))
+
     def test_a_changed_plan_is_a_different_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

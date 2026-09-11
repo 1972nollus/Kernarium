@@ -158,6 +158,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
         "max_resumptions": options.max_resumptions,
         "emulator": str(emulator),
         "interpreter": sys.executable,
+        "relax_diagnostics": bool(options.relax_diagnostics),
         "runners": {suite: str(path) for suite, path in RUNNERS.items()},
         "emulator_sha256": common.sha256_file(emulator),
         "kosmickrisp_sha256": common.verify_staged_kosmickrisp(emulator),
@@ -257,6 +258,10 @@ def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]
     if shard.suite == "vulkan":
         command += ["--experimental-venus", "--mode", "current-must-pass",
                     "--rootfs", spec["vulkan"]["rootfs"]]
+        # Only when this generation asked for it: the flag changes the guest
+        # script, which every earlier attempt's recorded command embeds.
+        if spec.get("relax_diagnostics"):
+            command += ["--relax-diagnostics"]
     else:
         command += ["--console-stall-busy-timeout", str(spec["console_stall_busy_timeout"])]
         run = spec["opengl"]["runs"][shard.run_index]
@@ -966,6 +971,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--max-attempts", type=int, default=0,
                         help="attempts a single shard may take across restarts "
                              "(default: 0, unlimited)")
+    parser.add_argument("--relax-diagnostics", action="store_true",
+                        help="ask Vulkan shards to report Venus stuck-wait lines "
+                             "while stalled; starts a new generation because it "
+                             "changes the guest script")
     parser.add_argument("--detach-on-signal", action="store_true",
                         help="on SIGINT/SIGTERM leave running shards alive for "
                              "the next pool to adopt instead of stopping them")
