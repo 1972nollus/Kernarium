@@ -1,7 +1,7 @@
 From 2c925a1c588174b52f87f71da522ea4065f7b2c5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
-Subject: [PATCH 33/54] kosmickrisp: precompile bounded raster executable
+Subject: [PATCH 33/53] kosmickrisp: precompile bounded raster executable
  classes
 
 ---

@@ -184,6 +184,14 @@ truncating, so an unrounded value would clear `D16_UNORM` one step low and
 disagree with the rasterizer's own depth writes, which round. Depth formats
 Metal stores as floats keep their exact value.
 
+Subgroup operations reach Metal's SIMD groups, which exist in kernel and
+fragment functions only, so the driver advertises compute and fragment as its
+subgroup stages. A vertex, tessellation or geometry shader that reads the
+subgroup builtins or uses a group operation still compiles: those stages
+present the single-invocation subgroup their properties imply, with size and
+count one, invocation zero, and every group operation returning the value that
+one invocation contributed.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is

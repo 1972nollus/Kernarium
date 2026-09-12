@@ -311,8 +311,9 @@ reordered list is rejected. Accepted `NotSupported` and warning results stay
 distinct from `Pass` and prove nothing about an optional feature.
 
 `tests/integration/gpu/run_vk_gl_cts.py` owns the OpenGL lane. `--api gl46
---leaf gl46 --case` runs one core `KHR-GL46.*` case; `--matrix gl46` runs the
-official XML-derived must-pass configurations by
+--leaf gl46 --case` runs core `KHR-GL46.*` cases; `--case` repeats to run a
+focused set in one guest boot and the repeated cases keep CTS traversal order.
+`--matrix gl46` runs the official XML-derived must-pass configurations by
 `--mustpass-config-index`/`--fraction` and rejects `--case`. The ES-for-GL
 leaves (`dEQP-GL45-ES3.*`, `dEQP-GL45-ES31.*`, `KHR-Single-GL46.*`) exist only
 as matrix shards. Seeds, dimensions, and FBO settings come from the XML

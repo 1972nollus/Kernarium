@@ -1,7 +1,7 @@
 From 3a35a3c51e1d4359e20fb2c37008d80b8226cd91 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 17:14:49 +0900
-Subject: [PATCH 15/54] kosmickrisp: embed LLVM-free build shaders
+Subject: [PATCH 15/53] kosmickrisp: embed LLVM-free build shaders
 
 ---
  meson.build                       |   1 -

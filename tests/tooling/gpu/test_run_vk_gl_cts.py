@@ -983,6 +983,40 @@ registered_module=KHR-GLES3
                     ]
                 )
 
+    def test_repeated_exact_cases_keep_their_order_and_reject_repeats(
+        self,
+    ) -> None:
+        first = "KHR-GLES3.exposed_extensions.validate_extensions"
+        second = "KHR-GLES3.info.version"
+        options = cts.parse_arguments(
+            [
+                "--leaf",
+                "gles3",
+                "--api",
+                "gles3",
+                "--case",
+                first,
+                "--case",
+                second,
+            ]
+        )
+        self.assertEqual(options.case, [first, second])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            cts.parse_arguments(
+                [
+                    "--leaf",
+                    "gles3",
+                    "--api",
+                    "gles3",
+                    "--case",
+                    first,
+                    "--case",
+                    first,
+                ]
+            )
+
     def test_caselist_parser_rejects_duplicates_and_invalid_rows(self) -> None:
         self.assertEqual(
             cts.parse_case_list("# comment\nKHR-GLES2.info.version\n\n"),
