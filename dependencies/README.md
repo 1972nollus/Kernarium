@@ -192,6 +192,14 @@ present the single-invocation subgroup their properties imply, with size and
 count one, invocation zero, and every group operation returning the value that
 one invocation contributed.
 
+The shader outputs Metal names itself keep the shape Metal gives them, not
+the shape the shader's stores imply: the clip coordinate is four components
+even when a shader writes only `gl_Position.xy`, point size is one float, the
+layer and viewport indices are unsigned, and the clip and cull distances are
+float arrays. A component no store reaches keeps the value the output is
+initialized with, which for the clip coordinate is the identity `(0, 0, 0, 1)`
+rather than a degenerate zero `w`.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is

@@ -1,7 +1,7 @@
-From 2b284f95778c461f3c42e29cd46d9e1490b3fae0 Mon Sep 17 00:00:00 2001
+From 9e6dfd0bdd21ae18b697ec4be40b8be14349c651 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:04:40 +0900
-Subject: [PATCH 19/53] kosmickrisp: support unused dynamic-rendering
+Subject: [PATCH 19/56] kosmickrisp: support unused dynamic-rendering
  attachments
 
 ---

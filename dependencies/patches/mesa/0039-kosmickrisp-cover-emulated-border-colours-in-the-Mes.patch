@@ -1,7 +1,7 @@
-From ba130c36e80f944c82f79b4a1366d49d2b12ef14 Mon Sep 17 00:00:00 2001
+From bec662348574ee5ba21d1d324ce5ce65dfbaa3b5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
-Subject: [PATCH 39/53] kosmickrisp: cover emulated border colours in the Meson
+Subject: [PATCH 39/56] kosmickrisp: cover emulated border colours in the Meson
  suite
 
 The custom border emulation reconstructs a Vulkan border colour from two

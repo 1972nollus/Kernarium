@@ -1,7 +1,7 @@
-From 36a08911e347afa3d4658d817ccb7f1b412c0c82 Mon Sep 17 00:00:00 2001
+From f5f39d4c39255f24118be4494cdc673cd52c8a79 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 07:09:27 +0900
-Subject: [PATCH 35/53] kosmickrisp: capture tessellation outputs on the GPU
+Subject: [PATCH 35/56] kosmickrisp: capture tessellation outputs on the GPU
 
 Produce ordered TES records once, then pull raw capture and raster outputs without re-executing application effects. Preserve shared GPU capacity and query accounting, independent raster provoking values, and empty-patch draws.
 

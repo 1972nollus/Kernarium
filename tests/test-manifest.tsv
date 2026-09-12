@@ -47,6 +47,7 @@ gpu-kosmickrisp-line-multiview	tests/unit/gpu/kosmickrisp_line_multiview_tests.c
 gpu-kosmickrisp-geometry-side-effects	tests/unit/gpu/kosmickrisp_geometry_side_effects_tests.cpp	unit	conditional
 gpu-kosmickrisp-geometry-invocations	tests/unit/gpu/kosmickrisp_geometry_invocations_tests.cpp	unit	conditional
 gpu-metal-submit-timing-collector	tests/unit/gpu/metal_submit_timing_tests.cpp	unit	retained
+gpu-kosmickrisp-partial-position	tests/unit/gpu/kosmickrisp_partial_position_tests.cpp	unit	conditional
 gpu-kosmickrisp-pipeline-statistics	tests/unit/gpu/kosmickrisp_pipeline_statistics_tests.cpp	unit	conditional
 gpu-kosmickrisp-raster-polygon	tests/unit/gpu/kosmickrisp_raster_polygon_tests.cpp	unit	conditional
 gpu-kosmickrisp-timestamp-availability	tests/unit/gpu/kosmickrisp_timestamp_availability_tests.cpp	unit	conditional
