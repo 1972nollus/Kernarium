@@ -564,6 +564,8 @@ public:
             });
             return {.action = uml::virtio::VhostUserQueueAction::defer};
         }
+        if (pendingFences_.empty() && gpu_.rendererHasPendingWork())
+            armFenceTimer();
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = std::move(result.response),
@@ -627,8 +629,21 @@ public:
             gpu_.notifyDisplayChanged();
             configChangePending_ = true;
         }
-        if (!fenceTimerReady || pendingFences_.empty())
+        if (!fenceTimerReady)
             return;
+        if (pendingFences_.empty()) {
+            /* A guest thread blocked on a query result spins on the buffer
+             * the renderer fills and issues no further commands, so no fence
+             * of its own is left to drive the scan that completes the query.
+             * Keep polling for as long as the renderer owns such work. */
+            if (!gpu_.rendererHasPendingWork())
+                return;
+            if (gpu_.pollRenderer() != 0)
+                throw std::runtime_error("polling GPU fences failed");
+            if (gpu_.rendererHasPendingWork())
+                armFenceTimer();
+            return;
+        }
 
         /* A Virgl context retires through the renderer-wide fence scan, so
          * one poll drains every Virgl context. A Venus context owns its own
@@ -697,10 +712,13 @@ public:
             });
             pendingFences_.erase(pendingFences_.begin() + index);
         }
-        if (pendingFences_.empty())
+        if (pendingFences_.empty()) {
             fenceOrderingRelaxed_ = false;
-        else
+            if (gpu_.rendererHasPendingWork())
+                armFenceTimer();
+        } else {
             armFenceTimer();
+        }
     }
 
     [[nodiscard]] bool takeQueueCompletion(

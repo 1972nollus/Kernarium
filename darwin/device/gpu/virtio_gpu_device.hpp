@@ -100,6 +100,8 @@ public:
         bool cursorQueue) const noexcept;
     [[nodiscard]] int pollContextFences(
         std::uint32_t contextId) noexcept;
+    [[nodiscard]] int pollRenderer() noexcept;
+    [[nodiscard]] bool rendererHasPendingWork() noexcept;
     [[nodiscard]] int contextFenceStatus(
         const DeferredFence& fence) noexcept;
     [[nodiscard]] std::optional<SharedMemoryAction>

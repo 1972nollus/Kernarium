@@ -109,6 +109,8 @@ public:
         std::uint64_t fenceCookie) noexcept = 0;
     [[nodiscard]] virtual int pollContextFences(
         std::uint32_t contextId) noexcept = 0;
+    [[nodiscard]] virtual int pollRenderer() noexcept = 0;
+    [[nodiscard]] virtual bool hasPendingWork() noexcept = 0;
     [[nodiscard]] virtual int contextFenceStatus(
         std::uint32_t contextId,
         std::uint32_t ringIndex,

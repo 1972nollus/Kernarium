@@ -781,6 +781,31 @@ int VirglRenderer::pollContextFences(std::uint32_t contextId) noexcept
     }
 }
 
+int VirglRenderer::pollRenderer() noexcept
+{
+    try {
+        if (fenceCallbackFailed_.load(std::memory_order_acquire))
+            return EIO;
+        virgl_renderer_poll();
+        if (checkGlDispatchResult(0) != 0 ||
+            fenceCallbackFailed_.load(std::memory_order_acquire)) {
+            return EIO;
+        }
+        return 0;
+    } catch (...) {
+        return EIO;
+    }
+}
+
+bool VirglRenderer::hasPendingWork() noexcept
+{
+    try {
+        return virgl_renderer_has_pending_work();
+    } catch (...) {
+        return false;
+    }
+}
+
 int VirglRenderer::contextFenceStatus(
     std::uint32_t contextId,
     std::uint32_t ringIndex,

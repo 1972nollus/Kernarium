@@ -735,6 +735,16 @@ int VirtioGpuDevice::pollContextFences(
     return UML_GPU_RENDERER.pollContextFences(contextId);
 }
 
+int VirtioGpuDevice::pollRenderer() noexcept
+{
+    return UML_GPU_RENDERER.pollRenderer();
+}
+
+bool VirtioGpuDevice::rendererHasPendingWork() noexcept
+{
+    return UML_GPU_RENDERER.hasPendingWork();
+}
+
 int VirtioGpuDevice::contextFenceStatus(
     const DeferredFence& fence) noexcept
 {

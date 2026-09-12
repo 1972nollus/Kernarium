@@ -392,6 +392,17 @@ public:
         return 0;
     }
 
+    [[nodiscard]] int pollRenderer() noexcept override
+    {
+        ++rendererPollCount;
+        return 0;
+    }
+
+    [[nodiscard]] bool hasPendingWork() noexcept override
+    {
+        return rendererPendingWork;
+    }
+
     [[nodiscard]] int contextFenceStatus(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
@@ -550,6 +561,8 @@ public:
     unsigned fenceCount {};
     unsigned contextFenceCount {};
     unsigned contextFencePollCount {};
+    unsigned rendererPollCount {};
+    bool rendererPendingWork {};
     std::uint32_t lastPolledContext {};
     std::vector<std::uint64_t> contextFenceCookies;
     VirtioGpuDevice::DeferredFence lastFence {};
@@ -2185,6 +2198,15 @@ void experimentalVenusBlobsAndFencesUseStandardWireState()
         context.header.contextId, submit.header.ringIndex, venusFenceCookie);
     require(device.pollContextFences(deferred.fence->contextId) == 0);
     require(device.contextFenceStatus(*deferred.fence) == 0);
+    /* Renderer work with no fence of its own behind it, such as a query a
+     * guest is blocked on, is reported and completed by a renderer-wide
+     * poll rather than by polling a context. */
+    require(!device.rendererHasPendingWork());
+    dependencies.rendererPendingWork = true;
+    require(device.rendererHasPendingWork());
+    require(device.pollRenderer() == 0);
+    require(dependencies.rendererPollCount == 1);
+    dependencies.rendererPendingWork = false;
 
     auto invalidRingSubmit = submit;
     invalidRingSubmit.header.ringIndex =
