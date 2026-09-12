@@ -1072,13 +1072,18 @@ x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
 x11_blanking=off
-OpenGL renderer string: virgl (Apple GPU)
+OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
 """
         cts.validate_renderer_probe(valid)
         cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 16384)
         with self.assertRaisesRegex(cts.CampaignError, "4096-byte guest pages"):
             cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 4096)
-        for forbidden in ("llvmpipe", "softpipe", "swrast", "Zink", "Xvfb"):
+        with self.assertRaisesRegex(cts.CampaignError, "Zink/KosmicKrisp"):
+            cts.validate_renderer_probe(
+                valid.replace("(zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))",
+                              "(Apple GPU)")
+            )
+        for forbidden in ("llvmpipe", "softpipe", "swrast", "Xvfb"):
             with self.subTest(forbidden=forbidden), self.assertRaisesRegex(
                 cts.CampaignError, "forbidden renderer"
             ):
@@ -1227,12 +1232,15 @@ native_display_cleanup
         self.assertNotIn("display-manager.service", cts.CTS_SERVICE)
         self.assertIn("WantedBy=multi-user.target", cts.CTS_SERVICE)
 
-    def test_host_backend_refuses_cgl_and_requires_angle_metal(self) -> None:
-        cts.validate_host_backend("Virgl ANGLE/Metal provider: hardware\n")
-        with self.assertRaisesRegex(cts.CampaignError, "retired CGL"):
-            cts.validate_host_backend(
-                "Virgl CGL capset probe\nVirgl ANGLE/Metal provider: hardware\n"
-            )
+    def test_host_backend_refuses_retired_providers_and_requires_zink(self) -> None:
+        cts.validate_host_backend("Virgl Zink/KosmicKrisp provider: hardware\n")
+        for retired in ("Virgl CGL capset probe", "Virgl ANGLE/Metal provider: hardware"):
+            with self.subTest(retired=retired), self.assertRaisesRegex(
+                cts.CampaignError, "retired host GL provider"
+            ):
+                cts.validate_host_backend(
+                    retired + "\nVirgl Zink/KosmicKrisp provider: hardware\n"
+                )
         with self.assertRaisesRegex(cts.CampaignError, "marker is missing"):
             cts.validate_host_backend("virgl started\n")
 
@@ -1286,7 +1294,7 @@ native_display_cleanup
             )
 
         final = (
-            "Native display: direct virgl/ANGLE/Metal presentation\n"
+            "Native display: direct Metal texture presentation\n"
             "Native display final: guest 8 presented 7 dropped 1 cpu-fallback 0\n"
         )
         self.assertEqual(
@@ -2457,7 +2465,7 @@ OpenGL renderer string: virgl
             }
             (run_directory / "console.log").write_text(
                 gpu_capability_report()
-                + "Native display: direct virgl/ANGLE/Metal presentation\n"
+                + "Native display: direct Metal texture presentation\n"
                 + "Native display final: guest 8 presented 7 dropped 1 "
                 "cpu-fallback 0\n",
                 encoding="utf-8",
@@ -2538,7 +2546,7 @@ OpenGL renderer string: virgl
             }
             (run_directory / "console.log").write_text(
                 gpu_capability_report()
-                + "Native display: direct virgl/ANGLE/Metal presentation\n"
+                + "Native display: direct Metal texture presentation\n"
                 + "Native display final: guest 8 presented 7 dropped 1 "
                 "cpu-fallback 0\n",
                 encoding="utf-8",

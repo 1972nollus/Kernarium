@@ -198,6 +198,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
         for path in inventory_files:
             regular_file(path)
         spec["opengl"] = {
+            "renderer": options.opengl_renderer,
             "rootfs": str(rootfs), "receipt": receipt,
             "receipt_path": str(receipt_path),
             "receipt_sha256": common.sha256_file(receipt_path),
@@ -265,7 +266,8 @@ def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]
     else:
         command += ["--console-stall-busy-timeout", str(spec["console_stall_busy_timeout"])]
         run = spec["opengl"]["runs"][shard.run_index]
-        command += ["--renderer", "zink", "--display", "vnc", "--matrix", "gl46",
+        command += ["--renderer", spec["opengl"]["renderer"],
+                    "--display", "vnc", "--matrix", "gl46",
                     "--egl-config-index", str(run["egl_config_index"]),
                     "--mustpass-config-index", str(run["configuration_index"]),
                     "--config-inventory-run", spec["opengl"]["config_inventory_run"],
@@ -294,6 +296,7 @@ def plan_identity(spec: dict[str, Any]) -> dict[str, Any]:
     if "gl46" in spec["suites"]:
         item = spec["opengl"]
         plan["opengl"] = {"rootfs": item["rootfs"],
+                          "renderer": item["renderer"],
                           "receipt_sha256": item["receipt_sha256"],
                           "egl_config_sha256": item["egl_config_sha256"],
                           "runs": item["runs"]}
@@ -694,8 +697,11 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
         require(metadata, {
             "console_stall_timeout": spec["console_stall_timeout"],
             "console_stall_busy_timeout": spec["console_stall_busy_timeout"],
-            "schema_version": 1, "adapter": "macos", "backend": "venus-kosmickrisp",
-            "renderer": "zink", "display": "vnc", "context": "egl", "mode": "mustpass-matrix-shard",
+            "schema_version": 1, "adapter": "macos",
+            "backend": ("venus-kosmickrisp" if item["renderer"] == "zink"
+                        else "zink-kosmickrisp"),
+            "renderer": item["renderer"], "display": "vnc", "context": "egl",
+            "mode": "mustpass-matrix-shard",
             "surface": [1280, 720], "rootfs_type": "ext4",
             "rootfs_receipt": receipt, "rootfs_receipt_sha256": item["receipt_sha256"],
             "rootfs_sha256": receipt["derivative"]["sha256"],
@@ -950,6 +956,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--vulkan-rootfs", type=Path)
     parser.add_argument("--opengl-rootfs", type=Path)
     parser.add_argument("--opengl-receipt", type=Path)
+    parser.add_argument("--opengl-renderer", choices=("zink", "virgl"),
+                        default="virgl",
+                        help="guest OpenGL stack: guest Zink over Venus, or "
+                             "the guest Virgl driver over host Zink")
     parser.add_argument("--opengl-config-inventory-run", type=Path,
                         help="verified run.json from Zink CTS-Configs.gl46 on these exact inputs")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")

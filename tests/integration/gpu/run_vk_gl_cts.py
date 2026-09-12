@@ -157,8 +157,8 @@ EGL_CONFIG_MESSAGE = re.compile(
     r"(?:, (?:window|pixmap|pbuffer))*)\Z"
 )
 GUEST_ERROR = re.compile(r"UML_CTS_ERROR: ([^\r\n]+)")
-HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
-RETIRED_BACKEND_MARKER = "Virgl CGL"
+HOST_BACKEND_MARKER = "Virgl Zink/KosmicKrisp provider:"
+RETIRED_BACKEND_MARKERS = ("Virgl CGL", "Virgl ANGLE/Metal provider:")
 DARWIN_CLEAN_STOP = "Darwin UML stopped: result=0 exitcode=0"
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
 MAX_ARTIFACT_TRANSPORT_LINE = 64 * 1024
@@ -2427,10 +2427,14 @@ def validate_renderer_probe(
         if line.startswith("opengl renderer string:")
     )
     if renderer_backend == "virgl":
-        if "zink" in lower:
-            raise CampaignError("software or forbidden renderer: Zink")
         if "virgl" not in client_renderers:
             raise CampaignError("renderer probe did not report Virgl")
+        # The guest renderer string carries the host GL renderer in
+        # parentheses, and the host stack is Mesa Zink over KosmicKrisp.
+        if "zink" not in client_renderers or "kosmickrisp" not in client_renderers:
+            raise CampaignError(
+                "renderer probe did not report Virgl over Zink/KosmicKrisp"
+            )
     elif renderer_backend == "zink":
         if "zink" not in client_renderers or "virtio-gpu venus" not in client_renderers:
             raise CampaignError(
@@ -2448,10 +2452,11 @@ def validate_renderer_probe(
 
 
 def validate_host_backend(transcript: str) -> None:
-    if RETIRED_BACKEND_MARKER in transcript:
-        raise CampaignError("retired CGL renderer was selected")
+    for marker in RETIRED_BACKEND_MARKERS:
+        if marker in transcript:
+            raise CampaignError(f"retired host GL provider was selected: {marker}")
     if HOST_BACKEND_MARKER not in transcript:
-        raise CampaignError("common ANGLE/Metal host-provider marker is missing")
+        raise CampaignError("Zink/KosmicKrisp host-provider marker is missing")
 
 
 def report_marker(line: str, prefix: str) -> str | None:
@@ -2650,7 +2655,7 @@ def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
 
 
 def parse_native_display_final(transcript: str) -> dict[str, int]:
-    if "Native display: direct virgl/ANGLE/Metal presentation" not in transcript:
+    if "Native display: direct Metal texture presentation" not in transcript:
         raise CampaignError("native display never accepted direct Metal presentation")
     matches = NATIVE_DISPLAY_FINAL.findall(transcript)
     if len(matches) != 1:
@@ -3360,7 +3365,12 @@ fi"""
     echo 'UML_CTS_ERROR: renderer is not Virgl'
     exit 1
 }
-if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|zink|xvfb' "$renderer"; then
+grep -Eiq '^OpenGL renderer string:.*zink' "$renderer" &&
+grep -Eiq '^OpenGL renderer string:.*kosmickrisp' "$renderer" || {
+    echo 'UML_CTS_ERROR: renderer is not Virgl over Zink/KosmicKrisp'
+    exit 1
+}
+if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|xvfb' "$renderer"; then
     echo 'UML_CTS_ERROR: software or forbidden renderer selected'
     exit 1
 fi"""
@@ -4963,16 +4973,25 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         parser.error(str(error))
     options.derivative_receipt = receipt
     options.rootfs_contract = contract
-    if options.renderer == "zink" and (
+    # The GL46 scope is bound to the combined Vulkan/OpenGL derivative image
+    # and its receipt, whichever stack renders it: guest Zink over Venus, or
+    # the guest Virgl driver over the host's Zink provider.
+    options.gl46_scope = (
+        options.renderer == "zink"
+        or options.matrix == "gl46"
+        or options.config_inventory == "gl46"
+    )
+    if options.gl46_scope and (
         options.rootfs_type != "ext4"
         or receipt is None
         or receipt.get("artifact") != "uml-vulkan-zink-gl-rootfs"
     ):
         parser.error(
-            "Zink CTS requires the authenticated combined Vulkan/OpenGL ext4 rootfs"
+            "the GL46 scope requires the authenticated combined "
+            "Vulkan/OpenGL ext4 rootfs"
         )
-    if options.renderer == "zink":
-        if (
+    if options.gl46_scope:
+        if options.renderer == "zink" and (
             options.inventory
             or options.config_inventory not in {None, "gl46"}
             or options.matrix not in {None, "gl46"}
@@ -4986,13 +5005,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             )
             for row in receipt_leaves
         }
-        if (options.matrix is None and options.config_inventory is None
+        if (options.renderer == "zink" and options.matrix is None
+                and options.config_inventory is None
                 and options.leaf != "gl46"):
             parser.error(
                 "Zink developer shards require the active gl46 core leaf"
             )
-    elif options.matrix == "gl46" or options.config_inventory == "gl46":
-        parser.error("GL46 config discovery and matrices require --renderer zink")
     options.matrix_run = None
     options.runner_oracle = None
     if options.matrix is not None:
@@ -5118,16 +5136,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise CampaignError(f"emulator is not executable: {emulator}")
     emulator_bytes = emulator.read_bytes()
     provider_sha256 = (
-        verify_staged_kosmickrisp(emulator)
-        if options.renderer == "zink"
-        else None
+        verify_staged_kosmickrisp(emulator) if options.gl46_scope else None
     )
     if options.renderer == "virgl":
-        if RETIRED_BACKEND_MARKER.encode() in emulator_bytes:
-            raise CampaignError("emulator contains the retired CGL provider")
+        for marker in RETIRED_BACKEND_MARKERS:
+            if marker.encode() in emulator_bytes:
+                raise CampaignError(
+                    f"emulator contains a retired host GL provider: {marker}"
+                )
         if HOST_BACKEND_MARKER.encode() not in emulator_bytes:
             raise CampaignError(
-                "emulator does not contain the ANGLE/Metal provider marker"
+                "emulator does not contain the Zink/KosmicKrisp provider marker"
             )
     rootfs_contract = options.rootfs_contract
     if rootfs_contract.filesystem_type == "erofs":
@@ -5156,7 +5175,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "backend": (
             "venus-kosmickrisp"
             if options.renderer == "zink"
-            else "angle-metal"
+            else "zink-kosmickrisp"
         ),
         "renderer": options.renderer,
         "page_profile": options.page_profile,
@@ -5202,7 +5221,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     }
     if options.derivative_receipt is not None:
         metadata["rootfs_receipt"] = options.derivative_receipt
-    if options.renderer == "zink":
+    if options.gl46_scope:
         metadata["formal_conformance"] = False
         metadata["kosmickrisp_sha256"] = provider_sha256
         metadata["rootfs_receipt_sha256"] = sha256_file(options.rootfs_receipt.resolve())

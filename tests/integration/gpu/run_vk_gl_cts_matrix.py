@@ -322,11 +322,14 @@ def build_definition(options: argparse.Namespace) -> CampaignDefinition:
     if not os.access(emulator, os.X_OK):
         raise cts.CampaignError(f"emulator is not executable: {emulator}")
     emulator_payload = emulator.read_bytes()
-    if cts.RETIRED_BACKEND_MARKER.encode() in emulator_payload:
-        raise cts.CampaignError("emulator contains the retired CGL provider")
+    for marker in cts.RETIRED_BACKEND_MARKERS:
+        if marker.encode() in emulator_payload:
+            raise cts.CampaignError(
+                f"emulator contains a retired host GL provider: {marker}"
+            )
     if cts.HOST_BACKEND_MARKER.encode() not in emulator_payload:
         raise cts.CampaignError(
-            "emulator does not contain the ANGLE/Metal provider marker"
+            "emulator does not contain the Zink/KosmicKrisp provider marker"
         )
 
     config_inventory_run = options.config_inventory_run.resolve()
