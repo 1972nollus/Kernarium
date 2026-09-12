@@ -160,6 +160,10 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+Programmable primitive IDs cross the Metal vertex/fragment interface as flat
+user varyings. Layer and viewport indices use unsigned native Metal attributes
+without interpolation qualifiers.
+
 KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
 submission, using the common Vulkan runtime's on-demand submit worker. This
 keeps delayed host signals from outliving Metal's finite GPU event-wait window;
