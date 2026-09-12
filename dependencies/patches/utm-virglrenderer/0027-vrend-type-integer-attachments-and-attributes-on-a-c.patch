@@ -1,4 +1,4 @@
-From 45cda0b3449393b2da2b1156fc68ae3ae43d8aaa Mon Sep 17 00:00:00 2001
+From 472d1fe233c479ed82f579b06c68a560a964de36 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:35:56 +0900
 Subject: [PATCH 27/29] vrend: type integer attachments and attributes on a
