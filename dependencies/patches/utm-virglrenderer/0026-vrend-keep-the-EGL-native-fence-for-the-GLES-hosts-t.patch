@@ -1,7 +1,7 @@
 From 22f667aef25c0f76ce187d094225506628017845 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 22:19:52 +0900
-Subject: [PATCH 26/30] vrend: keep the EGL native fence for the GLES hosts
+Subject: [PATCH 26/31] vrend: keep the EGL native fence for the GLES hosts
  that need it
 
 Creating an EGL native fence makes the GL driver submit a command

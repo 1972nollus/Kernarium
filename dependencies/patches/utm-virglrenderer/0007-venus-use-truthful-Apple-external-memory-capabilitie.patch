@@ -1,7 +1,7 @@
 From 154144a010b0a9ec95e553e59ad94db6693efbf0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:04:14 +0900
-Subject: [PATCH 07/30] venus: use truthful Apple external-memory capabilities
+Subject: [PATCH 07/31] venus: use truthful Apple external-memory capabilities
 
 ---
  src/meson.build                 |   4 +-

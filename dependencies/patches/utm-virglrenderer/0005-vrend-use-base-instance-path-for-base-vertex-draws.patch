@@ -1,7 +1,7 @@
 From 923536914fe1e77a63f61ebc43c822c130bab683 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 02:34:09 +0900
-Subject: [PATCH 05/30] vrend: use base-instance path for base-vertex draws
+Subject: [PATCH 05/31] vrend: use base-instance path for base-vertex draws
 
 ---
  src/vrend/vrend_renderer.c | 15 +++++++++++++++
