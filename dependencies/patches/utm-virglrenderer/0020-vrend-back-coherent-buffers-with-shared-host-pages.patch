@@ -1,0 +1,204 @@
+From 22e73a8c0812dc9d28c5157a10cf09f99daaf676 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 12:41:23 +0900
+Subject: [PATCH 20/20] vrend: back coherent buffers with shared host pages
+
+A guest that asks for GL_ARB_buffer_storage needs host storage it can map
+coherently. vrend allocated such buffers with glBufferStorage, whose pages
+belong to the GL driver and cannot be exported to the guest, so the blob
+export produced no file descriptor and the guest fell back to a version
+without buffer storage.
+
+Allocate the storage as shared host memory instead and pin it as the
+buffer's storage through GL_AMD_pinned_memory, which a Zink host provider
+implements over Vulkan external host memory. The same pages then back the
+GPU's view and the guest's mapping, the blob exports as a shared-memory
+descriptor the way a Venus blob does, and the host map short-circuits to
+the existing mapping. Hosts without pinned memory keep the previous
+storage paths.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c | 68 ++++++++++++++++++++++++++++++++++++--
+ src/vrend/vrend_renderer.h |  5 +++
+ 2 files changed, 71 insertions(+), 2 deletions(-)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 9924990..2fa4cef 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -42,6 +42,7 @@
+ #include "util/ralloc.h"
+ 
+ #include "util/u_thread.h"
++#include "util/os_file.h"
+ #include "util/u_format.h"
+ #include "tgsi/tgsi_dump.h"
+ #include "tgsi/tgsi_parse.h"
+@@ -55,6 +56,7 @@
+ #include "vrend_winsys.h"
+ #include "vrend_blitter.h"
+ 
++#include "virgl_host_memory.h"
+ #include "virgl_util.h"
+ 
+ #include "virgl_hw.h"
+@@ -133,6 +135,7 @@ struct global_error_state {
+ 
+ enum features_id
+ {
++   feat_amd_pinned_memory,
+    feat_arb_or_gles_ext_texture_buffer,
+    feat_arb_robustness,
+    feat_arb_buffer_storage,
+@@ -247,6 +250,7 @@ static const  struct {
+    const char *gl_ext[FEAT_MAX_EXTS];
+    const char *log_name;
+ } feature_list[] = {
++   FEAT(amd_pinned_memory, UNAVAIL, UNAVAIL, "GL_AMD_pinned_memory"),
+    FEAT(arb_or_gles_ext_texture_buffer, 31, UNAVAIL, "GL_ARB_texture_buffer_object", "GL_EXT_texture_buffer", NULL),
+    FEAT(arb_robustness, UNAVAIL, UNAVAIL,  "GL_ARB_robustness" ),
+    FEAT(arb_buffer_storage, 44, UNAVAIL, "GL_ARB_buffer_storage", "GL_EXT_buffer_storage"),
+@@ -7695,6 +7699,12 @@ static enum virgl_resource_fd_type vrend_pipe_resource_export_fd(UNUSED struct p
+                                                                  UNUSED int *fd,
+                                                                  UNUSED void *data)
+ {
++   struct vrend_resource *shm_res = (struct vrend_resource *)pres;
++   if (has_bit(shm_res->storage_bits, VREND_STORAGE_HOST_SHM)) {
++      *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
++      return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
++   }
++
+ #if defined(HAVE_EPOXY_EGL_H) && defined(ENABLE_GBM_ALLOCATION)
+    struct vrend_resource *res = (struct vrend_resource *)pres;
+ 
+@@ -8523,6 +8533,44 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
+    return 0;
+ }
+ 
++/* Pin shared host pages as a buffer's storage so the guest can map the very
++ * memory the GPU reads. GL_AMD_pinned_memory is the only GL entry point that
++ * takes host pages the caller allocated; a driver that implements it over
++ * Vulkan external host memory (Zink does) keeps the mapping coherent on a
++ * unified-memory host. Returns false when the host cannot pin memory, leaving
++ * the ordinary storage paths to allocate the buffer.
++ */
++static bool vrend_create_pinned_buffer_storage(struct vrend_resource *gr,
++                                               uint32_t width)
++{
++   if (!has_feature(feat_amd_pinned_memory) || vrend_state.use_external_blob)
++      return false;
++
++   struct virgl_host_shm *shm = virgl_host_shm_alloc(width, 0);
++   if (!shm)
++      return false;
++
++   while (glGetError() != GL_NO_ERROR)
++      ;
++   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, gr->gl_id);
++   glBufferData(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, shm->size, shm->ptr,
++                GL_DYNAMIC_DRAW);
++   const GLenum error = glGetError();
++   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, 0);
++   if (error != GL_NO_ERROR) {
++      virgl_warn("Pinning %u bytes of host memory failed with GL error %d\n",
++                 width, error);
++      virgl_host_shm_free(shm);
++      return false;
++   }
++
++   gr->host_shm = shm;
++   gr->storage_bits |= VREND_STORAGE_HOST_SHM;
++   /* The pages are ordinary cached host memory on both sides of the map. */
++   gr->map_info = VIRGL_RENDERER_MAP_CACHE_CACHED;
++   return true;
++}
++
+ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint32_t flags)
+ {
+ 
+@@ -8545,7 +8593,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+    glBindBufferARB(gr->target, gr->gl_id);
+ 
+    if (buffer_storage_flags) {
+-      if (has_feature(feat_arb_buffer_storage) && !vrend_state.use_external_blob) {
++      if (vrend_create_pinned_buffer_storage(gr, width)) {
++         /* storage is the shared host mapping the guest will see */
++      } else if (has_feature(feat_arb_buffer_storage) && !vrend_state.use_external_blob) {
+          glBufferStorage(gr->target, width, NULL, buffer_storage_flags);
+          gr->map_info = vrend_state.inferred_gl_caching_type;
+       }
+@@ -8583,7 +8633,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+          return;
+       }
+ 
+-      gr->storage_bits |= VREND_STORAGE_GL_IMMUTABLE;
++      /* Pinned host pages are ordinary mutable buffer storage. */
++      if (!has_bit(gr->storage_bits, VREND_STORAGE_HOST_SHM))
++         gr->storage_bits |= VREND_STORAGE_GL_IMMUTABLE;
+       gr->buffer_storage_flags = buffer_storage_flags;
+       gr->size = width;
+    } else
+@@ -9257,6 +9309,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+       glDeleteMemoryObjectsEXT(1, &res->memobj);
+    }
+ 
++   if (res->host_shm)
++      virgl_host_shm_free(res->host_shm);
++
+ #if (defined(ENABLE_GBM) || defined(ENABLE_METAL)) && defined(HAVE_EPOXY_EGL_H)
+    if (res->egl_image) {
+       virgl_egl_image_destroy(egl, res->egl_image);
+@@ -14372,6 +14427,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
+ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t *out_size)
+ {
+    struct vrend_resource *res = (struct vrend_resource *)pres;
++   if (has_bit(res->storage_bits, VREND_STORAGE_HOST_SHM)) {
++      *map = res->host_shm->ptr;
++      *out_size = res->host_shm->size;
++      return 0;
++   }
++
+    if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
+       return -EINVAL;
+ 
+@@ -14388,6 +14449,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
+ int vrend_renderer_resource_unmap(struct pipe_resource *pres)
+ {
+    struct vrend_resource *res = (struct vrend_resource *)pres;
++   if (has_bit(res->storage_bits, VREND_STORAGE_HOST_SHM))
++      return 0;
++
+    if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
+       return -EINVAL;
+ 
+diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
+index 3ae1fed..95872c2 100644
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -64,6 +64,7 @@ struct virgl_gl_ctx_param {
+ };
+ 
+ struct virgl_context;
++struct virgl_host_shm;
+ struct virgl_resource;
+ struct vrend_context;
+ 
+@@ -82,6 +83,8 @@ struct vrend_context;
+ #define VREND_STORAGE_GL_MEMOBJ          BIT(7)
+ #define VREND_STORAGE_NATIVE_TEXTURE     BIT(8)
+ #define VREND_STORAGE_GL_RENDERBUFFER    BIT(9)
++/* Host pages shared with the guest, pinned as this buffer's storage. */
++#define VREND_STORAGE_HOST_SHM           BIT(10)
+ 
+ struct vrend_resource {
+    struct pipe_resource base;
+@@ -123,6 +126,8 @@ struct vrend_resource {
+    uint64_t size;
+    GLbitfield buffer_storage_flags;
+    GLuint memobj;
++   /* Shared host pages pinned as this buffer's storage, or NULL. */
++   struct virgl_host_shm *host_shm;
+ 
+    uint32_t blob_id;
+    struct list_head head;
