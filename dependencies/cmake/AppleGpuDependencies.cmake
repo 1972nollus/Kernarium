@@ -8,8 +8,10 @@ set_property(CACHE UML_APPLE_GPU_PRODUCT PROPERTY STRINGS
     apple-gpu apple-gpu-vulkan-experiment)
 if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu")
     set(_uml_apple_gpu_vulkan FALSE)
+    set(_uml_apple_gl_provider angle-metal)
 elseif(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     set(_uml_apple_gpu_vulkan TRUE)
+    set(_uml_apple_gl_provider zink-kosmickrisp)
     if(NOT UML_APPLE_PLATFORM STREQUAL "macos")
         message(FATAL_ERROR
             "The KosmicKrisp Vulkan product currently supports macOS only")
@@ -35,7 +37,7 @@ endif()
 set(UML_APPLE_GPU_DEPENDENCY_PREFIX
     "${_uml_apple_gpu_default_prefix}"
     CACHE PATH
-    "Verified ANGLE/Metal libepoxy/virglrenderer Apple GPU prefix")
+    "Verified Apple GPU prefix: host GL provider, libepoxy, virglrenderer")
 
 set(_uml_apple_gpu_include "${UML_APPLE_GPU_DEPENDENCY_PREFIX}/include")
 set(_uml_apple_gpu_lib "${UML_APPLE_GPU_DEPENDENCY_PREFIX}/lib")
@@ -46,9 +48,18 @@ set(_uml_apple_gpu_inputs
     "${_uml_apple_gpu_lib}/libvirglrenderer.a"
     "${_uml_apple_gpu_include}/epoxy/egl.h"
     "${_uml_apple_gpu_include}/virgl/virglrenderer.h"
-    "${_uml_apple_gpu_include}/virgl/virgl_hw.h"
-    "${_uml_apple_gpu_frameworks}/EGL.framework/EGL"
-    "${_uml_apple_gpu_frameworks}/GLESv2.framework/GLESv2")
+    "${_uml_apple_gpu_include}/virgl/virgl_hw.h")
+if(_uml_apple_gl_provider STREQUAL "angle-metal")
+    set(_uml_apple_gl_frameworks EGL GLESv2)
+    set(_uml_apple_gl_provider_is_mesa FALSE)
+else()
+    set(_uml_apple_gl_frameworks MesaEGL MesaGallium)
+    set(_uml_apple_gl_provider_is_mesa TRUE)
+endif()
+foreach(_uml_apple_gl_framework IN LISTS _uml_apple_gl_frameworks)
+    list(APPEND _uml_apple_gpu_inputs
+        "${_uml_apple_gpu_frameworks}/${_uml_apple_gl_framework}.framework/${_uml_apple_gl_framework}")
+endforeach()
 if(_uml_apple_gpu_vulkan)
     list(APPEND _uml_apple_gpu_inputs
         "${_uml_apple_gpu_include}/vulkan/vulkan.h"
@@ -81,23 +92,28 @@ find_library(_uml_apple_gpu_math
     PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
     NO_DEFAULT_PATH REQUIRED)
 
-add_library(uml_third_party_angle_egl SHARED IMPORTED GLOBAL)
-set_target_properties(uml_third_party_angle_egl PROPERTIES
-    IMPORTED_LOCATION "${_uml_apple_gpu_frameworks}/EGL.framework/EGL")
-add_library(UML::ThirdPartyAngleEgl ALIAS uml_third_party_angle_egl)
-
-add_library(uml_third_party_angle_gles SHARED IMPORTED GLOBAL)
-set_target_properties(uml_third_party_angle_gles PROPERTIES
-    IMPORTED_LOCATION
-        "${_uml_apple_gpu_frameworks}/GLESv2.framework/GLESv2")
-add_library(UML::ThirdPartyAngleGles ALIAS uml_third_party_angle_gles)
+# The packaged host GL provider is one product decision: ANGLE's EGL/GLES
+# facade, or Mesa's EGL entry point over its Gallium library. libepoxy and the
+# renderer dispatch through whichever pair the prefix carries.
+set(_uml_apple_gl_provider_targets)
+foreach(_uml_apple_gl_framework IN LISTS _uml_apple_gl_frameworks)
+    string(TOLOWER "${_uml_apple_gl_framework}" _uml_apple_gl_lower)
+    set(_uml_apple_gl_target "uml_third_party_host_gl_${_uml_apple_gl_lower}")
+    add_library(${_uml_apple_gl_target} SHARED IMPORTED GLOBAL)
+    set_target_properties(${_uml_apple_gl_target} PROPERTIES
+        IMPORTED_LOCATION
+            "${_uml_apple_gpu_frameworks}/${_uml_apple_gl_framework}.framework/${_uml_apple_gl_framework}")
+    list(APPEND _uml_apple_gl_provider_targets "${_uml_apple_gl_target}")
+endforeach()
+list(GET _uml_apple_gl_provider_targets 0 _uml_apple_gl_egl_target)
+add_library(UML::ThirdPartyHostGlEgl ALIAS ${_uml_apple_gl_egl_target})
 
 add_library(uml_third_party_epoxy STATIC IMPORTED GLOBAL)
 set_target_properties(uml_third_party_epoxy PROPERTIES
     IMPORTED_LOCATION "${_uml_apple_gpu_lib}/libepoxy.a"
     INTERFACE_INCLUDE_DIRECTORIES "${_uml_apple_gpu_include}"
     INTERFACE_LINK_LIBRARIES
-        "UML::ThirdPartyAngleEgl;UML::ThirdPartyAngleGles")
+        "${_uml_apple_gl_provider_targets}")
 add_library(UML::ThirdPartyEpoxy ALIAS uml_third_party_epoxy)
 
 if(_uml_apple_gpu_vulkan)
@@ -145,6 +161,9 @@ endif()
 set(UML_APPLE_GPU_FRAMEWORK_DIRECTORY
     "${_uml_apple_gpu_frameworks}"
     CACHE INTERNAL "Verified Apple GPU runtime framework directory")
+set(UML_APPLE_GPU_GL_FRAMEWORK_NAMES
+    "${_uml_apple_gl_frameworks}"
+    CACHE INTERNAL "Packaged Apple host GL provider frameworks")
 if(_uml_apple_gpu_vulkan)
     set(UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK
         "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework"

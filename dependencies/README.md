@@ -26,11 +26,11 @@ The dependency products are:
 
 - `macos`: non-graphics static host libraries at
   `.build/dependencies/macos-arm64`;
-- `apple-gpu`: common ANGLE/Metal, libepoxy, and virglrenderer inputs for
-  macOS, Simulator, and device;
-- `apple-gpu-vulkan-experiment`: the macOS-only experimental composition that
-  extends that same matrix with pinned Mesa, Vulkan-Headers, and
-  Venus-protocol sources;
+- `apple-gpu`: the iOS Simulator and device ANGLE/Metal, libepoxy, and
+  virglrenderer inputs;
+- `apple-gpu-vulkan-experiment`: the macOS-only composition that replaces the
+  ANGLE provider with Mesa's Zink Gallium driver over KosmicKrisp and adds the
+  pinned Mesa, Vulkan-Headers, and Venus-protocol sources;
 - `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
@@ -49,10 +49,16 @@ The dependency products are:
   conformance runtime code is linked.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
-flat `EGL.framework` and `GLESv2.framework` payloads. All Apple platforms use
-the same ANGLE/Metal provider contract. Platform-specific patches remain
-scoped by the checked contracts and series rather than being described as
-general hardware capability.
+flat framework payloads for exactly one host GL provider. The iOS prefixes
+carry `EGL.framework` and `GLESv2.framework` from ANGLE; the macOS prefix
+carries `MesaEGL.framework` and `MesaGallium.framework`, whose Zink Gallium
+driver renders desktop OpenGL 4.6 core on the packaged
+`KosmicKrisp.framework`. Each prefix's `gl_provider` contract field names the
+one it carries. Mesa's GLSL grammars declare two Bison 3 directives that
+Apple's Bison 2 does not accept, so the macOS OpenGL build drives the host
+generator through `dependencies/bison2-grammar-shim.sh` rather than forking
+the grammars. Platform-specific patches remain scoped by the checked contracts
+and series rather than being described as general hardware capability.
 
 SwiftTerm remains an Xcode Swift Package dependency. It is not part of the
 emulator library prefix.

@@ -499,13 +499,15 @@ The following are non-negotiable:
    platform-neutral device ownership. Build exactly the canonical 16 KiB and
    4 KiB artifacts; graphics changes must not create a platform-specific Linux
    image or public emulator ABI.
-7. ANGLE/Metal is the only GL/GLES host provider. Do not route GL/GLES through
-   ANGLE/Vulkan, MoltenVK, Zink, Venus, or another Vulkan implementation, even
-   as an experimental profile-promotion lane. Do not build, link, or package
-   CGL or a desktop-only virglrenderer/libepoxy graphics family, and do not
+7. Each Apple product has exactly one host GL provider, named by its
+   `gl_provider` contract field. ANGLE/Metal is that provider on iOS Simulator
+   and iOS device. On macOS it is Mesa's Zink Gallium driver on the packaged
+   KosmicKrisp Vulkan driver, which gives the guest desktop OpenGL 4.6 core
+   through Virgl; that provider supersedes the earlier rule forbidding a
+   Vulkan-backed GL route on macOS. Do not route GL/GLES through MoltenVK or
+   an ambient Vulkan loader, do not build, link, or package CGL, and do not
    fall back to Homebrew or ambient Vulkan, EGL, GL, or `pkg-config`
-   installations. If Vulkan support is also built, its Venus-to-KosmicKrisp
-   targets and loader remain separate from the ANGLE/Metal GL facade.
+   installations. Every provider library comes from the verified prefix.
 8. Keep iOS App Store compatibility: public APIs only, ordinary signing, no
    JIT entitlement, no private Metal API, and no helper process required by
    the graphics backend.

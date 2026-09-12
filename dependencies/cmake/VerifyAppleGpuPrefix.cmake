@@ -16,8 +16,10 @@ if(NOT DEFINED PRODUCT)
 endif()
 if(PRODUCT STREQUAL "apple-gpu")
     set(_vulkan_enabled FALSE)
+    set(_gl_provider angle-metal)
 elseif(PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     set(_vulkan_enabled TRUE)
+    set(_gl_provider zink-kosmickrisp)
 else()
     message(FATAL_ERROR "Unsupported Apple GPU product: ${PRODUCT}")
 endif()
@@ -152,18 +154,18 @@ _contract_expect(platform "${PLATFORM}")
 _contract_expect(architecture arm64)
 _contract_expect(deployment_target "${_deployment_target}")
 _contract_expect(linkage static-and-framework)
-_contract_expect(gl_provider angle-metal)
+_contract_expect(gl_provider "${_gl_provider}")
 _contract_expect(presentation_api Metal)
 if(_vulkan_enabled)
     _contract_expect(payload
-        "static-libepoxy,static-libvirglrenderer,dynamic-EGL-framework,dynamic-GLESv2-framework,dynamic-KosmicKrisp-framework,Vulkan-Headers")
+        "static-libepoxy,static-libvirglrenderer,dynamic-MesaEGL-framework,dynamic-MesaGallium-framework,dynamic-KosmicKrisp-framework,Vulkan-Headers")
     _contract_expect(vk_provider venus-kosmickrisp)
-    _contract_expect(graphics_api "ANGLE-EGL-GLES,Vulkan")
+    _contract_expect(graphics_api "OpenGL,Vulkan")
     _contract_expect(renderer_features
-        "gles,venus,native-share-texture,render-server-thread,direct-vulkan-entrypoint,video-h264-decode,video-hevc-decode,video-jpeg-decode")
+        "core-profile,venus,render-server-thread,direct-vulkan-entrypoint,readback-scanout")
     _contract_expect(components
-        "utm-webkit,utm-libepoxy,utm-virglrenderer,mesa,vulkan-headers,venus-protocol")
-    _contract_expect(common_recipe apple-gpu-vulkan-experiment-v3)
+        "utm-libepoxy,utm-virglrenderer,mesa,vulkan-headers,venus-protocol")
+    _contract_expect(common_recipe apple-gpu-vulkan-experiment-v4)
     _contract_expect(kosmickrisp_linkage dynamic-framework)
     _contract_expect(vulkan_entrypoint direct-vkGetInstanceProcAddr)
     _contract_expect(venus_dynamic_loading disabled)
@@ -184,10 +186,13 @@ uml_verify_dependency_manifest_product(
     PRODUCT "${PRODUCT}"
     LABEL "Apple GPU")
 set(_provenance_files manifest.tsv "${_platform_contract}")
-foreach(_series IN ITEMS
-    "patches/utm-webkit/series.tsv"
+set(_provenance_series
     "patches/utm-libepoxy/series.tsv"
     "patches/utm-virglrenderer/series.tsv")
+if(_gl_provider STREQUAL "angle-metal")
+    list(INSERT _provenance_series 0 "patches/utm-webkit/series.tsv")
+endif()
+foreach(_series IN LISTS _provenance_series)
     list(APPEND _provenance_files "${_series}")
     get_filename_component(_series_directory "${_series}" DIRECTORY)
     file(STRINGS "${SOURCE_ROOT}/dependencies/${_series}" _series_rows)
@@ -269,7 +274,11 @@ endif()
 file(GLOB _frameworks RELATIVE "${PREFIX}/Frameworks"
     "${PREFIX}/Frameworks/*")
 list(SORT _frameworks)
-set(_expected_frameworks EGL.framework GLESv2.framework)
+if(_gl_provider STREQUAL "angle-metal")
+    set(_expected_frameworks EGL.framework GLESv2.framework)
+else()
+    set(_expected_frameworks MesaEGL.framework MesaGallium.framework)
+endif()
 if(_vulkan_enabled)
     list(APPEND _expected_frameworks KosmicKrisp.framework)
 endif()
@@ -290,7 +299,11 @@ endif()
 
 file(GLOB _include_roots RELATIVE "${PREFIX}/include" "${PREFIX}/include/*")
 list(SORT _include_roots)
-set(_expected_include_roots EGL GLES GLES2 GLES3 KHR epoxy virgl)
+if(_gl_provider STREQUAL "angle-metal")
+    set(_expected_include_roots EGL GLES GLES2 GLES3 KHR epoxy virgl)
+else()
+    set(_expected_include_roots EGL GL KHR epoxy virgl)
+endif()
 if(_vulkan_enabled)
     list(APPEND _expected_include_roots vk_video vulkan)
 endif()
@@ -415,9 +428,16 @@ endif()
 set(_static_archives
     "${PREFIX}/lib/libepoxy.a"
     "${PREFIX}/lib/libvirglrenderer.a")
-set(_framework_binaries
-    "${PREFIX}/Frameworks/EGL.framework/EGL"
-    "${PREFIX}/Frameworks/GLESv2.framework/GLESv2")
+if(_gl_provider STREQUAL "angle-metal")
+    set(_gl_frameworks EGL GLESv2)
+else()
+    set(_gl_frameworks MesaEGL MesaGallium)
+endif()
+set(_framework_binaries)
+foreach(_framework IN LISTS _gl_frameworks)
+    list(APPEND _framework_binaries
+        "${PREFIX}/Frameworks/${_framework}.framework/${_framework}")
+endforeach()
 if(_vulkan_enabled)
     list(APPEND _framework_binaries
         "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
@@ -428,8 +448,11 @@ set(_required
     "${PREFIX}/include/epoxy/egl.h"
     "${PREFIX}/include/virgl/virglrenderer.h"
     "${PREFIX}/include/virgl/virgl_hw.h"
-    "${PREFIX}/Frameworks/EGL.framework/Info.plist"
-    "${PREFIX}/Frameworks/GLESv2.framework/Info.plist")
+    )
+foreach(_framework IN LISTS _gl_frameworks)
+    list(APPEND _required
+        "${PREFIX}/Frameworks/${_framework}.framework/Info.plist")
+endforeach()
 if(_vulkan_enabled)
     list(APPEND _required
         "${PREFIX}/include/vulkan/vulkan.h"
@@ -507,7 +530,7 @@ foreach(_binary IN LISTS _static_archives _framework_binaries)
     endforeach()
 endforeach()
 
-foreach(_framework IN ITEMS EGL GLESv2)
+foreach(_framework IN LISTS _gl_frameworks)
     set(_binary "${PREFIX}/Frameworks/${_framework}.framework/${_framework}")
     file(GLOB_RECURSE _framework_payload LIST_DIRECTORIES false
         RELATIVE "${PREFIX}/Frameworks/${_framework}.framework"
@@ -559,17 +582,47 @@ foreach(_framework IN ITEMS EGL GLESv2)
            _dependency MATCHES "^/System/Library/Frameworks/(CoreFoundation|CoreGraphics|Foundation|IOKit|IOSurface|Metal|QuartzCore)\\.framework/")
             continue()
         endif()
+        # The OpenGL provider is a two-library Mesa stack rendering on the
+        # packaged Vulkan driver, so those exact edges are expected.
+        if(_framework STREQUAL "MesaEGL" AND _dependency STREQUAL
+               "@rpath/MesaGallium.framework/MesaGallium")
+            continue()
+        endif()
+        if(_framework STREQUAL "MesaGallium" AND _dependency STREQUAL
+               "@rpath/KosmicKrisp.framework/KosmicKrisp")
+            continue()
+        endif()
+        if(NOT _gl_provider STREQUAL "angle-metal" AND
+           _dependency STREQUAL "/usr/lib/libexpat.1.dylib")
+            continue()
+        endif()
         message(FATAL_ERROR
             "Unexpected ${_framework}.framework dependency: ${_dependency}")
     endforeach()
-    if(_closure MATCHES "OpenGL|OpenGLES|KosmicKrisp|Vulkan")
+    if(_gl_provider STREQUAL "angle-metal")
+        set(_forbidden_closure "OpenGL|OpenGLES|KosmicKrisp|Vulkan")
+    else()
+        set(_forbidden_closure "OpenGL\\.framework|OpenGLES\\.framework|libvulkan")
+    endif()
+    if(_closure MATCHES "${_forbidden_closure}")
         message(FATAL_ERROR
             "${_framework}.framework contains a forbidden GL/Vulkan dependency")
     endif()
     execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
         RESULT_VARIABLE _nm_status OUTPUT_VARIABLE _undefined_symbols)
+    if(_framework STREQUAL "MesaGallium")
+        if(NOT _undefined_symbols MATCHES "_vkGetInstanceProcAddr")
+            message(FATAL_ERROR
+                "MesaGallium.framework does not reference vkGetInstanceProcAddr")
+        endif()
+        string(REGEX REPLACE
+            "[^\n]*_vkGetInstanceProcAddr[^\n]*(\n|$)" ""
+            _provider_symbols "${_undefined_symbols}")
+    else()
+        set(_provider_symbols "${_undefined_symbols}")
+    endif()
     if(NOT _nm_status EQUAL 0 OR
-       _undefined_symbols MATCHES "_(CGL|EAGL|vk[A-Z])")
+       _provider_symbols MATCHES "_(CGL|EAGL|vk[A-Z])")
         message(FATAL_ERROR
             "${_framework}.framework contains a forbidden provider symbol")
     endif()
@@ -580,6 +633,16 @@ foreach(_framework IN ITEMS EGL GLESv2)
            NOT _exports MATCHES "[ 	]_eglGetPlatformDisplayEXT([ 	\n]|$)")
             message(FATAL_ERROR
                 "EGL.framework does not export the ANGLE platform bootstrap")
+        endif()
+    endif()
+    if(_framework STREQUAL "MesaEGL")
+        execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
+            RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
+        if(NOT _export_status EQUAL 0 OR
+           NOT _exports MATCHES "[ 	]_eglGetPlatformDisplay([ 	
+]|$)")
+            message(FATAL_ERROR
+                "MesaEGL.framework does not export the EGL platform bootstrap")
         endif()
     endif()
 endforeach()

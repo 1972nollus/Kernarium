@@ -40,8 +40,16 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$APPLE_GPU_PRODUCT" in
-apple-gpu) VULKAN_ENABLED=0 ;;
-apple-gpu-vulkan-experiment) VULKAN_ENABLED=1 ;;
+apple-gpu)
+	VULKAN_ENABLED=0
+	GL_FRAMEWORKS='EGL GLESv2'
+	HOST_GL_MARKER='Virgl ANGLE/Metal provider: hardware'
+	;;
+apple-gpu-vulkan-experiment)
+	VULKAN_ENABLED=1
+	GL_FRAMEWORKS='MesaEGL MesaGallium'
+	HOST_GL_MARKER='Virgl Zink/KosmicKrisp provider: hardware'
+	;;
 *) fail "unsupported Apple GPU product: $APPLE_GPU_PRODUCT" ;;
 esac
 
@@ -78,7 +86,9 @@ while IFS= read -r dependency; do
 		fail "production executable has a forbidden graphics dependency: $dependency"
 	case "$dependency" in
 	/System/Library/*|/usr/lib/*) ;;
-	@rpath/EGL.framework/EGL|@rpath/GLESv2.framework/GLESv2)
+	@rpath/EGL.framework/EGL|@rpath/GLESv2.framework/GLESv2|\
+	@rpath/MesaEGL.framework/MesaEGL|\
+	@rpath/MesaGallium.framework/MesaGallium)
 		[ -n "$APPLE_GPU_PREFIX" ] ||
 			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
 		;;
@@ -96,8 +106,8 @@ done
 }
 
 "$STRINGS" "$BINARY" |
-	grep -F -x 'Virgl ANGLE/Metal provider: hardware' >/dev/null ||
-	fail "production executable is missing the ANGLE/Metal host-provider marker"
+	grep -F -x "$HOST_GL_MARKER" >/dev/null ||
+	fail "production executable is missing the host GL provider marker"
 
 [ -d "$APPLE_GPU_PREFIX" ] && [ ! -L "$APPLE_GPU_PREFIX" ] ||
 	fail "Apple GPU prefix is missing or symbolic: $APPLE_GPU_PREFIX"
@@ -124,14 +134,15 @@ embedded_frameworks=$(
 	cd "$FRAMEWORK_DIRECTORY"
 	find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
 )
-frameworks='EGL GLESv2'
-expected_frameworks='./EGL.framework
-./GLESv2.framework'
+frameworks=$GL_FRAMEWORKS
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	frameworks="$frameworks KosmicKrisp"
-	expected_frameworks="$expected_frameworks
-./KosmicKrisp.framework"
 fi
+expected_frameworks=$(
+	for framework in $frameworks; do
+		printf './%s.framework\n' "$framework"
+	done | LC_ALL=C sort
+)
 [ "$embedded_frameworks" = "$expected_frameworks" ] ||
 	fail "embedded Apple GPU framework set is not exact: $embedded_frameworks"
 
@@ -171,8 +182,11 @@ for framework in $frameworks; do
 			fail "$framework.framework has a forbidden graphics dependency: $dependency"
 		case "$dependency" in
 		@rpath/$framework.framework/$framework|\
+		@rpath/MesaGallium.framework/MesaGallium|\
+		@rpath/KosmicKrisp.framework/KosmicKrisp|\
 		/usr/lib/libc++.1.dylib|/usr/lib/libSystem.B.dylib|\
 		/usr/lib/libobjc.A.dylib|/usr/lib/libz.1.dylib|\
+		/usr/lib/libexpat.1.dylib|\
 		/System/Library/Frameworks/AppKit.framework/*|\
 		/System/Library/Frameworks/CoreFoundation.framework/*|\
 		/System/Library/Frameworks/CoreGraphics.framework/*|\

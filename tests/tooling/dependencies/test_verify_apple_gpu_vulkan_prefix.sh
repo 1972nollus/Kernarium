@@ -49,10 +49,11 @@ make_framework()
 {
 	framework=$1
 	source=$2
+	shift 2
 	binary="$BASE_PREFIX/Frameworks/$framework.framework/$framework"
 	mkdir -p "$(dirname -- "$binary")"
 	xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
-		-dynamiclib "$source" \
+		-dynamiclib "$source" "$@" \
 		-Wl,-install_name,"@rpath/$framework.framework/$framework" \
 		-o "$binary"
 	cat >"$(dirname -- "$binary")/Info.plist" <<EOF
@@ -71,20 +72,29 @@ command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 mkdir -p "$BASE_PREFIX/Frameworks" "$BASE_PREFIX/lib" \
 	"$BASE_PREFIX/share/uml-dependencies/patches" \
-	"$BASE_PREFIX/include/EGL" "$BASE_PREFIX/include/GLES" \
-	"$BASE_PREFIX/include/GLES2" "$BASE_PREFIX/include/GLES3" \
+	"$BASE_PREFIX/include/EGL" "$BASE_PREFIX/include/GL" \
 	"$BASE_PREFIX/include/KHR" "$BASE_PREFIX/include/epoxy" \
 	"$BASE_PREFIX/include/virgl" \
 	"$BASE_PREFIX/include/vulkan" "$BASE_PREFIX/include/vk_video"
 
 cat >"$TEST_ROOT/fixture.c" <<'EOF'
 int uml_apple_gpu_fixture(void) { return 0; }
-void *eglGetPlatformDisplayEXT(unsigned platform, void *display, const int *attributes)
+EOF
+cat >"$TEST_ROOT/mesa-egl.c" <<'EOF'
+extern void *uml_mesa_gallium_fixture(void);
+void *eglGetPlatformDisplay(unsigned platform, void *display, const long *attributes)
 {
     (void)platform;
     (void)display;
     (void)attributes;
-    return 0;
+    return uml_mesa_gallium_fixture();
+}
+EOF
+cat >"$TEST_ROOT/mesa-gallium.c" <<'EOF'
+extern void *vkGetInstanceProcAddr(void *, const char *);
+void *uml_mesa_gallium_fixture(void)
+{
+    return vkGetInstanceProcAddr(0, "vkCreateInstance");
 }
 EOF
 cat >"$TEST_ROOT/virgl.c" <<'EOF'
@@ -108,9 +118,11 @@ xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
 	-c "$TEST_ROOT/virgl.c" -o "$TEST_ROOT/virgl.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libepoxy.a" "$TEST_ROOT/fixture.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libvirglrenderer.a" "$TEST_ROOT/virgl.o"
-make_framework EGL "$TEST_ROOT/fixture.c"
-make_framework GLESv2 "$TEST_ROOT/fixture.c"
 make_framework KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+make_framework MesaGallium "$TEST_ROOT/mesa-gallium.c" \
+	"$BASE_PREFIX/Frameworks/KosmicKrisp.framework/KosmicKrisp"
+make_framework MesaEGL "$TEST_ROOT/mesa-egl.c" \
+	"$BASE_PREFIX/Frameworks/MesaGallium.framework/MesaGallium"
 
 for header in \
 	EGL/egl.h \
@@ -137,7 +149,7 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 cp "$ROOT_DIR/dependencies/platforms/macos-gpu-vulkan-arm64.tsv" \
 	"$BASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv"
 for component in \
-	utm-webkit utm-libepoxy utm-virglrenderer mesa; do
+	utm-libepoxy utm-virglrenderer mesa; do
 	cp -R "$ROOT_DIR/dependencies/patches/$component" \
 		"$BASE_PREFIX/share/uml-dependencies/patches/"
 done
@@ -242,6 +254,10 @@ LOSERS=$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type d \
 
 grep -Fq -- '-Dvulkan-drivers=kosmickrisp' "$BUILDER" ||
 	fail "builder does not select the KosmicKrisp Vulkan driver"
+grep -Fq -- '-Dgallium-drivers=zink' "$BUILDER" ||
+	fail "builder does not select the Zink OpenGL driver"
+grep -Fq -- '-Dzink-vulkan-library-file=' "$BUILDER" ||
+	fail "builder does not link Zink against the packaged Vulkan driver"
 grep -Fq -- '-Dllvm=disabled' "$BUILDER" ||
 	fail "builder does not use the embedded KosmicKrisp shader blobs"
 grep -Fq -- '--wrap-mode=nodownload' "$BUILDER" ||

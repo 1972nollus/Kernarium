@@ -141,21 +141,27 @@ ios)
 *) fail "platform must be macos, ios-simulator, or ios" ;;
 esac
 
+# The KosmicKrisp product renders desktop OpenGL with Mesa's Zink Gallium
+# driver on the same in-process Vulkan driver Venus uses; every other product
+# keeps the packaged ANGLE/Metal GLES provider.
 if [ "$PRODUCT" = apple-gpu-vulkan-experiment ]; then
 	[ "$PLATFORM" = macos ] ||
 		fail "the KosmicKrisp Vulkan product currently supports macOS only"
 	VULKAN_ENABLED=1
+	GL_PROVIDER=zink-kosmickrisp
 	CONTRACT_NAME=$VULKAN_CONTRACT_NAME
 	TARGET=arm64-apple-macos26.0
 	DEPLOYMENT_TARGET=26.0
 else
 	VULKAN_ENABLED=0
+	GL_PROVIDER=angle-metal
 	CONTRACT_NAME=$GL_CONTRACT_NAME
 fi
 DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/$PRODUCT/$PREFIX_PLATFORM"
 
 PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
 [ -r "$MANIFEST" ] || fail "source manifest is unavailable: $MANIFEST"
+MESA_VERSION=$(awk -F'\t' '$1 == "mesa" { print $2 }' "$MANIFEST")
 [ -r "$PLATFORM_CONTRACT" ] ||
 	fail "platform contract is unavailable: $PLATFORM_CONTRACT"
 [ -n "$PREFIX" ] || PREFIX=$DEFAULT_PREFIX
@@ -189,7 +195,9 @@ fi
 "$ROOT_DIR/dependencies/prepare.sh" --product "$PRODUCT" \
 	--root "$SOURCE_ROOT" --verify
 SOURCE_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT" && pwd -P)
-WEBKIT_SOURCE="$SOURCE_ROOT/utm-webkit"
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	WEBKIT_SOURCE="$SOURCE_ROOT/utm-webkit"
+fi
 EPOXY_SOURCE="$SOURCE_ROOT/utm-libepoxy"
 VIRGL_SOURCE="$SOURCE_ROOT/utm-virglrenderer"
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
@@ -221,9 +229,11 @@ else
 fi
 find_tool RSYNC rsync
 find_tool PKG_CONFIG pkg-config
-find_tool XCODEBUILD xcodebuild
 find_tool XCRUN xcrun
-find_tool SHLOCK shlock
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	find_tool XCODEBUILD xcodebuild
+	find_tool SHLOCK shlock
+fi
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
 if [ -n "${UML_MESA_PYTHON:-}" ]; then
@@ -235,6 +245,10 @@ if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	find_tool NINJA ninja
 	"$PYTHON" -c 'import mako, packaging, yaml' >/dev/null 2>&1 ||
 		fail "KosmicKrisp requires Python modules mako, packaging, and yaml"
+fi
+if [ "$GL_PROVIDER" = zink-kosmickrisp ]; then
+	find_tool BISON bison
+	find_tool FLEX flex
 fi
 
 SDK_ROOT=$($XCRUN --sdk "$SDK_NAME" --show-sdk-path)
@@ -278,20 +292,23 @@ ANGLE_ROOT="$SOURCES/WebKit/Source/ThirdParty/ANGLE"
 ANGLE_ARCHIVE="$BUILDS/ANGLE"
 EPOXY_CROSS="$BUILDS/meson-epoxy-$PLATFORM.cross"
 VIRGL_CROSS="$BUILDS/meson-virgl-$PLATFORM.cross"
-mkdir -p -- "$ANGLE_ROOT" "$SOURCES/WebKit/Configurations" \
-	"$SOURCES/WebKit/Tools/ccache" "$SOURCES/libepoxy" \
+mkdir -p -- "$SOURCES/libepoxy" \
 	"$SOURCES/virglrenderer" "$BUILDS" "$STAGE/include" \
 	"$STAGE/lib" "$STAGE/Frameworks"
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	mkdir -p -- "$SOURCES/Mesa"
 fi
 
-$RSYNC -a --exclude .git --exclude ANGLE.xcarchive \
-	"$WEBKIT_SOURCE/Source/ThirdParty/ANGLE/" "$ANGLE_ROOT/"
-$RSYNC -a --exclude .git \
-	"$WEBKIT_SOURCE/Configurations/" "$SOURCES/WebKit/Configurations/"
-$RSYNC -a --exclude .git \
-	"$WEBKIT_SOURCE/Tools/ccache/" "$SOURCES/WebKit/Tools/ccache/"
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	mkdir -p -- "$ANGLE_ROOT" "$SOURCES/WebKit/Configurations" \
+		"$SOURCES/WebKit/Tools/ccache"
+	$RSYNC -a --exclude .git --exclude ANGLE.xcarchive \
+		"$WEBKIT_SOURCE/Source/ThirdParty/ANGLE/" "$ANGLE_ROOT/"
+	$RSYNC -a --exclude .git \
+		"$WEBKIT_SOURCE/Configurations/" "$SOURCES/WebKit/Configurations/"
+	$RSYNC -a --exclude .git \
+		"$WEBKIT_SOURCE/Tools/ccache/" "$SOURCES/WebKit/Tools/ccache/"
+fi
 $RSYNC -a --exclude .git --exclude utm_build \
 	"$EPOXY_SOURCE/" "$SOURCES/libepoxy/"
 $RSYNC -a --exclude .git --exclude utm_build \
@@ -302,43 +319,77 @@ fi
 
 APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
 APPLE_GPU_TOOL_PATH=/usr/bin:/bin:/usr/sbin:/sbin
-# macOS, Simulator, and device archives share this cache across invocations.
-# Serialize only Xcode so later Meson work may still overlap safely.
-if ! "$SHLOCK" -f "$ANGLE_DERIVED_DATA_LOCK" -p "$$"; then
-	fail "ANGLE DerivedData is in use by another dependency build"
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	# macOS, Simulator, and device archives share this cache across invocations.
+	# Serialize only Xcode so later Meson work may still overlap safely.
+	if ! "$SHLOCK" -f "$ANGLE_DERIVED_DATA_LOCK" -p "$$"; then
+		fail "ANGLE DerivedData is in use by another dependency build"
+	fi
+	ANGLE_DERIVED_DATA_LOCK_HELD=1
+	(
+		cd "$ANGLE_ROOT"
+		env -i PATH="$APPLE_GPU_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+			"$XCODEBUILD" archive -quiet \
+			-jobs "$JOBS" \
+			-archivePath "$ANGLE_ARCHIVE" \
+			-derivedDataPath "$ANGLE_DERIVED_DATA" \
+			-scheme ANGLE \
+			-sdk "$SDK_NAME" \
+			-destination "$XCODE_DESTINATION" \
+			-configuration Release \
+			ARCHS=arm64 \
+			WEBCORE_LIBRARY_DIR=/usr/local/lib \
+			NORMAL_UMBRELLA_FRAMEWORKS_DIR= \
+			CODE_SIGNING_ALLOWED=NO \
+			"$DEPLOYMENT_SETTING=$DEPLOYMENT_TARGET" \
+			WK_LIBCPP_ASSERTIONS_CFLAGS= \
+			ANGLE_ALLOWABLE_CLIENTS= \
+			GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+			OTHER_CPLUSPLUSFLAGS='$(inherited) -Wno-error=unnecessary-virtual-specifier'
+	)
+	rm -f -- "$ANGLE_DERIVED_DATA_LOCK"
+	ANGLE_DERIVED_DATA_LOCK_HELD=0
+	[ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" ] ||
+		fail "ANGLE archive did not produce libEGL.dylib"
+	[ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" ] ||
+		fail "ANGLE archive did not produce libGLESv2.dylib"
+	for headers in EGL GLES GLES2 GLES3 KHR; do
+		mkdir -p -- "$STAGE/include/$headers"
+		$RSYNC -a "$ANGLE_ROOT/include/$headers/" "$STAGE/include/$headers/"
+	done
 fi
-ANGLE_DERIVED_DATA_LOCK_HELD=1
-(
-	cd "$ANGLE_ROOT"
-	env -i PATH="$APPLE_GPU_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-		"$XCODEBUILD" archive -quiet \
-		-jobs "$JOBS" \
-		-archivePath "$ANGLE_ARCHIVE" \
-		-derivedDataPath "$ANGLE_DERIVED_DATA" \
-		-scheme ANGLE \
-		-sdk "$SDK_NAME" \
-		-destination "$XCODE_DESTINATION" \
-		-configuration Release \
-		ARCHS=arm64 \
-		WEBCORE_LIBRARY_DIR=/usr/local/lib \
-		NORMAL_UMBRELLA_FRAMEWORKS_DIR= \
-		CODE_SIGNING_ALLOWED=NO \
-		"$DEPLOYMENT_SETTING=$DEPLOYMENT_TARGET" \
-		WK_LIBCPP_ASSERTIONS_CFLAGS= \
-		ANGLE_ALLOWABLE_CLIENTS= \
-		GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-		OTHER_CPLUSPLUSFLAGS='$(inherited) -Wno-error=unnecessary-virtual-specifier'
-)
-rm -f -- "$ANGLE_DERIVED_DATA_LOCK"
-ANGLE_DERIVED_DATA_LOCK_HELD=0
-[ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" ] ||
-	fail "ANGLE archive did not produce libEGL.dylib"
-[ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" ] ||
-	fail "ANGLE archive did not produce libGLESv2.dylib"
-for headers in EGL GLES GLES2 GLES3 KHR; do
-	mkdir -p -- "$STAGE/include/$headers"
-	$RSYNC -a "$ANGLE_ROOT/include/$headers/" "$STAGE/include/$headers/"
-done
+
+install_framework()
+{
+	framework_name=$1
+	source_binary=$2
+	bundle_identifier=$3
+	framework_version=${4:-1.0}
+	framework_dir="$STAGE/Frameworks/$framework_name.framework"
+	mkdir -p -- "$framework_dir"
+	install -m 0755 "$source_binary" "$framework_dir/$framework_name"
+	"$INSTALL_NAME_TOOL" -id \
+		"@rpath/$framework_name.framework/$framework_name" \
+		"$framework_dir/$framework_name"
+	cat > "$framework_dir/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleExecutable</key><string>$framework_name</string>
+	<key>CFBundleIdentifier</key><string>$bundle_identifier</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>$framework_name</string>
+	<key>CFBundlePackageType</key><string>FMWK</string>
+	<key>CFBundleShortVersionString</key><string>$framework_version</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>$MINIMUM_OS_KEY</key><string>$DEPLOYMENT_TARGET</string>
+</dict>
+</plist>
+EOF
+	"$PLUTIL" -lint "$framework_dir/Info.plist" >/dev/null
+}
 
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	MESA_BUILD="$BUILDS/Mesa"
@@ -389,6 +440,75 @@ if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	mkdir -p -- "$STAGE/include/vulkan" "$STAGE/include/vk_video"
 	$RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vulkan/" "$STAGE/include/vulkan/"
 	$RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vk_video/" "$STAGE/include/vk_video/"
+	# The Vulkan driver is packaged before the OpenGL pass so that Zink links
+	# against the published framework and records its runtime install name.
+	install_framework KosmicKrisp "$KOSMICKRISP_BINARY" \
+		org.linux-um-darwin.KosmicKrisp 26.2.1
+	KOSMICKRISP_FRAMEWORK_BINARY="$STAGE/Frameworks/KosmicKrisp.framework/KosmicKrisp"
+fi
+
+if [ "$GL_PROVIDER" = zink-kosmickrisp ]; then
+	# Mesa's OpenGL stack is a second configuration of the same authenticated
+	# source: Zink renders desktop OpenGL 4.6 core on the packaged Vulkan
+	# driver, and libEGL exposes it through the surfaceless platform.
+	MESA_GL_BUILD="$BUILDS/Mesa-gl"
+	MESA_GL_STAGE="$BUILDS/Mesa-gl-stage"
+	mkdir -p -- "$MESA_GL_STAGE"
+	MESA_GL_TOOL_PATH="$MESA_TOOL_PATH"
+	# Mesa's GLSL grammars use two Bison 3 declarations. Apple's toolchain
+	# ships Bison 2, so an older generator is driven through a translation
+	# shim rather than by forking the grammars.
+	BISON_VERSION=$("$BISON" --version 2>/dev/null | sed -n '1s/.*) //p')
+	case $BISON_VERSION in
+	[3-9].*|[1-9][0-9].*) ;;
+	*)
+		BISON_SHIM_DIR="$BUILDS/bison-shim"
+		mkdir -p -- "$BISON_SHIM_DIR"
+		sed -e "s|@BISON@|$BISON|g" \
+			"$ROOT_DIR/dependencies/bison2-grammar-shim.sh" \
+			> "$BISON_SHIM_DIR/bison"
+		chmod 0755 "$BISON_SHIM_DIR/bison"
+		MESA_GL_TOOL_PATH="$BISON_SHIM_DIR:$MESA_TOOL_PATH"
+		;;
+	esac
+	env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		CC="$CC" CXX="$CXX" OBJC="$CC" OBJCXX="$CXX" \
+		PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+		PKG_CONFIG_SYSROOT_DIR= \
+		"$MESON" setup "$MESA_GL_BUILD" "$SOURCES/Mesa" \
+			--prefix "$MESA_GL_STAGE" --libdir lib --buildtype release \
+			--wrap-mode=nodownload \
+			-Dplatforms=macos -Dvulkan-drivers= \
+			-Dgallium-drivers=zink -Dopengl=true -Degl=enabled \
+			-Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
+			-Dzstd=disabled -Dllvm=disabled -Dspirv-tools=disabled \
+			-Dzink-vulkan-library-file="$KOSMICKRISP_FRAMEWORK_BINARY"
+	env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		"$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
+	env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$SDK_ROOT" \
+		MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		"$MESON" install --no-rebuild -C "$MESA_GL_BUILD" > /dev/null
+	MESA_EGL_BINARY="$MESA_GL_STAGE/lib/libEGL.1.dylib"
+	MESA_GALLIUM_BINARY="$MESA_GL_STAGE/lib/libgallium-$MESA_VERSION.dylib"
+	[ -f "$MESA_EGL_BINARY" ] && [ -f "$MESA_GALLIUM_BINARY" ] ||
+		fail "Mesa did not produce the packaged OpenGL libraries"
+	install_framework MesaGallium "$MESA_GALLIUM_BINARY" \
+		org.linux-um-darwin.mesa.Gallium "$MESA_VERSION"
+	install_framework MesaEGL "$MESA_EGL_BINARY" \
+		org.linux-um-darwin.mesa.EGL "$MESA_VERSION"
+	"$INSTALL_NAME_TOOL" -change \
+		"$MESA_GALLIUM_BINARY" "@rpath/MesaGallium.framework/MesaGallium" \
+		"$STAGE/Frameworks/MesaEGL.framework/MesaEGL"
+	for headers in EGL GL KHR; do
+		mkdir -p -- "$STAGE/include/$headers"
+		$RSYNC -a "$MESA_GL_STAGE/include/$headers/" \
+			"$STAGE/include/$headers/"
+	done
 fi
 
 cat > "$EPOXY_CROSS" <<EOF
@@ -443,14 +563,22 @@ PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/libepoxy" "$SOURCES/libepoxy" \
 	--prefix "$STAGE" --buildtype release --cross-file "$EPOXY_CROSS" \
 	--wrap-mode=nodownload \
-	-Ddefault_library=static -Dtests=false -Dglx=no -Degl=yes -Dx11=false
+	-Ddefault_library=static -Dtests=false -Dglx=no -Degl=yes -Dx11=false \
+	-Dapple-gl-provider="$GL_PROVIDER"
 "$MESON" compile -C "$BUILDS/libepoxy" -j "$JOBS"
 "$MESON" install -C "$BUILDS/libepoxy"
 
 set -- \
 	-Ddefault_library=static -Dtests=false -Dvtest=false \
 	-Dcheck-gl-errors=false -Dneptune=false \
-	-Dplatforms=egl -Drender-server-mode=thread -Dvideo=true
+	-Dplatforms=egl -Drender-server-mode=thread
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	# VideoToolbox decode publishes frames through ANGLE's Metal texture
+	# client buffer, which the Mesa OpenGL provider does not expose.
+	set -- "$@" -Dvideo=true
+else
+	set -- "$@" -Dvideo=false
+fi
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
 	set -- "$@" \
 		-Dvenus=true -Dvulkan-dload=false -Dvulkan-preload=false \
@@ -474,47 +602,16 @@ install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
 # contains the exclusive staging path and must not enter the published prefix.
 rm -rf -- "$STAGE/lib/pkgconfig"
 
-install_framework()
-{
-	framework_name=$1
-	source_binary=$2
-	bundle_identifier=$3
-	framework_version=${4:-1.0}
-	framework_dir="$STAGE/Frameworks/$framework_name.framework"
-	mkdir -p -- "$framework_dir"
-	install -m 0755 "$source_binary" "$framework_dir/$framework_name"
-	"$INSTALL_NAME_TOOL" -id \
-		"@rpath/$framework_name.framework/$framework_name" \
-		"$framework_dir/$framework_name"
-	cat > "$framework_dir/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleDevelopmentRegion</key><string>en</string>
-	<key>CFBundleExecutable</key><string>$framework_name</string>
-	<key>CFBundleIdentifier</key><string>$bundle_identifier</string>
-	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>CFBundleName</key><string>$framework_name</string>
-	<key>CFBundlePackageType</key><string>FMWK</string>
-	<key>CFBundleShortVersionString</key><string>$framework_version</string>
-	<key>CFBundleVersion</key><string>1</string>
-	<key>$MINIMUM_OS_KEY</key><string>$DEPLOYMENT_TARGET</string>
-</dict>
-</plist>
-EOF
-	"$PLUTIL" -lint "$framework_dir/Info.plist" >/dev/null
-}
 
-install_framework EGL \
-	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" \
-	org.linux-um-darwin.angle.EGL
-install_framework GLESv2 \
-	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" \
-	org.linux-um-darwin.angle.GLESv2
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	install_framework EGL \
+		"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" \
+		org.linux-um-darwin.angle.EGL
+	install_framework GLESv2 \
+		"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" \
+		org.linux-um-darwin.angle.GLESv2
+fi
 if [ "$VULKAN_ENABLED" -eq 1 ]; then
-	install_framework KosmicKrisp "$KOSMICKRISP_BINARY" \
-		org.linux-um-darwin.KosmicKrisp 26.2.1
 	KOSMICKRISP_FRAMEWORK="$STAGE/Frameworks/KosmicKrisp.framework"
 	mkdir -p -- "$KOSMICKRISP_FRAMEWORK/Headers/vulkan" \
 		"$KOSMICKRISP_FRAMEWORK/Headers/vk_video" \
@@ -540,8 +637,10 @@ fi
 
 mkdir -p "$STAGE/share/uml-dependencies/patches"
 cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
-cp -R "$ROOT_DIR/dependencies/patches/utm-webkit" \
-	"$STAGE/share/uml-dependencies/patches/"
+if [ "$GL_PROVIDER" = angle-metal ]; then
+	cp -R "$ROOT_DIR/dependencies/patches/utm-webkit" \
+		"$STAGE/share/uml-dependencies/patches/"
+fi
 cp -R "$ROOT_DIR/dependencies/patches/utm-libepoxy" \
 	"$STAGE/share/uml-dependencies/patches/"
 cp -R "$ROOT_DIR/dependencies/patches/utm-virglrenderer" \
