@@ -1,7 +1,7 @@
 From f67dee0266141abf9aa18cc9552c73c2dfdafec1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:38:05 +0900
-Subject: [PATCH 17/52] kosmickrisp: implement GPU geometry shaders and streams
+Subject: [PATCH 17/53] kosmickrisp: implement GPU geometry shaders and streams
 
 Lower application geometry shaders through the shared GPU poly pipeline, including multi-stream emission, raster stream selection, transform-feedback accounting, and generated-draw setup. Keep primitive assembly, counting, prefix sums, and rasterization entirely on the GPU for direct, indexed, indirect, restart, tessellation, and invocation paths.
 ---

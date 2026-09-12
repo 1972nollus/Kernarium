@@ -1,7 +1,7 @@
 From 3f9a669305d29f006a9cd7fcf6da78ab0b11a0fb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 04:50:34 +0900
-Subject: [PATCH 52/52] kosmickrisp: clamp the cube an array coordinate selects
+Subject: [PATCH 52/53] kosmickrisp: clamp the cube an array coordinate selects
 
 A VK_EXT_non_seamless_cube_map sampler is served by sampling the same
 storage through a 2D array alias of the constituent cube faces, so the

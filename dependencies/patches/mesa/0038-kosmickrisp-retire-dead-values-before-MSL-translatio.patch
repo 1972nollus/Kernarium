@@ -1,7 +1,7 @@
 From 4eea73acc5d0fab65a85167778c108b63aadd4ac Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 18:21:12 +0900
-Subject: [PATCH 38/52] kosmickrisp: retire dead values before MSL translation
+Subject: [PATCH 38/53] kosmickrisp: retire dead values before MSL translation
 
 MSL type inference reaches a value only through its uses, so a value whose
 last consumer disappears keeps no type at all. The final copy propagation in
