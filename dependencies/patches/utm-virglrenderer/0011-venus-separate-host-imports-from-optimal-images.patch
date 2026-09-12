@@ -1,7 +1,7 @@
 From 69346f3b3da727ee504f79bbac53ed1c798cacb6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 11/22] venus: separate host imports from optimal images
+Subject: [PATCH 11/23] venus: separate host imports from optimal images
 
 ---
  src/venus/vkr_buffer.c          | 12 +++++

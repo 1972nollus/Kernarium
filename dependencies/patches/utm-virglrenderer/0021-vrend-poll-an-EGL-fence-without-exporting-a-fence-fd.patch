@@ -1,7 +1,7 @@
 From f55c48f9480e94efe8e401dc53faeda05314b358 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 15:33:15 +0900
-Subject: [PATCH 21/22] vrend: poll an EGL fence without exporting a fence fd
+Subject: [PATCH 21/23] vrend: poll an EGL fence without exporting a fence fd
 
 Checking whether a fence has retired must not block: the caller is the
 thread that decodes the guest's command stream. A driver that has no
