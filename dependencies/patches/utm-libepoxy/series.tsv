@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-apple-resolve-GL-facade-through-packaged-ANGLE.patch	8becc884bd0e2a94d5fdf9e5a5e0853057fc5afb	6ac4cc9490e2a9edc6e282244982a68131df0706ede5fe87ba003d8e407ff99a	apple: resolve GL facade through packaged ANGLE
+1	0001-apple-resolve-the-GL-facade-through-the-packaged-pro.patch	8f3822dfb931b841b3409584b8f5a3ed1bbad439	ddbffefa0d665e26bb6893f2099000572f033548f4f72d4e4441de0968f72b14	apple: resolve the GL facade through the packaged provider
