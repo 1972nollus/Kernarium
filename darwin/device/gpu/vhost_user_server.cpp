@@ -6,6 +6,7 @@
 
 #include "socket_paths.hpp"
 #include "memory/shared_backing.hpp"
+#include "platform/apple/autorelease_scope.hpp"
 
 #include <algorithm>
 #include <array>
@@ -2284,6 +2285,13 @@ void VhostUserServer::serveConnection(
     const std::size_t deviceEventIndex = queues_.size() + 1U;
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
+            /* The renderer drives Metal from this thread, and Metal
+             * autoreleases per submission. This thread has no run loop to
+             * drain that for it, so bound a pool to the work of one pass;
+             * otherwise the objects live as long as the connection and the
+             * process grows by gigabytes within a minute of a GL workload. */
+            const uml::platform::apple::AutoreleaseScope autoreleaseScope;
+
             /* This also publishes a resize which arrived before the guest
              * installed its backend-request descriptor. Running it at the
              * loop boundary ensures any SET_SLAVE_REQ_FD acknowledgement was
