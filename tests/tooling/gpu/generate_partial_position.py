@@ -24,7 +24,8 @@ def main() -> None:
     # optimizer would merge them back into one vec4 store.
     variants = [("partial_position.vert", "pp_vertex_split"),
                 ("partial_position_only_xy.vert", "pp_vertex_xy"),
-                ("partial_position.frag", "pp_fragment")]
+                ("partial_position.frag", "pp_fragment"),
+                ("partial_position_depth.frag", "pp_fragment_depth")]
     with tempfile.TemporaryDirectory(prefix="partial-position-") as temporary:
         for source, name in variants:
             binary = Path(temporary) / f"{name}.spv"

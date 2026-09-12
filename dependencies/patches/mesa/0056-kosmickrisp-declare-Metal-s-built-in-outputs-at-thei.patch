@@ -1,4 +1,4 @@
-From 060f10c480a68a259c995600baa48071c06e45e0 Mon Sep 17 00:00:00 2001
+From 731319d721716e503a6e79c974b4163b4efd4d7d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:01:21 +0900
 Subject: [PATCH 56/56] kosmickrisp: declare Metal's built-in outputs at their
@@ -15,15 +15,18 @@ of the clip and cull distance arrays.
 
 Declare those slots at the shape Metal requires and give the clip
 coordinate the identity value, so a component no store reaches is (0,0,
-0,1) rather than a degenerate zero w.
+0,1) rather than a degenerate zero w. Only the stages whose interface
+is varyings are indexed by varying slot: a vertex shader's inputs are
+vertex attributes and a fragment shader's outputs are depth, stencil
+and colour results, and both number those from zero too.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/compiler/msl_iomap.c | 52 ++++++++++++++++++++++++++++
- 1 file changed, 52 insertions(+)
+ src/kosmickrisp/compiler/msl_iomap.c | 61 ++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index b3f40aab..4325973f 100644
+index b3f40aab..58d98cb3 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -438,6 +438,50 @@ msl_fs_varying_components(nir_shader *shader)
@@ -77,16 +80,25 @@ index b3f40aab..4325973f 100644
  void
  msl_gather_io_info(struct nir_to_msl_ctx *ctx,
                     struct io_slot_info *info_array_input,
-@@ -449,6 +493,8 @@ msl_gather_io_info(struct nir_to_msl_ctx *ctx,
+@@ -449,6 +493,17 @@ msl_gather_io_info(struct nir_to_msl_ctx *ctx,
     };
     nir_shader_intrinsics_pass(ctx->shader, msl_nir_gather_io_info,
                                nir_metadata_all, &gather_ctx);
-+   pin_metal_builtin_slot_shapes(info_array_input);
-+   pin_metal_builtin_slot_shapes(info_array_output);
++
++   /* Only index these arrays by varying slot where the stage's interface is
++    * varyings. A vertex shader's inputs are vertex attributes and a fragment
++    * shader's outputs are depth, stencil and colour results, and both number
++    * those from zero as well, so pinning there would retype an unrelated
++    * attribute or render target.
++    */
++   if (ctx->shader->info.stage == MESA_SHADER_FRAGMENT)
++      pin_metal_builtin_slot_shapes(info_array_input);
++   if (ctx->shader->info.stage == MESA_SHADER_VERTEX)
++      pin_metal_builtin_slot_shapes(info_array_output);
  }
  
  /* Generate all the struct definitions needed for shader I/O */
-@@ -491,6 +537,12 @@ msl_emit_output_var(struct nir_to_msl_ctx *ctx, nir_shader *shader)
+@@ -491,6 +546,12 @@ msl_emit_output_var(struct nir_to_msl_ctx *ctx, nir_shader *shader)
     switch (shader->info.stage) {
     case MESA_SHADER_VERTEX:
        P_IND(ctx, "%s out = {};\n", VERTEX_OUTPUT_TYPE);
