@@ -1,7 +1,7 @@
 From 97b35e32c8219bdde628ae433022e0d0fb960d60 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 00:00:00 +0900
-Subject: [PATCH 01/25] vrend: support GLES 3.0 MSAA on iOS Metal
+Subject: [PATCH 01/26] vrend: support GLES 3.0 MSAA on iOS Metal
 
 OpenGL ES 3.0 requires multisampled renderbuffers but does not gain
 multisampled textures until ES 3.1.  The ANGLE Metal backend used on iOS

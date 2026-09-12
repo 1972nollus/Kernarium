@@ -1,7 +1,7 @@
 From 6ea917c4cdad8d83691cc231cb28e4c8c5084dbe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 05:26:27 +0900
-Subject: [PATCH 03/25] vrend: stop advertising emulated GLES Z32_UNORM
+Subject: [PATCH 03/26] vrend: stop advertising emulated GLES Z32_UNORM
 
 OpenGL ES has no normalized 32-bit depth renderbuffer format. The existing GLES table nevertheless advertised Z32_UNORM by backing it with a 24-bit depth texture. Mesa then exposed 32-bit EGL depth configurations whose precision and component type did not match their backing storage, causing valid GLES framebuffer blits to fail format validation.
 
