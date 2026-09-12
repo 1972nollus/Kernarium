@@ -1,4 +1,4 @@
-From bf9ed6bdc0de2464b654fc37da3d9b3ec6d5da89 Mon Sep 17 00:00:00 2001
+From e8c24536524e0959b35ab876865ec1e6b40dc7bf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:10:24 +0900
 Subject: [PATCH 18/56] kosmickrisp: implement single-texel buffer alignment

@@ -1,4 +1,4 @@
-From d0f0945de4413235804e47380f93a01d03ff27ce Mon Sep 17 00:00:00 2001
+From 060f10c480a68a259c995600baa48071c06e45e0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:01:21 +0900
 Subject: [PATCH 56/56] kosmickrisp: declare Metal's built-in outputs at their

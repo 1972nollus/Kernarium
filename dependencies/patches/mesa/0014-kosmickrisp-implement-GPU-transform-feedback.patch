@@ -1,4 +1,4 @@
-From cc49204cb783ec06352832fcc924fb695e9e5adc Mon Sep 17 00:00:00 2001
+From f86bca63edfc2efa480d48bab59578e6d865677c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 16:16:25 +0900
 Subject: [PATCH 14/56] kosmickrisp: implement GPU transform feedback

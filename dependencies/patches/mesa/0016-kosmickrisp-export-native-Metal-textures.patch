@@ -1,4 +1,4 @@
-From 79f15f049a7ad4ce2cd7ff9538dbf0ec17097436 Mon Sep 17 00:00:00 2001
+From e25d6b8185b66005b436fcfca9b7a2e0af05aae1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:09 +0900
 Subject: [PATCH 16/56] kosmickrisp: export native Metal textures

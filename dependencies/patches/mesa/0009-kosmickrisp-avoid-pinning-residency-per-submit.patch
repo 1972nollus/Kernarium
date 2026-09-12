@@ -1,4 +1,4 @@
-From 103d862ac2812d01ffe4fc5d1fea9a141ec1ff22 Mon Sep 17 00:00:00 2001
+From 20aa9196aa3ce18c0342b2b9b43b1fb529368464 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 21:34:01 +0900
 Subject: [PATCH 09/56] kosmickrisp: avoid pinning residency per submit

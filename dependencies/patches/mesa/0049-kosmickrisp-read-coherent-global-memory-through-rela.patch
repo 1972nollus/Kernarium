@@ -1,4 +1,4 @@
-From 882afed40ae9ebd41d049ce4cee0fd701185b1ba Mon Sep 17 00:00:00 2001
+From a4b95adde072740545c2f93112594b828ee5c5aa Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:29:40 +0900
 Subject: [PATCH 49/56] kosmickrisp: read coherent global memory through

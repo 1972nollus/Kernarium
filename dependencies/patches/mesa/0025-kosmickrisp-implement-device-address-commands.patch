@@ -1,4 +1,4 @@
-From 90554767d818270577e5b0f3a5be685643046294 Mon Sep 17 00:00:00 2001
+From dd27bab9a8e66aeb30e8c973c0192eece5f04b45 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 04:14:50 +0900
 Subject: [PATCH 25/56] kosmickrisp: implement device address commands

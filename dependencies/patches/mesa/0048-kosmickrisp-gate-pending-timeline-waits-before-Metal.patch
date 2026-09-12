@@ -1,4 +1,4 @@
-From e57fd55e957e2a4598182f228249a06fff421f52 Mon Sep 17 00:00:00 2001
+From 465615bcb08fbbdeee15343a5ccf3db17b72aaba Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
 Subject: [PATCH 48/56] kosmickrisp: gate pending timeline waits before Metal
