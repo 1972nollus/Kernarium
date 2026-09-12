@@ -502,9 +502,9 @@ The following are non-negotiable:
 7. Each Apple product has exactly one host GL provider, named by its
    `gl_provider` contract field. ANGLE/Metal is that provider on iOS Simulator
    and iOS device. On macOS it is Mesa's Zink Gallium driver on the packaged
-   KosmicKrisp Vulkan driver, which gives the guest desktop OpenGL 4.6 core
-   through Virgl; that provider supersedes the earlier rule forbidding a
-   Vulkan-backed GL route on macOS. Do not route GL/GLES through MoltenVK or
+   KosmicKrisp Vulkan driver, rendering the Virgl command stream on a desktop
+   OpenGL 4.6 core context; that provider supersedes the earlier rule
+   forbidding a Vulkan-backed GL route on macOS. Do not route GL/GLES through MoltenVK or
    an ambient Vulkan loader, do not build, link, or package CGL, and do not
    fall back to Homebrew or ambient Vulkan, EGL, GL, or `pkg-config`
    installations. Every provider library comes from the verified prefix.
