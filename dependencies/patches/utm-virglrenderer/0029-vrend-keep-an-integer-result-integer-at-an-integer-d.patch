@@ -1,4 +1,4 @@
-From bdc19660e1fde7d45d7bcbd7aec2b88b37e9f893 Mon Sep 17 00:00:00 2001
+From 146089acae4ef700995522b0c5cec146911f54d9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
 Subject: [PATCH 29/29] vrend: keep an integer result integer at an integer
@@ -22,6 +22,14 @@ choose their own conversion: textures, image and buffer loads, image,
 buffer and counter atomics, and the four bit-encoding builtins that
 spell the cast themselves.
 
+The texel fetch path needs the same care in the other direction. It
+stages the sampler's result in a local so that an emulated swizzle can
+be applied to it, and that local was spelled vec4 whatever the sampler
+returned, which no longer compiles once an integer sampler reaches an
+integer destination without a cast. The staging variable now takes the
+sampler's own type, the swizzle constants follow it, and the store to
+the destination carries the one conversion the destination needs.
+
 The test that started this compared the destination against the scalar
 INT alone, so every vector integer destination looked like a float one;
 an atomic counter read into a pure-integer colour output went further
@@ -30,14 +38,14 @@ compile and left the whole context in error.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_shader.c | 117 +++++++++++++++++++++++++++++++++------
- 1 file changed, 100 insertions(+), 17 deletions(-)
+ src/vrend/vrend_shader.c | 166 ++++++++++++++++++++++++++++++---------
+ 1 file changed, 127 insertions(+), 39 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 868121d..e5fd969 100644
+index 868121d..7e8bd5e 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -481,6 +481,55 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
+@@ -481,6 +481,83 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
     }
  }
  
@@ -90,10 +98,38 @@ index 868121d..e5fd969 100644
 +   }
 +}
 +
++/* The same question for an emitter that spells its own bit cast around an
++ * expression of a known type: the cast is what a float register needs, and an
++ * integer destination takes the expression as it stands. */
++static enum vrend_type_qualifier
++inner_conv_for_dest(const struct dest_info *dinfo,
++                    enum vrend_type_qualifier bits_to_float)
++{
++   return type_qualifier_is_integer(dinfo->dstconv) ? TYPE_CONVERSION_NONE
++                                                    : bits_to_float;
++}
++
++/* The conversion a texture, image, buffer or atomic-counter result needs on
++ * its way to this instruction's destination. A float register takes the bit
++ * cast the result's own type asks for; a destination declared at an integer
++ * type takes an integer result unchanged, and a float result through its own
++ * cast. */
++static enum vrend_type_qualifier
++result_conv_for_dest(const struct dest_info *dinfo,
++                     enum vrend_type_qualifier bits_to_float)
++{
++   if (!type_qualifier_is_integer(dinfo->dstconv))
++      return bits_to_float;
++   if (bits_to_float == TYPE_CONVERSION_NONE)
++      return type_qualifier_is_signed_integer(dinfo->dstconv) ? FLOAT_BITS_TO_INT
++                                                              : FLOAT_BITS_TO_UINT;
++   return dinfo->dstconv;
++}
++
  static inline const char *get_string(enum vrend_type_qualifier key)
  {
     if (key >= ARRAY_SIZE(conversion_table)) {
-@@ -2549,7 +2598,7 @@ static void emit_fog_fixup_write(const struct dump_ctx *ctx,
+@@ -2549,7 +2626,7 @@ static void emit_fog_fixup_write(const struct dump_ctx *ctx,
  #define emit_op1(op) emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s(%s))%s);\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), op, srcs[0], writemask)
  #define emit_compare(op) emit_buff(&ctx->glsl_strbufs, "%s = %s(%s((%s(%s(%s), %s(%s))))%s);\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), op, get_string(sinfo.svec4), srcs[0], get_string(sinfo.svec4), srcs[1], writemask)
  
@@ -102,7 +138,7 @@ index 868121d..e5fd969 100644
  
  static void handle_vertex_proc_exit(const struct dump_ctx *ctx,
                                      struct vrend_glsl_strbufs *glsl_strbufs,
-@@ -3169,15 +3218,17 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3169,15 +3246,17 @@ static void translate_tex(struct dump_ctx *ctx,
  
     is_shad = samplertype_is_shadow(inst->Texture.Texture);
  
@@ -124,41 +160,84 @@ index 868121d..e5fd969 100644
           dtypeprefix = UINT_BITS_TO_FLOAT;
        break;
     default:
-@@ -3929,6 +3980,33 @@ translate_store(const struct dump_ctx *ctx,
-    }
- }
+@@ -3466,20 +3545,35 @@ static void translate_tex(struct dump_ctx *ctx,
+          /* To inject the swizzle for texturebufffers with emulated formats do
+           *
+           * {
+-          *    vec4 val = texelFetch( )
+-          *    val = vec4(0/1/swizzle_x, ...);
+-          *    dest.writemask = val.writemask;
++          *    <sampler type> val = texelFetch( )
++          *    val = <sampler type>(0/1/swizzle_x, ...);
++          *    dest.writemask = <destination conversion>(val).writemask;
+           * }
+           *
++          * The staging variable holds what the sampler returns, so that an
++          * integer sampler needs no cast to reach an integer destination and
++          * the swizzle constants stay at the type they are compared against.
+           */
+-         emit_buff(&ctx->glsl_strbufs, "{\n  vec4 val = %s(texelFetch%s(%s, %s(%s%s)%s%s));\n",
+-                   get_string(dtypeprefix),
++         enum vrend_type_qualifier val_type = VEC4;
++         switch (ctx->samplers[sinfo->sreg_index].tgsi_sampler_return) {
++         case TGSI_RETURN_TYPE_SINT: val_type = IVEC4; break;
++         case TGSI_RETURN_TYPE_UINT: val_type = UVEC4; break;
++         default: break;
++         }
++         const char *const one = val_type == VEC4 ? "1.0" : "1";
++         const char *const zero = val_type == VEC4 ? "0.0" : "0";
++         const enum vrend_type_qualifier val_to_float =
++            val_type == IVEC4 ? INT_BITS_TO_FLOAT :
++            val_type == UVEC4 ? UINT_BITS_TO_FLOAT : TYPE_CONVERSION_NONE;
++
++         emit_buff(&ctx->glsl_strbufs, "{\n  %s val = texelFetch%s(%s, %s(%s%s)%s%s);\n",
++                   get_string(val_type),
+                    tex_ext, srcs[sampler_index], get_string(txfi),
+                    srcs[0], src_swizzle, bias, offset);
  
-+/* The conversion an image, buffer or atomic-counter result needs on its way
-+ * to this instruction's destination. A float register takes the bit cast the
-+ * result's own type asks for; a destination declared at an integer type takes
-+ * the integer result unchanged, and a float result through its own cast. */
-+/* The same question for an emitter that spells its own bit cast around an
-+ * expression of a known type: the cast is what a float register needs, and an
-+ * integer destination takes the expression as it stands. */
-+static enum vrend_type_qualifier
-+inner_conv_for_dest(const struct dest_info *dinfo,
-+                    enum vrend_type_qualifier bits_to_float)
-+{
-+   return type_qualifier_is_integer(dinfo->dstconv) ? TYPE_CONVERSION_NONE
-+                                                    : bits_to_float;
-+}
-+
-+static enum vrend_type_qualifier
-+result_conv_for_dest(const struct dest_info *dinfo,
-+                     enum vrend_type_qualifier bits_to_float)
-+{
-+   if (!type_qualifier_is_integer(dinfo->dstconv))
-+      return bits_to_float;
-+   if (bits_to_float == TYPE_CONVERSION_NONE)
-+      return type_qualifier_is_signed_integer(dinfo->dstconv) ? FLOAT_BITS_TO_INT
-+                                                              : FLOAT_BITS_TO_UINT;
-+   return dinfo->dstconv;
-+}
-+
- static void emit_load_mem(struct vrend_glsl_strbufs *glsl_strbufs, const char *dst, int writemask,
-                           const char *conversion, const char *atomic_op, const char *src0,
-                           const char *atomic_src)
-@@ -4005,6 +4083,8 @@ translate_load(const struct dump_ctx *ctx,
+          if (vrend_shader_sampler_views_mask_get(ctx->key->sampler_views_lower_swizzle_mask, sinfo->sreg_index)) {
+             int16_t  packed_swizzles = ctx->key->tex_swizzle[sinfo->sreg_index];
+-            emit_buff(&ctx->glsl_strbufs,  "   val = vec4(");
++            emit_buff(&ctx->glsl_strbufs,  "   val = %s(", get_string(val_type));
+ 
+             for (int i = 0; i < 4; ++i) {
+                if (i > 0)
+@@ -3487,20 +3581,8 @@ static void translate_tex(struct dump_ctx *ctx,
+ 
+                int swz = (packed_swizzles >> (i * 3)) & 7;
+                switch (swz) {
+-               case PIPE_SWIZZLE_0 : emit_buf(&ctx->glsl_strbufs,  "0.0"); break;
+-               case PIPE_SWIZZLE_1 :
+-                  switch (dtypeprefix) {
+-                  case UINT_BITS_TO_FLOAT:
+-                     emit_buf(&ctx->glsl_strbufs,  "uintBitsToFloat(1u)");
+-                     break;
+-                  case INT_BITS_TO_FLOAT:
+-                     emit_buf(&ctx->glsl_strbufs,  "intBitsToFloat(1)");
+-                     break;
+-                  default:
+-                     emit_buf(&ctx->glsl_strbufs,  "1.0");
+-                     break;
+-                  }
+-                  break;
++               case PIPE_SWIZZLE_0 : emit_buf(&ctx->glsl_strbufs,  zero); break;
++               case PIPE_SWIZZLE_1 : emit_buf(&ctx->glsl_strbufs,  one); break;
+                default:
+                   emit_buff(&ctx->glsl_strbufs,  "val%s", get_swizzle_string(swz));
+                }
+@@ -3509,8 +3591,9 @@ static void translate_tex(struct dump_ctx *ctx,
+             emit_buff(&ctx->glsl_strbufs,  ");\n");
+          }
+ 
+-         emit_buff(&ctx->glsl_strbufs, "  %s  = val%s;\n}\n",
+-                   dst, dinfo->dst_override_no_wm[0] ? "" : writemask);
++         emit_buff(&ctx->glsl_strbufs, "  %s  = %s(val)%s;\n}\n",
++                   dst, get_string(result_conv_for_dest(dinfo, val_to_float)),
++                   dinfo->dst_override_no_wm[0] ? "" : writemask);
+       }
+    } else if ((ctx->cfg->glsl_version < 140 && (ctx->shader_req_bits & SHADER_REQ_SAMPLER_RECT)) &&
+               !vrend_shader_sampler_views_mask_get(ctx->key->sampler_views_emulated_rect_mask, sinfo->sreg_index)) {
+@@ -4005,6 +4088,8 @@ translate_load(const struct dump_ctx *ctx,
            (ctx->images[sinfo->sreg_index].decl.Format != PIPE_FORMAT_R32_UINT))
           images[sinfo->sreg_index].decl.Writable = 0;
  
@@ -167,7 +246,7 @@ index 868121d..e5fd969 100644
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_buff(glsl_strbufs, "%s = %s(imageLoad(%s, %s(%s(%s))%s)%s);\n",
                 dst, get_string(dtypeprefix),
-@@ -4056,6 +4136,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4056,6 +4141,7 @@ translate_load(const struct dump_ctx *ctx,
        }
  
        dtypeprefix = (is_integer_memory(ctx, src->Register.File, src->Register.Index)) ? INT_BITS_TO_FLOAT : UINT_BITS_TO_FLOAT;
@@ -175,7 +254,7 @@ index 868121d..e5fd969 100644
  
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_load_mem(glsl_strbufs, mydst, inst->Dst[0].Register.WriteMask, get_string(dtypeprefix), atomic_op, srcs[0], atomic_src);
-@@ -4078,7 +4159,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4078,7 +4164,8 @@ translate_load(const struct dump_ctx *ctx,
           emit_buf(glsl_strbufs, "}\n");
        }
     } else if (src->Register.File == TGSI_FILE_HW_ATOMIC) {
@@ -185,7 +264,7 @@ index 868121d..e5fd969 100644
     }
     return true;
  }
-@@ -4161,6 +4243,7 @@ static void
+@@ -4161,6 +4248,7 @@ static void
  translate_atomic(struct dump_ctx *ctx,
                   const struct tgsi_full_instruction *inst,
                   struct source_info *sinfo,
@@ -193,7 +272,7 @@ index 868121d..e5fd969 100644
                   const char *srcs[4],
                   char *dst)
  {
-@@ -4206,6 +4289,8 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4206,6 +4294,8 @@ translate_atomic(struct dump_ctx *ctx,
       stypecast = UINT;
     }
  
@@ -202,7 +281,7 @@ index 868121d..e5fd969 100644
     opname = get_atomic_opname(inst->Instruction.Opcode, &is_cas);
     if (!opname) {
        set_buf_error(&ctx->glsl_strbufs);
-@@ -4274,6 +4359,7 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4274,6 +4364,7 @@ translate_atomic(struct dump_ctx *ctx,
           dtypeprefix = UINT_BITS_TO_FLOAT;
           stypeprefix = FLOAT_BITS_TO_UINT;
        }
@@ -210,7 +289,7 @@ index 868121d..e5fd969 100644
  
        if (is_cas)
           snprintf(cas_str, sizeof(cas_str), ", %s(%s(%s))", get_string(type), get_string(stypeprefix), srcs[3]);
-@@ -4484,7 +4570,7 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4484,7 +4575,7 @@ get_destination_info(struct dump_ctx *ctx,
              }
              strbuf_fmt(&dst_bufs[i], "%s[%d]", output->glsl_name, idx);
              if (output->is_int) {
@@ -219,7 +298,7 @@ index 868121d..e5fd969 100644
                 dinfo->dstconv = INT;
              }
           } else {
-@@ -4518,18 +4604,15 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4518,18 +4609,15 @@ get_destination_info(struct dump_ctx *ctx,
                 dinfo->dst_override_no_wm[i] = output->override_no_wm;
              }
              if (output->is_int) {
@@ -241,7 +320,7 @@ index 868121d..e5fd969 100644
                 dinfo->dstconv = dinfo->idstconv;
              }
              if (output->name == TGSI_SEMANTIC_PSIZE) {
-@@ -5908,10 +5991,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5908,10 +5996,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), srcs[0]);
        break;
     case TGSI_OPCODE_NOT:
@@ -254,7 +333,7 @@ index 868121d..e5fd969 100644
        break;
     case TGSI_OPCODE_DNEG:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(-%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -6093,7 +6176,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6093,7 +6181,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BFI:
@@ -263,7 +342,7 @@ index 868121d..e5fd969 100644
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BREV:
-@@ -6190,7 +6273,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6190,7 +6278,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
              return false;
           srcs[1] = ctx->src_bufs[1].buf;
        }
