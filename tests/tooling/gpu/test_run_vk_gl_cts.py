@@ -607,6 +607,42 @@ class VkGlCtsToolingTests(unittest.TestCase):
             self.assertIn("systemd.mask=sddm.service", command)
             self.assertIn("multi-user.target", command)
 
+    def test_gl46_scope_gives_both_stacks_the_host_visible_blob_aperture(
+        self,
+    ) -> None:
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt_path = Path(temporary) / "zink-gl-receipt.json"
+            receipt_path.write_text(
+                json.dumps(zink_gl_derivative_receipt(identity)),
+                encoding="utf-8",
+            )
+            options = cts.parse_arguments(
+                [
+                    "--renderer",
+                    "virgl",
+                    "--config-inventory",
+                    "gl46",
+                    "--rootfs",
+                    "/tmp/rootfs-vulkan-zink-gl.ext4",
+                    "--rootfs-type",
+                    "ext4",
+                    "--rootfs-receipt",
+                    str(receipt_path),
+                ]
+            )
+            self.assertTrue(options.gl46_scope)
+            self.assertEqual(
+                cts.gl_scope_launch_environment(options),
+                ("UML_GPU_CAPABILITY_REPORT", "UML_GPU_EXPERIMENTAL_VULKAN"),
+            )
+        gles3 = cts.parse_arguments(["--leaf", "gles3", "--api", "gles3"])
+        self.assertFalse(gles3.gl46_scope)
+        self.assertEqual(
+            cts.gl_scope_launch_environment(gles3),
+            ("UML_GPU_CAPABILITY_REPORT",),
+        )
+
     def test_zink_gl_receipt_requires_each_source_identity(self) -> None:
         identity = cts.load_identity()
         valid = zink_gl_derivative_receipt(identity)

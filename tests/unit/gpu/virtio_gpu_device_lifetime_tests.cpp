@@ -2050,6 +2050,47 @@ void experimentalVenusBlobsAndFencesUseStandardWireState()
         device.process(requestBytes(rendererBlobUnref), false)) ==
         protocol::GpuResponse::okNoData);
 
+    /*
+     * Virgl contexts own host-visible storage too: coherent GL buffers reach
+     * the guest through the same aperture as Venus device memory.
+     */
+    auto virglContext = createContext(0x403, protocol::virgl2CapsetId);
+    require(responseType(device.process(requestBytes(virglContext), false)) ==
+        protocol::GpuResponse::okNoData);
+    auto virglBlobCreate = create;
+    virglBlobCreate.header.contextId = virglContext.header.contextId;
+    virglBlobCreate.resourceId = 0x5fe;
+    require(responseType(
+        device.process(requestBytes(virglBlobCreate), false)) ==
+        protocol::GpuResponse::okNoData);
+    auto virglBlobMap = protocol::GpuResourceMapBlob {};
+    virglBlobMap.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceMapBlob);
+    virglBlobMap.resourceId = virglBlobCreate.resourceId;
+    virglBlobMap.offset = 0;
+    require(responseType(device.process(requestBytes(virglBlobMap), false)) ==
+        protocol::GpuResponse::okMapInfo);
+    auto virglBlobAction = device.takeSharedMemoryAction();
+    require(virglBlobAction.has_value());
+    device.completeSharedMemoryAction(virglBlobAction->actionId, true);
+    auto virglBlobUnmap = protocol::GpuResourceUnmapBlob {};
+    virglBlobUnmap.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceUnmapBlob);
+    virglBlobUnmap.resourceId = virglBlobCreate.resourceId;
+    require(responseType(
+        device.process(requestBytes(virglBlobUnmap), false)) ==
+        protocol::GpuResponse::okNoData);
+    auto virglBlobUnmapAction = device.takeSharedMemoryAction();
+    require(virglBlobUnmapAction.has_value());
+    device.completeSharedMemoryAction(virglBlobUnmapAction->actionId, true);
+    protocol::GpuResourceReference virglBlobUnref {};
+    virglBlobUnref.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceUnref);
+    virglBlobUnref.resourceId = virglBlobCreate.resourceId;
+    require(responseType(
+        device.process(requestBytes(virglBlobUnref), false)) ==
+        protocol::GpuResponse::okNoData);
+
     protocol::GpuResourceMapBlob map {};
     map.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceMapBlob);

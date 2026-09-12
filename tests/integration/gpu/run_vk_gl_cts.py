@@ -3828,13 +3828,15 @@ def gl_scope_launch_environment(options: argparse.Namespace) -> tuple[str, ...]:
     """Name the host switches this run's stack needs, in a stable order.
 
     Guest Zink renders on Venus and needs the experimental Vulkan device.
-    A Virgl guest must not ask for it: the device publishes its host-visible
-    blob aperture only to Venus contexts, so the guest GL driver would see
-    coherent buffer support, try to create a blob resource, and fail its
-    display setup. It reports the host GL provider instead.
+    A Virgl guest needs it too in the GL46 scope: desktop GL 4.6 requires
+    GL_ARB_buffer_storage, whose coherent buffers reach the guest through the
+    host-visible blob aperture that switch publishes. Outside that scope the
+    Virgl guest stays on the plain device and only reports its host provider.
     """
     if options.renderer == "zink":
         return ("UML_GPU_EXPERIMENTAL_VULKAN",)
+    if getattr(options, "gl46_scope", False):
+        return ("UML_GPU_CAPABILITY_REPORT", "UML_GPU_EXPERIMENTAL_VULKAN")
     return ("UML_GPU_CAPABILITY_REPORT",)
 
 

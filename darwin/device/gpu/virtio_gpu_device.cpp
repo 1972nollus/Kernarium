@@ -1074,7 +1074,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
-        if (!venusContexts_.contains(header->contextId)) {
+        /*
+         * Both renderer capsets own host storage the guest can map: Venus
+         * publishes Vulkan device memory, and Virgl publishes the coherent
+         * buffer storage behind GL_ARB_buffer_storage. Any 3D context may
+         * therefore create a host-visible blob; the aperture bounds above
+         * apply equally to both.
+         */
+        if (!contexts_.contains(header->contextId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
