@@ -46,13 +46,15 @@ matrices have been run on the signed 16 KiB iOS path. Those results do not
 imply GLES 3.1, GLES 3.2, desktop OpenGL above the exposed Virgl profile, or
 Vulkan support.
 
-On macOS the guest reports desktop OpenGL 4.3 core through Virgl. The host
-renders the Virgl command stream on a desktop OpenGL 4.6 core context and
-reports GLSL 4.60 to the guest, but the guest driver exposes
-`GL_ARB_buffer_storage` only over coherent host-visible blob resources, and
-the virtio-GPU device publishes that aperture to Venus contexts alone.
-OpenGL 4.4 requires that extension, so Mesa caps an otherwise complete guest
-at 4.3. Guest Zink over Venus remains the OpenGL 4.6 path.
+On macOS the guest reports desktop OpenGL 4.6 core and GLSL 4.60 through
+Virgl, because the host renders the Virgl command stream on a desktop OpenGL
+4.6 core context. OpenGL 4.4 and above additionally require
+`GL_ARB_buffer_storage`, which the guest exposes only over coherent
+host-visible blob resources: the virtio-GPU device publishes its host-visible
+aperture to Virgl contexts as well as Venus ones, and vrend backs those
+coherent buffers with shared host pages pinned into GL. The aperture is part
+of the experimental Vulkan device, so a macOS Virgl guest reaches 4.6 only
+when that device is enabled.
 
 Video decode and native Metal texture sharing are ANGLE features and are not
 advertised by the macOS provider: scanouts of Virgl resources take the host
