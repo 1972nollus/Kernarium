@@ -1,7 +1,7 @@
 From 3bc3ee9befd702dcce60092e3eebc163d0c7c072 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 07:07:05 +0900
-Subject: [PATCH 31/31] vrend: advertise a texture buffer alignment the
+Subject: [PATCH 31/32] vrend: advertise a texture buffer alignment the
  protocol can carry
 
 A texture buffer view crosses the protocol as a first and last element,
