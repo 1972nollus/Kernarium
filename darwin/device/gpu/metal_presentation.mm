@@ -323,7 +323,7 @@ struct MetalPresentationState final :
                 droppedFrames.fetch_add(1, std::memory_order_relaxed);
             if (!directPathReported.exchange(true, std::memory_order_relaxed)) {
                 std::fputs(
-                    "Native display: direct virgl/ANGLE/Metal presentation\n",
+                    "Native display: direct Metal texture presentation\n",
                     stderr);
             }
             requestRedraw();

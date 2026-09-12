@@ -4,18 +4,28 @@
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
+#if !UML_GPU_HOST_GL_PROVIDER_MESA
 #include <EGL/eglext_angle.h>
+#endif
 
-// EGL display creation must precede libepoxy's version discovery. The common
-// framework exports this platform bootstrap entry point directly; all later
-// EGL and GLES dispatch continues through libepoxy.
-#undef eglGetPlatformDisplayEXT
+// EGL display creation must precede libepoxy's version discovery. The packaged
+// provider exports this platform bootstrap entry point directly; all later EGL
+// and GL dispatch continues through libepoxy.
 #undef eglGetError
+extern "C" EGLint eglGetError(void);
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+#undef eglGetPlatformDisplay
+extern "C" EGLDisplay eglGetPlatformDisplay(
+    EGLenum platform,
+    void* nativeDisplay,
+    const EGLAttrib* attributes);
+#else
+#undef eglGetPlatformDisplayEXT
 extern "C" EGLDisplay eglGetPlatformDisplayEXT(
     EGLenum platform,
     void* nativeDisplay,
     const EGLint* attributes);
-extern "C" EGLint eglGetError(void);
+#endif
 
 extern "C" {
 #include <virglrenderer.h>
@@ -24,16 +34,32 @@ extern "C" {
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace uml::gpu {
 namespace {
 
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+constexpr EGLenum kClientApi = EGL_OPENGL_API;
+constexpr EGLint kRenderableType = EGL_OPENGL_BIT;
+constexpr const char* kProviderName = "Zink/KosmicKrisp";
+constexpr const char* kProviderMarker =
+    "Virgl Zink/KosmicKrisp provider: hardware\n";
+#else
+constexpr EGLenum kClientApi = EGL_OPENGL_ES_API;
+constexpr EGLint kRenderableType = EGL_OPENGL_ES3_BIT;
+constexpr const char* kProviderName = "ANGLE/Metal";
+constexpr const char* kProviderMarker =
+    "Virgl ANGLE/Metal provider: hardware\n";
+#endif
+
 void reportEglFailure(const char* operation) noexcept
 {
     std::fprintf(
         stderr,
-        "ANGLE/Metal EGL %s failed: 0x%04x\n",
+        "%s EGL %s failed: 0x%04x\n",
+        kProviderName,
         operation,
         static_cast<unsigned int>(eglGetError()));
 }
@@ -70,6 +96,14 @@ void* HostGlProvider::display() noexcept
                 display_.load(std::memory_order_acquire)) {
             return publishedDisplay;
         }
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+        // Mesa selects its Gallium driver from the process environment before
+        // the display is created, and the packaged provider offers exactly one
+        // driver. Set it here rather than inheriting an ambient choice.
+        ::setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
+        const auto eglDisplay = eglGetPlatformDisplay(
+            EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr);
+#else
         const EGLint displayAttributes[] {
             EGL_PLATFORM_ANGLE_TYPE_ANGLE,
             EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
@@ -81,6 +115,7 @@ void* HostGlProvider::display() noexcept
         // authenticated GLES companion framework.
         const auto eglDisplay = eglGetPlatformDisplayEXT(
             EGL_PLATFORM_ANGLE_ANGLE, nullptr, displayAttributes);
+#endif
         if (eglDisplay == EGL_NO_DISPLAY) {
             reportEglFailure("display creation");
             return nullptr;
@@ -92,14 +127,14 @@ void* HostGlProvider::display() noexcept
             (void)eglTerminate(eglDisplay);
             return nullptr;
         }
-        if (eglBindAPI(EGL_OPENGL_ES_API) != EGL_TRUE) {
+        if (eglBindAPI(kClientApi) != EGL_TRUE) {
             reportEglFailure("API binding");
             (void)eglTerminate(eglDisplay);
             return nullptr;
         }
         const EGLint configAttributes[] {
             EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+            EGL_RENDERABLE_TYPE, kRenderableType,
             EGL_RED_SIZE, 8,
             EGL_GREEN_SIZE, 8,
             EGL_BLUE_SIZE, 8,
@@ -120,7 +155,7 @@ void* HostGlProvider::display() noexcept
             return nullptr;
         }
         config_ = eglConfig;
-        std::fputs("Virgl ANGLE/Metal provider: hardware\n", stderr);
+        std::fputs(kProviderMarker, stderr);
         display_.store(eglDisplay, std::memory_order_release);
         return eglDisplay;
     } catch (...) {
@@ -172,6 +207,10 @@ HostGlProvider::ContextProbe HostGlProvider::probeContext(
         const EGLint attributes[] {
             EGL_CONTEXT_MAJOR_VERSION_KHR, static_cast<EGLint>(major),
             EGL_CONTEXT_MINOR_VERSION_KHR, static_cast<EGLint>(minor),
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+            EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+            EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+#endif
             EGL_NONE,
         };
         context = eglCreateContext(
@@ -241,11 +280,21 @@ void* HostGlProvider::createContext(
     const virgl_renderer_gl_ctx_param& parameters) noexcept
 {
     try {
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+        // vrend probes desktop versions from 4.6 downwards and never asks for
+        // a compatibility profile on this provider.
+        if (parameters.version != 2 || parameters.compat_ctx ||
+            parameters.major_ver < 3 ||
+            parameters.major_ver > 4) {
+            return nullptr;
+        }
+#else
         if (parameters.version != 2 || parameters.compat_ctx ||
             parameters.major_ver < 2 ||
             parameters.major_ver > 3) {
             return nullptr;
         }
+#endif
         if (display() == nullptr)
             return nullptr;
         std::lock_guard lock(mutex_);
@@ -258,10 +307,22 @@ void* HostGlProvider::createContext(
             if (shared == EGL_NO_CONTEXT)
                 return nullptr;
         }
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+        const EGLint attributes[] {
+            EGL_CONTEXT_MAJOR_VERSION_KHR,
+            static_cast<EGLint>(parameters.major_ver),
+            EGL_CONTEXT_MINOR_VERSION_KHR,
+            static_cast<EGLint>(parameters.minor_ver),
+            EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+            EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+            EGL_NONE,
+        };
+#else
         const EGLint attributes[] {
             EGL_CONTEXT_CLIENT_VERSION, 3,
             EGL_NONE,
         };
+#endif
         const auto context = eglCreateContext(
             eglDisplay, eglConfig, shared, attributes);
         if (context == EGL_NO_CONTEXT) {

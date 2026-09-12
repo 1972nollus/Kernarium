@@ -26,11 +26,17 @@ function(uml_add_macos_embedded_kernel_app
     set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY LINK_DEPENDS
         "${_uml_kernel_image}"
         "${PROJECT_SOURCE_DIR}/dependencies/verify-runtime-dependencies.sh"
-        "${UML_DEPENDENCY_PREFIX}/share/uml-dependencies/receipt.tsv"
-        "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework/EGL"
-        "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework/Info.plist"
-        "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/GLESv2"
-        "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework/Info.plist")
+        "${UML_DEPENDENCY_PREFIX}/share/uml-dependencies/receipt.tsv")
+    set(_uml_gl_stage_commands)
+    foreach(_uml_gl_framework IN LISTS UML_APPLE_GPU_GL_FRAMEWORK_NAMES)
+        set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY LINK_DEPENDS
+            "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/${_uml_gl_framework}.framework/${_uml_gl_framework}"
+            "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/${_uml_gl_framework}.framework/Info.plist")
+        list(APPEND _uml_gl_stage_commands
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/${_uml_gl_framework}.framework
+                $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/${_uml_gl_framework}.framework)
+    endforeach()
     set(_uml_kosmickrisp_stage_commands)
     if(TARGET uml_third_party_kosmickrisp)
         set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY LINK_DEPENDS
@@ -72,12 +78,7 @@ function(uml_add_macos_embedded_kernel_app
             $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks
         COMMAND ${CMAKE_COMMAND} -E make_directory
             $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework
-            $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/EGL.framework
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework
-            $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/GLESv2.framework
+        ${_uml_gl_stage_commands}
         ${_uml_kosmickrisp_stage_commands}
         COMMAND ${PROJECT_SOURCE_DIR}/dependencies/verify-runtime-dependencies.sh
             --binary $<TARGET_FILE:${TARGET_NAME}>

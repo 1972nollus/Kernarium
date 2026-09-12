@@ -74,7 +74,8 @@ add_library(uml_gpu_renderer STATIC
 uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS
-    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>)
+    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>
+    UML_GPU_HOST_GL_PROVIDER_MESA=$<BOOL:${_uml_apple_gl_provider_is_mesa}>)
 target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
 target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework CoreFoundation"
@@ -119,17 +120,19 @@ if(TARGET uml_third_party_kosmickrisp)
             ${PROJECT_BINARY_DIR}/probes/venus)
     set(_uml_venus_probe_frameworks
         $<TARGET_FILE_DIR:uml-venus-backend-probe>/Frameworks)
+    set(_uml_venus_probe_gl_stage_commands)
+    foreach(_uml_gl_framework IN LISTS UML_APPLE_GPU_GL_FRAMEWORK_NAMES)
+        list(APPEND _uml_venus_probe_gl_stage_commands
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/${_uml_gl_framework}.framework
+                ${_uml_venus_probe_frameworks}/${_uml_gl_framework}.framework)
+    endforeach()
     add_custom_command(TARGET uml-venus-backend-probe POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E remove_directory
             ${_uml_venus_probe_frameworks}
         COMMAND ${CMAKE_COMMAND} -E make_directory
             ${_uml_venus_probe_frameworks}
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework
-            ${_uml_venus_probe_frameworks}/EGL.framework
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/GLESv2.framework
-            ${_uml_venus_probe_frameworks}/GLESv2.framework
+        ${_uml_venus_probe_gl_stage_commands}
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
             ${_uml_venus_probe_frameworks}/KosmicKrisp.framework

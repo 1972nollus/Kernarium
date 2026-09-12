@@ -207,6 +207,15 @@ VirglRenderer::VirglRenderer()
             return result;
         }();
 
+#if UML_GPU_HOST_GL_PROVIDER_MESA
+        /*
+         * The Mesa provider supplies an external EGLDisplay whose contexts are
+         * desktop OpenGL 4.6 core. It publishes no Metal texture for a vrend
+         * resource and no VideoToolbox decode surface, so scanouts of those
+         * resources take the readback path.
+         */
+        int rendererFlags = 0;
+#else
         // The common Apple path supplies an external ANGLE EGLDisplay backed
         // by Metal. Native-share resources are MTLTexture objects on macOS,
         // Simulator, and device alike.
@@ -214,6 +223,7 @@ VirglRenderer::VirglRenderer()
             VIRGL_RENDERER_USE_GLES |
             VIRGL_RENDERER_USE_VIDEO |
             VIRGL_RENDERER_NATIVE_SHARE_TEXTURE;
+#endif
         if (enableExperimentalVulkan) {
             /*
              * The render server publishes each context's per-ring timeline

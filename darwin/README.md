@@ -207,14 +207,15 @@ Virtio-input, Virtio-Sound, Virtio-console, and Kernarium battery services.
 Deferred used-ring publication lets a device retain a descriptor until
 asynchronous host work is complete.
 
-The common Apple graphics stack uses virglrenderer and ANGLE/EGL on Metal.
+The Apple graphics stack uses virglrenderer on one packaged host GL provider:
+Mesa Zink over KosmicKrisp on macOS, ANGLE/EGL on Metal for iOS.
 macOS provides native AppKit and VNC display consumers; iOS provides UIKit
 Metal presentation and deliberately excludes VNC. See
 [`../docs/graphics.md`](../docs/graphics.md).
 
 The separately named macOS-only `apple-gpu-vulkan-experiment` composition adds
-a Venus facade over one directly linked Mesa KosmicKrisp framework without
-changing that GL route. It is compiled only by the `*-venus*` presets and
+a Venus facade over one directly linked Mesa KosmicKrisp framework, and routes
+host OpenGL through Mesa Zink on that same driver. It is compiled only by the `*-venus*` presets and
 remains invisible at runtime unless `UML_GPU_EXPERIMENTAL_VULKAN=1` is set
 exactly. Under that gate, the host implements capset 4/version 0, HOST3D blob
 resources, ring-indexed deferred fences on the same transport pipeline the

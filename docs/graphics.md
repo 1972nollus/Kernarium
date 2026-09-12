@@ -2,16 +2,21 @@
 
 ## Current path
 
-macOS, iOS Simulator, and iOS device use one Virtio-GPU rendering path:
+macOS, iOS Simulator, and iOS device use one Virtio-GPU rendering path. The
+host GL provider differs by product:
 
 ```text
 guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
-    -> EGL/GLES through ANGLE Metal -> MTLTexture -> AppKit or UIKit
+    -> host GL provider -> MTLTexture -> AppKit or UIKit
 ```
 
-The graphics dependencies come from the verified `apple-gpu` prefix. No Apple
-GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, or a second ambient
-libepoxy/virglrenderer family.
+On macOS the provider is Mesa's Zink Gallium driver on the packaged
+KosmicKrisp Vulkan driver, reached through Mesa's surfaceless EGL platform; it
+renders on a desktop OpenGL 4.6 core context. On iOS Simulator and iOS device
+the provider is ANGLE's EGL/GLES facade on Metal. The graphics dependencies
+come from the verified `apple-gpu-vulkan-experiment` (macOS) or `apple-gpu`
+(iOS) prefix. No Apple GPU product links CGL, OpenGL.framework, EAGL,
+MoltenVK, a Vulkan loader, or a second ambient libepoxy/virglrenderer family.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
@@ -35,10 +40,17 @@ pointer hover, primary and auxiliary mouse buttons, and wheel input.
 
 ## Guest capability boundary
 
-The maintained guest path exposes Virgl desktop OpenGL 2.1 and OpenGL ES 3.0
-on the qualified images. GLES 2 and GLES 3 conformance matrices have been run
-on macOS and the signed 16 KiB iOS path. These results do not imply GLES 3.1,
-GLES 3.2, desktop OpenGL above the exposed Virgl profile, or Vulkan support.
+On the iOS products the maintained guest path exposes Virgl desktop OpenGL 2.1
+and OpenGL ES 3.0 on the qualified images. GLES 2 and GLES 3 conformance
+matrices have been run on the signed 16 KiB iOS path. Those results do not
+imply GLES 3.1, GLES 3.2, desktop OpenGL above the exposed Virgl profile, or
+Vulkan support.
+
+On macOS the guest reports desktop OpenGL 4.6 core through Virgl, because the
+host renders the Virgl command stream on a desktop OpenGL 4.6 core context.
+Video decode and native Metal texture sharing are ANGLE features and are not
+advertised by the macOS provider: scanouts of Virgl resources take the host
+readback path, while Venus scanouts keep their native Metal textures.
 
 Virgl exposes hardware bitstream decoding for H.264 baseline,
 constrained-baseline, main, and high profiles up to 4096x2304; HEVC Main and
@@ -65,9 +77,9 @@ advertise them. This boundary deliberately avoids guest-library forks or
 private profiles. Encoding, interlaced H.264, and other codec profiles are not
 advertised.
 
-Supported NV12 and P010 surfaces keep VideoToolbox's IOSurface-backed
-CoreVideo planes on the GPU: the host imports them through the ANGLE Metal
-device and copies each plane into the existing guest texture without changing
+Video decode is an iOS-product feature. Supported NV12 and P010 surfaces keep
+VideoToolbox's IOSurface-backed CoreVideo planes on the GPU: the host imports
+them through the ANGLE Metal device and copies each plane into the existing guest texture without changing
 its identity. IYUV and unsupported resource shapes may use a CPU conversion
 path. Native performance qualification requires zero sustained CPU fallback.
 Dropped superseded presentation frames are successful guest completions; they
