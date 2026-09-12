@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	66dba9cdf5f6769a08cfb17fb9da0cd4df5de7e6ff032fb6489ecfeff9b1ad8e	vrend: support GLES 3.0 MSAA on iOS Metal
-2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	4653737d419980467a8f71aaf6b04ec0bc11786264a2686a905edbf9a3a85d52	vrend: map GLES separate transform feedback buffers
-3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	152620daf0144aa3602966882384dd0e48d3b72d7e00eb6504e886426ced0141	vrend: stop advertising emulated GLES Z32_UNORM
-4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	d84f3fb208981a32d875110e5454d8e869dd21a8894e64b71b747bed7451d352	vrend: add VideoToolbox decode backend
-5	0005-vrend-use-base-instance-path-for-base-vertex-draws.patch	50d4b7e5608821a16639edcaa0ec14c8954fce63	371b8e7603ba0c0d5960d0ea42560a9cf33829af2d8bdb5f0278a82f1e5e2165	vrend: use base-instance path for base-vertex draws
-6	0006-venus-require-an-explicit-Darwin-Vulkan-provider.patch	abdd831ed0d0a744969b56bd5dfc4508ffe79a44	ed1efc0b3b7d570164c1e271e9a202bbfc938a1851328c227236afdd434ee73b	venus: require an explicit Darwin Vulkan provider
-7	0007-venus-use-truthful-Apple-external-memory-capabilitie.patch	6cceced89453b051d3b747fe022982fbfccab535	ddbd0dcb563416b7d16e2684fe35593739d69b46b6efb73e1bd4879a2166f39e	venus: use truthful Apple external-memory capabilities
-8	0008-util-fall-back-to-app-tmpdir-for-iOS-shmem.patch	31c415f86b7cc15bfe6a5c1f9f40d5249eaf6528	e8a3c8f577ad7d84507399ceb33d71870d7e0ab21749a147f012860d9431d4b5	util: fall back to app tmpdir for iOS shmem
-9	0009-venus-keep-pipelines-created-before-a-failure.patch	045dd1146284e9b7bab93c9015b2d58807a58ed2	7ef5c6ce6f9d5c1541e9dcbf4f95428187b537e3f7b07e3d47b1c7e5c456b6fc	venus: keep pipelines created before a failure
-10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	bb631e81d911c829e6895074003f75286eedb531c08388d84e5b2159afa6c708	venus: stage the host image copy reply
-11	0011-venus-separate-host-imports-from-optimal-images.patch	96a7d31b77d68b3e1a753d2d506bc0078d4edbe4	f3509f9d6d6541c795790ebbd999152faa8ca346f2897086334d9fa7fb5569a8	venus: separate host imports from optimal images
-12	0012-venus-expose-host-memory-for-linear-images.patch	f100e52c20faaa397a8478d3644b75ceae2765e1	45bc1a261564984af88129dd9b1504500c79e2d0450261fb262ec3b3e649025c	venus: expose host memory for linear images
-13	0013-venus-bridge-host-memory-through-guest-dma-bufs.patch	220e193b0b20cab518c038f5ef35b9b9aacd657e	b9fdeb0df557fafba4520623141060847680399a6acfd1a1e076501dc870ad40	venus: bridge host memory through guest dma-bufs
-14	0014-venus-present-native-Metal-scanouts.patch	65bd998e314450c82e500f6c48392a15e4749dcc	f346674752375419f45879cc9281a5755c2a86952094424227dbf83ae726bc82	venus: present native Metal scanouts
-15	0015-venus-transport-native-device-address-commands-and-m.patch	319477bee92e3cf25b7f28125273082aabda6f67	42e7902fec4ec9e2e31d110e919cdf03dfe74d896221d71fce34e165b1381d52	venus: transport native device-address commands and maintenance
-16	0016-virgl-reference-count-the-shared-fence-table.patch	677d60d74e7a458047aaaf9a87269f7a9eb0d486	92fa4ecc111a259ce25337fb1e3171ce940f13b6bbd2e75ff5cf2272a4d2454f	virgl: reference-count the shared fence table
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	fdc7ca01e8bf3c5ce25f4e3cdf88b970bf05322798421072b44771798985e9c1	vrend: support GLES 3.0 MSAA on iOS Metal
+2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	a89a1f353dadb19155bbecf271972d6cf10645940fd6114207ac0982a9c00230	vrend: map GLES separate transform feedback buffers
+3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	da04c6a9aa4f698a916b22172e4a5a5afba966a0c11aa5f88b3bafb0def045f8	vrend: stop advertising emulated GLES Z32_UNORM
+4	0004-vrend-add-VideoToolbox-decode-backend.patch	aa1ab702d027edb9b5df77171322f495b8cda027	be616296dc91babf1077256ed0494029ce82b263afee7d6372024ff9fb409b95	vrend: add VideoToolbox decode backend
+5	0005-vrend-use-base-instance-path-for-base-vertex-draws.patch	50d4b7e5608821a16639edcaa0ec14c8954fce63	aca998d1bfc62fece727c200fe538175236dcb3e6ce1fd49cab809825d31ed83	vrend: use base-instance path for base-vertex draws
+6	0006-venus-require-an-explicit-Darwin-Vulkan-provider.patch	abdd831ed0d0a744969b56bd5dfc4508ffe79a44	51209e6d1c1c4f9e7099b6f7045bf517e757c83623b17b9a633a5c8021f8faa5	venus: require an explicit Darwin Vulkan provider
+7	0007-venus-use-truthful-Apple-external-memory-capabilitie.patch	6cceced89453b051d3b747fe022982fbfccab535	4f583b7abfc761d98ba5df3308afe9f2c0465cf0bcc472be47069c91767f48f9	venus: use truthful Apple external-memory capabilities
+8	0008-util-fall-back-to-app-tmpdir-for-iOS-shmem.patch	31c415f86b7cc15bfe6a5c1f9f40d5249eaf6528	e1af01bd9b3aa287b56c34487f35b95bb03a5bfb20cc87a6c39d83be899e535d	util: fall back to app tmpdir for iOS shmem
+9	0009-venus-keep-pipelines-created-before-a-failure.patch	045dd1146284e9b7bab93c9015b2d58807a58ed2	1d3e5457e8488fbcc647f820236f16d805336688058b55e46afbd61c20c3fcda	venus: keep pipelines created before a failure
+10	0010-venus-stage-the-host-image-copy-reply.patch	0347bb216e56672cf7f0689fbaa85ea79078cc65	02e02635171b114fccfb4a08910c1d614db945a42a725258d7640de33e40f291	venus: stage the host image copy reply
+11	0011-venus-separate-host-imports-from-optimal-images.patch	96a7d31b77d68b3e1a753d2d506bc0078d4edbe4	46bc6385609c97f866010b90acb6b194f8eab249d68b014d88f2499ff6f2f7d8	venus: separate host imports from optimal images
+12	0012-venus-expose-host-memory-for-linear-images.patch	f100e52c20faaa397a8478d3644b75ceae2765e1	9fcf1e77ce177ed1f1b5ef059b3e5c657578696b734db24941b3e8ae08563f70	venus: expose host memory for linear images
+13	0013-venus-bridge-host-memory-through-guest-dma-bufs.patch	220e193b0b20cab518c038f5ef35b9b9aacd657e	07adf731aaa8c61b70f86644f92686ce1876409d0ccae120b5f41e0a4886bdb4	venus: bridge host memory through guest dma-bufs
+14	0014-venus-present-native-Metal-scanouts.patch	65bd998e314450c82e500f6c48392a15e4749dcc	7e1d59c712799a68b87a1d6a82714bdd420c7ae8c9071a12f7ca7428fdb3b71d	venus: present native Metal scanouts
+15	0015-venus-transport-native-device-address-commands-and-m.patch	319477bee92e3cf25b7f28125273082aabda6f67	d32e7f9ba76ca7885877f9dcb681ef1bdda477650322efbb9b84b5c7c9e8046a	venus: transport native device-address commands and maintenance
+16	0016-virgl-reference-count-the-shared-fence-table.patch	677d60d74e7a458047aaaf9a87269f7a9eb0d486	bd125421b71487b5659d79d905deff178d6f13c28f892a0d05cbaa7ed9cffcb8	virgl: reference-count the shared fence table
+17	0017-vrend-scope-the-Apple-GL-workarounds-to-Apple-s-own-.patch	5f896ece348316fd5c79e848d57cc158c24b04a5	6bd2130468d34e7ebd5e1a8cd2941d68b3418aabd341b1fd4abf5192a3c11905	vrend: scope the Apple GL workarounds to Apple's own driver
+18	0018-vrend-recognise-a-Mesa-host-driver-by-its-GL-vendor.patch	83010f3fcee4c9e81931a4e89a7c257135ea4646	213ed9e448df4d569c78cf26d253a0a1e2f8dd4384ebaa52ce75aa9c582c609e	vrend: recognise a Mesa host driver by its GL vendor
