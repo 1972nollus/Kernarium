@@ -1,0 +1,46 @@
+From b39d37c5d0740125969726e9d4de0934346b4c1a Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 20:58:49 +0900
+Subject: [PATCH 22/22] vrend: poll waiting queries on every fence pass
+
+A guest blocked on a query result spins on the buffer the host writes the
+result into and issues no further commands, so no later fence exists. The
+waiting queries were only re-checked when a fence retired in the same pass,
+and a host driver is allowed to answer "not available yet" to the first few
+non-blocking checks even after the work has finished. The two together
+wedge the guest for good: it polls memory the host has stopped updating.
+
+Check the waiting queries on every pass instead, before fences retire, and
+skip the walk entirely when none are waiting.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 100cf23..c82e04b 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -12178,11 +12178,19 @@ void vrend_renderer_check_fences(void)
+       }
+    }
+ 
++   /* Queries must be checked before fences are retired, and on every pass
++    * rather than only when a fence retired. A guest waiting for a query
++    * result spins on the buffer the host writes into and issues no further
++    * commands, so no later fence exists to trigger the check; and a host
++    * driver may answer "not available yet" to the first few non-blocking
++    * checks even once the work is done.
++    */
++   if (atomic_load(&vrend_state.has_waiting_queries))
++      vrend_renderer_check_queries();
++
+    if (list_is_empty(&retired_fences))
+       return;
+ 
+-   vrend_renderer_check_queries();
+-
+    list_for_each_entry_safe(struct vrend_fence, fence, &retired_fences, fences) {
+       struct vrend_context *ctx = fence->ctx;
+       ctx->fence_retire(fence->fence_id, ctx->fence_retire_data);

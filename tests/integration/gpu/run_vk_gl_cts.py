@@ -5020,11 +5020,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     options.rootfs_contract = contract
     # The GL46 scope is bound to the combined Vulkan/OpenGL derivative image
     # and its receipt, whichever stack renders it: guest Zink over Venus, or
-    # the guest Virgl driver over the host's Zink provider.
+    # the guest Virgl driver over the host's Zink provider. A developer shard
+    # of the gl46 leaf is in that scope too; it asks the guest for the same
+    # desktop OpenGL context an official matrix does.
     options.gl46_scope = (
         options.renderer == "zink"
         or options.matrix == "gl46"
         or options.config_inventory == "gl46"
+        or options.api == "gl46"
     )
     if options.gl46_scope and (
         options.rootfs_type != "ext4"
