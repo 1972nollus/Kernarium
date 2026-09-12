@@ -1,7 +1,7 @@
 From 7d560e8267b82a494e6c7cee959601f7c4a4c117 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:46:23 +0900
-Subject: [PATCH 17/27] vrend: scope the Apple GL workarounds to Apple's own
+Subject: [PATCH 17/28] vrend: scope the Apple GL workarounds to Apple's own
  driver
 
 The Apple workarounds in vrend are all properties of Apple's own OpenGL

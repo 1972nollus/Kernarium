@@ -1,7 +1,7 @@
 From f0565f0c6281178985718f09dd1e4cf6d3eb94b8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:26:14 +0900
-Subject: [PATCH 23/27] virgl: report renderer work that only a poll completes
+Subject: [PATCH 23/28] virgl: report renderer work that only a poll completes
 
 A guest blocked on a query result spins on the buffer the host fills and
 issues no further commands. The caller therefore has no fence of its own
