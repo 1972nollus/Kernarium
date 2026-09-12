@@ -1,7 +1,7 @@
 From 0562ac5c60a5c11dbf6f122206daa532c74eb1c8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
-Subject: [PATCH 04/28] vrend: add VideoToolbox decode backend
+Subject: [PATCH 04/29] vrend: add VideoToolbox decode backend
 
 ---
  meson.build                          |   19 +-

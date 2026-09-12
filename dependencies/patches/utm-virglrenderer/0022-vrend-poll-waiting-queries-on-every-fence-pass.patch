@@ -1,7 +1,7 @@
 From 1f3cd8e1956046c60f1a2d49f87d352d8543fbf2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 20:58:49 +0900
-Subject: [PATCH 22/28] vrend: poll waiting queries on every fence pass
+Subject: [PATCH 22/29] vrend: poll waiting queries on every fence pass
 
 A guest blocked on a query result spins on the buffer the host writes the
 result into and issues no further commands, so no later fence exists. The
