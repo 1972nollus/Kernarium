@@ -1,7 +1,7 @@
 From 67fd0d2747786026c0dabacbd17622a4bf9b13a3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 02:19:23 +0900
-Subject: [PATCH 23/56] kosmickrisp: implement RGB32 uniform texel buffers
+Subject: [PATCH 23/57] kosmickrisp: implement RGB32 uniform texel buffers
 
 ---
  src/kosmickrisp/vulkan/kk_buffer_view.c       |  24 +-
