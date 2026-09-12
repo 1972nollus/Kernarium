@@ -230,7 +230,8 @@ class OpenGLPlanTests(unittest.TestCase):
             path = fixtures.write_config_inventory_evidence(
                 directory, "gl46", contract, runtime_identity=runtime,
             )
-            configs, _ = common.load_config_inventory_evidence(path, "gl46", "16k", "vnc", contract, runtime)
+            configs, _ = common.load_config_inventory_evidence(
+                path, "gl46", "16k", "vnc", contract, runtime, renderer="zink")
             self.assertEqual([row.identifier for row in configs], [1, 2])
             original = path.read_text()
             for key, value in (("kosmickrisp_sha256", "3" * 64),
@@ -241,21 +242,32 @@ class OpenGLPlanTests(unittest.TestCase):
                 changed[key] = value
                 path.write_text(json.dumps(changed))
                 with self.subTest(key=key), self.assertRaises(common.CampaignError):
-                    common.load_config_inventory_evidence(path, "gl46", "16k", "vnc", contract, runtime)
+                    common.load_config_inventory_evidence(
+                        path, "gl46", "16k", "vnc", contract, runtime,
+                        renderer="zink")
             path.write_text(original)
             (directory / "artifacts/summary.txt").write_text("cts_rc=1\n")
             with self.assertRaisesRegex(common.CampaignError, "transport and artifacts"):
-                common.load_config_inventory_evidence(path, "gl46", "16k", "vnc", contract, runtime)
+                common.load_config_inventory_evidence(
+                    path, "gl46", "16k", "vnc", contract, runtime,
+                    renderer="zink")
 
-    def test_gl_discovery_is_separate_from_matrix_and_requires_zink(self) -> None:
+    def test_gl_discovery_is_separate_from_the_matrix_on_either_stack(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "receipt.json"
             path.write_text(json.dumps(self.receipt()))
             args = ["--renderer", "zink", "--config-inventory", "gl46",
                     "--rootfs-type", "ext4", "--rootfs-receipt", str(path)]
             self.assertEqual(common.parse_arguments(args).config_inventory, "gl46")
+            # Both GL46 stacks discover their own EGL configs: guest Zink over
+            # Venus, and guest Virgl over the host's Mesa Zink provider.
+            virgl = common.parse_arguments(args + ["--renderer", "virgl"])
+            self.assertEqual(
+                (virgl.config_inventory, virgl.renderer, virgl.gl46_scope),
+                ("gl46", "virgl", True),
+            )
             for extra in (["--qualification"], ["--egl-config-index", "0"],
-                          ["--case", "KHR-GL46.foo"], ["--renderer", "virgl"]):
+                          ["--case", "KHR-GL46.foo"]):
                 with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     common.parse_arguments(args + extra)
 
