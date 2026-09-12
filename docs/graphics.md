@@ -56,6 +56,12 @@ coherent buffers with shared host pages pinned into GL. The aperture is part
 of the experimental Vulkan device, so a macOS Virgl guest reaches 4.6 only
 when that device is enabled.
 
+That version is the profile the guest reports, not a conformance result. No
+GL46 conformance shard completes on the macOS Virgl stack: some workloads
+leave a fence that never retires, and the guest driver retries a failed
+transfer indefinitely, so a single host error stops the guest. Guest Zink over
+Venus remains the qualified desktop OpenGL path on macOS.
+
 Video decode and native Metal texture sharing are ANGLE features and are not
 advertised by the macOS provider: scanouts of Virgl resources take the host
 readback path, while Venus scanouts keep their native Metal textures.
