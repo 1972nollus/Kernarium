@@ -1,7 +1,7 @@
 From aa9f00317aed874c8734511fbb45788763ac8fac Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:45:41 +0900
-Subject: [PATCH 25/27] vrend: do not require EXT_texture_shadow_lod for a
+Subject: [PATCH 25/26] vrend: do not require EXT_texture_shadow_lod for a
  gather
 
 For TGSI_OPCODE_TG4 the operand slot the emitter calls the bias holds

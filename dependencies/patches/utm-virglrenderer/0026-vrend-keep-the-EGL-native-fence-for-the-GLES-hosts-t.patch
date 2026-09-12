@@ -1,7 +1,7 @@
-From 4acf56b1944d45a9bbcbe581d9878220bff40f18 Mon Sep 17 00:00:00 2001
+From bb7b8c6c2c3d26f5300f654afa96960bcbbb1f98 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 22:19:52 +0900
-Subject: [PATCH 27/27] vrend: keep the EGL native fence for the GLES hosts
+Subject: [PATCH 26/26] vrend: keep the EGL native fence for the GLES hosts
  that need it
 
 Creating an EGL native fence makes the GL driver submit a command
@@ -23,10 +23,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 18334a4..05d9150 100644
+index 6ec1e87..366e304 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -8017,7 +8017,18 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -8007,7 +8007,18 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
        vrend_state.use_external_blob = true;
  
  #ifdef HAVE_EPOXY_EGL_H
