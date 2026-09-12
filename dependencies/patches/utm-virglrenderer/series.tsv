@@ -19,4 +19,4 @@ order	patch	stable_patch_id	sha256	subject
 17	0017-vrend-scope-the-Apple-GL-workarounds-to-Apple-s-own-.patch	5f896ece348316fd5c79e848d57cc158c24b04a5	069fb289dba912d943222a2b4ee8fc3abf49550f15186b94511e2618717dd9d5	vrend: scope the Apple GL workarounds to Apple's own driver
 18	0018-vrend-recognise-a-Mesa-host-driver-by-its-GL-vendor.patch	83010f3fcee4c9e81931a4e89a7c257135ea4646	4fc616fe5f76238585def109fa5fb81c6326862d52f7c6d1b2f61fc3bf68d13b	vrend: recognise a Mesa host driver by its GL vendor
 19	0019-virgl-share-the-host-shared-memory-helper-outside-Ve.patch	a3ed1c638b4d40a3c194f2f749ba0c3dc0df0e49	b1a2410895f54b4996ba760296a7a9fe16fbc3a90d9c3e88fa628581dd0a816d	virgl: share the host shared-memory helper outside Venus
-20	0020-vrend-back-coherent-buffers-with-shared-host-pages.patch	796b2eb0d1443a8ea8a9908e684c2d2bcd689b5b	451bb757c78f1f6a64b2fc3f3ee29606b05171917873e605a72067b061286fa3	vrend: back coherent buffers with shared host pages
+20	0020-vrend-back-coherent-buffers-with-shared-host-pages.patch	bd586d968aa516a71a0287ecec9e1d785ee51d32	a29a72f168b5bb95c3c988d2f6a7d2889b8b9be24cc6216dbbdd715684e8378b	vrend: back coherent buffers with shared host pages

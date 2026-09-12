@@ -1,4 +1,4 @@
-From 22e73a8c0812dc9d28c5157a10cf09f99daaf676 Mon Sep 17 00:00:00 2001
+From 6a7ef7377d8fd158634dcfbf249c3fdf7599014a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:41:23 +0900
 Subject: [PATCH 20/20] vrend: back coherent buffers with shared host pages
@@ -14,17 +14,19 @@ buffer's storage through GL_AMD_pinned_memory, which a Zink host provider
 implements over Vulkan external host memory. The same pages then back the
 GPU's view and the guest's mapping, the blob exports as a shared-memory
 descriptor the way a Venus blob does, and the host map short-circuits to
-the existing mapping. Hosts without pinned memory keep the previous
-storage paths.
+the existing mapping. A driver keeps the buffer alive past glDeleteBuffers
+and may still have the pages in the GPU's address space, so the pages are
+released behind a fence rather than at destroy time. Hosts without pinned
+memory keep the previous storage paths.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c | 68 ++++++++++++++++++++++++++++++++++++--
- src/vrend/vrend_renderer.h |  5 +++
- 2 files changed, 71 insertions(+), 2 deletions(-)
+ src/vrend/vrend_renderer.c | 144 ++++++++++++++++++++++++++++++++++++-
+ src/vrend/vrend_renderer.h |   5 ++
+ 2 files changed, 147 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 9924990..2fa4cef 100644
+index 9924990..100cf23 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -42,6 +42,7 @@
@@ -72,7 +74,95 @@ index 9924990..2fa4cef 100644
  #if defined(HAVE_EPOXY_EGL_H) && defined(ENABLE_GBM_ALLOCATION)
     struct vrend_resource *res = (struct vrend_resource *)pres;
  
-@@ -8523,6 +8533,44 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
+@@ -8015,6 +8025,75 @@ fail:
+    return EINVAL;
+ }
+ 
++/* Pinned pages outlive the GL buffer they were pinned into: the driver keeps
++ * the buffer alive until every command that reads it has retired, and a
++ * driver that imported the pages into the GPU's address space faults if they
++ * are unmapped before then. Hold each retired allocation behind a fence.
++ */
++struct vrend_retired_shm {
++   struct list_head head;
++   struct virgl_host_shm *shm;
++   GLsync fence;
++};
++
++static struct list_head vrend_retired_shm_list;
++static bool vrend_retired_shm_ready;
++static unsigned vrend_retired_shm_count;
++
++/* Release every retired allocation whose fence has signalled. With `force`,
++ * release all of them; the caller has already waited for the GPU to idle.
++ */
++static void vrend_drain_retired_shm(bool force)
++{
++   if (!vrend_retired_shm_ready)
++      return;
++
++   list_for_each_entry_safe(struct vrend_retired_shm, entry,
++                            &vrend_retired_shm_list, head) {
++      if (!force) {
++         const GLenum status = glClientWaitSync(entry->fence, 0, 0);
++         if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
++            continue;
++      }
++      list_del(&entry->head);
++      glDeleteSync(entry->fence);
++      virgl_host_shm_free(entry->shm);
++      free(entry);
++      vrend_retired_shm_count--;
++   }
++}
++
++static void vrend_retire_host_shm(struct virgl_host_shm *shm)
++{
++   if (!vrend_retired_shm_ready) {
++      list_inithead(&vrend_retired_shm_list);
++      vrend_retired_shm_ready = true;
++   }
++   vrend_drain_retired_shm(false);
++
++   struct vrend_retired_shm *entry = malloc(sizeof(*entry));
++   GLsync fence = entry ? glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) : NULL;
++   if (!fence) {
++      free(entry);
++      glFinish();
++      virgl_host_shm_free(shm);
++      return;
++   }
++
++   entry->shm = shm;
++   entry->fence = fence;
++   list_addtail(&entry->head, &vrend_retired_shm_list);
++   vrend_retired_shm_count++;
++
++   /* A guest that churns coherent buffers must not accumulate host mappings
++    * faster than the fences retire them.
++    */
++   if (vrend_retired_shm_count > 64) {
++      glFinish();
++      vrend_drain_retired_shm(true);
++   }
++}
++
+ void
+ vrend_renderer_fini(void)
+ {
+@@ -8034,6 +8113,11 @@ vrend_renderer_fini(void)
+ 
+    vrend_destroy_context(vrend_state.ctx0);
+ 
++   if (vrend_retired_shm_ready) {
++      glFinish();
++      vrend_drain_retired_shm(true);
++   }
++
+    vrend_state.current_ctx = NULL;
+    vrend_state.current_hw_ctx = NULL;
+ 
+@@ -8523,6 +8607,46 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
     return 0;
  }
  
@@ -88,6 +178,8 @@ index 9924990..2fa4cef 100644
 +{
 +   if (!has_feature(feat_amd_pinned_memory) || vrend_state.use_external_blob)
 +      return false;
++
++   vrend_drain_retired_shm(false);
 +
 +   struct virgl_host_shm *shm = virgl_host_shm_alloc(width, 0);
 +   if (!shm)
@@ -117,7 +209,7 @@ index 9924990..2fa4cef 100644
  static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint32_t flags)
  {
  
-@@ -8545,7 +8593,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8545,7 +8669,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
     glBindBufferARB(gr->target, gr->gl_id);
  
     if (buffer_storage_flags) {
@@ -128,7 +220,7 @@ index 9924990..2fa4cef 100644
           glBufferStorage(gr->target, width, NULL, buffer_storage_flags);
           gr->map_info = vrend_state.inferred_gl_caching_type;
        }
-@@ -8583,7 +8633,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8583,7 +8709,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
           return;
        }
  
@@ -139,17 +231,17 @@ index 9924990..2fa4cef 100644
        gr->buffer_storage_flags = buffer_storage_flags;
        gr->size = width;
     } else
-@@ -9257,6 +9309,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9257,6 +9385,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
        glDeleteMemoryObjectsEXT(1, &res->memobj);
     }
  
 +   if (res->host_shm)
-+      virgl_host_shm_free(res->host_shm);
++      vrend_retire_host_shm(res->host_shm);
 +
  #if (defined(ENABLE_GBM) || defined(ENABLE_METAL)) && defined(HAVE_EPOXY_EGL_H)
     if (res->egl_image) {
        virgl_egl_image_destroy(egl, res->egl_image);
-@@ -14372,6 +14427,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
+@@ -14372,6 +14503,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
  int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t *out_size)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
@@ -162,7 +254,7 @@ index 9924990..2fa4cef 100644
     if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
        return -EINVAL;
  
-@@ -14388,6 +14449,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
+@@ -14388,6 +14525,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
  int vrend_renderer_resource_unmap(struct pipe_resource *pres)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
