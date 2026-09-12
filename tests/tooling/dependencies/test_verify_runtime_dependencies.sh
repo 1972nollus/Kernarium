@@ -98,7 +98,7 @@ xcrun --sdk macosx clang -arch arm64 \
 	-F"$PREFIX/Frameworks" -framework EGL -framework GLESv2 \
 	-Wl,-rpath,@executable_path/Frameworks \
 	-o "$RUNTIME/apple-gpu-client-missing-marker"
-expect_rejection 'host-provider marker' \
+expect_rejection 'host GL provider marker' \
 	--binary "$RUNTIME/apple-gpu-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
 	--framework-directory "$RUNTIME/Frameworks"
@@ -137,22 +137,43 @@ expect_rejection 'forbidden graphics dependency' \
 	--binary "$TEST_ROOT/opengl-client"
 
 mkdir -p -- "$PREFIX/Frameworks/KosmicKrisp.framework/Headers" \
-	"$PREFIX/Frameworks/KosmicKrisp.framework/Modules"
+	"$PREFIX/Frameworks/KosmicKrisp.framework/Modules" \
+	"$PREFIX/Frameworks/MesaEGL.framework" \
+	"$PREFIX/Frameworks/MesaGallium.framework"
 cat >"$TEST_ROOT/kosmickrisp.c" <<'EOF'
 int uml_kosmickrisp_fixture(void) { return 29; }
 EOF
+cat >"$TEST_ROOT/mesa-egl.c" <<'EOF'
+int uml_mesa_egl_fixture(void) { return 31; }
+EOF
+cat >"$TEST_ROOT/mesa-gallium.c" <<'EOF'
+int uml_mesa_gallium_fixture(void) { return 37; }
+EOF
 cat >"$TEST_ROOT/vulkan-framework-main.c" <<'EOF'
 #include <stdio.h>
-int uml_egl_fixture(void);
-int uml_gles_fixture(void);
+int uml_mesa_egl_fixture(void);
+int uml_mesa_gallium_fixture(void);
 int uml_kosmickrisp_fixture(void);
 int main(void)
 {
-	puts("Virgl ANGLE/Metal provider: hardware");
-	return uml_egl_fixture() + uml_gles_fixture() +
+	puts("Virgl Zink/KosmicKrisp provider: hardware");
+	return uml_mesa_egl_fixture() + uml_mesa_gallium_fixture() +
 	       uml_kosmickrisp_fixture() == 0;
 }
 EOF
+for framework in MesaEGL MesaGallium; do
+	case "$framework" in
+	MesaEGL) source="$TEST_ROOT/mesa-egl.c" ;;
+	MesaGallium) source="$TEST_ROOT/mesa-gallium.c" ;;
+	esac
+	xcrun --sdk macosx clang -arch arm64 -dynamiclib \
+		-Wl,-install_name,"@rpath/$framework.framework/$framework" \
+		"$source" -o "$PREFIX/Frameworks/$framework.framework/$framework"
+	cat >"$PREFIX/Frameworks/$framework.framework/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>$framework</string></dict></plist>
+EOF
+done
 xcrun --sdk macosx clang -arch arm64 -dynamiclib \
 	-Wl,-install_name,@rpath/KosmicKrisp.framework/KosmicKrisp \
 	"$TEST_ROOT/kosmickrisp.c" \
@@ -165,25 +186,34 @@ printf '%s\n' 'fixture header' \
 	>"$PREFIX/Frameworks/KosmicKrisp.framework/Headers/KosmicKrisp.h"
 printf '%s\n' 'framework module KosmicKrisp {}' \
 	>"$PREFIX/Frameworks/KosmicKrisp.framework/Modules/module.modulemap"
-cp -R "$PREFIX/Frameworks/KosmicKrisp.framework" "$RUNTIME/Frameworks/"
+VULKAN_RUNTIME="$TEST_ROOT/vulkan-runtime"
+mkdir -p -- "$VULKAN_RUNTIME/Frameworks"
+for framework in KosmicKrisp MesaEGL MesaGallium; do
+	cp -R "$PREFIX/Frameworks/$framework.framework" \
+		"$VULKAN_RUNTIME/Frameworks/"
+done
 xcrun --sdk macosx clang -arch arm64 "$TEST_ROOT/vulkan-framework-main.c" \
-	-F"$PREFIX/Frameworks" -framework EGL -framework GLESv2 \
+	-F"$PREFIX/Frameworks" -framework MesaEGL -framework MesaGallium \
 	-framework KosmicKrisp -Wl,-rpath,@executable_path/Frameworks \
-	-o "$RUNTIME/apple-gpu-vulkan-client"
-expect_rejection 'forbidden graphics dependency' \
-	--binary "$RUNTIME/apple-gpu-vulkan-client" \
-	--apple-gpu-prefix "$PREFIX" \
-	--framework-directory "$RUNTIME/Frameworks"
-"$VERIFIER" --binary "$RUNTIME/apple-gpu-vulkan-client" \
+	-o "$VULKAN_RUNTIME/apple-gpu-vulkan-client"
+expect_rejection 'unauthenticated Apple GPU dependency' \
+	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client"
+"$VERIFIER" --binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
 	--apple-gpu-product apple-gpu-vulkan-experiment \
-	--framework-directory "$RUNTIME/Frameworks" >/dev/null
+	--framework-directory "$VULKAN_RUNTIME/Frameworks" >/dev/null
 
-printf '\0' >>"$RUNTIME/Frameworks/KosmicKrisp.framework/KosmicKrisp"
-expect_rejection 'does not match the authenticated prefix' \
-	--binary "$RUNTIME/apple-gpu-vulkan-client" \
+expect_rejection 'host GL provider marker' \
+	--binary "$RUNTIME/apple-gpu-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
 	--apple-gpu-product apple-gpu-vulkan-experiment \
-	--framework-directory "$RUNTIME/Frameworks"
+	--framework-directory "$VULKAN_RUNTIME/Frameworks"
+
+printf '\0' >>"$VULKAN_RUNTIME/Frameworks/KosmicKrisp.framework/KosmicKrisp"
+expect_rejection 'does not match the authenticated prefix' \
+	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
+	--apple-gpu-prefix "$PREFIX" \
+	--apple-gpu-product apple-gpu-vulkan-experiment \
+	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 
 printf '%s\n' 'runtime dependency closure fixture passed'
