@@ -4780,7 +4780,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--context", choices=("egl",), default="egl")
     selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--case", type=exact_case)
+    selection.add_argument(
+        "--case",
+        type=exact_case,
+        action="append",
+        help="exact CTS case, repeatable in CTS traversal order",
+    )
     selection.add_argument("--fraction", type=parse_fraction)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--config-inventory-run", type=Path)
@@ -4932,6 +4937,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             )
         if matrix_only_arguments:
             parser.error("a developer shard does not accept matrix options")
+        if options.case is not None and len(set(options.case)) != len(options.case):
+            parser.error("--case must not repeat a case")
     if options.seed is None:
         options.seed = 0
     if options.shard_timeout is None:
@@ -5092,7 +5099,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         suffix = campaign.identifier
     elif not options.inventory:
         leaf = options.leaves[options.leaf]
-        exact_cases = (options.case,) if options.case is not None else ()
+        exact_cases = tuple(options.case) if options.case is not None else ()
         selection = Selection(
             leaf, exact_cases, fraction_index, fraction_count
         )
