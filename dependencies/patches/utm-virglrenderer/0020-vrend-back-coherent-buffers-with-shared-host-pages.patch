@@ -1,4 +1,4 @@
-From 6a7ef7377d8fd158634dcfbf249c3fdf7599014a Mon Sep 17 00:00:00 2001
+From 3862794dd7507cf6f3219d3103898c18821ce56e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:41:23 +0900
 Subject: [PATCH 20/23] vrend: back coherent buffers with shared host pages
@@ -21,12 +21,12 @@ memory keep the previous storage paths.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c | 144 ++++++++++++++++++++++++++++++++++++-
+ src/vrend/vrend_renderer.c | 159 ++++++++++++++++++++++++++++++++++++-
  src/vrend/vrend_renderer.h |   5 ++
- 2 files changed, 147 insertions(+), 2 deletions(-)
+ 2 files changed, 162 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 9924990..100cf23 100644
+index 9924990..5809e12 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -42,6 +42,7 @@
@@ -74,7 +74,7 @@ index 9924990..100cf23 100644
  #if defined(HAVE_EPOXY_EGL_H) && defined(ENABLE_GBM_ALLOCATION)
     struct vrend_resource *res = (struct vrend_resource *)pres;
  
-@@ -8015,6 +8025,75 @@ fail:
+@@ -8015,6 +8025,90 @@ fail:
     return EINVAL;
  }
  
@@ -92,6 +92,14 @@ index 9924990..100cf23 100644
 +static struct list_head vrend_retired_shm_list;
 +static bool vrend_retired_shm_ready;
 +static unsigned vrend_retired_shm_count;
++static size_t vrend_retired_shm_bytes;
++
++/* A retired allocation stays resident on the host until its fence signals, so
++ * the wait list is a memory budget as much as a count. Both bounds are small
++ * enough that a guest churning coherent buffers cannot inflate the process.
++ */
++#define VREND_RETIRED_SHM_MAX_COUNT 64
++#define VREND_RETIRED_SHM_MAX_BYTES (64u * 1024u * 1024u)
 +
 +/* Release every retired allocation whose fence has signalled. With `force`,
 + * release all of them; the caller has already waited for the GPU to idle.
@@ -104,12 +112,17 @@ index 9924990..100cf23 100644
 +   list_for_each_entry_safe(struct vrend_retired_shm, entry,
 +                            &vrend_retired_shm_list, head) {
 +      if (!force) {
-+         const GLenum status = glClientWaitSync(entry->fence, 0, 0);
++         /* Without the flush bit a fence that no later command flushed never
++          * signals, and the pages it guards are never handed back.
++          */
++         const GLenum status =
++            glClientWaitSync(entry->fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
 +         if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
 +            continue;
 +      }
 +      list_del(&entry->head);
 +      glDeleteSync(entry->fence);
++      vrend_retired_shm_bytes -= entry->shm->size;
 +      virgl_host_shm_free(entry->shm);
 +      free(entry);
 +      vrend_retired_shm_count--;
@@ -137,11 +150,13 @@ index 9924990..100cf23 100644
 +   entry->fence = fence;
 +   list_addtail(&entry->head, &vrend_retired_shm_list);
 +   vrend_retired_shm_count++;
++   vrend_retired_shm_bytes += shm->size;
 +
 +   /* A guest that churns coherent buffers must not accumulate host mappings
 +    * faster than the fences retire them.
 +    */
-+   if (vrend_retired_shm_count > 64) {
++   if (vrend_retired_shm_count > VREND_RETIRED_SHM_MAX_COUNT ||
++       vrend_retired_shm_bytes > VREND_RETIRED_SHM_MAX_BYTES) {
 +      glFinish();
 +      vrend_drain_retired_shm(true);
 +   }
@@ -150,7 +165,7 @@ index 9924990..100cf23 100644
  void
  vrend_renderer_fini(void)
  {
-@@ -8034,6 +8113,11 @@ vrend_renderer_fini(void)
+@@ -8034,6 +8128,11 @@ vrend_renderer_fini(void)
  
     vrend_destroy_context(vrend_state.ctx0);
  
@@ -162,7 +177,7 @@ index 9924990..100cf23 100644
     vrend_state.current_ctx = NULL;
     vrend_state.current_hw_ctx = NULL;
  
-@@ -8523,6 +8607,46 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
+@@ -8523,6 +8622,46 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
     return 0;
  }
  
@@ -209,7 +224,7 @@ index 9924990..100cf23 100644
  static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint32_t flags)
  {
  
-@@ -8545,7 +8669,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8545,7 +8684,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
     glBindBufferARB(gr->target, gr->gl_id);
  
     if (buffer_storage_flags) {
@@ -220,7 +235,7 @@ index 9924990..100cf23 100644
           glBufferStorage(gr->target, width, NULL, buffer_storage_flags);
           gr->map_info = vrend_state.inferred_gl_caching_type;
        }
-@@ -8583,7 +8709,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8583,7 +8724,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
           return;
        }
  
@@ -231,7 +246,7 @@ index 9924990..100cf23 100644
        gr->buffer_storage_flags = buffer_storage_flags;
        gr->size = width;
     } else
-@@ -9257,6 +9385,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9257,6 +9400,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
        glDeleteMemoryObjectsEXT(1, &res->memobj);
     }
  
@@ -241,7 +256,7 @@ index 9924990..100cf23 100644
  #if (defined(ENABLE_GBM) || defined(ENABLE_METAL)) && defined(HAVE_EPOXY_EGL_H)
     if (res->egl_image) {
        virgl_egl_image_destroy(egl, res->egl_image);
-@@ -14372,6 +14503,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
+@@ -14372,6 +14518,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
  int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t *out_size)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
@@ -254,7 +269,7 @@ index 9924990..100cf23 100644
     if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
        return -EINVAL;
  
-@@ -14388,6 +14525,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
+@@ -14388,6 +14540,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
  int vrend_renderer_resource_unmap(struct pipe_resource *pres)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
