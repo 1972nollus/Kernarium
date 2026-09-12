@@ -1,7 +1,7 @@
 From e0a96c4064b3bea1dd4f9284e1c887f8a8193ead Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:55:42 +0900
-Subject: [PATCH 26/26] vrend: declare integer shader types on a desktop core
+Subject: [PATCH 26/27] vrend: declare integer shader types on a desktop core
  profile
 
 use_integer() asks the GL vendor string whether the emitted shaders

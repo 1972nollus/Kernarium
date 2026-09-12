@@ -1,7 +1,7 @@
 From 96ed7dcc366175b3ee5c7be673e10b9827842fbe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:38:45 +0900
-Subject: [PATCH 24/26] vrend: stop a context error from stranding the guest
+Subject: [PATCH 24/27] vrend: stop a context error from stranding the guest
 
 A command that reports a context error aborts the rest of its buffer and
 leaves the context in error for good: every later submit fails the

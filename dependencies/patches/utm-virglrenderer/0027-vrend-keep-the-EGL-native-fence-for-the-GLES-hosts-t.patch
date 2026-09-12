@@ -1,0 +1,48 @@
+From 4acf56b1944d45a9bbcbe581d9878220bff40f18 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 22:19:52 +0900
+Subject: [PATCH 27/27] vrend: keep the EGL native fence for the GLES hosts
+ that need it
+
+Creating an EGL native fence makes the GL driver submit a command
+buffer and export a semaphore for every guest fence. A host driver
+with no kernel fence of its own emulates the descriptor, and the
+per-fence command buffers pile up unrecycled while the guest keeps
+fencing: a sample of a desktop GL host taken 30 s into a conformance
+run shows 48000 live driver command allocators and 2.2 million driver
+resource pools, several gigabytes of host memory, all created under
+eglCreateSyncKHR.
+
+The renderer only ever asks a fence whether its work has finished, and
+the GL sync object answers that. Use the native fence only on the GLES
+hosts whose fence-descriptor path it was written for.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 18334a4..05d9150 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -8017,7 +8017,18 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+       vrend_state.use_external_blob = true;
+ 
+ #ifdef HAVE_EPOXY_EGL_H
+-   vrend_state.use_egl_fence = virgl_egl_supports_fences(egl);
++   /* An EGL native fence asks the GL driver for a fence it can hand out as a
++    * file descriptor, which forces a real command-buffer submission and an
++    * exportable semaphore for every guest fence. A driver with no kernel
++    * fence of its own emulates that, and the per-fence command buffers it
++    * allocates are never recycled while the guest keeps fencing: a GL
++    * workload costs the host gigabytes within a minute. The GL sync object
++    * answers the only question this renderer asks of a fence -- has the work
++    * finished -- so keep the native fence for the GLES hosts whose fence-fd
++    * path it was written for.
++    */
++   vrend_state.use_egl_fence = virgl_egl_supports_fences(egl) &&
++                               vrend_state.use_gles;
+ #endif
+ 
+    if (!vrend_check_no_error(vrend_state.ctx0)) {
