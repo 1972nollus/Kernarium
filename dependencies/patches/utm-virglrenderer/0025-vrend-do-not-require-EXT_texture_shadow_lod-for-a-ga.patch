@@ -1,0 +1,38 @@
+From aa9f00317aed874c8734511fbb45788763ac8fac Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 21:45:41 +0900
+Subject: [PATCH 25/25] vrend: do not require EXT_texture_shadow_lod for a
+ gather
+
+For TGSI_OPCODE_TG4 the operand slot the emitter calls the bias holds
+the shadow comparison value, so every textureGather on a 2D-array or
+cube shadow sampler asked the host for EXT_texture_shadow_lod. A gather
+on a shadow sampler is core GLSL and a desktop GL host has no reason to
+implement that extension, so the generated shader failed to compile and
+put the context into error, which on this host costs the rest of the
+run rather than the one draw.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_shader.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
+index 39895ce..3bad057 100644
+--- a/src/vrend/vrend_shader.c
++++ b/src/vrend/vrend_shader.c
+@@ -3366,8 +3366,12 @@ static void translate_tex(struct dump_ctx *ctx,
+ 
+    bool has_bias = strbuf_get_len (&bias_buf) != 0;
+    bool has_offset = strbuf_get_len (&offset_buf) != 0;
+-   // EXT_texture_shadow_lod defines a few more functions handling bias
+-   if (has_bias &&
++   // EXT_texture_shadow_lod defines a few more functions handling bias.
++   // TG4 is not one of them: for a gather the same slot carries the shadow
++   // comparison value, and textureGather on a shadow sampler is core GLSL.
++   // Requiring the extension there fails to compile on a host that has no
++   // reason to implement it.
++   if (has_bias && inst->Instruction.Opcode != TGSI_OPCODE_TG4 &&
+        (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
+         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE ||
+         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY))

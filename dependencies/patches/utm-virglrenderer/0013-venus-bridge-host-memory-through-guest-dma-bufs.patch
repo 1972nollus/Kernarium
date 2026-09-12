@@ -1,7 +1,7 @@
 From 17a24a4e17064bfe376d1dede0f5802209ddd59a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
-Subject: [PATCH 13/24] venus: bridge host memory through guest dma-bufs
+Subject: [PATCH 13/25] venus: bridge host memory through guest dma-bufs
 
 ---
  src/venus/vkr_context.c         |  78 +++++++++--

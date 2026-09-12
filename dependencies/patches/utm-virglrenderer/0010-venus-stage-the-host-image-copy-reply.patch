@@ -1,7 +1,7 @@
 From e9789110401c406a6fdb46ea21d75ca664f86336 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 08:00:36 +0900
-Subject: [PATCH 10/24] venus: stage the host image copy reply
+Subject: [PATCH 10/25] venus: stage the host image copy reply
 
 vkCopyImageToMemoryMESA points the driver straight at the reply blob so the
 temporary allocation and copy are skipped.  That blob is guest-visible
