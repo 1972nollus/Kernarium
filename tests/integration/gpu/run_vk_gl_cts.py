@@ -145,6 +145,9 @@ CAPSET_CHUNK = re.compile(
 CAPSET_END = re.compile(
     r"UML_GPU_CAPSET_END\|id=([0-9]+)\|chunks=([0-9]+)\Z"
 )
+# The experimental Vulkan device reports this capset alongside the two Virgl
+# ones. It carries the Venus protocol identity, not a Virgl capability record.
+VENUS_CAPSET_ID = 4
 NATIVE_DISPLAY_FINAL = re.compile(
     r"Native display final: guest ([0-9]+) presented ([0-9]+) "
     r"dropped ([0-9]+) cpu-fallback ([0-9]+)"
@@ -2490,7 +2493,15 @@ def decode_report_text(value: str, field: str) -> str:
     return decoded
 
 
-def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
+def parse_gpu_capability_report(
+    transcript: str, *, venus_capset: bool = False
+) -> dict[str, Any]:
+    """Decode the host capability report the emulator prints at start-up.
+
+    A run that enables the experimental Vulkan device also reports the
+    Venus capset. It is not a Virgl capset and has no Virgl layout, so it
+    is recorded by identity alone and kept out of `virgl_capsets`.
+    """
     contexts: dict[tuple[int, int], dict[str, Any]] = {}
     context_extensions: dict[tuple[int, int], list[str]] = {}
     capsets: dict[int, dict[str, Any]] = {}
@@ -2629,9 +2640,11 @@ def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
             raise CampaignError("failed host context has contradictory evidence")
         serialized_contexts.append(context)
 
-    if set(capsets) != {1, 2}:
+    expected_capsets = {1, 2} | ({VENUS_CAPSET_ID} if venus_capset else set())
+    if set(capsets) != expected_capsets:
         raise CampaignError("GPU capability report omitted a Virgl capset")
     serialized_capsets: list[dict[str, Any]] = []
+    serialized_venus: dict[str, Any] | None = None
     for identifier in sorted(capsets):
         capset = capsets[identifier]
         expected_chunks = capset["expected_chunks"]
@@ -2644,24 +2657,28 @@ def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
         )
         if len(payload) != capset["size"]:
             raise CampaignError(f"Virgl capset {identifier} size changed")
+        row: dict[str, Any] = {
+            "id": identifier,
+            "maximum_version": capset["maximum_version"],
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "data_hex": payload.hex(),
+        }
+        if identifier == VENUS_CAPSET_ID:
+            serialized_venus = row
+            continue
         try:
-            decoded = virgl_capset.decode_capset(identifier, payload)
+            row["decoded"] = virgl_capset.decode_capset(identifier, payload)
         except ValueError as error:
             raise CampaignError(str(error)) from error
-        serialized_capsets.append(
-            {
-                "id": identifier,
-                "maximum_version": capset["maximum_version"],
-                "size": len(payload),
-                "sha256": hashlib.sha256(payload).hexdigest(),
-                "data_hex": payload.hex(),
-                "decoded": decoded,
-            }
-        )
-    return {
+        serialized_capsets.append(row)
+    report: dict[str, Any] = {
         "host_contexts": serialized_contexts,
         "virgl_capsets": serialized_capsets,
     }
+    if serialized_venus is not None:
+        report["venus_capset"] = serialized_venus
+    return report
 
 
 def parse_native_display_final(transcript: str) -> dict[str, int]:
@@ -5411,7 +5428,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     metadata["console_sha256"] = sha256_file(log_path)
     if options.renderer == "virgl":
         validate_host_backend(transcript)
-        metadata.update(parse_gpu_capability_report(transcript))
+        metadata.update(
+            parse_gpu_capability_report(
+                transcript,
+                venus_capset="UML_GPU_EXPERIMENTAL_VULKAN"
+                in gl_scope_launch_environment(options),
+            )
+        )
     if options.display == "native":
         metadata["native_display_final"] = parse_native_display_final(transcript)
     write_json(artifact_directory / "run.json", metadata)

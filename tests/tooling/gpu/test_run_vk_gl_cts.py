@@ -282,7 +282,7 @@ def framed_artifact(name: str, payload: bytes) -> str:
     return "\n".join(lines) + "\n"
 
 
-def gpu_capability_report() -> str:
+def gpu_capability_report(*, venus_capset: bool = False) -> str:
     lines: list[str] = []
     extensions = ["GL_EXT_alpha", "GL_EXT_beta"]
     for major, minor in ((3, 0), (3, 1), (3, 2)):
@@ -305,10 +305,10 @@ def gpu_capability_report() -> str:
     capset_v2 = bytearray(1408)
     struct.pack_into("<I", capset_v2, 0, 2)
     capset_v2[696:705] = b"renderer\0"
-    for identifier, version, payload in (
-        (1, 1, bytes(capset_v1)),
-        (2, 2, bytes(capset_v2)),
-    ):
+    reported = [(1, 1, bytes(capset_v1)), (2, 2, bytes(capset_v2))]
+    if venus_capset:
+        reported.append((cts.VENUS_CAPSET_ID, 0, bytes(range(16))))
+    for identifier, version, payload in reported:
         lines.extend(
             (
                 "UML_GPU_CAPSET_BEGIN|"
@@ -1327,6 +1327,20 @@ native_display_cleanup
             changed_comparison["capsets"][0]["differences"][0]["field"],
             "$.decoded.v1.glsl_level",
         )
+        venus = cts.parse_gpu_capability_report(
+            gpu_capability_report(venus_capset=True), venus_capset=True
+        )
+        self.assertEqual(
+            [capset["id"] for capset in venus["virgl_capsets"]], [1, 2]
+        )
+        self.assertEqual(venus["venus_capset"]["id"], cts.VENUS_CAPSET_ID)
+        self.assertEqual(venus["venus_capset"]["size"], 16)
+        with self.assertRaisesRegex(cts.CampaignError, "omitted a Virgl capset"):
+            cts.parse_gpu_capability_report(
+                gpu_capability_report(venus_capset=True)
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "omitted a Virgl capset"):
+            cts.parse_gpu_capability_report(report, venus_capset=True)
         with self.assertRaisesRegex(cts.CampaignError, "omitted an ES 3.x"):
             cts.parse_gpu_capability_report(
                 "\n".join(
