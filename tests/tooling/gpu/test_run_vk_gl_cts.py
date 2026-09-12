@@ -207,6 +207,7 @@ def write_config_inventory_evidence(
     page_profile: str = "16k",
     display: str = "vnc",
     runtime_identity: dict[str, str] | None = None,
+    renderer: str = "zink",
 ) -> Path:
     payload = config_qpa(api).encode()
     configs = cts.parse_egl_config_qpa(payload.decode(), api)
@@ -239,14 +240,19 @@ def write_config_inventory_evidence(
         ],
     }
     if api == "gl46":
-        metadata.update({"backend": "venus-kosmickrisp", "renderer": "zink",
+        metadata.update({"backend": cts.host_backend_label(renderer, True),
+                         "renderer": renderer,
                          "surface": [1280, 720], **(runtime_identity or {})})
         (directory / "console.log").write_text("Darwin UML stopped: result=0 exitcode=0\n")
+        client = (
+            "zink over Virtio-GPU Venus" if renderer == "zink"
+            else "virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))"
+        )
         payloads = {
             "results.qpa": payload,
             "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
                              "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
-                             "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode(),
+                             f"OpenGL renderer string: {client}\n").encode(),
             "summary.txt": b"cts_rc=0\n",
         }
         for name, content in payloads.items():
@@ -1078,11 +1084,18 @@ OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)
         cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 16384)
         with self.assertRaisesRegex(cts.CampaignError, "4096-byte guest pages"):
             cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 4096)
+        other_host = valid.replace(
+            "(zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))", "(Apple GPU)"
+        )
+        cts.validate_renderer_probe(
+            valid, host_provider="zink-kosmickrisp"
+        )
         with self.assertRaisesRegex(cts.CampaignError, "Zink/KosmicKrisp"):
             cts.validate_renderer_probe(
-                valid.replace("(zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))",
-                              "(Apple GPU)")
+                other_host, host_provider="zink-kosmickrisp"
             )
+        # The ANGLE provider names no host stack inside the guest string.
+        cts.validate_renderer_probe(other_host)
         for forbidden in ("llvmpipe", "softpipe", "swrast", "Xvfb"):
             with self.subTest(forbidden=forbidden), self.assertRaisesRegex(
                 cts.CampaignError, "forbidden renderer"
@@ -1689,6 +1702,33 @@ Kernarium: runtime returned 0
                 cts.load_config_inventory_evidence(
                     run, "gles2", "16k", "vnc", contract
                 )
+
+    def test_gl46_config_inventory_binds_the_opengl_stack_it_was_captured_on(
+        self,
+    ) -> None:
+        identity = cts.load_identity()
+        runtime = {"emulator_sha256": "a" * 64, "kosmickrisp_sha256": "b" * 64}
+        receipt = zink_gl_derivative_receipt(identity)
+        _, contract = cts.load_zink_gl_derivative_receipt(receipt, identity)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for renderer, other in (("zink", "virgl"), ("virgl", "zink")):
+                run = write_config_inventory_evidence(
+                    root / renderer, "gl46", contract,
+                    runtime_identity=runtime, renderer=renderer,
+                )
+                configs, digest = cts.load_config_inventory_evidence(
+                    run, "gl46", "16k", "vnc", contract, runtime,
+                    (1280, 720), renderer,
+                )
+                self.assertEqual(digest, cts.egl_config_digest(configs))
+                with self.assertRaisesRegex(
+                    cts.CampaignError, "does not match backend"
+                ):
+                    cts.load_config_inventory_evidence(
+                        run, "gl46", "16k", "vnc", contract, runtime,
+                        (1280, 720), other,
+                    )
 
     def test_matrix_cli_requires_authenticated_discovery_and_exact_xml(self) -> None:
         identity = cts.load_identity()

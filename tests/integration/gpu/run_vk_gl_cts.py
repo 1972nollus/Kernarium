@@ -2416,6 +2416,7 @@ def validate_renderer_probe(
     text: str,
     expected_page_size: int | None = None,
     renderer_backend: str = "virgl",
+    host_provider: str = "angle-metal",
 ) -> None:
     lower = text.lower()
     validate_native_x11_probe(text)
@@ -2430,8 +2431,10 @@ def validate_renderer_probe(
         if "virgl" not in client_renderers:
             raise CampaignError("renderer probe did not report Virgl")
         # The guest renderer string carries the host GL renderer in
-        # parentheses, and the host stack is Mesa Zink over KosmicKrisp.
-        if "zink" not in client_renderers or "kosmickrisp" not in client_renderers:
+        # parentheses, so a Mesa host provider is visible to the guest.
+        if host_provider == "zink-kosmickrisp" and (
+            "zink" not in client_renderers or "kosmickrisp" not in client_renderers
+        ):
             raise CampaignError(
                 "renderer probe did not report Virgl over Zink/KosmicKrisp"
             )
@@ -2449,6 +2452,13 @@ def validate_renderer_probe(
         raise CampaignError(
             f"renderer probe did not prove {expected_page_size}-byte guest pages"
         )
+
+
+def host_backend_label(renderer: str, gl46_scope: bool) -> str:
+    """Name the host stack a run renders on, for run metadata and evidence."""
+    if renderer == "zink":
+        return "venus-kosmickrisp"
+    return "zink-kosmickrisp" if gl46_scope else "angle-metal"
 
 
 def validate_host_backend(transcript: str) -> None:
@@ -3814,6 +3824,20 @@ WantedBy=multi-user.target
 """
 
 
+def gl_scope_launch_environment(options: argparse.Namespace) -> tuple[str, ...]:
+    """Name the host switches this run's stack needs, in a stable order.
+
+    Guest Zink renders on Venus and needs the experimental Vulkan device.
+    A Virgl guest must not ask for it: the device publishes its host-visible
+    blob aperture only to Venus contexts, so the guest GL driver would see
+    coherent buffer support, try to create a blob resource, and fail its
+    display setup. It reports the host GL provider instead.
+    """
+    if options.renderer == "zink":
+        return ("UML_GPU_EXPERIMENTAL_VULKAN",)
+    return ("UML_GPU_CAPABILITY_REPORT",)
+
+
 def build_harness_command(
     options: argparse.Namespace,
     selection: Selection | None,
@@ -3864,11 +3888,9 @@ def build_harness_command(
         width=options.width, height=options.height,
         display=options.display, rootfs_type=options.rootfs_type,
     )
-    launch_environment = (
-        ["UML_GPU_EXPERIMENTAL_VULKAN=1"]
-        if options.renderer == "zink"
-        else ["UML_GPU_CAPABILITY_REPORT=1"]
-    )
+    launch_environment = [
+        f"{name}=1" for name in gl_scope_launch_environment(options)
+    ]
     if options.display == "native":
         launch_environment.append("UML_GPU_FRAME_STATS=1")
     return ["env", *launch_environment, *command]
@@ -4583,6 +4605,7 @@ def load_config_inventory_evidence(
     rootfs_contract: RootfsContract,
     runtime_identity: dict[str, str] | None = None,
     surface: tuple[int, int] = (1280, 720),
+    renderer: str = "virgl",
 ) -> tuple[tuple[EglConfig, ...], str]:
     try:
         metadata = json.loads(
@@ -4597,7 +4620,7 @@ def load_config_inventory_evidence(
         raise CampaignError("unsupported config-inventory evidence")
     expected = {
         "adapter": "macos",
-        "backend": "venus-kosmickrisp" if api == "gl46" else "angle-metal",
+        "backend": host_backend_label(renderer, api == "gl46"),
         "mode": "config-inventory",
         "api": api,
         "page_profile": page_profile,
@@ -4614,7 +4637,9 @@ def load_config_inventory_evidence(
             "emulator_sha256", "kosmickrisp_sha256",
         }:
             raise CampaignError("GL config inventory requires the exact runtime identity")
-        expected.update({"renderer": "zink", "surface": list(surface), **runtime_identity})
+        expected.update(
+            {"renderer": renderer, "surface": list(surface), **runtime_identity}
+        )
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise CampaignError(
@@ -4663,7 +4688,8 @@ def load_config_inventory_evidence(
             raise CampaignError("config-inventory CTS process failed")
         validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
-            16384 if page_profile == "16k" else 4096, "zink",
+            16384 if page_profile == "16k" else 4096, renderer,
+            host_backend_label(renderer, True),
         )
     return configs, digest
 
@@ -5029,6 +5055,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                   "kosmickrisp_sha256": verify_staged_kosmickrisp(options.emulator.resolve())}
                  if options.matrix == "gl46" else None),
                 (options.width, options.height),
+                options.renderer,
             )
             if options.matrix == "gl46":
                 options.matrix_run = opengl_matrix_run(
@@ -5172,11 +5199,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "schema_version": 1,
         "git": git_state(),
         "adapter": "macos",
-        "backend": (
-            "venus-kosmickrisp"
-            if options.renderer == "zink"
-            else "zink-kosmickrisp"
-        ),
+        "backend": host_backend_label(options.renderer, options.gl46_scope),
         "renderer": options.renderer,
         "page_profile": options.page_profile,
         "engine": options.engine,
@@ -5206,11 +5229,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "acknowledged_frames": True,
         },
         "launch_environment": {
-            **(
-                {"UML_GPU_EXPERIMENTAL_VULKAN": "1"}
-                if options.renderer == "zink"
-                else {"UML_GPU_CAPABILITY_REPORT": "1"}
-            ),
+            **{name: "1" for name in gl_scope_launch_environment(options)},
             **(
                 {"UML_GPU_FRAME_STATS": "1"}
                 if options.display == "native"
@@ -5403,6 +5422,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         renderer_text,
         16384 if options.page_profile == "16k" else 4096,
         options.renderer,
+        host_backend_label(options.renderer, options.gl46_scope),
     )
     if sessions and shard_provenance(sessions) == "host-merged":
         # A host-merged shard always carries at least one recorded terminated
