@@ -2,21 +2,27 @@
 
 ## Current path
 
-macOS, iOS Simulator, and iOS device use one Virtio-GPU rendering path. The
-host GL provider differs by product:
+Every Apple product uses one Virtio-GPU rendering path on one host GL
+provider:
 
 ```text
 guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
-    -> host GL provider -> MTLTexture -> AppKit or UIKit
+    -> Mesa Zink over KosmicKrisp -> MTLTexture -> AppKit or UIKit
 ```
 
-On macOS the provider is Mesa's Zink Gallium driver on the packaged
-KosmicKrisp Vulkan driver, reached through Mesa's surfaceless EGL platform; it
-renders on a desktop OpenGL 4.6 core context. On iOS Simulator and iOS device
-the provider is ANGLE's EGL/GLES facade on Metal. The graphics dependencies
-come from the verified `apple-gpu-vulkan-experiment` (macOS) or `apple-gpu`
-(iOS) prefix. No Apple GPU product links CGL, OpenGL.framework, EAGL,
-MoltenVK, a Vulkan loader, or a second ambient libepoxy/virglrenderer family.
+The provider is Mesa's Zink Gallium driver on the packaged KosmicKrisp Vulkan
+driver, reached through Mesa's surfaceless EGL platform; it renders on a
+desktop OpenGL 4.6 core context. virglrenderer and libepoxy are upstream
+releases carrying the maintained host series, not vendor forks. The graphics
+dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
+Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
+loader, or a second ambient libepoxy/virglrenderer family.
+
+macOS is the only platform with a build of that stack. KosmicKrisp requires
+Metal 4, which the iOS Simulator does not provide, so the iOS GPU product
+targets a physical device only and is pending its Mesa/KosmicKrisp port. The
+iOS GPU presets and `dependencies/build-apple-gpu.sh --platform ios` fail
+early with that message rather than configuring against removed inputs.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
@@ -40,12 +46,6 @@ pointer hover, primary and auxiliary mouse buttons, and wheel input.
 
 ## Guest capability boundary
 
-On the iOS products the maintained guest path exposes Virgl desktop OpenGL 2.1
-and OpenGL ES 3.0 on the qualified images. GLES 2 and GLES 3 conformance
-matrices have been run on the signed 16 KiB iOS path. Those results do not
-imply GLES 3.1, GLES 3.2, desktop OpenGL above the exposed Virgl profile, or
-Vulkan support.
-
 On macOS the guest reports desktop OpenGL 4.6 core and GLSL 4.60 through
 Virgl, because the host renders the Virgl command stream on a desktop OpenGL
 4.6 core context. OpenGL 4.4 and above additionally require
@@ -62,42 +62,10 @@ leave a fence that never retires, and the guest driver retries a failed
 transfer indefinitely, so a single host error stops the guest. Guest Zink over
 Venus remains the qualified desktop OpenGL path on macOS.
 
-Video decode and native Metal texture sharing are ANGLE features and are not
-advertised by the macOS provider: scanouts of Virgl resources take the host
+Hardware video decode is not advertised. It published frames through a Metal
+texture client buffer that only the retired ANGLE provider exposed, and the
+renderer is built without it. Scanouts of Virgl resources take the host
 readback path, while Venus scanouts keep their native Metal textures.
-
-Virgl exposes hardware bitstream decoding for H.264 baseline,
-constrained-baseline, main, and high profiles up to 4096x2304; HEVC Main and
-Main10 up to 8192x4320 and level 6.2; and JPEG Baseline/MJPEG up to 4096x2304.
-The supported inputs are progressive 4:2:0. Eight-bit output uses NV12 or IYUV
-guest buffers, while 10-bit HEVC output uses P010. The Apple host reconstructs
-H.264 or HEVC parameter sets from the standard Virgl picture descriptor and
-passes complete JPEG pictures to the corresponding VideoToolbox hardware
-decoder. Guests use unmodified upstream Mesa and libva through the standard
-VA-API path; applications, including Chromium builds, must enable Linux VA-API
-decoding themselves.
-
-H.264 High10 is advertised only on Apple targets where a profile-specific
-VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
-10-bit bi-planar output. A session-only probe on macOS is insufficient: native
-decoding rejects a representative High10 frame, so macOS does not advertise
-the profile. Upstream Chromium maps HEVC Main and Main10 to its VA-API decoder
-but does not map H.264 High10; the latter remains available on qualifying hosts
-to upstream VA-API clients such as FFmpeg.
-
-The stock Debian libva/Mesa interface does not expose the required H.264 or
-HEVC 4:2:2 and 4:4:4 profile and surface combinations, so the host does not
-advertise them. This boundary deliberately avoids guest-library forks or
-private profiles. Encoding, interlaced H.264, and other codec profiles are not
-advertised.
-
-Video decode is an iOS-product feature. Supported NV12 and P010 surfaces keep
-VideoToolbox's IOSurface-backed CoreVideo planes on the GPU: the host imports
-them through the ANGLE Metal device and copies each plane into the existing guest texture without changing
-its identity. IYUV and unsupported resource shapes may use a CPU conversion
-path. Native performance qualification requires zero sustained CPU fallback.
-Dropped superseded presentation frames are successful guest completions; they
-must not force synchronous GPU readback.
 
 The GPU advertises display geometry and density through EDID. Kernarium point
 mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and

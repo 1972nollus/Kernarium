@@ -210,7 +210,7 @@ their protocol behavior independently.
 The Apple graphics path is:
 
 ```text
-Linux virtio-gpu -> vhost-user -> virglrenderer -> ANGLE/EGL on Metal
+Linux virtio-gpu -> vhost-user -> virglrenderer -> Mesa Zink on KosmicKrisp
     -> shared Metal presentation -> AppKit or UIKit
 ```
 

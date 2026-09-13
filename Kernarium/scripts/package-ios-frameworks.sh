@@ -25,6 +25,10 @@ fail()
 	exit 1
 }
 
+# The GPU slices below are the retired ANGLE payload. Their replacement is
+# Mesa Zink over KosmicKrisp, which has no iOS build yet.
+fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
+
 if [ "$#" -ne 0 ]; then
 	fail "this script takes no arguments"
 fi

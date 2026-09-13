@@ -304,7 +304,6 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_GUEST_16K_PAGES": true,
-        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/network",
         "UML_KERNEL_PRODUCT": "mainline-6.18"
       }
@@ -350,7 +349,6 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_GUEST_16K_PAGES": true,
-        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-simulator-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/network",
         "UML_KERNEL_PRODUCT": "mainline-6.18"
       }

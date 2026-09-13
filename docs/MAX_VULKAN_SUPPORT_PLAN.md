@@ -19,14 +19,14 @@ Linux application
     -> Metal
 ```
 
-The route is macOS-only and requires macOS 26. iOS device and iOS Simulator
-remain on the ANGLE/Metal GL product and contain no Vulkan backend, Vulkan
-runtime preset, or Vulkan framework packaging path.
+The route is macOS-only and requires macOS 26. The iOS GPU product has no
+build: KosmicKrisp requires Metal 4, so it targets a physical device only and
+is pending its Mesa/KosmicKrisp port.
 
-The accepted `apple-gpu` product is unchanged. Vulkan exists only in the
-separately named `apple-gpu-vulkan-experiment` product and only when
-`UML_GPU_EXPERIMENTAL_VULKAN=1` is set. The experiment must never change
-capsets 1/2, GL context selection, or native Metal presentation.
+Vulkan exists only in the separately named `apple-gpu-vulkan-experiment`
+product and only when `UML_GPU_EXPERIMENTAL_VULKAN=1` is set. The experiment
+must never change capsets 1/2, GL context selection, or native Metal
+presentation.
 
 MoltenVK is not an input, fallback, packaged framework, runtime provider, or
 test target in this design. Historical feasibility documents may discuss it,
@@ -36,7 +36,8 @@ but no active build or product contract may select it.
 
 `dependencies/manifest.tsv` is the host source authority. The Vulkan product
 adds pinned Mesa, Vulkan-Headers, and Venus-protocol sources to the ordinary
-ANGLE/libepoxy/virglrenderer matrix. Mesa supplies KosmicKrisp; the standalone
+upstream libepoxy/virglrenderer matrix. Mesa supplies KosmicKrisp and the Zink
+Gallium OpenGL driver; the standalone
 SDK supplies Vulkan headers and the registry used to generate paired guest and
 renderer codecs in build directories. The SDK and protocol inputs match the
 guest lock under `tools/rootfs/vulkan`. Host topics are regenerated into their
@@ -47,11 +48,11 @@ never edited directly or used to carry duplicate SDK or codec copies.
 `dependencies/build-apple-gpu.sh` builds offline and publishes:
 
 - static libepoxy and virglrenderer;
-- the unchanged EGL and GLESv2 frameworks; and
+- the dynamic `MesaEGL` and `MesaGallium` frameworks; and
 - one dynamic `KosmicKrisp.framework`.
 
 The format-4 macOS contract records
-`gl_provider=angle-metal` and `vk_provider=venus-kosmickrisp`. Verification
+`gl_provider=zink-kosmickrisp` and `vk_provider=venus-kosmickrisp`. Verification
 requires an arm64 macOS 26 payload, exact source and patch provenance, one
 `@rpath/KosmicKrisp.framework/KosmicKrisp` dependency, a directly exported
 `vkGetInstanceProcAddr`, and no Vulkan loader, `dlopen`, `dlsym`, second
@@ -132,8 +133,8 @@ bits alone do not raise that maximum.
 ## Renderer and memory contract
 
 One renderer session owns virglrenderer's process-global lifetime. The
-ANGLE/Metal GL facade and the Venus/KosmicKrisp Vulkan facade share only that
-owner and bounded device resources; neither resolves or calls the other's API.
+Zink/KosmicKrisp GL facade and the Venus/KosmicKrisp Vulkan facade share only
+that owner and bounded device resources; neither resolves or calls the other's API.
 The render server runs in that same address space, so it shares those
 process-global tables rather than owning a second copy of them. It takes and
 releases references to them, and the end of its last context never destroys

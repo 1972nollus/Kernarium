@@ -61,6 +61,13 @@ cmake --workflow --preset check-gpu-venus
 cmake --workflow --preset check-integration-venus
 ```
 
+There is no iOS GPU conformance lane. The host GL provider is Mesa Zink over
+KosmicKrisp, which requires Metal 4; the iOS Simulator does not provide it, so
+iOS GPU verification happens on a physical device and is deferred until the
+iOS Mesa/KosmicKrisp port lands. The iOS GPU presets fail early with that
+message. The retired Simulator and device GLES lanes verified the removed
+ANGLE provider and have no replacement.
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh
