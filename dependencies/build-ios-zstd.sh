@@ -12,7 +12,7 @@ OUTPUT=${UML_IOS_ZSTD_DEPENDENCY_PREFIX:-"$ROOT_DIR/.build/dependencies/ios-zstd
 WORK_ROOT=${UML_IOS_ZSTD_DEPENDENCY_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build/ios-zstd"}
 VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyIosZstdXCFramework.cmake"
 JOBS=${UML_IOS_ZSTD_DEPENDENCY_JOBS:-8}
-DEPLOYMENT_TARGET=16.0
+DEPLOYMENT_TARGET=26.0
 VERIFY_ONLY=0
 
 fail()

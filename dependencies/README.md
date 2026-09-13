@@ -110,7 +110,8 @@ An invalid prepared tree or installed prefix is never replaced automatically.
 Review the diagnostic and move the old path aside before rebuilding. Prefix
 verification checks manifest/series identity, architecture, Apple platform and
 deployment target, expected static payloads, framework install names, and the
-absence of undeclared or legacy providers.
+absence of undeclared or legacy providers. Every iOS prefix builds and verifies at an
+iOS 26.0 deployment target.
 
 Product-specific prefixes compare only the manifest rows consumed by that
 product. Adding an unrelated dependency does not invalidate an accepted

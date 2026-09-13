@@ -117,10 +117,10 @@ macos)
 ios-simulator)
 	SDK_NAME=iphonesimulator
 	XCODE_DESTINATION='generic/platform=iOS Simulator'
-	TARGET=arm64-apple-ios16.0-simulator
+	TARGET=arm64-apple-ios26.0-simulator
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios-simulator
-	DEPLOYMENT_TARGET=16.0
+	DEPLOYMENT_TARGET=26.0
 	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
 	GL_CONTRACT_NAME=ios-simulator-gpu-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion
@@ -129,10 +129,10 @@ ios-simulator)
 ios)
 	SDK_NAME=iphoneos
 	XCODE_DESTINATION='generic/platform=iOS'
-	TARGET=arm64-apple-ios16.0
+	TARGET=arm64-apple-ios26.0
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios
-	DEPLOYMENT_TARGET=16.0
+	DEPLOYMENT_TARGET=26.0
 	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
 	GL_CONTRACT_NAME=ios-device-gpu-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion

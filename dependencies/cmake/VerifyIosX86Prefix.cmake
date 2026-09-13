@@ -65,8 +65,8 @@ foreach(_archive IN ITEMS libsoftfloat_3e.a libcephes_128bit.a)
         OUTPUT_VARIABLE _load_commands)
     if(NOT _otool_status EQUAL 0 OR
        NOT _load_commands MATCHES "platform ${_mach_platform}([^0-9]|$)" OR
-       NOT _load_commands MATCHES "minos 16\\.0")
-        message(FATAL_ERROR "${_path} is not a ${PLATFORM} 16.0 archive")
+       NOT _load_commands MATCHES "minos 26\\.0")
+        message(FATAL_ERROR "${_path} is not a ${PLATFORM} 26.0 archive")
     endif()
 endforeach()
 

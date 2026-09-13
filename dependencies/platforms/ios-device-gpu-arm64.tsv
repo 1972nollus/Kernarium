@@ -3,7 +3,7 @@ field	value
 format	3
 platform	ios
 architecture	arm64
-deployment_target	16.0
+deployment_target	26.0
 linkage	static-and-framework
 payload	static-libepoxy,static-libvirglrenderer,dynamic-EGL-framework,dynamic-GLESv2-framework
 gl_provider	angle-metal
