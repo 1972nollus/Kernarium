@@ -1,7 +1,7 @@
 From 45141e222e1de83b98ef34afc2e70d2f85355fa8 Mon Sep 17 00:00:00 2001
-From: Yi Xie <imxieyi@users.noreply.github.com>
+From: UML Darwin Debian Builder <builder@uml-darwin.invalid>
 Date: Mon, 31 Aug 2026 21:04:50 -0400
-Subject: [PATCH 03/14] venus: stop advertising DRM display acquisition
+Subject: [PATCH 03/15] venus: stop advertising DRM display acquisition
 
 ---
  src/virtio/vulkan/vn_instance.c | 1 -

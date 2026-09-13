@@ -51,7 +51,10 @@ sharing correctness fixes:
   of deadlocking; and
 - bound the wait a Wayland present spends throttling on the previous frame
   callback, and spend an unbounded `vkWaitForPresentKHR` in observing slices
-  rather than one indefinite dispatch.
+  rather than one indefinite dispatch; and
+- serve a descriptor set layout and a pipeline layout from the allocation
+  callbacks their create command carried, and return the storage to those
+  callbacks when the last internal reference goes away.
 
 The first fix prevents a rejected native pipeline from becoming a stale guest
 object and a later fatal command stream. The second prevents the renderer from
@@ -100,6 +103,16 @@ swapchain's images are ever in flight. An unbounded `vkWaitForPresentKHR` is
 still unbounded, as the specification requires, but is spent in observing
 slices, so a retired swapchain ends it with `VK_ERROR_OUT_OF_DATE_KHR` instead
 of waiting for a present id its successor owns.
+Both layouts are reference counted, because the specification lets an
+application destroy one while descriptor sets, pipelines, update templates and
+recorded push descriptors still describe themselves with it. That is why the
+driver took their storage from the device rather than from the creating
+command's callbacks, which left an application's allocator unaware of the
+layouts it paid for and let a layout succeed while every one of its callbacks
+was refusing memory. A layout now keeps the callbacks that served it and
+returns its storage to them on the final unref, with the device allocation
+scope its extended lifetime needs; reference counting, and the renderer object
+the last reference destroys, are unchanged.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also
