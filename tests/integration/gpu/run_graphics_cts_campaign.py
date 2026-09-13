@@ -739,8 +739,15 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
             # A recorded stall or terminated case explains the missing stop
             # marker; the Virtio-GPU takedown contract still holds.
             common.validate_drm_shutdown(final_console.read_text(encoding="utf-8"))
-        common.validate_renderer_probe(artifacts["renderer.txt"].decode("utf-8"),
-                                      16384 if spec["page_profile"] == "16k" else 4096, "zink")
+        # The plan names the Gallium driver the OpenGL shards run on, and the
+        # host stack follows from it, so judge the probe against the same pair
+        # the leaf validated rather than against one fixed renderer.
+        common.validate_renderer_probe(
+            artifacts["renderer.txt"].decode("utf-8"),
+            16384 if spec["page_profile"] == "16k" else 4096,
+            item["renderer"],
+            common.host_backend_label(item["renderer"]),
+        )
         selected = common.parse_case_list(artifacts["selected.txt"].decode("utf-8"))
         if len(selected) != selection.expected_count:
             raise common.CampaignError("OpenGL selected-case count changed")

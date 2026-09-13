@@ -1192,6 +1192,51 @@ OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)
         with self.assertRaisesRegex(cts.CampaignError, "Zink over Virtio-GPU Venus"):
             cts.validate_renderer_probe(evidence, renderer_backend="zink")
 
+    def test_final_campaign_virgl_probe_passes_as_virgl_and_fails_as_zink(self) -> None:
+        """The probe two clean gl46 shards wrote when a renderer-blind
+        verification step rejected them.
+
+        Kept verbatim in the lines verification reads, including the
+        `virtio-uml` transport and the `zink` the host provider contributes to
+        the client string, because those are what a check written for Zink over
+        Venus can mistake for its own stack.
+        """
+        recorded = """guest_page_size=16384
+
+device=/dev/dri/card0
+drm_transport=/dev/dri/card0:/sys/bus/platform/drivers/virtio-uml
+device=/dev/dri/renderD128
+drm_transport=/dev/dri/renderD128:/sys/bus/platform/drivers/virtio-uml
+x11_server=xorg
+x11_pid=343
+x11_blanking=off
+x11_dri3=1
+x11_present=1
+x11_glamor=1
+x11_connected=1
+x11_drm_fd=1
+x11_display_renderer=virgl
+Extended renderer info (GLX_MESA_query_renderer):
+    Vendor: Mesa (0x1af4)
+    Device: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP))) (0x1010)
+OpenGL vendor string: Mesa
+OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
+OpenGL core profile version string: 4.6 (Core Profile) Mesa 26.2.1 (git-275ba84f2c)
+OpenGL version string: 4.6 (Compatibility Profile) Mesa 26.2.1 (git-275ba84f2c)
+OpenGL core profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
+OpenGL compatibility profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
+OpenGL ES profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
+"""
+        cts.validate_renderer_probe(
+            recorded, 16384, "virgl", cts.host_backend_label("virgl")
+        )
+        with self.assertRaisesRegex(
+            cts.CampaignError, "Zink over Virtio-GPU Venus"
+        ):
+            cts.validate_renderer_probe(
+                recorded, 16384, "zink", cts.host_backend_label("zink")
+            )
+
     def test_native_x11_setup_separates_display_driver_and_wayland(self) -> None:
         for wayland in (False, True):
             with self.subTest(wayland=wayland):

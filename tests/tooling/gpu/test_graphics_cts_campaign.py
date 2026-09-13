@@ -40,7 +40,34 @@ def ownership_record(attempt: Path) -> dict:
     return {"guest_ownership_token": token, "guest_ownership_sha256": gl.sha256_file(path)}
 
 
-def spec(directory: Path) -> dict:
+# The renderer probe a gl46 shard writes, kept to the lines verification reads.
+# The Virgl text is what the final campaign's gl46-run0002 and gl46-run0003
+# shards recorded and a renderer-blind verification step rejected.
+PROBE_PREAMBLE = (
+    "device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
+    "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\n"
+    "x11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
+)
+RENDERER_PROBES = {
+    "zink": (
+        PROBE_PREAMBLE
+        + "OpenGL renderer string: zink over Virtio-GPU Venus\n"
+    ).encode(),
+    "virgl": (
+        PROBE_PREAMBLE
+        + "x11_display_renderer=virgl\n"
+        + "OpenGL vendor string: Mesa\n"
+        + "OpenGL renderer string: virgl "
+          "(zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))\n"
+    ).encode(),
+}
+
+
+def renderer_probe(definition: dict) -> bytes:
+    return RENDERER_PROBES[definition["opengl"]["renderer"]]
+
+
+def spec(directory: Path, renderer: str = "zink") -> dict:
     receipt = fixtures.zink_gl_derivative_receipt(gl.load_identity())
     receipt["schema_version"] = 4
     receipt["opengl_cts"]["release"] = "vulkan-cts-1.4.6.2"
@@ -52,6 +79,7 @@ def spec(directory: Path) -> dict:
     _, contract = gl.load_zink_gl_derivative_receipt(receipt, gl.load_identity())
     inventory = fixtures.write_config_inventory_evidence(
         directory / "inventory", "gl46", contract, runtime_identity=runtime_identity,
+        renderer=renderer,
     )
     config_rows = [{"id": 1, "surface_types": ["window", "pixmap", "pbuffer"]},
                    {"id": 2, "surface_types": ["pbuffer", "pixmap"]}]
@@ -70,7 +98,7 @@ def spec(directory: Path) -> dict:
         "vulkan": {"rootfs": str(directory / "rootfs-vulkan-venus.ext4"), "receipt": vk_receipt,
                    "receipt_path": str(campaign.vk.RECEIPT_PATH),
                    "receipt_sha256": gl.sha256_file(campaign.vk.RECEIPT_PATH)},
-        "opengl": {"renderer": "zink",
+        "opengl": {"renderer": renderer,
                    "rootfs": str(directory / "rootfs-vulkan-zink-gl.ext4"), "receipt": receipt,
                    "receipt_path": str(path), "receipt_sha256": gl.sha256_file(path),
                    "config_inventory_run": str(inventory), "egl_configs": config_rows,
@@ -95,7 +123,8 @@ def results(shard: campaign.Shard) -> dict[str, str]:
             for index in range(shard.index, len(cases), 8)}
 
 
-def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path:
+def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard,
+                    probe: bytes | None = None) -> Path:
     attempt = campaign.attempt_path(root, shard)
     run = attempt / "driver-output/fixture-run"
     (run / "artifacts").mkdir(parents=True)
@@ -104,9 +133,7 @@ def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path
     selection = options.matrix_run.selection
     rows = results(shard)
     artifacts = {
-        "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                         "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
-                         "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode(),
+        "renderer.txt": probe if probe is not None else renderer_probe(definition),
         "summary.txt": b"cts_rc=0\n",
         "selected.txt": "".join(f"{case}\n" for case in rows).encode(),
         "results.qpa": fixtures.qpa(*(fixtures.qpa_result(case, status)
@@ -124,7 +151,8 @@ def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard) -> Path
         "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "16k",
         "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
         "git": definition["source"]["git"], "console_sha256": gl.sha256_file(run / "console.log"),
-        "adapter": "macos", "backend": "venus-kosmickrisp", "renderer": "zink",
+        "adapter": "macos", "backend": gl.host_backend_label(item["renderer"]),
+        "renderer": item["renderer"],
         "display": "vnc", "context": "egl", "mode": "mustpass-matrix-shard", "surface": [1280, 720],
         "rootfs_type": "ext4", "rootfs_receipt": item["receipt"],
         "rootfs_receipt_sha256": item["receipt_sha256"],
@@ -169,9 +197,7 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     rows = results(shard)
     cases = list(rows)
     terminated = cases[1]
-    renderer = ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
-                "OpenGL renderer string: zink over Virtio-GPU Venus\n").encode()
+    renderer = renderer_probe(definition)
     selected = "".join(f"{case}\n" for case in cases).encode()
     stalled_qpa = fixtures.qpa(
         *(fixtures.qpa_result(case, rows[case]) for case in cases[:1])
@@ -236,7 +262,8 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
         "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
         "git": definition["source"]["git"],
         "console_sha256": gl.sha256_file(run / "console.log"),
-        "adapter": "macos", "backend": "venus-kosmickrisp", "renderer": "zink",
+        "adapter": "macos", "backend": gl.host_backend_label(item["renderer"]),
+        "renderer": item["renderer"],
         "display": "vnc", "context": "egl", "mode": "mustpass-matrix-shard",
         "surface": [1280, 720], "rootfs_type": "ext4",
         "rootfs_receipt": item["receipt"],
@@ -493,6 +520,35 @@ class GraphicsCampaignTests(unittest.TestCase):
             artifact.write_bytes(artifact.read_bytes().replace(b"Pass", b"Fail"))
             with self.assertRaisesRegex(gl.CampaignError, "transport differs"):
                 campaign.validate_attempt(root, definition, key)
+
+    def test_gl_attempt_verification_follows_the_plan_renderer(self) -> None:
+        """Judge the probe against the renderer the plan launched.
+
+        The final campaign launched its OpenGL shards with
+        `--opengl-renderer virgl` and then verified them against Zink over
+        Venus, so two clean shards were rejected for reporting exactly the
+        stack they had been asked to run.
+        """
+        for renderer, other in (("virgl", "zink"), ("zink", "virgl")):
+            with self.subTest(renderer=renderer):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    definition = spec(root, renderer=renderer)
+                    key = campaign.Shard("gl46", 0, 7)
+                    make_gl_attempt(root, definition, key)
+                    result = campaign.validate_attempt(root, definition, key)
+                    self.assertEqual(result["status_totals"],
+                                     {"NotSupported": 1, "Pass": 1})
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    definition = spec(root, renderer=renderer)
+                    key = campaign.Shard("gl46", 0, 7)
+                    make_gl_attempt(root, definition, key,
+                                    probe=RENDERER_PROBES[other])
+                    with self.assertRaisesRegex(
+                        gl.CampaignError, "renderer probe did not report"
+                    ):
+                        campaign.validate_attempt(root, definition, key)
 
     def test_resumed_gl_attempt_reparses_and_names_its_recorded_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

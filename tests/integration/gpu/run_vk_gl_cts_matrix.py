@@ -41,6 +41,11 @@ DEFAULT_CAMPAIGN_ROOT = cts.DEFAULT_ARTIFACT_ROOT / "matrix"
 FIXED_ENGINE = "jit"
 FIXED_CPUS = 10
 FIXED_DISPLAY = "vnc"
+# This orchestrator drives one stack: the guest Virgl driver over the host's
+# Zink provider. Naming the renderer here keeps the shard metadata and the
+# renderer probe answering to the same pair.
+FIXED_RENDERER = "virgl"
+FIXED_BACKEND = cts.host_backend_label(FIXED_RENDERER)
 FIXED_MEMORY = "8G"
 FIXED_WIDTH = 1280
 FIXED_HEIGHT = 720
@@ -155,7 +160,7 @@ class CampaignDefinition:
             "guest_timeout": self.guest_timeout,
             "execution": {
                 "adapter": "macos",
-                "backend": "zink-kosmickrisp",
+                "backend": FIXED_BACKEND,
                 "display": FIXED_DISPLAY,
                 "engine": FIXED_ENGINE,
                 "cpus": FIXED_CPUS,
@@ -473,7 +478,7 @@ def validate_shard_run(
         {
             "schema_version": 1,
             "adapter": "macos",
-            "backend": "zink-kosmickrisp",
+            "backend": FIXED_BACKEND,
             "page_profile": definition.page_profile,
             "engine": FIXED_ENGINE,
             "memory": FIXED_MEMORY,
@@ -566,7 +571,8 @@ def validate_shard_run(
         },
     )
     cts.validate_renderer_probe(
-        renderer_text, 16384 if definition.page_profile == "16k" else 4096
+        renderer_text, 16384 if definition.page_profile == "16k" else 4096,
+        FIXED_RENDERER, FIXED_BACKEND,
     )
     cts.validate_host_backend(console_text)
     cts.validate_guest_shutdown(console_text)
