@@ -64,7 +64,10 @@ cmake --workflow --preset check-integration-venus
 The iOS GPU lane runs the unmodified iOS device build on this Apple silicon
 Mac in Designed for iPad mode, because the host GL provider is Mesa Zink over
 KosmicKrisp and the iOS Simulator provides no Metal 4 device. The Simulator GPU
-presets fail early with that reason. The retired Simulator and device GLES
+presets fail early with that reason. Kernarium's own suite carries the narrowest
+check of that provider: it creates a surfaceless OpenGL 4.6 core context in the
+application process and requires Zink on the packaged KosmicKrisp driver, so a
+broken iOS graphics closure fails in seconds rather than inside a guest. The retired Simulator and device GLES
 lanes verified the removed ANGLE provider and have no replacement.
 
 The full sanitizer suites remain separate because of their runtime cost:
