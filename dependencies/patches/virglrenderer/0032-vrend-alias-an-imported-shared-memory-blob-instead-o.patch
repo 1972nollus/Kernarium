@@ -1,0 +1,246 @@
+From 42825ccde7065f6b59fe75e4b6b762fbba35cdbd Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 05:06:20 +0900
+Subject: [PATCH 32/32] vrend: alias an imported shared-memory blob instead of
+ copying it
+
+Topic 28 gave an imported blob an ordinary texture and refreshed it from the
+exporter's mapping before every read, because nothing on this host could build
+a texture over foreign pages. EGL_MESA_image_host_pointer now can, so try that
+first: an image over the exporter's own pages needs no refresh at all, and the
+presenting X server samples the guest's frame where the guest wrote it.
+
+The import is attempted once per resource and is all or nothing - a format,
+alignment or pitch the driver cannot alias returns no image - so a segment
+that cannot be aliased still lands on topic 28's copy path rather than
+failing. The refresh hook stays where it is and becomes a no-op for an aliased
+resource.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c   | 81 ++++++++++++++++++++++++++++++++++--
+ src/vrend/vrend_renderer.h   |  3 ++
+ src/vrend/vrend_winsys_egl.c | 42 +++++++++++++++++++
+ src/vrend/vrend_winsys_egl.h | 10 +++++
+ 4 files changed, 132 insertions(+), 4 deletions(-)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index e5065ea..144a93e 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -9171,8 +9171,50 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+ }
+ 
+ #ifdef ENABLE_METAL
+-/* Map an exporter's shared-memory blob and give this resource an ordinary
+- * texture to hold a copy of it. */
++/* EGL names an imported image's layout with a DRM fourcc even where there is
++ * no DRM: it is the one channel-order vocabulary both sides already speak. */
++static uint32_t vrend_shm_import_fourcc(enum virgl_formats format)
++{
++#define VREND_FOURCC(a, b, c, d)                                               \
++   ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) |             \
++    ((uint32_t)(d) << 24))
++   switch (format) {
++   case VIRGL_FORMAT_B8G8R8A8_UNORM: return VREND_FOURCC('A', 'R', '2', '4');
++   case VIRGL_FORMAT_B8G8R8X8_UNORM: return VREND_FOURCC('X', 'R', '2', '4');
++   case VIRGL_FORMAT_R8G8B8A8_UNORM: return VREND_FOURCC('A', 'B', '2', '4');
++   case VIRGL_FORMAT_R8G8B8X8_UNORM: return VREND_FOURCC('X', 'B', '2', '4');
++   default: return 0;
++   }
++#undef VREND_FOURCC
++}
++
++/* Try to give this resource a texture that reads the exporter's pages in
++ * place. Returns NULL when anything about the segment - its format, its
++ * alignment, its pitch - is not something the driver can lay a texture over,
++ * which is the caller's cue to fall back to the copy. */
++static void *vrend_resource_alias_shm(struct vrend_resource *gr,
++                                      void *map,
++                                      uint32_t format,
++                                      uint32_t stride,
++                                      uint32_t offset)
++{
++   if (!virgl_egl_supports_host_pointer_image(egl))
++      return NULL;
++
++   const uint32_t fourcc = vrend_shm_import_fourcc(format);
++   const uint32_t blocksize = util_format_get_blocksize(format);
++   if (!fourcc || !blocksize)
++      return NULL;
++
++   return virgl_egl_image_from_host_pointer(egl, map, gr->base.width0,
++                                            gr->base.height0, fourcc,
++                                            stride ? stride
++                                                   : gr->base.width0 * blocksize,
++                                            offset);
++}
++
++/* Map an exporter's shared-memory blob and give this resource a texture over
++ * it, aliasing the pages where the driver can and copying where it cannot. */
+ static int vrend_resource_import_shm(struct vrend_resource *gr,
+                                      struct virgl_resource *res,
+                                      uint32_t format,
+@@ -9192,12 +9234,38 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+       return EINVAL;
+    }
+ 
+-   ret = vrend_resource_alloc_texture(gr, format, NULL);
++   /* Aliasing is the whole point: a texture over the exporter's own pages
++    * needs no refresh at all, so the presenting X server reads the guest's
++    * frame where the guest wrote it. */
++   void *image = vrend_resource_alias_shm(gr, map, format, stride, offset);
++
++   ret = vrend_resource_alloc_texture(gr, format, image);
+    if (ret) {
++      if (image)
++         virgl_egl_host_pointer_image_destroy(egl, image);
+       munmap(map, res->map_size);
+       return ret;
+    }
+ 
++   if (image) {
++      virgl_info("%s: aliasing the exporter's %ux%u segment in place\n",
++                 __func__, gr->base.width0, gr->base.height0);
++      gr->shm_import_image = image;
++      gr->shm_import_map = map;
++      gr->shm_import_size = res->map_size;
++      gr->shm_import_stride = stride;
++      gr->shm_import_offset = offset;
++      gr->shm_import_format = format;
++      return 0;
++   }
++
++   if (virgl_egl_supports_host_pointer_image(egl)) {
++      virgl_info("%s: the exporter's %ux%u segment cannot be aliased "
++                 "(format %u, stride %u, offset %u); copying it instead\n",
++                 __func__, gr->base.width0, gr->base.height0, format, stride,
++                 offset);
++   }
++
+    /* GL_AMD_pinned_memory is the one GL entry point that takes pages the
+     * caller allocated. Pinning the exporter's segment turns the refresh into
+     * a GPU-side copy: no staging buffer, no CPU pass over the frame. */
+@@ -9232,7 +9300,8 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+ 
+ void vrend_resource_sync_shm_import(struct vrend_resource *res)
+ {
+-   if (likely(!res || !res->shm_import_map))
++   /* An aliased import is always current: there is nothing to refresh. */
++   if (likely(!res || !res->shm_import_map || res->shm_import_image))
+       return;
+ 
+    const struct vrend_format_table *entry = &tex_conv_table[res->shm_import_format];
+@@ -9270,6 +9339,10 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+ {
+    if (res->shm_import_pbo)
+       glDeleteBuffers(1, &res->shm_import_pbo);
++#ifdef ENABLE_METAL
++   if (res->shm_import_image)
++      virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
++#endif
+    if (res->shm_import_map)
+       munmap(res->shm_import_map, res->shm_import_size);
+ 
+diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
+index dfa6a73..db792bf 100644
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -125,6 +125,9 @@ struct vrend_resource {
+    /* Those pages pinned as a buffer object, so the upload is a GPU read of
+     * the exporter's own memory rather than a CPU copy into a staging buffer. */
+    GLuint shm_import_pbo;
++   /* set when the segment is aliased instead of copied; the refresh path is
++    * then dead and the mapping is kept only so it can be unmapped. */
++   void *shm_import_image;
+    uint64_t shm_import_size;
+    uint32_t shm_import_stride;
+    uint32_t shm_import_offset;
+diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
+index 9f93e77..dd5d15c 100644
+--- a/src/vrend/vrend_winsys_egl.c
++++ b/src/vrend/vrend_winsys_egl.c
+@@ -69,6 +69,7 @@
+ #define EGL_EXT_DEVICE_ENUMERATION             BIT(10)
+ #define EGL_EXT_DEVICE_QUERY                   BIT(11)
+ #define EGL_EXT_PLATFORM_DEVICE                BIT(12)
++#define EGL_MESA_IMAGE_HOST_POINTER            BIT(13)
+ 
+ static const struct {
+    uint32_t bit;
+@@ -86,6 +87,7 @@ static const struct {
+    { EGL_EXT_DEVICE_ENUMERATION, "EGL_EXT_device_enumeration" },
+    { EGL_EXT_DEVICE_QUERY, "EGL_EXT_device_query" },
+    { EGL_EXT_PLATFORM_DEVICE, "EGL_EXT_platform_device" },
++   { EGL_MESA_IMAGE_HOST_POINTER, "EGL_MESA_image_host_pointer" },
+ };
+ 
+ struct egl_funcs {
+@@ -922,6 +924,46 @@ void *virgl_egl_aux_plane_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo
+ }
+ #endif /* ENABLE_GBM_ALLOCATION */
+ 
++#ifndef EGL_HOST_POINTER_MESA
++#define EGL_HOST_POINTER_MESA        0x3293
++#define EGL_HOST_POINTER_PITCH_MESA  0x3294
++#define EGL_HOST_POINTER_OFFSET_MESA 0x3295
++#endif
++
++bool virgl_egl_supports_host_pointer_image(struct virgl_egl *egl)
++{
++   return has_bit(egl->extension_bits, EGL_MESA_IMAGE_HOST_POINTER);
++}
++
++void *virgl_egl_image_from_host_pointer(struct virgl_egl *egl,
++                                        void *pointer,
++                                        uint32_t width,
++                                        uint32_t height,
++                                        uint32_t drm_format,
++                                        uint32_t stride,
++                                        uint32_t offset)
++{
++   const EGLint attrs[] = {
++      EGL_WIDTH, (EGLint)width,
++      EGL_HEIGHT, (EGLint)height,
++      EGL_LINUX_DRM_FOURCC_EXT, (EGLint)drm_format,
++      EGL_HOST_POINTER_PITCH_MESA, (EGLint)stride,
++      EGL_HOST_POINTER_OFFSET_MESA, (EGLint)offset,
++      EGL_NONE
++   };
++
++   return (void *)eglCreateImageKHR(egl->egl_display,
++                                    EGL_NO_CONTEXT,
++                                    EGL_HOST_POINTER_MESA,
++                                    (EGLClientBuffer)pointer,
++                                    attrs);
++}
++
++void virgl_egl_host_pointer_image_destroy(struct virgl_egl *egl, void *image)
++{
++   eglDestroyImageKHR(egl->egl_display, image);
++}
++
+ bool virgl_egl_supports_fences(struct virgl_egl *egl)
+ {
+    return (egl && has_bit(egl->extension_bits, EGL_KHR_FENCE_SYNC_ANDROID));
+diff --git a/src/vrend/vrend_winsys_egl.h b/src/vrend/vrend_winsys_egl.h
+index 129d16d..7023bb3 100644
+--- a/src/vrend/vrend_winsys_egl.h
++++ b/src/vrend/vrend_winsys_egl.h
+@@ -86,6 +86,16 @@ void *virgl_egl_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo *bo);
+ void *virgl_egl_aux_plane_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo *bo, int plane);
+ #endif
+ 
++bool virgl_egl_supports_host_pointer_image(struct virgl_egl *egl);
++void *virgl_egl_image_from_host_pointer(struct virgl_egl *egl,
++                                        void *pointer,
++                                        uint32_t width,
++                                        uint32_t height,
++                                        uint32_t drm_format,
++                                        uint32_t stride,
++                                        uint32_t offset);
++void virgl_egl_host_pointer_image_destroy(struct virgl_egl *egl, void *image);
++
+ bool virgl_egl_supports_fences(struct virgl_egl *egl);
+ EGLSyncKHR virgl_egl_fence_create(struct virgl_egl *egl);
+ void virgl_egl_fence_destroy(struct virgl_egl *egl, EGLSyncKHR fence);

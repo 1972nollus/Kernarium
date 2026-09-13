@@ -1,7 +1,7 @@
 From 852f585f6c1ebedfc04e81c526f1f1f4585fbedf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 23:51:15 +0900
-Subject: [PATCH 01/31] build: name an Apple host's foreign resources through
+Subject: [PATCH 01/32] build: name an Apple host's foreign resources through
  Metal
 
 An Apple host has neither GBM nor dma-buf, so a blob another renderer
