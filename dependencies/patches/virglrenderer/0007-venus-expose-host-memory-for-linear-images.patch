@@ -1,7 +1,7 @@
-From 0ecf9de2c7ee0d9c298e22da68e0b40375347b0e Mon Sep 17 00:00:00 2001
+From a2af4f521bce6a0bd2c80201f9df2ae32b948964 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 18:00:57 +0900
-Subject: [PATCH 07/29] venus: expose host memory for linear images
+Subject: [PATCH 07/30] venus: expose host memory for linear images
 
 ---
  src/venus/vkr_image.c | 17 +++++++++++++----
@@ -9,7 +9,7 @@ Subject: [PATCH 07/29] venus: expose host memory for linear images
  2 files changed, 14 insertions(+), 4 deletions(-)
 
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 53f76d6..5036b68 100644
+index 7516604..d1222ad 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -12,6 +12,7 @@ static void
@@ -64,7 +64,7 @@ index 53f76d6..5036b68 100644
  }
  
  static void
-@@ -230,6 +237,8 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+@@ -232,6 +239,8 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
  {
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
@@ -73,7 +73,7 @@ index 53f76d6..5036b68 100644
  
     vn_replace_vkGetDeviceImageMemoryRequirements_args_handle(args);
     vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo,
-@@ -237,7 +246,7 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+@@ -239,7 +248,7 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
     args->pMemoryRequirements->memoryRequirements.memoryTypeBits =
        vkr_physical_device_get_guest_memory_type_bits(
           dev->physical_device,

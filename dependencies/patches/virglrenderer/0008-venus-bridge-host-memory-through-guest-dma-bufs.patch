@@ -1,22 +1,22 @@
-From 6efc94be8ef44ba42052faf6196fd6a68e52d297 Mon Sep 17 00:00:00 2001
+From 1bb26b65a4d1a5c4f40febb4833b4b129d18db93 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
-Subject: [PATCH 08/29] venus: bridge host memory through guest dma-bufs
+Subject: [PATCH 08/30] venus: bridge host memory through guest dma-bufs
 
 ---
  src/venus/vkr_context.c         |  78 +++++++++--
  src/venus/vkr_context.h         |   5 +
  src/venus/vkr_device.c          |  22 ++++
  src/venus/vkr_device.h          |   2 +
- src/venus/vkr_device_memory.c   | 220 +++++++++++++++++++++++++++-----
+ src/venus/vkr_device_memory.c   | 221 +++++++++++++++++++++++++++-----
  src/venus/vkr_device_memory.h   |   4 +
  src/venus/vkr_physical_device.c |  20 +++
  src/venus/vkr_physical_device.h |   1 +
  src/venus/vkr_renderer.c        |   3 +-
- src/virgl_resource.c            | 167 ++++++++++++++++++++++++
+ src/virgl_resource.c            | 171 ++++++++++++++++++++++++
  src/virgl_resource.h            |  39 ++++++
  src/virglrenderer.c             |   2 +-
- 12 files changed, 516 insertions(+), 47 deletions(-)
+ 12 files changed, 521 insertions(+), 47 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
 index b97e5ea..e045777 100644
@@ -250,7 +250,7 @@ index a8c185c..fcf875c 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index a3336e1..16382ca 100644
+index a3336e1..4c8286c 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -7,6 +7,7 @@
@@ -291,7 +291,7 @@ index a3336e1..16382ca 100644
        .fd = fd,
        .handleType = handle_type,
     };
-@@ -265,19 +259,100 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -265,19 +259,101 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
                                                       guest_mem_type_index);
     alloc_info->memoryTypeIndex = host_mem_type_index;
  
@@ -385,7 +385,8 @@ index a3336e1..16382ca 100644
 +            (res->fd_type != VIRGL_RESOURCE_FD_DMABUF ||
 +             physical_dev->EXT_external_memory_dma_buf);
 +         if (!fd_import_supported ||
-+             !vkr_get_fd_info_from_resource_info(ctx, res_info, &local_import_info)) {
++             !vkr_get_fd_info_from_resource(res, res_info->pNext,
++                                            &local_import_info)) {
 +            args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
 +            return;
 +         }
@@ -395,7 +396,7 @@ index a3336e1..16382ca 100644
     }
  
     VkExportMemoryAllocateInfo *export_info =
-@@ -285,6 +360,10 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -285,6 +361,10 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
  
     /* track if driver has requested export allocation */
     const bool might_export = export_info && export_info->handleTypes;
@@ -406,7 +407,7 @@ index a3336e1..16382ca 100644
  
     /* Make host-visible memory shareable with the virtio-gpu blob transport.
      * VK_EXT_external_memory_host supplies the direct import path on unified-memory
-@@ -305,17 +384,27 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -305,17 +385,27 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     void *gbm_bo = NULL;
     struct vkr_host_shm *host_shm = NULL;
     VkExportMemoryAllocateInfo local_export_info;
@@ -437,7 +438,7 @@ index a3336e1..16382ca 100644
        host_shm = vkr_host_shm_alloc(
           alloc_info->allocationSize,
           physical_dev->min_imported_host_pointer_alignment);
-@@ -449,6 +538,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -449,6 +539,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     mem->udmabuf_fd = udmabuf_fd;
     mem->gbm_bo = gbm_bo;
     mem->host_shm = host_shm;
@@ -445,7 +446,7 @@ index a3336e1..16382ca 100644
     mem->allocation_size = alloc_info->allocationSize;
     mem->memory_type_index = host_mem_type_index;
  }
-@@ -507,27 +597,53 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
+@@ -507,27 +598,53 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
        return;
     }
  
@@ -512,7 +513,7 @@ index a3336e1..16382ca 100644
  
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
-@@ -559,6 +675,7 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
+@@ -559,6 +676,7 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
  void
  vkr_device_memory_release(struct vkr_device_memory *mem)
  {
@@ -520,7 +521,7 @@ index a3336e1..16382ca 100644
     vkr_host_shm_free(mem->host_shm);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-@@ -598,10 +715,6 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -598,10 +716,6 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
     }
  
     if (mem->host_shm && mem->host_shm->fd >= 0) {
@@ -531,7 +532,7 @@ index a3336e1..16382ca 100644
        *out_blob = (struct virgl_context_blob){
           .type = VIRGL_RESOURCE_FD_SHM,
           .u.fd = os_dupfd_cloexec(mem->host_shm->fd),
-@@ -613,6 +726,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -613,6 +727,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
        return true;
     }
  
@@ -593,11 +594,11 @@ index b82e878..e25198b 100644
     uint32_t memory_type_index;
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 3818715..a4be17f 100644
+index ca4cf38..cb6fdfe 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -360,6 +360,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
-          physical_dev->EXT_queue_family_foreign = true;
+@@ -356,6 +356,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+          physical_dev->KHR_external_fence_fd = true;
        else if (!strcmp(props->extensionName, "VK_EXT_external_memory_host"))
           physical_dev->EXT_external_memory_host = true;
 +      else if (!strcmp(props->extensionName,
@@ -606,7 +607,7 @@ index 3818715..a4be17f 100644
        else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
           physical_dev->KHR_portability_subset = true;
  
-@@ -368,6 +371,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -364,6 +367,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           if (props->specVersion > spec_ver)
              props->specVersion = spec_ver;
           exts[advertised_count++] = exts[i];
@@ -657,10 +658,10 @@ index 8aae924..3a69b92 100644
     assert(size);
  
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
-index 0ee5468..c22cda4 100644
+index 0ee5468..dbc803c 100644
 --- a/src/virgl_resource.c
 +++ b/src/virgl_resource.c
-@@ -22,14 +22,18 @@
+@@ -22,23 +22,191 @@
   *
   **************************************************************************/
  
@@ -679,7 +680,13 @@ index 0ee5468..c22cda4 100644
  #include "util/os_file.h"
  #include "util/u_hash_table.h"
  #include "util/u_pointer.h"
-@@ -39,6 +43,166 @@
+ #include "virgl_util.h"
+ #include "virgl_context.h"
+ 
++#ifdef ENABLE_METAL
++#include "virgl_metal.h"
++#endif
++
  static struct util_hash_table *virgl_resource_table;
  static struct virgl_resource_pipe_callbacks pipe_callbacks;
  
@@ -846,7 +853,7 @@ index 0ee5468..c22cda4 100644
  static void
  virgl_resource_destroy_func(void *val)
  {
-@@ -49,6 +213,7 @@ virgl_resource_destroy_func(void *val)
+@@ -49,6 +217,7 @@ virgl_resource_destroy_func(void *val)
     if ((res->fd_type != VIRGL_RESOURCE_FD_INVALID) &&
         (res->fd_type != VIRGL_RESOURCE_OPAQUE_HANDLE))
        close(res->fd);
@@ -854,7 +861,7 @@ index 0ee5468..c22cda4 100644
  
     free(res);
  }
-@@ -151,6 +316,8 @@ virgl_resource_create_from_fd(uint32_t res_id,
+@@ -151,6 +320,8 @@ virgl_resource_create_from_fd(uint32_t res_id,
     res->fd_type = fd_type;
     /* take ownership */
     res->fd = fd;

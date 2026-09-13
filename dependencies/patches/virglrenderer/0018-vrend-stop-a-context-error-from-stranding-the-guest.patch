@@ -1,7 +1,7 @@
-From 415186f4dfbfbf89c24d229e946d9f71093f3306 Mon Sep 17 00:00:00 2001
+From b551d19b7a343ad2882c30d84c39fa8a6247b0c5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:38:45 +0900
-Subject: [PATCH 18/29] vrend: stop a context error from stranding the guest
+Subject: [PATCH 18/30] vrend: stop a context error from stranding the guest
 
 A command that reports a context error aborts the rest of its buffer and
 leaves the context in error for good: every later submit fails the
@@ -27,9 +27,9 @@ losing every command it sends afterwards.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/vrend/vrend_decode.c   | 18 +++++++++++++++---
- src/vrend/vrend_renderer.c | 23 ++++++++++++++++++++++-
+ src/vrend/vrend_renderer.c | 26 +++++++++++++++++++++++++-
  src/vrend/vrend_renderer.h |  2 ++
- 3 files changed, 39 insertions(+), 4 deletions(-)
+ 3 files changed, 42 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
 index 72fdab4..5e3cadc 100644
@@ -77,10 +77,20 @@ index 72fdab4..5e3cadc 100644
  
  static int vrend_decode_ctx_get_fencing_fd(UNUSED struct virgl_context *ctx)
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 72e6770..711b239 100644
+index 72e6770..753e3e8 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -1137,6 +1137,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
+@@ -126,6 +126,9 @@ struct vrend_query {
+    int sub_ctx_id;
+    struct vrend_resource *res;
+    bool fake_samples_passed;
++   /* Set when the query's context can no longer run, so a guest waiting on
++    * the result is answered instead of spinning forever. */
++   bool invalid;
+ };
+ 
+ struct global_error_state {
+@@ -1137,6 +1140,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
                 value);
  }
  
@@ -100,7 +110,7 @@ index 72e6770..711b239 100644
  #define CORE_PROFILE_WARN_NONE 0
  #define CORE_PROFILE_WARN_STIPPLE 1
  #define CORE_PROFILE_WARN_POLYGON_MODE 2
-@@ -11716,7 +11729,7 @@ static bool vrend_check_query(struct vrend_query *query)
+@@ -11716,7 +11732,7 @@ static bool vrend_check_query(struct vrend_query *query)
     /* We got a boolean, but the client wanted the actual number of samples
      * blow the number up so that the client doesn't think it was just one pixel
      * and discards an object that might be bigger */
@@ -109,7 +119,7 @@ index 72e6770..711b239 100644
        vrend_update_oq_samples_multiplier(query->ctx);
        state.result *= query->ctx->sub->fake_occlusion_query_samples_passed_multiplier;
     }
-@@ -11787,6 +11800,14 @@ static void vrend_renderer_check_queries(void)
+@@ -11787,6 +11803,14 @@ static void vrend_renderer_check_queries(void)
        if (!vrend_hw_switch_context_with_sub(query->ctx, query->sub_ctx_id)) {
           virgl_warn("Failed to switch to context (%d) with sub (%d) for query %u\n",
                        query->ctx->ctx_id, query->sub_ctx_id, query->id);

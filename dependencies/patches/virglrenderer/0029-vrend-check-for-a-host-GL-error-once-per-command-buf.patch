@@ -1,7 +1,7 @@
-From 09c6d517381ee1add852c4913a32bfabbbab0cc6 Mon Sep 17 00:00:00 2001
+From 5ad3a61a01e1c3177f75769388723cf3e8984059 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 22:54:31 +0900
-Subject: [PATCH 29/29] vrend: check for a host GL error once per command
+Subject: [PATCH 29/30] vrend: check for a host GL error once per command
  buffer
 
 The decoder calls glGetError() after every decoded command. In a build that

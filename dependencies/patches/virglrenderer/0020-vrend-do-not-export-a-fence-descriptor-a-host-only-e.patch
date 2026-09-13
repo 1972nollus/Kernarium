@@ -1,7 +1,7 @@
-From f264936cd3d923f18b80316d969795c65f105cf1 Mon Sep 17 00:00:00 2001
+From bf4fbd2a20b55fefef05a14a2fc1c7bde5112e39 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 22:19:52 +0900
-Subject: [PATCH 20/29] vrend: do not export a fence descriptor a host only
+Subject: [PATCH 20/30] vrend: do not export a fence descriptor a host only
  emulates
 
 Creating an EGL native fence makes the GL driver submit a command buffer
@@ -21,10 +21,10 @@ whose fence descriptor is a real one.
  1 file changed, 13 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 711b239..5fe7333 100644
+index 753e3e8..2c09dd6 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -7777,7 +7777,20 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7780,7 +7780,20 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
        vrend_state.use_external_blob = true;
  
  #ifdef HAVE_EPOXY_EGL_H

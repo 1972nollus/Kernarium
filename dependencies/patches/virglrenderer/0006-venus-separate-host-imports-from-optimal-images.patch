@@ -1,7 +1,7 @@
-From 257930b72db5506c641c098b6c4be8ba3e661f92 Mon Sep 17 00:00:00 2001
+From d1de1784b2af98e58cd18daf7669115e8033d450 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 06/29] venus: separate host imports from optimal images
+Subject: [PATCH 06/30] venus: separate host imports from optimal images
 
 ---
  src/venus/vkr_buffer.c          | 12 +++++
@@ -117,7 +117,7 @@ index a8dd8fc..a3336e1 100644
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index ae46553..53f76d6 100644
+index 5634aa7..7516604 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -51,6 +51,9 @@ vkr_dispatch_vkGetImageMemoryRequirements(
@@ -141,7 +141,7 @@ index ae46553..53f76d6 100644
  }
  
  static void
-@@ -227,6 +234,10 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+@@ -229,6 +236,10 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
     vn_replace_vkGetDeviceImageMemoryRequirements_args_handle(args);
     vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo,
                                          args->pMemoryRequirements);
@@ -153,7 +153,7 @@ index ae46553..53f76d6 100644
  
  static void
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 12ccdfd..3818715 100644
+index d59aade..ca4cf38 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -171,7 +171,43 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -244,7 +244,7 @@ index 12ccdfd..3818715 100644
  static void
  vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
  {
-@@ -714,16 +786,16 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
+@@ -710,16 +782,16 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
        vkr_physical_device_from_handle(args->physicalDevice);
     struct vn_physical_device_proc_table *vk = &physical_dev->proc_table;
  

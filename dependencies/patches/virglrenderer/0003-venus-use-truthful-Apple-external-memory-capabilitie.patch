@@ -1,7 +1,7 @@
-From 719e9e852004cfacb6b6421d25ccb1b3e1b88cb0 Mon Sep 17 00:00:00 2001
+From cbbfffb815f17b0221515ae1df327753b4e43879 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:04:14 +0900
-Subject: [PATCH 03/29] venus: use truthful Apple external-memory capabilities
+Subject: [PATCH 03/30] venus: use truthful Apple external-memory capabilities
 
 ---
  src/meson.build                 |  4 +-
@@ -12,13 +12,13 @@ Subject: [PATCH 03/29] venus: use truthful Apple external-memory capabilities
  src/venus/vkr_device_memory.h   |  6 +-
  src/venus/vkr_host_memory.c     | 68 ++++++++++++++++++++++
  src/venus/vkr_host_memory.h     | 24 ++++++++
- src/venus/vkr_image.c           |  5 ++
+ src/venus/vkr_image.c           |  7 +++
  src/venus/vkr_instance.c        | 11 ----
  src/venus/vkr_metal_helpers.h   | 72 ------------------------
  src/venus/vkr_metal_helpers.m   | 99 ---------------------------------
- src/venus/vkr_physical_device.c | 64 +++++++++++----------
+ src/venus/vkr_physical_device.c | 60 +++++++++-----------
  src/venus/vkr_physical_device.h |  4 +-
- 14 files changed, 213 insertions(+), 267 deletions(-)
+ 14 files changed, 211 insertions(+), 267 deletions(-)
  create mode 100644 src/venus/vkr_host_memory.c
  create mode 100644 src/venus/vkr_host_memory.h
  delete mode 100644 src/venus/vkr_metal_helpers.h
@@ -421,14 +421,16 @@ index 0000000..55c2f5c
 +
 +#endif /* VKR_HOST_MEMORY_H */
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 2b627e3..ae46553 100644
+index 2b627e3..5634aa7 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -162,6 +162,11 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
+@@ -162,6 +162,13 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
-+   if (!dev->physical_device->EXT_image_drm_format_modifier) {
++   /* An Apple host has no DRM format modifiers, so the entry point is not
++    * loaded and calling through the table would fault. */
++   if (!vk->GetImageDrmFormatModifierPropertiesEXT) {
 +      args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
 +      return;
 +   }
@@ -642,10 +644,10 @@ index f0373ed..0000000
 -
 -#endif /* __APPLE__ */
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index bc38754..12ccdfd 100644
+index bc38754..d59aade 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -282,10 +282,12 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -282,10 +282,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->EXT_external_memory_dma_buf = true;
        else if (!strcmp(props->extensionName, "VK_KHR_external_fence_fd"))
           physical_dev->KHR_external_fence_fd = true;
@@ -653,16 +655,12 @@ index bc38754..12ccdfd 100644
 -         physical_dev->EXT_external_memory_metal = true;
 -      else if (!strcmp(props->extensionName, "VK_EXT_metal_objects"))
 -         physical_dev->EXT_metal_objects = true;
-+      else if (!strcmp(props->extensionName, "VK_EXT_image_drm_format_modifier"))
-+         physical_dev->EXT_image_drm_format_modifier = true;
-+      else if (!strcmp(props->extensionName, "VK_EXT_queue_family_foreign"))
-+         physical_dev->EXT_queue_family_foreign = true;
 +      else if (!strcmp(props->extensionName, "VK_EXT_external_memory_host"))
 +         physical_dev->EXT_external_memory_host = true;
        else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
           physical_dev->KHR_portability_subset = true;
  
-@@ -311,39 +313,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -311,39 +309,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->KHR_external_fence_fd = false;
     }
  
@@ -726,7 +724,7 @@ index bc38754..12ccdfd 100644
  static void
  vkr_physical_device_init_properties(struct vkr_physical_device *physical_dev)
  {
-@@ -444,6 +441,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
+@@ -444,6 +437,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
        physical_dev->api_version =
           MIN2(physical_dev->properties.apiVersion, instance->api_version);
        vkr_physical_device_init_extensions(physical_dev);

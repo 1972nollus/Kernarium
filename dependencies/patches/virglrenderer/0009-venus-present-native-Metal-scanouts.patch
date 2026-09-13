@@ -1,7 +1,7 @@
-From f45f5040833fa16ae7974ec49d375285bde8606a Mon Sep 17 00:00:00 2001
+From 4b4f388415bb7a60539e757db25084eaa5d5e8b3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:14 +0900
-Subject: [PATCH 09/29] venus: present native Metal scanouts
+Subject: [PATCH 09/30] venus: present native Metal scanouts
 
 ---
  src/venus/vkr_device.c          |  17 ++++
@@ -73,7 +73,7 @@ index fcf875c..67f83f9 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 16382ca..43848b9 100644
+index 4c8286c..8e3f118 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -5,7 +5,10 @@
@@ -156,7 +156,7 @@ index 16382ca..43848b9 100644
        } else if (res->fd_type == VIRGL_RESOURCE_FD_SHM) {
           if (!physical_dev->EXT_external_memory_host || !res->u.data ||
               alloc_info->allocationSize > res->size ||
-@@ -523,6 +574,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -524,6 +575,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
  
     struct vkr_device_memory *mem = vkr_device_memory_create_and_add(ctx, args);
     if (!mem) {
@@ -164,7 +164,7 @@ index 16382ca..43848b9 100644
        if (local_import_info.fd >= 0)
           close(local_import_info.fd);
        if (gbm_bo)
-@@ -539,6 +591,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -540,6 +592,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     mem->gbm_bo = gbm_bo;
     mem->host_shm = host_shm;
     mem->metal_heap_exportable = export_metal_heap;
@@ -173,7 +173,7 @@ index 16382ca..43848b9 100644
     mem->allocation_size = alloc_info->allocationSize;
     mem->memory_type_index = host_mem_type_index;
  }
-@@ -676,6 +730,8 @@ void
+@@ -677,6 +731,8 @@ void
  vkr_device_memory_release(struct vkr_device_memory *mem)
  {
     virgl_resource_native_release(mem->native_resource_id);
@@ -182,7 +182,7 @@ index 16382ca..43848b9 100644
     vkr_host_shm_free(mem->host_shm);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-@@ -683,6 +739,50 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
+@@ -684,6 +740,50 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
        close(mem->udmabuf_fd);
  }
  
@@ -233,7 +233,7 @@ index 16382ca..43848b9 100644
  bool
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
-@@ -727,35 +827,19 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -728,35 +828,19 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
     }
  
     if (mem->metal_heap_exportable) {
@@ -297,7 +297,7 @@ index e25198b..02e2ebf 100644
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 5036b68..273f9be 100644
+index d1222ad..cf78cc9 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -6,13 +6,95 @@
@@ -480,10 +480,10 @@ index a491b8d..5120b80 100644
  VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index a4be17f..3fcf99d 100644
+index cb6fdfe..fd79413 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -363,6 +363,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -359,6 +359,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
        else if (!strcmp(props->extensionName,
                         VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME))
           physical_dev->EXT_external_memory_metal = true;
@@ -506,10 +506,10 @@ index ad07431..7bda834 100644
     VkPhysicalDeviceMemoryProperties host_memory_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
-index c22cda4..8a8feb2 100644
+index dbc803c..e555eda 100644
 --- a/src/virgl_resource.c
 +++ b/src/virgl_resource.c
-@@ -50,6 +50,15 @@ struct virgl_native_resource {
+@@ -54,6 +54,15 @@ struct virgl_native_resource {
     enum virgl_resource_native_handle_type type;
     void *handle;
     uint32_t refcount;
@@ -525,7 +525,7 @@ index c22cda4..8a8feb2 100644
     struct list_head head;
  };
  
-@@ -116,6 +125,7 @@ virgl_resource_native_publish(int fd,
+@@ -120,6 +129,7 @@ virgl_resource_native_publish(int fd,
     resource->type = type;
     resource->handle = virgl_metal_retain_object(handle);
     resource->refcount = 1;
@@ -533,7 +533,7 @@ index c22cda4..8a8feb2 100644
     list_addtail(&resource->head, &native_resources);
     mtx_unlock(&native_resource_mutex);
  
-@@ -128,6 +138,152 @@ virgl_resource_native_publish(int fd,
+@@ -132,6 +142,152 @@ virgl_resource_native_publish(int fd,
  #endif
  }
  
@@ -686,7 +686,7 @@ index c22cda4..8a8feb2 100644
  uint64_t
  virgl_resource_native_acquire(int fd,
                                enum virgl_resource_native_handle_type *out_type,
-@@ -195,6 +351,12 @@ virgl_resource_native_release(uint64_t id)
+@@ -199,6 +355,12 @@ virgl_resource_native_release(uint64_t id)
     mtx_unlock(&native_resource_mutex);
  
     if (released) {

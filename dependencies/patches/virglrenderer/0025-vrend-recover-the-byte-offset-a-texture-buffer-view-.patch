@@ -1,7 +1,7 @@
-From 6f7e8576d2f818c68fd253482002a9ec5d062e8b Mon Sep 17 00:00:00 2001
+From 5fc30a213649bac3e91a5b8ed30ff42db9a79ad7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
-Subject: [PATCH 25/29] vrend: recover the byte offset a texture buffer view
+Subject: [PATCH 25/30] vrend: recover the byte offset a texture buffer view
  was given
 
 A texture buffer view crosses the protocol as a first and last element, so
@@ -31,10 +31,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 39 insertions(+), 9 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index d3abae6..77fb208 100644
+index 26d4ceb..25f7f7c 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -379,6 +379,7 @@ struct global_renderer_state {
+@@ -382,6 +382,7 @@ struct global_renderer_state {
  
     uint32_t max_draw_buffers;
     uint32_t max_texture_buffer_size;
@@ -42,7 +42,7 @@ index d3abae6..77fb208 100644
     uint32_t max_texture_2d_size;
     uint32_t max_texture_3d_size;
     uint32_t max_texture_cube_size;
-@@ -3681,6 +3682,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
+@@ -3684,6 +3685,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
     }
  }
  
@@ -74,7 +74,7 @@ index d3abae6..77fb208 100644
  void vrend_set_single_sampler_view(struct vrend_context *ctx,
                                     uint32_t shader_type,
                                     uint32_t index,
-@@ -3774,15 +3800,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
+@@ -3777,15 +3803,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
           }
  
           if (has_feature(feat_texture_buffer_range)) {
@@ -99,7 +99,7 @@ index d3abae6..77fb208 100644
           } else
              glTexBuffer(GL_TEXTURE_BUFFER, internalformat, view->texture->gl_id);
        }
-@@ -7715,6 +7741,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7718,6 +7744,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,
                   (GLint*)&vrend_state.max_texture_units);
  

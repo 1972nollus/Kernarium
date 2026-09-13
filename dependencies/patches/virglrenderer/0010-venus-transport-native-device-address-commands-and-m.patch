@@ -1,7 +1,7 @@
-From 238f124abd4957e81ee56eea6edb4f71c4187b9c Mon Sep 17 00:00:00 2001
+From 2552205f64ffd3dd3ab4aab4396c0647511337cb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:23:49 +0900
-Subject: [PATCH 10/29] venus: transport native device-address commands and
+Subject: [PATCH 10/30] venus: transport native device-address commands and
  maintenance
 
 ---
@@ -565,7 +565,7 @@ index 67f83f9..7af0a20 100644
  #include "vkr_context.h"
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 43848b9..1014127 100644
+index 8e3f118..84e6ab9 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -11,7 +11,7 @@
@@ -662,7 +662,7 @@ index 12aebf9..d279891 100644
  struct vulkan_library {
     void *handle;
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 3fcf99d..8f44509 100644
+index fd79413..bdc96c9 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -5,7 +5,7 @@

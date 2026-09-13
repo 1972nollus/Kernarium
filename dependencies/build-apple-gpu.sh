@@ -462,7 +462,7 @@ PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/libepoxy" "$SOURCES/libepoxy" \
 	--prefix "$STAGE" --buildtype release --cross-file "$EPOXY_CROSS" \
 	--wrap-mode=nodownload \
-	-Ddefault_library=static -Dtests=false -Dglx=no -Degl=yes -Dx11=false \
+	-Ddefault_library=static -Dtests=false -Dglx=no -Degl=yes -Dx11=false
 "$MESON" compile -C "$BUILDS/libepoxy" -j "$JOBS"
 "$MESON" install -C "$BUILDS/libepoxy"
 
