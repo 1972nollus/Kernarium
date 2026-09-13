@@ -555,7 +555,13 @@ private:
 		return 126;
 	}
 	if (reinterpret_cast<uintptr_t>(mapped) != minimum) {
-		fprintf(stderr, "UML ELF: preferred kernel address unavailable\n");
+		fprintf(stderr,
+			"UML ELF: preferred kernel address unavailable: "
+			"wanted %#llx..%#llx, Darwin offered %#llx\n",
+			static_cast<unsigned long long>(minimum),
+			static_cast<unsigned long long>(maximum),
+			static_cast<unsigned long long>(
+				reinterpret_cast<uintptr_t>(mapped)));
 		return 126;
 	}
 

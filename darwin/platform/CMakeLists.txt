@@ -47,6 +47,21 @@ target_compile_options(uml_host_topology PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_host_topology PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
+add_library(uml_host_environment OBJECT apple/host_environment.mm)
+add_library(UML::HostEnvironment ALIAS uml_host_environment)
+uml_declare_architecture_target(uml_host_environment platform)
+target_link_libraries(uml_host_environment PRIVATE
+    UML::PlatformContract)
+target_include_directories(uml_host_environment PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_host_environment PUBLIC cxx_std_20)
+set_target_properties(uml_host_environment PROPERTIES
+    OBJCXX_STANDARD 20
+    POSITION_INDEPENDENT_CODE ON)
+target_compile_options(uml_host_environment PRIVATE
+    -Wall -Wextra -Werror
+    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+
 add_library(uml_guest_files OBJECT guest_files.cpp)
 add_library(UML::GuestFiles ALIAS uml_guest_files)
 uml_declare_architecture_target(uml_guest_files platform)
@@ -62,8 +77,10 @@ add_library(uml_platform_component INTERFACE)
 add_library(UML::PlatformComponent ALIAS uml_platform_component)
 uml_declare_architecture_target(uml_platform_component platform)
 target_link_libraries(uml_platform_component INTERFACE
-    UML::PlatformContract)
+    UML::PlatformContract
+    "-framework Foundation")
 target_sources(uml_platform_component INTERFACE
     $<TARGET_OBJECTS:uml_run_routing>
     $<TARGET_OBJECTS:uml_host_topology>
+    $<TARGET_OBJECTS:uml_host_environment>
     $<TARGET_OBJECTS:uml_guest_files>)

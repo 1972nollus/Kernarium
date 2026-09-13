@@ -48,7 +48,10 @@ kernel reserves for negotiated vhost-user shared-memory regions and its stub
 pages. The host and the kernel derive that reservation from the same constants,
 so a host window smaller than the kernel's expectation faults on the kernel's
 own stub write. macOS places the window at 96 TiB; iOS top-packs it below the
-physical-device address ceiling.
+physical-device address ceiling. The iOS slice also runs on an Apple silicon
+Mac in Designed for iPad mode, where the process is a macOS process; placement
+follows the address space the process actually has, so that mode takes the
+macOS window.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create

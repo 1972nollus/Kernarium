@@ -37,6 +37,7 @@ uml_declare_architecture_target(uml_runtime_context runtime)
 target_link_libraries(uml_runtime_context PRIVATE
     UML::RuntimeContract
     UML::RunRouting
+    UML::HostEnvironment
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_context PRIVATE
