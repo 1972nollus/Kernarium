@@ -1,7 +1,7 @@
 From d71b5ba75e87a30a44f399875e8d340c37cd7e8a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 15:34:12 +0900
-Subject: [PATCH 55/57] kosmickrisp: apply the static sample mask before early
+Subject: [PATCH 55/58] kosmickrisp: apply the static sample mask before early
  sample counting
 
 Vulkan performs the sample mask test before the early depth and stencil
