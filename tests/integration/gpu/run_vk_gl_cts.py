@@ -3322,6 +3322,18 @@ def native_wsi_harness_command(
     return command
 
 
+def shard_selection_command(target: str, selection: Selection) -> str:
+    """Write the fraction's cases, in leaf order, to the named guest file."""
+    return (
+        "awk -v shard_index="
+        f"{selection.fraction_index} "
+        f"-v shard_count={selection.fraction_count} "
+        "'NF && $1 !~ /^#/ { "
+        "if ((seen % shard_count) == shard_index) print; ++seen }' "
+        f'"$leaf" > {target}'
+    )
+
+
 def build_guest_launcher(
     selection: Selection | None,
     seed: int,
@@ -3552,14 +3564,25 @@ chown uml:uml "$inventory_report" "$renderer"
     elif config_inventory:
         pass
     elif not selection.exact_cases:
-        selection_command = (
-            "awk -v shard_index="
-            f"{selection.fraction_index} "
-            f"-v shard_count={selection.fraction_count} "
-            "'NF && $1 !~ /^#/ { "
-            "if ((seen % shard_count) == shard_index) print; ++seen }' "
-            '"$leaf" > "$selected"'
-        )
+        selection_command = shard_selection_command('"$selected"', selection)
+    elif matrix is not None:
+        # An official shard narrowed to named cases. Derive the shard exactly
+        # as the fraction path does, keep the requested cases in the shard's
+        # own order, and require the result to be the request itself: that
+        # proves every case belongs to this shard, that none repeats, and that
+        # the request is in the shard's order.
+        request = "".join(f"{case}\n" for case in selection.exact_cases)
+        selection_command = "\n".join([
+            shard_selection_command('"$selected.shard"', selection),
+            f'printf \'%s\' {shlex.quote(request)} > "$selected.request"',
+            'grep -Fx -f "$selected.request" "$selected.shard" > "$selected" || true',
+            'if ! cmp -s "$selected" "$selected.request"; then',
+            "    echo 'UML_CTS_ERROR: exact cases are not an ordered subset "
+            "of the selected matrix shard'",
+            "    exit 1",
+            "fi",
+            'rm -f -- "$selected.shard" "$selected.request"',
+        ])
     else:
         selection_lines = [': > "$selected"']
         selection_lines.extend(
@@ -4811,6 +4834,7 @@ def load_config_inventory_evidence(
 def opengl_matrix_run(
     receipt: dict[str, Any], configs: tuple[EglConfig, ...], digest: str,
     config_index: int, configuration_index: int, fraction: tuple[int, int],
+    exact_cases: tuple[str, ...] = (),
 ) -> MatrixRun:
     if receipt.get("schema_version") != 4:
         raise CampaignError("GL matrix requires the XML-scoped schema-4 receipt")
@@ -4842,7 +4866,8 @@ def opengl_matrix_run(
             xml_arguments=tuple(row["xml_arguments"]),
         ),
         egl_config=configs[config_index], egl_config_index=config_index,
-        config_inventory_sha256=digest, selection=Selection(leaf, (), *fraction),
+        config_inventory_sha256=digest,
+        selection=Selection(leaf, exact_cases, *fraction),
         mustpass_xml_path=document["path"], mustpass_xml_size=document["size"],
         mustpass_xml_sha256=document["sha256"],
         opengl_configuration_index=configuration_index,
@@ -4929,14 +4954,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=sorted({api_for_leaf(identifier) for identifier in leaves}),
     )
     parser.add_argument("--context", choices=("egl",), default="egl")
-    selection = parser.add_mutually_exclusive_group()
-    selection.add_argument(
+    # A developer shard still picks cases or a fraction, never both, but an
+    # official matrix shard takes its fraction and then narrows it to named
+    # cases, so the pair is rejected where it does not belong instead of by
+    # the parser.
+    parser.add_argument(
         "--case",
         type=exact_case,
         action="append",
         help="exact CTS case, repeatable in CTS traversal order",
     )
-    selection.add_argument("--fraction", type=parse_fraction)
+    parser.add_argument("--fraction", type=parse_fraction)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--config-inventory-run", type=Path)
     parser.add_argument("--egl-config-index", type=nonnegative_integer)
@@ -5046,8 +5074,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     elif options.matrix is not None:
         if options.leaf is not None or options.api is not None:
             parser.error("--matrix owns its exact leaf and API")
-        if options.case is not None:
-            parser.error("--matrix does not accept an exact-case selector")
+        if options.case is not None and len(set(options.case)) != len(options.case):
+            parser.error("--case must not repeat a case")
         if options.seed is not None:
             parser.error("--matrix uses the seed from mustpass.xml")
         if options.config_inventory_run is None or options.egl_config_index is None:
@@ -5087,6 +5115,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             )
         if matrix_only_arguments:
             parser.error("a developer shard does not accept matrix options")
+        if options.case is not None and options.fraction is not None:
+            parser.error("a developer shard takes --case or --fraction, not both")
         if options.case is not None and len(set(options.case)) != len(options.case):
             parser.error("--case must not repeat a case")
     if options.seed is None:
@@ -5185,6 +5215,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                 options.matrix_run = opengl_matrix_run(
                     receipt, configs, config_digest, options.egl_config_index,
                     options.mustpass_config_index, options.fraction,
+                    tuple(options.case) if options.case else (),
                 )
                 source = receipt["opengl_cts"]["mustpass"]["runner_source"]
                 options.runner_oracle = RunnerOracle(
@@ -5202,7 +5233,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         if options.matrix_run is None:
             fraction_index, fraction_count = options.fraction
             leaf = leaves[options.matrix]
-            selected = Selection(leaf, (), fraction_index, fraction_count)
+            selected = Selection(
+                leaf, tuple(options.case) if options.case else (),
+                fraction_index, fraction_count,
+            )
             xml_identity = identity["mustpass"]["gles_xml"]
             options.matrix_run = MatrixRun(
                 configuration=baseline_mustpass_configuration(
@@ -5252,6 +5286,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
                if matrix.opengl_configuration_index is not None else "")
         suffix = (f"matrix-{api_identifier}-cfg{matrix.egl_config_index:02d}-"
                   f"{row}{fraction_index:03d}of{fraction_count:03d}")
+        if selection.exact_cases:
+            # A subset of a shard is not that shard, and its directory says so
+            # before anything reads its metadata.
+            suffix += f"-cases{len(selection.exact_cases):03d}"
     elif options.campaign is not None:
         campaign = options.campaigns[options.campaign]
         leaf = campaign.leaf
@@ -5337,6 +5375,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if options.inventory
             else "config-inventory"
             if options.config_inventory is not None
+            else "mustpass-matrix-case-subset"
+            if options.matrix is not None and options.case
             else "mustpass-matrix-shard"
             if options.matrix is not None
             else "shard"
@@ -5620,6 +5660,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     selected_digest = hashlib.sha256(artifacts["selected.txt"]).hexdigest()
     if len(selected_cases) != selection.expected_count:
         raise CampaignError("egressed caselist count changed")
+    if options.matrix is not None and selection.exact_cases:
+        # The guest proved the request is an ordered subset of its shard; the
+        # host holds the egressed list to the request it sent, so the evidence
+        # names the cases that were asked for and no others.
+        if tuple(selected_cases) != selection.exact_cases:
+            raise CampaignError("egressed caselist is not the requested subset")
     qpa_text = decode_qpa(artifacts["results.qpa"])
     results = validate_qpa_union(qpa_text, selected_cases)
     totals = status_totals(results)

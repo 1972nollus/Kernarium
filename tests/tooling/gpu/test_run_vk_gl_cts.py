@@ -1776,6 +1776,96 @@ native_display_cleanup
                         (1280, 720), other,
                     )
 
+    def test_matrix_case_subset_narrows_a_shard_and_names_itself(self) -> None:
+        """An official shard can be narrowed to named cases.
+
+        Isolating one failing case is the only way to tell a real defect from
+        an ordering artefact, and the developer leaf path cannot do it on a
+        sealed image: its leaf identity comes from the checked-in identity
+        file, not from the image's own receipt. Narrowing the matrix shard
+        keeps the receipt-bound leaf gate exactly as it is.
+        """
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt_path = root / "receipt.json"
+            receipt_path.write_text(
+                json.dumps(derivative_receipt(identity)), encoding="utf-8"
+            )
+            _, contract = cts.load_derivative_receipt(receipt_path, identity)
+            inventory_run = write_config_inventory_evidence(
+                root / "inventory", "gles3", contract
+            )
+            cases = ["dEQP-GLES3.functional.a", "dEQP-GLES3.functional.b"]
+            common = [
+                "--matrix", "gles3",
+                "--config-inventory-run", str(inventory_run),
+                "--egl-config-index", "1",
+                "--fraction", "3,8",
+                "--display", "vnc",
+                "--rootfs", str(root / "rootfs.ext4"),
+                "--rootfs-type", "ext4",
+                "--rootfs-receipt", str(receipt_path),
+                "--qualification",
+                "--dry-run",
+            ]
+            selector = [argument for case in cases for argument in ("--case", case)]
+            options = cts.parse_arguments(common + selector)
+            selection = options.matrix_run.selection
+            # The shard is still the shard it was, and the request narrows it.
+            self.assertEqual(selection.fraction_index, 3)
+            self.assertEqual(selection.fraction_count, 8)
+            self.assertEqual(selection.exact_cases, tuple(cases))
+            self.assertEqual(selection.expected_count, len(cases))
+
+            for backend in ("virgl", "zink"):
+                with self.subTest(renderer=backend):
+                    launcher = cts.build_guest_launcher(
+                        selection,
+                        options.seed,
+                        options.shard_timeout,
+                        16384,
+                        options.rootfs_contract,
+                        matrix=options.matrix_run,
+                        renderer_backend=backend,
+                    )
+                    # The guest derives the shard, keeps the requested cases in
+                    # the shard's order, and proves the two agree.
+                    self.assertIn("shard_index=3", launcher)
+                    self.assertIn("shard_count=8", launcher)
+                    self.assertIn('"$selected.shard"', launcher)
+                    self.assertIn('grep -Fx -f "$selected.request"', launcher)
+                    self.assertIn(
+                        "exact cases are not an ordered subset "
+                        "of the selected matrix shard",
+                        launcher,
+                    )
+                    for case in cases:
+                        self.assertIn(case, launcher)
+                    # The receipt-bound leaf gate is untouched.
+                    self.assertIn(
+                        "selected must-pass leaf identity changed", launcher
+                    )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                cts.parse_arguments(common + selector + ["--case", cases[0]])
+            self.assertIn("--case must not repeat a case", stderr.getvalue())
+
+    def test_developer_shard_still_takes_cases_or_a_fraction(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            cts.parse_arguments(
+                [
+                    "--leaf", "gles3",
+                    "--api", "gles3",
+                    "--case", "dEQP-GLES3.functional.a",
+                    "--fraction", "3,8",
+                    "--dry-run",
+                ]
+            )
+        self.assertIn("--case or --fraction, not both", stderr.getvalue())
+
     def test_matrix_cli_requires_authenticated_discovery_and_exact_xml(self) -> None:
         identity = cts.load_identity()
         with tempfile.TemporaryDirectory() as temporary:

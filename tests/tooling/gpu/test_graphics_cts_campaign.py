@@ -550,6 +550,42 @@ class GraphicsCampaignTests(unittest.TestCase):
                     ):
                         campaign.validate_attempt(root, definition, key)
 
+    def test_gl46_case_subset_narrows_its_run_and_never_counts_as_a_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            item = definition["opengl"]
+            configs = tuple(
+                gl.EglConfig(row["id"], tuple(row["surface_types"]))
+                for row in item["egl_configs"]
+            )
+            run = item["runs"][0]
+            cases = ("KHR-GL46.case.a", "KHR-GL46.case.b")
+            narrowed = gl.opengl_matrix_run(
+                item["receipt"], configs, item["egl_config_sha256"],
+                run["egl_config_index"], run["configuration_index"], (3, 8),
+                cases,
+            )
+            whole = gl.opengl_matrix_run(
+                item["receipt"], configs, item["egl_config_sha256"],
+                run["egl_config_index"], run["configuration_index"], (3, 8),
+            )
+            # Same shard, same leaf, fewer cases.
+            self.assertEqual(narrowed.selection.leaf, whole.selection.leaf)
+            self.assertEqual(narrowed.selection.fraction_index, 3)
+            self.assertEqual(narrowed.selection.fraction_count, 8)
+            self.assertEqual(narrowed.selection.exact_cases, cases)
+            self.assertEqual(narrowed.selection.expected_count, len(cases))
+            self.assertEqual(whole.selection.exact_cases, ())
+
+            key = campaign.Shard("gl46", 0, 7)
+            attempt = make_gl_attempt(root, definition, key)
+            metadata = json.loads((attempt / "run.json").read_text())
+            metadata["mode"] = "mustpass-matrix-case-subset"
+            (attempt / "run.json").write_text(json.dumps(metadata))
+            with self.assertRaises(gl.CampaignError):
+                campaign.validate_attempt(root, definition, key)
+
     def test_resumed_gl_attempt_reparses_and_names_its_recorded_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
