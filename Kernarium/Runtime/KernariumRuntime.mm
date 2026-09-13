@@ -846,7 +846,11 @@ public:
     }
 
 private:
-    static constexpr std::size_t maximumFrameBytes = 2048U;
+    /* One frame is one base64 line plus its short header. The GL driver
+     * encodes 1 KiB lines and the Vulkan driver 3 KiB ones, so a bound below
+     * the larger of the two rejects every Vulkan artifact past the first
+     * single-chunk file. */
+    static constexpr std::size_t maximumFrameBytes = 4096U;
 
     [[nodiscard]] static bool decimal(std::string_view text) noexcept
     {
@@ -869,7 +873,9 @@ private:
 
     [[nodiscard]] static bool base64(std::string_view text) noexcept
     {
-        return !text.empty() && text.size() <= 1024U &&
+        /* One chunk is one encoded line: the GL driver writes 1 KiB lines and
+         * the Vulkan driver 3 KiB ones. */
+        return !text.empty() && text.size() <= 3072U &&
             std::ranges::all_of(text, [](char character) {
                 return (character >= 'A' && character <= 'Z') ||
                     (character >= 'a' && character <= 'z') ||
@@ -884,12 +890,21 @@ private:
         for (const std::string_view allowed : {
                  "renderer.txt",
                  "selected.txt",
+                 "expected.txt",
                  "results.qpa",
                  "summary.txt"}) {
             if (name == allowed)
                 return true;
         }
-        return false;
+        /* A campaign that checkpoints its log ships it as fixed-width
+         * numbered segments, which the host reassembles in order. */
+        constexpr std::string_view segmentPrefix = "results.qpa.";
+        constexpr std::size_t segmentDigits = 4U;
+        if (name.size() != segmentPrefix.size() + segmentDigits ||
+            name.substr(0, segmentPrefix.size()) != segmentPrefix) {
+            return false;
+        }
+        return decimal(name.substr(segmentPrefix.size()));
     }
 
     [[nodiscard]] static std::vector<std::string_view> split(

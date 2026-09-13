@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import socket
 import subprocess
 import shlex
@@ -1828,6 +1829,57 @@ native_display_cleanup
                 SystemExit
             ):
                 cts.parse_arguments(wrong_display)
+
+    def test_kernarium_relay_accepts_every_driver_artifact_frame(self) -> None:
+        """The application relays what the drivers it hosts actually send.
+
+        The relay validates each frame before acknowledging it, so a bound
+        below a driver's own encoding silently truncates that campaign's
+        evidence instead of failing the build. Both drivers are checked here
+        because only one of them is read when a campaign is generated.
+        """
+        runtime = (
+            REPO_ROOT / "Kernarium/Runtime/KernariumRuntime.mm"
+        ).read_text(encoding="utf-8")
+        gl_launcher = (INTEGRATION_GPU / "run_vk_gl_cts.py").read_text(
+            encoding="utf-8"
+        )
+        vulkan_launcher = (INTEGRATION_GPU / "run_vk_cts.py").read_text(
+            encoding="utf-8"
+        )
+        lines = [
+            int(match)
+            for match in re.findall(r"base64 -w (\d+) ", gl_launcher)
+        ]
+        vulkan_line = re.search(
+            r"^ARTIFACT_BASE64_LINE_LENGTH = (\d+) \* (\d+)$",
+            vulkan_launcher,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(vulkan_line)
+        lines.append(int(vulkan_line.group(1)) * int(vulkan_line.group(2)))
+        self.assertTrue(lines)
+        widest = max(lines)
+        chunk_bound = int(
+            re.search(r"text\.size\(\) <= (\d+)U", runtime).group(1)
+        )
+        frame_bound = int(
+            re.search(
+                r"maximumFrameBytes = (\d+)U", runtime
+            ).group(1)
+        )
+        self.assertGreaterEqual(chunk_bound, widest)
+        # A frame is one chunk plus its header fields.
+        self.assertGreater(frame_bound, chunk_bound)
+        for name in (
+            "renderer.txt",
+            "selected.txt",
+            "expected.txt",
+            "results.qpa",
+            "summary.txt",
+        ):
+            self.assertIn(f'"{name}"', runtime)
+        self.assertIn('segmentPrefix = "results.qpa."', runtime)
 
     def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
         generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"
