@@ -1,7 +1,7 @@
 From 4d43840785bb953bfbb21332e724f11af2a914f5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 19:31:13 +0900
-Subject: [PATCH 06/15] zink: support Venus implicit native dma-bufs
+Subject: [PATCH 06/16] zink: support Venus implicit native dma-bufs
 
 ---
  src/gallium/drivers/zink/zink_batch.c        |  10 +-

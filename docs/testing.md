@@ -421,6 +421,28 @@ every waived result, the campaign aggregate counts `waived_cases` per run, and
 `unwaived_runner_success` is false whenever a waiver was used. A waived result
 is not a pass and makes no conformance claim.
 
+### Framebuffer completeness compatibility warning
+
+`KHR-GL46.direct_state_access.framebuffers_check_status` grades three of its
+observations optional, because the specification does not make the statuses
+they expect mandatory, and reports `CompatibilityWarning` when one of them sees
+`GL_FRAMEBUFFER_COMPLETE` instead. The runner policy above counts that status as
+a success.
+
+The guest frontend grants a one-sample multisample renderbuffer exactly one
+sample, so a framebuffer that mixes it with a two-sample renderbuffer is
+incomplete as the caller described it. Multisample textures keep the frontend's
+promotion to two samples: a texture is also sampled, a one-sample multisample
+texture has no Metal representation, and honouring the request there costs most
+of the `samples_1` rendering cases their result.
+
+The layer-targets observation keeps the warning. It attaches one slice of a
+three-dimensional texture beside a two-dimensional texture, which leaves no
+attachment layered, and the rule requiring a common texture target applies only
+when one is. Reporting that framebuffer incomplete would contradict the
+completeness rules a conforming implementation must apply, so this case is
+expected to stay a compatibility warning.
+
 ### Native whole-submit timing
 
 The KosmicKrisp line and geometry unit executables accept the opt-in arguments
