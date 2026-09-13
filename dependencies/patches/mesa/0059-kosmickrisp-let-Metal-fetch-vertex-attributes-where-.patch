@@ -1,4 +1,4 @@
-From f4e1f7f43b5faab751697969201a3ad570075ef0 Mon Sep 17 00:00:00 2001
+From 0d632f761426ef8f83dcb384e691321d0dfbe721 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 18:41:01 +0900
 Subject: [PATCH 59/69] kosmickrisp: let Metal fetch vertex attributes where
@@ -29,8 +29,8 @@ descriptor to carry the vertex descriptor.
 
 Two things had to follow the attributes out of the shader.  The vertex buffers
 are now bound as addresses in the argument table rather than read as UBOs, at
-KK_VERTEX_BUFFER_BINDING_BASE onwards, which is why the maximum buffer binding
-count grows by KK_MAX_VBUFS.  And modify_nir_info used to clear inputs_read for
+KK_VERTEX_BUFFER_BINDING_BASE onwards, which is why the command buffer's
+argument table now asks for every buffer bind Metal allows it.  And modify_nir_info used to clear inputs_read for
 every vertex shader, on the assumption that attribute fetch always became
 argument-buffer reads; a shader that lets Metal fetch keeps its attributes,
 because they are exactly what the [[stage_in]] parameter and the vertex
@@ -44,6 +44,24 @@ the way the shader-lowered path does, which indexes its own descriptor array,
 instead left Metal matching a declared attribute against another one's format,
 or against nothing: "Vertex attribute attribute_5(5) is missing from the vertex
 descriptor".
+
+Metal numbers both ends of that descriptor more narrowly than Vulkan numbers
+its vertex input, so the predicate has to stop where Metal does.  An argument
+table holds at most KK_MAX_ARGUMENT_TABLE_BUFFERS buffer binds - Metal 4's own
+limit, which MTL4ArgumentTableDescriptor and MTLVertexAttributeDescriptor both
+enforce - and three of those carry the root descriptor table, the sampler table
+and the per-draw data, so Metal's fetch can reach KK_MAX_NATIVE_VBUFS bindings.
+MSL numbers an [[attribute(n)]] from zero to thirty, so it can name
+KK_MAX_NATIVE_VERTEX_ATTRIBS locations.  Vulkan advertises 32 of each.  The
+lowered fetch has neither ceiling, because it reads its buffers through the
+root descriptor table and indexes its own attribute array, so a binding or a
+location past Metal's end keeps that path, and maxVertexInputBindings and
+maxVertexInputAttributes stand as advertised.  Sizing the table at
+KK_VERTEX_BUFFER_BINDING_BASE + KK_MAX_VBUFS instead asked for 35 binds, which
+runtime Metal tolerated and MTLDebugDevice rejected outright - "max buffer bind
+count must not be more than 31" - while a draw from the last Vulkan binding
+aborted the process with "buffer index (34) must be < 31" with no validation
+layer at all.
 
 A zero attribute divisor keeps the lowered path.  Vulkan reads the element at
 firstInstance there, not the first element of the buffer, and Metal's constant
@@ -63,7 +81,10 @@ index rather than at the location fails it exactly as Metal reports it.  A
 third draws two instances through a binding whose divisor is zero, which the
 predicate now sends down the lowered path; it is kept because the Metal path
 reached it before, and aborted the process inside MTLVertexDescriptor
-validation.  Four more link the same vertex stage against the
+validation.  A fourth and a fifth draw from the last binding and the last
+location Vulkan advertises, both past Metal's ceilings and so on the lowered
+path too, and read the same value back.  Four more link the same vertex stage
+against the
 generated fragment stages KosmicKrisp precompiles for point and line
 rasterization - point and line topologies, and the point and line polygon
 modes - because those are built separately and have to agree with a vertex
@@ -91,39 +112,41 @@ fast link.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/bridge/mtl_compiler.h         |  12 +
- src/kosmickrisp/bridge/mtl_compiler.m         |  36 +
- src/kosmickrisp/bridge/mtl_types.h            |  66 ++
- src/kosmickrisp/bridge/stubs/mtl_compiler.c   |  14 +
- src/kosmickrisp/compiler/msl_iomap.c          |  40 +-
- src/kosmickrisp/compiler/nir_to_msl.c         |   6 +
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        |   5 +-
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  15 +-
- src/kosmickrisp/vulkan/kk_debug.c             |   1 +
- src/kosmickrisp/vulkan/kk_debug.h             |   4 +
- src/kosmickrisp/vulkan/kk_gpl.h               |   3 +
- src/kosmickrisp/vulkan/kk_private.h           |   5 +
- src/kosmickrisp/vulkan/kk_shader.c            | 311 ++++++-
- src/kosmickrisp/vulkan/kk_shader.h            |  20 +
- src/kosmickrisp/vulkan/meson.build            |  23 +
- .../vulkan/tests/bench_vertex_fetch_path.cpp  | 603 +++++++++++++
- .../bench_fetch.frag                          |   7 +
- .../bench_fetch.frag.h                        |  22 +
- .../bench_fetch.vert                          |  17 +
- .../bench_fetch.vert.h                        |  80 ++
- .../bench_fetch_instanced.vert                |  17 +
- .../bench_fetch_instanced.vert.h              |  85 ++
- .../bench_fetch_wide.vert                     |  21 +
- .../bench_fetch_wide.vert.h                   | 107 +++
- .../metal_vertex_fetch_shaders/fetch.frag     |   7 +
- .../metal_vertex_fetch_shaders/fetch.frag.h   |  20 +
- .../metal_vertex_fetch_shaders/fetch.vert     |  18 +
- .../metal_vertex_fetch_shaders/fetch.vert.h   |  78 ++
- .../fetch_single.vert                         |  16 +
- .../fetch_single.vert.h                       |  76 ++
- .../metal_vertex_fetch_shaders/generate.sh    |   8 +
- .../vulkan/tests/test_metal_vertex_fetch.cpp  | 840 ++++++++++++++++++
- 32 files changed, 2573 insertions(+), 10 deletions(-)
+ src/kosmickrisp/bridge/mtl_compiler.h         |   12 +
+ src/kosmickrisp/bridge/mtl_compiler.m         |   36 +
+ src/kosmickrisp/bridge/mtl_types.h            |   66 +
+ src/kosmickrisp/bridge/stubs/mtl_compiler.c   |   14 +
+ src/kosmickrisp/compiler/msl_iomap.c          |   40 +-
+ src/kosmickrisp/compiler/nir_to_msl.c         |    6 +
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        |   12 +-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |   15 +-
+ src/kosmickrisp/vulkan/kk_debug.c             |    1 +
+ src/kosmickrisp/vulkan/kk_debug.h             |    4 +
+ src/kosmickrisp/vulkan/kk_gpl.h               |    3 +
+ src/kosmickrisp/vulkan/kk_private.h           |   21 +
+ src/kosmickrisp/vulkan/kk_shader.c            |  337 +++++-
+ src/kosmickrisp/vulkan/kk_shader.h            |   20 +
+ src/kosmickrisp/vulkan/meson.build            |   23 +
+ .../vulkan/tests/bench_vertex_fetch_path.cpp  |  603 ++++++++++
+ .../bench_fetch.frag                          |    7 +
+ .../bench_fetch.frag.h                        |   22 +
+ .../bench_fetch.vert                          |   17 +
+ .../bench_fetch.vert.h                        |   80 ++
+ .../bench_fetch_instanced.vert                |   17 +
+ .../bench_fetch_instanced.vert.h              |   85 ++
+ .../bench_fetch_wide.vert                     |   21 +
+ .../bench_fetch_wide.vert.h                   |  107 ++
+ .../metal_vertex_fetch_shaders/fetch.frag     |    7 +
+ .../metal_vertex_fetch_shaders/fetch.frag.h   |   20 +
+ .../metal_vertex_fetch_shaders/fetch.vert     |   18 +
+ .../metal_vertex_fetch_shaders/fetch.vert.h   |   78 ++
+ .../fetch_high_location.vert                  |   15 +
+ .../fetch_high_location.vert.h                |   76 ++
+ .../fetch_single.vert                         |   16 +
+ .../fetch_single.vert.h                       |   76 ++
+ .../metal_vertex_fetch_shaders/generate.sh    |    9 +
+ .../vulkan/tests/test_metal_vertex_fetch.cpp  | 1059 +++++++++++++++++
+ 34 files changed, 2933 insertions(+), 10 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/bench_vertex_fetch_path.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag.h
@@ -137,6 +160,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert
+ create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert.h
  create mode 100755 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
@@ -404,18 +429,25 @@ index d679a62a..b1208f34 100644
        P_IND(ctx, "FragmentIn in [[stage_in]],\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 98444414..36e5442b 100644
+index 98444414..11fc8968 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -142,7 +142,10 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -142,7 +142,17 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
     {
        mtl_argument_table_descriptor *desc = mtl_new_argument_table_descriptor();
        /* Root at 0, samplers at 1 and per draw data at 2 */
 -      mtl_set_max_buffer_binding_count(desc, 3u);
-+      /* Three fixed bindings plus a slot for each vertex buffer Metal's own
-+       * fetch may read; see KK_VERTEX_BUFFER_BINDING_BASE. */
-+      mtl_set_max_buffer_binding_count(
-+         desc, KK_VERTEX_BUFFER_BINDING_BASE + KK_MAX_VBUFS);
++      /* Metal caps the table at KK_MAX_ARGUMENT_TABLE_BUFFERS binds, so ask
++       * for exactly that: the three fixed slots and, above them, one slot for
++       * every vertex buffer Metal's own fetch is allowed to read.  A binding
++       * past those keeps the shader-lowered fetch and needs no slot here; see
++       * kk_vertex_input_is_metal_expressible. */
++      static_assert(KK_VERTEX_BUFFER_BINDING_BASE + KK_MAX_NATIVE_VBUFS <=
++                       KK_MAX_ARGUMENT_TABLE_BUFFERS,
++                    "argument table must stay inside Metal's bind limit");
++      static_assert(KK_MAX_NATIVE_VBUFS <= KK_MAX_VBUFS,
++                    "Metal cannot fetch from more bindings than Vulkan has");
++      mtl_set_max_buffer_binding_count(desc, KK_MAX_ARGUMENT_TABLE_BUFFERS);
        cmd->argument_table = mtl_new_argument_table(dev->mtl_handle, desc);
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
@@ -495,10 +527,10 @@ index 9a3f458f..7fd01045 100644
  
  #include <string.h>
 diff --git a/src/kosmickrisp/vulkan/kk_private.h b/src/kosmickrisp/vulkan/kk_private.h
-index a31eadde..52bb9013 100644
+index a31eadde..4e246852 100644
 --- a/src/kosmickrisp/vulkan/kk_private.h
 +++ b/src/kosmickrisp/vulkan/kk_private.h
-@@ -15,6 +15,11 @@
+@@ -15,6 +15,27 @@
  
  #include <assert.h>
  
@@ -507,14 +539,30 @@ index a31eadde..52bb9013 100644
 + * vertex buffers from the slots above them. */
 +#define KK_VERTEX_BUFFER_BINDING_BASE    3
 +
++/* Metal 4 allows an argument table at most this many buffer binds, and both
++ * MTL4ArgumentTableDescriptor and MTLVertexAttributeDescriptor enforce it. */
++#define KK_MAX_ARGUMENT_TABLE_BUFFERS    31
++
++/* The vertex buffers Metal's own fetch can reach are the table slots left
++ * above the fixed three.  A binding above that keeps the shader-lowered fetch,
++ * which reads its buffers through the root descriptor table and so needs no
++ * bind of its own; maxVertexInputBindings stays what the device advertises. */
++#define KK_MAX_NATIVE_VBUFS                                                    \
++   (KK_MAX_ARGUMENT_TABLE_BUFFERS - KK_VERTEX_BUFFER_BINDING_BASE)
++
++/* MSL numbers an [[attribute(n)]] from zero to thirty, so a vertex input
++ * location above that has no Metal attribute to name it and keeps the
++ * shader-lowered fetch as well. */
++#define KK_MAX_NATIVE_VERTEX_ATTRIBS     31
++
  #define KK_MAX_SETS                      32
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 2dfec72c..6e92f21d 100644
+index 2dfec72c..e70fb883 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -384,6 +384,265 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
+@@ -384,6 +384,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
     NIR_PASS(_, nir, kk_nir_lower_vbo, attributes, robustness2, byte_strides);
  }
  
@@ -649,7 +697,16 @@ index 2dfec72c..6e92f21d 100644
 + * bounds checking and without a Vulkan-shaped notion of an out-of-range read,
 + * so a pipeline that asked for robustness keeps the lowered path, and so does
 + * one whose vertex input is dynamic, because Metal bakes the descriptor into
-+ * the pipeline state. */
++ * the pipeline state.
++ *
++ * Metal also numbers both ends of that descriptor more narrowly than Vulkan
++ * numbers its vertex input: an argument table holds
++ * KK_MAX_ARGUMENT_TABLE_BUFFERS buffer binds and MSL numbers an
++ * [[attribute(n)]] up to KK_MAX_NATIVE_VERTEX_ATTRIBS - 1.  The lowered fetch
++ * has neither limit, because it reads its buffers through the root descriptor
++ * table and indexes its own attribute array, so a binding or a location past
++ * Metal's end keeps that path and the advertised maxVertexInputBindings and
++ * maxVertexInputAttributes stand. */
 +static bool
 +kk_vertex_input_is_metal_expressible(
 +   const struct vk_graphics_pipeline_state *state,
@@ -678,12 +735,29 @@ index 2dfec72c..6e92f21d 100644
 +         return false;
 +   }
 +
++   static_assert(KK_MAX_NATIVE_VERTEX_ATTRIBS <= KK_MAX_ATTRIBS,
++                 "Metal cannot name more attributes than Vulkan has");
++
 +   u_foreach_bit(i, state->vi->attributes_valid) {
 +      const struct vk_vertex_attribute_state *attr = &state->vi->attributes[i];
 +      if (!(state->vi->bindings_valid & BITFIELD_BIT(attr->binding)))
 +         return false;
 +      const struct vk_vertex_binding_state *binding =
 +         &state->vi->bindings[attr->binding];
++
++      /* The MSL backend names an attribute after its Vulkan location, and MSL
++       * runs out of [[attribute(n)]] indices before Vulkan runs out of
++       * locations: asking for one past the end fails to compile with
++       * "'attribute' attribute parameter is out of bounds". */
++      if (i >= KK_MAX_NATIVE_VERTEX_ATTRIBS)
++         return false;
++
++      /* Metal's fetch reads the buffer bound at KK_VERTEX_BUFFER_BINDING_BASE
++       * plus the Vulkan binding, and the argument table has no slot there for
++       * a binding past KK_MAX_NATIVE_VBUFS.  Metal rejects the descriptor
++       * outright - "buffer index (34) must be < 31" - rather than clamping. */
++      if (attr->binding >= KK_MAX_NATIVE_VBUFS)
++         return false;
 +
 +      if (kk_vertex_format_to_mtl(vk_format_to_pipe_format(attr->format)) ==
 +          MTL_VERTEX_FORMAT_INVALID)
@@ -780,7 +854,7 @@ index 2dfec72c..6e92f21d 100644
  static nir_def *
  kk_load_depth_clip_array(nir_builder *b, nir_def *viewport,
                           unsigned array_offset, unsigned element_size)
-@@ -1333,12 +1592,16 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
+@@ -1333,12 +1618,16 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
  }
  
  static void
@@ -800,7 +874,7 @@ index 2dfec72c..6e92f21d 100644
     } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
        /* Some meta shaders like vk-meta-resolve will have depth_layout as NONE
         * which is not a valid Metal layout */
-@@ -1424,10 +1687,22 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1424,10 +1713,22 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
      * are turned to compute shaders that will be dispatched before the draw
      * call. Tess evalutaion shaders are turned into vertex shaders. */
     if (stage == MESA_SHADER_VERTEX) {
@@ -825,7 +899,7 @@ index 2dfec72c..6e92f21d 100644
           if (line_multiview)
              NIR_PASS(_, nir, kk_nir_lower_line_multiview,
                       state->mv->view_mask);
-@@ -1498,7 +1773,8 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1498,7 +1799,8 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
     NIR_PASS(_, nir, kk_nir_lower_poly, pipeline_statistics);
  
     msl_optimize_nir(nir);
@@ -835,7 +909,7 @@ index 2dfec72c..6e92f21d 100644
  
     struct nir_to_msl_options translate_options = {
        .mem_ctx = NULL,
-@@ -4131,6 +4407,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4131,6 +4433,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
     mtl_render_pipeline_descriptor_set_input_primitive_topology(
        pipeline_descriptor, vs->info.vs.topology);
  
@@ -2104,6 +2178,109 @@ index 00000000..15da8896
 +0x00000007,0x00000036,0x00000027,0x0000002a,
 +0x0000002c,0x00000035,0x0003003e,0x00000023,
 +0x00000036,0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert
+new file mode 100644
+index 00000000..31703b3f
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert
+@@ -0,0 +1,15 @@
++#version 450
++/* The same single attribute as fetch_single.vert, at the highest location
++ * maxVertexInputAttributes allows.  MSL numbers an [[attribute(n)]] from zero
++ * to thirty, so location 31 has no Metal attribute to name it and the pipeline
++ * has to keep the shader-lowered fetch. */
++layout(location = 31) in uvec2 in_index;
++layout(location = 0) out vec4 out_value;
++void main()
++{
++   const vec2 corner[3] =
++      vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
++   gl_Position = vec4(corner[gl_VertexIndex], 0.0, 1.0);
++   out_value = vec4(float(in_index.x) / 255.0, float(in_index.y) / 255.0, 0.0,
++                    1.0);
++}
+diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h
+new file mode 100644
+index 00000000..fd6ea962
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h
+@@ -0,0 +1,76 @@
++{0x07230203,0x00010600,0x000d000b,0x00000039,
++0x00000000,0x00020011,0x00000001,0x0006000b,
++0x00000001,0x4c534c47,0x6474732e,0x3035342e,
++0x00000000,0x0003000e,0x00000000,0x00000001,
++0x0009000f,0x00000000,0x00000004,0x6e69616d,
++0x00000000,0x0000000d,0x0000001a,0x00000028,
++0x0000002b,0x00030047,0x0000000b,0x00000002,
++0x00050048,0x0000000b,0x00000000,0x0000000b,
++0x00000000,0x00050048,0x0000000b,0x00000001,
++0x0000000b,0x00000001,0x00050048,0x0000000b,
++0x00000002,0x0000000b,0x00000003,0x00050048,
++0x0000000b,0x00000003,0x0000000b,0x00000004,
++0x00040047,0x0000001a,0x0000000b,0x0000002a,
++0x00030047,0x0000001d,0x00000018,0x00040047,
++0x00000028,0x0000001e,0x00000000,0x00040047,
++0x0000002b,0x0000001e,0x0000001f,0x00020013,
++0x00000002,0x00030021,0x00000003,0x00000002,
++0x00030016,0x00000006,0x00000020,0x00040017,
++0x00000007,0x00000006,0x00000004,0x00040015,
++0x00000008,0x00000020,0x00000000,0x0004002b,
++0x00000008,0x00000009,0x00000001,0x0004001c,
++0x0000000a,0x00000006,0x00000009,0x0006001e,
++0x0000000b,0x00000007,0x00000006,0x0000000a,
++0x0000000a,0x00040020,0x0000000c,0x00000003,
++0x0000000b,0x0004003b,0x0000000c,0x0000000d,
++0x00000003,0x00040015,0x0000000e,0x00000020,
++0x00000001,0x0004002b,0x0000000e,0x0000000f,
++0x00000000,0x00040017,0x00000010,0x00000006,
++0x00000002,0x0004002b,0x00000008,0x00000011,
++0x00000003,0x0004001c,0x00000012,0x00000010,
++0x00000011,0x0004002b,0x00000006,0x00000013,
++0xbf800000,0x0005002c,0x00000010,0x00000014,
++0x00000013,0x00000013,0x0004002b,0x00000006,
++0x00000015,0x40400000,0x0005002c,0x00000010,
++0x00000016,0x00000015,0x00000013,0x0005002c,
++0x00000010,0x00000017,0x00000013,0x00000015,
++0x0006002c,0x00000012,0x00000018,0x00000014,
++0x00000016,0x00000017,0x00040020,0x00000019,
++0x00000001,0x0000000e,0x0004003b,0x00000019,
++0x0000001a,0x00000001,0x00040020,0x0000001c,
++0x00000007,0x00000012,0x00040020,0x0000001e,
++0x00000007,0x00000010,0x0004002b,0x00000006,
++0x00000021,0x00000000,0x0004002b,0x00000006,
++0x00000022,0x3f800000,0x00040020,0x00000026,
++0x00000003,0x00000007,0x0004003b,0x00000026,
++0x00000028,0x00000003,0x00040017,0x00000029,
++0x00000008,0x00000002,0x00040020,0x0000002a,
++0x00000001,0x00000029,0x0004003b,0x0000002a,
++0x0000002b,0x00000001,0x0004002b,0x00000008,
++0x0000002c,0x00000000,0x00040020,0x0000002d,
++0x00000001,0x00000008,0x0004002b,0x00000006,
++0x00000038,0x3b808081,0x00050036,0x00000002,
++0x00000004,0x00000000,0x00000003,0x000200f8,
++0x00000005,0x0005003b,0x0000001c,0x0000001d,
++0x00000007,0x00000018,0x0004003d,0x0000000e,
++0x0000001b,0x0000001a,0x00050041,0x0000001e,
++0x0000001f,0x0000001d,0x0000001b,0x0004003d,
++0x00000010,0x00000020,0x0000001f,0x00050051,
++0x00000006,0x00000023,0x00000020,0x00000000,
++0x00050051,0x00000006,0x00000024,0x00000020,
++0x00000001,0x00070050,0x00000007,0x00000025,
++0x00000023,0x00000024,0x00000021,0x00000022,
++0x00050041,0x00000026,0x00000027,0x0000000d,
++0x0000000f,0x0003003e,0x00000027,0x00000025,
++0x00050041,0x0000002d,0x0000002e,0x0000002b,
++0x0000002c,0x0004003d,0x00000008,0x0000002f,
++0x0000002e,0x00040070,0x00000006,0x00000030,
++0x0000002f,0x00050085,0x00000006,0x00000032,
++0x00000030,0x00000038,0x00050041,0x0000002d,
++0x00000033,0x0000002b,0x00000009,0x0004003d,
++0x00000008,0x00000034,0x00000033,0x00040070,
++0x00000006,0x00000035,0x00000034,0x00050085,
++0x00000006,0x00000036,0x00000035,0x00000038,
++0x00070050,0x00000007,0x00000037,0x00000032,
++0x00000036,0x00000021,0x00000022,0x0003003e,
++0x00000028,0x00000037,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert
 new file mode 100644
 index 00000000..76575497
@@ -2210,24 +2387,25 @@ index 00000000..3978fd74
 +0x00000028,0x00000037,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
 new file mode 100755
-index 00000000..25ec783e
+index 00000000..5a8a2175
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,9 @@
 +#!/bin/sh
 +# SPDX-License-Identifier: MIT
 +set -eu
 +cd -- "$(dirname -- "$0")"
-+for shader in fetch.vert fetch_single.vert fetch.frag bench_fetch.vert \
++for shader in fetch.vert fetch_single.vert fetch_high_location.vert \
++              fetch.frag bench_fetch.vert \
 +              bench_fetch_instanced.vert bench_fetch_wide.vert bench_fetch.frag; do
 +   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 new file mode 100644
-index 00000000..de5b0e95
+index 00000000..869c35a0
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
-@@ -0,0 +1,840 @@
+@@ -0,0 +1,1059 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -2295,6 +2473,9 @@ index 00000000..de5b0e95
 +   ;
 +static const uint32_t vertex_single_spirv[] =
 +#include "metal_vertex_fetch_shaders/fetch_single.vert.h"
++   ;
++static const uint32_t vertex_high_location_spirv[] =
++#include "metal_vertex_fetch_shaders/fetch_high_location.vert.h"
 +   ;
 +static const uint32_t fragment_spirv[] =
 +#include "metal_vertex_fetch_shaders/fetch.frag.h"
@@ -2982,6 +3163,222 @@ index 00000000..de5b0e95
 +         vkDestroyPipeline(device, divisor_pipeline, nullptr);
 +         vkDestroyBuffer(device, divisor_buffer, nullptr);
 +         vkFreeMemory(device, divisor_memory, nullptr);
++      }
++
++      /* Metal's own fetch reads its vertex buffers out of the command buffer's
++       * argument table, and Metal 4 allows that table at most 31 buffer binds.
++       * Three of them are the root descriptor table, the sampler table and the
++       * per-draw data, so a binding past the slots those leave has nowhere
++       * native to sit and keeps the shader-lowered fetch, which reads its
++       * buffers through the root table and needs no bind of its own.
++       * maxVertexInputBindings therefore stays what the device advertises. */
++      {
++         require(properties.limits.maxVertexInputBindings >= 32u,
++                 "maxVertexInputBindings");
++         const uint32_t last_binding =
++            properties.limits.maxVertexInputBindings - 1u;
++         const uint8_t last_binding_data[3][4] = {
++            {kIndex[0], kIndex[1], 0u, 0u},
++            {kIndex[0], kIndex[1], 0u, 0u},
++            {kIndex[0], kIndex[1], 0u, 0u},
++         };
++         VkBuffer last_binding_buffer = VK_NULL_HANDLE;
++         VkDeviceMemory last_binding_memory = VK_NULL_HANDLE;
++         void *last_binding_map = nullptr;
++         make_buffer(sizeof(last_binding_data),
++                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &last_binding_buffer,
++                     &last_binding_memory, &last_binding_map);
++         std::memcpy(last_binding_map, last_binding_data,
++                     sizeof(last_binding_data));
++
++         VkPipelineShaderStageCreateInfo last_binding_stages[2] = {stages[0],
++                                                                   stages[1]};
++         last_binding_stages[0].module = single_module_kept;
++         const VkVertexInputBindingDescription last_binding_description = {
++            last_binding, 4u, VK_VERTEX_INPUT_RATE_VERTEX};
++         const VkVertexInputAttributeDescription last_binding_attribute = {
++            5u, last_binding, VK_FORMAT_R8G8_UINT, 0u};
++         VkPipelineVertexInputStateCreateInfo last_binding_input{
++            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
++         last_binding_input.vertexBindingDescriptionCount = 1;
++         last_binding_input.pVertexBindingDescriptions =
++            &last_binding_description;
++         last_binding_input.vertexAttributeDescriptionCount = 1;
++         last_binding_input.pVertexAttributeDescriptions =
++            &last_binding_attribute;
++
++         VkGraphicsPipelineCreateInfo last_binding_info = pipeline_info;
++         last_binding_info.pStages = last_binding_stages;
++         last_binding_info.pVertexInputState = &last_binding_input;
++         VkPipeline last_binding_pipeline = VK_NULL_HANDLE;
++         require(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
++                                           &last_binding_info, nullptr,
++                                           &last_binding_pipeline) ==
++                    VK_SUCCESS,
++                 "vkCreateGraphicsPipelines last binding");
++
++         require(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS,
++                 "vkBeginCommandBuffer last binding");
++         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
++                              0, nullptr, 0, nullptr, 1, &to_colour);
++         vkCmdBeginRendering(command, &rendering_info);
++         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
++                           last_binding_pipeline);
++         const VkDeviceSize last_binding_offset = 0u;
++         vkCmdBindVertexBuffers(command, last_binding, 1, &last_binding_buffer,
++                                &last_binding_offset);
++         vkCmdDraw(command, 3, 1, 0, 0);
++         vkCmdEndRendering(command);
++         vkCmdPipelineBarrier(command,
++                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
++                              nullptr, 1, &to_source);
++         vkCmdCopyImageToBuffer(command, image,
++                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback,
++                                1, &copy);
++         require(vkEndCommandBuffer(command) == VK_SUCCESS,
++                 "vkEndCommandBuffer last binding");
++         require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS,
++                 "vkQueueSubmit last binding");
++         require(vkQueueWaitIdle(queue) == VK_SUCCESS,
++                 "vkQueueWaitIdle last binding");
++
++         const float last_binding_expected[4] = {kIndex[0] / 255.0f,
++                                                 kIndex[1] / 255.0f, 0.0f,
++                                                 1.0f};
++         int last_binding_failures = 0;
++         for (uint32_t p = 0; p < kExtent * kExtent; ++p) {
++            for (uint32_t c = 0; c < 4; ++c) {
++               const float got = pixels[p * 4u + c] / 255.0f;
++               if (std::fabs(got - last_binding_expected[c]) > 1.5f / 255.0f) {
++                  std::fprintf(stderr,
++                               "last binding: pixel %u channel %u is %.4f, "
++                               "expected %.4f\n",
++                               p, c, got, last_binding_expected[c]);
++                  ++last_binding_failures;
++               }
++            }
++         }
++         std::printf("  attribute at the last vertex binding              "
++                     "        %s\n",
++                     last_binding_failures == 0 ? "ok" : "WRONG");
++         failures += last_binding_failures;
++
++         vkDestroyPipeline(device, last_binding_pipeline, nullptr);
++         vkDestroyBuffer(device, last_binding_buffer, nullptr);
++         vkFreeMemory(device, last_binding_memory, nullptr);
++      }
++
++      /* MSL numbers an [[attribute(n)]] from zero to thirty while Vulkan
++       * advertises 32 vertex input attributes, so the last location has no
++       * Metal attribute to name it.  Asking Metal for one made the MSL fail to
++       * compile ("'attribute' attribute parameter is out of bounds: must be
++       * between 0 and 30"), so that location keeps the shader-lowered fetch and
++       * maxVertexInputAttributes stays what the device advertises. */
++      {
++         require(properties.limits.maxVertexInputAttributes >= 32u,
++                 "maxVertexInputAttributes");
++         module_info.codeSize = sizeof(vertex_high_location_spirv);
++         module_info.pCode = vertex_high_location_spirv;
++         VkShaderModule high_location_module = VK_NULL_HANDLE;
++         require(vkCreateShaderModule(device, &module_info, nullptr,
++                                      &high_location_module) == VK_SUCCESS,
++                 "vkCreateShaderModule high location");
++
++         const uint8_t high_location_data[3][4] = {
++            {kIndex[0], kIndex[1], 0u, 0u},
++            {kIndex[0], kIndex[1], 0u, 0u},
++            {kIndex[0], kIndex[1], 0u, 0u},
++         };
++         VkBuffer high_location_buffer = VK_NULL_HANDLE;
++         VkDeviceMemory high_location_memory = VK_NULL_HANDLE;
++         void *high_location_map = nullptr;
++         make_buffer(sizeof(high_location_data),
++                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &high_location_buffer,
++                     &high_location_memory, &high_location_map);
++         std::memcpy(high_location_map, high_location_data,
++                     sizeof(high_location_data));
++
++         VkPipelineShaderStageCreateInfo high_location_stages[2] = {stages[0],
++                                                                    stages[1]};
++         high_location_stages[0].module = high_location_module;
++         const VkVertexInputBindingDescription high_location_binding = {
++            0u, 4u, VK_VERTEX_INPUT_RATE_VERTEX};
++         /* The shader declares this location; see fetch_high_location.vert. */
++         const VkVertexInputAttributeDescription high_location_attribute = {
++            31u, 0u, VK_FORMAT_R8G8_UINT, 0u};
++         VkPipelineVertexInputStateCreateInfo high_location_input{
++            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
++         high_location_input.vertexBindingDescriptionCount = 1;
++         high_location_input.pVertexBindingDescriptions =
++            &high_location_binding;
++         high_location_input.vertexAttributeDescriptionCount = 1;
++         high_location_input.pVertexAttributeDescriptions =
++            &high_location_attribute;
++
++         VkGraphicsPipelineCreateInfo high_location_info = pipeline_info;
++         high_location_info.pStages = high_location_stages;
++         high_location_info.pVertexInputState = &high_location_input;
++         VkPipeline high_location_pipeline = VK_NULL_HANDLE;
++         require(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
++                                           &high_location_info, nullptr,
++                                           &high_location_pipeline) ==
++                    VK_SUCCESS,
++                 "vkCreateGraphicsPipelines high location");
++
++         require(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS,
++                 "vkBeginCommandBuffer high location");
++         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
++                              0, nullptr, 0, nullptr, 1, &to_colour);
++         vkCmdBeginRendering(command, &rendering_info);
++         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
++                           high_location_pipeline);
++         const VkDeviceSize high_location_offset = 0u;
++         vkCmdBindVertexBuffers(command, 0, 1, &high_location_buffer,
++                                &high_location_offset);
++         vkCmdDraw(command, 3, 1, 0, 0);
++         vkCmdEndRendering(command);
++         vkCmdPipelineBarrier(command,
++                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
++                              nullptr, 1, &to_source);
++         vkCmdCopyImageToBuffer(command, image,
++                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback,
++                                1, &copy);
++         require(vkEndCommandBuffer(command) == VK_SUCCESS,
++                 "vkEndCommandBuffer high location");
++         require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS,
++                 "vkQueueSubmit high location");
++         require(vkQueueWaitIdle(queue) == VK_SUCCESS,
++                 "vkQueueWaitIdle high location");
++
++         const float high_location_expected[4] = {kIndex[0] / 255.0f,
++                                                  kIndex[1] / 255.0f, 0.0f,
++                                                  1.0f};
++         int high_location_failures = 0;
++         for (uint32_t p = 0; p < kExtent * kExtent; ++p) {
++            for (uint32_t c = 0; c < 4; ++c) {
++               const float got = pixels[p * 4u + c] / 255.0f;
++               if (std::fabs(got - high_location_expected[c]) > 1.5f / 255.0f) {
++                  std::fprintf(stderr,
++                               "high location: pixel %u channel %u is %.4f, "
++                               "expected %.4f\n",
++                               p, c, got, high_location_expected[c]);
++                  ++high_location_failures;
++               }
++            }
++         }
++         std::printf("  attribute at the last vertex input location       "
++                     "        %s\n",
++                     high_location_failures == 0 ? "ok" : "WRONG");
++         failures += high_location_failures;
++
++         vkDestroyPipeline(device, high_location_pipeline, nullptr);
++         vkDestroyShaderModule(device, high_location_module, nullptr);
++         vkDestroyBuffer(device, high_location_buffer, nullptr);
++         vkFreeMemory(device, high_location_memory, nullptr);
 +      }
 +      /* KosmicKrisp precompiles bounded raster variants for point and line
 +       * rasterization, and generates their fragment stages.  Those generated

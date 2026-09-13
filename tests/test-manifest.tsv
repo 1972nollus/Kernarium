@@ -35,6 +35,7 @@ gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional
 gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional
 gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
 gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
+gpu-host-pointer-image	tests/unit/gpu/host_gl_host_pointer_image_tests.cpp	unit	conditional
 gpu-virgl-fence-table-ownership	tests/unit/gpu/virgl_fence_table_ownership_tests.cpp	unit	conditional
 gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional
 gpu-display-resize	tests/unit/gpu/display_resize_tests.cpp	unit	conditional
@@ -49,6 +50,7 @@ gpu-kosmickrisp-geometry-invocations	tests/unit/gpu/kosmickrisp_geometry_invocat
 gpu-metal-submit-timing-collector	tests/unit/gpu/metal_submit_timing_tests.cpp	unit	retained
 gpu-kosmickrisp-partial-position	tests/unit/gpu/kosmickrisp_partial_position_tests.cpp	unit	conditional
 gpu-kosmickrisp-pipeline-statistics	tests/unit/gpu/kosmickrisp_pipeline_statistics_tests.cpp	unit	conditional
+gpu-kosmickrisp-command-storage	tests/unit/gpu/kosmickrisp_command_storage_tests.cpp	unit	conditional
 gpu-kosmickrisp-raster-polygon	tests/unit/gpu/kosmickrisp_raster_polygon_tests.cpp	unit	conditional
 gpu-kosmickrisp-timestamp-availability	tests/unit/gpu/kosmickrisp_timestamp_availability_tests.cpp	unit	conditional
 gpu-kosmickrisp-point-clipping	tests/unit/gpu/kosmickrisp_point_clipping_tests.cpp	unit	conditional

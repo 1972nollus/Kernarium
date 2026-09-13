@@ -283,6 +283,18 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         LABELS gpu;vulkan
         TIMEOUT 600)
 
+    add_executable(uml_gpu_kosmickrisp_command_storage_tests
+        kosmickrisp_command_storage_tests.cpp)
+    target_link_libraries(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
+        uml_gpu_vulkan_draw_test_support)
+    target_compile_options(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(
+        NAME gpu-kosmickrisp-command-storage
+        COMMAND uml_gpu_kosmickrisp_command_storage_tests
+        LABELS gpu;vulkan
+        TIMEOUT 600)
+
     add_executable(uml_gpu_kosmickrisp_raster_polygon_tests
         kosmickrisp_raster_polygon_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_raster_polygon_tests PRIVATE
@@ -347,6 +359,25 @@ if(TARGET uml_gpu_service)
         COMMAND uml_gpu_host_gl_provider_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
+
+    # The host GL provider has to be able to alias memory the caller already
+    # owns as a sampled texture; the guest scanout import depends on it.
+    add_executable(uml_gpu_host_pointer_image_tests
+        host_gl_host_pointer_image_tests.cpp)
+    target_link_libraries(uml_gpu_host_pointer_image_tests PRIVATE
+        uml_gpu_renderer
+        UML::ThirdPartyVirglrenderer
+        UML::ThirdPartyEpoxy)
+    target_include_directories(uml_gpu_host_pointer_image_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_features(uml_gpu_host_pointer_image_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_host_pointer_image_tests PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    uml_add_unit_test(NAME gpu-host-pointer-image
+        COMMAND uml_gpu_host_pointer_image_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu
+        TIMEOUT 600)
 
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
