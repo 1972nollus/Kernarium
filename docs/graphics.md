@@ -56,11 +56,24 @@ coherent buffers with shared host pages pinned into GL. The aperture is part
 of the experimental Vulkan device, so a macOS Virgl guest reaches 4.6 only
 when that device is enabled.
 
-That version is the profile the guest reports, not a conformance result. No
-GL46 conformance shard completes on the macOS Virgl stack: some workloads
-leave a fence that never retires, and the guest driver retries a failed
-transfer indefinitely, so a single host error stops the guest. Guest Zink over
-Venus remains the qualified desktop OpenGL path on macOS.
+GLES reaches the guest over the same path and from the same capsets: the
+guest's Mesa derives its GLES version from what Virgl advertises, so nothing
+targets GLES separately and no GLES-only host provider exists.
+
+That version is the profile the guest reports, not a conformance result. Guest
+Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
+own conformance standing is whatever its recorded campaigns show.
+
+The boundary that fixes this ladder has two sides. Guest userspace is an
+external input: the Mesa, libdrm, WSI, CTS executables and desktop packages
+installed in `rootfs.erofs` are used exactly as they are, never replaced,
+preloaded, overlay-substituted, rebuilt, or repackaged. The guest kernel is
+this project's: required `virtio_gpu`, DRM, UAPI, Kconfig, or `arch/um`
+transport work belongs in the maintained Linux series. Prefer standard
+Virtio-GPU and DRM interfaces; a kernel-to-emulator extension is acceptable
+only when negotiated, bounded, invisible to guest userspace, and presented
+through an ABI the unmodified guest Mesa and libdrm already understand. A
+private userspace ioctl or library must never become a production dependency.
 
 Hardware video decode is not advertised. It published frames through a Metal
 texture client buffer that only the retired ANGLE provider exposed, and the
@@ -123,8 +136,7 @@ Guest Vulkan is an experimental, separately named capability, not part of the
 supported product. It exists only in the `apple-gpu-vulkan-experiment`
 dependency product, where Venus runs over KosmicKrisp on Metal and the guest
 reaches the host ring through the kernel's vhost-user shared-memory aperture.
-The default `apple-gpu` product advertises no Vulkan capset, and no build
-advertises one without `UML_GPU_EXPERIMENTAL_VULKAN`.
+No build advertises a Vulkan capset without `UML_GPU_EXPERIMENTAL_VULKAN`.
 
 That route makes no conformance claim. Support is asserted only by the
 receipt-bound guest CTS campaigns described in

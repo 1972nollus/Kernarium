@@ -309,6 +309,17 @@ compositor is not painting is owed no frame callback, so each FIFO
 presentation waits out its whole bound instead of a frame.
 The launchers stop their display processes before requesting guest shutdown.
 
+Two rules bound what any graphics run may be used to claim.
+
+A version or capability rises only when natural capset discovery and a
+functional test agree. `MESA_GL_VERSION_OVERRIDE`, `MESA_GLES_VERSION_OVERRIDE`,
+forced Virgl capability bits, and extension-string injection are never
+evidence, in a run or in a report.
+
+A run must exercise the real Virtio-GPU/Virgl path. An app-owned framebuffer, a
+Chromium-specific library preload, or any other substitution for the guest's own
+driver stack invalidates the result for capability purposes.
+
 `tests/integration/gpu/run_vk_cts.py` owns the Vulkan lane. `--qualification`
 binds the run to `vulkan_cts_receipt.json`: the sealed image's receipt, the CTS
 and Mesa source locks, and the staged KosmicKrisp provider digest, which must
