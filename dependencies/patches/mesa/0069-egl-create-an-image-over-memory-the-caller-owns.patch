@@ -1,7 +1,7 @@
 From 885ff1150eacb8c635989396f5afe8909333b164 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 04:34:25 +0900
-Subject: [PATCH 69/69] egl: create an image over memory the caller owns
+Subject: [PATCH 69/71] egl: create an image over memory the caller owns
 
 The Apple GPU host runs vrend on Mesa's Zink driver, where the only way to
 alias memory the caller already owns is GL_AMD_pinned_memory, which aliases it
