@@ -1,7 +1,7 @@
-From 731319d721716e503a6e79c974b4163b4efd4d7d Mon Sep 17 00:00:00 2001
+From e5ef41bc90de1f03476d7c28891745a3b8da727b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:01:21 +0900
-Subject: [PATCH 56/60] kosmickrisp: declare Metal's built-in outputs at their
+Subject: [PATCH 63/67] kosmickrisp: declare Metal's built-in outputs at their
  fixed shape
 
 The MSL translator sizes each output struct member from the components
@@ -26,10 +26,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 61 insertions(+)
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index b3f40aab..58d98cb3 100644
+index a5ac417b..0a7295b6 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
-@@ -438,6 +438,50 @@ msl_fs_varying_components(nir_shader *shader)
+@@ -473,6 +473,50 @@ msl_fs_varying_components(nir_shader *shader)
     return components;
  }
  
@@ -80,7 +80,7 @@ index b3f40aab..58d98cb3 100644
  void
  msl_gather_io_info(struct nir_to_msl_ctx *ctx,
                     struct io_slot_info *info_array_input,
-@@ -449,6 +493,17 @@ msl_gather_io_info(struct nir_to_msl_ctx *ctx,
+@@ -484,6 +528,17 @@ msl_gather_io_info(struct nir_to_msl_ctx *ctx,
     };
     nir_shader_intrinsics_pass(ctx->shader, msl_nir_gather_io_info,
                                nir_metadata_all, &gather_ctx);
@@ -98,7 +98,7 @@ index b3f40aab..58d98cb3 100644
  }
  
  /* Generate all the struct definitions needed for shader I/O */
-@@ -491,6 +546,12 @@ msl_emit_output_var(struct nir_to_msl_ctx *ctx, nir_shader *shader)
+@@ -528,6 +583,12 @@ msl_emit_output_var(struct nir_to_msl_ctx *ctx, nir_shader *shader)
     switch (shader->info.stage) {
     case MESA_SHADER_VERTEX:
        P_IND(ctx, "%s out = {};\n", VERTEX_OUTPUT_TYPE);

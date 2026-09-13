@@ -1,7 +1,7 @@
 From 25ed5454665aa4ed404d412bd51fbef1eab0d2ac Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:34:49 +0900
-Subject: [PATCH 44/60] kosmickrisp: compile emulated stages without a thread
+Subject: [PATCH 44/67] kosmickrisp: compile emulated stages without a thread
  limit
 
 A compute pipeline built with a small maxTotalThreadsPerThreadgroup
