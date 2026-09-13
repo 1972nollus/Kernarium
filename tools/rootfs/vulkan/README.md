@@ -54,7 +54,9 @@ sharing correctness fixes:
   rather than one indefinite dispatch; and
 - serve a descriptor set layout and a pipeline layout from the allocation
   callbacks their create command carried, and return the storage to those
-  callbacks when the last internal reference goes away.
+  callbacks when the last internal reference goes away; and
+- report a device reset status for a robust virgl context, so the guest can
+  create one at all.
 
 The first fix prevents a rejected native pipeline from becoming a stale guest
 object and a later fatal command stream. The second prevents the renderer from
@@ -113,6 +115,14 @@ was refusing memory. A layout now keeps the callbacks that served it and
 returns its storage to them on the final unref, with the device allocation
 scope its extended lifetime needs; reference counting, and the renderer object
 the last reference destroys, are unchanged.
+A robust OpenGL context needs `EGL_EXT_create_context_robustness`, which the
+guest EGL advertises only for a screen that answers a device reset query. The
+virgl driver never claimed one, so every robust `eglCreateContext` failed with
+`EGL_BAD_ATTRIBUTE` on a guest rendering through virgl. The claim now follows
+the host's own `VIRGL_CAP_ROBUST_BUFFER_ACCESS` bit, needing no protocol
+change, and the query answers `PIPE_NO_RESET`: a renderer that loses its device
+loses the command stream the asking context lives in, so a live guest context
+has no reset to report.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also
