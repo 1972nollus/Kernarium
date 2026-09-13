@@ -461,42 +461,43 @@ class VkGlCtsToolingTests(unittest.TestCase):
             with self.assertRaisesRegex(cts.CampaignError, "exclusion"):
                 cts.load_derivative_receipt(path, identity)
 
-    def test_checked_derivative_receipt_freezes_the_minimal_clone(self) -> None:
+    def test_checked_derivative_receipt_freezes_the_selected_image(self) -> None:
+        """The application may boot exactly the epoch this receipt names.
+
+        Kernarium bakes this receipt into its generated CTS campaigns, so the
+        identity it pins is the only rendered image an iOS build will accept.
+        """
         receipt, contract = cts.load_derivative_receipt(
             DERIVATIVE_RECEIPT, cts.load_identity()
         )
+        self.assertEqual(receipt["artifact"], "uml-vulkan-zink-gl-rootfs")
         self.assertEqual(contract.filesystem_type, "ext4")
         self.assertEqual(contract.size, 8 * 1024 * 1024 * 1024)
         self.assertEqual(
             contract.sha256,
-            "f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a",
+            "355f996e148da7eaa888b31a3a28424df0de062910250eda1d8c911b184b1444",
         )
         self.assertEqual(
             contract.glcts_sha256,
-            "cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e",
+            "9bb567b4db930fce28e2dc893a09fa0bd5b7c046f72d0807c3546ae4311dc1d1",
         )
         self.assertEqual(
-            receipt["clone"]["excluded_paths"],
-            [
-                "/home/uml/vk-gl-cts-1.4.5.5/android",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/README.md",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/data",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/doc",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/modules",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/mustpass",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/scripts",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscpc",
-                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscserver",
-                "/opt/geekbench",
-                "/opt/hpl",
-                "/opt/ltp",
-                "/opt/node",
-                "/opt/passmark",
-                "/opt/unixbench",
-                "/opt/vk-gl-cts/vulkan",
-                "/usr/local/go",
-            ],
+            contract.filesystem_uuid, "3b59fbc9-4b35-4a2b-890d-286a77b04afd"
         )
+        self.assertEqual(
+            contract.guest_receipt_path,
+            "/usr/share/uml-vulkan/rootfs-build-receipt.json",
+        )
+        # The rendered image drops every unrelated payload the base carries and
+        # every other Vulkan ICD, so a reappearing benchmark tree or a second
+        # driver means the wrong clone.
+        for excluded in (
+            "/opt/geekbench",
+            "/opt/ltp",
+            "/opt/vk-gl-cts",
+            "/usr/share/vulkan/icd.d/lvp_icd.json",
+        ):
+            self.assertIn(excluded, receipt["exclusions"])
 
     def test_ext4_rootfs_contract_is_forwarded_and_checked_in_guest(self) -> None:
         identity = cts.load_identity()
@@ -1881,9 +1882,9 @@ native_display_cleanup
             self.assertIn("bool namedSerialArtifacts", generated)
             self.assertIn("std::string_view erofsSetup", generated)
             self.assertIn("std::string_view ext4Setup", generated)
-            self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", generated)
+            self.assertIn("3b59fbc9-4b35-4a2b-890d-286a77b04afd", generated)
             self.assertIn(
-                "cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e",
+                "9bb567b4db930fce28e2dc893a09fa0bd5b7c046f72d0807c3546ae4311dc1d1",
                 generated,
             )
             self.assertNotIn("/dev/ubda", generated)
