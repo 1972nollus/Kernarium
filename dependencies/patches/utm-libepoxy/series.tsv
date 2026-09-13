@@ -1,3 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-order	patch	stable_patch_id	sha256	subject
-1	0001-apple-resolve-the-GL-facade-through-the-packaged-pro.patch	8f3822dfb931b841b3409584b8f5a3ed1bbad439	ddbffefa0d665e26bb6893f2099000572f033548f4f72d4e4441de0968f72b14	apple: resolve the GL facade through the packaged provider

@@ -26,11 +26,12 @@ The dependency products are:
 
 - `macos`: non-graphics static host libraries at
   `.build/dependencies/macos-arm64`;
-- `apple-gpu`: the iOS Simulator and device ANGLE/Metal, libepoxy, and
-  virglrenderer inputs;
-- `apple-gpu-vulkan-experiment`: the macOS-only composition that replaces the
-  ANGLE provider with Mesa's Zink Gallium driver over KosmicKrisp and adds the
-  pinned Mesa, Vulkan-Headers, and Venus-protocol sources;
+- `apple-gpu`: the upstream libepoxy and virglrenderer inputs. It has no build
+  yet: the iOS GPU product is pending its Mesa/KosmicKrisp port and targets a
+  physical device only, because the iOS Simulator has no Metal 4;
+- `apple-gpu-vulkan-experiment`: the macOS build, which adds the pinned Mesa,
+  Vulkan-Headers, and Venus-protocol sources so that Mesa supplies both the
+  KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver;
 - `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
@@ -49,12 +50,10 @@ The dependency products are:
   conformance runtime code is linked.
 
 The Apple GPU prefixes contain static renderer libraries plus authenticated
-flat framework payloads for exactly one host GL provider. The iOS prefixes
-carry `EGL.framework` and `GLESv2.framework` from ANGLE; the macOS prefix
-carries `MesaEGL.framework` and `MesaGallium.framework`, whose Zink Gallium
-driver renders desktop OpenGL 4.6 core on the packaged
-`KosmicKrisp.framework`. Each prefix's `gl_provider` contract field names the
-one it carries. Mesa's GLSL grammars declare two Bison 3 directives that
+flat framework payloads for exactly one host GL provider. The prefix carries
+`MesaEGL.framework` and `MesaGallium.framework`, whose Zink Gallium driver
+renders desktop OpenGL 4.6 core on the packaged `KosmicKrisp.framework`. Each
+prefix's `gl_provider` contract field names the one it carries. Mesa's GLSL grammars declare two Bison 3 directives that
 Apple's Bison 2 does not accept, so the macOS OpenGL build drives the host
 generator through `dependencies/bison2-grammar-shim.sh` rather than forking
 the grammars. Platform-specific patches remain scoped by the checked contracts
@@ -72,11 +71,6 @@ repositories. All build scripts are offline.
 ```sh
 dependencies/prepare.sh
 dependencies/build.sh
-
-dependencies/prepare.sh --product apple-gpu
-dependencies/build-apple-gpu.sh --platform macos
-dependencies/build-apple-gpu.sh --platform ios-simulator
-dependencies/build-apple-gpu.sh --platform ios
 
 dependencies/prepare.sh --product apple-gpu-vulkan-experiment
 dependencies/build-apple-gpu.sh \
@@ -126,12 +120,12 @@ prefix, while any change to one of its own rows still requires a rebuild.
 ## Experimental Vulkan composition
 
 `apple-gpu-vulkan-experiment` is a separately named macOS-only product. It
-reuses the `apple-gpu` source matrix and adds Mesa, which supplies the
-KosmicKrisp Vulkan driver, plus the standalone Vulkan SDK headers and the
-Venus protocol generator. It never alters or replaces `apple-gpu`, and no
-accepted product gains Venus or KosmicKrisp.
+builds the `apple-gpu` source matrix -- upstream virglrenderer and libepoxy --
+and adds Mesa, which supplies both the KosmicKrisp Vulkan driver and the Zink
+Gallium OpenGL driver, plus the standalone Vulkan SDK headers and the Venus
+protocol generator.
 
-Its format-4 platform contract keeps `gl_provider=angle-metal` and adds an
+Its format-4 platform contract sets `gl_provider=zink-kosmickrisp` and an
 independent `vk_provider=venus-kosmickrisp`. The build compiles KosmicKrisp as
 `KosmicKrisp.framework`, injects its `vkGetInstanceProcAddr` directly into
 Venus, and disables host Vulkan-loader discovery and downstream downloads.

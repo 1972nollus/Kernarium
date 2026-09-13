@@ -12,7 +12,7 @@ vk_provider	venus-kosmickrisp
 graphics_api	OpenGL,Vulkan
 presentation_api	Metal
 renderer_features	core-profile,venus,render-server-thread,direct-vulkan-entrypoint,readback-scanout
-components	utm-libepoxy,utm-virglrenderer,mesa,vulkan-headers,venus-protocol
+components	libepoxy,virglrenderer,mesa,vulkan-headers,venus-protocol
 source_manifest	dependencies/manifest.tsv
 common_recipe	apple-gpu-vulkan-experiment-v4
 kosmickrisp_linkage	dynamic-framework

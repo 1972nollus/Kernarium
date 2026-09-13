@@ -914,7 +914,7 @@ obtain_cache()
 	[ -n "$missing_any" ] || CACHE_HAS_COMPLETE_COMMIT=1
 	if [ "$FETCH" -eq 1 ] && [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 0 ]; then
 		# `cat-file --batch-check` asks a promisor remote for each missing
-		# object independently. A large sparse tree such as ANGLE can therefore
+		# object independently. A large sparse tree such as Mesa can therefore
 		# create thousands of lazy-fetch subprocesses and race the shallow
 		# boundary. A transient sparse checkout lets unpack-trees request the
 		# complete missing-object set in one bounded fetch. Direct its object

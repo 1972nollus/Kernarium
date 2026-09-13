@@ -1,0 +1,268 @@
+From fe137e5856f16f0c4f0fe8352ebebc25397a33c3 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 13 Sep 2026 21:26:15 +0900
+Subject: [PATCH 28/29] vrend: import a shared-memory blob by copy where
+ nothing can alias it
+
+A Venus context exports a Vulkan swapchain image as a shared-memory blob, and
+the guest's X server imports it into its virgl context to present it. The
+importer wraps the segment as a MTLBuffer and builds a linear MTLTexture over
+it, which needs ANGLE's EGL_ANGLE_metal_texture_client_buffer and a Metal
+device behind the EGL display.
+
+Mesa's EGL has neither, and this stack has no GL_EXT_memory_object_fd and no
+EGL_EXT_image_dma_buf_import either, so nothing can build a texture over the
+exporter's pages: every import fails with EINVAL and the guest logs "failed to
+create texture from shared memory" followed by "failed to dispatch
+PIPE_RESOURCE_SET_TYPE".
+
+Where no Metal device is present, map the segment and give the resource an
+ordinary texture that is refreshed from the mapping before each read - when it
+is bound as a sampler view and when it is a blit source. Those are the two
+ways a presenting X server reads an imported pixmap, and the sampler path is
+already gated on the view's dirty mask, so a frame costs one upload rather
+than one per draw. Where GL_AMD_pinned_memory is available the segment is
+pinned as the upload's buffer, so the refresh is a GPU read of the exporter's
+own pages instead of a CPU pass over the frame.
+
+This is read-only import: a guest that renders into an imported blob still
+needs the zero-copy path, which this stack cannot provide.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c | 143 +++++++++++++++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h |  16 +++++
+ 2 files changed, 159 insertions(+)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 30d0844..1533773 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -29,6 +29,8 @@
+ #include <stdatomic.h>
+ #include <stdio.h>
+ #include <errno.h>
++#include <inttypes.h>
++#include <sys/mman.h>
+ #include "pipe/p_shader_tokens.h"
+ 
+ #include "pipe/p_defines.h"
+@@ -1035,6 +1037,11 @@ static inline bool
+ vrend_resource_needs_redblue_swizzle(struct vrend_resource *res,
+                                      enum virgl_formats view_format)
+ {
++   /* A blob imported by copy is an ordinary texture written with the
++    * exporter's own format, so its channel order is already correct and the
++    * compensating swizzle an imported EGL image needs would invert it. */
++   if (res->shm_import_map)
++      return false;
+    return !vrend_resource_supports_view(res, view_format) &&
+          vrend_format_is_bgra(res->base.format) ^ vrend_format_is_bgra(view_format);
+ }
+@@ -5363,6 +5370,7 @@ static GLuint vrend_draw_bind_samplers_shader(struct vrend_sub_context *sub_ctx,
+                target = GL_TEXTURE_BUFFER;
+             }
+ 
++            vrend_resource_sync_shm_import(tview->texture);
+             glBindTexture(target, id);
+             vrend_apply_sampler_state(sub_ctx, tview->texture,
+                                       shader_view->samplers[i],
+@@ -9159,8 +9167,109 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+    return &gr->base;
+ }
+ 
++#ifdef ENABLE_METAL
++/* Map an exporter's shared-memory blob and give this resource an ordinary
++ * texture to hold a copy of it. */
++static int vrend_resource_import_shm(struct vrend_resource *gr,
++                                     struct virgl_resource *res,
++                                     uint32_t format,
++                                     uint32_t stride,
++                                     uint32_t offset)
++{
++   void *map;
++   int ret;
++
++   if (res->fd < 0 || !res->map_size)
++      return EINVAL;
++
++   map = mmap(NULL, res->map_size, PROT_READ, MAP_SHARED, res->fd, 0);
++   if (map == MAP_FAILED) {
++      virgl_error("%s: cannot map the exporter's %" PRIu64 " byte segment: %s\n",
++                  __func__, (uint64_t)res->map_size, strerror(errno));
++      return EINVAL;
++   }
++
++   ret = vrend_resource_alloc_texture(gr, format, NULL);
++   if (ret) {
++      munmap(map, res->map_size);
++      return ret;
++   }
++
++   /* GL_AMD_pinned_memory is the one GL entry point that takes pages the
++    * caller allocated. Pinning the exporter's segment turns the refresh into
++    * a GPU-side copy: no staging buffer, no CPU pass over the frame. */
++   if (has_feature(feat_amd_pinned_memory)) {
++      GLuint pbo = 0;
++      glGenBuffers(1, &pbo);
++      while (glGetError() != GL_NO_ERROR)
++         ;
++      glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, pbo);
++      glBufferData(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, res->map_size, map,
++                   GL_DYNAMIC_DRAW);
++      const GLenum pin_error = glGetError();
++      glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, 0);
++      if (pin_error == GL_NO_ERROR) {
++         gr->shm_import_pbo = pbo;
++      } else {
++         virgl_warn("%s: pinning the exporter's segment failed with GL error "
++                    "%d; refreshing through a client-memory upload\n",
++                    __func__, pin_error);
++         glDeleteBuffers(1, &pbo);
++      }
++   }
++
++   gr->shm_import_map = map;
++   gr->shm_import_size = res->map_size;
++   gr->shm_import_stride = stride;
++   gr->shm_import_offset = offset;
++   gr->shm_import_format = format;
++   return 0;
++}
++#endif
++
++void vrend_resource_sync_shm_import(struct vrend_resource *res)
++{
++   if (likely(!res || !res->shm_import_map))
++      return;
++
++   const struct vrend_format_table *entry = &tex_conv_table[res->shm_import_format];
++   const uint32_t blocksize = util_format_get_blocksize(res->shm_import_format);
++   const uint32_t width = res->base.width0;
++   const uint32_t height = res->base.height0;
++   const uint32_t stride = res->shm_import_stride ? res->shm_import_stride
++                                                  : width * blocksize;
++   const uint64_t needed = (uint64_t)res->shm_import_offset +
++                           (uint64_t)stride * height;
++
++   if (!blocksize || needed > res->shm_import_size)
++      return;
++
++   glBindTexture(res->target, res->gl_id);
++   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++   if (stride % blocksize == 0)
++      glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / blocksize);
++   if (res->shm_import_pbo) {
++      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, res->shm_import_pbo);
++      glTexSubImage2D(res->target, 0, 0, 0, width, height,
++                      entry->glformat, entry->gltype,
++                      (const void *)(uintptr_t)res->shm_import_offset);
++      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
++   } else {
++      glTexSubImage2D(res->target, 0, 0, 0, width, height,
++                      entry->glformat, entry->gltype,
++                      (const char *)res->shm_import_map + res->shm_import_offset);
++   }
++   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++}
++
+ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+ {
++   if (res->shm_import_pbo)
++      glDeleteBuffers(1, &res->shm_import_pbo);
++   if (res->shm_import_map)
++      munmap(res->shm_import_map, res->shm_import_size);
++
+    if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
+       glDeleteTextures(1, &res->gl_id);
+    } else if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
+@@ -11454,6 +11563,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+       .swizzle =  {0, 1, 2, 3}
+    };
+ 
++   /* a blit is the other way an imported blob is read */
++   vrend_resource_sync_shm_import(src_res);
++
+    /* We create the texture views in this function instead of doing it in
+     * vrend_renderer_prepare_blit_extra_info because we also delete them here */
+    if ((src_res->base.format != info->src.format) && has_feature(feat_texture_view) &&
+@@ -13707,8 +13819,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+       };
+       struct vrend_resource *gr;
+ 
++#ifdef ENABLE_METAL
++      /* An Apple host has no dma-buf: a blob another context exported arrives
++       * as an anonymous shared-memory file. */
++      if (res->fd_type != VIRGL_RESOURCE_FD_SHM)
++         return EINVAL;
++#else
+       if (res->fd_type != VIRGL_RESOURCE_FD_DMABUF)
+          return EINVAL;
++#endif
+ 
+       gr = vrend_resource_create(&create_args);
+       if (!gr)
+@@ -13757,6 +13876,30 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+             return ret;
+          }
+ 
++#elif defined(ENABLE_METAL)
++         /* A Venus context exports a blob resource as shared memory, and this
++          * host GL stack can build no texture over foreign storage: it has
++          * neither GL_EXT_memory_object_fd nor EGL_EXT_image_dma_buf_import,
++          * and Mesa's EGL has no Metal device to import through. Map the
++          * segment and refresh an ordinary texture from the mapping before
++          * each read; that is what lets a Venus swapchain image reach the X
++          * server's virgl context at all. */
++         if (args->plane_count > 1) {
++            virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
++                       __func__, args->plane_count);
++         }
++         /* args->format is the importer's guess -- always the screen visual's
++          * BGRA, since DRI3 carries no channel order -- so the exporter's own
++          * format wins where it is known. */
++         int ret = vrend_resource_import_shm(gr, res,
++                                             res->export_format ? res->export_format
++                                                                : args->format,
++                                             args->plane_strides[0],
++                                             args->plane_offsets[0]);
++         if (ret) {
++            FREE(gr);
++            return ret;
++         }
+ #else /* ENABLE_GBM */
+          FREE(gr);
+          virgl_error("%s: no EGL/GBM support \n", __func__);
+diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
+index bbf2635..dfa6a73 100644
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -118,11 +118,27 @@ struct vrend_resource {
+    /* Shared host pages pinned as this buffer's storage, or NULL. */
+    struct virgl_host_shm *host_shm;
+ 
++   /* A blob another context exported as shared memory and imported here on a
++    * host GL stack with no way to build a texture over foreign storage: the
++    * mapping this texture's contents are refreshed from before each read. */
++   void *shm_import_map;
++   /* Those pages pinned as a buffer object, so the upload is a GPU read of
++    * the exporter's own memory rather than a CPU copy into a staging buffer. */
++   GLuint shm_import_pbo;
++   uint64_t shm_import_size;
++   uint32_t shm_import_stride;
++   uint32_t shm_import_offset;
++   uint32_t shm_import_format;
++
+    uint32_t blob_id;
+    struct list_head head;
+    bool is_imported;
+ };
+ 
++/* Bring an imported shared-memory blob's texture up to date with the memory
++ * the exporting context wrote. A no-op for every other resource. */
++void vrend_resource_sync_shm_import(struct vrend_resource *res);
++
+ #define VIRGL_TEXTURE_NEED_SWIZZLE        (1 << 0)
+ #define VIRGL_TEXTURE_CAN_TEXTURE_STORAGE (1 << 1)
+ #define VIRGL_TEXTURE_CAN_READBACK        (1 << 2)

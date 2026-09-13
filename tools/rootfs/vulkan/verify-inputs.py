@@ -262,11 +262,11 @@ def verify(metadata_root: Path, outer_root: Path) -> None:
             fail(f"Mesa series retains obsolete portability path: {obsolete}")
 
     renderer_series = (
-        outer_root / "dependencies/patches/utm-virglrenderer/series.tsv"
+        outer_root / "dependencies/patches/virglrenderer/series.tsv"
     )
     _, renderer_rows = read_tsv(renderer_series)
     renderer_payload = verify_series(
-        outer_root / "dependencies", "patches/utm-virglrenderer/series.tsv"
+        outer_root / "dependencies", "patches/virglrenderer/series.tsv"
     )
     verify_generated_ownership(
         renderer_payload, "renderer series", ("src/venus/venus-protocol/",),

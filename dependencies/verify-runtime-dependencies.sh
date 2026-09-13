@@ -4,7 +4,7 @@ set -eu
 
 BINARY=
 APPLE_GPU_PREFIX=
-APPLE_GPU_PRODUCT=apple-gpu
+APPLE_GPU_PRODUCT=apple-gpu-vulkan-experiment
 FRAMEWORK_DIRECTORY=
 
 fail()
@@ -39,19 +39,17 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+# Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
+# the KosmicKrisp Vulkan driver. Only macOS has a build of that stack.
 case "$APPLE_GPU_PRODUCT" in
+apple-gpu-vulkan-experiment) ;;
 apple-gpu)
-	VULKAN_ENABLED=0
-	GL_FRAMEWORKS='EGL GLESv2'
-	HOST_GL_MARKER='Virgl ANGLE/Metal provider: hardware'
-	;;
-apple-gpu-vulkan-experiment)
-	VULKAN_ENABLED=1
-	GL_FRAMEWORKS='MesaEGL MesaGallium'
-	HOST_GL_MARKER='Virgl Zink/KosmicKrisp provider: hardware'
+	fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
 	;;
 *) fail "unsupported Apple GPU product: $APPLE_GPU_PRODUCT" ;;
 esac
+GL_FRAMEWORKS='MesaEGL MesaGallium'
+HOST_GL_MARKER='Virgl Zink/KosmicKrisp provider: hardware'
 
 [ -f "$BINARY" ] || fail "linked production executable is missing: $BINARY"
 case "$APPLE_GPU_PREFIX:$FRAMEWORK_DIRECTORY" in
@@ -71,7 +69,6 @@ forbidden_dependency()
 {
 	case "$1" in
 	*OpenGL*|*OpenGLES*|*Vulkan*) return 0 ;;
-	*KosmicKrisp*) [ "$VULKAN_ENABLED" -eq 0 ] && return 0 ;;
 	esac
 	return 1
 }
@@ -86,14 +83,13 @@ while IFS= read -r dependency; do
 		fail "production executable has a forbidden graphics dependency: $dependency"
 	case "$dependency" in
 	/System/Library/*|/usr/lib/*) ;;
-	@rpath/EGL.framework/EGL|@rpath/GLESv2.framework/GLESv2|\
 	@rpath/MesaEGL.framework/MesaEGL|\
 	@rpath/MesaGallium.framework/MesaGallium)
 		[ -n "$APPLE_GPU_PREFIX" ] ||
 			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
 		;;
 	@rpath/KosmicKrisp.framework/KosmicKrisp)
-		[ "$VULKAN_ENABLED" -eq 1 ] && [ -n "$APPLE_GPU_PREFIX" ] ||
+		[ -n "$APPLE_GPU_PREFIX" ] ||
 			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
 		;;
 	*) fail "production executable has a non-system dynamic dependency: $dependency" ;;
@@ -134,10 +130,7 @@ embedded_frameworks=$(
 	cd "$FRAMEWORK_DIRECTORY"
 	find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
 )
-frameworks=$GL_FRAMEWORKS
-if [ "$VULKAN_ENABLED" -eq 1 ]; then
-	frameworks="$frameworks KosmicKrisp"
-fi
+frameworks="$GL_FRAMEWORKS KosmicKrisp"
 expected_frameworks=$(
 	for framework in $frameworks; do
 		printf './%s.framework\n' "$framework"
