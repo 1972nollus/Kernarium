@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "config_inventory": {
     "sha256": "843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607",
     "ids": [
@@ -49,5 +49,17 @@
       ],
       "shard_timeout": 7200
     }
+  },
+  "opengl": {
+    "egl_config_index": 0,
+    "configuration_index": 1,
+    "fraction_index": 1,
+    "fraction_count": 32,
+    "selected_sha256": "aac3e92ea51e20a29ecdfc500e4dedc2b62b8fc785fe229def375f2b3a67960d",
+    "shard_timeout": 7200,
+    "renderer_backends": [
+      "virgl",
+      "zink"
+    ]
   }
 }

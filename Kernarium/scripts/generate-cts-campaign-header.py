@@ -79,6 +79,15 @@ def config_inventory_setup(
     return wrap_setup(driver, launcher, identifier)
 
 
+# The official desktop GL matrix is bound to the sealed ext4 derivative, whose
+# receipt names the must-pass XML and its leaves. The EROFS base image carries
+# no such evidence, so that cell refuses to run there rather than reporting a
+# result the receipt gates never covered.
+UNSUPPORTED_SETUP = """echo 'UML_CTS_ERROR: the official GL matrix requires the sealed ext4 derivative'
+systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1
+"""
+
+
 def matrix_setup(
     driver: ModuleType,
     shard: object,
@@ -92,6 +101,7 @@ def matrix_setup(
         page_size,
         rootfs_contract,
         matrix=shard.matrix,
+        renderer_backend=shard.renderer_backend,
     ).rstrip()
     return wrap_setup(driver, launcher, shard.identifier)
 
@@ -256,12 +266,16 @@ def generate_header(
             vulkan_receipt_path
         )
     campaigns = driver.load_apple_campaigns(identity, campaigns_path)
-    matrix_shards = driver.load_apple_matrix_shards(identity, matrix_path)
     _, erofs_contract = driver.select_rootfs_contract(
         identity, "erofs", None
     )
-    _, ext4_contract = driver.select_rootfs_contract(
+    derivative_receipt, ext4_contract = driver.select_rootfs_contract(
         identity, "ext4", derivative_receipt_path
+    )
+    # The desktop GL matrix cell lives in the sealed derivative receipt, so the
+    # shard set is expanded against it rather than against the base identity.
+    matrix_shards = driver.load_apple_matrix_shards(
+        identity, matrix_path, derivative_receipt
     )
     rows: list[str] = []
     for index, campaign in enumerate(campaigns.values()):
@@ -286,7 +300,9 @@ def generate_header(
     for shard in matrix_shards.values():
         index = len(rows)
         setups = (
-            matrix_setup(driver, shard, page_size, erofs_contract),
+            UNSUPPORTED_SETUP
+            if shard.api == "gl46"
+            else matrix_setup(driver, shard, page_size, erofs_contract),
             matrix_setup(driver, shard, page_size, ext4_contract),
         )
         delimiters = (f"CTS{index}E", f"CTS{index}X")

@@ -1867,6 +1867,15 @@ native_display_cleanup
             self.assertIn("gles3-config-inventory-v1", generated)
             self.assertIn("gles2-matrix-cfg00-000of001-v1", generated)
             self.assertIn("gles3-matrix-cfg19-003of004-v1", generated)
+            self.assertIn("gl46-matrix-cfg00-xml01-001of032-virgl-v1", generated)
+            self.assertIn("gl46-matrix-cfg00-xml01-001of032-zink-v1", generated)
+            self.assertIn(
+                "aosp_mustpass/main/gl45-es31-main.txt", generated
+            )
+            self.assertIn(
+                "the official GL matrix requires the sealed ext4 derivative",
+                generated,
+            )
             self.assertIn("--deqp-case=CTS-Configs.es2", generated)
             self.assertIn("--deqp-case=CTS-Configs.es3", generated)
             self.assertIn("--deqp-gl-config-id=1", generated)
@@ -1995,6 +2004,62 @@ native_display_cleanup
                 cts.CampaignError, "invalid Apple CTS matrix bounds"
             ):
                 cts.load_apple_matrix_shards(path=path)
+
+    def test_apple_gl_matrix_cell_matches_the_macos_workload(self) -> None:
+        """The desktop GL cell is the shard the macOS lane accepts on.
+
+        Both renderer backends run the identical caselist, so an Apple result
+        is comparable to the macOS one case for case rather than only in
+        aggregate.
+        """
+        identity = cts.load_identity()
+        receipt, _ = cts.select_rootfs_contract(
+            identity, "ext4", DERIVATIVE_RECEIPT
+        )
+        self.assertEqual(
+            len(cts.load_apple_matrix_shards(identity)), 100
+        )
+        shards = cts.load_apple_matrix_shards(identity, receipt=receipt)
+        gl_shards = {
+            identifier: shard
+            for identifier, shard in shards.items()
+            if shard.api == "gl46"
+        }
+        self.assertEqual(
+            sorted(gl_shards),
+            [
+                "gl46-matrix-cfg00-xml01-001of032-virgl-v1",
+                "gl46-matrix-cfg00-xml01-001of032-zink-v1",
+            ],
+        )
+        self.assertEqual(
+            {shard.renderer_backend for shard in gl_shards.values()},
+            {"virgl", "zink"},
+        )
+        for shard in gl_shards.values():
+            self.assertEqual(shard.leaf.identifier, "gl45-es31-main-es-for-gl")
+            self.assertEqual(shard.selection.expected_count, 977)
+            self.assertEqual(shard.matrix.configuration.name, "es31-main")
+            self.assertEqual(shard.matrix.opengl_configuration_index, 1)
+            self.assertEqual(shard.matrix.egl_config.identifier, 1)
+            self.assertEqual(
+                shard.selected_sha256,
+                "aac3e92ea51e20a29ecdfc500e4dedc2b62b8fc785fe229def375f2b3a67960d",
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = json.loads(
+                (INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest["opengl"]["renderer_backends"] = ["virgl", "virgl"]
+            path = Path(temporary) / "matrix.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                cts.CampaignError, "invalid Apple CTS matrix OpenGL bounds"
+            ):
+                cts.load_apple_matrix_shards(identity, path, receipt)
 
     def test_cli_blocks_qualification_and_interpreter(self) -> None:
         stderr = io.StringIO()

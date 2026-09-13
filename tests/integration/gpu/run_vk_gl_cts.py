@@ -432,6 +432,7 @@ class AppleMatrixShard:
     shard_timeout: int
     manifest_sha256: str
     selected_sha256: str
+    renderer_backend: str = "virgl"
 
     @property
     def leaf(self) -> LeafIdentity:
@@ -1769,7 +1770,14 @@ def load_apple_campaigns(
 def load_apple_matrix_shards(
     identity: dict[str, Any] | None = None,
     path: Path = APPLE_MATRIX_PATH,
+    receipt: dict[str, Any] | None = None,
 ) -> dict[str, AppleMatrixShard]:
+    """Expand the pinned Apple matrix into one shard per runnable cell.
+
+    The GLES rows come from the base image identity alone. The desktop GL row
+    names a cell of the official GL46 must-pass matrix, which lives in the
+    sealed derivative receipt, so it expands only when that receipt is given.
+    """
     if identity is None:
         identity = load_identity()
     try:
@@ -1786,9 +1794,10 @@ def load_apple_matrix_shards(
         "schema_version",
         "config_inventory",
         "apis",
+        "opengl",
     }:
         raise CampaignError("invalid Apple CTS matrix document")
-    if value["schema_version"] != 2:
+    if value["schema_version"] != 3:
         raise CampaignError("unsupported Apple CTS matrix schema")
 
     inventory = value["config_inventory"]
@@ -1916,9 +1925,96 @@ def load_apple_matrix_shards(
     expected_shards = len(configs) * sum(
         row["fraction_count"] for row in api_rows.values()
     )
+    expected_shards += append_apple_opengl_matrix_shards(
+        result, value["opengl"], configs, digest, manifest_sha256, receipt
+    )
     if len(result) != expected_shards:
         raise CampaignError("Apple CTS matrix generated duplicate shards")
     return result
+
+
+def append_apple_opengl_matrix_shards(
+    result: dict[str, AppleMatrixShard],
+    row: Any,
+    configs: tuple[EglConfig, ...],
+    digest: str,
+    manifest_sha256: str,
+    receipt: dict[str, Any] | None,
+) -> int:
+    """Expand the pinned desktop GL matrix cell, once per renderer backend.
+
+    The cell is the same one the macOS lane runs, so the two stacks are
+    compared on one caselist; the backend only selects which guest driver
+    reaches the host.
+    """
+    if not isinstance(row, dict) or set(row) != {
+        "egl_config_index",
+        "configuration_index",
+        "fraction_index",
+        "fraction_count",
+        "selected_sha256",
+        "shard_timeout",
+        "renderer_backends",
+    }:
+        raise CampaignError("invalid Apple CTS matrix OpenGL row")
+    config_index = row["egl_config_index"]
+    configuration_index = row["configuration_index"]
+    fraction_index = row["fraction_index"]
+    fraction_count = row["fraction_count"]
+    selected_sha256 = row["selected_sha256"]
+    shard_timeout = row["shard_timeout"]
+    backends = row["renderer_backends"]
+    if (
+        type(config_index) is not int
+        or not 0 <= config_index < len(configs)
+        or type(configuration_index) is not int
+        or configuration_index < 0
+        or type(fraction_count) is not int
+        or not 1 <= fraction_count <= 64
+        or type(fraction_index) is not int
+        or not 0 <= fraction_index < fraction_count
+        or not isinstance(selected_sha256, str)
+        or SHA256.fullmatch(selected_sha256) is None
+        or type(shard_timeout) is not int
+        or not 1 <= shard_timeout <= 7200
+        or not isinstance(backends, list)
+        or not backends
+        or any(backend not in {"virgl", "zink"} for backend in backends)
+        or len(set(backends)) != len(backends)
+    ):
+        raise CampaignError("invalid Apple CTS matrix OpenGL bounds")
+    if receipt is None:
+        return 0
+    matrix = opengl_matrix_run(
+        receipt, configs, digest, config_index, configuration_index,
+        (fraction_index, fraction_count),
+    )
+    source = receipt["opengl_cts"]["mustpass"]["runner_source"]
+    oracle = RunnerOracle(
+        source["path"], source["size"], source["sha256"], (),
+        tuple(receipt["runner_oracle"]["successful"]),
+    )
+    for backend in backends:
+        identifier = (
+            f"gl46-matrix-cfg{config_index:02d}-"
+            f"xml{configuration_index:02d}-"
+            f"{fraction_index:03d}of{fraction_count:03d}-{backend}-v1"
+        )
+        if APPLE_CAMPAIGN_ID.fullmatch(identifier) is None:
+            raise CampaignError(
+                f"invalid Apple CTS matrix identifier: {identifier}"
+            )
+        result[identifier] = AppleMatrixShard(
+            identifier=identifier,
+            api="gl46",
+            matrix=matrix,
+            oracle=oracle,
+            shard_timeout=shard_timeout,
+            manifest_sha256=manifest_sha256,
+            selected_sha256=selected_sha256,
+            renderer_backend=backend,
+        )
+    return len(backends)
 
 
 def apple_matrix_configs(
