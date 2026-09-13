@@ -445,21 +445,23 @@ is not a pass and makes no conformance claim.
 observations optional, because the specification does not make the statuses
 they expect mandatory, and reports `CompatibilityWarning` when one of them sees
 `GL_FRAMEBUFFER_COMPLETE` instead. The runner policy above counts that status as
-a success.
+a success, and this case is expected to report two of those observations.
 
-The guest frontend grants a one-sample multisample renderbuffer exactly one
-sample, so a framebuffer that mixes it with a two-sample renderbuffer is
-incomplete as the caller described it. Multisample textures keep the frontend's
-promotion to two samples: a texture is also sampled, a one-sample multisample
-texture has no Metal representation, and honouring the request there costs most
-of the `samples_1` rendering cases their result.
+The multisample observation mixes a renderbuffer created with one sample and one
+created with two. `RenderbufferStorageMultisample` may grant more samples than
+were asked for, and the frontend promotes a one-sample request to two, because
+Gallium represents no one-sample multisample surface: one sample there is a
+single-sampled surface, on which Zink deletes a shader's `gl_SampleMask` writes
+and the `sample_variables` `multisample_rbo_1` cases lose the per-sample
+fragment operations they verify. Both renderbuffers therefore carry the same
+`RENDERBUFFER_SAMPLES`, and section 9.4.2 requires the framebuffer that mixes
+them to be reported complete.
 
-The layer-targets observation keeps the warning. It attaches one slice of a
-three-dimensional texture beside a two-dimensional texture, which leaves no
-attachment layered, and the rule requiring a common texture target applies only
-when one is. Reporting that framebuffer incomplete would contradict the
-completeness rules a conforming implementation must apply, so this case is
-expected to stay a compatibility warning.
+The layer-targets observation attaches one slice of a three-dimensional texture
+beside a two-dimensional texture, which leaves no attachment layered, and the
+rule requiring a common texture target applies only when one is. Reporting that
+framebuffer incomplete would contradict the completeness rules a conforming
+implementation must apply.
 
 ### Native whole-submit timing
 
