@@ -1,7 +1,7 @@
 From cb9e65091163dba21be489b0aa37b65ab0352ff9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:11:01 +0900
-Subject: [PATCH 61/67] zink: build against a packaged Apple Vulkan driver
+Subject: [PATCH 61/69] zink: build against a packaged Apple Vulkan driver
 
 An Apple host that packages one in-process Vulkan driver has no MoltenVK SDK
 and no Vulkan loader, so zink could neither configure nor find an entry point
