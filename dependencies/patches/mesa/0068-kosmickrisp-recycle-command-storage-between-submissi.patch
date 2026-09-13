@@ -1,0 +1,299 @@
+From f3ca87587a78dcdc1f11d9523ae356491625f2ad Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 00:35:16 +0900
+Subject: [PATCH 68/68] kosmickrisp: recycle command storage between
+ submissions
+
+A Metal command allocator owns the storage its encoders record into. Creating
+one gives it an empty storage pool, so every encoder in it allocates from the
+kernel (IOGPUResourceCreate), and releasing one purges that whole pool back to
+the kernel. A one-time-submit recording releases its three allocators in the
+GPU completion handler, so the next recording starts empty again: a stream of
+submissions trades command storage with the kernel twice per submit and never
+amortizes it.
+
+A native probe of the loop a virtualized GL stack drives - draw, glFenceSync,
+glClientWaitSync, repeat - spends 60% of the submitting thread inside encoder
+creation, almost all of it in IOGPUResourceCreate's mach call, with a matching
+amount of IOGPUMetalResourcePool purging on Metal's completion thread. One
+flush costs 0.56 ms on an M1 Ultra with a single triangle in it.
+
+Hand the allocators of a completed recording to a small device-level cache
+instead, resetting each one as Metal requires and releasing anything past the
+cache bound, and take from that cache when a command buffer begins. The cache
+is refcounted and holds no Vulkan pointers, like the queue's feedback block,
+because Metal can dispatch a completion after the device is gone.
+---
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c | 23 ++++++--
+ src/kosmickrisp/vulkan/kk_device.c     | 77 ++++++++++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_device.h     | 36 ++++++++++++
+ src/kosmickrisp/vulkan/kk_queue.c      | 10 +++-
+ 4 files changed, 139 insertions(+), 7 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index 36e5442b..9a5b51a3 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+    vk_free(&pool->vk.alloc, cmd);
+ }
+ 
++/* A recycled allocator is one a completed submission handed back, so it costs
++ * no kernel allocation; only an empty cache creates one. */
++static mtl_command_allocator *
++kk_acquire_command_allocator(struct kk_device *dev)
++{
++   mtl_command_allocator *allocator =
++      kk_command_allocator_cache_take(dev->allocator_cache);
++
++   return allocator ? allocator : mtl_new_command_allocator(dev->mtl_handle);
++}
++
+ static bool
+-kk_init_encoder_state(struct kk_encoder_state *es, mtl_device *handle)
++kk_init_encoder_state(struct kk_encoder_state *es, struct kk_device *dev)
+ {
+-   es->allocator = mtl_new_command_allocator(handle);
++   es->allocator = kk_acquire_command_allocator(dev);
+    es->ts_resolves = UTIL_DYNARRAY_INIT;
+    es->ts_samples = UTIL_DYNARRAY_INIT;
+    return es->allocator != NULL;
+@@ -130,13 +141,13 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+ 
+    cmd->pre_gfx = &cmd->cmp[0];
+    cmd->post_gfx = &cmd->cmp[1];
+-   if (!kk_init_encoder_state(cmd->pre_gfx, dev->mtl_handle))
++   if (!kk_init_encoder_state(cmd->pre_gfx, dev))
+       goto pre_gfx_allocator_fail;
+ 
+-   if (!kk_init_encoder_state(&cmd->gfx, dev->mtl_handle))
++   if (!kk_init_encoder_state(&cmd->gfx, dev))
+       goto gfx_allocator_fail;
+ 
+-   if (!kk_init_encoder_state(cmd->post_gfx, dev->mtl_handle))
++   if (!kk_init_encoder_state(cmd->post_gfx, dev))
+       goto post_gfx_allocator_fail;
+ 
+    {
+@@ -257,7 +268,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+                                           &cmd->cmp[1]};
+    for (unsigned i = 0; i < ARRAY_SIZE(encoders); i++) {
+       if (!encoders[i]->allocator)
+-         encoders[i]->allocator = mtl_new_command_allocator(dev->mtl_handle);
++         encoders[i]->allocator = kk_acquire_command_allocator(dev);
+       if (!encoders[i]->allocator) {
+          kk_reset_cmd_buffer(&cmd->vk,
+                              VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index a3751869..f4c61695 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -17,6 +17,8 @@
+ #include "kosmickrisp/bridge/mtl_device.h"
+ #include "kosmickrisp/bridge/ns_process_info.h"
+ 
++#include "util/u_atomic.h"
++
+ #include "kk_dispatch_cmd.h"
+ #include "vk_cmd_enqueue_entrypoints.h"
+ #include "vk_common_entrypoints.h"
+@@ -24,6 +26,7 @@
+ #include "vulkan/wsi/wsi_common.h"
+ #include "vk_pipeline_cache.h"
+ 
++#include <stdlib.h>
+ #include <time.h>
+ 
+ struct kk_mtl_compiler {
+@@ -268,6 +271,71 @@ kk_get_timestamp(struct vk_device *device, uint64_t *timestamp)
+    return VK_SUCCESS;
+ }
+ 
++struct kk_command_allocator_cache *
++kk_command_allocator_cache_create(void)
++{
++   struct kk_command_allocator_cache *cache = calloc(1, sizeof(*cache));
++   if (!cache)
++      return NULL;
++   cache->refcount = 1;
++   simple_mtx_init(&cache->mutex, mtx_plain);
++   return cache;
++}
++
++struct kk_command_allocator_cache *
++kk_command_allocator_cache_ref(struct kk_command_allocator_cache *cache)
++{
++   p_atomic_inc(&cache->refcount);
++   return cache;
++}
++
++void
++kk_command_allocator_cache_unref(struct kk_command_allocator_cache *cache)
++{
++   if (!p_atomic_dec_zero(&cache->refcount))
++      return;
++
++   for (unsigned i = 0; i < cache->count; i++)
++      mtl_release(cache->entries[i]);
++   simple_mtx_destroy(&cache->mutex);
++   free(cache);
++}
++
++mtl_command_allocator *
++kk_command_allocator_cache_take(struct kk_command_allocator_cache *cache)
++{
++   mtl_command_allocator *allocator = NULL;
++
++   simple_mtx_lock(&cache->mutex);
++   if (cache->count)
++      allocator = cache->entries[--cache->count];
++   simple_mtx_unlock(&cache->mutex);
++
++   return allocator;
++}
++
++void
++kk_command_allocator_cache_give(struct kk_command_allocator_cache *cache,
++                                mtl_command_allocator *allocator)
++{
++   if (!allocator)
++      return;
++
++   /* The caller only reaches here once the GPU has finished with the storage,
++    * which is the condition Metal places on a reset. */
++   mtl_command_allocator_reset(allocator);
++
++   simple_mtx_lock(&cache->mutex);
++   if (cache->count < KK_COMMAND_ALLOCATOR_CACHE_MAX) {
++      cache->entries[cache->count++] = allocator;
++      allocator = NULL;
++   }
++   simple_mtx_unlock(&cache->mutex);
++
++   if (allocator)
++      mtl_release(allocator);
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+                 const VkDeviceCreateInfo *pCreateInfo,
+@@ -337,6 +405,10 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+    simple_mtx_init(&dev->address_space.mutex, mtx_plain);
+    list_inithead(&dev->address_space.allocations);
+ 
++   dev->allocator_cache = kk_command_allocator_cache_create();
++   if (dev->allocator_cache == NULL)
++      goto fail_vab_memory;
++
+    if (pCreateInfo->queueCreateInfoCount > 0) {
+       result =
+          kk_queue_init(dev, &dev->queue, &pCreateInfo->pQueueCreateInfos[0], 0);
+@@ -378,6 +450,8 @@ fail_mem_cache:
+       dev->has_queue = false;
+    }
+ fail_vab_memory:
++   if (dev->allocator_cache)
++      kk_command_allocator_cache_unref(dev->allocator_cache);
+    simple_mtx_destroy(&dev->address_space.mutex);
+    mtl_release(dev->residency_set.handle);
+    simple_mtx_destroy(&dev->residency_set.mutex);
+@@ -422,6 +496,9 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+    if (dev->heap)
+       kk_destroy_bo(dev, dev->heap);
+ 
++   /* Outstanding completion callbacks keep their own reference. */
++   kk_command_allocator_cache_unref(dev->allocator_cache);
++
+    /* Release the residency set last once all BOs are released. */
+    assert(list_is_empty(&dev->address_space.allocations));
+    simple_mtx_destroy(&dev->address_space.mutex);
+diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
+index af6992bd..16ec133e 100644
+--- a/src/kosmickrisp/vulkan/kk_device.h
++++ b/src/kosmickrisp/vulkan/kk_device.h
+@@ -81,6 +81,39 @@ struct kk_precompiled_cache {
+    struct kk_precompiled_shader shaders[LIBKK_NUM_PROGRAMS];
+ };
+ 
++/* Metal command allocators own the command storage an encoder writes into,
++ * and creating one costs a kernel allocation per encoder while destroying one
++ * returns its whole storage pool to the kernel. A submission that ends with
++ * the GPU releasing its allocators therefore pays both on every submit. Cache
++ * the allocators of completed submissions instead, so a steady stream of
++ * submissions reuses storage rather than trading it with the kernel.
++ *
++ * The cache outlives the device on purpose: Metal can dispatch a completion
++ * callback after the device is gone, and the callback must be able to return
++ * its allocators somewhere. It therefore holds no Vulkan pointers, exactly
++ * like the queue's feedback block.
++ */
++#define KK_COMMAND_ALLOCATOR_CACHE_MAX 24
++
++struct kk_command_allocator_cache {
++   int refcount;
++   simple_mtx_t mutex;
++   unsigned count;
++   mtl_command_allocator *entries[KK_COMMAND_ALLOCATOR_CACHE_MAX];
++};
++
++struct kk_command_allocator_cache *kk_command_allocator_cache_create(void);
++struct kk_command_allocator_cache *
++kk_command_allocator_cache_ref(struct kk_command_allocator_cache *cache);
++void kk_command_allocator_cache_unref(struct kk_command_allocator_cache *cache);
++/* Returns NULL when the cache is empty; the caller creates one instead. */
++mtl_command_allocator *
++kk_command_allocator_cache_take(struct kk_command_allocator_cache *cache);
++/* Takes ownership: the allocator is reset and kept, or released if the cache
++ * is full. Safe to call from Metal's completion thread. */
++void kk_command_allocator_cache_give(struct kk_command_allocator_cache *cache,
++                                     mtl_command_allocator *allocator);
++
+ struct kk_device {
+    struct vk_device vk;
+ 
+@@ -115,6 +148,9 @@ struct kk_device {
+    struct hash_table *msl_libraries;
+    simple_mtx_t msl_libraries_lock;
+ 
++   /* Command storage recycled between submissions; see the cache above. */
++   struct kk_command_allocator_cache *allocator_cache;
++
+    bool has_queue;
+    struct kk_queue queue;
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+index e4ad0842..f7f30265 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -69,6 +69,8 @@ struct kk_completed_recording {
+    struct util_dynarray command_buffers;
+    mtl_command_allocator *allocators[3];
+    mtl_command_queue *queue;
++   /* Referenced, not borrowed: the callback may outlive the device. */
++   struct kk_command_allocator_cache *allocator_cache;
+ };
+ 
+ static void
+@@ -80,8 +82,12 @@ kk_completed_recording_unref(struct kk_completed_recording *recording)
+    util_dynarray_foreach(&recording->command_buffers, mtl_command_buffer *, cb)
+       mtl_release(*cb);
+    util_dynarray_fini(&recording->command_buffers);
++   /* The GPU is done with this storage, so the next submission can record
++    * into it instead of asking the kernel for more. */
+    for (unsigned i = 0; i < ARRAY_SIZE(recording->allocators); i++)
+-      mtl_release(recording->allocators[i]);
++      kk_command_allocator_cache_give(recording->allocator_cache,
++                                      recording->allocators[i]);
++   kk_command_allocator_cache_unref(recording->allocator_cache);
+    mtl_release(recording->queue);
+    free(recording);
+ }
+@@ -105,6 +111,8 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+     * native queue keeps its feedback service alive through Vulkan teardown. */
+    recording->refcount = 2;
+    recording->queue = mtl_retain(queue);
++   recording->allocator_cache = kk_command_allocator_cache_ref(
++      kk_cmd_buffer_device(cmd)->allocator_cache);
+    recording->command_buffers = cmd->submit_cmd_bufs;
+    cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
+ 

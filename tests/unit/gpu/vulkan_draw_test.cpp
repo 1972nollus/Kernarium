@@ -263,6 +263,123 @@ const DrawCapabilities &DrawContext::capabilities() const
     return impl_->capabilities;
 }
 
+SubmitStormResult DrawContext::submit_storm(const SubmitStormConfig &config)
+{
+    auto &api = *impl_;
+    require(config.submissions != 0, "submit storm needs a submission");
+    const uint32_t outstanding = config.outstanding ? config.outstanding : 1;
+
+    Cleanup cleanup;
+    SubmitStormResult result;
+    result.submissions = config.submissions;
+
+    const VkDeviceSize size = VkDeviceSize(config.submissions) * sizeof(uint32_t);
+    VkBufferCreateInfo buffer_info = structure<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
+    buffer_info.size = size;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkBuffer slots;
+    VK_CHECK(CreateBuffer, api.device, &buffer_info, nullptr, &slots);
+    cleanup.actions.emplace_back([&, slots] { VK_CALL(DestroyBuffer, api.device, slots, nullptr); });
+    VkMemoryRequirements requirements;
+    VK_CALL(GetBufferMemoryRequirements, api.device, slots, &requirements);
+    VkMemoryAllocateInfo allocate = structure<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = api.memory_type(requirements.memoryTypeBits,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    VkDeviceMemory memory;
+    VK_CHECK(AllocateMemory, api.device, &allocate, nullptr, &memory);
+    cleanup.actions.emplace_back([&, memory] { VK_CALL(FreeMemory, api.device, memory, nullptr); });
+    VK_CHECK(BindBufferMemory, api.device, slots, memory, 0);
+    void *mapping = nullptr;
+    VK_CHECK(MapMemory, api.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping);
+    std::memset(mapping, 0, size_t(size));
+
+    VkCommandPoolCreateInfo pool_info = structure<VkCommandPoolCreateInfo>(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
+    pool_info.queueFamilyIndex = api.queue_family;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    VkCommandPool pool;
+    VK_CHECK(CreateCommandPool, api.device, &pool_info, nullptr, &pool);
+    cleanup.actions.emplace_back([&, pool] { VK_CALL(DestroyCommandPool, api.device, pool, nullptr); });
+
+    /* One command buffer and one fence per outstanding slot, each recycled
+     * once its own submission has completed: the driver sees a steady stream
+     * of one-time recordings, which is where per-submission command storage
+     * is created and destroyed. */
+    std::vector<VkCommandBuffer> commands(outstanding);
+    VkCommandBufferAllocateInfo command_info = structure<VkCommandBufferAllocateInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
+    command_info.commandPool = pool;
+    command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_info.commandBufferCount = outstanding;
+    VK_CHECK(AllocateCommandBuffers, api.device, &command_info, commands.data());
+    std::vector<VkFence> fences(outstanding);
+    std::vector<bool> pending(outstanding, false);
+    for (uint32_t i = 0; i < outstanding; ++i) {
+        VkFenceCreateInfo fence_info = structure<VkFenceCreateInfo>(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);
+        VK_CHECK(CreateFence, api.device, &fence_info, nullptr, &fences[i]);
+    }
+    if (!config.abandon) {
+        cleanup.actions.emplace_back([&] {
+            for (VkFence fence : fences)
+                VK_CALL(DestroyFence, api.device, fence, nullptr);
+        });
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    for (uint32_t index = 0; index < config.submissions; ++index) {
+        const uint32_t slot = index % outstanding;
+        if (pending[slot]) {
+            VK_CHECK(WaitForFences, api.device, 1, &fences[slot], VK_TRUE, 30'000'000'000ull);
+            VK_CHECK(ResetFences, api.device, 1, &fences[slot]);
+            pending[slot] = false;
+        }
+        VkCommandBufferBeginInfo begin = structure<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VK_CHECK(BeginCommandBuffer, commands[slot], &begin);
+        /* A value no other submission writes, at an offset no other one
+         * touches, so a recording that lands in the wrong storage shows up as
+         * a wrong or missing word rather than as a race. */
+        VK_CALL(CmdFillBuffer, commands[slot], slots, VkDeviceSize(index) * sizeof(uint32_t),
+                sizeof(uint32_t), index + 1u);
+        VkMemoryBarrier host = structure<VkMemoryBarrier>(VK_STRUCTURE_TYPE_MEMORY_BARRIER);
+        host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        VK_CALL(CmdPipelineBarrier, commands[slot], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host, 0, nullptr, 0, nullptr);
+        VK_CHECK(EndCommandBuffer, commands[slot]);
+        VkSubmitInfo submit = structure<VkSubmitInfo>(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &commands[slot];
+        VK_CHECK(QueueSubmit, api.queue, 1, &submit, fences[slot]);
+        pending[slot] = true;
+    }
+
+    if (config.abandon) {
+        /* Deliberately leave every submission in flight: the caller destroys
+         * the context next, and the driver's completion handling must survive
+         * the device going away underneath it. */
+        result.wall_nanoseconds = double(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count());
+        cleanup.actions.clear();
+        return result;
+    }
+
+    for (uint32_t slot = 0; slot < outstanding; ++slot) {
+        if (!pending[slot])
+            continue;
+        VK_CHECK(WaitForFences, api.device, 1, &fences[slot], VK_TRUE, 30'000'000'000ull);
+    }
+    result.wall_nanoseconds = double(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started).count());
+
+    VkMappedMemoryRange range = structure<VkMappedMemoryRange>(VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE);
+    range.memory = memory;
+    range.size = VK_WHOLE_SIZE;
+    VK_CHECK(InvalidateMappedMemoryRanges, api.device, 1, &range);
+    result.values.resize(config.submissions);
+    std::memcpy(result.values.data(), mapping, size_t(size));
+    return result;
+}
+
 DrawResult DrawContext::draw(const DrawConfig &config,
                               std::span<const uint8_t> initial_cache)
 {

@@ -283,6 +283,18 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         LABELS gpu;vulkan
         TIMEOUT 600)
 
+    add_executable(uml_gpu_kosmickrisp_command_storage_tests
+        kosmickrisp_command_storage_tests.cpp)
+    target_link_libraries(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
+        uml_gpu_vulkan_draw_test_support)
+    target_compile_options(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(
+        NAME gpu-kosmickrisp-command-storage
+        COMMAND uml_gpu_kosmickrisp_command_storage_tests
+        LABELS gpu;vulkan
+        TIMEOUT 600)
+
     add_executable(uml_gpu_kosmickrisp_raster_polygon_tests
         kosmickrisp_raster_polygon_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_raster_polygon_tests PRIVATE

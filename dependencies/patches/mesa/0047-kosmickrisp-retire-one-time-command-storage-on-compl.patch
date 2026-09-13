@@ -1,7 +1,7 @@
 From 71afe5e118104b7ebda73a7ed10ce808dfc967ca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 03:03:14 +0900
-Subject: [PATCH 47/67] kosmickrisp: retire one-time command storage on
+Subject: [PATCH 47/68] kosmickrisp: retire one-time command storage on
  completion
 
 Transfer native command buffers and allocators to a completion-owned batch for one-time Vulkan submissions. Keep separate submitter and callback references so early feedback cannot release commit input storage.

@@ -131,6 +131,27 @@ struct DrawConfig {
     bool query_after_rendering = false;
 };
 
+// A stream of one-time command buffers, which is what a virtualized GL or
+// Vulkan stack submits: each records a distinct value into its own slot of one
+// buffer, so the result proves every recording both reached the GPU and landed
+// where it belonged. `outstanding` bounds how many are in flight at once, so a
+// driver that recycles per-submission command storage is exercised with more
+// live recordings than it can cache.
+struct SubmitStormConfig {
+    uint32_t submissions = 64;
+    uint32_t outstanding = 32;
+    // Return with the submissions still in flight and let the caller destroy
+    // the context underneath them: a completion that runs after the device is
+    // gone must still be safe.
+    bool abandon = false;
+};
+
+struct SubmitStormResult {
+    std::vector<uint32_t> values;
+    double wall_nanoseconds = 0;
+    uint32_t submissions = 0;
+};
+
 struct DrawResult {
     std::vector<std::array<uint8_t, 4>> pixels;
     std::vector<uint32_t> counters;
@@ -162,6 +183,7 @@ public:
     DrawContext &operator=(const DrawContext &) = delete;
     DrawResult draw(const DrawConfig &config,
                     std::span<const uint8_t> pipeline_cache = {});
+    SubmitStormResult submit_storm(const SubmitStormConfig &config);
     const DrawCapabilities &capabilities() const;
 
 private:
