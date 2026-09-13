@@ -260,7 +260,11 @@ def verify_kernarium_geekbench_contract() -> None:
         "            ctsCampaign,\n"
         "            derivativeRootfs}",
         "if (!geekbench)",
-        'arguments.emplace_back("systemd.unit=graphical.target")',
+        # Geekbench boots its own shell rather than a systemd target; every
+        # other mode selects one, and a CTS campaign takes the session-free
+        # target so nothing competes with its own display server.
+        '? "systemd.unit=multi-user.target"',
+        ': "systemd.unit=graphical.target")',
         ".run = runtimeRun",
     )
     for token in required_run_contract:
