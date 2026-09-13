@@ -354,6 +354,16 @@ class MustpassConfiguration:
     fbo_config: str | None
     xml_arguments: tuple[str, ...]
 
+    @property
+    def uses_fbo_surface(self) -> bool:
+        """Whether the record draws into the framework-owned framebuffer.
+
+        The CTS runner selects that surface only for a record whose own
+        command line names it; a record that names a GL config without it
+        keeps the surface its EGL config provides.
+        """
+        return "--deqp-surface-type=fbo" in self.xml_arguments
+
 
 @dataclass(frozen=True)
 class EglConfig:
@@ -1341,7 +1351,7 @@ def matrix_runner_arguments(
         f"--deqp-watchdog={configuration.watchdog}",
         f"--deqp-base-seed={configuration.base_seed}",
     ]
-    if configuration.fbo_config is not None:
+    if configuration.uses_fbo_surface:
         arguments.extend(
             (
                 f"--deqp-gl-config-name={configuration.fbo_config}",
@@ -1438,7 +1448,7 @@ def load_waivers(path: Path = WAIVERS_PATH) -> tuple[Waiver, ...]:
 
 
 def matrix_draw_surface_type(matrix: MatrixRun) -> str:
-    if matrix.configuration.fbo_config is not None:
+    if matrix.configuration.uses_fbo_surface:
         return "fbo"
     return matrix.egl_config.selected_surface_type
 
@@ -4905,8 +4915,7 @@ def matrix_metadata(options: argparse.Namespace) -> dict[str, Any]:
         "config_inventory_sha256": matrix.config_inventory_sha256,
         "config_inventory_run": str(options.config_inventory_run.resolve()),
         **({"opengl_configuration_index": matrix.opengl_configuration_index,
-            "draw_surface_type": ("fbo" if matrix.configuration.fbo_config
-                                  else matrix.egl_config.selected_surface_type)}
+            "draw_surface_type": matrix_draw_surface_type(matrix)}
            if matrix.opengl_configuration_index is not None else {}),
     }
 

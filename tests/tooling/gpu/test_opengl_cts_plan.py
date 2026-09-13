@@ -91,16 +91,21 @@ class OpenGLPlanTests(unittest.TestCase):
         self.assertEqual(len(runs), 15)
         self.assertEqual([row["egl_config_id"] for row in runs], [7] * 11 + [3] * 2 + [9] * 2)
         self.assertEqual([row["configuration_index"] for row in runs], list(range(11)) + [11, 12, 11, 12])
-        self.assertEqual([row["surface_type"] for row in runs[7:]],
-                         ["window", "window", "fbo", "fbo", "pbuffer", "pbuffer", "pixmap", "pixmap"])
+        self.assertEqual([row["surface_type"] for row in runs],
+                         ["window"] * 9 + ["fbo", "fbo", "pbuffer", "pbuffer", "pixmap", "pixmap"])
 
-    def test_upstream_es_for_gl_implicit_seed_and_fbo_are_preserved(self) -> None:
-        run = plan.expand_runs(self.manifest, self.configs)[0]
-        arguments = plan.runner_arguments(self.manifest, run, "/run/selected.txt")
-        for argument in ("--deqp-base-seed=-1", "--deqp-surface-type=fbo",
-                         "--deqp-gl-config-name=rgba8888d24s8ms0",
+    def test_only_a_record_naming_the_fbo_surface_draws_into_one(self) -> None:
+        runs = plan.expand_runs(self.manifest, self.configs)
+        arguments = plan.runner_arguments(self.manifest, runs[0], "/run/selected.txt")
+        for argument in ("--deqp-base-seed=-1", "--deqp-surface-type=window",
                          "--deqp-gl-config-id=7", "--deqp-gl-context-type=egl"):
             self.assertIn(argument, arguments)
+        self.assertNotIn("--deqp-surface-type=fbo", arguments)
+        self.assertFalse(any(argument.startswith("--deqp-gl-config-name")
+                             for argument in arguments))
+        fbo = plan.runner_arguments(self.manifest, runs[9], "/run/selected.txt")
+        self.assertIn("--deqp-surface-type=fbo", fbo)
+        self.assertIn("--deqp-gl-config-name=rgba8888d24s8", fbo)
 
     def test_main_xml_sizes_seeds_and_negative_fbo_dimension_are_preserved(self) -> None:
         runs = plan.expand_runs(self.manifest, self.configs)

@@ -2590,8 +2590,14 @@ class WaiverTests(unittest.TestCase):
         leaf: cts.LeafIdentity | None = None,
         opengl_configuration_index: int | None = 0,
         api: str = "gl46",
+        xml_arguments: tuple[str, ...] | None = None,
     ) -> cts.MatrixRun:
         leaf = leaf or self.leaf()
+        if xml_arguments is None:
+            xml_arguments = ("--deqp-screen-rotation=unspecified",) + (
+                () if fbo_config is None else
+                (f"--deqp-gl-config-name={fbo_config}", "--deqp-surface-type=fbo")
+            )
         configuration = cts.MustpassConfiguration(
             api=api,
             leaf=leaf,
@@ -2603,7 +2609,7 @@ class WaiverTests(unittest.TestCase):
             base_seed=1,
             watchdog="disable",
             fbo_config=fbo_config,
-            xml_arguments=("--deqp-screen-rotation=unspecified",),
+            xml_arguments=xml_arguments,
         )
         return cts.MatrixRun(
             configuration=configuration,
@@ -2653,6 +2659,25 @@ class WaiverTests(unittest.TestCase):
             ),
         ):
             self.assertEqual(cts.applicable_waivers(other, waivers), ())
+
+        # The pinned ES-for-GL record names a GL config without asking for the
+        # framework framebuffer object, so its run observes default-framebuffer
+        # state and the FBO-scoped waiver does not reach it.
+        es_for_gl = self.matrix(xml_arguments=(
+            "--deqp-gl-config-name=rgba8888d24s8ms0",
+            "--deqp-screen-rotation=unspecified",
+            "--deqp-surface-width=256",
+            "--deqp-surface-height=256",
+            "--deqp-watchdog=disable",
+        ))
+        self.assertEqual(cts.matrix_draw_surface_type(es_for_gl), "window")
+        self.assertEqual(cts.applicable_waivers(es_for_gl, waivers), ())
+        arguments = cts.matrix_runner_arguments(es_for_gl, "/run/uml-cts/selected.txt")
+        self.assertIn("--deqp-surface-type=window", arguments)
+        self.assertNotIn("--deqp-surface-type=fbo", arguments)
+        self.assertFalse(
+            any(argument.startswith("--deqp-gl-config-name") for argument in arguments)
+        )
 
         payload = json.loads(cts.WAIVERS_PATH.read_text(encoding="utf-8"))
         entry = payload["waivers"][0]

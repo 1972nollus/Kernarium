@@ -85,10 +85,24 @@ def command_values(arguments: list[str], collection: str) -> dict[str, Any]:
     require(surface is None or surface == "fbo", "unsupported OpenGL XML surface type")
     require(surface is None or config is not None, "OpenGL FBO has no named config")
     require(config is None or surface == "fbo" or collection == "es-for-gl", "incomplete OpenGL FBO configuration")
-    # appendConfigArgs treats any RunParams named config as an FBO, including
-    # the ES-for-GL records whose XML does not explicitly say surface-type=fbo.
+    # The named config is the runner's fboConfig only for a record that also
+    # selects that surface; an ES-for-GL record names an AOSP GL config and
+    # keeps the EGL config's own surface. uses_fbo_surface decides from the
+    # record's own arguments, so this field stays the name the XML carries.
     return {"surface_width": width, "surface_height": height,
             "base_seed": seed, "fbo_config": config}
+
+
+def uses_fbo_surface(configuration: dict[str, Any]) -> bool:
+    """Whether a run record draws into the framework-owned framebuffer object.
+
+    appendConfigArgs adds ``--deqp-surface-type=fbo`` only where the generated
+    RunParams table carries an fboConfig, which it does for the records whose
+    command line already names that surface. getTestRunsForESForGL passes a
+    null fboConfig, so the ES-for-GL records draw into the surface their EGL
+    config provides and observe default-framebuffer state.
+    """
+    return "--deqp-surface-type=fbo" in configuration["xml_arguments"]
 
 
 def parse_documents(documents: Any) -> list[dict[str, Any]]:
@@ -231,7 +245,7 @@ def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]]) -> list
 
     def append(configuration: dict[str, Any], config_index: int) -> None:
         config = configs[config_index]
-        surface = "fbo" if configuration["fbo_config"] else next(
+        surface = "fbo" if uses_fbo_surface(configuration) else next(
             value for value in ("window", "pbuffer", "pixmap") if value in config["surface_types"]
         )
         runs.append({"index": len(runs), "configuration_index": configuration["index"],
@@ -259,7 +273,7 @@ def runner_arguments(manifest: dict[str, Any], run: dict[str, Any], caselist_pat
         f"--deqp-base-seed={row['base_seed']}",
         "--deqp-watchdog=disable",
     ]
-    if row["fbo_config"]:
+    if uses_fbo_surface(row):
         arguments.append(f"--deqp-gl-config-name={row['fbo_config']}")
     arguments.extend((f"--deqp-surface-type={run['surface_type']}",
                       f"--deqp-gl-config-id={run['egl_config_id']}",

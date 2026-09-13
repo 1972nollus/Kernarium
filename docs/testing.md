@@ -453,11 +453,17 @@ wait consumes nothing. The host then records the case in flight as `Timeout` or
 
 `tests/integration/gpu/vk_gl_cts_waivers.json` holds the granted waivers. Its
 one entry covers the fifteen `dEQP-GL45-ES3.functional.state_query` cases that
-assert default-framebuffer state in the `es3-main` configuration, whose
-must-pass record renders into a framework-owned framebuffer object; a
-conforming driver reports the bound object there, so those failures belong to
-the configuration rather than to the driver. The project owner granted it on
-2026-09-08 for Zink over Venus and KosmicKrisp.
+assert default-framebuffer state in an `es3-main` run that draws into a
+framework-owned framebuffer object; a conforming driver reports the bound
+object there, so those failures belong to the configuration rather than to the
+driver. The project owner granted it on 2026-09-08 for Zink over Venus and
+KosmicKrisp.
+
+The matrix produces such a run only where a must-pass record asks for that
+surface itself. A record naming a GL config selects the framework framebuffer
+object only when its own command line also names that surface; the ES-for-GL
+records name a config without it, so they keep the surface their EGL config
+provides and do observe default-framebuffer state.
 
 A waiver applies only to a matrix run whose API, configuration name, and draw
 surface match its scope. The runner installs the official waiver file in the
