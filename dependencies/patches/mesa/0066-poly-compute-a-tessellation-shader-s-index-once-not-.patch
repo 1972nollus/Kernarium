@@ -1,4 +1,4 @@
-From 45eea305de2e4f8d41d489dc61e759ae8bbc220c Mon Sep 17 00:00:00 2001
+From bfc8d82d62b9299038cc4ec8bc47d4a53d3a386d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:12:22 +0900
 Subject: [PATCH 66/71] poly: compute a tessellation shader's index once, not

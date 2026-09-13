@@ -1,9 +1,31 @@
-From 2c925a1c588174b52f87f71da522ea4065f7b2c5 Mon Sep 17 00:00:00 2001
+From 8eaf80d07bd890a3adc14409e0fe5477d97cd188 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
 Subject: [PATCH 33/71] kosmickrisp: precompile bounded raster executable
  classes
 
+kk_test_line_planner_bounds hands Metal a commit feedback block that points at
+a stack-allocated completion struct, and the only thing that kept that block
+from outliving the frame was a dispatch_semaphore_wait inside assert().  Every
+build that defines NDEBUG - Mesa's own release buildtype, which is what
+dependencies/build-apple-gpu.sh configures - dropped the wait with the rest of
+the assertion, so the helper committed the dispatch, released the semaphore and
+returned while Metal still held the block.  The block then ran on
+com.Metal4.CompletionQueue and signalled a semaphore that no longer existed,
+reading through a stale stack pointer: SIGSEGV in dispatch_semaphore_signal
+from __mtl_commit_options_add_feedback_handler_block_invoke, three times out of
+three, with and without the Metal validation layer.  A debugoptimized build
+never saw it, because there the wait is real.
+
+Check with a macro that survives NDEBUG instead.  The wait is not the only
+assertion that mattered: under NDEBUG the whole helper verified nothing at all
+while still running the dispatch - the buffer guard bytes, the planner's
+indirect draw arguments and the edge bounds it exists to check all compiled
+away - so every check in the file becomes KK_TEST_CHECK.  A timeout is now
+fatal too, because falling through one would leave Metal holding the same
+dangling block.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |   20 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   10 +
@@ -17,7 +39,7 @@ Subject: [PATCH 33/71] kosmickrisp: precompile bounded raster executable
  src/kosmickrisp/vulkan/kk_shader.h            |   14 +-
  src/kosmickrisp/vulkan/meson.build            |   35 +
  .../vulkan/tests/line_raster_cache_state.h    |    1 +
- .../vulkan/tests/line_raster_cache_state.m    |  148 +-
+ .../vulkan/tests/line_raster_cache_state.m    |  203 +-
  .../tests/raster_discard_shaders/discard.frag |   13 +
  .../raster_discard_shaders/discard.frag.h     |   35 +
  .../tests/raster_discard_shaders/discard.geom |   17 +
@@ -31,7 +53,7 @@ Subject: [PATCH 33/71] kosmickrisp: precompile bounded raster executable
  .../vulkan/tests/test_line_raster_cache.cpp   |    2 +
  .../vulkan/tests/test_raster_discard.cpp      |  500 +++++
  .../vulkan/tests/test_raster_variant.c        |   80 +
- 26 files changed, 2693 insertions(+), 743 deletions(-)
+ 26 files changed, 2730 insertions(+), 761 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_edge.h
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_variant.h
  create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
@@ -3440,10 +3462,10 @@ index 71d3909f..8fb4338b 100644
  void kk_test_assert_line_variant(VkCommandBuffer command,
                                    const struct kk_shader *owner,
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
-index 95aabcce..fd6ab1bb 100644
+index 95aabcce..78614c5d 100644
 --- a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
-@@ -5,7 +5,138 @@
+@@ -5,7 +5,157 @@
  
  #include "line_raster_cache_state.h"
  #include "kosmickrisp/vulkan/kk_cmd_buffer.h"
@@ -3453,6 +3475,23 @@ index 95aabcce..fd6ab1bb 100644
  #include <Metal/MTL4RenderPass.h>
 +#include <Metal/MTLDevice.h>
 +#include <dispatch/dispatch.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++/* These checks are the point of this helper, and one of them - the wait for
++ * the planner's completion - is what keeps Metal's feedback block from
++ * outliving the stack frame it points at.  assert() compiles away wherever
++ * NDEBUG is defined, which left a release build committing the dispatch,
++ * releasing the semaphore and returning while Metal still held the block: the
++ * block then signalled freed memory from com.Metal4.CompletionQueue.  So this
++ * file checks with a macro that survives every build. */
++#define KK_TEST_CHECK(x)                                                       \
++   do {                                                                        \
++      if (!(x)) {                                                              \
++         fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x);               \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
 +
 +struct kk_planner_completion {
 +   dispatch_semaphore_t semaphore;
@@ -3473,11 +3512,11 @@ index 95aabcce..fd6ab1bb 100644
 +   struct kk_device *dev = kk_device_from_handle(device);
 +   const struct kk_shader *shader =
 +      owner->raster_variant_shaders[KK_RASTER_LINE][MESA_SHADER_VERTEX];
-+   assert(shader && shader->info.vs.line_raster_procedural);
-+   assert(!shader->info.vs.line_raster_materialize);
++   KK_TEST_CHECK(shader && shader->info.vs.line_raster_procedural);
++   KK_TEST_CHECK(!shader->info.vs.line_raster_materialize);
 +   const uint64_t outputs = shader->info.vs.line_raster_outputs;
-+   assert(outputs & VARYING_BIT_POS);
-+   assert(!(outputs & (VARYING_BIT_VIEWPORT | VARYING_BIT_CLIP_DIST0 |
++   KK_TEST_CHECK(outputs & VARYING_BIT_POS);
++   KK_TEST_CHECK(!(outputs & (VARYING_BIT_VIEWPORT | VARYING_BIT_CLIP_DIST0 |
 +                        VARYING_BIT_CLIP_DIST1)));
 +   const uint32_t cells_per_edge = 32768;
 +   const uint32_t below = (UINT32_MAX / 6) / cells_per_edge;
@@ -3493,7 +3532,7 @@ index 95aabcce..fd6ab1bb 100644
 +   const size_t size = indirect_offset + sizeof(VkDrawIndirectCommand) + 16;
 +   id<MTLDevice> metal = (id<MTLDevice>)dev->mtl_handle;
 +   id<MTLBuffer> storage = [metal newBufferWithLength:size options:MTLResourceStorageModeShared];
-+   assert(storage);
++   KK_TEST_CHECK(storage);
 +   uint8_t *cpu = storage.contents;
 +   const uint64_t gpu = storage.gpuAddress;
 +   mtl_residency_set *residency = mtl_new_residency_set(dev->mtl_handle);
@@ -3550,21 +3589,23 @@ index 95aabcce..fd6ab1bb 100644
 +      mtl_end_encoding(encoder);
 +      mtl_end_command_buffer(command);
 +      mtl_command_queue_commit(queue, &command, 1, options);
-+      assert(dispatch_semaphore_wait(done.semaphore,
++      /* Metal's feedback block holds &done, so a timeout here must not fall
++       * through to the release below and the return above it. */
++      KK_TEST_CHECK(dispatch_semaphore_wait(done.semaphore,
 +         dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC)) == 0);
-+      assert(!done.failed);
-+      assert(indirect->instanceCount == !overflow);
-+      assert(indirect->vertexCount == below * cells_per_edge * 6);
-+      assert(indirect->firstVertex == 0x13579bdf);
-+      assert(indirect->firstInstance == 0x2468ace0);
++      KK_TEST_CHECK(!done.failed);
++      KK_TEST_CHECK(indirect->instanceCount == !overflow);
++      KK_TEST_CHECK(indirect->vertexCount == below * cells_per_edge * 6);
++      KK_TEST_CHECK(indirect->firstVertex == 0x13579bdf);
++      KK_TEST_CHECK(indirect->firstInstance == 0x2468ace0);
 +      const struct kk_raster_edge *edges = (const void *)(cpu + edges_offset);
-+      assert(edges[primitives - 1].cell_end == below * cells_per_edge);
++      KK_TEST_CHECK(edges[primitives - 1].cell_end == below * cells_per_edge);
 +      for (unsigned byte = 0; byte < 16; byte++) {
-+         assert(cpu[edge_guard + byte] == 0xa5);
-+         assert(cpu[edge_end + byte] == 0xa5);
-+         assert(cpu[active_edge_end + byte] == 0xa5);
-+         assert(cpu[indirect_offset - 16 + byte] == 0xa5);
-+         assert(cpu[indirect_offset + sizeof(*indirect) + byte] == 0xa5);
++         KK_TEST_CHECK(cpu[edge_guard + byte] == 0xa5);
++         KK_TEST_CHECK(cpu[edge_end + byte] == 0xa5);
++         KK_TEST_CHECK(cpu[active_edge_end + byte] == 0xa5);
++         KK_TEST_CHECK(cpu[indirect_offset - 16 + byte] == 0xa5);
++         KK_TEST_CHECK(cpu[indirect_offset + sizeof(*indirect) + byte] == 0xa5);
 +      }
 +      dispatch_release(done.semaphore);
 +      mtl_release(options);
@@ -3582,66 +3623,118 @@ index 95aabcce..fd6ab1bb 100644
  
  const struct kk_shader *
  kk_test_bound_vertex_shader(VkCommandBuffer command)
-@@ -28,7 +159,7 @@
+@@ -19,7 +169,7 @@
  {
-    const struct kk_shader *owner = kk_test_vertex_shader(pipeline);
-    assert(owner->info.deferred);
--   assert(!owner->info.vs.line_variant_stages);
-+   assert(!owner->info.vs.raster_variant_mask);
-    assert(!owner->pipeline.gfx.render);
+    struct vk_shader *shader = vk_pipeline_get_shader(
+       vk_pipeline_from_handle(pipeline), MESA_SHADER_VERTEX);
+-   assert(shader != NULL);
++   KK_TEST_CHECK(shader != NULL);
+    return container_of(shader, struct kk_shader, vk);
  }
  
-@@ -36,7 +167,7 @@
+@@ -27,42 +177,43 @@
+ kk_test_assert_deferred_pipeline(VkPipeline pipeline)
+ {
+    const struct kk_shader *owner = kk_test_vertex_shader(pipeline);
+-   assert(owner->info.deferred);
+-   assert(!owner->info.vs.line_variant_stages);
+-   assert(!owner->pipeline.gfx.render);
++   KK_TEST_CHECK(owner->info.deferred);
++   KK_TEST_CHECK(!owner->info.vs.raster_variant_mask);
++   KK_TEST_CHECK(!owner->pipeline.gfx.render);
+ }
+ 
+ void
  kk_test_assert_static_pipeline(VkPipeline pipeline, bool generated)
  {
     const struct kk_shader *vs = kk_test_vertex_shader(pipeline);
 -   assert(vs->info.vs.line_variant_stages == 0);
-+   assert(vs->info.vs.raster_variant_mask == 0);
-    assert(vs->info.vs.line_raster_emulation == generated);
+-   assert(vs->info.vs.line_raster_emulation == generated);
++   KK_TEST_CHECK(vs->info.vs.raster_variant_mask == 0);
++   KK_TEST_CHECK(vs->info.vs.line_raster_emulation == generated);
  }
  
-@@ -44,12 +175,13 @@
+ void
  kk_test_assert_line_owner(const struct kk_shader *owner, bool plain)
  {
-    assert(!owner->info.vs.line_raster_emulation);
+-   assert(!owner->info.vs.line_raster_emulation);
 -   assert(owner->info.vs.line_variant_stages != 0);
-+   assert(owner->info.vs.raster_variant_mask ==
++   KK_TEST_CHECK(!owner->info.vs.line_raster_emulation);
++   KK_TEST_CHECK(owner->info.vs.raster_variant_mask ==
 +          (BITFIELD_BIT(KK_RASTER_BASE) | BITFIELD_BIT(KK_RASTER_LINE)));
     const struct kk_shader *generated =
 -      owner->line_variant_shaders[MESA_SHADER_VERTEX];
-+      owner->raster_variant_shaders[KK_RASTER_LINE][MESA_SHADER_VERTEX];
-    assert(generated != NULL && generated->info.vs.line_raster_emulation);
-    assert(generated->info.vs.line_raster_stipple);
+-   assert(generated != NULL && generated->info.vs.line_raster_emulation);
+-   assert(generated->info.vs.line_raster_stipple);
 -   assert(generated->info.vs.line_variant_stages == 0);
-+   assert(generated->info.vs.raster_variant_mask == 0);
++      owner->raster_variant_shaders[KK_RASTER_LINE][MESA_SHADER_VERTEX];
++   KK_TEST_CHECK(generated != NULL && generated->info.vs.line_raster_emulation);
++   KK_TEST_CHECK(generated->info.vs.line_raster_stipple);
++   KK_TEST_CHECK(generated->info.vs.raster_variant_mask == 0);
     if (plain)
-       assert(owner->pipeline.gfx.pre_render_count == 0);
+-      assert(owner->pipeline.gfx.pre_render_count == 0);
++      KK_TEST_CHECK(owner->pipeline.gfx.pre_render_count == 0);
  }
-@@ -60,7 +192,7 @@
+ 
+ void
+ kk_test_assert_raster_samples(VkPipeline pipeline, uint32_t samples)
+ {
     const struct kk_shader *owner = kk_test_vertex_shader(pipeline);
-    assert(owner->info.vs.sample_count == samples);
+-   assert(owner->info.vs.sample_count == samples);
++   KK_TEST_CHECK(owner->info.vs.sample_count == samples);
     const struct kk_shader *generated =
 -      owner->line_variant_shaders[MESA_SHADER_VERTEX];
 +      owner->raster_variant_shaders[KK_RASTER_LINE][MESA_SHADER_VERTEX];
     if (generated)
-       assert(generated->info.vs.sample_count == samples);
+-      assert(generated->info.vs.sample_count == samples);
++      KK_TEST_CHECK(generated->info.vs.sample_count == samples);
  }
-@@ -74,13 +206,13 @@
-    assert(cmd->state.gfx.bound_shaders[MESA_SHADER_VERTEX] == owner);
+ 
+ void
+@@ -71,33 +222,33 @@
+                              uint32_t samples)
+ {
+    const struct kk_cmd_buffer *cmd = kk_cmd_buffer_from_handle(command);
+-   assert(cmd->state.gfx.bound_shaders[MESA_SHADER_VERTEX] == owner);
++   KK_TEST_CHECK(cmd->state.gfx.bound_shaders[MESA_SHADER_VERTEX] == owner);
     for (unsigned stage = MESA_SHADER_VERTEX; stage <= MESA_SHADER_FRAGMENT;
          stage++) {
 -      if (!(owner->info.vs.line_variant_stages & BITFIELD_BIT(stage))) {
+-         assert(cmd->state.gfx.bound_shaders[stage] == NULL);
+-         assert(cmd->state.shaders[stage] == NULL);
 +      if (!(owner->info.vs.raster_variant_stages & BITFIELD_BIT(stage))) {
-          assert(cmd->state.gfx.bound_shaders[stage] == NULL);
-          assert(cmd->state.shaders[stage] == NULL);
++         KK_TEST_CHECK(cmd->state.gfx.bound_shaders[stage] == NULL);
++         KK_TEST_CHECK(cmd->state.shaders[stage] == NULL);
           continue;
        }
        const struct kk_shader *expected =
 -         generated ? owner->line_variant_shaders[stage]
 +         generated ? owner->raster_variant_shaders[KK_RASTER_LINE][stage]
                     : cmd->state.gfx.bound_shaders[stage];
-       assert(cmd->state.shaders[stage] == expected);
+-      assert(cmd->state.shaders[stage] == expected);
++      KK_TEST_CHECK(cmd->state.shaders[stage] == expected);
     }
+-   assert(cmd->state.gfx.render.bresenham_samples == samples);
++   KK_TEST_CHECK(cmd->state.gfx.render.bresenham_samples == samples);
+    if (samples) {
+       MTL4RenderPassDescriptor *descriptor =
+          (MTL4RenderPassDescriptor *)cmd->state.gfx.render_pass_descriptor;
+       MTLSamplePosition positions[KK_MAX_SAMPLES];
+-      assert([descriptor getSamplePositions:positions count:samples] ==
++      KK_TEST_CHECK([descriptor getSamplePositions:positions count:samples] ==
+              samples);
+       for (unsigned i = 0; i < samples; i++) {
+          const VkSampleLocationEXT expected =
+             cmd->state.gfx.render.sample_locations_enable
+                ? cmd->state.gfx.render.sample_locations[i]
+                : (VkSampleLocationEXT){0.5f, 0.5f};
+-         assert(positions[i].x == expected.x);
+-         assert(positions[i].y == expected.y);
++         KK_TEST_CHECK(positions[i].x == expected.x);
++         KK_TEST_CHECK(positions[i].y == expected.y);
+       }
+    }
+ }
 diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
 new file mode 100644
 index 00000000..e2c4d396

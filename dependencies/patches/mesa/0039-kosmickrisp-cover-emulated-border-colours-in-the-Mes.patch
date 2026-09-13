@@ -1,4 +1,4 @@
-From ba130c36e80f944c82f79b4a1366d49d2b12ef14 Mon Sep 17 00:00:00 2001
+From a3ed5e2eb2cad3faa2705e2000905d14f752e8c5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
 Subject: [PATCH 39/71] kosmickrisp: cover emulated border colours in the Meson
