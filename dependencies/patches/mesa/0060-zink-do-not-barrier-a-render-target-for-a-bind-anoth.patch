@@ -1,4 +1,4 @@
-From 0a454947b1f21f1eab59a90b8a42f0f990074c6b Mon Sep 17 00:00:00 2001
+From ea1b84dfa50698324a6859428859dd51df2acb64 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 20:23:59 +0900
 Subject: [PATCH 60/60] zink: do not barrier a render target for a bind another
@@ -27,14 +27,14 @@ barrier up on the draw that binds it.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/gallium/drivers/zink/zink_context.c | 46 +++++++++++++++++++++++++
- 1 file changed, 46 insertions(+)
+ src/gallium/drivers/zink/zink_context.c | 55 +++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 363dbf8f..b135531c 100644
+index 363dbf8f..18e14539 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
-@@ -6337,6 +6337,45 @@ add_implicit_feedback_loop(struct zink_context *ctx, struct zink_resource *res)
+@@ -6337,6 +6337,54 @@ add_implicit_feedback_loop(struct zink_context *ctx, struct zink_resource *res)
     return true;
  }
  
@@ -67,12 +67,21 @@ index 363dbf8f..b135531c 100644
 +      is_attachment = true;
 +   if (!is_attachment)
 +      return false;
-+   /* a bound program that samples it needs the barrier after all */
++   /* a bound program that samples it in *this* context needs the barrier after
++    * all; sampler_binds is per-resource, so the slot it names may well belong
++    * to another context's view of another texture
++    */
 +   for (unsigned stage = 0; stage < ZINK_GFX_SHADER_COUNT; stage++) {
 +      if (!ctx->gfx_stages[stage])
 +         continue;
-+      if (res->sampler_binds[stage] & ctx->gfx_stages[stage]->info.textures_used[0])
-+         return false;
++      uint32_t texuse = res->sampler_binds[stage] & ctx->gfx_stages[stage]->info.textures_used[0];
++      u_foreach_bit(slot, texuse) {
++         if (slot >= ctx->di.num_sampler_views[stage])
++            continue;
++         const struct pipe_sampler_view *sv = ctx->sampler_views[stage][slot];
++         if (sv && sv->texture == &res->base.b)
++            return false;
++      }
 +   }
 +   return true;
 +}
@@ -80,7 +89,7 @@ index 363dbf8f..b135531c 100644
  void
  zink_update_barriers(struct zink_context *ctx, bool is_compute,
                       struct pipe_resource *index, struct pipe_resource *indirect, struct pipe_resource *indirect_draw_count)
-@@ -6351,6 +6390,13 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6351,6 +6399,13 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
     ASSERTED bool check_rp = ctx->in_rp && ctx->dynamic_fb.tc_info.zsbuf_invalidate;
     set_foreach(need_barriers, he) {
        struct zink_resource *res = (struct zink_resource *)he->key;
