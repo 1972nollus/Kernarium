@@ -259,7 +259,7 @@ class MatrixCampaignTests(unittest.TestCase):
             metadata = {
                 "schema_version": 1,
                 "adapter": "macos",
-                "backend": "angle-metal",
+                "backend": "zink-kosmickrisp",
                 "page_profile": "16k",
                 "engine": "jit",
                 "memory": "8G",

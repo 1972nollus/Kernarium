@@ -4,7 +4,8 @@ if(TARGET uml-virtio-gpu AND TARGET uml-vnc-smoke-client)
     set(_uml_vnc_smoke_startup_timeout 5)
     set(_uml_vnc_smoke_test_timeout 30)
     if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=")
-        # ANGLE/Metal initialization is intentionally exercised by this test
+        # Host GL provider initialization is intentionally exercised by this
+        # test
         # and is substantially slower when the host executable is instrumented.
         set(_uml_vnc_smoke_startup_timeout 120)
         set(_uml_vnc_smoke_test_timeout 180)

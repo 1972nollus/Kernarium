@@ -236,7 +236,7 @@ class OpenGLPlanTests(unittest.TestCase):
             original = path.read_text()
             for key, value in (("kosmickrisp_sha256", "3" * 64),
                                ("emulator_sha256", "3" * 64), ("rootfs_sha256", "3" * 64),
-                               ("backend", "angle-metal"), ("surface", [640, 480]),
+                               ("backend", "zink-kosmickrisp"), ("surface", [640, 480]),
                                ("egl_configs", [])):
                 changed = json.loads(original)
                 changed[key] = value

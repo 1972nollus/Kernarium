@@ -4,9 +4,10 @@
 
 The authenticated rootfs owns the CTS executable, resources, Mesa, libdrm,
 and WSI.  This runner injects only a first-party launcher and transient output
-into the disposable OverlayFS upper layer. The default path requires the
-common ANGLE/Metal Virgl product. The explicit Zink path instead requires the
-receipt-bound Vulkan/OpenGL derivative and proves Zink over Virtio-GPU Venus.
+into the disposable OverlayFS upper layer. The default path renders Virgl on
+the host's Zink/KosmicKrisp OpenGL provider. The explicit Zink path instead
+requires the receipt-bound Vulkan/OpenGL derivative and proves Zink over
+Virtio-GPU Venus.
 
 Official must-pass qualification remains fail-closed while the original image
 has no authoritative CTS build receipt and the complete matrices have not run.
@@ -2419,7 +2420,7 @@ def validate_renderer_probe(
     text: str,
     expected_page_size: int | None = None,
     renderer_backend: str = "virgl",
-    host_provider: str = "angle-metal",
+    host_provider: str = "zink-kosmickrisp",
 ) -> None:
     lower = text.lower()
     validate_native_x11_probe(text)
@@ -2457,11 +2458,9 @@ def validate_renderer_probe(
         )
 
 
-def host_backend_label(renderer: str, gl46_scope: bool) -> str:
+def host_backend_label(renderer: str) -> str:
     """Name the host stack a run renders on, for run metadata and evidence."""
-    if renderer == "zink":
-        return "venus-kosmickrisp"
-    return "zink-kosmickrisp" if gl46_scope else "angle-metal"
+    return "venus-kosmickrisp" if renderer == "zink" else "zink-kosmickrisp"
 
 
 def validate_host_backend(transcript: str) -> None:
@@ -4639,7 +4638,7 @@ def load_config_inventory_evidence(
         raise CampaignError("unsupported config-inventory evidence")
     expected = {
         "adapter": "macos",
-        "backend": host_backend_label(renderer, api == "gl46"),
+        "backend": host_backend_label(renderer),
         "mode": "config-inventory",
         "api": api,
         "page_profile": page_profile,
@@ -4708,7 +4707,7 @@ def load_config_inventory_evidence(
         validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
             16384 if page_profile == "16k" else 4096, renderer,
-            host_backend_label(renderer, True),
+            host_backend_label(renderer),
         )
     return configs, digest
 
@@ -5228,7 +5227,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "schema_version": 1,
         "git": git_state(),
         "adapter": "macos",
-        "backend": host_backend_label(options.renderer, options.gl46_scope),
+        "backend": host_backend_label(options.renderer),
         "renderer": options.renderer,
         "page_profile": options.page_profile,
         "engine": options.engine,
@@ -5457,7 +5456,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         renderer_text,
         16384 if options.page_profile == "16k" else 4096,
         options.renderer,
-        host_backend_label(options.renderer, options.gl46_scope),
+        host_backend_label(options.renderer),
     )
     if sessions and shard_provenance(sessions) == "host-merged":
         # A host-merged shard always carries at least one recorded terminated

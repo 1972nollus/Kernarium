@@ -657,8 +657,6 @@ vulkan-cts-campaign-safety	tests/tooling/gpu/test_run_vk_cts.py	tooling	retained
 vulkan-guest-rootfs-safety	tests/tooling/gpu/test_vulkan_guest_rootfs.py	tooling	retained
 kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained
 chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained
-ios-simulator-webgl-aquarium-policy	tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py	tooling	retained
-ios-device-thermal-lifecycle-policy	tests/tooling/gpu/test_verify_ios_device_thermal_lifecycle.py	tooling	retained
 network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained
 jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
 gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
@@ -707,7 +705,6 @@ dependency-patch-regenerator	tests/tooling/dependencies/test_rebase_patches.sh	t
 dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained
 dependency-product-manifest-verifier	tests/tooling/dependencies/test_manifest_product_verifier.cmake	tooling	retained
 dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained
-dependency-apple-gpu-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh	tooling	retained
 dependency-apple-gpu-vulkan-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh	tooling	retained
 dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained
 guest-overlay-systemd-smoke	tests/integration	integration	retained

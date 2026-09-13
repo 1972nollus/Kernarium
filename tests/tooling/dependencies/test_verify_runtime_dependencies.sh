@@ -42,89 +42,6 @@ expect_rejection 'non-system dynamic dependency' \
 	--binary "$TEST_ROOT/ambient-client"
 
 PREFIX="$TEST_ROOT/prefix"
-RUNTIME="$TEST_ROOT/runtime"
-mkdir -p -- "$PREFIX/Frameworks/EGL.framework" \
-	"$PREFIX/Frameworks/GLESv2.framework" "$RUNTIME/Frameworks"
-cat >"$TEST_ROOT/egl.c" <<'EOF'
-int uml_egl_fixture(void) { return 19; }
-EOF
-cat >"$TEST_ROOT/gles.c" <<'EOF'
-int uml_gles_fixture(void) { return 23; }
-EOF
-cat >"$TEST_ROOT/framework-main.c" <<'EOF'
-#include <stdio.h>
-int uml_egl_fixture(void);
-int uml_gles_fixture(void);
-int main(void)
-{
-	puts("Virgl ANGLE/Metal provider: hardware");
-	return uml_egl_fixture() == uml_gles_fixture();
-}
-EOF
-cat >"$TEST_ROOT/framework-main-missing-marker.c" <<'EOF'
-int uml_egl_fixture(void);
-int uml_gles_fixture(void);
-int main(void) { return uml_egl_fixture() == uml_gles_fixture(); }
-EOF
-for framework in EGL GLESv2; do
-	case "$framework" in
-	EGL) source="$TEST_ROOT/egl.c" ;;
-	GLESv2) source="$TEST_ROOT/gles.c" ;;
-	esac
-	xcrun --sdk macosx clang -arch arm64 -dynamiclib \
-		-Wl,-install_name,"@rpath/$framework.framework/$framework" \
-		"$source" -o "$PREFIX/Frameworks/$framework.framework/$framework"
-	cat >"$PREFIX/Frameworks/$framework.framework/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict><key>CFBundleExecutable</key><string>$framework</string></dict></plist>
-EOF
-done
-cp -R "$PREFIX/Frameworks/EGL.framework" "$RUNTIME/Frameworks/"
-cp -R "$PREFIX/Frameworks/GLESv2.framework" "$RUNTIME/Frameworks/"
-xcrun --sdk macosx clang -arch arm64 "$TEST_ROOT/framework-main.c" \
-	-F"$PREFIX/Frameworks" -framework EGL -framework GLESv2 \
-	-Wl,-rpath,@executable_path/Frameworks -o "$RUNTIME/apple-gpu-client"
-
-verify_framework_runtime()
-{
-	"$VERIFIER" --binary "$RUNTIME/apple-gpu-client" \
-		--apple-gpu-prefix "$PREFIX" \
-		--framework-directory "$RUNTIME/Frameworks"
-}
-verify_framework_runtime >/dev/null
-
-xcrun --sdk macosx clang -arch arm64 \
-	"$TEST_ROOT/framework-main-missing-marker.c" \
-	-F"$PREFIX/Frameworks" -framework EGL -framework GLESv2 \
-	-Wl,-rpath,@executable_path/Frameworks \
-	-o "$RUNTIME/apple-gpu-client-missing-marker"
-expect_rejection 'host GL provider marker' \
-	--binary "$RUNTIME/apple-gpu-client-missing-marker" \
-	--apple-gpu-prefix "$PREFIX" \
-	--framework-directory "$RUNTIME/Frameworks"
-
-printf '\0' >> "$RUNTIME/Frameworks/EGL.framework/EGL"
-expect_rejection 'does not match the authenticated prefix' \
-	--binary "$RUNTIME/apple-gpu-client" \
-	--apple-gpu-prefix "$PREFIX" \
-	--framework-directory "$RUNTIME/Frameworks"
-cp "$PREFIX/Frameworks/EGL.framework/EGL" \
-	"$RUNTIME/Frameworks/EGL.framework/EGL"
-
-mkdir -p -- "$RUNTIME/duplicate"
-cp -R "$PREFIX/Frameworks/EGL.framework" "$RUNTIME/duplicate/"
-expect_rejection 'exactly one EGL.framework copy' \
-	--binary "$RUNTIME/apple-gpu-client" \
-	--apple-gpu-prefix "$PREFIX" \
-	--framework-directory "$RUNTIME/Frameworks"
-rm -rf -- "$RUNTIME/duplicate"
-
-touch "$RUNTIME/Frameworks/GLESv2.framework/unexpected"
-expect_rejection 'payload is not exact' \
-	--binary "$RUNTIME/apple-gpu-client" \
-	--apple-gpu-prefix "$PREFIX" \
-	--framework-directory "$RUNTIME/Frameworks"
-rm -- "$RUNTIME/Frameworks/GLESv2.framework/unexpected"
 
 cat >"$TEST_ROOT/opengl-main.c" <<'EOF'
 typedef void *CGLContextObj;
@@ -157,6 +74,16 @@ int uml_kosmickrisp_fixture(void);
 int main(void)
 {
 	puts("Virgl Zink/KosmicKrisp provider: hardware");
+	return uml_mesa_egl_fixture() + uml_mesa_gallium_fixture() +
+	       uml_kosmickrisp_fixture() == 0;
+}
+EOF
+cat >"$TEST_ROOT/vulkan-framework-main-missing-marker.c" <<'EOF'
+int uml_mesa_egl_fixture(void);
+int uml_mesa_gallium_fixture(void);
+int uml_kosmickrisp_fixture(void);
+int main(void)
+{
 	return uml_mesa_egl_fixture() + uml_mesa_gallium_fixture() +
 	       uml_kosmickrisp_fixture() == 0;
 }
@@ -196,18 +123,45 @@ xcrun --sdk macosx clang -arch arm64 "$TEST_ROOT/vulkan-framework-main.c" \
 	-F"$PREFIX/Frameworks" -framework MesaEGL -framework MesaGallium \
 	-framework KosmicKrisp -Wl,-rpath,@executable_path/Frameworks \
 	-o "$VULKAN_RUNTIME/apple-gpu-vulkan-client"
+xcrun --sdk macosx clang -arch arm64 \
+	"$TEST_ROOT/vulkan-framework-main-missing-marker.c" \
+	-F"$PREFIX/Frameworks" -framework MesaEGL -framework MesaGallium \
+	-framework KosmicKrisp -Wl,-rpath,@executable_path/Frameworks \
+	-o "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker"
 expect_rejection 'unauthenticated Apple GPU dependency' \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client"
-"$VERIFIER" --binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
-	--apple-gpu-prefix "$PREFIX" \
-	--apple-gpu-product apple-gpu-vulkan-experiment \
-	--framework-directory "$VULKAN_RUNTIME/Frameworks" >/dev/null
+verify_vulkan_runtime()
+{
+	"$VERIFIER" --binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
+		--apple-gpu-prefix "$PREFIX" \
+		--apple-gpu-product apple-gpu-vulkan-experiment \
+		--framework-directory "$VULKAN_RUNTIME/Frameworks"
+}
+verify_vulkan_runtime >/dev/null
 
 expect_rejection 'host GL provider marker' \
-	--binary "$RUNTIME/apple-gpu-client-missing-marker" \
+	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
 	--apple-gpu-product apple-gpu-vulkan-experiment \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
+
+mkdir -p -- "$VULKAN_RUNTIME/duplicate"
+cp -R "$PREFIX/Frameworks/MesaEGL.framework" "$VULKAN_RUNTIME/duplicate/"
+expect_rejection 'exactly one MesaEGL.framework copy' \
+	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
+	--apple-gpu-prefix "$PREFIX" \
+	--apple-gpu-product apple-gpu-vulkan-experiment \
+	--framework-directory "$VULKAN_RUNTIME/Frameworks"
+rm -rf -- "$VULKAN_RUNTIME/duplicate"
+
+touch "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
+expect_rejection 'payload is not exact' \
+	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
+	--apple-gpu-prefix "$PREFIX" \
+	--apple-gpu-product apple-gpu-vulkan-experiment \
+	--framework-directory "$VULKAN_RUNTIME/Frameworks"
+rm -- "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
+verify_vulkan_runtime >/dev/null
 
 printf '\0' >>"$VULKAN_RUNTIME/Frameworks/KosmicKrisp.framework/KosmicKrisp"
 expect_rejection 'does not match the authenticated prefix' \

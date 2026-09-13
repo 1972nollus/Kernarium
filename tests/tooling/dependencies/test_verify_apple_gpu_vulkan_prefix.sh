@@ -149,7 +149,7 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 cp "$ROOT_DIR/dependencies/platforms/macos-gpu-vulkan-arm64.tsv" \
 	"$BASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv"
 for component in \
-	utm-libepoxy utm-virglrenderer mesa; do
+	libepoxy virglrenderer mesa; do
 	cp -R "$ROOT_DIR/dependencies/patches/$component" \
 		"$BASE_PREFIX/share/uml-dependencies/patches/"
 done
@@ -184,7 +184,7 @@ expect_failure "wrong platform" "$BASE_PREFIX" ios-simulator
 CASE_PREFIX="$TEST_ROOT/stale-series"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' '# stale' \
-	>>"$CASE_PREFIX/share/uml-dependencies/patches/utm-virglrenderer/series.tsv"
+	>>"$CASE_PREFIX/share/uml-dependencies/patches/virglrenderer/series.tsv"
 expect_failure "stale installed series" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/stale-mesa-series"

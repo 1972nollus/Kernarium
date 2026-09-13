@@ -155,7 +155,7 @@ class CampaignDefinition:
             "guest_timeout": self.guest_timeout,
             "execution": {
                 "adapter": "macos",
-                "backend": "angle-metal",
+                "backend": "zink-kosmickrisp",
                 "display": FIXED_DISPLAY,
                 "engine": FIXED_ENGINE,
                 "cpus": FIXED_CPUS,
@@ -473,7 +473,7 @@ def validate_shard_run(
         {
             "schema_version": 1,
             "adapter": "macos",
-            "backend": "angle-metal",
+            "backend": "zink-kosmickrisp",
             "page_profile": definition.page_profile,
             "engine": FIXED_ENGINE,
             "memory": FIXED_MEMORY,
