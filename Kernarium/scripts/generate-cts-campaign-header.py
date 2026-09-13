@@ -31,7 +31,7 @@ def load_runner(
 def wrap_setup(driver: ModuleType, launcher: str, identifier: str) -> str:
     service = driver.CTS_SERVICE.rstrip()
     return f"""install -d -m 0755 /usr/local/libexec \\
-    /etc/systemd/system/graphical.target.wants
+    /etc/systemd/system/multi-user.target.wants
 cat > /usr/local/libexec/uml-vk-gl-cts <<'KERNARIUM_CTS_LAUNCHER'
 {launcher}
 KERNARIUM_CTS_LAUNCHER
@@ -40,7 +40,7 @@ cat > /etc/systemd/system/uml-vk-gl-cts.service <<'KERNARIUM_CTS_SERVICE'
 {service}
 KERNARIUM_CTS_SERVICE
 ln -sf ../uml-vk-gl-cts.service \\
-    /etc/systemd/system/graphical.target.wants/uml-vk-gl-cts.service
+    /etc/systemd/system/multi-user.target.wants/uml-vk-gl-cts.service
 echo 'Kernarium CTS campaign enabled: {identifier}'
 """
 
@@ -119,7 +119,8 @@ def vulkan_development_setup(
     ).rstrip()
     service = """[Unit]
 Description=Darwin UML Vulkan CTS development identity campaign
-After=multi-user.target
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
 
 [Service]
 Type=oneshot
@@ -129,10 +130,10 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 """.rstrip()
     setup = f"""install -d -m 0755 /usr/local/libexec \\
-    /etc/systemd/system/graphical.target.wants
+    /etc/systemd/system/multi-user.target.wants
 cat > /usr/local/libexec/uml-vulkan-cts <<'KERNARIUM_VULKAN_CTS_LAUNCHER'
 {launcher}
 KERNARIUM_VULKAN_CTS_LAUNCHER
@@ -156,7 +157,7 @@ cat > /etc/systemd/system/uml-vulkan-cts.service <<'KERNARIUM_VULKAN_CTS_SERVICE
 {service}
 KERNARIUM_VULKAN_CTS_SERVICE
 ln -sf ../uml-vulkan-cts.service \\
-    /etc/systemd/system/graphical.target.wants/uml-vulkan-cts.service
+    /etc/systemd/system/multi-user.target.wants/uml-vulkan-cts.service
 echo 'Kernarium Vulkan CTS development campaign enabled: {identifier}'
 """
     unsupported = """echo 'UML_VK_CTS_ERROR: the development Vulkan identity campaign requires the frozen EROFS image'
@@ -187,7 +188,8 @@ def vulkan_receipt_setup(
     ).rstrip()
     service = """[Unit]
 Description=Darwin UML receipt-backed Vulkan CTS smoke
-After=multi-user.target
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
 
 [Service]
 Type=oneshot
@@ -197,10 +199,10 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 """.rstrip()
     setup = f"""install -d -m 0755 /usr/local/libexec \\
-    /etc/systemd/system/graphical.target.wants
+    /etc/systemd/system/multi-user.target.wants
 cat > /usr/local/libexec/uml-vulkan-cts <<'KERNARIUM_VULKAN_CTS_LAUNCHER'
 {launcher}
 KERNARIUM_VULKAN_CTS_LAUNCHER
@@ -221,7 +223,7 @@ cat > /etc/systemd/system/uml-vulkan-cts.service <<'KERNARIUM_VULKAN_CTS_SERVICE
 {service}
 KERNARIUM_VULKAN_CTS_SERVICE
 ln -sf ../uml-vulkan-cts.service \\
-    /etc/systemd/system/graphical.target.wants/uml-vulkan-cts.service
+    /etc/systemd/system/multi-user.target.wants/uml-vulkan-cts.service
 echo 'Kernarium receipt-backed Vulkan CTS campaign enabled: {identifier}'
 """
     unsupported = """echo 'UML_VK_CTS_ERROR: the receipt-backed Vulkan campaign requires the sealed ext4 derivative'

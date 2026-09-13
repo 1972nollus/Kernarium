@@ -103,15 +103,30 @@ def main() -> int:
         "Kernarium systemd boots must disable the Plymouth handoff that "
         "blocks before greetd on iOS",
     )
-    systemd_policy = """if (!geekbench) {
-            arguments.emplace_back("systemd.unit=graphical.target");
-            arguments.emplace_back("plymouth.enable=0");
-        }"""
+    systemd_policy = """            arguments.emplace_back(
+                ctsRequested ? "systemd.unit=multi-user.target"
+                             : "systemd.unit=graphical.target");"""
     require(
-        systemd_policy in runtime_source,
+        systemd_policy in runtime_source
+        and "if (!geekbench) {" in runtime_source,
         "Kernarium must apply the Plymouth policy with its systemd boot "
-        "arguments, leaving the direct Geekbench shell unchanged",
+        "arguments, leaving the direct Geekbench shell unchanged, and must "
+        "boot a CTS campaign into the session-free target",
     )
+    for mask in (
+        "systemd.mask=display-manager.service",
+        "systemd.mask=sddm.service",
+        "systemd.mask=getty@tty0.service",
+        "systemd.mask=getty@tty1.service",
+    ):
+        require(
+            f'arguments.emplace_back(\n                    "{mask}");'
+            in runtime_source
+            or f'arguments.emplace_back("{mask}");' in runtime_source,
+            "a Kernarium CTS campaign owns VT 1 for its own Xorg and must "
+            "mask the display manager and the fixed-VT getties that would "
+            "take it away",
+        )
     bootstrap_fragments = []
     for name in ("desktopBootstrapPrefix", "desktopBootstrapSuffix"):
         declaration = f'constexpr std::string_view {name} = R"krn('

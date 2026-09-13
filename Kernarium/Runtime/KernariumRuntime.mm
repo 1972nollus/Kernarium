@@ -1510,7 +1510,29 @@ int runtimeRun(
             arguments.emplace_back("ro");
         }
         if (!geekbench) {
-            arguments.emplace_back("systemd.unit=graphical.target");
+            /* A CTS campaign owns the display itself: its launcher starts
+             * Xorg on VT 1 and asks the stack for a GL context through it.
+             * The image's display manager claims its own VT as soon as
+             * graphical.target is reached, Xorg suspends AIGLX for that
+             * switch, and the pending GL query then never returns. The
+             * campaign therefore boots the session-free target the macOS
+             * lane boots, with the display manager and the fixed-VT getties
+             * masked. The container runtime is masked beside them because a
+             * campaign that powers off while Docker is still loading its BPF
+             * programs leaves the teardown blocked. */
+            arguments.emplace_back(
+                ctsRequested ? "systemd.unit=multi-user.target"
+                             : "systemd.unit=graphical.target");
+            if (ctsRequested) {
+                arguments.emplace_back(
+                    "systemd.mask=display-manager.service");
+                arguments.emplace_back("systemd.mask=sddm.service");
+                arguments.emplace_back("systemd.mask=getty@tty0.service");
+                arguments.emplace_back("systemd.mask=getty@tty1.service");
+                arguments.emplace_back("systemd.mask=docker.service");
+                arguments.emplace_back("systemd.mask=docker.socket");
+                arguments.emplace_back("systemd.mask=containerd.service");
+            }
             arguments.emplace_back("plymouth.enable=0");
         }
 #endif
