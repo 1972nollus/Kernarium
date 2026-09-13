@@ -88,7 +88,7 @@ foreach(_slice IN ITEMS ios-arm64 ios-arm64-simulator)
         OUTPUT_VARIABLE _load_commands)
     if(NOT _otool_status EQUAL 0 OR
        NOT _load_commands MATCHES "platform ${_mach_platform}([^0-9]|$)" OR
-       NOT _load_commands MATCHES "minos 16\\.0")
+       NOT _load_commands MATCHES "minos 26\\.0")
         message(FATAL_ERROR "${_archive} has the wrong Apple platform contract")
     endif()
 

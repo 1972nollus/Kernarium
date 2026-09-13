@@ -1,7 +1,7 @@
 From 34b0b852f00c0cf420e783e1a8972957d8deacb4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 11 Sep 2026 16:40:47 +0900
-Subject: [PATCH 14/14] vulkan/wsi/wayland: bound the waits a compositor need
+Subject: [PATCH 14/16] vulkan/wsi/wayland: bound the waits a compositor need
  not end
 
 A FIFO swapchain on a compositor without wp_fifo_v1 is throttled with a

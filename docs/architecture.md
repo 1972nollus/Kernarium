@@ -69,6 +69,12 @@ embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour/page profile for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
+The iOS device and iOS Simulator products build at an iOS 26.0 minimum. iOS
+code therefore carries no availability guard, fallback path, or dependency
+build for a release older than that, and every iOS dependency prefix and
+platform contract records the same 26.0 deployment target. macOS keeps the
+baseline each macOS product declares.
+
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
 artifact on macOS, Simulator, and device. The ARM64EC Wine appliance uses a
