@@ -15,25 +15,30 @@ if(NOT DEFINED PRODUCT)
     set(PRODUCT apple-gpu-vulkan-experiment)
 endif()
 # Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
-# the KosmicKrisp Vulkan driver. Only macOS has a build of that stack.
+# the KosmicKrisp Vulkan driver.
 if(PRODUCT STREQUAL "apple-gpu")
-    message(FATAL_ERROR
-        "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4")
+    message(FATAL_ERROR "apple-gpu is retired; build apple-gpu-vulkan-experiment")
 elseif(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     message(FATAL_ERROR "Unsupported Apple GPU product: ${PRODUCT}")
 endif()
 
 if(PLATFORM STREQUAL "macos")
     set(_platform_contract macos-gpu-vulkan-arm64.tsv)
-    set(_deployment_target 26.0)
     set(_mach_platform 1)
     set(_minimum_os_key LSMinimumSystemVersion)
-elseif(PLATFORM STREQUAL "ios" OR PLATFORM STREQUAL "ios-simulator")
+elseif(PLATFORM STREQUAL "ios")
+    set(_platform_contract ios-device-gpu-vulkan-arm64.tsv)
+    set(_mach_platform 2)
+    set(_minimum_os_key MinimumOSVersion)
+elseif(PLATFORM STREQUAL "ios-simulator")
+    # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
+    # device, so the Simulator has no build of this stack.
     message(FATAL_ERROR
-        "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4")
+        "the iOS Simulator has no Metal 4 device; build for the iOS device")
 else()
     message(FATAL_ERROR "Unsupported Apple GPU platform: ${PLATFORM}")
 endif()
+set(_deployment_target 26.0)
 
 if(NOT IS_DIRECTORY "${PREFIX}" OR IS_SYMLINK "${PREFIX}")
     message(FATAL_ERROR "Invalid Apple GPU dependency prefix: ${PREFIX}")

@@ -116,6 +116,7 @@ ios)
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios
 	DEPLOYMENT_TARGET=26.0
+	VULKAN_CONTRACT_NAME=ios-device-gpu-vulkan-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion
 	PREFIX_PLATFORM=ios-device-arm64
 	;;
@@ -123,20 +124,29 @@ ios)
 esac
 
 # Every Apple product renders OpenGL with Mesa's Zink Gallium driver on the
-# same in-process Vulkan driver Venus uses. The iOS product has no build yet.
+# same in-process Vulkan driver Venus uses.
 case "$PRODUCT" in
 apple-gpu-vulkan-experiment)
-	[ "$PLATFORM" = macos ] ||
-		fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
 	CONTRACT_NAME=$VULKAN_CONTRACT_NAME
-	TARGET=arm64-apple-macos26.0
+	if [ "$PLATFORM" = macos ]; then
+		TARGET=arm64-apple-macos26.0
+	fi
 	DEPLOYMENT_TARGET=26.0
 	;;
 apple-gpu)
-	fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
+	fail "apple-gpu is retired; build apple-gpu-vulkan-experiment"
 	;;
 *) fail "product must be apple-gpu or apple-gpu-vulkan-experiment" ;;
 esac
+
+# An iOS prefix is cross compiled: its binaries cannot run on the build
+# machine, so Mesa's helper tools are built separately for macOS and the
+# sysroot is carried by meson machine files rather than by SDKROOT.
+if [ "$PLATFORM" = macos ]; then
+	CROSS_BUILD=0
+else
+	CROSS_BUILD=1
+fi
 DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/$PRODUCT/$PREFIX_PLATFORM"
 
 PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
@@ -227,6 +237,15 @@ NM=$($XCRUN --sdk "$SDK_NAME" --find nm)
 RANLIB=$($XCRUN --sdk "$SDK_NAME" --find ranlib)
 STRIP=$($XCRUN --sdk "$SDK_NAME" --find strip)
 
+# The build machine toolchain. On a native macOS build it is the same one; a
+# cross build additionally compiles Mesa's helper tools and the Venus protocol
+# generator, which run here rather than on the target.
+NATIVE_SDK_ROOT=$($XCRUN --sdk macosx --show-sdk-path)
+[ -d "$NATIVE_SDK_ROOT" ] || fail "xcrun returned an invalid macOS SDK"
+NATIVE_TARGET=arm64-apple-macos26.0
+NATIVE_CC=$($XCRUN --sdk macosx --find clang)
+NATIVE_CXX=$($XCRUN --sdk macosx --find clang++)
+
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
@@ -251,6 +270,7 @@ SOURCES="$TEMP_ROOT/sources"
 BUILDS="$TEMP_ROOT/builds"
 EPOXY_CROSS="$BUILDS/meson-epoxy-$PLATFORM.cross"
 VIRGL_CROSS="$BUILDS/meson-virgl-$PLATFORM.cross"
+NATIVE_FILE="$BUILDS/meson-native-$PLATFORM.ini"
 mkdir -p -- "$SOURCES/libepoxy" \
 	"$SOURCES/virglrenderer" "$BUILDS" "$STAGE/include" \
 	"$STAGE/lib" "$STAGE/Frameworks"
@@ -262,6 +282,92 @@ $RSYNC -a --exclude .git "$MESA_SOURCE/" "$SOURCES/Mesa/"
 
 APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
 APPLE_GPU_TOOL_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+if [ "$CROSS_BUILD" -eq 1 ]; then
+	OBJC_RUNTIME_LINK=", '-lobjc'"
+	# Mesa and virglrenderer describe the target as Darwin with an iOS
+	# subsystem, which is what makes KosmicKrisp compile its Objective-C
+	# Metal bridge rather than the portable stubs. libepoxy keys its own
+	# platform selection on system = 'ios' and keeps the other file.
+	MESA_MACHINE_ARGS="--cross-file $VIRGL_CROSS --native-file $NATIVE_FILE"
+else
+	OBJC_RUNTIME_LINK=
+	MESA_MACHINE_ARGS=
+fi
+
+cat > "$EPOXY_CROSS" <<EOF
+[properties]
+needs_exe_wrapper = true
+
+[built-in options]
+c_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+cpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+objc_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+objcpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+c_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib'$OBJC_RUNTIME_LINK]
+cpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib'$OBJC_RUNTIME_LINK]
+objc_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib'$OBJC_RUNTIME_LINK]
+objcpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib'$OBJC_RUNTIME_LINK]
+
+[binaries]
+c = ['$CC']
+cpp = ['$CXX']
+objc = ['$CC']
+objcpp = ['$CXX']
+ar = ['$AR']
+nm = ['$NM']
+ranlib = ['$RANLIB']
+strip = ['$STRIP', '-x']
+pkg-config = ['$PKG_CONFIG']
+python = ['$PYTHON']
+
+[host_machine]
+system = '$EPOXY_SYSTEM'
+cpu_family = 'aarch64'
+cpu = 'arm64'
+endian = 'little'
+EOF
+
+awk -v source_system="$EPOXY_SYSTEM" -v subsystem="$SUBSYSTEM" '
+	BEGIN {
+		quote = sprintf("%c", 39)
+		expected = "system = " quote source_system quote
+	}
+	$0 == expected {
+		print "system = " quote "darwin" quote
+		print "kernel = " quote "xnu" quote
+		print "subsystem = " quote subsystem quote
+		next
+	}
+	{ print }
+' "$EPOXY_CROSS" > "$VIRGL_CROSS"
+
+# A cross build compiles helper tools for the build machine. Their compilers
+# and sysroot come from this file; nothing may leak through the environment,
+# because SDKROOT would point them at the target SDK as well.
+cat > "$NATIVE_FILE" <<EOF
+[binaries]
+c = ['$NATIVE_CC']
+cpp = ['$NATIVE_CXX']
+objc = ['$NATIVE_CC']
+objcpp = ['$NATIVE_CXX']
+ar = ['$AR']
+nm = ['$NM']
+ranlib = ['$RANLIB']
+strip = ['$STRIP', '-x']
+pkg-config = ['$PKG_CONFIG']
+python = ['$PYTHON']
+
+[built-in options]
+c_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+cpp_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+objc_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+objcpp_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+c_link_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+cpp_link_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+objc_link_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+objcpp_link_args = ['-arch', 'arm64', '-target', '$NATIVE_TARGET', '-isysroot', '$NATIVE_SDK_ROOT']
+EOF
 install_framework()
 {
 	framework_name=$1
@@ -294,6 +400,45 @@ EOF
 	"$PLUTIL" -lint "$framework_dir/Info.plist" >/dev/null
 }
 
+# Mesa build steps. A native macOS build takes its sysroot from SDKROOT; a
+# cross build must not export it, because the same variable would point the
+# build machine compiler at the target SDK and meson's native compiler check
+# then fails on binaries it cannot run. The cross sysroot lives in the meson
+# machine files instead.
+mesa_run()
+{
+	mesa_run_path=$1
+	shift
+	if [ "$CROSS_BUILD" -eq 0 ]; then
+		env -i PATH="$mesa_run_path" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+			SDKROOT="$SDK_ROOT" \
+			MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+			"$@"
+	else
+		env -i PATH="$mesa_run_path" TMPDIR="$APPLE_GPU_TEMP_DIR" "$@"
+	fi
+}
+
+mesa_setup()
+{
+	mesa_setup_path=$1
+	shift
+	if [ "$CROSS_BUILD" -eq 0 ]; then
+		env -i PATH="$mesa_setup_path" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+			SDKROOT="$SDK_ROOT" \
+			MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+			CC="$CC" CXX="$CXX" OBJC="$CC" OBJCXX="$CXX" \
+			PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+			PKG_CONFIG_SYSROOT_DIR= \
+			"$@"
+	else
+		env -i PATH="$mesa_setup_path" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+			PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+			PKG_CONFIG_SYSROOT_DIR= \
+			"$@"
+	fi
+}
+
 MESA_BUILD="$BUILDS/Mesa"
 MESA_STAGE="$BUILDS/Mesa-stage"
 MESA_PKG_CONFIG="$BUILDS/empty-mesa-pkgconfig"
@@ -303,15 +448,15 @@ MESA_TOOL_PATH="$(dirname -- "$PYTHON"):$(dirname -- "$MESON"):$(dirname -- "$NI
 # its Git banner records the real prepared topic rather than an outer repo.
 VENUS_PROTOCOL_BUILD="$BUILDS/venus-protocol"
 env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	CC="$CC" SDKROOT="$SDK_ROOT" \
-	CFLAGS="-isysroot $SDK_ROOT -target $TARGET" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+	CC="$NATIVE_CC" SDKROOT="$NATIVE_SDK_ROOT" \
+	CFLAGS="-isysroot $NATIVE_SDK_ROOT -target $NATIVE_TARGET" \
+	MACOSX_DEPLOYMENT_TARGET=26.0 \
 	PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
 	"$MESON" setup "$VENUS_PROTOCOL_BUILD" "$VENUS_PROTOCOL_SOURCE" \
 		--buildtype debugoptimized -Db_ndebug=false --wrap-mode=nodownload \
 		-Dvulkan-headers-dir="$VULKAN_HEADERS_SOURCE"
 env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+	SDKROOT="$NATIVE_SDK_ROOT" MACOSX_DEPLOYMENT_TARGET=26.0 \
 	"$MESON" compile -C "$VENUS_PROTOCOL_BUILD" -j "$JOBS"
 env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 	"$MESON" test -C "$VENUS_PROTOCOL_BUILD" --print-errorlogs
@@ -320,22 +465,52 @@ VENUS_PROTOCOL_GENERATED_SHA256=$(
 	shasum -a 256 vn_protocol_driver*.h vn_protocol_renderer*.h |
 		shasum -a 256 | awk '{print $1}'
 )
-env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
-	CC="$CC" CXX="$CXX" OBJC="$CC" OBJCXX="$CXX" \
-	PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
-	PKG_CONFIG_SYSROOT_DIR= \
+# vtn_bindgen2 and the drivers' precompiled shader compilers run on the build
+# machine. A cross configuration cannot produce them -- they would have to link
+# build machine targets against the host machine's vtn, nir and util, which
+# meson refuses -- so a cross build installs them from a native pass first and
+# then asks for them with -Dprecomp-compiler=system.
+MESA_PRECOMP_ARGS=
+if [ "$CROSS_BUILD" -eq 1 ]; then
+	MESA_TOOLS_BUILD="$BUILDS/Mesa-tools"
+	MESA_TOOLS_STAGE="$BUILDS/Mesa-tools-stage"
+	mkdir -p -- "$MESA_TOOLS_STAGE"
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$NATIVE_SDK_ROOT" MACOSX_DEPLOYMENT_TARGET=26.0 \
+		CC="$NATIVE_CC" CXX="$NATIVE_CXX" \
+		OBJC="$NATIVE_CC" OBJCXX="$NATIVE_CXX" \
+		PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
+		PKG_CONFIG_SYSROOT_DIR= \
+		"$MESON" setup "$MESA_TOOLS_BUILD" "$SOURCES/Mesa" \
+			--prefix "$MESA_TOOLS_STAGE" --libdir lib \
+			--buildtype release --wrap-mode=nodownload \
+			-Dplatforms=macos -Dvulkan-drivers=kosmickrisp \
+			-Dgallium-drivers= -Dopengl=false -Dzstd=disabled \
+			-Dllvm=disabled -Dspirv-tools=disabled \
+			-Dinstall-mesa-clc=true -Dinstall-precomp-compiler=true
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$NATIVE_SDK_ROOT" MACOSX_DEPLOYMENT_TARGET=26.0 \
+		"$MESON" compile -C "$MESA_TOOLS_BUILD" -j "$JOBS"
+	env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		SDKROOT="$NATIVE_SDK_ROOT" MACOSX_DEPLOYMENT_TARGET=26.0 \
+		"$MESON" install --no-rebuild -C "$MESA_TOOLS_BUILD" > /dev/null
+	for tool in vtn_bindgen2 kk_clc; do
+		[ -x "$MESA_TOOLS_STAGE/bin/$tool" ] ||
+			fail "the native Mesa pass did not install $tool"
+	done
+	MESA_TOOL_PATH="$MESA_TOOLS_STAGE/bin:$MESA_TOOL_PATH"
+	MESA_PRECOMP_ARGS=-Dprecomp-compiler=system
+fi
+
+mesa_setup "$MESA_TOOL_PATH" \
 	"$MESON" setup "$MESA_BUILD" "$SOURCES/Mesa" \
 		--prefix "$MESA_STAGE" --libdir lib --buildtype release \
 		--wrap-mode=nodownload --prefer-static \
+		$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
 		-Dplatforms=macos -Dvulkan-drivers=kosmickrisp \
 		-Dgallium-drivers= -Dopengl=false -Dzstd=disabled \
 		-Dllvm=disabled -Dspirv-tools=disabled
-env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
-	"$MESON" compile -C "$MESA_BUILD" -j "$JOBS"
+mesa_run "$MESA_TOOL_PATH" "$MESON" compile -C "$MESA_BUILD" -j "$JOBS"
 KOSMICKRISP_BINARY="$MESA_BUILD/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
 [ -f "$KOSMICKRISP_BINARY" ] ||
 	fail "Mesa did not produce the pinned KosmicKrisp dynamic library"
@@ -371,27 +546,18 @@ case $BISON_VERSION in
 	MESA_GL_TOOL_PATH="$BISON_SHIM_DIR:$MESA_TOOL_PATH"
 	;;
 esac
-env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
-	CC="$CC" CXX="$CXX" OBJC="$CC" OBJCXX="$CXX" \
-	PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$MESA_PKG_CONFIG" \
-	PKG_CONFIG_SYSROOT_DIR= \
+mesa_setup "$MESA_GL_TOOL_PATH" \
 	"$MESON" setup "$MESA_GL_BUILD" "$SOURCES/Mesa" \
 		--prefix "$MESA_GL_STAGE" --libdir lib --buildtype release \
 		--wrap-mode=nodownload \
+		$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
 		-Dplatforms=macos -Dvulkan-drivers= \
 		-Dgallium-drivers=zink -Dopengl=true -Degl=enabled \
 		-Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
 		-Dzstd=disabled -Dllvm=disabled -Dspirv-tools=disabled \
 		-Dzink-vulkan-library-file="$KOSMICKRISP_FRAMEWORK_BINARY"
-env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
-	"$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
-env -i PATH="$MESA_GL_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
-	SDKROOT="$SDK_ROOT" \
-	MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+mesa_run "$MESA_GL_TOOL_PATH" "$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
+mesa_run "$MESA_GL_TOOL_PATH" \
 	"$MESON" install --no-rebuild -C "$MESA_GL_BUILD" > /dev/null
 MESA_EGL_BINARY="$MESA_GL_STAGE/lib/libEGL.1.dylib"
 MESA_GALLIUM_BINARY="$MESA_GL_STAGE/lib/libgallium-$MESA_VERSION.dylib"
@@ -409,53 +575,6 @@ for headers in EGL GL KHR; do
 	$RSYNC -a "$MESA_GL_STAGE/include/$headers/" \
 		"$STAGE/include/$headers/"
 done
-
-cat > "$EPOXY_CROSS" <<EOF
-[properties]
-needs_exe_wrapper = true
-
-[built-in options]
-c_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-cpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-objc_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-objcpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-c_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-cpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-objc_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-objcpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-
-[binaries]
-c = ['$CC']
-cpp = ['$CXX']
-objc = ['$CC']
-objcpp = ['$CXX']
-ar = ['$AR']
-nm = ['$NM']
-ranlib = ['$RANLIB']
-strip = ['$STRIP', '-x']
-pkg-config = ['$PKG_CONFIG']
-python = ['$PYTHON']
-
-[host_machine]
-system = '$EPOXY_SYSTEM'
-cpu_family = 'aarch64'
-cpu = 'arm64'
-endian = 'little'
-EOF
-
-awk -v source_system="$EPOXY_SYSTEM" -v subsystem="$SUBSYSTEM" '
-	BEGIN {
-		quote = sprintf("%c", 39)
-		expected = "system = " quote source_system quote
-	}
-	$0 == expected {
-		print "system = " quote "darwin" quote
-		print "kernel = " quote "xnu" quote
-		print "subsystem = " quote subsystem quote
-		next
-	}
-	{ print }
-' "$EPOXY_CROSS" > "$VIRGL_CROSS"
 
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
 PKG_CONFIG_SYSROOT_DIR= \

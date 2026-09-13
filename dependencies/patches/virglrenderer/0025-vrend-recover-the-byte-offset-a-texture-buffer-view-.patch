@@ -1,7 +1,7 @@
 From 5fc30a213649bac3e91a5b8ed30ff42db9a79ad7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
-Subject: [PATCH 25/31] vrend: recover the byte offset a texture buffer view
+Subject: [PATCH 25/32] vrend: recover the byte offset a texture buffer view
  was given
 
 A texture buffer view crosses the protocol as a first and last element, so
