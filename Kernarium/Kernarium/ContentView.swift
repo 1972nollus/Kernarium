@@ -52,11 +52,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var floatingButtons: some View {
-        if #available(iOS 26.0, *) {
-            GlassEffectContainer(spacing: FloatingControlMetrics.spacing) {
-                floatingButtonsContent
-            }
-        } else {
+        GlassEffectContainer(spacing: FloatingControlMetrics.spacing) {
             floatingButtonsContent
         }
     }
@@ -145,27 +141,14 @@ struct ContentView: View {
         identifier: String,
         action: @escaping () -> Void
     ) -> some View {
-        if #available(iOS 26.0, *) {
-            Button(action: action) {
-                floatingIcon(systemName: systemName)
-            }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .glassEffectID(identifier, in: floatingButtonNamespace)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityIdentifier(identifier)
-        } else {
-            Button(action: action) {
-                floatingIcon(systemName: systemName)
-                    .background(.regularMaterial, in: Circle())
-                    .overlay {
-                        Circle().strokeBorder(.primary, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityIdentifier(identifier)
+        Button(action: action) {
+            floatingIcon(systemName: systemName)
         }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffectID(identifier, in: floatingButtonNamespace)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(identifier)
     }
 
     private func floatingIcon(systemName: String) -> some View {
