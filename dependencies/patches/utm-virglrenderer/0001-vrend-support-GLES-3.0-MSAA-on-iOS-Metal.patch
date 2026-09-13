@@ -1,7 +1,7 @@
 From 97b35e32c8219bdde628ae433022e0d0fb960d60 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 00:00:00 +0900
-Subject: [PATCH 01/33] vrend: support GLES 3.0 MSAA on iOS Metal
+Subject: [PATCH 01/34] vrend: support GLES 3.0 MSAA on iOS Metal
 
 OpenGL ES 3.0 requires multisampled renderbuffers but does not gain
 multisampled textures until ES 3.1.  The ANGLE Metal backend used on iOS
@@ -27,7 +27,7 @@ native sharing path.
  6 files changed, 164 insertions(+), 26 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index 7774a25..d154feb 100644
+index 7774a253..d154feb0 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -652,7 +652,9 @@ static int vrend_decode_create_surface_common(struct vrend_context *ctx, const u
@@ -42,7 +42,7 @@ index 7774a25..d154feb 100644
        return EINVAL;
     }
 diff --git a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
-index 40ed4d5..8566fd3 100644
+index 40ed4d55..8566fd38 100644
 --- a/src/vrend/vrend_formats.c
 +++ b/src/vrend/vrend_formats.c
 @@ -650,25 +650,43 @@ void vrend_check_texture_multisample(struct vrend_format_table *table,
@@ -102,7 +102,7 @@ index 40ed4d5..8566fd3 100644
     }
  }
 diff --git a/src/vrend/vrend_metal.m b/src/vrend/vrend_metal.m
-index e8ded74..d9113c5 100644
+index e8ded745..d9113c5f 100644
 --- a/src/vrend/vrend_metal.m
 +++ b/src/vrend/vrend_metal.m
 @@ -12,6 +12,7 @@
@@ -160,7 +160,7 @@ index e8ded74..d9113c5 100644
     if (!mtl_device || !descriptor) {
        [descriptor release];
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index e6ae007..86498a9 100644
+index e6ae0074..86498a92 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -1492,7 +1492,7 @@ static bool vrend_compile_shader(struct vrend_sub_context *sub_ctx,
@@ -297,7 +297,7 @@ index e6ae007..86498a9 100644
                    caps->v1.max_samples);
        caps->v1.max_samples = 1;
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 814eb7e..3ae1fed 100644
+index 814eb7e3..3ae1feda 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -81,6 +81,7 @@ struct vrend_context;
@@ -309,7 +309,7 @@ index 814eb7e..3ae1fed 100644
  struct vrend_resource {
     struct pipe_resource base;
 diff --git a/tests/test_virgl_cmd.c b/tests/test_virgl_cmd.c
-index 3124e5f..8ab37ca 100644
+index 3124e5fc..8ab37ca6 100644
 --- a/tests/test_virgl_cmd.c
 +++ b/tests/test_virgl_cmd.c
 @@ -1460,6 +1460,45 @@ START_TEST(virgl_test_create_surface_pass)

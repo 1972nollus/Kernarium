@@ -1,7 +1,7 @@
 From f0565f0c6281178985718f09dd1e4cf6d3eb94b8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:26:14 +0900
-Subject: [PATCH 23/33] virgl: report renderer work that only a poll completes
+Subject: [PATCH 23/34] virgl: report renderer work that only a poll completes
 
 A guest blocked on a query result spins on the buffer the host fills and
 issues no further commands. The caller therefore has no fence of its own
@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 22 insertions(+)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 6eac683..ba56e6d 100644
+index 6eac6830..ba56e6d4 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
 @@ -795,6 +795,11 @@ void virgl_renderer_poll(void)
@@ -36,7 +36,7 @@ index 6eac683..ba56e6d 100644
  {
     TRACE_FUNC();
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index e5f0efd..953b088 100644
+index e5f0efdf..953b0885 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
 @@ -177,6 +177,12 @@ struct virgl_renderer_callbacks {
@@ -53,7 +53,7 @@ index e5f0efd..953b088 100644
  VIRGL_EXPORT void *virgl_renderer_get_cursor_data(uint32_t resource_id, uint32_t *width, uint32_t *height);
  
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index cfa0088..e2b0142 100644
+index cfa0088b..e2b0142e 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7507,6 +7507,16 @@ void vrend_renderer_poll(void) {
@@ -74,7 +74,7 @@ index cfa0088..e2b0142 100644
  {
     struct vrend_context *ctx = fence->ctx;
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 95872c2..4fb216d 100644
+index 95872c2a..4fb216d8 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -611,6 +611,7 @@ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,

@@ -1,14 +1,14 @@
 From aba8604d5e08eb2926467e871fb0224381878c71 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 23:41:18 +0900
-Subject: [PATCH 08/33] util: fall back to app tmpdir for iOS shmem
+Subject: [PATCH 08/34] util: fall back to app tmpdir for iOS shmem
 
 ---
  src/mesa/util/anon_file.c | 22 ++++++++++++++++++++--
  1 file changed, 20 insertions(+), 2 deletions(-)
 
 diff --git a/src/mesa/util/anon_file.c b/src/mesa/util/anon_file.c
-index c363891..abeebf9 100644
+index c3638917..abeebf9f 100644
 --- a/src/mesa/util/anon_file.c
 +++ b/src/mesa/util/anon_file.c
 @@ -54,7 +54,7 @@

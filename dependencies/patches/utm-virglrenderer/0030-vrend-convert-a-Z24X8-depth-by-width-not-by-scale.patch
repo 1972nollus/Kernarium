@@ -1,7 +1,7 @@
 From a20489c1117a163a9e1306e47f84c4d49b927ee1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 07:06:41 +0900
-Subject: [PATCH 30/33] vrend: convert a Z24X8 depth by width, not by scale
+Subject: [PATCH 30/34] vrend: convert a Z24X8 depth by width, not by scale
 
 The guest keeps a Z24X8 texel as a 24-bit depth in the low bits of a
 word; the host reads and writes the same texel as a 32-bit normalised
@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 22 insertions(+), 14 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index c4848bc..7c93362 100644
+index c4848bc8..7c933629 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -9481,19 +9481,29 @@ static void iov_buffer_upload(void *cookie, uint32_t doff, void *src, int len)

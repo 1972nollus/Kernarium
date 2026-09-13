@@ -1,7 +1,7 @@
 From 008834e8b0ee50bdd85ee8f9c14f5084a31832ce Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 06:27:17 +0900
-Subject: [PATCH 06/33] venus: require an explicit Darwin Vulkan provider
+Subject: [PATCH 06/34] venus: require an explicit Darwin Vulkan provider
 
 ---
  meson.build              | 10 ++++++++++
@@ -10,7 +10,7 @@ Subject: [PATCH 06/33] venus: require an explicit Darwin Vulkan provider
  3 files changed, 31 insertions(+), 3 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index b46e133..8563881 100644
+index b46e133b..85638819 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -376,6 +376,16 @@ if with_venus
@@ -31,7 +31,7 @@ index b46e133..8563881 100644
        venus_dep += dependency('vulkan')
     endif
 diff --git a/meson_options.txt b/meson_options.txt
-index 1862ee5..0236b5f 100644
+index 1862ee50..0236b5f8 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
 @@ -52,6 +52,20 @@ option(
@@ -56,7 +56,7 @@ index 1862ee5..0236b5f 100644
    'vulkan-preload',
    type : 'boolean',
 diff --git a/src/venus/vkr_instance.c b/src/venus/vkr_instance.c
-index 56173b9..9d4e4b2 100644
+index 56173b95..9d4e4b20 100644
 --- a/src/venus/vkr_instance.c
 +++ b/src/venus/vkr_instance.c
 @@ -178,11 +178,15 @@ vkr_dispatch_vkCreateInstance(struct vn_dispatch_context *dispatch,

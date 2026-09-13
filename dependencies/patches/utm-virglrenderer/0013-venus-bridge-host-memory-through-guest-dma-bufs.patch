@@ -1,7 +1,7 @@
 From 17a24a4e17064bfe376d1dede0f5802209ddd59a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
-Subject: [PATCH 13/33] venus: bridge host memory through guest dma-bufs
+Subject: [PATCH 13/34] venus: bridge host memory through guest dma-bufs
 
 ---
  src/venus/vkr_context.c         |  78 +++++++++--
@@ -21,7 +21,7 @@ Subject: [PATCH 13/33] venus: bridge host memory through guest dma-bufs
  14 files changed, 533 insertions(+), 52 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index 2ea5898..144d605 100644
+index 2ea58988..144d6050 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -193,6 +193,7 @@ vkr_context_free_resource(struct hash_entry *entry)
@@ -176,7 +176,7 @@ index 2ea5898..144d605 100644
  
  void
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index 12541a7..9d351f3 100644
+index 12541a72..9d351f36 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
 @@ -32,6 +32,11 @@ struct vkr_resource {
@@ -192,7 +192,7 @@ index 12541a7..9d351f3 100644
  
  enum vkr_context_validate_level {
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 4bef9fa..f69dc48 100644
+index 4bef9faa..f69dc489 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -131,6 +131,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
@@ -239,7 +239,7 @@ index 4bef9fa..f69dc48 100644
  
     args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index a2af006..175ecb9 100644
+index a2af0060..175ecb9f 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -28,6 +28,8 @@ struct vkr_device {
@@ -252,7 +252,7 @@ index a2af006..175ecb9 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 2172b2f..1741baf 100644
+index 2172b2fc..1741baf8 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -7,6 +7,7 @@
@@ -584,7 +584,7 @@ index 2172b2f..1741baf 100644
     const bool can_export_opaque = mem->valid_fd_types & (1 << VIRGL_RESOURCE_FD_OPAQUE);
     enum virgl_resource_fd_type fd_type;
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index b82e878..e25198b 100644
+index b82e8786..e25198b5 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -30,6 +30,10 @@ struct vkr_device_memory {
@@ -599,7 +599,7 @@ index b82e878..e25198b 100644
     uint32_t memory_type_index;
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index b234844..9388683 100644
+index b2348443..93886834 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -360,6 +360,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
@@ -637,7 +637,7 @@ index b234844..9388683 100644
     }
  
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 8e5e330..5f56526 100644
+index 8e5e330f..5f565266 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -31,6 +31,7 @@ struct vkr_physical_device {
@@ -649,7 +649,7 @@ index 8e5e330..5f56526 100644
     VkPhysicalDeviceMemoryProperties host_memory_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
-index c0335ca..fbac7e1 100644
+index c0335ca5..fbac7e1d 100644
 --- a/src/venus/vkr_renderer.c
 +++ b/src/venus/vkr_renderer.c
 @@ -220,7 +220,8 @@ vkr_renderer_import_resource(uint32_t ctx_id,
@@ -663,7 +663,7 @@ index c0335ca..fbac7e1 100644
     assert(size);
  
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
-index 2055527..3dac1dc 100644
+index 20555279..3dac1dc8 100644
 --- a/src/virgl_resource.c
 +++ b/src/virgl_resource.c
 @@ -22,23 +22,191 @@
@@ -876,7 +876,7 @@ index 2055527..3dac1dc 100644
     res->iov = iov;
     res->iov_count = iov_count;
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index 2a68add..875baef 100644
+index 2a68adde..875baef2 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
 @@ -60,6 +60,11 @@ struct virgl_resource_vulkan_info {
@@ -924,7 +924,7 @@ index 2a68add..875baef 100644
 +
  #endif /* VIRGL_RESOURCE_H */
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 7107672..154a377 100644
+index 71076727..154a3773 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
 @@ -1174,7 +1174,7 @@ int virgl_renderer_resource_create_blob(const struct virgl_renderer_resource_cre
@@ -937,7 +937,7 @@ index 7107672..154a377 100644
     bool has_guest_storage;
     int ret;
 diff --git a/src/vrend/vrend_metal.h b/src/vrend/vrend_metal.h
-index f56a05e..f5c59b3 100644
+index f56a05ea..f5c59b37 100644
 --- a/src/vrend/vrend_metal.h
 +++ b/src/vrend/vrend_metal.h
 @@ -43,4 +43,12 @@ MTLTexture_id virgl_metal_retain_texture(MTLTexture_id tex);
@@ -954,7 +954,7 @@ index f56a05e..f5c59b3 100644
 +
  #endif
 diff --git a/src/vrend/vrend_metal.m b/src/vrend/vrend_metal.m
-index d9113c5..d6dc569 100644
+index d9113c5f..d6dc569e 100644
 --- a/src/vrend/vrend_metal.m
 +++ b/src/vrend/vrend_metal.m
 @@ -187,14 +187,24 @@ bool virgl_metal_create_texture_from_shm(MTLDevice_id device,

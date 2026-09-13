@@ -1,7 +1,7 @@
 From 0562ac5c60a5c11dbf6f122206daa532c74eb1c8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 22:24:13 +0900
-Subject: [PATCH 04/33] vrend: add VideoToolbox decode backend
+Subject: [PATCH 04/34] vrend: add VideoToolbox decode backend
 
 ---
  meson.build                          |   19 +-
@@ -27,7 +27,7 @@ Subject: [PATCH 04/33] vrend: add VideoToolbox decode backend
  create mode 100644 tests/test_vrend_video_h265.c
 
 diff --git a/meson.build b/meson.build
-index b863ecc..b46e133 100644
+index b863eccb..b46e133b 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -135,7 +135,11 @@ if with_drm_renderers
@@ -64,7 +64,7 @@ index b863ecc..b46e133 100644
  
  with_tests = get_option('tests')
 diff --git a/src/meson.build b/src/meson.build
-index e6e48ca..c040251 100644
+index e6e48ca5..c0402518 100644
 --- a/src/meson.build
 +++ b/src/meson.build
 @@ -190,10 +190,24 @@ if with_render_server == 'thread'
@@ -106,7 +106,7 @@ index e6e48ca..c040251 100644
  
  if with_host_windows
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 273e3f2..06d45fd 100644
+index 273e3f2a..06d45fd2 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7967,10 +7967,15 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
@@ -163,7 +163,7 @@ index 273e3f2..06d45fd 100644
           if (do_wait(fence, /* can_block */ false)) {
 diff --git a/src/vrend/vrend_video_h264.c b/src/vrend/vrend_video_h264.c
 new file mode 100644
-index 0000000..5352a6e
+index 00000000..5352a6ea
 --- /dev/null
 +++ b/src/vrend/vrend_video_h264.c
 @@ -0,0 +1,560 @@
@@ -729,7 +729,7 @@ index 0000000..5352a6e
 +}
 diff --git a/src/vrend/vrend_video_h264.h b/src/vrend/vrend_video_h264.h
 new file mode 100644
-index 0000000..52ea5c8
+index 00000000..52ea5c85
 --- /dev/null
 +++ b/src/vrend/vrend_video_h264.h
 @@ -0,0 +1,66 @@
@@ -801,7 +801,7 @@ index 0000000..52ea5c8
 +#endif /* VREND_VIDEO_H264_H */
 diff --git a/src/vrend/vrend_video_h265.c b/src/vrend/vrend_video_h265.c
 new file mode 100644
-index 0000000..aa2df3b
+index 00000000..aa2df3b4
 --- /dev/null
 +++ b/src/vrend/vrend_video_h265.c
 @@ -0,0 +1,623 @@
@@ -1430,7 +1430,7 @@ index 0000000..aa2df3b
 +}
 diff --git a/src/vrend/vrend_video_h265.h b/src/vrend/vrend_video_h265.h
 new file mode 100644
-index 0000000..6cf584d
+index 00000000..6cf584d4
 --- /dev/null
 +++ b/src/vrend/vrend_video_h265.h
 @@ -0,0 +1,62 @@
@@ -1498,7 +1498,7 @@ index 0000000..6cf584d
 +#endif /* VREND_VIDEO_H265_H */
 diff --git a/src/vrend/vrend_video_videotoolbox.m b/src/vrend/vrend_video_videotoolbox.m
 new file mode 100644
-index 0000000..8a9975f
+index 00000000..8a9975f7
 --- /dev/null
 +++ b/src/vrend/vrend_video_videotoolbox.m
 @@ -0,0 +1,1597 @@
@@ -3100,7 +3100,7 @@ index 0000000..8a9975f
 +          get_video_buffer(ctx, tgt_handle) ? 0 : -1;
 +}
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index 184a5ee..5c6b69e 100644
+index 184a5eea..5c6b69e8 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
 @@ -616,6 +616,12 @@ virgl_egl_metal_init(UNUSED struct virgl_egl *egl)
@@ -3117,7 +3117,7 @@ index 184a5ee..5c6b69e 100644
                                      uint32_t format, MTLTexture_id *tex)
  {
 diff --git a/src/vrend/vrend_winsys_egl.h b/src/vrend/vrend_winsys_egl.h
-index fb6d73b..b288922 100644
+index fb6d73bd..b288922d 100644
 --- a/src/vrend/vrend_winsys_egl.h
 +++ b/src/vrend/vrend_winsys_egl.h
 @@ -108,6 +108,7 @@ EGLImageKHR virgl_egl_win32_image_from_d3d11_texture2d(struct virgl_egl *egl, ID
@@ -3129,7 +3129,7 @@ index fb6d73b..b288922 100644
                                      uint32_t format, MTLTexture_id *tex);
  bool virgl_egl_metal_create_texture_from_shm(struct virgl_egl *egl, int fd, size_t size,
 diff --git a/tests/meson.build b/tests/meson.build
-index 884a005..698ce0c 100644
+index 884a0051..698ce0c8 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -74,6 +74,30 @@ foreach t : tests
@@ -3165,7 +3165,7 @@ index 884a005..698ce0c 100644
  # goes wrong
 diff --git a/tests/test_vrend_video_h264.c b/tests/test_vrend_video_h264.c
 new file mode 100644
-index 0000000..2d2aec2
+index 00000000..2d2aec2b
 --- /dev/null
 +++ b/tests/test_vrend_video_h264.c
 @@ -0,0 +1,174 @@
@@ -3345,7 +3345,7 @@ index 0000000..2d2aec2
 +}
 diff --git a/tests/test_vrend_video_h265.c b/tests/test_vrend_video_h265.c
 new file mode 100644
-index 0000000..65c2afe
+index 00000000..65c2afe2
 --- /dev/null
 +++ b/tests/test_vrend_video_h265.c
 @@ -0,0 +1,134 @@

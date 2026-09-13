@@ -1,7 +1,7 @@
 From 1c9a954846f8a6b57e7974d9d2dd6d47bfdda092 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:49:05 +0900
-Subject: [PATCH 33/33] vrend: write a sampler's texture unit once, not on
+Subject: [PATCH 33/34] vrend: write a sampler's texture unit once, not on
  every bind
 
 The unit a sampler uniform is bound to follows from the program's own sampler
@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 5285673..c8a4e49 100644
+index 5285673a..c8a4e49e 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -475,6 +475,8 @@ struct vrend_linked_shader_program {

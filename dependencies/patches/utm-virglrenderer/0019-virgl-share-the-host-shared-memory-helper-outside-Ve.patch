@@ -1,7 +1,7 @@
 From 079c4749fe1fb8cb0ce320fc14a95ccaeb298331 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:28:07 +0900
-Subject: [PATCH 19/33] virgl: share the host shared-memory helper outside
+Subject: [PATCH 19/34] virgl: share the host shared-memory helper outside
  Venus
 
 The anonymous-file allocator that gives a host-visible Venus allocation a
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/virgl_host_memory.h
 
 diff --git a/src/meson.build b/src/meson.build
-index b25ec14..e583416 100644
+index b25ec14b..e5834163 100644
 --- a/src/meson.build
 +++ b/src/meson.build
 @@ -27,6 +27,7 @@ subdir('gallium')
@@ -44,7 +44,7 @@ index b25ec14..e583416 100644
     'venus/vkr_image.c',
     'venus/vkr_instance.c',
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 7935230..44270bd 100644
+index 79352304..44270bd0 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -14,7 +14,7 @@
@@ -102,7 +102,7 @@ index 7935230..44270bd 100644
        vkr_gbm_bo_destroy(mem->gbm_bo);
     if (mem->udmabuf_fd >= 0)
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index 02e2ebf..aab490e 100644
+index 02e2ebf3..aab490e7 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -9,7 +9,7 @@
@@ -125,7 +125,7 @@ index 02e2ebf..aab490e 100644
     bool metal_heap_exportable;
 diff --git a/src/venus/vkr_host_memory.h b/src/venus/vkr_host_memory.h
 deleted file mode 100644
-index 55c2f5c..0000000
+index 55c2f5c8..00000000
 --- a/src/venus/vkr_host_memory.h
 +++ /dev/null
 @@ -1,24 +0,0 @@
@@ -157,7 +157,7 @@ diff --git a/src/venus/vkr_host_memory.c b/src/virgl_host_memory.c
 similarity index 81%
 rename from src/venus/vkr_host_memory.c
 rename to src/virgl_host_memory.c
-index 0e36494..394da84 100644
+index 0e364942..394da841 100644
 --- a/src/venus/vkr_host_memory.c
 +++ b/src/virgl_host_memory.c
 @@ -3,7 +3,7 @@
@@ -209,7 +209,7 @@ index 0e36494..394da84 100644
        return;
 diff --git a/src/virgl_host_memory.h b/src/virgl_host_memory.h
 new file mode 100644
-index 0000000..f487a20
+index 00000000..f487a20d
 --- /dev/null
 +++ b/src/virgl_host_memory.h
 @@ -0,0 +1,24 @@

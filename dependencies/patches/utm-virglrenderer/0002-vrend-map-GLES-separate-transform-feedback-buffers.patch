@@ -1,7 +1,7 @@
 From df7aff7eacc0a5f64a22c6e512e7f30db74db9f8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 03:01:50 +0900
-Subject: [PATCH 02/33] vrend: map GLES separate transform feedback buffers
+Subject: [PATCH 02/34] vrend: map GLES separate transform feedback buffers
 
 ---
  src/vrend/vrend_renderer.c | 75 +++++++++++++++++++++++++++-----------
@@ -9,7 +9,7 @@ Subject: [PATCH 02/33] vrend: map GLES separate transform feedback buffers
  2 files changed, 90 insertions(+), 43 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 86498a9..273e3f2 100644
+index 86498a92..273e3f2a 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -1654,12 +1654,36 @@ static char *get_skip_str(int *skip_val)
@@ -124,7 +124,7 @@ index 86498a9..273e3f2 100644
     for (i = 0; i < n_outputs; i++)
        if (varyings[i])
 diff --git a/tests/test_virgl_cmd.c b/tests/test_virgl_cmd.c
-index 8ab37ca..8f30902 100644
+index 8ab37ca6..8f309020 100644
 --- a/tests/test_virgl_cmd.c
 +++ b/tests/test_virgl_cmd.c
 @@ -819,19 +819,20 @@ START_TEST(virgl_test_render_xfb)

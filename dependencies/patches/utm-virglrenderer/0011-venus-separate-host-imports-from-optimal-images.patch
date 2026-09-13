@@ -1,7 +1,7 @@
 From 69346f3b3da727ee504f79bbac53ed1c798cacb6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 11/33] venus: separate host imports from optimal images
+Subject: [PATCH 11/34] venus: separate host imports from optimal images
 
 ---
  src/venus/vkr_buffer.c          | 12 +++++
@@ -12,7 +12,7 @@ Subject: [PATCH 11/33] venus: separate host imports from optimal images
  5 files changed, 130 insertions(+), 13 deletions(-)
 
 diff --git a/src/venus/vkr_buffer.c b/src/venus/vkr_buffer.c
-index 99ec8dd..d4d2309 100644
+index 99ec8dd9..d4d23097 100644
 --- a/src/venus/vkr_buffer.c
 +++ b/src/venus/vkr_buffer.c
 @@ -6,6 +6,7 @@
@@ -56,7 +56,7 @@ index 99ec8dd..d4d2309 100644
  
  void
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 2a0a6d3..2172b2f 100644
+index 2a0a6d36..2172b2fc 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -254,11 +254,16 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
@@ -117,7 +117,7 @@ index 2a0a6d3..2172b2f 100644
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index ae46553..53f76d6 100644
+index ae465532..53f76d6a 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -51,6 +51,9 @@ vkr_dispatch_vkGetImageMemoryRequirements(
@@ -153,7 +153,7 @@ index ae46553..53f76d6 100644
  
  static void
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 4a83795..b234844 100644
+index 4a83795f..b2348443 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -171,7 +171,43 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -268,7 +268,7 @@ index 4a83795..b234844 100644
  
  static void
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index f6121ae..8e5e330 100644
+index f6121ae0..8e5e330f 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -32,7 +32,11 @@ struct vkr_physical_device {

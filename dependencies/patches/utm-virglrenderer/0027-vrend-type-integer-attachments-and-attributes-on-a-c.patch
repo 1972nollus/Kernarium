@@ -1,7 +1,7 @@
 From 472d1fe233c479ed82f579b06c68a560a964de36 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:35:56 +0900
-Subject: [PATCH 27/33] vrend: type integer attachments and attributes on a
+Subject: [PATCH 27/34] vrend: type integer attachments and attributes on a
  core profile
 
 A core profile has no fixed-function conversion between a float shader
@@ -22,7 +22,7 @@ inputs are cast the same way and get the same requirement.
  2 files changed, 22 insertions(+), 8 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 366e304..c4848bc 100644
+index 366e3043..c4848bc8 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7784,6 +7784,14 @@ static bool use_integer(void) {
@@ -41,7 +41,7 @@ index 366e304..c4848bc 100644
     return a && !(strcmp(a, "ARM") && strcmp(a, "Google Inc. (Apple)"));
  }
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 3bad057..868121d 100644
+index 3bad0573..868121dd 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -1218,15 +1218,21 @@ static bool logiop_require_inout(const struct vrend_shader_key *key)

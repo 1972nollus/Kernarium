@@ -1,7 +1,7 @@
 From 7d560e8267b82a494e6c7cee959601f7c4a4c117 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:46:23 +0900
-Subject: [PATCH 17/33] vrend: scope the Apple GL workarounds to Apple's own
+Subject: [PATCH 17/34] vrend: scope the Apple GL workarounds to Apple's own
  driver
 
 The Apple workarounds in vrend are all properties of Apple's own OpenGL
@@ -30,7 +30,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+), 15 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 96e3f81..24e4c59 100644
+index 96e3f817..24e4c598 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -393,6 +393,9 @@ struct global_renderer_state {

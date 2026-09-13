@@ -1,7 +1,7 @@
 From 62bbf33e5f99cb942dfea955264bb11f63213a16 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:38:45 +0900
-Subject: [PATCH 24/33] vrend: stop a context error from stranding the guest
+Subject: [PATCH 24/34] vrend: stop a context error from stranding the guest
 
 A command that reports a context error aborts the rest of its buffer and
 leaves the context in error for good: every later submit fails the
@@ -32,7 +32,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 39 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index d154feb..f33f418 100644
+index d154feb0..f33f4187 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -2055,7 +2055,7 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
@@ -77,7 +77,7 @@ index d154feb..f33f418 100644
  
  static int vrend_decode_ctx_get_fencing_fd(UNUSED struct virgl_context *ctx)
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index e2b0142..6ec1e87 100644
+index e2b0142e..6ec1e879 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -1199,6 +1199,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
@@ -125,7 +125,7 @@ index e2b0142..6ec1e87 100644
        else if (!vrend_check_query(query)) {
           continue;
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 4fb216d..caa88fe 100644
+index 4fb216d8..caa88fea 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -597,6 +597,8 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context

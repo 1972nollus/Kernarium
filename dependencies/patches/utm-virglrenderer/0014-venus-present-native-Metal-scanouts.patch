@@ -1,7 +1,7 @@
 From c1106e0f24162d000fad69e1b02b982f0f66b932 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:14 +0900
-Subject: [PATCH 14/33] venus: present native Metal scanouts
+Subject: [PATCH 14/34] venus: present native Metal scanouts
 
 ---
  src/venus/vkr_device.c          |  17 ++++
@@ -18,7 +18,7 @@ Subject: [PATCH 14/33] venus: present native Metal scanouts
  11 files changed, 441 insertions(+), 22 deletions(-)
 
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index f69dc48..1c7ddeb 100644
+index f69dc489..1c7ddebd 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -132,6 +132,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
@@ -60,7 +60,7 @@ index f69dc48..1c7ddeb 100644
  
     args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index 175ecb9..94e7b41 100644
+index 175ecb9f..94e7b410 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -30,6 +30,7 @@ struct vkr_device {
@@ -72,7 +72,7 @@ index 175ecb9..94e7b41 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 1741baf..aeb7374 100644
+index 1741baf8..aeb73743 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -5,7 +5,10 @@
@@ -274,7 +274,7 @@ index 1741baf..aeb7374 100644
        *out_blob = (struct virgl_context_blob) {
           .type = VIRGL_RESOURCE_FD_SHM,
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index e25198b..02e2ebf 100644
+index e25198b5..02e2ebf3 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -32,6 +32,7 @@ struct vkr_device_memory {
@@ -296,7 +296,7 @@ index e25198b..02e2ebf 100644
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 5036b68..273f9be 100644
+index 5036b68f..273f9be1 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -6,13 +6,95 @@
@@ -466,7 +466,7 @@ index 5036b68..273f9be 100644
  
  static void
 diff --git a/src/venus/vkr_image.h b/src/venus/vkr_image.h
-index a491b8d..5120b80 100644
+index a491b8d7..5120b80f 100644
 --- a/src/venus/vkr_image.h
 +++ b/src/venus/vkr_image.h
 @@ -11,6 +11,8 @@
@@ -479,7 +479,7 @@ index a491b8d..5120b80 100644
  VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 9388683..70c61bc 100644
+index 93886834..70c61bcd 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -363,6 +363,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
@@ -493,7 +493,7 @@ index 9388683..70c61bc 100644
           physical_dev->KHR_portability_subset = true;
  
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 5f56526..0c0dd21 100644
+index 5f565266..0c0dd21a 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -32,6 +32,7 @@ struct vkr_physical_device {
@@ -505,7 +505,7 @@ index 5f56526..0c0dd21 100644
     VkPhysicalDeviceMemoryProperties host_memory_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
-index 3dac1dc..c0dd532 100644
+index 3dac1dc8..c0dd5325 100644
 --- a/src/virgl_resource.c
 +++ b/src/virgl_resource.c
 @@ -54,6 +54,15 @@ struct virgl_native_resource {
@@ -699,7 +699,7 @@ index 3dac1dc..c0dd532 100644
        free(released);
     }
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index 875baef..2e43afa 100644
+index 875baef2..2e43afa7 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
 @@ -211,6 +211,22 @@ virgl_resource_native_acquire(int fd,
@@ -726,7 +726,7 @@ index 875baef..2e43afa 100644
  virgl_resource_native_release(uint64_t id);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 154a377..6eac683 100644
+index 154a3773..6eac6830 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
 @@ -1532,12 +1532,21 @@ virgl_renderer_create_handle_for_scanout(uint32_t res_id,
