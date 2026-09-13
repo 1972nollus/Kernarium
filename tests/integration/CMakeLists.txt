@@ -293,3 +293,36 @@ if(UML_BUILD_WINE_ARM64EC)
         PROCESSORS 4
         RESOURCE_GROUPS cpus:4)
 endif()
+
+# The iOS slice renders through Mesa Zink on KosmicKrisp, which requires Metal
+# 4; the iOS Simulator publishes no Metal 4 device, so the unmodified device
+# build is verified by running it on this Apple silicon Mac in Designed for
+# iPad mode. That needs Xcode's local install service and a sealed rendered
+# image the application copies into its own container, neither of which a
+# checkout provides, so the lane is opt-in: name the image and it registers.
+if(APPLE AND UML_IOS_MAC_CTS_ROOTFS)
+    if(NOT EXISTS "${UML_IOS_MAC_CTS_ROOTFS}")
+        message(FATAL_ERROR
+            "UML_IOS_MAC_CTS_ROOTFS does not exist: ${UML_IOS_MAC_CTS_ROOTFS}")
+    endif()
+    if(NOT UML_IOS_MAC_CTS_ROOTFS_RECEIPT)
+        message(FATAL_ERROR
+            "The iOS-on-Mac CTS lane needs the image's identity receipt in "
+            "UML_IOS_MAC_CTS_ROOTFS_RECEIPT")
+    endif()
+    if(NOT UML_IOS_MAC_CTS_CAMPAIGN)
+        set(UML_IOS_MAC_CTS_CAMPAIGN "gles3-identity-sentinel-v1")
+    endif()
+    uml_add_integration_test(
+        NAME apple-ios-mac-vk-gl-cts
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_ios_mac_vk_gl_cts.py
+            --campaign ${UML_IOS_MAC_CTS_CAMPAIGN}
+            --rootfs ${UML_IOS_MAC_CTS_ROOTFS}
+            --rootfs-receipt ${UML_IOS_MAC_CTS_ROOTFS_RECEIPT}
+            --artifact-root ${CMAKE_CURRENT_BINARY_DIR}/ios-mac-cts
+        LABELS gpu;apple;ios;external;full
+        TIMEOUT 5400
+        PROCESSORS 8
+        RESOURCE_GROUPS cpus:8,gpus:1)
+endif()

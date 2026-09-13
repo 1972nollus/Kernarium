@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Run one Kernarium CTS campaign in the iOS application on this Mac.
+
+The iOS product renders OpenGL through Mesa Zink on the KosmicKrisp Vulkan
+driver, which requires Metal 4. The iOS Simulator exposes no Metal 4 device, so
+the iOS slice is exercised by running the unmodified device build on an Apple
+silicon Mac in Designed for iPad mode, where Metal reports the host GPU.
+
+That mode constrains how a shard can be driven, and this lane exists to absorb
+those constraints rather than to reimplement the campaign:
+
+* The application already carries every campaign. Its runtime generates the
+  guest launcher from the same ``run_vk_gl_cts.py`` driver the macOS lane uses,
+  selects one by ``KERNARIUM_CTS_CAMPAIGN``, and relays the guest's artifact
+  frames to its own standard output. Nothing about the shard is decided here.
+* An iOS application on macOS cannot be started from a command line: ``open``
+  refuses the bundle and ``devicectl`` does not enumerate the host Mac. Xcode's
+  local install service, driven by ``xcodebuild test``, is the only launcher,
+  and it stops the application when its tests finish -- so a hosted case holds
+  the application open for the session and tees its output into the container.
+* The application reads nothing outside its container, so the rendered image is
+  copied in rather than referenced in place, and removed again afterwards.
+"""
+
+from __future__ import annotations
+
+__import__("sys").dont_write_bytecode = True
+
+import argparse
+import hashlib
+import os
+import plistlib
+import shutil
+import subprocess
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import run_vk_gl_cts as cts  # noqa: E402
+import vulkan_cts_receipt as vulkan_receipt  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PROJECT = REPO_ROOT / "Kernarium" / "Kernarium.xcodeproj"
+DEFAULT_DERIVED_DATA = REPO_ROOT / ".build" / "kernarium-xcode-derived"
+DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build" / "ios-mac-cts"
+CHECKED_RECEIPT = Path(__file__).with_name("vk_gl_cts_derivative_rootfs.json")
+CHECKED_VULKAN_RECEIPT = Path(__file__).with_name("vulkan_cts_receipt.json")
+# The runtime generates these two from the Vulkan driver rather than from the
+# GL campaign set, and they run against the Venus image and its own receipt.
+VULKAN_CAMPAIGNS = ("vulkan-info-development-v1", "vulkan-info-receipt-smoke-v1")
+BUNDLE_ID = "com.imxieyi.Kernarium"
+DESTINATION = "platform=macOS,variant=Designed for iPad"
+# The application selects its image by name, and the campaign's guest-side
+# checks are generated against the ext4 contract.
+STAGED_IMAGE = "rootfs.ext4"
+SESSION_LOG = "guest-session.log"
+TEST_TARGET = "KernariumTests/GuestSessionTests"
+
+
+def fail(message: str) -> None:
+    raise cts.CampaignError(message)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def data_container(identifier: str = BUNDLE_ID) -> Path:
+    """The newest per-bundle data container macOS created for the app.
+
+    macOS creates it when it installs the application, which only Xcode's local
+    install service does for an iOS bundle, so a missing container means the
+    application has never been installed here.
+    """
+    root = Path.home() / "Library" / "Containers"
+    newest: tuple[float, Path] | None = None
+    for metadata in root.glob("*/.com.apple.containermanagerd.metadata.plist"):
+        try:
+            with metadata.open("rb") as handle:
+                payload = plistlib.load(handle)
+        except (OSError, plistlib.InvalidFileException):
+            continue
+        if payload.get("MCMMetadataIdentifier") != identifier:
+            continue
+        data = metadata.parent / "Data"
+        if not data.is_dir():
+            continue
+        stamp = metadata.parent.stat().st_mtime
+        if newest is None or stamp > newest[0]:
+            newest = (stamp, data)
+    if newest is None:
+        fail(
+            f"no data container for {identifier}; build the application for "
+            "the Designed for iPad destination once so macOS installs it"
+        )
+    return newest[1]
+
+
+def stage_image(image: Path, documents: Path, expected_sha256: str) -> Path:
+    """Copy the sealed image into the container, verifying what lands there.
+
+    The sealed image is read-only and lives outside the container, which the
+    sandbox cannot reach, so a real copy is the only delivery route. An existing
+    identical copy is reused: the image is 8 GiB.
+    """
+    staged = documents / STAGED_IMAGE
+    if staged.is_file() and staged.stat().st_size == image.stat().st_size:
+        if sha256_file(staged) == expected_sha256:
+            print(f"reusing the staged image: {staged}")
+            return staged
+    documents.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(documents).free
+    needed = image.stat().st_size
+    if free < needed + (4 << 30):
+        fail(
+            f"only {free >> 30} GiB free where the container lives; the image "
+            f"needs {needed >> 30} GiB plus room for its overlay"
+        )
+    if staged.exists():
+        staged.chmod(0o600)
+        staged.unlink()
+    print(f"copying {image} -> {staged}")
+    shutil.copyfile(image, staged)
+    landed = sha256_file(staged)
+    if landed != expected_sha256:
+        fail(f"the staged image hashes {landed}, not {expected_sha256}")
+    return staged
+
+
+def remove_staged_image(documents: Path) -> None:
+    """Remove only what this lane put in the container."""
+    staged = documents / STAGED_IMAGE
+    if not staged.exists():
+        return
+    # The application seals the image read-only before booting it.
+    staged.chmod(0o600)
+    staged.unlink()
+    print(f"removed the staged image: {staged}")
+
+
+def known_campaigns(
+    identity: dict, receipt: dict
+) -> tuple[set[str], dict[str, cts.AppleMatrixShard]]:
+    """Every campaign the application carries, and the matrix shards among them.
+
+    This is the same expansion the campaign generator runs at build time, so a
+    name accepted here is one the application can actually select.
+    """
+    shards = cts.load_apple_matrix_shards(identity, receipt=receipt)
+    campaigns = set(cts.load_apple_campaigns(identity)) | set(shards)
+    for api in cts.BASELINE_GLES_APIS:
+        campaigns.add(f"{api}-config-inventory-v1")
+    campaigns.update(VULKAN_CAMPAIGNS)
+    return campaigns, shards
+
+
+def rootfs_identity(
+    campaign: str, receipt_path: Path
+) -> tuple[Path, int, str, dict]:
+    """Name the checked receipt this campaign runs against, and the image.
+
+    Kernarium bakes one receipt of each kind into its campaigns, so the image
+    offered here has to be the one the application was built to accept.
+    """
+    if campaign in VULKAN_CAMPAIGNS:
+        checked = CHECKED_VULKAN_RECEIPT
+        receipt = vulkan_receipt.validate_receipt(receipt_path)
+        derivative = receipt["derivative"]
+        return checked, derivative["size"], derivative["sha256"], receipt
+    checked = CHECKED_RECEIPT
+    receipt, contract = cts.load_derivative_receipt(
+        receipt_path, cts.load_identity()
+    )
+    if contract.filesystem_type != "ext4":
+        fail("the application boots the rendered ext4 image")
+    return checked, contract.size, contract.sha256, receipt
+
+
+def launch_environment(shard: cts.AppleMatrixShard | None) -> dict[str, str]:
+    """The host switches this shard's stack needs, named by the driver itself.
+
+    A guest Zink renders on Venus and a desktop-GL Virgl guest needs the
+    host-visible blob aperture, so the selection belongs to the driver rather
+    than to this lane. The application always drives a native display.
+    """
+    settings = {"UML_GPU_FRAME_STATS": "1"}
+    if shard is None:
+        return settings
+    scope = argparse.Namespace(
+        renderer=shard.renderer_backend, gl46_scope=shard.api == "gl46"
+    )
+    for name in cts.gl_scope_launch_environment(scope):
+        settings[name] = "1"
+    return settings
+
+
+def build_command(options: argparse.Namespace, action: str) -> list[str]:
+    command = [
+        "xcodebuild",
+        "-project", str(options.project),
+        "-scheme", "Kernarium",
+        "-configuration", "Release",
+        "-destination", DESTINATION,
+        "-derivedDataPath", str(options.derived_data),
+        "-jobs", str(options.jobs),
+        # The application stays optimized; testability is raised only so the
+        # hosted bundle may import it.
+        "ENABLE_TESTABILITY=YES",
+    ]
+    if action == "test":
+        command += ["-only-testing:" + TEST_TARGET]
+    command.append(action)
+    return command
+
+
+def session_environment(options: argparse.Namespace) -> dict[str, str]:
+    """`xcodebuild` forwards TEST_RUNNER_-prefixed variables to the app."""
+    settings = {
+        **launch_environment(options.shard),
+        "KERNARIUM_ROOTFS": STAGED_IMAGE,
+        "KERNARIUM_CTS_CAMPAIGN": options.campaign,
+        "KERNARIUM_GUEST_SESSION": "1",
+        "KERNARIUM_GUEST_SESSION_LOG": SESSION_LOG,
+        "KERNARIUM_GUEST_SESSION_TIMEOUT": str(options.timeout),
+        "KERNARIUM_VCPU_COUNT": str(options.cpus),
+        "KERNARIUM_GUEST_MEMORY_MIB": str(options.memory_mib),
+        "KERNARIUM_EXECUTION_ENGINE": options.engine,
+    }
+    for assignment in options.host_env:
+        name, _, value = assignment.partition("=")
+        settings[name] = value
+    environment = dict(os.environ)
+    for name, value in settings.items():
+        environment[f"TEST_RUNNER_{name}"] = value
+    return environment
+
+
+def run_session(options: argparse.Namespace, documents: Path) -> Path:
+    log = documents / SESSION_LOG
+    if log.exists():
+        log.unlink()
+    command = build_command(options, "test")
+    print("running:", " ".join(command))
+    started = time.monotonic()
+    # The hosted case owns the session's own bound; this one only keeps a
+    # wedged xcodebuild from running forever.
+    completed = subprocess.run(
+        command,
+        env=session_environment(options),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=options.timeout + 900,
+        check=False,
+    )
+    elapsed = time.monotonic() - started
+    options.artifact_root.mkdir(parents=True, exist_ok=True)
+    harness = options.artifact_root / "xcodebuild.log"
+    harness.write_bytes(completed.stdout)
+    print(f"xcodebuild returned {completed.returncode} after {elapsed:.0f}s")
+    print(f"harness log: {harness}")
+    if not log.is_file():
+        fail(
+            "the application recorded no session log; see the harness log for "
+            "why it did not launch"
+        )
+    return log
+
+
+def report(artifacts: dict[str, bytes], transcript: str) -> int:
+    print("---- campaign summary ----")
+    summary = artifacts.get("summary.txt")
+    if summary is None:
+        # A Vulkan campaign reports through its own wrapper rather than a GL
+        # summary file; the run is judged by the markers it prints.
+        if not artifacts:
+            fail("the campaign delivered no artifacts")
+        print("artifacts: " + ", ".join(sorted(artifacts)))
+        failed = "UML_VK_CTS_ERROR" in transcript or "UML_CTS_ERROR" in transcript
+        print("vulkan_campaign_failed=" + ("true" if failed else "false"))
+        print("--------------------------")
+        return 1 if failed else 0
+    text = summary.decode("utf-8", errors="replace")
+    print(text.rstrip())
+    qpa = artifacts.get("results.qpa")
+    if qpa is not None:
+        try:
+            results = cts.parse_qpa(cts.decode_qpa(qpa))
+        except cts.CampaignError as error:
+            print(f"results: unusable QPA: {error}")
+        else:
+            counts = Counter(results.values())
+            print(f"cases={len(results)} " + " ".join(
+                f"{status}={count}"
+                for status, count in sorted(counts.items())
+            ))
+    print("--------------------------")
+    return 0 if text.strip() == "cts_rc=0" else 1
+
+
+def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--campaign", required=True,
+        help="campaign identifier the application carries",
+    )
+    parser.add_argument(
+        "--rootfs", type=Path, required=True,
+        help="sealed rendered ext4 image for this epoch",
+    )
+    parser.add_argument(
+        "--rootfs-receipt", type=Path, required=True,
+        help="that image's identity receipt",
+    )
+    parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
+    parser.add_argument("--project", type=Path, default=PROJECT)
+    parser.add_argument("--derived-data", type=Path, default=DEFAULT_DERIVED_DATA)
+    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--cpus", type=int, default=8)
+    parser.add_argument("--memory-mib", type=int, default=4096)
+    parser.add_argument("--engine", choices=("auto", "gadgets", "jit"),
+                        default="gadgets")
+    parser.add_argument("--timeout", type=int, default=7200,
+                        help="bound in seconds on the guest session")
+    parser.add_argument("--no-build", action="store_true",
+                        help="use the application already built and installed")
+    parser.add_argument("--keep-image", action="store_true",
+                        help="leave the staged copy in the container")
+    parser.add_argument(
+        "--host-env", action="append", default=[], metavar="NAME=VALUE",
+        help="extra variable for the application process, repeatable "
+             "(host GPU diagnostics: MESA_LOG_LEVEL, VIRGL_LOG_LEVEL)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    options = parse_arguments(argv)
+    if sys.platform != "darwin":
+        fail("this lane runs an iOS application on macOS")
+    checked, image_size, image_sha256, receipt = rootfs_identity(
+        options.campaign, options.rootfs_receipt
+    )
+    if sha256_file(options.rootfs_receipt) != sha256_file(checked):
+        fail(
+            "the receipt does not match the one the application was built "
+            f"with ({checked})"
+        )
+    identity = cts.load_identity()
+    gl_receipt = (
+        receipt
+        if options.campaign not in VULKAN_CAMPAIGNS
+        else cts.load_derivative_receipt(CHECKED_RECEIPT, identity)[0]
+    )
+    campaigns, shards = known_campaigns(identity, gl_receipt)
+    if options.campaign not in campaigns:
+        fail(
+            f"the application carries no campaign {options.campaign}; "
+            f"{len(campaigns)} are available"
+        )
+    options.shard = shards.get(options.campaign)
+    if options.rootfs.stat().st_size != image_size:
+        fail("the image size does not match its receipt")
+
+    documents = data_container() / "Documents"
+    if options.artifact_root.exists():
+        fail(f"artifact directory already exists: {options.artifact_root}")
+
+    if not options.no_build:
+        build = build_command(options, "build-for-testing")
+        print("building:", " ".join(build))
+        subprocess.run(build, check=True, timeout=3600)
+
+    stage_image(options.rootfs, documents, image_sha256)
+    try:
+        log = run_session(options, documents)
+        transcript = log.read_text(encoding="utf-8", errors="replace")
+        (options.artifact_root / "session.log").write_text(
+            transcript, encoding="utf-8"
+        )
+        artifacts = cts.decode_artifacts(transcript)
+        cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
+        print(f"artifacts: {options.artifact_root / 'artifacts'}")
+        return report(artifacts, transcript)
+    finally:
+        if not options.keep_image:
+            remove_staged_image(documents)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except cts.CampaignError as error:
+        print(f"run_ios_mac_vk_gl_cts.py: {error}", file=sys.stderr)
+        raise SystemExit(1) from error

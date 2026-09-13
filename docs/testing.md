@@ -70,6 +70,22 @@ application process and requires Zink on the packaged KosmicKrisp driver, so a
 broken iOS graphics closure fails in seconds rather than inside a guest. The retired Simulator and device GLES
 lanes verified the removed ANGLE provider and have no replacement.
 
+A whole CTS campaign runs in that application through the opt-in
+`apple-ios-mac-vk-gl-cts` lane. It needs Xcode's local install service and a
+sealed rendered image, so it registers only when the image is named:
+
+```sh
+cmake --preset macos-integration-venus \
+    -DUML_IOS_MAC_CTS_ROOTFS=<image>.ext4 \
+    -DUML_IOS_MAC_CTS_ROOTFS_RECEIPT=<image>.receipt.json \
+    -DUML_IOS_MAC_CTS_CAMPAIGN=gl46-matrix-cfg00-xml01-001of032-zink-v1
+ctest --test-dir .build/presets/macos-integration-venus \
+    -R apple-ios-mac-vk-gl-cts
+```
+
+The application carries the campaigns; the lane copies the image into its
+container, launches it, and decodes the artifact frames the runtime relays.
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh
