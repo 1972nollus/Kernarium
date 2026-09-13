@@ -448,14 +448,41 @@ def main() -> int:
         "macos-android17-4k" not in configurations,
         "Android product exposes a forbidden 4 KiB configure preset",
     )
+    # The device runtime carries the Vulkan-experiment GPU stack, whose guest
+    # reaches host-visible blob memory through the vhost-user shared-memory
+    # aperture. That aperture lives in the Vulkan-experiment kernel line, so
+    # the two experimental products are selected together, exactly as the
+    # macOS Venus integration selects them. The Simulator runtime publishes no
+    # GPU provider and stays on the accepted mainline artifact.
     for platform in ("device", "simulator"):
         profile_16k = configurations[f"kernarium-ios-{platform}"]
         profile_4k = configurations[f"kernarium-ios-{platform}-4k"]
+        expected_product = (
+            "mainline-6.18-vulkan-experiment"
+            if platform == "device"
+            else "mainline-6.18"
+        )
         require(
             profile_16k["cacheVariables"]["UML_KERNEL_PRODUCT"]
-            == "mainline-6.18"
+            == expected_product
             and profile_16k["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
-            f"{platform} 16 KiB runtime profile does not select mainline",
+            f"{platform} 16 KiB runtime profile does not select "
+            f"{expected_product}",
+        )
+        require(
+            platform != "device"
+            or profile_16k["cacheVariables"]["UML_APPLE_GPU_PRODUCT"]
+            == "apple-gpu-vulkan-experiment",
+            "the device runtime does not select both experimental products",
+        )
+        # The Wine profile inherits this runtime, and the Vulkan-experiment
+        # artifact is published only for the standard profile, so the device
+        # Wine runtime names the mainline artifact back explicitly.
+        require(
+            configurations["wine-arm64ec-ios-" + platform]["cacheVariables"]
+            .get("UML_KERNEL_PRODUCT", "mainline-6.18")
+            == "mainline-6.18",
+            f"{platform} Wine runtime does not stay on the mainline artifact",
         )
         require(
             profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
@@ -925,8 +952,11 @@ def main() -> int:
     for contract in (
         "UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR",
         "UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR",
-        "accepted-16k.env",
-        "accepted-4k.env",
+        # The device runtimes take the Vulkan-experiment kernel line with the
+        # Vulkan-experiment GPU stack; only the Wine profile keeps its
+        # accepted mainline bundle.
+        "vulkan-experiment-16k.env",
+        "vulkan-experiment-4k.env",
         "cmake --build --preset kernarium-ios-device",
         "cmake --build --preset kernarium-ios-device-4k",
         "platform=macOS,variant=Designed for iPad",

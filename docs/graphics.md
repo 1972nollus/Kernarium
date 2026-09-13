@@ -26,7 +26,10 @@ exposes no Metal 4 device: its GPU preset and
 reason rather than configuring against a device that cannot exist. Until a
 physical device is attached, the iOS slice is exercised by running the
 unmodified device build on an Apple silicon Mac in Designed for iPad mode,
-where Metal reports the host GPU and the full Metal 4 family.
+where Metal reports the host GPU and the full Metal 4 family. The device
+runtimes take the Vulkan-experiment kernel line with that stack: desktop GL
+4.6 needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest
+through the vhost-user shared-memory aperture only that line carries.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
