@@ -1,7 +1,7 @@
 From 64e5048a6a0638feebb3cda8a69ca2101608a41c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 15:34:12 +0900
-Subject: [PATCH 56/59] kosmickrisp: measure pipeline library link time against
+Subject: [PATCH 56/60] kosmickrisp: measure pipeline library link time against
  fast linking
 
 VK_EXT_graphics_pipeline_library expects a link that omits
