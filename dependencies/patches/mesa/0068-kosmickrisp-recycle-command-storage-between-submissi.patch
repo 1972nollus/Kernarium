@@ -1,4 +1,4 @@
-From f3ca87587a78dcdc1f11d9523ae356491625f2ad Mon Sep 17 00:00:00 2001
+From 2b7d63c2692357c3c7d2dd9a8f903fb2c304fee1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:35:16 +0900
 Subject: [PATCH 68/68] kosmickrisp: recycle command storage between
@@ -31,7 +31,7 @@ because Metal can dispatch a completion after the device is gone.
  4 files changed, 139 insertions(+), 7 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 36e5442b..9a5b51a3 100644
+index 11fc8968..23b1a175 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -75,7 +75,7 @@ index 36e5442b..9a5b51a3 100644
        goto post_gfx_allocator_fail;
  
     {
-@@ -257,7 +268,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -264,7 +275,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                                            &cmd->cmp[1]};
     for (unsigned i = 0; i < ARRAY_SIZE(encoders); i++) {
        if (!encoders[i]->allocator)
