@@ -1,4 +1,4 @@
-From 2b7d63c2692357c3c7d2dd9a8f903fb2c304fee1 Mon Sep 17 00:00:00 2001
+From a186425d8ec2960183783d07173f24b030e66ba5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:35:16 +0900
 Subject: [PATCH 68/68] kosmickrisp: recycle command storage between
@@ -23,12 +23,26 @@ instead, resetting each one as Metal requires and releasing anything past the
 cache bound, and take from that cache when a command buffer begins. The cache
 is refcounted and holds no Vulkan pointers, like the queue's feedback block,
 because Metal can dispatch a completion after the device is gone.
+
+kosmickrisp_command_completion watched every native object of a recording in
+one set and required all of them released once the recording retired, which was
+the old contract and is no longer this one: the command buffers still die with
+the recording, but the allocators are exactly the objects the device keeps.
+Split the watch. The command buffers must still be gone when the recording
+retires; the allocators must still be alive then, must be the very same three
+the next recording begins on, and must be gone only once the device and the
+last outstanding completion have both let go of the cache. Identity is taken
+inside an autorelease pool, because reading a weak reference retains it until
+the pool drains and an observer that skips one keeps alive what it measures.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/kk_cmd_buffer.c | 23 ++++++--
- src/kosmickrisp/vulkan/kk_device.c     | 77 ++++++++++++++++++++++++++
- src/kosmickrisp/vulkan/kk_device.h     | 36 ++++++++++++
- src/kosmickrisp/vulkan/kk_queue.c      | 10 +++-
- 4 files changed, 139 insertions(+), 7 deletions(-)
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 23 ++++--
+ src/kosmickrisp/vulkan/kk_device.c            | 77 +++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_device.h            | 36 +++++++++
+ src/kosmickrisp/vulkan/kk_queue.c             | 10 ++-
+ .../vulkan/tests/test_command_completion.m    | 73 +++++++++++++++---
+ 5 files changed, 202 insertions(+), 17 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 index 11fc8968..23b1a175 100644
@@ -296,4 +310,130 @@ index e4ad0842..f7f30265 100644
 +      kk_cmd_buffer_device(cmd)->allocator_cache);
     recording->command_buffers = cmd->submit_cmd_bufs;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
+ 
+diff --git a/src/kosmickrisp/vulkan/tests/test_command_completion.m b/src/kosmickrisp/vulkan/tests/test_command_completion.m
+index bc5b601a..64fe5be5 100644
+--- a/src/kosmickrisp/vulkan/tests/test_command_completion.m
++++ b/src/kosmickrisp/vulkan/tests/test_command_completion.m
+@@ -41,29 +41,67 @@
+ }
+ 
+ static void
+-wait_released(NSPointerArray *objects)
++wait_released(NSPointerArray *objects, const char *what)
+ {
+    uint64_t deadline = monotonic_ns() + 5000000000ull;
+    while (live_objects(objects) && monotonic_ns() < deadline)
+       usleep(1000);
++   if (live_objects(objects))
++      fprintf(stderr, "%s: %zu of %lu still live\n", what,
++              live_objects(objects), (unsigned long)objects.count);
+    CHECK(live_objects(objects) == 0);
+ }
+ 
++/* The native objects of one recording, split by how each is retired. Metal
++ * command buffers die with the completed recording, while the command
++ * allocators own storage the device recycles, so they outlive the recording
++ * and die with the cache holding them. */
+ static NSPointerArray *
+-watch_recording(VkCommandBuffer command)
++watch_recording(VkCommandBuffer command, NSPointerArray **allocators_out)
+ {
+    struct kk_cmd_buffer *cmd = kk_cmd_buffer_from_handle(command);
++   NSPointerArray *allocators = [NSPointerArray weakObjectsPointerArray];
++   [allocators addPointer:cmd->cmp[0].allocator];
++   [allocators addPointer:cmd->gfx.allocator];
++   [allocators addPointer:cmd->cmp[1].allocator];
+    NSPointerArray *objects = [NSPointerArray weakObjectsPointerArray];
+-   [objects addPointer:cmd->cmp[0].allocator];
+-   [objects addPointer:cmd->gfx.allocator];
+-   [objects addPointer:cmd->cmp[1].allocator];
+    util_dynarray_foreach(&cmd->submit_cmd_bufs, mtl_command_buffer *, cb)
+       [objects addPointer:*cb];
+-   CHECK(objects.count > 3);
++   CHECK(allocators.count == 3);
++   CHECK(objects.count > 0);
++   CHECK(live_objects(allocators) == allocators.count);
+    CHECK(live_objects(objects) == objects.count);
++   *allocators_out = allocators;
+    return objects;
+ }
+ 
++/* Reading a weak reference retains it until the pool drains, so identity has
++ * to be taken inside one or the observer keeps what it observes alive. */
++static void
++capture_allocators(NSPointerArray *objects, void *out[3])
++{
++   @autoreleasepool {
++      for (unsigned i = 0; i < 3; i++)
++         out[i] = [objects pointerAtIndex:i];
++   }
++}
++
++/* The cache hands storage back in its own order, so reuse is a set. */
++static bool
++same_allocators(NSPointerArray *objects, void *const previous[3])
++{
++   void *current[3];
++   capture_allocators(objects, current);
++   for (unsigned i = 0; i < 3; i++) {
++      bool found = false;
++      for (unsigned j = 0; j < 3; j++)
++         found |= previous[j] == current[i];
++      if (!found)
++         return false;
++   }
++   return true;
++}
++
+ static void
+ run(bool one_time)
+ {
+@@ -171,13 +209,21 @@
+       VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+          .flags = one_time ? VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT : 0};
+       const unsigned rounds = one_time ? 3 : 1;
++      NSPointerArray *allocators = nil;
++      void *previous[3] = {NULL, NULL, NULL};
+       for (unsigned round = 0; round < rounds; round++) {
+          CHECK(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS);
+          uint32_t value = 0x13579bdf + round;
+          memset(mapped, 0, 4096);
+          vkCmdFillBuffer(command, buffer, 0, 4096, value);
+          CHECK(vkEndCommandBuffer(command) == VK_SUCCESS);
+-         NSPointerArray *objects = watch_recording(command);
++         NSPointerArray *objects = watch_recording(command, &allocators);
++         /* A completed recording hands its storage to the device instead of
++          * returning it to the kernel, so the next recording begins on the
++          * very same allocators. */
++         if (round > 0)
++            CHECK(same_allocators(allocators, previous));
++         capture_allocators(allocators, previous);
+          dispatch_semaphore_t gate = dispatch_semaphore_create(0);
+          dispatch_async(feedback_queue, ^{
+             CHECK(dispatch_semaphore_wait(gate,
+@@ -235,14 +281,21 @@
+          }
+ 
+          dispatch_semaphore_signal(gate);
+-         wait_released(objects);
++         wait_released(objects, "recording command buffers");
++         /* Retiring a recording must not purge its command storage: the
++          * device keeps it for the next one. */
++         if (round + 1 < rounds)
++            CHECK(live_objects(allocators) == allocators.count);
+          dispatch_release(gate);
+          /* In early rounds the same Vulkan command buffer is still allocated.
+           * Begin must recreate native allocators and produce correct GPU data. */
+       }
+-      wait_released(weak_queue);
++      /* Recycled storage still has an owner, so it goes away once the device
++       * and the last outstanding completion have both let go of the cache. */
++      wait_released(allocators, "recycled command storage");
++      wait_released(weak_queue, "native queue");
+       dispatch_release(feedback_queue);
+-      wait_released(weak_feedback_queue);
++      wait_released(weak_feedback_queue, "feedback queue");
+    }
+ }
  
