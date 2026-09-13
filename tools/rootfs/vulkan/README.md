@@ -54,8 +54,7 @@ sharing correctness fixes:
   rather than one indefinite dispatch; and
 - serve a descriptor set layout and a pipeline layout from the allocation
   callbacks their create command carried, and return the storage to those
-  callbacks when the last internal reference goes away; and
-- grant a renderbuffer that asked for one sample exactly one sample.
+  callbacks when the last internal reference goes away.
 
 The first fix prevents a rejected native pipeline from becoming a stale guest
 object and a later fatal command stream. The second prevents the renderer from
@@ -114,14 +113,6 @@ was refusing memory. A layout now keeps the callbacks that served it and
 returns its storage to them on the final unref, with the device allocation
 scope its extended lifetime needs; reference counting, and the renderer object
 the last reference destroys, are unchanged.
-A multisample renderbuffer may be granted more samples than were asked for, up
-to the next supported count, and the frontend used that latitude to start every
-search at two samples. Two renderbuffers created with different counts then
-carried the same `RENDERBUFFER_SAMPLES`, and a framebuffer mixing them had to be
-reported complete. The search now starts at the requested count, which one
-sample reaches. Multisample textures keep the promotion: a texture is also
-sampled, and a one-sample multisample texture has no Metal representation, so
-honouring the request there loses most of the `samples_1` rendering results.
 
 Passing this project's receipt-gated CTS campaign demonstrates the tested
 stack's result. It is not by itself a Khronos conformance claim; that also
