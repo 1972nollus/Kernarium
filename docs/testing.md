@@ -359,12 +359,16 @@ distinct from `Pass` and prove nothing about an optional feature.
 --leaf gl46 --case` runs core `KHR-GL46.*` cases; `--case` repeats to run a
 focused set in one guest boot and the repeated cases keep CTS traversal order.
 `--matrix gl46` runs the official XML-derived must-pass configurations by
-`--mustpass-config-index`/`--fraction` and rejects `--case`. The ES-for-GL
-leaves (`dEQP-GL45-ES3.*`, `dEQP-GL45-ES31.*`, `KHR-Single-GL46.*`) exist only
-as matrix shards. Seeds, dimensions, and FBO settings come from the XML
-records, and an ordered `CTS-Configs.gl46` inventory captured from the exact
-emulator, image, and provider (`--config-inventory gl46`, replayed with
-`--config-inventory-run`) assigns the first/other EGL configuration roles.
+`--mustpass-config-index`/`--fraction`. Adding `--case` there narrows that
+shard to named cases, which must be an ordered subset of the shard's own case
+list; the run records itself as a case subset in its mode and its artifact
+directory, and no campaign or matrix aggregate counts it as the shard it was
+cut from. The ES-for-GL leaves (`dEQP-GL45-ES3.*`, `dEQP-GL45-ES31.*`,
+`KHR-Single-GL46.*`) exist only as matrix shards. Seeds, dimensions, and FBO
+settings come from the XML records, and an ordered `CTS-Configs.gl46`
+inventory captured from the exact emulator, image, and provider
+(`--config-inventory gl46`, replayed with `--config-inventory-run`) assigns
+the first/other EGL configuration roles.
 
 `tests/integration/gpu/run_graphics_cts_campaign.py` coordinates both suites:
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at

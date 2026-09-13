@@ -342,6 +342,17 @@ class MatrixCampaignTests(unittest.TestCase):
             with self.assertRaisesRegex(cts.CampaignError, "emulator_sha256"):
                 matrix.validate_shard_run(run, campaign_definition, key)
 
+            # A shard narrowed to named cases is evidence about those cases and
+            # nothing else. It names itself in its mode, and the orchestrator
+            # refuses to count it as the shard it was cut from.
+            metadata["emulator_sha256"] = campaign_definition.emulator_sha256
+            metadata["mode"] = "mustpass-matrix-case-subset"
+            (run / "run.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(cts.CampaignError, "mode"):
+                matrix.validate_shard_run(run, campaign_definition, key)
+
     def test_attempt_is_single_and_return_code_is_immutable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             campaign = Path(temporary)
