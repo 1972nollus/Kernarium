@@ -154,8 +154,8 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.pbxproj
         --package-resolved
             ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-        --simulator-script
-            ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
+        --mac-launch-script
+            ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-mac.sh
         --macos-app-cmake
             ${PROJECT_SOURCE_DIR}/darwin/app/macos/CMakeLists.txt
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp

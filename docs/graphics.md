@@ -18,11 +18,15 @@ dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
 Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
-macOS is the only platform with a build of that stack. KosmicKrisp requires
-Metal 4, which the iOS Simulator does not provide, so the iOS GPU product
-targets a physical device only and is pending its Mesa/KosmicKrisp port. The
-iOS GPU presets and `dependencies/build-apple-gpu.sh --platform ios` fail
-early with that message rather than configuring against removed inputs.
+macOS and the iOS device both build that stack from the same sources; the
+prefixes differ only in their platform contract and deployment target. The iOS
+Simulator does not, because KosmicKrisp requires Metal 4 and the Simulator
+exposes no Metal 4 device: its GPU preset and
+`dependencies/build-apple-gpu.sh --platform ios-simulator` fail early with that
+reason rather than configuring against a device that cannot exist. Until a
+physical device is attached, the iOS slice is exercised by running the
+unmodified device build on an Apple silicon Mac in Designed for iPad mode,
+where Metal reports the host GPU and the full Metal 4 family.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS

@@ -26,12 +26,13 @@ The dependency products are:
 
 - `macos`: non-graphics static host libraries at
   `.build/dependencies/macos-arm64`;
-- `apple-gpu`: the upstream libepoxy and virglrenderer inputs. It has no build
-  yet: the iOS GPU product is pending its Mesa/KosmicKrisp port and targets a
-  physical device only, because the iOS Simulator has no Metal 4;
-- `apple-gpu-vulkan-experiment`: the macOS build, which adds the pinned Mesa,
-  Vulkan-Headers, and Venus-protocol sources so that Mesa supplies both the
-  KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver;
+- `apple-gpu`: the upstream libepoxy and virglrenderer sources alone. It
+  publishes no host GL provider, so no product consumes it directly;
+- `apple-gpu-vulkan-experiment`: the macOS and iOS device builds, which add the
+  pinned Mesa, Vulkan-Headers, and Venus-protocol sources so that Mesa supplies
+  both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver. There
+  is no iOS Simulator build: KosmicKrisp requires Metal 4 and the Simulator
+  exposes no Metal 4 device;
 - `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
@@ -119,8 +120,12 @@ prefix, while any change to one of its own rows still requires a rebuild.
 
 ## Experimental Vulkan composition
 
-`apple-gpu-vulkan-experiment` is a separately named macOS-only product. It
-builds the `apple-gpu` source matrix -- upstream virglrenderer and libepoxy --
+`apple-gpu-vulkan-experiment` is a separately named product built for macOS
+and for the iOS device, from one source matrix and one set of patches; its
+`--platform ios` build differs only in SDK, deployment target, platform
+contract, and its need for a native-machine pass for the compilers Mesa runs
+during the build. It builds the `apple-gpu` source matrix -- upstream
+virglrenderer and libepoxy --
 and adds Mesa, which supplies both the KosmicKrisp Vulkan driver and the Zink
 Gallium OpenGL driver, plus the standalone Vulkan SDK headers and the Venus
 protocol generator.

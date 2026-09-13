@@ -59,11 +59,13 @@ struct EmulatorConfiguration: Equatable {
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
     static let androidDiskSizeRangeGiB = 4...64
-#if targetEnvironment(simulator)
-    static let defaultGuestMemoryMiB = 4096
-#else
-    static let defaultGuestMemoryMiB = 2048
-#endif
+    // A real iPhone or iPad enforces a jetsam limit that a 4 GiB guest would
+    // cross, so the device default stays at half the range. The same slice
+    // running on an Apple silicon Mac in Designed for iPad mode is given the
+    // host's memory instead and keeps the full guest.
+    static var defaultGuestMemoryMiB: Int {
+        ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 2048
+    }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB

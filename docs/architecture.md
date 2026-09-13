@@ -77,10 +77,18 @@ baseline each macOS product declares.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
-artifact on macOS, Simulator, and device. The ARM64EC Wine appliance uses a
-separate accepted 4 KiB arm64 profile on all three Apple platforms. The macOS
-x86_64 userspace product uses a separately identified 4 KiB mainline slice.
-Android uses a separate accepted 16 KiB ACK artifact.
+artifact on macOS and on the iOS device. The ARM64EC Wine appliance uses a
+separate accepted 4 KiB arm64 profile on both. The macOS x86_64 userspace
+product uses a separately identified 4 KiB mainline slice. Android uses a
+separate accepted 16 KiB ACK artifact.
+
+Kernarium is an iOS device product only. Its GPU stack renders through
+KosmicKrisp, which requires Metal 4, and the iOS Simulator exposes no Metal 4
+device, so the Simulator has no build of the application or of the Apple GPU
+prefix. The unmodified iOS device slice runs on an Apple silicon Mac in
+Designed for iPad mode, where it reaches the host GPU directly; that mode is
+where iOS behaviour is verified when no physical device is attached. The
+Simulator remains a target of the ordinary, non-GPU iOS libraries.
 
 ## CPU execution and scheduling
 

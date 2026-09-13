@@ -304,6 +304,8 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_GUEST_16K_PAGES": true,
+        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/network",
         "UML_KERNEL_PRODUCT": "mainline-6.18"
       }

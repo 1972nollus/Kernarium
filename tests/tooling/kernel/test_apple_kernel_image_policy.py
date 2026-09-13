@@ -361,7 +361,7 @@ def main() -> int:
     parser.add_argument("--package-script", type=Path, required=True)
     parser.add_argument("--xcode-project", type=Path, required=True)
     parser.add_argument("--package-resolved", type=Path, required=True)
-    parser.add_argument("--simulator-script", type=Path, required=True)
+    parser.add_argument("--mac-launch-script", type=Path, required=True)
     parser.add_argument("--macos-app-cmake", type=Path, required=True)
     parser.add_argument("--macos-app", type=Path, required=True)
     parser.add_argument("--macos-linux-main", type=Path, required=True)
@@ -794,11 +794,10 @@ def main() -> int:
     for contract in (
         "kernarium-runtime-ios-device-4k",
         "kernarium-runtime-ios-device-16k",
-        "kernarium-runtime-ios-simulator-4k",
-        "kernarium-runtime-ios-simulator-16k",
         'create_xcframework "$RUNTIME_4K"',
         'create_xcframework "$RUNTIME_16K"',
         'create_xcframework "$RUNTIME_ANDROID_16K"',
+        'GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"',
         "LC_RPATH",
         "@loader_path/..",
         'build-ios-zstd.sh',
@@ -806,6 +805,19 @@ def main() -> int:
         'LibZstd.xcframework',
     ):
         require(contract in package_script, f"runtime packaging lacks {contract}")
+    # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
+    # device, so there is no Simulator slice of this stack to package. The
+    # storage and compression cores carry no Metal dependency and keep theirs.
+    for forbidden in (
+        "kernarium-runtime-ios-simulator",
+        "wine-arm64ec-runtime-ios-simulator",
+        "ios-simulator-arm64",
+        "--platform ios-simulator",
+    ):
+        require(
+            forbidden not in package_script,
+            f"runtime packaging still expects an iOS Simulator slice: {forbidden}",
+        )
 
     xcode_project = read(arguments.xcode_project)
     for runtime in (runtime_4k, runtime_16k, runtime_android):
@@ -817,6 +829,23 @@ def main() -> int:
         "KernariumRuntime" not in xcode_project
         and "KernariumGPTFDisk" not in xcode_project,
         "Xcode retains an obsolete framework name",
+    )
+    # Mesa Zink is the host GL provider and KosmicKrisp the Vulkan driver it
+    # renders on; both ride in the application next to the runtime frameworks.
+    for provider in ("MesaEGL", "MesaGallium", "KosmicKrisp"):
+        require(
+            f"{provider}.xcframework in Embed Frameworks" in xcode_project,
+            f"Xcode does not embed {provider}",
+        )
+    require(
+        "EGL.xcframework" not in xcode_project.replace("MesaEGL.xcframework", "")
+        and "GLESv2" not in xcode_project,
+        "Xcode retains the removed ANGLE GL provider",
+    )
+    require(
+        'SUPPORTED_PLATFORMS = iphoneos;' in xcode_project
+        and "iphonesimulator" not in xcode_project,
+        "Xcode still builds the application for the iOS Simulator",
     )
     for dependency in ("GPTFDisk", "LibZstd"):
         require(
@@ -892,19 +921,29 @@ def main() -> int:
         "a selectable runtime is linked for process launch instead of only embedded",
     )
 
-    simulator_script = read(arguments.simulator_script)
+    mac_launch_script = read(arguments.mac_launch_script)
     for contract in (
         "UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR",
         "UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR",
         "accepted-16k.env",
         "accepted-4k.env",
-        "cmake --build --preset kernarium-ios-simulator",
-        "cmake --build --preset kernarium-ios-simulator-4k",
+        "cmake --build --preset kernarium-ios-device",
+        "cmake --build --preset kernarium-ios-device-4k",
+        "platform=macOS,variant=Designed for iPad",
+        "com.apple.containermanagerd.metadata.plist",
+        "TEST_RUNNER_KERNARIUM_ROOTFS=",
     ):
-        require(contract in simulator_script, f"Simulator launcher lacks {contract}")
+        require(
+            contract in mac_launch_script,
+            f"iOS-on-Mac launcher lacks {contract}",
+        )
     require(
-        '-DUML_ANDROID17_ROOTFS_RELEASE_DIR=' not in simulator_script,
-        "Simulator build still passes a rootfs release into CMake",
+        '-DUML_ANDROID17_ROOTFS_RELEASE_DIR=' not in mac_launch_script,
+        "iOS build still passes a rootfs release into CMake",
+    )
+    require(
+        "simctl" not in mac_launch_script,
+        "iOS-on-Mac launcher still drives the Simulator",
     )
 
     macos_app_cmake = read(arguments.macos_app_cmake)
@@ -1017,7 +1056,7 @@ def main() -> int:
     for path, source in (
         (arguments.presets, presets_source),
         (arguments.runtime_cmake, runtime_cmake),
-        (arguments.simulator_script, simulator_script),
+        (arguments.mac_launch_script, mac_launch_script),
         (arguments.macos_app_cmake, macos_app_cmake),
         (arguments.macos_app, macos_app),
         (arguments.macos_linux_main, macos_linux_main),

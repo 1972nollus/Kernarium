@@ -454,7 +454,10 @@ struct KernariumTests {
         )
 
         #expect(configuration.vCPUCount == 6)
-        #expect(configuration.guestMemoryMiB == 4096)
+        #expect(
+            configuration.guestMemoryMiB ==
+                (ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 2048)
+        )
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
         #expect(configuration.rootfsFilename == "rootfs.erofs")

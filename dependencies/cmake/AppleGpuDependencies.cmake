@@ -7,10 +7,12 @@ set(UML_APPLE_GPU_PRODUCT "apple-gpu-vulkan-experiment" CACHE STRING
 set_property(CACHE UML_APPLE_GPU_PRODUCT PROPERTY STRINGS
     apple-gpu apple-gpu-vulkan-experiment)
 # Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
-# the KosmicKrisp Vulkan driver. Only macOS has a build of that stack.
+# the KosmicKrisp Vulkan driver.
 if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu")
     message(FATAL_ERROR
-        "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4")
+        "The apple-gpu product carries only the upstream libepoxy and "
+        "virglrenderer inputs and publishes no host GL provider. Select "
+        "apple-gpu-vulkan-experiment.")
 elseif(NOT UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     message(FATAL_ERROR
         "Unsupported Apple GPU dependency product: ${UML_APPLE_GPU_PRODUCT}")
@@ -19,10 +21,16 @@ endif()
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_gpu_default_prefix
         "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/macos-arm64")
-elseif(UML_APPLE_PLATFORM STREQUAL "ios" OR
-       UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+elseif(UML_APPLE_PLATFORM STREQUAL "ios")
+    set(_uml_apple_gpu_default_prefix
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/ios-device-arm64")
+elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+    # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
+    # device, so the Simulator has no build of this stack. An iOS application
+    # runs on an Apple silicon Mac in Designed for iPad mode instead, where the
+    # host GPU is used directly.
     message(FATAL_ERROR
-        "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4")
+        "the iOS Simulator has no Metal 4 device; build for the iOS device")
 else()
     message(FATAL_ERROR
         "The Apple GPU product does not support ${UML_APPLE_PLATFORM}")

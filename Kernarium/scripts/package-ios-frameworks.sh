@@ -1,14 +1,19 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Combine the verified Simulator and device framework slices used by the
-# Kernarium Xcode project. All output is generated below .build by default.
+# Package the verified iOS device framework slices used by the Kernarium
+# Xcode project. All output is generated below .build by default.
+#
+# The packaged stack is device-only. Mesa Zink renders on KosmicKrisp, which
+# requires Metal 4, and the iOS Simulator exposes no Metal 4 device, so there
+# is no Simulator slice to combine. An iOS device build runs on an Apple
+# silicon Mac in Designed for iPad mode when no device is attached.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-PRODUCT=${UML_APPLE_GPU_PRODUCT:-apple-gpu}
+PRODUCT=${UML_APPLE_GPU_PRODUCT:-apple-gpu-vulkan-experiment}
 case "$PRODUCT" in
-apple-gpu)
+apple-gpu-vulkan-experiment)
 	DEFAULT_OUTPUT="$ROOT_DIR/.build/kernarium-xcframeworks"
 	;;
 *)
@@ -24,10 +29,6 @@ fail()
 	printf '%s\n' "Kernarium/scripts/package-ios-frameworks.sh: $*" >&2
 	exit 1
 }
-
-# The GPU slices below are the retired ANGLE payload. Their replacement is
-# Mesa Zink over KosmicKrisp, which has no iOS build yet.
-fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
 
 if [ "$#" -ne 0 ]; then
 	fail "this script takes no arguments"
@@ -60,49 +61,40 @@ RUNTIME_WINE_4K="KRuntime_Wine_6_18_4K"
 # invalidate an existing guest bundle.
 RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
 
-SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
-SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
-SIMULATOR_RUNTIME_WINE="$ROOT_DIR/.build/wine-arm64ec-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_WINE_4K.framework"
 DEVICE_RUNTIME_WINE="$ROOT_DIR/.build/wine-arm64ec-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_WINE_4K.framework"
-SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
-SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-simulator-arm64/Frameworks"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 
+# Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
+# Vulkan driver they render on as KosmicKrisp.
+GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
+
 # Packaging is an independent trust boundary: revalidate the complete source,
 # contract, provenance, binary-platform, and provider-negative policy before
-# consuming either platform prefix.
-"$ROOT_DIR/dependencies/build-apple-gpu.sh" \
-	--product "$PRODUCT" --platform ios-simulator --verify-only
+# consuming the device prefix.
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
 	--product "$PRODUCT" --platform ios --verify-only
-"$ROOT_DIR/dependencies/build-ios-x86.sh" \
-	--platform ios-simulator --verify-only
 "$ROOT_DIR/dependencies/build-ios-x86.sh" \
 	--platform ios --verify-only
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"
 
 for framework in \
-	"$SIMULATOR_RUNTIME_4K" \
-	"$SIMULATOR_RUNTIME_16K" \
-	"$SIMULATOR_RUNTIME_WINE" \
-	"$SIMULATOR_RUNTIME_ANDROID" \
 	"$DEVICE_RUNTIME_4K" \
 	"$DEVICE_RUNTIME_16K" \
 	"$DEVICE_RUNTIME_WINE" \
 	"$DEVICE_RUNTIME_ANDROID" \
-	"$SIMULATOR_GPU/EGL.framework" \
-	"$DEVICE_GPU/EGL.framework" \
-	"$SIMULATOR_GPU/GLESv2.framework" \
-	"$DEVICE_GPU/GLESv2.framework" \
 	"$STORAGE" \
 	"$ZSTD"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
+done
+for framework in $GPU_FRAMEWORKS; do
+	[ -d "$DEVICE_GPU/$framework.framework" ] ||
+		fail "missing framework slice: $DEVICE_GPU/$framework.framework"
 done
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
@@ -121,54 +113,46 @@ trap cleanup EXIT HUP INT TERM
 create_xcframework()
 {
 	name=$1
-	simulator_framework=$2
-	device_framework=$3
+	device_framework=$2
 	"$XCODEBUILD" -create-xcframework \
-		-framework "$simulator_framework" \
 		-framework "$device_framework" \
 		-output "$STAGE/$name.xcframework"
 	[ -f "$STAGE/$name.xcframework/Info.plist" ] ||
 		fail "$name XCFramework was not created"
 }
 
-create_xcframework "$RUNTIME_4K" \
-	"$SIMULATOR_RUNTIME_4K" "$DEVICE_RUNTIME_4K"
-create_xcframework "$RUNTIME_16K" \
-	"$SIMULATOR_RUNTIME_16K" "$DEVICE_RUNTIME_16K"
-create_xcframework "$RUNTIME_WINE_4K" \
-	"$SIMULATOR_RUNTIME_WINE" "$DEVICE_RUNTIME_WINE"
-create_xcframework "$RUNTIME_ANDROID_16K" \
-	"$SIMULATOR_RUNTIME_ANDROID" "$DEVICE_RUNTIME_ANDROID"
-create_xcframework EGL \
-	"$SIMULATOR_GPU/EGL.framework" "$DEVICE_GPU/EGL.framework"
-create_xcframework GLESv2 \
-	"$SIMULATOR_GPU/GLESv2.framework" "$DEVICE_GPU/GLESv2.framework"
+create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
+create_xcframework "$RUNTIME_16K" "$DEVICE_RUNTIME_16K"
+create_xcframework "$RUNTIME_WINE_4K" "$DEVICE_RUNTIME_WINE"
+create_xcframework "$RUNTIME_ANDROID_16K" "$DEVICE_RUNTIME_ANDROID"
+for framework in $GPU_FRAMEWORKS; do
+	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
+done
 "$CMAKE" -E copy_directory "$STORAGE" \
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
 	"$STAGE/LibZstd.xcframework"
 
-for platform in ios-arm64 ios-arm64-simulator; do
-	for framework in "$RUNTIME_4K" "$RUNTIME_16K" \
-		"$RUNTIME_WINE_4K" "$RUNTIME_ANDROID_16K" EGL GLESv2; do
-		binary="$STAGE/$framework.xcframework/$platform/$framework.framework/$framework"
-		[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
-	done
-	for framework in "$RUNTIME_4K" "$RUNTIME_16K" \
-		"$RUNTIME_WINE_4K" "$RUNTIME_ANDROID_16K"; do
-		binary="$STAGE/$framework.xcframework/$platform/$framework.framework/$framework"
-		rpaths=$("$OTOOL" -l "$binary" | awk '
-			$1 == "cmd" { command = $2; next }
-			command == "LC_RPATH" && $1 == "path" {
-				print $2
-				command = ""
-			}
-		')
-		[ "$rpaths" = '@loader_path/..' ] ||
-			fail "$framework has an invalid runtime search path: $rpaths"
-	done
+RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_WINE_4K $RUNTIME_ANDROID_16K"
+for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
+	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
+	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
+done
+for framework in $RUNTIME_FRAMEWORKS; do
+	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
+	rpaths=$("$OTOOL" -l "$binary" | awk '
+		$1 == "cmd" { command = $2; next }
+		command == "LC_RPATH" && $1 == "path" {
+			print $2
+			command = ""
+		}
+	')
+	[ "$rpaths" = '@loader_path/..' ] ||
+		fail "$framework has an invalid runtime search path: $rpaths"
 done
 
+# The storage and compression cores carry no Metal dependency, so their
+# XCFrameworks keep both published slices.
 for platform in ios-arm64 ios-arm64-simulator; do
 	binary="$STAGE/GPTFDisk.xcframework/$platform/GPTFDisk.framework/GPTFDisk"
 	[ -f "$binary" ] || fail "missing packaged GPT fdisk core: $binary"

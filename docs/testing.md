@@ -61,12 +61,11 @@ cmake --workflow --preset check-gpu-venus
 cmake --workflow --preset check-integration-venus
 ```
 
-There is no iOS GPU conformance lane. The host GL provider is Mesa Zink over
-KosmicKrisp, which requires Metal 4; the iOS Simulator does not provide it, so
-iOS GPU verification happens on a physical device and is deferred until the
-iOS Mesa/KosmicKrisp port lands. The iOS GPU presets fail early with that
-message. The retired Simulator and device GLES lanes verified the removed
-ANGLE provider and have no replacement.
+The iOS GPU lane runs the unmodified iOS device build on this Apple silicon
+Mac in Designed for iPad mode, because the host GL provider is Mesa Zink over
+KosmicKrisp and the iOS Simulator provides no Metal 4 device. The Simulator GPU
+presets fail early with that reason. The retired Simulator and device GLES
+lanes verified the removed ANGLE provider and have no replacement.
 
 The full sanitizer suites remain separate because of their runtime cost:
 
@@ -157,8 +156,8 @@ The fast full-stack gate is
 `cmake --workflow --preset check-wine-arm64ec-macos`. It boots the dedicated
 4 KiB kernel and emulator, starts Xvfb and the XFCE window manager, and requires
 Wine to return exit code 42 from the AMD64 PE probe and 43 from the i386 WoW64
-probe. iOS Simulator and physical-device packaging and launch validation
-follow only after this macOS gate passes.
+probe. iOS packaging and launch validation follows only after this macOS gate
+passes.
 
 ## Apple builds and Kernarium
 
@@ -172,8 +171,9 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-Kernarium has separate runtime presets for device and Simulator, 16 KiB and
-4 KiB Linux, 16 KiB Android, and the dedicated 4 KiB ARM64EC Wine profile.
+Kernarium is an iOS device product: it has runtime presets for 16 KiB and 4 KiB
+Linux, 16 KiB Android, and the dedicated 4 KiB ARM64EC Wine profile, with no
+Simulator variant, because its GPU stack needs a Metal 4 device.
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode. A `wine-arm64ec-*.erofs` filename selects
@@ -188,24 +188,32 @@ before embedding an artifact; they do not bind to its patch release or source
 commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
 are launch inputs, not emulator build inputs.
 
-Kernarium defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on physical
-devices, and the processor count reported by `NSProcessInfo`. Android fixes the
+Kernarium defaults to 16 KiB Linux, 4 GiB of guest memory where the process is
+given the host's memory (an iOS app on macOS), 2 GiB on a physical device whose
+jetsam limit a 4 GiB guest would cross, and the processor count reported by
+`NSProcessInfo`. Android fixes the
 page profile at 16 KiB; the ARM64EC Wine image fixes it at 4 KiB. A `.kern`
 bundle contains the selected rootfs release and its persistent writable state;
 rebuilding the app or kernel framework must not erase it.
 
-Simulator launch and bundle assembly are owned by
-`Kernarium/scripts/run-ios-simulator.sh` and
+Launch and bundle assembly are owned by `Kernarium/scripts/run-ios-mac.sh` and
 `Kernarium/scripts/make-guest-bundle.py`. Use each script's `--help` rather than
-copying a long invocation into documentation.
+copying a long invocation into documentation. `open(1)` cannot start an iOS
+application on macOS and `devicectl` does not enumerate the host Mac, so Xcode's
+local install service, driven by `xcodebuild test`, is the only command-line
+launcher for this mode; the launcher forwards each `KERNARIUM_*` setting as the
+matching `TEST_RUNNER_` variable. An iOS application reads nothing outside its
+container, so the launcher copies the rootfs into
+`~/Library/Containers/<uuid>/Data/Documents` rather than referencing it in
+place.
 
-For an opt-in Simulator diagnostic, pass one SLiRP forwarding specification as
-`SIMCTL_CHILD_KERNARIUM_HOST_FORWARD` when launching the app. For example,
+For an opt-in diagnostic, pass one SLiRP forwarding specification as
+`TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
 launches leave the variable unset and publish no host port.
 
 Android recovery qualification uses a fresh disposable bundle and sets
-`SIMCTL_CHILD_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the OrangeFox UI,
+`TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the OrangeFox UI,
 touch input, ADB, fixed-GPT partition discovery, read-only payload mounts,
 userdata/metadata mount and format behavior, backup/restore, file manager,
 terminal, battery display, and normal/recovery reboot paths. Never run wipe or

@@ -8,8 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000004 /* KRuntime_6_18_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		A10000000000000000000005 /* EGL.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* EGL.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		A10000000000000000000006 /* GLESv2.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* GLESv2.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000005 /* MesaEGL.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* MesaEGL.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000006 /* MesaGallium.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* MesaGallium.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A1000000000000000000000C /* KosmicKrisp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* KosmicKrisp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000007 /* KRuntime_6_18_4K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* KRuntime_6_18_4K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000008 /* KRuntime_ACK_6_18_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000009 /* GPTFDisk.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* GPTFDisk.xcframework */; };
@@ -46,8 +47,9 @@
 				A10000000000000000000004 /* KRuntime_6_18_16K.xcframework in Embed Frameworks */,
 				A1000000000000000000000B /* KRuntime_Wine_6_18_4K.xcframework in Embed Frameworks */,
 				A10000000000000000000008 /* KRuntime_ACK_6_18_16K.xcframework in Embed Frameworks */,
-				A10000000000000000000005 /* EGL.xcframework in Embed Frameworks */,
-				A10000000000000000000006 /* GLESv2.xcframework in Embed Frameworks */,
+				A10000000000000000000005 /* MesaEGL.xcframework in Embed Frameworks */,
+				A10000000000000000000006 /* MesaGallium.xcframework in Embed Frameworks */,
+				A1000000000000000000000C /* KosmicKrisp.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -59,13 +61,14 @@
 		8AF5E8DE302C966400B19616 /* KernariumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF5E8E8302C966400B19616 /* KernariumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
-		A10000000000000000000012 /* EGL.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = EGL.xcframework; path = "../.build/kernarium-xcframeworks/EGL.xcframework"; sourceTree = SOURCE_ROOT; };
-		A10000000000000000000013 /* GLESv2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GLESv2.xcframework; path = "../.build/kernarium-xcframeworks/GLESv2.xcframework"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000012 /* MesaEGL.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MesaEGL.xcframework; path = "../.build/kernarium-xcframeworks/MesaEGL.xcframework"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000013 /* MesaGallium.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MesaGallium.xcframework; path = "../.build/kernarium-xcframeworks/MesaGallium.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000014 /* KRuntime_6_18_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_6_18_4K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_6_18_4K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_ACK_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_ACK_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000016 /* GPTFDisk.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GPTFDisk.xcframework; path = "../.build/kernarium-xcframeworks/GPTFDisk.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000017 /* LibZstd.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LibZstd.xcframework; path = "../.build/kernarium-xcframeworks/LibZstd.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000018 /* KRuntime_Wine_6_18_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_Wine_6_18_4K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_Wine_6_18_4K.xcframework"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000019 /* KosmicKrisp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KosmicKrisp.xcframework; path = "../.build/kernarium-xcframeworks/KosmicKrisp.xcframework"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -144,8 +147,9 @@
 				A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */,
 				A10000000000000000000018 /* KRuntime_Wine_6_18_4K.xcframework */,
 				A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */,
-				A10000000000000000000012 /* EGL.xcframework */,
-				A10000000000000000000013 /* GLESv2.xcframework */,
+				A10000000000000000000012 /* MesaEGL.xcframework */,
+				A10000000000000000000013 /* MesaGallium.xcframework */,
+				A10000000000000000000019 /* KosmicKrisp.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -395,7 +399,8 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -454,7 +459,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -470,7 +476,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XXXXXXXXXX;
 				ENABLE_PREVIEWS = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/../.build/kernarium-xcframeworks",
@@ -480,17 +485,13 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
@@ -501,7 +502,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -522,7 +524,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XXXXXXXXXX;
 				ENABLE_PREVIEWS = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/../.build/kernarium-xcframeworks",
@@ -532,17 +533,13 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
@@ -553,7 +550,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -578,7 +576,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -602,7 +601,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -625,7 +625,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -648,7 +649,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
