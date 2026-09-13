@@ -485,8 +485,9 @@ install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
 	"$STAGE/include/virgl/virgl_hw.h"
 
 # CMake imports exact archives and headers. Build-only pkg-config metadata
-# contains the exclusive staging path and must not enter the published prefix.
-rm -rf -- "$STAGE/lib/pkgconfig"
+# contains the exclusive staging path and must not enter the published prefix,
+# and upstream's vtest development server is not part of the product payload.
+rm -rf -- "$STAGE/lib/pkgconfig" "$STAGE/bin"
 
 
 KOSMICKRISP_FRAMEWORK="$STAGE/Frameworks/KosmicKrisp.framework"

@@ -132,7 +132,7 @@ def source_identity() -> dict[str, Any]:
         root / "scripts/boot_kde_vnc.py",
         root / "dependencies/manifest.tsv",
         root / "dependencies/patches/mesa/series.tsv",
-        root / "dependencies/patches/utm-virglrenderer/series.tsv",
+        root / "dependencies/patches/virglrenderer/series.tsv",
     )
     return {"git": common.git_state(), "files": {
         str(path.relative_to(root)): common.sha256_file(path) for path in inputs
