@@ -74,17 +74,13 @@ add_library(uml_gpu_renderer STATIC
 uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS
-    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>
-    UML_GPU_HOST_GL_PROVIDER_MESA=$<BOOL:${_uml_apple_gl_provider_is_mesa}>)
+    UML_GPU_VULKAN_EXPERIMENT=1)
 target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
 target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework CoreFoundation"
-    "-framework CoreMedia"
-    "-framework CoreVideo"
     "-framework Foundation"
     "-framework Metal"
-    "-framework QuartzCore"
-    "-framework VideoToolbox")
+    "-framework QuartzCore")
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
 if(TARGET uml_third_party_kosmickrisp)
@@ -94,17 +90,12 @@ if(TARGET uml_third_party_kosmickrisp)
     target_compile_features(uml-venus-backend-probe PRIVATE cxx_std_20)
     target_compile_options(uml-venus-backend-probe PRIVATE
         -Wall -Wextra -Werror)
-    # The renderer archive carries the VideoToolbox decode backend for both
-    # Apple GPU products, so this direct consumer needs the same frameworks.
     target_link_libraries(uml-venus-backend-probe PRIVATE
         UML::ThirdPartyVirglrenderer
         UML::GpuKosmicKrispCapabilityProbe
-        "-framework CoreMedia"
-        "-framework CoreVideo"
         "-framework Foundation"
         "-framework Metal"
-        "-framework QuartzCore"
-        "-framework VideoToolbox")
+        "-framework QuartzCore")
     add_dependencies(uml-venus-backend-probe
         uml_dependency_prefix_verify)
     set_property(TARGET uml-venus-backend-probe APPEND PROPERTY
@@ -196,7 +187,7 @@ add_library(uml_gpu_transport STATIC vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)
 target_compile_definitions(uml_gpu_transport PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>
-    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>)
+    UML_GPU_VULKAN_EXPERIMENT=1)
 target_link_libraries(uml_gpu_transport PUBLIC
     UML::DeviceSocketPaths
     UML::MemorySharedBacking

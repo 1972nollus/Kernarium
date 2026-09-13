@@ -207,7 +207,6 @@ VirglRenderer::VirglRenderer()
             return result;
         }();
 
-#if UML_GPU_HOST_GL_PROVIDER_MESA
         /*
          * The Mesa provider supplies an external EGLDisplay whose contexts are
          * desktop OpenGL 4.6 core. It publishes no Metal texture for a vrend
@@ -215,15 +214,6 @@ VirglRenderer::VirglRenderer()
          * resources take the readback path.
          */
         int rendererFlags = 0;
-#else
-        // The common Apple path supplies an external ANGLE EGLDisplay backed
-        // by Metal. Native-share resources are MTLTexture objects on macOS,
-        // Simulator, and device alike.
-        int rendererFlags =
-            VIRGL_RENDERER_USE_GLES |
-            VIRGL_RENDERER_USE_VIDEO |
-            VIRGL_RENDERER_NATIVE_SHARE_TEXTURE;
-#endif
         if (enableExperimentalVulkan) {
             /*
              * The render server publishes each context's per-ring timeline
@@ -302,7 +292,7 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
          error = glGetError()) {
         std::fprintf(
             stderr,
-            "Virgl ANGLE capset probe GL error (cleared): %u\n",
+            "Virgl capset probe GL error (cleared): %u\n",
             static_cast<unsigned int>(error));
     }
     return result;
@@ -334,7 +324,7 @@ int VirglRenderer::createContext(
 
     /*
      * virglrenderer creates a fresh shared EGL context here and assumes that
-     * it is returned with a clean GL error state. ANGLE may leave
+     * it is returned with a clean GL error state. A host driver may leave
      * GL_INVALID_ENUM behind while virglrenderer probes that context;
      * CHECK_GL_ERRORS would otherwise attribute the probe error to the first
      * real guest command and permanently poison the context.
@@ -345,7 +335,7 @@ int VirglRenderer::createContext(
          error = glGetError()) {
         std::fprintf(
             stderr,
-            "Virgl ANGLE context initialization GL error: %u\n",
+            "Virgl context initialization GL error: %u\n",
             static_cast<unsigned int>(error));
         unexpectedError |= error != GL_INVALID_ENUM;
     }

@@ -19,8 +19,8 @@ namespace uml::gpu {
 class HostGlProvider;
 
 // Owns the process-global virglrenderer instance. Every Apple product uses the
-// same opaque ANGLE/EGL provider backed by Metal; provider state never changes
-// this public class layout.
+// same opaque EGL provider backed by Metal; provider state never changes this
+// public class layout.
 class VirglRenderer {
 public:
     static constexpr std::uint32_t sharedMemoryBlobDescriptor = 3;

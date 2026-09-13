@@ -139,6 +139,6 @@ int main()
     providerReportsExplicitEsVersionRequests();
     providerOwnsOneSharedAngleTopology();
     rendererRetiresFencesThroughTheExternalProvider();
-    std::puts("ANGLE/Metal host GL provider lifetime tests passed");
+    std::puts("host GL provider lifetime tests passed");
     return 0;
 }
