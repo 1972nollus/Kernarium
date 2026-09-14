@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <vector>
 
@@ -51,6 +52,22 @@ using android::SurfaceComposerClient;
 using android::SurfaceControl;
 
 namespace {
+
+/*
+ * Applying a layer transaction makes libgui register its process-wide
+ * TransactionCompletedListener and start a binder thread pool this tool
+ * neither owns nor can stop, and SurfaceFlinger keeps calling that listener
+ * back after the last present. Returning from main would let the C++ static
+ * destructors free the listener singleton -- and its std::mutex -- under a
+ * binder thread already inside onTransactionCompleted, which bionic reports
+ * as "FORTIFY: pthread_mutex_lock called on a destroyed mutex". Leave with
+ * the result instead; the layer, the client and the binder threads go away
+ * with the process.
+ */
+[[noreturn]] void leave(int status) {
+    fflush(nullptr);
+    _exit(status);
+}
 
 bool check(VkResult result, const char* what) {
     if (result == VK_SUCCESS) {
@@ -432,12 +449,12 @@ int main(int argc, char** argv) {
 
     Window window;
     if (!window.create()) {
-        return 1;
+        leave(1);
     }
 
     Vulkan vk;
     if (!createInstance(&vk)) {
-        return 1;
+        leave(1);
     }
 
     VkAndroidSurfaceCreateInfoKHR surfaceInfo = {};
@@ -445,14 +462,14 @@ int main(int argc, char** argv) {
     surfaceInfo.window = window.nativeWindow();
     if (!check(vkCreateAndroidSurfaceKHR(vk.instance, &surfaceInfo, nullptr, &vk.surface),
                "vkCreateAndroidSurfaceKHR")) {
-        return 1;
+        leave(1);
     }
 
     VkExtent2D extent = {};
     VkFormat format = VK_FORMAT_UNDEFINED;
     if (!pickDevice(&vk) || !createDevice(&vk) || !createSwapchain(&vk, &extent, &format) ||
         !createCommandResources(&vk)) {
-        return 1;
+        leave(1);
     }
 
     uint32_t presented = 0;
@@ -513,5 +530,5 @@ int main(int argc, char** argv) {
     vkDestroyDevice(vk.device, nullptr);
     vkDestroySurfaceKHR(vk.instance, vk.surface, nullptr);
     vkDestroyInstance(vk.instance, nullptr);
-    return presented == requested ? 0 : 1;
+    leave(presented == requested ? 0 : 1);
 }
