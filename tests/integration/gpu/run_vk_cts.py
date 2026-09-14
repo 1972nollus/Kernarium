@@ -1606,19 +1606,10 @@ def validate_receipt_attempt(
     transcript: str,
     artifacts: dict[str, bytes],
     *,
-    host_recorded: dict[str, str] | None = None,
     session_count: int = 1,
 ) -> dict[str, Any]:
     if session_count < 1:
         raise CampaignError("a shard needs at least one guest session")
-    recorded = dict(host_recorded or {})
-    # A single session can still be host-merged, when the case it was running
-    # when it died was the last one in the shard.  What is never legitimate is
-    # a continuation that accounted for nothing.
-    if session_count > 1 and not recorded:
-        raise CampaignError(
-            "a resumed Vulkan shard must record every terminated case"
-        )
     required = {"renderer.txt", "selected.txt", "results.qpa", "summary.txt"}
     if selection.generated_expected:
         required.add("expected.txt")
@@ -1655,18 +1646,14 @@ def validate_receipt_attempt(
     }
     if selection.generated_expected:
         expected_summary["fraction"] = selection.fraction.argument()
-    if recorded:
+    if session_count > 1:
+        # A resumed shard re-ran the cases its dead guests never transported,
+        # so the merge is stated in the summary but no case is host-recorded.
         expected_summary["provenance"] = "host-merged"
         expected_summary["sessions"] = str(session_count)
-        for index, (case, status) in enumerate(recorded.items()):
-            expected_summary[f"host_recorded_{index}"] = f"{case}={status}"
     cts_rc = summary.pop("cts_rc", None)
     allowed_return_codes = (
-        {"1"}
-        if recorded
-        else {"0", "1"}
-        if selection.generated_expected
-        else {"0"}
+        {"0", "1"} if selection.generated_expected else {"0"}
     )
     if summary != expected_summary or cts_rc not in allowed_return_codes:
         raise CampaignError("receipt-backed CTS summary changed")
@@ -1692,14 +1679,9 @@ def validate_receipt_attempt(
         raise CampaignError("receipt-backed CTS produced an empty QPA")
     qpa_text = common.decode_qpa(qpa_payload)
     results = common.validate_qpa_union(qpa_text, expected_cases)
-    for case, status in recorded.items():
-        if results.get(case) != status:
-            raise CampaignError(
-                f"merged QPA omits the host-recorded result for {case}"
-            )
     validate_virtio_qpa_identity(qpa_text)
     rejected = classify_released_results(results, receipt["runner_oracle"])
-    if not selection.generated_expected and not recorded:
+    if not selection.generated_expected:
         validate_released_results(results, receipt["runner_oracle"])
     if (bool(rejected) and cts_rc != "1") or (not rejected and cts_rc != "0"):
         raise CampaignError("CTS exit status disagrees with its complete QPA")
@@ -1722,7 +1704,7 @@ def validate_receipt_attempt(
     if FORBIDDEN_SOFTWARE_ICD.search(renderer):
         raise CampaignError("receipt-backed renderer evidence selected a software ICD")
     validate_wsi_operation(selection, results, renderer)
-    if not selection.generated_expected and not recorded:
+    if not selection.generated_expected:
         return {
             "outcome": "receipt-backed-cts",
             "cts_return_code": 0,
@@ -1902,7 +1884,6 @@ def verify_receipt_only(
     if metadata.get("console_sha256") != _sha256_file(console):
         raise CampaignError("receipt-backed console digest changed")
     sessions = metadata.get("sessions")
-    recorded: dict[str, str] = {}
     transcript = console.read_text(encoding="utf-8", errors="replace")
     session_count = 1
     if sessions is not None:
@@ -1917,7 +1898,6 @@ def verify_receipt_only(
             path, metadata, artifacts, len(expected_cases)
         )
         session_count = len(sessions)
-        recorded = dict(metadata.get("host_recorded_results") or {})
         transcript = "".join(
             (path / str(row["console"])).read_text(
                 encoding="utf-8", errors="replace"
@@ -1929,7 +1909,6 @@ def verify_receipt_only(
         selection,
         transcript,
         artifacts,
-        host_recorded=recorded,
         session_count=session_count,
     )
     if metadata.get("result") != result:
@@ -2049,7 +2028,6 @@ def run_receipt_campaign(
                 "max_resumptions": options.max_resumptions,
                 "artifacts_provenance": common.shard_provenance(rows),
                 "sessions": common.session_records(rows, artifact_directory),
-                "host_recorded_results": common.host_recorded_results(rows),
             }
         )
         common.write_json(artifact_directory / "run.json", metadata)
@@ -2074,17 +2052,16 @@ def run_receipt_campaign(
         for session in sessions
     )
     common.validate_host_backend(transcript)
-    if final.terminated_case is None:
-        final_transcript = (artifact_directory / final.console).read_text(
-            encoding="utf-8", errors="replace"
-        )
-        if final.shutdown_stall:
-            # The guest transported every acknowledged frame and then failed to
-            # power off inside its shutdown grace. Only the memory-manager
-            # contract still applies to a reaped guest's transcript.
-            common.validate_drm_shutdown(final_transcript)
-        else:
-            common.validate_guest_shutdown(final_transcript)
+    final_transcript = (artifact_directory / final.console).read_text(
+        encoding="utf-8", errors="replace"
+    )
+    if final.shutdown_stall:
+        # The guest transported every acknowledged frame and then failed to
+        # power off inside its shutdown grace. Only the memory-manager
+        # contract still applies to a reaped guest's transcript.
+        common.validate_drm_shutdown(final_transcript)
+    else:
+        common.validate_guest_shutdown(final_transcript)
     artifact_path = artifact_directory / "artifacts"
     if common.shard_provenance(sessions) == "single-session-guest":
         artifacts = {
@@ -2100,7 +2077,6 @@ def run_receipt_campaign(
         common.write_artifacts(artifacts, artifact_path)
     if list(merged) != list(expected_cases):
         raise CampaignError("merged Vulkan shard results left the released order")
-    recorded = common.host_recorded_results(sessions)
     record_sessions(sessions)
     immutable_evidence = {
         "console_sha256": _sha256_file(console_path),
@@ -2116,7 +2092,6 @@ def run_receipt_campaign(
             selection,
             transcript,
             artifacts,
-            host_recorded=recorded,
             session_count=len(sessions),
         )
     except CampaignError as error:

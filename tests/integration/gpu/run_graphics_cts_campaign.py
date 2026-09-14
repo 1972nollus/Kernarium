@@ -682,9 +682,10 @@ def check_session_ownership(run: Path, metadata: dict[str, Any],
     """Prove every continuation guest was reaped.
 
     Returns the last session's console, whether that guest still owes a clean
-    stop marker -- which it does unless the host recorded why it died: a
-    terminated case, or a shutdown stall after its complete evidence arrived --
-    and whether that stall is the recorded reason.
+    stop marker -- which it does unless it stalled in shutdown after its
+    complete evidence arrived -- and whether that stall is the recorded
+    reason.  A shard always ends on a session that finished its caselist: a
+    session the emulator killed is re-run, never recorded as a result.
     """
     sessions = metadata.get("sessions")
     if not isinstance(sessions, list) or not sessions:
@@ -695,9 +696,7 @@ def check_session_ownership(run: Path, metadata: dict[str, Any],
             raise common.CampaignError("continuation guest omits its ownership journal")
         check_guest_ownership(run / journal, token, required=True)
     stalled = bool(sessions[-1].get("shutdown_stall", False))
-    return (run / str(sessions[-1]["console"]),
-            sessions[-1].get("terminated_case") is None and not stalled,
-            stalled)
+    return (run / str(sessions[-1]["console"]), not stalled, stalled)
 
 
 def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
@@ -816,15 +815,19 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
             common.validate_session_provenance(
                 run, metadata, artifacts, selection.expected_count
             )
-            if "provenance=host-merged" not in summary or "cts_rc=1" not in summary:
+            # A resumed shard re-ran what its dead guests never transported,
+            # so its merged summary declares the merge and still reports the
+            # ordinary status of a complete run.
+            if ("provenance=host-merged" not in summary
+                    or "cts_rc=0" not in summary):
                 raise common.CampaignError("OpenGL host-merged summary is not truthful")
         elif summary.strip() != "cts_rc=0":
             raise common.CampaignError("OpenGL CTS process failed")
         if clean_stop:
             common.validate_guest_shutdown(final_console.read_text(encoding="utf-8"))
         else:
-            # A recorded stall or terminated case explains the missing stop
-            # marker; the Virtio-GPU takedown contract still holds.
+            # A recorded shutdown stall explains the missing stop marker; the
+            # Virtio-GPU takedown contract still holds.
             common.validate_drm_shutdown(final_console.read_text(encoding="utf-8"))
         # The plan names the Gallium driver the OpenGL shards run on, and the
         # host stack follows from it, so judge the probe against the same pair

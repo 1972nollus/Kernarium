@@ -484,9 +484,13 @@ for `--console-stall-timeout` seconds while its `glcts` processes also burn no
 CPU is abandoned, while a case that is silent but computing survives until
 `--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
 software fp64 cases run for 700-2000 s without logging whereas a wedged Venus
-wait consumes nothing. The host then records the case in flight as `Timeout` or
-`Crash`, never retries it, and continues in a fresh guest bounded by
-`--max-resumptions`. Both statuses are always failures.
+wait consumes nothing. An emulator exit -- an abandoned case, a host fault, a
+signal -- aborts the session rather than producing a result: the host invents
+no status for the case that was in flight, keeps the last `Test case` name the
+guest console printed as a diagnostic, and starts a fresh guest at the same
+index, so every case after the last transported result is simply re-run. A
+shard that cannot get past a case exhausts `--max-resumptions` and fails as a
+whole, naming that case.
 
 ### OpenGL ES3 FBO state-query waiver
 

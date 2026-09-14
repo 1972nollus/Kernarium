@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Host-only proof that a CTS shard survives one hang and one host abort."""
+"""Host-only proof that a CTS shard survives one hang and one host abort.
+
+A guest the host had to kill is a session abort, never a case result: the
+shard re-runs from the last result the dead guest transported and gives up
+as a whole once its resumptions are spent.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +55,11 @@ def qpa_session(cases, *, ended: bool = True, in_flight: str | None = None) -> s
     if ended:
         text += "#endSession\n"
     return text
+
+
+def console_log(cases, *, tail: str) -> str:
+    """A guest console that announced each case before running it."""
+    return "".join(f"Test case '{case}'..\n  Pass\n" for case in cases) + tail
 
 
 def framed(name: str, payload: bytes) -> str:
@@ -182,7 +192,6 @@ def provenance_metadata(sessions, root: Path) -> dict:
         "max_resumptions": 4,
         "artifacts_provenance": gl.shard_provenance(sessions),
         "sessions": gl.session_records(sessions, root),
-        "host_recorded_results": gl.host_recorded_results(sessions),
     }
 
 
@@ -240,16 +249,29 @@ class QpaPrefixTests(unittest.TestCase):
         self.assertTrue(gl.scan_qpa(text).ended_session)
 
 
+class ConsoleDiagnosticTests(unittest.TestCase):
+    def test_the_last_announced_case_is_the_one_kept(self) -> None:
+        transcript = console_log(CASES[:3], tail=f"Test case '{CASES[3]}'..\n")
+        self.assertEqual(gl.last_console_case(transcript), CASES[3])
+
+    def test_a_console_that_named_no_case_yields_nothing(self) -> None:
+        self.assertIsNone(gl.last_console_case(""))
+        self.assertIsNone(
+            gl.last_console_case("Darwin UML host signal 11 at pc=0x0\n")
+        )
+        # A name the traversal order could never contain is not a case.
+        self.assertIsNone(gl.last_console_case("Test case 'not a case'..\n"))
+
+
 class QpaMergeTests(unittest.TestCase):
-    def evidence(self, index, cases, *, ended, terminated, status, outcome, resume):
+    def evidence(self, index, cases, *, ended, outcome, resume, console_case=None):
         return gl.SessionEvidence(
             index=index,
             outcome=outcome,
             resume_after=resume,
             qpa_text=qpa_session(cases, ended=ended),
             completed_cases=tuple(cases),
-            terminated_case=terminated,
-            terminated_status=status,
+            console_case=console_case,
             console="console.log",
             artifact_transport=gl.ARTIFACT_TRANSPORT_LOG,
             artifacts_directory="artifacts",
@@ -257,37 +279,28 @@ class QpaMergeTests(unittest.TestCase):
         )
 
     def test_single_complete_session_is_returned_byte_for_byte(self) -> None:
-        session = self.evidence(
-            0, CASES, ended=True, terminated=None, status=None,
-            outcome="completed", resume=0,
-        )
+        session = self.evidence(0, CASES, ended=True, outcome="completed", resume=0)
         self.assertEqual(gl.merge_qpa_sessions([session]), session.qpa_text)
 
-    def test_merged_sessions_record_the_offending_case_explicitly(self) -> None:
+    def test_a_merge_carries_only_what_guests_transported(self) -> None:
         first = self.evidence(
-            0, CASES[:3], ended=False, terminated=CASES[3], status=gl.STALL_STATUS,
-            outcome="stalled", resume=0,
+            0, CASES[:3], ended=False, outcome="stalled", resume=0,
+            console_case=CASES[3],
         )
         second = self.evidence(
-            1, CASES[4:], ended=True, terminated=None, status=None,
-            outcome="completed", resume=4,
+            1, CASES[3:], ended=True, outcome="completed", resume=3,
         )
         merged = gl.merge_qpa_sessions([first, second])
         results = gl.parse_qpa(merged)
         self.assertEqual(list(results), list(CASES))
-        self.assertEqual(results[CASES[3]], "Timeout")
+        # The case the first guest died on was re-run, so its only result is
+        # the one the second guest produced.  Nothing is host-authored.
+        self.assertEqual(set(results.values()), {"Pass"})
+        self.assertEqual(merged.count(f"#beginTestCaseResult {CASES[3]}"), 1)
         self.assertEqual(merged.count("#beginSession"), 1)
         self.assertEqual(merged.count("#endSession"), 1)
-        self.assertIn(f"{gl.QPA_BOUNDARY}session 1 resumes at index 4", merged)
-        self.assertIn(f"{gl.QPA_BOUNDARY}host-recorded Timeout reason=stalled", merged)
-
-    def test_host_recorded_blocks_reject_invalid_names_and_statuses(self) -> None:
-        with self.assertRaisesRegex(gl.CampaignError, "invalid host-recorded status"):
-            gl.host_recorded_qpa_block(CASES[0], "Pass", "stalled")
-        with self.assertRaisesRegex(gl.CampaignError, "invalid host-recorded case"):
-            gl.host_recorded_qpa_block("a b", gl.STALL_STATUS, "stalled")
-        with self.assertRaisesRegex(gl.CampaignError, "invalid host-recorded reason"):
-            gl.host_recorded_qpa_block(CASES[0], gl.ABORT_STATUS, "Metal abort")
+        self.assertIn(f"{gl.QPA_BOUNDARY}session 1 resumes at index 3", merged)
+        self.assertNotIn("host-recorded", merged)
 
 
 class ShardResumptionTests(unittest.TestCase):
@@ -302,44 +315,44 @@ class ShardResumptionTests(unittest.TestCase):
                 ended=False,
                 in_flight=CASES[3],
                 selected=CASES,
+                console=console_log(CASES[:4], tail="guest went quiet\n"),
             ),
             Step(
                 outcome="completed",
-                cases=CASES[4:],
+                cases=CASES[3:],
                 ended=True,
-                selected=CASES[4:],
+                selected=CASES[3:],
                 summary=self.summary(),
             ),
         ]
         return drive(root, steps, max_resumptions=max_resumptions)
 
-    def test_hang_preserves_results_records_timeout_and_continues(self) -> None:
+    def test_a_hang_re_runs_the_case_its_guest_died_on(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             guests, sessions, expected, merged = self.hang_then_finish(root)
             self.assertEqual(expected, CASES)
             self.assertEqual(list(merged), list(CASES))
-            self.assertEqual(merged[CASES[3]], "Timeout")
-            self.assertEqual(
-                [status for case, status in merged.items() if case != CASES[3]],
-                ["Pass"] * 6,
-            )
+            # No case was blamed for the emulator exit: every result in the
+            # shard came from a guest that actually finished that case.
+            self.assertEqual(list(merged.values()), ["Pass"] * 7)
             self.assertEqual(len(sessions), 2)
-            self.assertEqual([row.resume_after for row in sessions], [0, 4])
+            self.assertEqual([row.resume_after for row in sessions], [0, 3])
             self.assertEqual(sessions[0].outcome, "stalled")
             self.assertEqual(sessions[1].outcome, "completed")
-            self.assertEqual(sessions[0].terminated_case, CASES[3])
-            self.assertIsNone(sessions[1].terminated_case)
-            # The offending case is never retried: the fresh guest is asked
-            # for the cases after it, in the same traversal order.
-            self.assertEqual(guests.calls[1]["command"][1], "4")
+            # The console name is kept as a diagnostic only.
+            self.assertEqual(sessions[0].console_case, CASES[3])
+            self.assertEqual(sessions[0].record(root)["console_case"], CASES[3])
+            self.assertIsNone(sessions[1].console_case)
+            # The fresh guest restarts at the same index the dead one reached.
+            self.assertEqual(guests.calls[1]["command"][1], "3")
             self.assertEqual(
                 sessions[0].artifacts_directory, "sessions/00/artifacts"
             )
             self.assertTrue((root / "sessions/01/console.log").is_file())
             self.assertTrue((root / "console.log").is_file())
 
-    def test_host_abort_records_a_crash_for_the_case_in_flight(self) -> None:
+    def test_a_host_abort_is_a_session_abort_not_a_case_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             steps = [
                 Step(
@@ -348,31 +361,39 @@ class ShardResumptionTests(unittest.TestCase):
                     ended=False,
                     selected=CASES,
                     return_code=134,
-                    console="Darwin UML host signal 6 at pc=0x0\n",
+                    console=console_log(
+                        CASES[:3], tail="Darwin UML host signal 6 at pc=0x0\n"
+                    ),
                 ),
                 Step(
                     outcome="completed",
-                    cases=CASES[3:],
+                    cases=CASES[2:],
                     ended=True,
-                    selected=CASES[3:],
+                    selected=CASES[2:],
                     summary=self.summary(),
                 ),
             ]
             _, sessions, _, merged = drive(Path(temporary), steps)
-            self.assertEqual(merged[CASES[2]], "Crash")
-            self.assertEqual(sessions[0].terminated_status, gl.ABORT_STATUS)
+            self.assertEqual(merged[CASES[2]], "Pass")
+            self.assertEqual(sessions[0].console_case, CASES[2])
             self.assertEqual(sessions[0].return_code, 134)
+            self.assertEqual(sessions[1].resume_after, 2)
             self.assertEqual(list(merged), list(CASES))
 
     def test_resumptions_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             steps = [
-                Step(outcome="stalled", cases=CASES[:1], ended=False, selected=CASES),
-                Step(outcome="stalled", cases=CASES[2:3], ended=False, selected=CASES[2:]),
-                Step(outcome="completed", cases=CASES[4:], ended=True,
-                     selected=CASES[4:], summary=self.summary()),
+                Step(outcome="stalled", cases=CASES[:1], ended=False, selected=CASES,
+                     console=console_log(CASES[:2], tail="quiet\n")),
+                Step(outcome="stalled", cases=CASES[1:2], ended=False,
+                     selected=CASES[1:],
+                     console=console_log(CASES[1:3], tail="quiet\n")),
+                Step(outcome="completed", cases=CASES[2:], ended=True,
+                     selected=CASES[2:], summary=self.summary()),
             ]
-            with self.assertRaisesRegex(gl.CampaignError, "exhausted its 1 resumptions"):
+            with self.assertRaisesRegex(
+                gl.CampaignError, f"session aborted 2 times at {CASES[2]}"
+            ):
                 drive(Path(temporary), steps, max_resumptions=1)
 
     def test_zero_bound_keeps_the_historical_single_session_shard(self) -> None:
@@ -381,7 +402,11 @@ class ShardResumptionTests(unittest.TestCase):
             steps = [
                 Step(outcome="stalled", cases=CASES[:1], ended=False, selected=CASES),
             ]
-            with self.assertRaisesRegex(gl.CampaignError, "exhausted its 0 resumptions"):
+            # No console name at all: the shard still says where it stopped,
+            # from the traversal order rather than from an invented result.
+            with self.assertRaisesRegex(
+                gl.CampaignError, f"session aborted 1 times at {CASES[1]}"
+            ):
                 drive(root, steps, max_resumptions=0)
 
     def test_a_clean_single_session_shard_keeps_its_layout(self) -> None:
@@ -397,19 +422,23 @@ class ShardResumptionTests(unittest.TestCase):
             self.assertFalse((root / gl.SESSION_DIRECTORY).exists())
             self.assertEqual(list(merged), list(CASES))
 
-    def test_a_hang_on_the_last_case_needs_no_second_guest(self) -> None:
+    def test_a_hang_on_the_last_case_costs_one_more_guest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             steps = [
                 Step(outcome="stalled", cases=CASES[:-1], ended=False,
-                     in_flight=CASES[-1], selected=CASES, summary=b"cts_rc=124\n"),
+                     in_flight=CASES[-1], selected=CASES, summary=b"cts_rc=124\n",
+                     console=console_log(CASES, tail="guest went quiet\n")),
+                Step(outcome="completed", cases=CASES[-1:], ended=True,
+                     selected=CASES[-1:], summary=b"cts_rc=0\n"),
             ]
             guests, sessions, expected, merged = drive(root, steps)
-            self.assertEqual(len(guests.calls), 1)
-            self.assertEqual(sessions[0].terminated_case, CASES[-1])
-            self.assertEqual(merged[CASES[-1]], "Timeout")
+            # Even the last case is re-run rather than recorded as a failure.
+            self.assertEqual(len(guests.calls), 2)
+            self.assertEqual(guests.calls[1]["command"][1], str(len(CASES) - 1))
+            self.assertEqual(sessions[0].console_case, CASES[-1])
+            self.assertEqual(merged[CASES[-1]], "Pass")
             self.assertEqual(list(merged), list(CASES))
-            # One session, but the shard's own QPA and summary are the host's.
             self.assertEqual(gl.shard_provenance(sessions), "host-merged")
             self.assertEqual(sessions[0].artifacts_directory, "sessions/00/artifacts")
             artifacts = gl.merged_shard_artifacts(sessions, root, len(expected))
@@ -418,10 +447,10 @@ class ShardResumptionTests(unittest.TestCase):
                 root, provenance_metadata(sessions, root), artifacts, len(expected)
             )
             self.assertEqual(
-                gl.parse_qpa(artifacts["results.qpa"].decode())[CASES[-1]], "Timeout"
+                gl.parse_qpa(artifacts["results.qpa"].decode())[CASES[-1]], "Pass"
             )
 
-    def test_a_dirty_stop_with_nothing_to_record_fails_closed(self) -> None:
+    def test_a_dirty_stop_with_every_result_in_hand_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             steps = [
@@ -429,34 +458,38 @@ class ShardResumptionTests(unittest.TestCase):
                      selected=CASES, summary=b"cts_rc=0\n"),
             ]
             _, sessions, expected, _ = drive(root, steps)
-            # Every case has a result, so there is no case to blame; a guest
-            # that never stopped cleanly must not become an ordinary shard.
-            self.assertIsNone(sessions[0].terminated_case)
+            # There is nothing left to re-run, but the guest never closed its
+            # session: that shard is not a complete one and must not pass.
+            self.assertEqual(sessions[0].outcome, "stalled")
             self.assertEqual(gl.shard_provenance(sessions), "single-session-guest")
             artifacts = {
                 path.name: path.read_bytes()
                 for path in sorted((root / "artifacts").iterdir())
             }
-            with self.assertRaisesRegex(gl.CampaignError, "must record its case"):
+            with self.assertRaisesRegex(
+                gl.CampaignError, "must end on a session that completed"
+            ):
                 gl.validate_session_provenance(
                     root, provenance_metadata(sessions, root), artifacts, len(expected)
                 )
 
-    def test_an_abort_before_the_first_checkpoint_still_merges(self) -> None:
+    def test_an_abort_before_the_first_checkpoint_re_runs_everything(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             steps = [
                 Step(outcome="aborted", cases=(), ended=False, selected=CASES,
                      no_qpa=True, return_code=134,
                      console="Darwin UML host signal 6 at pc=0x0\n"),
-                Step(outcome="completed", cases=CASES[1:], ended=True,
-                     selected=CASES[1:], summary=b"cts_rc=0\n"),
+                Step(outcome="completed", cases=CASES, ended=True,
+                     selected=CASES, summary=b"cts_rc=0\n"),
             ]
-            _, sessions, expected, merged = drive(root, steps)
-            # The first guest delivered its enumeration but no results at all;
-            # the case it was starting is still named, not dropped.
+            guests, sessions, expected, merged = drive(root, steps)
+            # The first guest delivered its enumeration and no results, so the
+            # second one starts over at index 0 with nothing written off.
             self.assertEqual(sessions[0].completed_cases, ())
-            self.assertEqual(merged[CASES[0]], "Crash")
+            self.assertIsNone(sessions[0].console_case)
+            self.assertEqual(guests.calls[1]["command"][1], "0")
+            self.assertEqual(merged[CASES[0]], "Pass")
             self.assertEqual(list(merged), list(CASES))
             artifacts = gl.merged_shard_artifacts(sessions, root, len(expected))
             gl.write_artifacts(artifacts, root / "artifacts")
@@ -508,9 +541,10 @@ class MergedProvenanceTests(unittest.TestCase):
     def build(self, root: Path):
         steps = [
             Step(outcome="stalled", cases=CASES[:3], ended=False,
-                 in_flight=CASES[3], selected=CASES),
-            Step(outcome="completed", cases=CASES[4:], ended=True,
-                 selected=CASES[4:], summary=b"cts_rc=0\n"),
+                 in_flight=CASES[3], selected=CASES,
+                 console=console_log(CASES[:4], tail="guest went quiet\n")),
+            Step(outcome="completed", cases=CASES[3:], ended=True,
+                 selected=CASES[3:], summary=b"cts_rc=0\n"),
         ]
         _, sessions, expected, merged = drive(root, steps)
         artifacts = gl.merged_shard_artifacts(sessions, root, len(expected))
@@ -523,14 +557,14 @@ class MergedProvenanceTests(unittest.TestCase):
             metadata, artifacts, expected = self.build(root)
             gl.validate_session_provenance(root, metadata, artifacts, len(expected))
             summary = artifacts["summary.txt"].decode()
-            self.assertIn("cts_rc=1", summary)
+            # A shard that re-ran its way to a complete result set has nothing
+            # failing of the host's own making.
+            self.assertIn("cts_rc=0", summary)
             self.assertIn("provenance=host-merged", summary)
             self.assertIn("sessions=2", summary)
-            self.assertIn(f"host_recorded_0={CASES[3]}=Timeout", summary)
             self.assertIn(f"expected_case_count={len(CASES)}", summary)
-            self.assertEqual(
-                metadata["host_recorded_results"], {CASES[3]: "Timeout"}
-            )
+            self.assertNotIn("host_recorded_", summary)
+            self.assertNotIn("host_recorded_results", metadata)
 
     def test_tampered_merge_or_dropped_record_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -538,14 +572,12 @@ class MergedProvenanceTests(unittest.TestCase):
             metadata, artifacts, expected = self.build(root)
             forged = dict(artifacts)
             forged["results.qpa"] = artifacts["results.qpa"].replace(
-                b"#terminateTestCaseResult Timeout",
                 b'<Result StatusCode="Pass">result</Result>',
+                b'<Result StatusCode="Fail">result</Result>',
+                1,
             )
             with self.assertRaisesRegex(gl.CampaignError, "not reproducible"):
                 gl.validate_session_provenance(root, metadata, forged, len(expected))
-            dropped = dict(metadata, host_recorded_results={})
-            with self.assertRaisesRegex(gl.CampaignError, "host-recorded shard results"):
-                gl.validate_session_provenance(root, dropped, artifacts, len(expected))
             relabelled = dict(metadata, artifacts_provenance="single-session-guest")
             with self.assertRaisesRegex(gl.CampaignError, "contradicts its sessions"):
                 gl.validate_session_provenance(root, relabelled, artifacts, len(expected))
@@ -654,7 +686,7 @@ class ShutdownBoundTests(unittest.TestCase):
             self.assertEqual(expected, CASES)
             self.assertEqual(tuple(merged), CASES)
             self.assertEqual(sessions[0].outcome, "completed")
-            self.assertIsNone(sessions[0].terminated_case)
+            self.assertIsNone(sessions[0].console_case)
             self.assertTrue(sessions[0].shutdown_stall)
             self.assertTrue(sessions[0].record(root)["shutdown_stall"])
 
@@ -682,26 +714,20 @@ class VulkanResumptionTests(unittest.TestCase):
         self.assertIn("results.qpa.%04d", resumed)
         self.assertIn("emit_prerun", resumed)
 
-    def test_receipt_summary_requires_every_host_recorded_case(self) -> None:
+    def test_a_resumed_receipt_shard_records_no_case_result(self) -> None:
         receipt = vk.receipt_contract.validate_receipt(vk.RECEIPT_PATH)
         selection = vk.resolve_receipt_selection(
             "exact-family", ["dEQP-VK.info.build"], None, vk.Fraction(0, 1)
         )
-        with self.assertRaisesRegex(vk.CampaignError, "must record every terminated"):
-            vk.validate_receipt_attempt(
-                receipt, selection, "", {}, host_recorded={}, session_count=2
-            )
-        # One session that recorded its last case is a legitimate host merge,
-        # so it reaches the ordinary artifact contract instead of this guard.
-        with self.assertRaisesRegex(vk.CampaignError, "artifact set is incomplete"):
-            vk.validate_receipt_attempt(
-                receipt,
-                selection,
-                "",
-                {},
-                host_recorded={"dEQP-VK.info.build": "Timeout"},
-                session_count=1,
-            )
+        # A resumed shard has nothing to declare beyond its merge: it reaches
+        # the ordinary artifact contract, not a host-recorded-case guard.
+        for session_count in (1, 2):
+            with self.assertRaisesRegex(vk.CampaignError, "artifact set is incomplete"):
+                vk.validate_receipt_attempt(
+                    receipt, selection, "", {}, session_count=session_count
+                )
+        with self.assertRaisesRegex(vk.CampaignError, "at least one guest session"):
+            vk.validate_receipt_attempt(receipt, selection, "", {}, session_count=0)
 
 
 class GuestCheckpointProgramTests(unittest.TestCase):

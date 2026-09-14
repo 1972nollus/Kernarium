@@ -213,11 +213,11 @@ QPA_CHECKPOINT_BYTES = 8 * 1024 * 1024
 QPA_BOUNDARY = "#umlSessionBoundary "
 SESSION_DIRECTORY = "sessions"
 DEFAULT_MAX_RESUMPTIONS = 4
-# dEQP's own terminated-case statuses; the receipt oracles list both as
-# always-failure, so a recorded one can never be mistaken for success.
-STALL_STATUS = "Timeout"
-ABORT_STATUS = "Crash"
 SESSION_OUTCOMES = ("completed", "stalled", "aborted")
+# dEQP announces each case on the guest console before it runs it.  The last
+# such name is the only thing an aborted session says about where it died, and
+# the host keeps it as a diagnostic: it is never turned into a case result.
+CONSOLE_CASE = re.compile(r"Test case '([A-Za-z0-9][A-Za-z0-9_.:-]*)'")
 
 
 class CampaignError(RuntimeError):
@@ -305,8 +305,7 @@ class SessionEvidence:
     resume_after: int
     qpa_text: str
     completed_cases: tuple[str, ...]
-    terminated_case: str | None
-    terminated_status: str | None
+    console_case: str | None
     console: str
     artifact_transport: str
     artifacts_directory: str
@@ -323,8 +322,7 @@ class SessionEvidence:
             "completed_cases": len(self.completed_cases),
             "first_case": self.completed_cases[0] if self.completed_cases else None,
             "last_case": self.completed_cases[-1] if self.completed_cases else None,
-            "terminated_case": self.terminated_case,
-            "terminated_status": self.terminated_status,
+            "console_case": self.console_case,
             "return_code": self.return_code,
             "console": self.console,
             "console_sha256": sha256_file(directory / self.console),
@@ -2341,34 +2339,20 @@ def qpa_session_split(text: str) -> tuple[str, str]:
     return "".join(lines[:start]), "".join(lines[start:end])
 
 
-def host_recorded_qpa_block(case: str, status: str, reason: str) -> str:
-    """Return the host-authored record for a case the guest never finished."""
-    if CASE_NAME.fullmatch(case) is None:
-        raise CampaignError(f"invalid host-recorded case name: {case!r}")
-    if status not in {STALL_STATUS, ABORT_STATUS}:
-        raise CampaignError(f"invalid host-recorded status: {status!r}")
-    if re.fullmatch(r"[a-z0-9-]+", reason) is None:
-        raise CampaignError(f"invalid host-recorded reason: {reason!r}")
-    return (
-        f"#beginTestCaseResult {case}\n"
-        f"{QPA_BOUNDARY}host-recorded {status} reason={reason}\n"
-        f"#terminateTestCaseResult {status}\n"
-    )
-
-
 def merge_qpa_sessions(sessions: Sequence["SessionEvidence"]) -> str:
     """Concatenate per-session QPA prefixes into one auditable transcript.
 
-    A single completed session is returned byte for byte.  Otherwise the
-    first session's header is kept, each session contributes only its
-    complete case blocks, and every case the guest never finished becomes an
-    explicit host-recorded terminated record marked with its boundary line.
+    A single session is returned byte for byte.  Otherwise the first
+    session's header is kept and each session contributes only its complete
+    case blocks: an aborted session ends at its last transported result and
+    the next session re-runs from there, so the transcript stays a gapless
+    record of what guests actually executed.
     """
     if not sessions:
         raise CampaignError("QPA merge requires at least one session")
     if [session.index for session in sessions] != list(range(len(sessions))):
         raise CampaignError("QPA merge requires gapless ordered sessions")
-    if len(sessions) == 1 and sessions[0].terminated_case is None:
+    if len(sessions) == 1:
         return sessions[0].qpa_text
     # A guest can be aborted before it checkpoints anything, so the release
     # header comes from the earliest session that transported a QPA at all.
@@ -2391,14 +2375,6 @@ def merge_qpa_sessions(sessions: Sequence["SessionEvidence"]) -> str:
             )
         if session.qpa_text:
             parts.append(qpa_session_split(session.qpa_text)[1])
-        if session.terminated_case is not None:
-            parts.append(
-                host_recorded_qpa_block(
-                    session.terminated_case,
-                    session.terminated_status or ABORT_STATUS,
-                    session.outcome,
-                )
-            )
     parts.append("#endSession\n")
     return "".join(parts)
 
@@ -4463,10 +4439,13 @@ def run_shard_sessions(
     """Run a shard as one or more guest sessions and merge their results.
 
     A session that stalls or is killed by a host abort still delivers the QPA
-    checkpoint prefix it transported.  The case the guest was executing is
-    recorded with an explicit terminated status, and the next session starts
-    at the following case in the released traversal order.  Nothing is ever
-    retried and the number of resumptions is bounded.
+    checkpoint prefix it transported.  That termination is an abort of the
+    session, not a result for whatever case was in flight: the host invents no
+    status, and the next session resumes at the same index the dead one
+    reached, so every case after the last transported result is simply re-run.
+    The last case dEQP announced on the console is kept as a diagnostic only.
+    A shard that cannot get past a case exhausts its bounded resumptions and
+    fails as a whole rather than blaming that case.
     """
     if max_resumptions < 0:
         raise CampaignError("resumption bound must not be negative")
@@ -4525,22 +4504,12 @@ def run_shard_sessions(
             # caselist: its own progress watchdog or a crash ended the case.
             outcome = "stalled" if guest_reported_stall(raw.artifacts) else "aborted"
         position = resume_after + len(completed)
-        terminated = (
-            None
-            if finished or position >= len(expected)
-            else expected[position]
-        )
-        status = (
-            None
-            if terminated is None
-            else STALL_STATUS
-            if outcome == "stalled"
-            else ABORT_STATUS
-        )
-        if terminated is not None and prefix.in_flight_case not in (None, terminated):
+        pending = expected[position] if position < len(expected) else None
+        if not finished and prefix.in_flight_case not in (None, pending):
             raise CampaignError(
                 "guest QPA trailer names a case outside the traversal order"
             )
+        console_case = None if finished else last_console_case(raw.transcript)
         write_artifacts(raw.artifacts, artifact_path)
         sessions.append(
             SessionEvidence(
@@ -4549,8 +4518,7 @@ def run_shard_sessions(
                 resume_after=resume_after,
                 qpa_text=qpa_text,
                 completed_cases=completed,
-                terminated_case=terminated,
-                terminated_status=status,
+                console_case=console_case,
                 console=relative_session_path(directory, console_path),
                 artifact_transport=relative_session_path(directory, transport_path),
                 artifacts_directory=relative_session_path(directory, artifact_path),
@@ -4566,10 +4534,11 @@ def run_shard_sessions(
             )
         )
         merged.update(prefix.results)
-        if terminated is not None:
-            merged[terminated] = status or ABORT_STATUS
-        resume_after = position + (1 if terminated is not None else 0)
-        if index == 0 and terminated is not None:
+        # The dead session contributed every result it transported and nothing
+        # else, so the next one restarts at exactly the case it was running.
+        resume_after = position
+        resuming = not finished and resume_after < len(expected)
+        if index == 0 and resuming:
             # The shard-level artifact set becomes the host-merged one, so the
             # first guest's own files move beside every later session's.
             nested = directory / SESSION_DIRECTORY / "00" / "artifacts"
@@ -4581,12 +4550,12 @@ def run_shard_sessions(
             )
         if on_sessions is not None:
             on_sessions(tuple(sessions))
-        if finished or resume_after >= len(expected):
+        if not resuming:
             break
         print(
             f"VK-GL-CTS shard session {index} {outcome} after "
-            f"{len(completed)} cases; recording {terminated}={status} and "
-            f"resuming at index {resume_after}",
+            f"{len(completed)} cases; the emulator exited around "
+            f"{console_case}, re-running from index {resume_after}",
             file=sys.stderr,
             flush=True,
         )
@@ -4594,10 +4563,21 @@ def run_shard_sessions(
         # shard still leaves a truthful catalogue of its guest sessions.
         if len(sessions) > max_resumptions:
             raise CampaignError(
-                f"shard exhausted its {max_resumptions} resumptions with "
-                f"{len(expected) - resume_after} cases left"
+                f"shard session aborted {len(sessions)} times at "
+                f"{console_case or pending}"
             )
     return tuple(sessions), expected, merged
+
+
+def last_console_case(transcript: str) -> str | None:
+    """Return the last case dEQP announced on the guest console.
+
+    This is a diagnostic, not a verdict.  The host never turns it into a
+    result: a session that died while this case was on screen is re-run from
+    the last case it actually transported, which may be an earlier one.
+    """
+    found = CONSOLE_CASE.findall(transcript)
+    return found[-1] if found else None
 
 
 def guest_reported_stall(artifacts: dict[str, bytes]) -> bool:
@@ -4658,9 +4638,11 @@ def merged_summary(
 ) -> bytes:
     """Return the host-merged shard summary.
 
-    The completing guest's own identity rows are kept; the shard-wide
-    counts, the merge provenance, and every host-recorded terminated case
-    are stated explicitly so nothing looks like an ordinary guest result.
+    The completing guest's own identity rows are kept and the shard-wide
+    counts and merge provenance are stated explicitly, so a resumed shard
+    never looks like a single guest's run.  No case is host-recorded: the
+    ``host_recorded_`` rows are dropped from the base summary so a guest
+    cannot smuggle one into a merged one either.
     """
     overridden = (
         "cts_rc=",
@@ -4674,20 +4656,12 @@ def merged_summary(
         for line in base.decode("utf-8", errors="strict").splitlines()
         if line and not line.startswith(overridden)
     ]
-    recorded = [
-        f"host_recorded_{index}={session.terminated_case}="
-        f"{session.terminated_status}"
-        for index, session in enumerate(
-            row for row in sessions if row.terminated_case is not None
-        )
-    ]
     rows = [
-        f"cts_rc={1 if recorded else 0}",
+        "cts_rc=0",
         *kept,
         f"expected_case_count={expected_count}",
         "provenance=host-merged",
         f"sessions={len(sessions)}",
-        *recorded,
     ]
     return "".join(f"{row}\n" for row in rows).encode("utf-8")
 
@@ -4708,19 +4682,9 @@ def shard_provenance(sessions: Sequence[SessionEvidence]) -> str:
     """
     if not sessions:
         raise CampaignError("a shard needs at least one guest session")
-    if len(sessions) == 1 and sessions[0].terminated_case is None:
+    if len(sessions) == 1:
         return "single-session-guest"
     return "host-merged"
-
-
-def host_recorded_results(
-    sessions: Sequence[SessionEvidence],
-) -> dict[str, str]:
-    return {
-        session.terminated_case: session.terminated_status or ABORT_STATUS
-        for session in sessions
-        if session.terminated_case is not None
-    }
 
 
 def validate_session_provenance(
@@ -4794,8 +4758,7 @@ def validate_session_provenance(
                 resume_after=int(record.get("resume_after", 0)),
                 qpa_text=decode_qpa(stored.get(QPA_ARTIFACT, b"")),
                 completed_cases=(),
-                terminated_case=record.get("terminated_case"),
-                terminated_status=record.get("terminated_status"),
+                console_case=record.get("console_case"),
                 console=str(record["console"]),
                 artifact_transport=str(record["artifact_transport"]),
                 artifacts_directory=str(record["artifacts_directory"]),
@@ -4803,11 +4766,11 @@ def validate_session_provenance(
                 shutdown_stall=bool(record.get("shutdown_stall", False)),
             )
         )
-    # A shard may end on a guest that never stopped only when the host wrote
-    # down why: otherwise the clean stop marker is still required of it.
-    if rebuilt[-1].terminated_case is None and rebuilt[-1].outcome != "completed":
+    # An aborted session is never a result, so a shard can only end on a guest
+    # that finished its caselist: anything else was retried or gave up.
+    if rebuilt[-1].outcome != "completed":
         raise CampaignError(
-            "a shard whose last session did not complete must record its case"
+            "a shard must end on a session that completed its caselist"
         )
     if provenance != shard_provenance(rebuilt):
         raise CampaignError("shard artifact provenance contradicts its sessions")
@@ -4816,8 +4779,6 @@ def validate_session_provenance(
     recomputed = merged_shard_artifacts(rebuilt, directory, expected_count)
     if recomputed != artifacts:
         raise CampaignError("host-merged shard artifacts are not reproducible")
-    if metadata.get("host_recorded_results") != host_recorded_results(rebuilt):
-        raise CampaignError("host-recorded shard results changed")
 
 
 def git_state() -> dict[str, Any]:
@@ -5861,7 +5822,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "artifacts_provenance": shard_provenance(rows),
                     "shutdown_stalls": sum(1 for row in rows if row.shutdown_stall),
                     "sessions": session_records(rows, artifact_directory),
-                    "host_recorded_results": host_recorded_results(rows),
                 }
             )
             write_json(artifact_directory / "run.json", metadata)
@@ -5910,15 +5870,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
             raise CampaignError("merged shard results left the selected order")
         record_sessions(sessions)
         emulator_return_code = final.return_code
-        if final.terminated_case is None:
-            if final.shutdown_stall:
-                # The guest transported every acknowledged frame and then failed
-                # to power off inside its shutdown grace.  The host reaped it and
-                # keeps the complete evidence, so only the memory-manager
-                # contract still applies to that transcript.
-                validate_drm_shutdown(transcript)
-            else:
-                validate_guest_shutdown(transcript)
+        if final.shutdown_stall:
+            # The guest transported every acknowledged frame and then failed
+            # to power off inside its shutdown grace.  The host reaped it and
+            # keeps the complete evidence, so only the memory-manager
+            # contract still applies to that transcript.
+            validate_drm_shutdown(transcript)
+        else:
+            validate_guest_shutdown(transcript)
     metadata["artifact_transport_sha256"] = sha256_file(artifact_log_path)
     metadata["console_sha256"] = sha256_file(log_path)
     if options.renderer == "virgl":

@@ -197,7 +197,6 @@ def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard,
         "max_resumptions": definition["max_resumptions"],
         "console_stall_timeout": 600, "console_stall_busy_timeout": 1800,
         "session_count": 1, "artifacts_provenance": "single-session-guest",
-        "host_recorded_results": {},
         "completed_cases": len(rows), "status_totals": gl.status_totals(rows),
         "waived_results": {},
         "selected_caselist_sha256": hashlib.sha256(artifacts["selected.txt"]).hexdigest(),
@@ -224,21 +223,20 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     selection = options.matrix_run.selection
     rows = results(shard)
     cases = list(rows)
-    terminated = cases[1]
     renderer = renderer_probe(definition)
     selected = "".join(f"{case}\n" for case in cases).encode()
     stalled_qpa = fixtures.qpa(
         *(fixtures.qpa_result(case, rows[case]) for case in cases[:1])
     ).replace("#endSession\n", "").encode()
     final_qpa = fixtures.qpa(
-        *(fixtures.qpa_result(case, rows[case]) for case in cases[2:])
+        *(fixtures.qpa_result(case, rows[case]) for case in cases[1:])
     ).encode()
     ownership = ownership_record(attempt)
     payloads = [
         {"renderer.txt": renderer, "selected.txt": selected,
          "results.qpa": stalled_qpa},
         {"renderer.txt": renderer,
-         "selected.txt": "".join(f"{case}\n" for case in cases[2:]).encode(),
+         "selected.txt": "".join(f"{case}\n" for case in cases[1:]).encode(),
          "results.qpa": final_qpa, "summary.txt": b"cts_rc=0\n"},
     ]
     sessions = []
@@ -251,7 +249,9 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
             (artifacts / name).write_bytes(value)
         console = guest / "console.log"
         console.write_text(
-            "Darwin UML stopped: result=0 exitcode=0\n" if index else "went quiet\n"
+            "Darwin UML stopped: result=0 exitcode=0\n"
+            if index
+            else f"Test case '{cases[1]}'..\nwent quiet\n"
         )
         transport = guest / gl.ARTIFACT_TRANSPORT_LOG
         transport.write_text("".join(
@@ -266,11 +266,10 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
         sessions.append(gl.SessionEvidence(
             index=index,
             outcome="completed" if index else "stalled",
-            resume_after=0 if index == 0 else 2,
+            resume_after=0 if index == 0 else 1,
             qpa_text=gl.decode_qpa(payload["results.qpa"]),
-            completed_cases=tuple(cases[:1]) if index == 0 else tuple(cases[2:]),
-            terminated_case=None if index else terminated,
-            terminated_status=None if index else gl.STALL_STATUS,
+            completed_cases=tuple(cases[:1]) if index == 0 else tuple(cases[1:]),
+            console_case=None if index else cases[1],
             console=str(console.relative_to(run)),
             artifact_transport=str(transport.relative_to(run)),
             artifacts_directory=str(artifacts.relative_to(run)),
@@ -311,7 +310,6 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
         "console_stall_timeout": 600, "console_stall_busy_timeout": 1800,
         "session_count": len(sessions), "artifacts_provenance": "host-merged",
         "sessions": gl.session_records(sessions, run),
-        "host_recorded_results": gl.host_recorded_results(sessions),
         "completed_cases": len(merged_results),
         "status_totals": gl.status_totals(merged_results),
         "waived_results": {},
@@ -747,28 +745,26 @@ class GraphicsCampaignTests(unittest.TestCase):
             with self.assertRaises(gl.CampaignError):
                 campaign.validate_attempt(root, definition, key)
 
-    def test_resumed_gl_attempt_reparses_and_names_its_recorded_timeout(self) -> None:
+    def test_resumed_gl_attempt_reparses_as_one_complete_shard(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             definition = spec(root)
             key = campaign.Shard("gl46", 0, 7)
             run = make_resumed_gl_attempt(root, definition, key)
             metadata = json.loads((run / "run.json").read_text())
-            recorded = metadata["host_recorded_results"]
-            self.assertEqual(list(recorded.values()), ["Timeout"])
-            # Structural reparse of the multi-session shard succeeds; the shard
-            # then fails exactly on its recorded, explicit non-pass status.
-            with self.assertRaisesRegex(
-                gl.CampaignError,
-                f"official CTS runner rejects case result: "
-                f"{next(iter(recorded))}=Timeout",
-            ):
-                campaign.validate_attempt(root, definition, key)
+            # The emulator exit was a session abort: nothing is host-recorded,
+            # the console name is kept only as a diagnostic, and the case the
+            # dead guest was running carries the re-run guest's own status.
+            self.assertNotIn("host_recorded_results", metadata)
+            self.assertIsNotNone(metadata["sessions"][0]["console_case"])
+            self.assertIsNone(metadata["sessions"][1]["console_case"])
+            self.assertEqual(metadata["sessions"][1]["resume_after"], 1)
+            campaign.validate_attempt(root, definition, key)
             merged = run / "artifacts/results.qpa"
             original = merged.read_bytes()
             merged.write_bytes(original.replace(
-                b"#terminateTestCaseResult Timeout",
-                b'<Result StatusCode="Pass">result</Result>'))
+                b'<Result StatusCode="Pass">result</Result>',
+                b'<Result StatusCode="Fail">result</Result>', 1))
             with self.assertRaisesRegex(gl.CampaignError, "not reproducible"):
                 campaign.validate_attempt(root, definition, key)
             merged.write_bytes(original)
@@ -1374,8 +1370,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             console = f"{gl.SESSION_DIRECTORY}/00/console.log"
             (run / console).parent.mkdir(parents=True)
             (run / console).write_text("guest delivered its evidence and never stopped\n")
-            metadata = {"sessions": [{"console": console, "terminated_case": None,
-                                      "shutdown_stall": True}]}
+            metadata = {"sessions": [{"console": console, "shutdown_stall": True}]}
             final, clean_stop, stalled = campaign.check_session_ownership(
                 run, metadata, "token")
             self.assertEqual(final, run / console)
