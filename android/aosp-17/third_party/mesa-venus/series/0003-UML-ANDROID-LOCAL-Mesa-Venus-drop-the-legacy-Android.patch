@@ -1,4 +1,4 @@
-From 81a8a6ff595601ce3f7619d7b3f50cc97b98b257 Mon Sep 17 00:00:00 2001
+From 8d5f286b1620609a2953f3bb9298a5659fb4d691 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 03:00:35 +0000
 Subject: [PATCH 3/4] UML-ANDROID-LOCAL: Mesa Venus drop the legacy Android.mk
