@@ -1,4 +1,4 @@
-From 07904a6d9b39e7a277086787d4737d6eac3f15fa Mon Sep 17 00:00:00 2001
+From d409d7f4c84aa6ec9505aa89833624e6d5a67f53 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:35:56 +0900
 Subject: [PATCH 21/34] vrend: type integer attachments and attributes on a
@@ -41,7 +41,7 @@ index 2c09dd6..88f8eae 100644
     if (!a)
         return false;
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index a2dab06..345b45a 100644
+index d6045c1..d2efe20 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -1218,15 +1218,21 @@ static bool logiop_require_inout(const struct vrend_shader_key *key)

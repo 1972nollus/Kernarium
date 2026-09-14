@@ -1,0 +1,61 @@
+From a8368becd79d8377535fd1ea4175ee005113a2ef Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 21:45:41 +0900
+Subject: [PATCH 19/34] vrend: do not require EXT_texture_shadow_lod where the
+ slot is a comparison
+
+TGSI puts a shadow comparison value that does not fit the coordinate vector
+into a second operand, and the emitter appends that operand to the same
+buffer it uses for a LOD bias. Two forms therefore look biased although
+nothing about them is: TGSI_OPCODE_TG4, where the slot holds the gather's
+comparison value, and TGSI_OPCODE_TEX2 on TGSI_TEXTURE_SHADOWCUBE_ARRAY,
+where it holds the lookup's. Both asked the host for EXT_texture_shadow_lod.
+
+textureGather on a shadow sampler and texture(samplerCubeArrayShadow, vec4,
+float) are both core GLSL; the extension exists to add the bias and
+explicit-LOD forms that core leaves out, which TXB2 and TXL2 still ask for
+because they append a real bias in .y after the comparison value in .x. A
+desktop GL host has no reason to implement the extension - zink never sets
+pipe_caps::texture_shadow_lod, so Mesa's GLSL compiler rejects the `require`
+outright - and the generated shader then fails to compile. For the gather
+that put the context into error, which on this host costs the rest of the
+run rather than the one draw; for the cube-array lookup the draw is dropped
+and the guest reads back the cleared surface, which is what all three shader
+stages of dEQP-GL45-ES31.functional.shaders.opaque_type_indexing.sampler.*.
+samplercubearrayshadow report. Compiling the emitted source against such a
+host directly reproduces it: every stage compiles the lookup with no
+extension line and every stage is rejected with "extension
+`GL_EXT_texture_shadow_lod' unsupported in <stage> shader" when the line is
+present.
+
+Exclude both opcodes. A host that does advertise the extension is unaffected,
+because the requirement was never what made either form work: the generated
+call is the same either way.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_shader.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
+index 83f8bad..d6045c1 100644
+--- a/src/vrend/vrend_shader.c
++++ b/src/vrend/vrend_shader.c
+@@ -3366,8 +3366,16 @@ static void translate_tex(struct dump_ctx *ctx,
+ 
+    bool has_bias = strbuf_get_len (&bias_buf) != 0;
+    bool has_offset = strbuf_get_len (&offset_buf) != 0;
+-   // EXT_texture_shadow_lod defines a few more functions handling bias
++   // EXT_texture_shadow_lod defines a few more functions handling bias.
++   // TEX2 and TG4 are not among them: neither passes a bias, both carry the
++   // shadow comparison value that does not fit the coordinate in that same
++   // slot, and both forms - texture(samplerCubeArrayShadow, vec4, float) and
++   // textureGather on a shadow sampler - are core GLSL. Requiring the
++   // extension for them fails to compile on a host that has no reason to
++   // implement it.
+    if (has_bias &&
++       inst->Instruction.Opcode != TGSI_OPCODE_TEX2 &&
++       inst->Instruction.Opcode != TGSI_OPCODE_TG4 &&
+        (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
+         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE ||
+         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY))
