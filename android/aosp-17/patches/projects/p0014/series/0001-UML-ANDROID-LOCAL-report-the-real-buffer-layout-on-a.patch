@@ -1,0 +1,66 @@
+From 5063a506965207282337dfed81edf4106b6a4632 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 09:59:08 +0000
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: report the real buffer layout on an
+ upstream virtio-gpu
+
+The virgl backend asks for a resource layout with the ChromeOS extended
+resource info ioctl. That reply shares its first word with the request
+type, so a kernel that implements only the upstream ioctl returns the type
+unchanged and the driver reports it as a row pitch of one byte. Mesa then
+builds an explicit DRM format modifier layout from it and every image the
+window system hands the Vulkan driver is rejected.
+
+Treat such a reply as carrying no layout, and fall back to the allocation
+recorded in the buffer handle when the driver reports no stride at all: a
+caller that gets no stride cannot use the buffer either way.
+
+Change-Id: I56b7fb7fda7c892b3cd0635f69acaa59e4b68b1d
+---
+ cros_gralloc/gralloc0/gralloc0.cc | 12 ++++++++++++
+ virtgpu_virgl.c                   |  9 +++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/cros_gralloc/gralloc0/gralloc0.cc b/cros_gralloc/gralloc0/gralloc0.cc
+index 8f97b2121150179e1218341d5fa52dc9e6407e8e..8c4bf45c5dfb29dedb418aeeac2e355ee29d2b04 100644
+--- a/cros_gralloc/gralloc0/gralloc0.cc
++++ b/cros_gralloc/gralloc0/gralloc0.cc
+@@ -350,6 +350,18 @@ static int gralloc0_perform(struct gralloc_module_t const *module, int op, ...)
+ 			info->stride[i] = strides[i];
+ 			info->offset[i] = offsets[i];
+ 		}
++
++		/*
++		 * A driver that cannot ask the host for a resource layout reports
++		 * none. The allocation recorded in the handle is the layout then,
++		 * and a caller that gets no stride at all cannot use the buffer.
++		 */
++		if (!info->stride[0]) {
++			for (uint32_t i = 0; i < hnd->num_planes; i++) {
++				info->stride[i] = hnd->strides[i];
++				info->offset[i] = hnd->offsets[i];
++			}
++		}
+ 		break;
+ 	case GRALLOC_DRM_GET_USAGE:
+ 		req_usage = va_arg(args, uint32_t);
+diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
+index 92f8c78ec243ad98095c61e44daede46e0732b59..628f1153458ce3d6c15645979fdea61231f5cc7b 100644
+--- a/virtgpu_virgl.c
++++ b/virtgpu_virgl.c
+@@ -1358,6 +1358,15 @@ static int virgl_resource_info(struct bo *bo, uint32_t strides[DRV_MAX_PLANES],
+ 		return ret;
+ 	}
+ 
++	/*
++	 * The extended reply shares its first word with the request type, so a
++	 * kernel that implements only the upstream resource info ioctl returns
++	 * that word unchanged and carries no layout at all. Reporting it as a
++	 * stride would describe every buffer as one byte per row.
++	 */
++	if (res_info.strides[0] == VIRTGPU_RESOURCE_INFO_TYPE_EXTENDED)
++		return 0;
++
+ 	for (uint32_t plane = 0; plane < DRV_MAX_PLANES; plane++) {
+ 		/*
+ 		 * Currently, kernel v4.14 (Betty) doesn't have the extended resource info

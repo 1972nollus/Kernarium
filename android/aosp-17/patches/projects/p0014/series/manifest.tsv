@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ordered generated AOSP project topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-report-the-real-buffer-layout-on-a.patch	75db05c3379186533f88da35214b57d944b90cc9	3a745ab0fb4a1966b1c8a313f06450537428be08f42a47c126f14b10d8a66220	UML-ANDROID-LOCAL: report the real buffer layout on an upstream virtio-gpu
