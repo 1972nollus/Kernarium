@@ -1,7 +1,7 @@
 From 5d7ef766a0f6cd3aaceeff06c53b60cb31cbb9ea Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:51:38 +0900
-Subject: [PATCH 2/3] protocol: serialize device-address commands and
+Subject: [PATCH 2/4] protocol: serialize device-address commands and
  maintenance features
 
 Append device-address command IDs after the ones upstream assigns, without
