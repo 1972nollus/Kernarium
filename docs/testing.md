@@ -370,10 +370,30 @@ inventory captured from the exact emulator, image, and provider
 (`--config-inventory gl46`, replayed with `--config-inventory-run`) assigns
 the first/other EGL configuration roles.
 
-`tests/integration/gpu/run_graphics_cts_campaign.py` coordinates both suites:
+`--matrix gles32` runs the OpenGL ES 3.2 must-pass matrix from the same
+authenticated image, on the EGL configurations an ordered `CTS-Configs.es32`
+inventory reports (`--config-inventory gles32`); a GL46 inventory never stands
+in for it. Its run records come from the three ES must-pass documents pinned
+beside the runner (`vk_gl_cts_gles_mustpass*.xml`, with the caselist
+identities in `vk_gl_cts_gles32_matrix.json`, which must agree with the CTS
+identity wherever they name the same file), and the guest re-checks the
+document and caselist digests before a shard runs. Following getTestRunsForES
+in the pinned runner source, the NoContext and Khronos ES collections admit
+every API an ES 3.2 context supports (`KHR-GLES2/3/31/32`, `KHR-GLESEXT`,
+`KHR-NoContext`) and Single Config only the exact API (`KHR-Single-GLES32`);
+the NoContext and Single Config runs happen once, on the first configuration.
+The two AOSP collections the official runner also visits (`dEQP-EGL` and
+`dEQP-GLES2/3/31`) are out of scope: it resolves their surface type from the
+AOSP configuration list, which `CTS-Configs` does not log, so no authenticated
+runtime input reproduces their command lines.
+
+`tests/integration/gpu/run_graphics_cts_campaign.py` coordinates the suites:
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
 most six owned guests at a time (`--jobs` may only lower that), immediately
-refilled. It freezes source, runner, emulator, framework, rootfs, receipt,
+refilled. `--suite` selects them: `vulkan`, `opengl` (GL46), `gles32`, `both`
+(Vulkan and GL46) or `all`. Each OpenGL matrix owns its shard prefix
+(`gl46-runNNNN-kkof08`, `gles32-runNNNN-kkof08`) and its own configuration
+inventory (`--opengl-config-inventory-run`, `--gles32-config-inventory-run`). It freezes source, runner, emulator, framework, rootfs, receipt,
 selection, and timeout identities per attempt, and reverifies completed ones.
 
 A campaign is complete when every shard has one attempt that validates, not
@@ -386,7 +406,10 @@ judged only against the generation that ran it, so a campaign may span several
 emulators without any single result meaning less. What may never change is the
 plan -- the suites, page profile, images, receipts, and EGL configuration set
 that decide which shards exist -- because that is what "every shard passed"
-refers to. A catalogued attempt whose directory has been removed still fails
+refers to. The one exception is adding a matrix: relaunching a campaign with a
+suite it did not have keeps every recorded suite's plan section and shard name
+unchanged and adds only the new suite's shards, so nothing already proved is
+reinterpreted. A catalogued attempt whose directory has been removed still fails
 closed: retrying a failure is ordinary, but no later run can restore what
 deleted evidence proved.
 
