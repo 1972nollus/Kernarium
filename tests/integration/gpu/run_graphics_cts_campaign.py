@@ -44,7 +44,11 @@ LEAF_EXIT_NAME = "leaf-exit.json"
 RUNNERS = {
     "vulkan": Path(vk.__file__).resolve(),
     "gl46": Path(common.__file__).resolve(),
+    "gles32": Path(common.__file__).resolve(),
 }
+# The official OpenGL matrices, and the specification section each one owns.
+GL_SUITES = {"gl46": "opengl", "gles32": "gles32"}
+SUITE_ORDER = ("vulkan", "gl46", "gles32")
 
 
 @dataclass(frozen=True, order=True)
@@ -58,18 +62,27 @@ class Shard:
         return f"{self.suite}{run}-{self.index:02d}of{FRACTIONS:02d}"
 
 
+def suite_manifest(spec: dict[str, Any], suite: str) -> dict[str, Any]:
+    """The must-pass manifest one OpenGL suite runs from."""
+    item = spec[GL_SUITES[suite]]
+    if suite == "gl46":
+        return item["receipt"]["opengl_cts"]["mustpass"]
+    return item["manifest"]
+
+
 def shards(spec: dict[str, Any]) -> tuple[Shard, ...]:
     result = []
-    if "gl46" in spec["suites"]:
-        validate_opengl_run_plan(spec["opengl"])
+    for suite in GL_SUITES:
+        if suite in spec["suites"]:
+            validate_opengl_run_plan(spec, suite)
     for index in range(FRACTIONS):
         for suite in spec["suites"]:
             if suite == "vulkan":
                 result.append(Shard(suite, index))
             else:
-                leaves = {leaf["id"]: leaf for leaf in
-                          spec["opengl"]["receipt"]["opengl_cts"]["mustpass"]["leaves"]}
-                for run in spec["opengl"]["runs"]:
+                leaves = {leaf["id"]: leaf
+                          for leaf in suite_manifest(spec, suite)["leaves"]}
+                for run in spec[GL_SUITES[suite]]["runs"]:
                     # Preserve eight mathematical fractions, but never launch an
                     # empty one (some official no-context leaves have one case).
                     if index < leaves[run["leaf_id"]]["case_count"]:
@@ -77,15 +90,16 @@ def shards(spec: dict[str, Any]) -> tuple[Shard, ...]:
     return tuple(result)
 
 
-def validate_opengl_run_plan(item: dict[str, Any]) -> None:
+def validate_opengl_run_plan(spec: dict[str, Any], suite: str) -> None:
+    item = spec[GL_SUITES[suite]]
+    plan = (common.opengl_cts_plan if suite == "gl46" else common.gles_cts_plan)
     try:
-        expected = common.opengl_cts_plan.expand_runs(
-            item["receipt"]["opengl_cts"]["mustpass"], item["egl_configs"],
-        )
-    except common.opengl_cts_plan.PlanError as error:
+        expected = plan.expand_runs(suite_manifest(spec, suite), item["egl_configs"])
+    except plan.PlanError as error:
         raise common.CampaignError(str(error)) from error
     if item["runs"] != expected:
-        raise common.CampaignError("OpenGL run plan differs from its XML and ordered EGL inventory")
+        raise common.CampaignError(
+            f"{suite} run plan differs from its XML and ordered EGL inventory")
 
 
 def utc_now() -> str:
@@ -128,6 +142,11 @@ def source_identity() -> dict[str, Any]:
         root / "tests/integration/gpu/guest_process.py",
         root / "tests/integration/gpu/vulkan_cts_receipt.py",
         root / "tests/integration/gpu/opengl_cts_plan.py",
+        root / "tests/integration/gpu/gles_cts_plan.py",
+        root / "tests/integration/gpu/vk_gl_cts_gles32_matrix.json",
+        root / "tests/integration/gpu/vk_gl_cts_gles_mustpass.xml",
+        root / "tests/integration/gpu/vk_gl_cts_gles_mustpass_noctx.xml",
+        root / "tests/integration/gpu/vk_gl_cts_gles_mustpass_single.xml",
         root / "tests/integration/gpu/vk_gl_cts_waivers.json",
         root / "scripts/boot_kde_vnc.py",
         root / "dependencies/manifest.tsv",
@@ -144,9 +163,13 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
     regular_file(emulator)
     if not os.access(emulator, os.X_OK):
         raise common.CampaignError("emulator is not executable")
-    suites = (["vulkan"] if options.suite == "vulkan" else
-              ["gl46"] if options.suite == "opengl" else
-              ["vulkan", "gl46"])
+    suites = {
+        "vulkan": ["vulkan"],
+        "opengl": ["gl46"],
+        "gles32": ["gles32"],
+        "both": ["vulkan", "gl46"],
+        "all": ["vulkan", "gl46", "gles32"],
+    }[options.suite]
     spec = {
         "suites": suites, "fraction_count": FRACTIONS,
         "cpus": CPUS, "memory": MEMORY, "engine": "jit",
@@ -173,39 +196,58 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
             "receipt_path": str(vk.RECEIPT_PATH),
             "receipt_sha256": common.sha256_file(vk.RECEIPT_PATH),
         }
-    if "gl46" in suites:
+    if any(suite in suites for suite in GL_SUITES):
+        identity = common.load_identity()
         receipt_path = options.opengl_receipt.resolve()
-        receipt, contract = common.load_derivative_receipt(
-            receipt_path, common.load_identity()
-        )
+        receipt, contract = common.load_derivative_receipt(receipt_path, identity)
         if (receipt.get("artifact") != "uml-vulkan-zink-gl-rootfs"
                 or receipt.get("schema_version") != 4):
             raise common.CampaignError("OpenGL requires the XML-scoped schema-4 Zink receipt")
         rootfs = options.opengl_rootfs.resolve()
         common.validate_rootfs_file(rootfs, contract)
-        inventory = options.opengl_config_inventory_run.resolve()
-        configs, digest = common.load_config_inventory_evidence(
-            inventory, "gl46", options.page_profile, "vnc", contract,
-            {key: spec[key] for key in ("emulator_sha256", "kosmickrisp_sha256")},
-        )
-        config_rows = [{"id": config.identifier, "surface_types": list(config.surface_types)}
-                       for config in configs]
-        runs = common.opengl_cts_plan.expand_runs(receipt["opengl_cts"]["mustpass"], config_rows)
-        inventory_files = [inventory, inventory.parent / "console.log",
-                           inventory.parent / common.ARTIFACT_TRANSPORT_LOG,
-                           *(inventory.parent / "artifacts" / name
-                             for name in sorted(common.CONFIG_INVENTORY_ARTIFACTS))]
-        for path in inventory_files:
-            regular_file(path)
-        spec["opengl"] = {
-            "renderer": options.opengl_renderer,
-            "rootfs": str(rootfs), "receipt": receipt,
-            "receipt_path": str(receipt_path),
-            "receipt_sha256": common.sha256_file(receipt_path),
-            "config_inventory_run": str(inventory), "egl_configs": config_rows,
-            "egl_config_sha256": digest, "runs": runs,
-            "inventory_files": {str(path): common.sha256_file(path) for path in inventory_files},
-        }
+        manifest = None
+        for suite in GL_SUITES:
+            if suite not in suites:
+                continue
+            inventory = (options.opengl_config_inventory_run if suite == "gl46"
+                         else options.gles32_config_inventory_run).resolve()
+            configs, digest = common.load_config_inventory_evidence(
+                inventory, suite, options.page_profile, "vnc", contract,
+                {key: spec[key] for key in ("emulator_sha256", "kosmickrisp_sha256")},
+            )
+            config_rows = [{"id": config.identifier,
+                            "surface_types": list(config.surface_types)}
+                           for config in configs]
+            if suite == "gl46":
+                runs = common.opengl_cts_plan.expand_runs(
+                    receipt["opengl_cts"]["mustpass"], config_rows)
+            else:
+                manifest = common.load_gles32_matrix(identity)
+                if receipt["opengl_cts"]["mustpass"]["runner_source"] != (
+                    common.gles_cts_plan.RUNNER_SOURCE
+                ):
+                    raise common.CampaignError(
+                        "the ES 3.2 run table and the sealed runner source disagree")
+                runs = common.gles_cts_plan.expand_runs(manifest, config_rows)
+            inventory_files = [inventory, inventory.parent / "console.log",
+                               inventory.parent / common.ARTIFACT_TRANSPORT_LOG,
+                               *(inventory.parent / "artifacts" / name
+                                 for name in sorted(common.CONFIG_INVENTORY_ARTIFACTS))]
+            for path in inventory_files:
+                regular_file(path)
+            item = {
+                "renderer": options.opengl_renderer,
+                "rootfs": str(rootfs), "receipt": receipt,
+                "receipt_path": str(receipt_path),
+                "receipt_sha256": common.sha256_file(receipt_path),
+                "config_inventory_run": str(inventory), "egl_configs": config_rows,
+                "egl_config_sha256": digest, "runs": runs,
+                "inventory_files": {str(path): common.sha256_file(path)
+                                    for path in inventory_files},
+            }
+            if manifest is not None and suite == "gles32":
+                item["manifest"] = manifest
+            spec[GL_SUITES[suite]] = item
     return spec
 
 
@@ -217,17 +259,20 @@ def check_current_inputs(spec: dict[str, Any]) -> None:
         "source": source_identity(),
     }, {key: spec[key] for key in
         ("emulator_sha256", "kosmickrisp_sha256", "source")})
-    for name in ("vulkan", "opengl"):
+    for name in ("vulkan", *GL_SUITES.values()):
         if name in spec:
             item = spec[name]
             if common.sha256_file(Path(item["receipt_path"])) != item["receipt_sha256"]:
                 raise common.CampaignError(f"{name} receipt changed during campaign")
-    if "opengl" in spec:
-        for name, digest in spec["opengl"]["inventory_files"].items():
-            path = Path(name)
+    for name in GL_SUITES.values():
+        if name not in spec:
+            continue
+        for entry, digest in spec[name]["inventory_files"].items():
+            path = Path(entry)
             regular_file(path)
             if common.sha256_file(path) != digest:
-                raise common.CampaignError("OpenGL configuration inventory changed during campaign")
+                raise common.CampaignError(
+                    f"{name} configuration inventory changed during campaign")
 
 
 def spec_runner(spec: dict[str, Any], suite: str) -> str:
@@ -265,15 +310,16 @@ def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]
             command += ["--relax-diagnostics"]
     else:
         command += ["--console-stall-busy-timeout", str(spec["console_stall_busy_timeout"])]
-        run = spec["opengl"]["runs"][shard.run_index]
-        command += ["--renderer", spec["opengl"]["renderer"],
-                    "--display", "vnc", "--matrix", "gl46",
+        item = spec[GL_SUITES[shard.suite]]
+        run = item["runs"][shard.run_index]
+        command += ["--renderer", item["renderer"],
+                    "--display", "vnc", "--matrix", shard.suite,
                     "--egl-config-index", str(run["egl_config_index"]),
                     "--mustpass-config-index", str(run["configuration_index"]),
-                    "--config-inventory-run", spec["opengl"]["config_inventory_run"],
+                    "--config-inventory-run", item["config_inventory_run"],
                     "--rootfs-type", "ext4",
-                    "--rootfs", spec["opengl"]["rootfs"],
-                    "--rootfs-receipt", spec["opengl"]["receipt_path"]]
+                    "--rootfs", item["rootfs"],
+                    "--rootfs-receipt", item["receipt_path"]]
     return command
 
 
@@ -293,13 +339,37 @@ def plan_identity(spec: dict[str, Any]) -> dict[str, Any]:
     if "vulkan" in spec["suites"]:
         plan["vulkan"] = {"rootfs": spec["vulkan"]["rootfs"],
                           "receipt_sha256": spec["vulkan"]["receipt_sha256"]}
-    if "gl46" in spec["suites"]:
-        item = spec["opengl"]
-        plan["opengl"] = {"rootfs": item["rootfs"],
-                          "renderer": item["renderer"],
-                          "receipt_sha256": item["receipt_sha256"],
-                          "egl_config_sha256": item["egl_config_sha256"],
-                          "runs": item["runs"]}
+    for suite, section in GL_SUITES.items():
+        if suite not in spec["suites"]:
+            continue
+        item = spec[section]
+        plan[section] = {"rootfs": item["rootfs"],
+                         "renderer": item["renderer"],
+                         "receipt_sha256": item["receipt_sha256"],
+                         "egl_config_sha256": item["egl_config_sha256"],
+                         "runs": item["runs"]}
+    return plan
+
+
+def extend_plan(stored: Any, plan: dict[str, Any]) -> dict[str, Any]:
+    """Accept a plan that only adds suites to the one already recorded.
+
+    Adding a matrix to a running campaign must never reinterpret a shard that
+    already passed, so every recorded suite keeps its own section byte for
+    byte and its shard names are unchanged; only the added suite's section and
+    its name in the suite list are new.
+    """
+    if not isinstance(stored, dict) or not isinstance(stored.get("suites"), list):
+        raise common.CampaignError("campaign evidence changed plan")
+    added = [suite for suite in plan["suites"] if suite not in stored["suites"]]
+    kept = [suite for suite in plan["suites"] if suite in stored["suites"]]
+    if kept != stored["suites"] or not added:
+        raise common.CampaignError("campaign evidence changed plan")
+    sections = {GL_SUITES[suite] for suite in added if suite in GL_SUITES}
+    sections.update(suite for suite in added if suite not in GL_SUITES)
+    if {**stored, "suites": plan["suites"],
+            **{key: plan[key] for key in sections}} != plan:
+        raise common.CampaignError("campaign evidence changed plan")
     return plan
 
 
@@ -688,7 +758,7 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
         selected = common.parse_case_list(artifacts["expected.txt"].decode("utf-8"))
         results = common.validate_qpa_union(common.decode_qpa(artifacts["results.qpa"]), selected)
     else:
-        item = spec["opengl"]
+        item = spec[GL_SUITES[shard.suite]]
         receipt = item["receipt"]
         options = common.parse_arguments(args)
         selection = options.matrix_run.selection
@@ -707,7 +777,7 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
             "rootfs_sha256": receipt["derivative"]["sha256"],
             "glcts_sha256": receipt["opengl_cts"]["executable"]["sha256"],
             "successful_case_statuses": receipt["runner_oracle"]["successful"],
-            "api": "gl46", "leaf": leaf.identifier, "leaf_sha256": leaf.sha256,
+            "api": shard.suite, "leaf": leaf.identifier, "leaf_sha256": leaf.sha256,
             "fraction": [shard.index, FRACTIONS], "exact_cases": [],
             "seed": options.matrix_run.configuration.base_seed,
             "matrix": common.matrix_metadata(options),
@@ -764,7 +834,7 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
         })
     common.validate_official_runner_results(
         results, receipt["runner_oracle"]["successful"],
-        waived if shard.suite == "gl46" else ())
+        waived if shard.suite in GL_SUITES else ())
     value = {"status_totals": common.status_totals(results), "cases": len(results)}
     if include_results:
         value["results"] = results
@@ -786,8 +856,8 @@ def aggregate(campaign: Path, spec: dict[str, Any],
               passed: dict[str, dict[str, Any]]) -> dict[str, Any]:
     suites = {}
     for suite in spec["suites"]:
-        if suite == "gl46":
-            suites[suite] = aggregate_opengl(campaign, spec, passed)
+        if suite in GL_SUITES:
+            suites[suite] = aggregate_opengl(campaign, spec, passed, suite)
             continue
         counts: Counter[str] = Counter()
         totals: Counter[str] = Counter()
@@ -825,10 +895,11 @@ def aggregate(campaign: Path, spec: dict[str, Any],
 
 
 def aggregate_opengl(campaign: Path, spec: dict[str, Any],
-                     passed: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    item = spec["opengl"]
-    validate_opengl_run_plan(item)
-    manifest = item["receipt"]["opengl_cts"]["mustpass"]
+                     passed: dict[str, dict[str, Any]],
+                     suite: str = "gl46") -> dict[str, Any]:
+    item = spec[GL_SUITES[suite]]
+    validate_opengl_run_plan(spec, suite)
+    manifest = suite_manifest(spec, suite)
     leaves = {row["id"]: row for row in manifest["leaves"]}
     unique: set[str] = set()
     totals: Counter[str] = Counter()
@@ -842,13 +913,13 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any],
         run_waived: set[str] = set()
         for index in range(min(FRACTIONS, leaf["case_count"])):
             result = passing_attempt(
-                campaign, passed, Shard("gl46", index, run["index"]),
+                campaign, passed, Shard(suite, index, run["index"]),
                 include_results=True,
             )
             rows = result["results"]
             expected = (leaf["case_count"] - index + FRACTIONS - 1) // FRACTIONS
             if len(rows) != expected:
-                raise common.CampaignError("OpenGL fraction count changed")
+                raise common.CampaignError(f"{suite} fraction count changed")
             fractions[index] = list(rows)
             counts.update(rows.keys())
             run_totals.update(result["status_totals"])
@@ -860,7 +931,8 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any],
         if (len(counts) != leaf["case_count"] or any(count != 1 for count in counts.values())
                 or len(payload) != leaf["size"]
                 or hashlib.sha256(payload).hexdigest() != leaf["sha256"]):
-            raise common.CampaignError("OpenGL fraction union changed the XML-referenced leaf")
+            raise common.CampaignError(
+                f"{suite} fraction union changed the XML-referenced leaf")
         unique.update(counts)
         totals.update(run_totals)
         waived_cases.update(run_waived)
@@ -872,8 +944,8 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any],
             "all_pass": set(run_totals) == {"Pass"},
             "waived_cases": sorted(run_waived),
         })
-    if len(unique) != manifest["unique_case_count"]:
-        raise common.CampaignError("OpenGL XML scope unique union changed")
+    if "unique_case_count" in manifest and len(unique) != manifest["unique_case_count"]:
+        raise common.CampaignError(f"{suite} XML scope unique union changed")
     return {
         "fraction_count": FRACTIONS, "run_count": len(observations),
         "unique_case_count": len(unique), "case_execution_count": sum(totals.values()),
@@ -957,7 +1029,13 @@ def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=("vulkan", "opengl", "both"), required=True)
+    parser.add_argument(
+        "--suite",
+        choices=("vulkan", "opengl", "gles32", "both", "all"),
+        required=True,
+        help="vulkan, opengl (GL46), gles32 (ES 3.2), both (vulkan+opengl) "
+             "or all three",
+    )
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--vulkan-rootfs", type=Path)
@@ -969,6 +1047,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                              "the guest Virgl driver over host Zink")
     parser.add_argument("--opengl-config-inventory-run", type=Path,
                         help="verified run.json from Zink CTS-Configs.gl46 on these exact inputs")
+    parser.add_argument("--gles32-config-inventory-run", type=Path,
+                        help="verified run.json from CTS-Configs.es32 on these exact inputs")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--jobs", type=common.positive_integer, default=MAX_JOBS,
                         help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB")
@@ -1012,13 +1092,20 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         parser.error("--max-attempts must not be negative")
     if options.verify_only and options.dry_run:
         parser.error("--verify-only and --dry-run are mutually exclusive")
-    if options.suite != "opengl" and options.vulkan_rootfs is None:
+    if options.suite in ("vulkan", "both", "all") and options.vulkan_rootfs is None:
         parser.error("Vulkan requires --vulkan-rootfs")
     if options.suite != "vulkan" and (
         options.opengl_rootfs is None or options.opengl_receipt is None
-        or options.opengl_config_inventory_run is None
     ):
-        parser.error("OpenGL requires --opengl-rootfs, --opengl-receipt and --opengl-config-inventory-run")
+        parser.error("an OpenGL matrix requires --opengl-rootfs and --opengl-receipt")
+    if options.suite in ("opengl", "both", "all") and (
+        options.opengl_config_inventory_run is None
+    ):
+        parser.error("the GL46 matrix requires --opengl-config-inventory-run")
+    if options.suite in ("gles32", "all") and (
+        options.gles32_config_inventory_run is None
+    ):
+        parser.error("the ES 3.2 matrix requires --gles32-config-inventory-run")
     return options
 
 
@@ -1035,7 +1122,7 @@ def legacy_launcher(record: dict[str, Any], attempted: Sequence[str]
     runners: dict[str, str] = {}
     campaign = record.get("campaign_directory")
     for name in attempted:
-        suite = "vulkan" if name.startswith("vulkan") else "gl46"
+        suite = next(item for item in SUITE_ORDER if name.startswith(item))
         if suite in runners or campaign is None:
             continue
         try:
@@ -1163,7 +1250,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
             stored.setdefault("campaign_directory", str(campaign))
             record = migrate_record(stored)
             record.pop("campaign_directory", None)
-            require(record, {"kind": KIND, "plan": plan_identity(spec)})
+            require(record, {"kind": KIND})
+            plan = plan_identity(spec)
+            if record.get("plan") != plan:
+                # Adding a matrix to a campaign keeps every recorded shard and
+                # its result; anything else is a different campaign.
+                record["plan"] = extend_plan(record.get("plan"), plan)
         elif any(entry.name in attempt_roots for entry in campaign.iterdir()):
             raise common.CampaignError("attempts exist without an original campaign specification")
         else:

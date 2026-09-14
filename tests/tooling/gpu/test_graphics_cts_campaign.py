@@ -107,6 +107,30 @@ def spec(directory: Path, renderer: str = "zink") -> dict:
     }
 
 
+def with_gles32(directory: Path, definition: dict, renderer: str = "zink") -> dict:
+    """The same specification with the ES 3.2 matrix added to it."""
+    definition = copy.deepcopy(definition)
+    receipt = definition["opengl"]["receipt"]
+    _, contract = gl.load_zink_gl_derivative_receipt(receipt, gl.load_identity())
+    inventory = fixtures.write_config_inventory_evidence(
+        directory / "gles32-inventory", "gles32", contract,
+        runtime_identity={key: definition[key] for key in
+                          ("emulator_sha256", "kosmickrisp_sha256")},
+        renderer=renderer,
+    )
+    manifest = gl.load_gles32_matrix()
+    config_rows = definition["opengl"]["egl_configs"]
+    definition["suites"] = ["vulkan", "gl46", "gles32"]
+    definition["gles32"] = {
+        **{key: definition["opengl"][key] for key in
+           ("renderer", "rootfs", "receipt", "receipt_path", "receipt_sha256")},
+        "config_inventory_run": str(inventory), "egl_configs": config_rows,
+        "egl_config_sha256": "f" * 64, "manifest": manifest,
+        "runs": campaign.common.gles_cts_plan.expand_runs(manifest, config_rows),
+    }
+    return definition
+
+
 def results(shard: campaign.Shard) -> dict[str, str]:
     if shard.suite == "vulkan":
         return {"dEQP-VK.mandatory0": "Pass", "dEQP-VK.mandatory1": "Pass",
@@ -340,6 +364,89 @@ class GraphicsCampaignTests(unittest.TestCase):
                 else:
                     self.assertNotIn("--console-stall-busy-timeout", command)
                 self.assertEqual(str(options.rootfs), definition["vulkan" if key.suite == "vulkan" else "opengl"]["rootfs"])
+
+    def test_es32_matrix_adds_its_own_shards_runs_and_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = with_gles32(root, spec(root))
+            keys = campaign.shards(definition)
+            counts = Counter(key.suite for key in keys)
+            self.assertEqual(counts["vulkan"], 8)
+            self.assertEqual(counts["gl46"], 90)
+            # Three one-time runs plus eight first-config and five other-config
+            # rows, eight fractions each, minus the provably empty fractions of
+            # the one-case ES 2.0 no-context leaf.
+            self.assertEqual(len(definition["gles32"]["runs"]), 16)
+            self.assertEqual(counts["gles32"], 16 * 8 - 7)
+            names = [key.name() for key in keys if key.suite == "gles32"]
+            self.assertIn("gles32-run0000-00of08", names)
+            self.assertIn("gles32-run0015-07of08", names)
+            self.assertEqual(len(set(names)), len(names))
+            shard = next(key for key in keys if key.suite == "gles32"
+                         and key.run_index == 15)
+            command = campaign.child_command(definition, shard, root / shard.name())
+            self.assertEqual(command[command.index("--matrix") + 1], "gles32")
+            self.assertEqual(
+                command[command.index("--config-inventory-run") + 1],
+                definition["gles32"]["config_inventory_run"])
+            self.assertEqual(command[command.index("--fraction") + 1],
+                             f"{shard.index},8")
+            run = definition["gles32"]["runs"][15]
+            self.assertEqual(command[command.index("--mustpass-config-index") + 1],
+                             str(run["configuration_index"]))
+
+    def test_adding_the_es32_matrix_keeps_every_recorded_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            extended = with_gles32(root, definition)
+            before = campaign.plan_identity(definition)
+            after = campaign.plan_identity(extended)
+            self.assertEqual(campaign.extend_plan(before, after), after)
+            self.assertEqual(before["opengl"], after["opengl"])
+            self.assertEqual(
+                {key.name() for key in campaign.shards(definition)},
+                {key.name() for key in campaign.shards(extended)
+                 if key.suite != "gles32"})
+            for broken in (
+                {**before, "page_profile": "4k"},
+                {**before, "opengl": {**before["opengl"], "renderer": "virgl"}},
+                {**after, "suites": ["vulkan", "gles32", "gl46"]},
+                after,
+            ):
+                with self.subTest(plan=sorted(broken)), \
+                        self.assertRaisesRegex(gl.CampaignError, "changed plan"):
+                    campaign.extend_plan(broken, after)
+
+    def test_relaunch_with_the_es32_matrix_records_the_extended_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            extended = with_gles32(root, definition)
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 2, "kind": campaign.KIND,
+                "plan": campaign.plan_identity(definition),
+                "generations": [copy.deepcopy(definition)],
+                "attempts": {"gl46-run0000-00of08": [
+                    {"path": "shards/gl46-run0000-00of08", "generation": 0}]},
+                "created_at": "2026-01-01T00:00:00+00:00", "state": "pending",
+            }))
+            passed = every_shard_passed(definition)
+            with mock.patch.object(campaign, "build_spec", return_value=extended), \
+                    mock.patch.object(campaign, "classify_attempts",
+                                      return_value=(passed, [], {}, [])) as classify, \
+                    mock.patch.object(campaign, "run_pending",
+                                      return_value=({}, {}, [])) as launch, \
+                    mock.patch.object(campaign, "aggregate", return_value={}):
+                campaign.main(self.arguments(root) + ["--dry-run"][:0])
+            classify.assert_called_once()
+            launch.assert_called_once()
+            record = json.loads((location / "campaign.json").read_text())
+            self.assertEqual(record["plan"], campaign.plan_identity(extended))
+            self.assertIn("gl46-run0000-00of08", record["attempts"])
+            self.assertEqual(record["generations"][0], definition)
 
     def test_cli_rejects_resource_and_selector_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
