@@ -162,8 +162,8 @@ EXPECTED_LOADER_STAGE = {
 }
 LOADER_RUNTIME_GUEST_PATH = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357"
 EXPECTED_FINAL_TREES = {
-    "mesa": "7f333c512c60e4ca171e419b0f588bbf8623fbbf",
-    "venus-protocol": "82cd85907372d8437e73b2280d27f2fa03ca7fc4",
+    "mesa": "ebf8cb931432934c27c9ccba98256d4439473ce8",
+    "venus-protocol": "c5a6d673c8e6532dfdeeaa34639458bb43139ff0",
     "vulkan-headers": "7509994568d7423209793fb72c3ac793d9aec0c9",
     "vulkan-loader": "9a68aaf7a98185b4e9224323003df0699033d0c4",
     "vk-gl-cts": "baed9ddd836897afcd628c8480b497a3e42bef61",
