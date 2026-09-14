@@ -9,6 +9,7 @@ PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 OVERLAY_SYNC="$ANDROID_ROOT/tools/sync-device-overlay.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
+MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 AOSP_SOURCE=
 
 fail()
@@ -60,9 +61,12 @@ esac
 [ -x "$VERIFIER" ] || fail "AOSP patch verifier is missing"
 [ -x "$OVERLAY_SYNC" ] || fail "device-overlay sync tool is missing"
 [ -x "$JELLY_VERIFIER" ] || fail "Jelly source verifier is missing"
+[ -x "$MESA_VENUS_VERIFIER" ] || fail "Mesa Venus source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
 
 "$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
+"$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect base

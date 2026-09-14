@@ -8,6 +8,7 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
+MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -135,6 +136,8 @@ absolute_path "ACK workspace" "$ACK_WORKSPACE"
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
 [ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
+[ -x "$MESA_VENUS_VERIFIER" ] ||
+	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
 # shellcheck disable=SC1090
@@ -160,6 +163,8 @@ if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
 "$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+	--aosp-source "$AOSP_SOURCE"
+"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
 	--aosp-source "$AOSP_SOURCE"
 
 if [ "$SOURCE_ONLY" -eq 1 ]; then

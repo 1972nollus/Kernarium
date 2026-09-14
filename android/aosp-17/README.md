@@ -45,7 +45,8 @@ upstream AOSP projects.
 
 `overlay/` owns the complete `device/kernarium/darwin` product tree and is
 synchronized as one verified unit. External Jelly has its own pinned source
-and generated series under `third_party/jelly/`.
+and generated series under `third_party/jelly/`, and the Vulkan HAL's Mesa
+source has its own under `third_party/mesa-venus/`.
 
 `third_party/orangefox/` records the official OrangeFox sync identity, the
 fully resolved TWRP Repo manifest, the exact OrangeFox-owned project commits,
@@ -120,6 +121,37 @@ The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
 time artifacts for ordinary applications, no `system_other` image, and no
 loadable modules or DLKM partitions. Applications inside updatable APEXes
 remain subject to the pinned platform's own ART policy.
+
+## Graphics
+
+The GLES stack is the AOSP `external/mesa3d` Virgl port routed through `p0004`.
+The Vulkan HAL is separate: it is Mesa's Venus driver, `VK_DRIVER_ID_MESA_VENUS`
+over Virtio-GPU, built from this project's own guest Mesa source rather than
+from the AOSP Mesa snapshot, so the Android guest and the Linux Venus guest run
+the same driver against the same renderer.
+
+`third_party/mesa-venus/` pins that source as three independent inputs: the
+upstream Mesa revision, the guest Vulkan series under
+[`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md), and the
+generated Android port series beside the metadata. A guest replay assigns new
+commit identities each time it is recreated, so the guest half is pinned by
+tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
+regeneration; the verifier refuses a guest series that changed underneath the
+recorded pin.
+
+The port itself is generated. `tools/generate-mesa-venus-port.py` runs AOSP's
+`meson2hermetic` converter with the checked `soong-port.toml`, then scopes every
+generated module name with a `venus_` prefix because `external/mesa3d` already
+defines the same Mesa module names and Soong module names are global at the Make
+layer. The installed HAL module keeps the name `vulkan.virtio`, which is the
+file name the Android Vulkan loader resolves through `ro.hardware.vulkan`.
+Soong has no equivalent of the guest build's out-of-tree
+`-Dvenus-protocol-dir`, so the port carries the paired generated Venus protocol
+codec at the tree path the upstream snapshot reserves for it.
+
+`vulkan.virtio.so` is a same-process HAL: it is loaded into every application
+that uses Vulkan, so the product labels it `same_process_hal_file` beside the
+Mesa EGL/GLES libraries.
 
 ## Payload reduction
 

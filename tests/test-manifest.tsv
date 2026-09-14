@@ -690,6 +690,7 @@ android17-builder-lane	tests/tooling/android/test_builder_lane.py	tooling	retain
 android17-aosp-patch-regenerator	tests/tooling/android/test_aosp_patch_regenerator.py	tooling	retained
 android17-kernel-patch-regenerator	tests/tooling/android/test_kernel_patch_regenerator.py	tooling	retained
 android17-jelly-source-contract	tests/tooling/android/test_jelly_source_contract.py	tooling	retained
+android17-mesa-venus-source-contract	tests/tooling/android/test_mesa_venus_source_contract.py	tooling	retained
 android17-release-contract	tests/tooling/android/test_release_contract.py	tooling	retained
 android17-macos-launcher-options	tests/tooling/android/test_boot_android.py	tooling	retained
 kernel-source-location-config	tests/tooling/kernel/test_source_location_config.sh	tooling	retained

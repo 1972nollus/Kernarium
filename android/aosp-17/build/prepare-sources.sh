@@ -9,12 +9,15 @@ AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 JELLY_METADATA="$ROOT_DIR/android/aosp-17/third_party/jelly/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
+MESA_VENUS_METADATA="$ROOT_DIR/android/aosp-17/third_party/mesa-venus/metadata.env"
+MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py"
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
 JOBS=
 JELLY_STAGING=
+MESA_VENUS_STAGING=
 
 fail()
 {
@@ -30,10 +33,11 @@ Usage: android/aosp-17/build/prepare-sources.sh \
        --ack-workspace ABSOLUTE_PATH [--jobs N]
 
 Run this command locally on the x86_64 Linux builder. It is the only Android
-producer step allowed to synchronize public AOSP, ACK, and Jelly source. Both
-Repo workspaces must already exist and be clean. Jelly is materialized at its
-pinned external commit plus generated local patch series. No endpoint or
-transport option is accepted.
+producer step allowed to synchronize public AOSP, ACK, Jelly, and guest Mesa
+source. Both Repo workspaces must already exist and be clean. Jelly and the
+Venus Vulkan HAL's Mesa source are materialized at their pinned external
+commits plus generated local patch series. No endpoint or transport option is
+accepted.
 EOF
 }
 
@@ -41,6 +45,9 @@ cleanup()
 {
 	if [ -n "${JELLY_STAGING:-}" ] && [ -d "$JELLY_STAGING" ]; then
 		rm -rf -- "$JELLY_STAGING"
+	fi
+	if [ -n "${MESA_VENUS_STAGING:-}" ] && [ -d "$MESA_VENUS_STAGING" ]; then
+		rm -rf -- "$MESA_VENUS_STAGING"
 	fi
 }
 trap cleanup EXIT HUP INT TERM
@@ -126,6 +133,74 @@ prepare_jelly()
 		--aosp-source "$AOSP_SOURCE"
 }
 
+prepare_mesa_venus()
+{
+	destination="$AOSP_SOURCE/$MESA_VENUS_DESTINATION"
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+			--aosp-source "$AOSP_SOURCE"
+		printf '%s\n' "reusing pinned Mesa Venus checkout: $destination"
+		return
+	fi
+
+	parent=$(dirname -- "$destination")
+	mkdir -p -- "$parent"
+	MESA_VENUS_STAGING=$(mktemp -d "$parent/.mesa-venus.prepare.XXXXXX")
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" init --quiet
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" remote add origin \
+		"$MESA_VENUS_UPSTREAM_REPOSITORY"
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" fetch --no-tags --depth=1 origin \
+		"$MESA_VENUS_UPSTREAM_COMMIT"
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" switch --create \
+		"$MESA_VENUS_PATCH_BRANCH" "$MESA_VENUS_UPSTREAM_COMMIT"
+	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
+	[ "$actual_tree" = "$MESA_VENUS_UPSTREAM_TREE" ] ||
+		fail "fetched Mesa tree is $actual_tree, expected $MESA_VENUS_UPSTREAM_TREE"
+
+	tab=$(printf '\t')
+	while IFS="$tab" read -r order filename patch_id digest subject; do
+		case "$order" in
+		\#*|order|'') continue ;;
+		esac
+		patch="$ROOT_DIR/$MESA_VENUS_GUEST_SERIES/$filename"
+		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+			git -C "$MESA_VENUS_STAGING" \
+			-c core.hooksPath=/dev/null \
+			-c user.useConfigOnly=true \
+			am --committer-date-is-author-date "$patch"
+	done < "$ROOT_DIR/$MESA_VENUS_GUEST_SERIES/series.tsv"
+	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
+	[ "$actual_tree" = "$MESA_VENUS_GUEST_TREE" ] ||
+		fail "replayed guest Mesa tree is $actual_tree, expected $MESA_VENUS_GUEST_TREE"
+
+	while IFS="$tab" read -r order filename patch_id digest subject; do
+		case "$order" in
+		\#*|order|'') continue ;;
+		esac
+		patch="$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series/$filename"
+		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+			git -C "$MESA_VENUS_STAGING" \
+			-c core.hooksPath=/dev/null \
+			-c user.useConfigOnly=true \
+			am --committer-date-is-author-date "$patch"
+	done < "$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series/manifest.tsv"
+	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
+	[ "$actual_tree" = "$MESA_VENUS_FINAL_TREE" ] ||
+		fail "replayed Mesa Venus tree is $actual_tree, expected $MESA_VENUS_FINAL_TREE"
+
+	mv -- "$MESA_VENUS_STAGING" "$destination"
+	MESA_VENUS_STAGING=
+	"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+		--aosp-source "$AOSP_SOURCE"
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--aosp-source)
@@ -168,6 +243,10 @@ esac
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
 [ -f "$JELLY_METADATA" ] || fail "missing Jelly metadata: $JELLY_METADATA"
 [ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
+[ -f "$MESA_VENUS_METADATA" ] ||
+	fail "missing Mesa Venus metadata: $MESA_VENUS_METADATA"
+[ -x "$MESA_VENUS_VERIFIER" ] ||
+	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
 [ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
 # shellcheck disable=SC1090
 . "$GIT_IDENTITY"
@@ -178,8 +257,11 @@ uml_require_git_identity 'android/aosp-17/build/prepare-sources.sh'
 . "$ACK_METADATA"
 # shellcheck disable=SC1090
 . "$JELLY_METADATA"
+# shellcheck disable=SC1090
+. "$MESA_VENUS_METADATA"
 
 "$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17"
+"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17"
 
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
@@ -210,6 +292,7 @@ git -C "$ACK_WORKSPACE/common" checkout --detach \
 	"$UML_KERNEL_UPSTREAM_COMMIT"
 
 prepare_jelly
+prepare_mesa_venus
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \

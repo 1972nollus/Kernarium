@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# meson2hermetic project configuration for the Kernarium Venus Soong port.
+[project]
+project_name = "aosp_mesa_venus"
+project_path = "external/mesa3d-venus"
+build_system = "soong"
+
+[copyright]
+license_name = "external_mesa3d_venus_license"
+licenses = ["MIT", "Apache-2.0", "GPL-1.0-or-later", "GPL-2.0-only"]
+license_texts = ["licenses/MIT", "licenses/Apache-2.0", "licenses/GPL-1.0-or-later", "licenses/GPL-2.0-only"]
+
+[target_renames]
+vulkan_virtio = "vulkan.virtio"
+
+[[config]]
+config_name = "kernarium_venus"
+
+[config.platforms]
+host_platforms = ["android_uml_arm64"]
+build_platforms = ["linux_glibc_x86_64"]
+
+[config.static_options]
+glx = "disabled"
+zlib = "disabled"
+platforms = "android"
+android-strict = false
+android-libbacktrace = "disabled"
+vulkan-drivers = "virtio"
+gallium-drivers = ""
+opengl = false
+egl = "disabled"
+gles1 = "disabled"
+gles2 = "disabled"
+gbm = "disabled"
+llvm = "disabled"
+libunwind = "disabled"
+valgrind = "disabled"
+xmlconfig = "disabled"
+venus-protocol-dir = ""

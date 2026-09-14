@@ -8,6 +8,7 @@ ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
+MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
@@ -161,12 +162,15 @@ fi
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
 [[ -x "$JELLY_VERIFIER" ]] || fail "Jelly source verifier is missing"
+[[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
 
 "$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
+"$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
