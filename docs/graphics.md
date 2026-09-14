@@ -205,7 +205,8 @@ Every layer of this stack already carries that one dependency, so the guest
 Venus driver owes no common-WSI work for any of the four.
 
 The pinned venus-protocol is v1.1.3, which tracks the Vulkan 1.4.357 registry
-and carries 201 extensions. An extension the protocol does not name has no
+and carries 201 extensions; the maintained series on top of it raises the
+table to 205. An extension the protocol does not name has no
 index in `vn_info_extension_index`, so the guest silently refuses it however
 the other layers are configured; the uprev is what makes `VK_KHR_maintenance8`,
 `VK_KHR_maintenance9`, `VK_KHR_maintenance10`,
@@ -217,13 +218,39 @@ of the encoder from that one pin at build time - the driver through
 copies unused here - so the two halves must be replaced together: a guest image
 sealed against one protocol cannot talk to a renderer built from another.
 
-What the protocol still does not describe is `VK_KHR_pipeline_binary`,
-`VK_EXT_image_compression_control` with its swapchain companion, and
-`VK_EXT_device_address_binding_report`. All but pipeline binaries define no
-command, so each of those needs only an entry in the generator's extension
-list; pipeline binaries additionally need command ids for five entrypoints and a
-`VkPipelineBinaryKHR` object type in the renderer's object tracking, which is
-the real cost of that one.
+The four extensions the pin itself does not describe -
+`VK_EXT_image_compression_control` with its swapchain companion,
+`VK_EXT_device_address_binding_report` and `VK_KHR_pipeline_binary` - are
+carried by the maintained protocol series. The first three define no command
+and need only an entry in the generator's extension list; pipeline binaries
+additionally need command ids for five entrypoints and a `VkPipelineBinaryKHR`
+object type in the renderer's object tracking, which is the real cost of that
+one.
+
+Two of the four are advertised honestly rather than completely, because Metal
+does not express what they describe:
+
+* Metal decides for itself whether a texture's contents are compressed, never
+  says so, and offers no fixed-rate control. Every image compression query the
+  host driver answers therefore reports no compression, and a format query that
+  insists on a fixed rate is refused. Accepting the control an application
+  passes costs nothing, because there is nothing to turn off.
+* An address binding report is delivered through a debug messenger callback.
+  The host driver emits one for every buffer, image plane and device memory
+  allocation it binds or unbinds, so a messenger on the host sees them, but
+  Venus answers `VK_EXT_debug_utils` in the guest and the protocol carries no
+  host-side callback, so a report cannot cross the ring. The guest advertises
+  the extension, which is what the profile asks for, and leaves
+  `reportAddressBinding` false.
+
+`VK_KHR_pipeline_binary` needs no host driver entrypoints: KosmicKrisp compiles
+shader objects rather than monolithic pipelines, so Mesa's common runtime
+serves all five commands from the shader binaries it already produces. Its
+internal-cache properties are all false, because the driver keeps no pipeline
+cache of its own. `MTLBinaryArchive` cannot stand in for a pipeline binary: it
+is keyed by internal pipeline descriptors and serializes only as a whole
+archive to a file URL, so it can neither produce one binary per pipeline nor
+return a binary's bytes.
 
 ### Experimental host memory
 

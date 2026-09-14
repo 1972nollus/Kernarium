@@ -156,6 +156,19 @@ The Venus protocol series is owned by
 parent-directory paths, unknown owners, or symlink traversal; no second copy
 exists under `patches/`.
 
+That series is patch-managed like every other dependency, and its editable
+source is a replay clone of the pinned generator repository whose history is
+the pinned commit followed by the maintained topic commits.
+`tools/rootfs/vulkan/rebase-patches.sh --component venus-protocol --source
+CHECKOUT` regenerates the checked-in series from that clone; amend a topic in
+the clone rather than editing a generated `.patch` file. The series carries
+generator inputs only - the extension list, the command-id registry and the
+templates - never generated output: both halves of the encoder are produced at
+build time from the one pin, so a topic that checked in a generated header
+would be rejected by `tools/rootfs/vulkan/verify-inputs.py`. Because the guest
+driver and the renderer generate their halves from the same pin, a protocol
+topic changes both sides at once and needs a matching guest epoch.
+
 KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `-Db_ndebug=false` and selected with
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
