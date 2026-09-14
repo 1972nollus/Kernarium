@@ -210,14 +210,14 @@ def verify(metadata_root: Path, outer_root: Path) -> None:
                 metadata_root, row["series"]
             )
 
+    # Only what the local series still adds. venus-protocol v1.1.3 serializes
+    # VK_KHR_maintenance8, VK_KHR_maintenance10 and vkCmdEndRendering2KHR
+    # itself, so those moved from this series to the pinned base.
     require_landmarks(
         series_payloads["venus-protocol"],
         (
             "VK_KHR_device_address_commands",
-            "VK_KHR_maintenance8",
-            "VK_KHR_maintenance10",
             "VK_COMMAND_TYPE_vkCmdCopyMemoryKHR_EXT",
-            "VK_COMMAND_TYPE_vkCmdEndRendering2KHR_EXT",
         ),
         "Venus protocol series",
     )
