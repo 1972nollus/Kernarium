@@ -1,7 +1,7 @@
 From 7738c1820da79f7cde9a4937dba62b92116ccd02 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:29:50 +0900
-Subject: [PATCH 19/21] venus: pass through VK_EXT_primitive_restart_index
+Subject: [PATCH 19/22] venus: pass through VK_EXT_primitive_restart_index
 
 The uprevved protocol encodes the extension's capability structure and gives
 vkCmdSetPrimitiveRestartIndexEXT a command ID, and the renderer now dispatches

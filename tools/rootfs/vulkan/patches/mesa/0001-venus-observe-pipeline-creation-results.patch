@@ -1,7 +1,7 @@
 From e54702d21c85fca6cffbd75872d5568c56f894c2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 08:02:38 -0400
-Subject: [PATCH 01/21] venus: observe pipeline creation results
+Subject: [PATCH 01/22] venus: observe pipeline creation results
 
 Pipeline creation on the primary ring was asynchronous, which reports VK_SUCCESS before the renderer has run the command. Native backends can reject a pipeline for reasons other than allocation failure; retaining a guest handle for an object the renderer never created makes the command stream fatal on first use. Always use the synchronous call so the application receives the real result and failed handles are released locally. This costs one round trip per pipeline-creation call.
 
