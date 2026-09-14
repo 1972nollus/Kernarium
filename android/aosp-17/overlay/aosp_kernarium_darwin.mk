@@ -271,6 +271,13 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.vulkan.version-1_4.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.version-1_4.xml \
     frameworks/native/data/etc/android.software.opengles.deqp.level-latest.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.opengles.deqp.level-latest.xml
 
+# A Vulkan window-system smoke test for this product. It owns a
+# SurfaceFlinger layer, wraps it through VK_KHR_android_surface, and clears
+# and presents a swapchain, so a run exercises the gralloc buffers the
+# platform loader hands the driver through VK_ANDROID_native_buffer.
+PRODUCT_PACKAGES += kernarium_vk_present
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # ADB is available over the inherited TCP port even though this machine has no
