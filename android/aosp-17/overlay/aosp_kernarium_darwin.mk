@@ -43,6 +43,14 @@ LOCAL_AUDIO_PRODUCT_PACKAGE := \
     android.hardware.audio.parameter_parser.example_service \
     com.android.hardware.audio
 LOCAL_USE_VENDOR_AUDIO_CONFIGURATION := true
+# The Vulkan driver of this product is Mesa's Venus HAL below, not the
+# Cuttlefish com.google.cf.vulkan APEX. That APEX carries the gfxstream and
+# SwiftShader drivers, their feature declarations, and an init script that
+# sets ro.vulkan.apex; the platform Vulkan loader then resolves
+# vulkan.<ro.hardware.vulkan>.so only inside that APEX linker namespace and
+# never reaches /vendor/lib64/hw. Dropping it also drops SwiftShader's
+# insecure executable-memory requirement.
+TARGET_VULKAN_SUPPORT := false
 TARGET_DISABLE_BIOMETRICS_FACE := true
 TARGET_NO_TELEPHONY := true
 TARGET_USES_CF_RILD := false
@@ -250,9 +258,18 @@ PRODUCT_COPY_FILES += \
 
 # The Vulkan HAL is Mesa's Venus driver built from this project's pinned guest
 # Mesa source. Its generated Soong module names are scoped with a venus_
-# prefix so they cannot collide with the AOSP external/mesa3d GLES port.
+# prefix so they cannot collide with the AOSP external/mesa3d GLES port. The
+# feature declarations the removed Cuttlefish Vulkan APEX used to install
+# come from the device tree instead, at the level this driver supports. No
+# Vulkan dEQP level is declared: the driver has not been qualified.
+PRODUCT_PACKAGES_EXCLUDE += com.google.cf.vulkan
 PRODUCT_PACKAGES += vulkan.virtio
 PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.vulkan.level-1.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.level-1.xml \
+    frameworks/native/data/etc/android.hardware.vulkan.compute-0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.compute-0.xml \
+    frameworks/native/data/etc/android.hardware.vulkan.version-1_3.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.version-1_3.xml \
+    frameworks/native/data/etc/android.software.opengles.deqp.level-latest.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.opengles.deqp.level-latest.xml
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 

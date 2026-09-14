@@ -31,6 +31,15 @@ BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := ext4
 BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=
 BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := ext4
 
+# This product has no SwiftShader: its Vulkan driver is the Mesa Venus HAL.
+# The inherited SwiftShader policy fragment grants bootanim, surfaceflinger,
+# system_server and zygote self:process execmem, which the platform
+# neverallow only tolerates while the SwiftShader insecure-execmem product
+# flag is set.
+BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
+    device/google/cuttlefish/shared/swiftshader/sepolicy, \
+    $(BOARD_VENDOR_SEPOLICY_DIRS))
+
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
 
 # The ACK UML ELF is built and published independently. Android packaging must
