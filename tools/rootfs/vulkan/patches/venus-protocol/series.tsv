@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	fd7541624fc825fdf32c6c49da820b209892411e8556f7e5cade01b29da70167	protocol: use explicit Vulkan SDK inputs and handle aliases
-2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	8887187b9db27f5bbef2b80550b2bfe28ebf342a48302c68091f367b8a7dccbc	protocol: serialize device-address commands and maintenance features
-3	0003-protocol-serialize-image-compression-control.patch	940140c73021d1fe5cab2345eef1e19a58cf085f	6dcd948a663f0389e7eae758e4318ab10d5ea0a53e431df08a5186639ae49ae2	protocol: serialize image compression control
-4	0004-protocol-serialize-the-address-binding-report-featur.patch	1bdc14a90f936adef786f006bed2aa8289944c3f	31cc351e4f57cfdf9b2cb86cf2795d0d2c7e3f78830572f8db7b96b69ce11254	protocol: serialize the address binding report feature
+1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	59617b0fcf7330551e262f366f55dab6aba3b753884cfff23bb3b8360e94224b	protocol: use explicit Vulkan SDK inputs and handle aliases
+2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	76fa5b9041b51cb4a20f8da2ec2d766f2e86cbd86a63cd62e9d3da7787c87ed6	protocol: serialize device-address commands and maintenance features
+3	0003-protocol-serialize-image-compression-control.patch	940140c73021d1fe5cab2345eef1e19a58cf085f	d62141051a9cafd5a645bb06484c036667844771d099897ca8ff8509543c4451	protocol: serialize image compression control
+4	0004-protocol-serialize-the-address-binding-report-featur.patch	1bdc14a90f936adef786f006bed2aa8289944c3f	8607f54be6c2ab60fb4f267bed531323399585ff8a9d6ba1eec453e9b32371a7	protocol: serialize the address binding report feature
+5	0005-protocol-measure-a-renderer-reply-that-carries-a-blo.patch	d72a53d40a7e5d9962bb13943dc7e48b98886f4f	ce39d4be70858a5640edd8617c4950aea6ccc65c4b9f269a58ac48d2696c02b0	protocol: measure a renderer reply that carries a blob beside a structure

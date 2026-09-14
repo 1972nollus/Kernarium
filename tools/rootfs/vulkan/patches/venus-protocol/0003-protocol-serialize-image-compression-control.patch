@@ -1,7 +1,7 @@
 From 2072a875e739cb458026f83de9929da7c54e3df4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 13:57:11 +0900
-Subject: [PATCH 3/4] protocol: serialize image compression control
+Subject: [PATCH 3/5] protocol: serialize image compression control
 
 VP_ANDROID_17_requirements lists VK_EXT_image_compression_control and its
 swapchain companion, and both are struct-only: the first adds a feature

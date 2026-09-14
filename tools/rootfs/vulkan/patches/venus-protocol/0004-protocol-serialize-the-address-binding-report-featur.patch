@@ -1,7 +1,7 @@
 From 6a9d02472fbc0d7b6fad60b76c46859e70c18282 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 13:58:41 +0900
-Subject: [PATCH 4/4] protocol: serialize the address binding report feature
+Subject: [PATCH 4/5] protocol: serialize the address binding report feature
 
 VP_ANDROID_17_requirements lists VK_EXT_device_address_binding_report. It
 defines no command, so listing it is the whole change and the extension table
