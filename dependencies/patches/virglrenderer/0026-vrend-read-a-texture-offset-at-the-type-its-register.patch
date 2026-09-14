@@ -1,7 +1,7 @@
 From 47edb4a86ac9af8fc76297e98038490ede049e0f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
-Subject: [PATCH 26/35] vrend: read a texture offset at the type its register
+Subject: [PATCH 26/36] vrend: read a texture offset at the type its register
  has
 
 A TGSI texture offset that lives in an input register was always spelled

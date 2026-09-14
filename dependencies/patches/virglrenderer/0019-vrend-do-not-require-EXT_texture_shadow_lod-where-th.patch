@@ -1,7 +1,7 @@
 From a8368becd79d8377535fd1ea4175ee005113a2ef Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:45:41 +0900
-Subject: [PATCH 19/35] vrend: do not require EXT_texture_shadow_lod where the
+Subject: [PATCH 19/36] vrend: do not require EXT_texture_shadow_lod where the
  slot is a comparison
 
 TGSI puts a shadow comparison value that does not fit the coordinate vector
