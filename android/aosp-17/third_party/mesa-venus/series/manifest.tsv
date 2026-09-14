@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated Mesa Venus Android topic identity. Patch bytes come only from git format-patch.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Mesa-Venus-pair-the-generated-prot.patch	96305c6745df15c67b5108b6ccae74d18b1f93db	b16e00d61b979e733a9a25a8fe8774b10929a8d6959d8f39837915e770899e4c	UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers
-2	0002-UML-ANDROID-LOCAL-Mesa-Venus-take-paired-protocol-he.patch	3b9e7ac09126a6dfc7c6e56871047139a01c587e	b1004ee9f8450750034ae7d006d3d00cd87fe3c0445dd324296770a0569545d0	UML-ANDROID-LOCAL: Mesa Venus take paired protocol headers from the tree
-3	0003-UML-ANDROID-LOCAL-Mesa-Venus-drop-the-legacy-Android.patch	99aa5ce5b08eb1aa4fbc2ef54524325942bf45ef	252ddcfcc5ba194c552fc18e20dd51d09cd3370abdd941b4d0c664992bd128ba	UML-ANDROID-LOCAL: Mesa Venus drop the legacy Android.mk
-4	0004-UML-ANDROID-LOCAL-Mesa-Venus-generated-Soong-port.patch	461fe5c4f7576d7b287f2eea1b90e1323ff946fb	68b5861d92785a39234e0a7db767b9a7b770ec62bb3d56bcaba0a99963ef4fc8	UML-ANDROID-LOCAL: Mesa Venus generated Soong port
+1	0001-UML-ANDROID-LOCAL-Mesa-Venus-pair-the-generated-prot.patch	96305c6745df15c67b5108b6ccae74d18b1f93db	0a0767ffd79889e60767c3f97ddff9b32a3b2aa13a269ab94bdf1e47eada069d	UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers
+2	0002-UML-ANDROID-LOCAL-Mesa-Venus-take-paired-protocol-he.patch	3b9e7ac09126a6dfc7c6e56871047139a01c587e	b74945b80decbe2d4a2dfb0cd16daf173d30a7ab6e5753c188897df619c24900	UML-ANDROID-LOCAL: Mesa Venus take paired protocol headers from the tree
+3	0003-UML-ANDROID-LOCAL-Mesa-Venus-drop-the-legacy-Android.patch	99aa5ce5b08eb1aa4fbc2ef54524325942bf45ef	824c8e99b25cb7ca0064baa7a899ea493fb02087107c6f9ea26481a95548020c	UML-ANDROID-LOCAL: Mesa Venus drop the legacy Android.mk
+4	0004-UML-ANDROID-LOCAL-Mesa-Venus-generated-Soong-port.patch	461fe5c4f7576d7b287f2eea1b90e1323ff946fb	84a75977146ba94e7e269162e3809540699209ef0affe06ca36335445ac9db32	UML-ANDROID-LOCAL: Mesa Venus generated Soong port
