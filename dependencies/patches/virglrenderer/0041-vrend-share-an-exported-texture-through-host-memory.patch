@@ -1,4 +1,4 @@
-From 829eae040f7b2ea9385c7f9a8d785ec598f25abd Mon Sep 17 00:00:00 2001
+From bc3ef888f9de8510b4bb1c60c9e2a72b6e6d259f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 20:46:45 +0900
 Subject: [PATCH 41/41] vrend: share an exported texture through host memory
@@ -20,7 +20,11 @@ segment the size of the texture's tightly packed linear layout, snapshot the
 texture into it, and hand out its fd as VIRGL_RESOURCE_FD_SHM. The segment
 becomes the resource's shared storage, recorded in the same shm_import_*
 fields an imported blob uses, so a single refresh path serves both
-directions and both pin the segment through the same helper.
+directions and both pin the segment through the same helper. The proxy then
+carries such an export to the render server, which already imports a
+segment; only its dma-buf-only check stood in the way, and the size it takes
+from the exported descriptor now falls back to the size the file reports,
+because a shared-memory object need not be seekable and on this host is not.
 
 The stride is width * blocksize, with no padding: that is the layout the
 guest allocator computed for the same width and format when it asked for the
@@ -45,11 +49,57 @@ keeps ordinary texture storage and an unchanged code path, and the whole
 export conversion is Metal-host only, so a host with dma-buf keeps its GBM
 export untouched.
 ---
+ src/proxy/proxy_context.c  |  23 +++-
  src/vrend/vrend_decode.c   |   4 +
  src/vrend/vrend_renderer.c | 209 ++++++++++++++++++++++++++++++++-----
  src/vrend/vrend_renderer.h |  12 +++
- 3 files changed, 200 insertions(+), 25 deletions(-)
+ 4 files changed, 219 insertions(+), 29 deletions(-)
 
+diff --git a/src/proxy/proxy_context.c b/src/proxy/proxy_context.c
+index 2780a54..0caf74e 100644
+--- a/src/proxy/proxy_context.c
++++ b/src/proxy/proxy_context.c
+@@ -471,9 +471,11 @@ proxy_context_attach_resource(struct virgl_context *base, struct virgl_resource
+    uint64_t res_size = res->map_size;
+    bool close_res_fd = false;
+    if (res_fd_type == VIRGL_RESOURCE_FD_INVALID) {
+-      /* importable pipe resouce can only export as dma-buf */
++      /* An importable pipe resource exports as a dma-buf, or, on a host with
++       * no dma-buf, as the shared-memory segment the renderer gave it. */
+       res_fd_type = virgl_resource_export_fd(res, &res_fd);
+-      if (res_fd_type != VIRGL_RESOURCE_FD_DMABUF) {
++      if (res_fd_type != VIRGL_RESOURCE_FD_DMABUF &&
++          res_fd_type != VIRGL_RESOURCE_FD_SHM) {
+          /* close fd for unexpected fd type from succeeded export */
+          if (res_fd_type != VIRGL_RESOURCE_FD_INVALID)
+             close(res_fd);
+@@ -481,11 +483,24 @@ proxy_context_attach_resource(struct virgl_context *base, struct virgl_resource
+          return;
+       }
+ 
+-      /* get the actual dma-buf size here because:
++      /* get the actual exported size here because:
+        * - pipe resource created by vrend has a zero map_size
+        * - blob resource created by vrend can have non-zero fake map_size
+        */
+-      res_size = lseek(res_fd, 0, SEEK_END);
++      off_t exported_size = lseek(res_fd, 0, SEEK_END);
++      if (exported_size < 0) {
++         /* a shared-memory object need not be seekable, and on an Apple host
++          * it is not; its size is the one the file itself reports. */
++         struct stat st;
++         if (fstat(res_fd, &st) == 0)
++            exported_size = st.st_size;
++      }
++      if (exported_size <= 0) {
++         proxy_log("exported res %d reports no size", res_id);
++         close(res_fd);
++         return;
++      }
++      res_size = (uint64_t)exported_size;
+ 
+       close_res_fd = true;
+    }
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
 index daccf9e..c3b7f42 100644
 --- a/src/vrend/vrend_decode.c
