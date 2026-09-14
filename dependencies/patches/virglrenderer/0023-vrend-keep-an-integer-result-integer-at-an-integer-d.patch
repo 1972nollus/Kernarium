@@ -1,4 +1,4 @@
-From d2180dfd18358e4770dc0e125c8bb2290d42586a Mon Sep 17 00:00:00 2001
+From 4c6d604808690076dc6a09c81c549be5f9743083 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
 Subject: [PATCH 23/41] vrend: keep an integer result integer at an integer
@@ -36,13 +36,25 @@ an atomic counter read into a pure-integer colour output went further
 and emitted a float assignment to a uint variable, which failed to
 compile and left the whole context in error.
 
+A texture lookup carried the same mistake the other way round. A float
+sampler left the conversion at none, so a TEX whose destination is a
+pure-integer colour output emitted uvec4((texture(samp, coord))), and
+the constructor rounded the sample instead of storing its bits: a
+colour below one arrived as zero and a shadow comparison's 1.0 arrived
+as the integer 1, which the reader sees as 1.4e-45. The lookups that
+passed through a temporary were already correct, because the store out
+of the float register spelled the cast. The sampler's return type now
+decides the cast on its own and the integer destination adjusts it,
+which covers texture, textureGather and the shadow and GLES texel
+fetch forms alike.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_shader.c | 166 ++++++++++++++++++++++++++++++---------
- 1 file changed, 127 insertions(+), 39 deletions(-)
+ src/vrend/vrend_shader.c | 175 ++++++++++++++++++++++++++++++---------
+ 1 file changed, 134 insertions(+), 41 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index d2efe20..5f21e23 100644
+index d2efe20..63eeffe 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -481,6 +481,83 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
@@ -138,29 +150,42 @@ index d2efe20..5f21e23 100644
  
  static void handle_vertex_proc_exit(const struct dump_ctx *ctx,
                                      struct vrend_glsl_strbufs *glsl_strbufs,
-@@ -3169,15 +3246,17 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3169,21 +3246,28 @@ static void translate_tex(struct dump_ctx *ctx,
  
     is_shad = samplertype_is_shadow(inst->Texture.Texture);
  
 +   /* An integer sampler returns integers, and the destination only needs the
 +    * bit cast to float when it is itself a float register. Casting the bits
 +    * to float and then constructing an integer destination from that float
-+    * is a numeric conversion, which loses the value. */
++    * is a numeric conversion, which loses the value. A float sampler reaching
++    * an integer destination needs the cast in the other direction for the
++    * same reason: the destination constructor would round the sample where it
++    * has to store the sample's bit pattern. */
     switch (ctx->samplers[sinfo->sreg_index].tgsi_sampler_return) {
     case TGSI_RETURN_TYPE_SINT:
 -      /* if dstconv isn't an int */
 -      if (dinfo->dstconv != INT)
-+      if (!type_qualifier_is_integer(dinfo->dstconv))
-          dtypeprefix = INT_BITS_TO_FLOAT;
+-         dtypeprefix = INT_BITS_TO_FLOAT;
++      dtypeprefix = INT_BITS_TO_FLOAT;
        break;
     case TGSI_RETURN_TYPE_UINT:
 -      /* if dstconv isn't an int */
 -      if (dinfo->dstconv != INT)
-+      if (!type_qualifier_is_integer(dinfo->dstconv))
-          dtypeprefix = UINT_BITS_TO_FLOAT;
+-         dtypeprefix = UINT_BITS_TO_FLOAT;
++      dtypeprefix = UINT_BITS_TO_FLOAT;
        break;
     default:
-@@ -3470,20 +3549,35 @@ static void translate_tex(struct dump_ctx *ctx,
+       break;
+    }
+ 
++   if (type_qualifier_is_integer(dinfo->dstconv))
++      dtypeprefix = integer_dest_prefix(
++         dtypeprefix, type_qualifier_is_signed_integer(dinfo->dstconv));
++
+    switch (inst->Texture.Texture) {
+    case TGSI_TEXTURE_1D:
+    case TGSI_TEXTURE_BUFFER:
+@@ -3470,20 +3554,35 @@ static void translate_tex(struct dump_ctx *ctx,
           /* To inject the swizzle for texturebufffers with emulated formats do
            *
            * {
@@ -202,7 +227,7 @@ index d2efe20..5f21e23 100644
  
              for (int i = 0; i < 4; ++i) {
                 if (i > 0)
-@@ -3491,20 +3585,8 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3491,20 +3590,8 @@ static void translate_tex(struct dump_ctx *ctx,
  
                 int swz = (packed_swizzles >> (i * 3)) & 7;
                 switch (swz) {
@@ -225,7 +250,7 @@ index d2efe20..5f21e23 100644
                 default:
                    emit_buff(&ctx->glsl_strbufs,  "val%s", get_swizzle_string(swz));
                 }
-@@ -3513,8 +3595,9 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3513,8 +3600,9 @@ static void translate_tex(struct dump_ctx *ctx,
              emit_buff(&ctx->glsl_strbufs,  ");\n");
           }
  
@@ -237,7 +262,7 @@ index d2efe20..5f21e23 100644
        }
     } else if ((ctx->cfg->glsl_version < 140 && (ctx->shader_req_bits & SHADER_REQ_SAMPLER_RECT)) &&
                !vrend_shader_sampler_views_mask_get(ctx->key->sampler_views_emulated_rect_mask, sinfo->sreg_index)) {
-@@ -4009,6 +4092,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4009,6 +4097,8 @@ translate_load(const struct dump_ctx *ctx,
            (ctx->images[sinfo->sreg_index].decl.Format != PIPE_FORMAT_R32_UINT))
           images[sinfo->sreg_index].decl.Writable = 0;
  
@@ -246,7 +271,7 @@ index d2efe20..5f21e23 100644
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_buff(glsl_strbufs, "%s = %s(imageLoad(%s, %s(%s(%s))%s)%s);\n",
                 dst, get_string(dtypeprefix),
-@@ -4060,6 +4145,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4060,6 +4150,7 @@ translate_load(const struct dump_ctx *ctx,
        }
  
        dtypeprefix = (is_integer_memory(ctx, src->Register.File, src->Register.Index)) ? INT_BITS_TO_FLOAT : UINT_BITS_TO_FLOAT;
@@ -254,7 +279,7 @@ index d2efe20..5f21e23 100644
  
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_load_mem(glsl_strbufs, mydst, inst->Dst[0].Register.WriteMask, get_string(dtypeprefix), atomic_op, srcs[0], atomic_src);
-@@ -4082,7 +4168,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4082,7 +4173,8 @@ translate_load(const struct dump_ctx *ctx,
           emit_buf(glsl_strbufs, "}\n");
        }
     } else if (src->Register.File == TGSI_FILE_HW_ATOMIC) {
@@ -264,7 +289,7 @@ index d2efe20..5f21e23 100644
     }
     return true;
  }
-@@ -4165,6 +4252,7 @@ static void
+@@ -4165,6 +4257,7 @@ static void
  translate_atomic(struct dump_ctx *ctx,
                   const struct tgsi_full_instruction *inst,
                   struct source_info *sinfo,
@@ -272,7 +297,7 @@ index d2efe20..5f21e23 100644
                   const char *srcs[4],
                   char *dst)
  {
-@@ -4210,6 +4298,8 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4210,6 +4303,8 @@ translate_atomic(struct dump_ctx *ctx,
       stypecast = UINT;
     }
  
@@ -281,7 +306,7 @@ index d2efe20..5f21e23 100644
     opname = get_atomic_opname(inst->Instruction.Opcode, &is_cas);
     if (!opname) {
        set_buf_error(&ctx->glsl_strbufs);
-@@ -4278,6 +4368,7 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4278,6 +4373,7 @@ translate_atomic(struct dump_ctx *ctx,
           dtypeprefix = UINT_BITS_TO_FLOAT;
           stypeprefix = FLOAT_BITS_TO_UINT;
        }
@@ -289,7 +314,7 @@ index d2efe20..5f21e23 100644
  
        if (is_cas)
           snprintf(cas_str, sizeof(cas_str), ", %s(%s(%s))", get_string(type), get_string(stypeprefix), srcs[3]);
-@@ -4488,7 +4579,7 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4488,7 +4584,7 @@ get_destination_info(struct dump_ctx *ctx,
              }
              strbuf_fmt(&dst_bufs[i], "%s[%d]", output->glsl_name, idx);
              if (output->is_int) {
@@ -298,7 +323,7 @@ index d2efe20..5f21e23 100644
                 dinfo->dstconv = INT;
              }
           } else {
-@@ -4522,18 +4613,15 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4522,18 +4618,15 @@ get_destination_info(struct dump_ctx *ctx,
                 dinfo->dst_override_no_wm[i] = output->override_no_wm;
              }
              if (output->is_int) {
@@ -320,7 +345,7 @@ index d2efe20..5f21e23 100644
                 dinfo->dstconv = dinfo->idstconv;
              }
              if (output->name == TGSI_SEMANTIC_PSIZE) {
-@@ -5912,10 +6000,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5912,10 +6005,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), srcs[0]);
        break;
     case TGSI_OPCODE_NOT:
@@ -333,7 +358,7 @@ index d2efe20..5f21e23 100644
        break;
     case TGSI_OPCODE_DNEG:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(-%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -6097,7 +6185,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6097,7 +6190,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BFI:
@@ -342,7 +367,7 @@ index d2efe20..5f21e23 100644
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BREV:
-@@ -6194,7 +6282,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6194,7 +6287,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
              return false;
           srcs[1] = ctx->src_bufs[1].buf;
        }

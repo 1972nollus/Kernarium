@@ -1,4 +1,4 @@
-From deb2ce0d76ccdde12777283be3491f49dbe2cc1c Mon Sep 17 00:00:00 2001
+From f81ba43539e290f5c9705825ce6b6f249eb42326 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 22:54:31 +0900
 Subject: [PATCH 29/41] vrend: check for a host GL error once per command

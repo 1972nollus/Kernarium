@@ -1,4 +1,4 @@
-From bf1d99926d9c9685eda086444cf52fd5f516ab61 Mon Sep 17 00:00:00 2001
+From 28d12e5f416e70c8ad5b3766e197bda23b2f24da Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 08:20:46 +0900
 Subject: [PATCH 34/41] vrend: bind a shader's buffers from the lowest one it
@@ -33,7 +33,7 @@ unchanged.
  2 files changed, 47 insertions(+), 27 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 73dc3ce..6503864 100644
+index c44094e..4bdeaa2 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -234,12 +234,15 @@ struct dump_ctx {
@@ -84,7 +84,7 @@ index 73dc3ce..6503864 100644
        } else {
           if (decl->Range.First < ctx->ssbo_array_base)
              ctx->ssbo_array_base = decl->Range.First;
-@@ -3850,7 +3861,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
+@@ -3855,7 +3866,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
  {
     switch(file_type) {
     case TGSI_FILE_BUFFER:
@@ -93,7 +93,7 @@ index 73dc3ce..6503864 100644
     case TGSI_FILE_MEMORY:
        return ctx->integer_memory;
     default:
-@@ -3878,15 +3889,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
+@@ -3883,15 +3894,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
  }
  
  static bool set_memory_qualifier(uint8_t ssbo_memory_qualifier[],
@@ -112,7 +112,7 @@ index 73dc3ce..6503864 100644
           ssbo_memory_qualifier[reg_index] = TGSI_MEMORY_COHERENT;
        } else
           return false;
-@@ -3910,7 +3921,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
+@@ -3915,7 +3926,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
                                  unsigned register_index, bool indirect, int indirect_register)
  {
     const char *cname = tgsi_proc_to_prefix(ctx->prog_type);
@@ -121,7 +121,7 @@ index 73dc3ce..6503864 100644
     const char *atomic_str = atomic_ssbo ? "atomic" : "";
     unsigned base = atomic_ssbo ? ctx->ssbo_atomic_array_base : ctx->ssbo_array_base;
  
-@@ -4023,11 +4034,11 @@ translate_store(const struct dump_ctx *ctx,
+@@ -4028,11 +4039,11 @@ translate_store(const struct dump_ctx *ctx,
           emit_store_mem(glsl_strbufs, dst, dst_reg->Register.WriteMask, srcs,
                          conversion);
        } else {
@@ -136,7 +136,7 @@ index 73dc3ce..6503864 100644
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", dst_reg->Indirect.Index,
                     dst_reg->Register.Index - base);
-@@ -4167,7 +4178,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4172,7 +4183,7 @@ translate_load(const struct dump_ctx *ctx,
        emit_buff(glsl_strbufs, "ssbo_addr_temp = uint(floatBitsToUint(%s)) >> 2;\n", srcs[1]);
  
        atomic_op[0] = atomic_src[0] = '\0';
@@ -145,7 +145,7 @@ index 73dc3ce..6503864 100644
           /* Emulate atomicCounter with atomicOr. */
           strcpy(atomic_op, "atomicOr");
           strcpy(atomic_src, ", uint(0)");
-@@ -4181,11 +4192,11 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4186,11 +4197,11 @@ translate_load(const struct dump_ctx *ctx,
        } else {
           char src[128] = "";
  
@@ -160,7 +160,7 @@ index 73dc3ce..6503864 100644
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", inst->Src[0].Indirect.Index, inst->Src[0].Register.Index - base);
           for (int i = 0; i < array_count; ++i) {
-@@ -6923,20 +6934,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
+@@ -6928,20 +6939,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
     }
  
     if (ctx->info.indirect_files & (1 << TGSI_FILE_BUFFER)) {
@@ -187,7 +187,7 @@ index 73dc3ce..6503864 100644
           char *coherent = ctx->ssbo_memory_qualifier[id] == TGSI_MEMORY_COHERENT ? "coherent" : "";
           emit_hdrf(glsl_strbufs, "layout (binding = %d, std430) %s buffer %sssbo%d { %s %sssbocontents%d[]; };\n", binding, coherent, sname, id,
                    get_string(type), sname, id);
-@@ -7981,7 +7992,7 @@ static bool analyze_instruction(struct tgsi_iterate_context *iter,
+@@ -7986,7 +7997,7 @@ static bool analyze_instruction(struct tgsi_iterate_context *iter,
     if (opcode == TGSI_OPCODE_ATOMIMIN || opcode == TGSI_OPCODE_ATOMIMAX) {
         const struct tgsi_full_src_register *src = &inst->Src[0];
         if (src->Register.File == TGSI_FILE_BUFFER)
@@ -196,7 +196,7 @@ index 73dc3ce..6503864 100644
         if (src->Register.File == TGSI_FILE_MEMORY)
           ctx->integer_memory = true;
     }
-@@ -8033,7 +8044,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
+@@ -8038,7 +8049,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
     sinfo->fog_input_mask = ctx->fog_input_mask;
     sinfo->fog_output_mask = ctx->fog_output_mask;
  
