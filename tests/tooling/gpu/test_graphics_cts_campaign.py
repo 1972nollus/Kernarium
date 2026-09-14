@@ -503,9 +503,10 @@ class GraphicsCampaignTests(unittest.TestCase):
     def test_cli_rejects_resource_and_selector_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             args = self.arguments(Path(temporary))
-            self.assertEqual(campaign.parse_arguments(args).jobs, 6)
+            self.assertEqual(campaign.parse_arguments(args).jobs, 8)
+            self.assertIsNone(campaign.parse_arguments(args).jobs_file)
             self.assertEqual(campaign.parse_arguments(args).console_stall_busy_timeout, 3600)
-            for extra in (["--jobs", "7"], ["--cpus", "8"], ["--memory", "8G"],
+            for extra in (["--jobs", "9"], ["--cpus", "8"], ["--memory", "8G"],
                           ["--case", "dEQP-VK.info.build"], ["--fraction-count", "16"],
                           ["--guest-timeout", "1"], ["--verify-only", "--dry-run"],
                           ["--console-stall-busy-timeout", "599"],
@@ -825,6 +826,55 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(peak, 6)
             self.assertEqual(len(complete), 8)
             self.assertFalse(failures)
+
+    def test_a_jobs_file_raises_the_pool_above_its_floor_between_launches(self) -> None:
+        """--jobs is the floor. The control file, re-read before every launch,
+        may raise the owned guests up to MAX_JOBS; whatever else it holds
+        (nothing, a word, a lower or an absurd number) means the floor or the
+        cap, never a stopped pool."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            control = root / "jobs"
+            self.assertEqual(campaign.current_jobs(None, 5), 5)
+            self.assertEqual(campaign.current_jobs(control, 5), 5)
+            for content, expected in (("seven\n", 5), ("", 5), ("3\n", 5),
+                                      ("99\n", campaign.MAX_JOBS), (" 7 \n", 7)):
+                control.write_text(content)
+                self.assertEqual(campaign.current_jobs(control, 5), expected, content)
+            definition = spec(root)
+            definition["suites"] = ["vulkan"]
+            control.write_text("4\n")
+            guard = threading.Lock()
+            full = threading.Event()
+            active = peak = 0
+
+            def worker(_root, _spec, key, _cancelled, *_rest):
+                nonlocal active, peak
+                with guard:
+                    active += 1
+                    peak = max(peak, active)
+                    if active == 4:
+                        full.set()
+                try:
+                    if key.index < 4 and not full.wait(timeout=5):
+                        raise AssertionError("the file did not raise the pool to four")
+                    if key.index == 3:
+                        control.write_text("1\n")
+                    return {"cases": 1, "status_totals": {"Pass": 1}}
+                finally:
+                    with guard:
+                        active -= 1
+
+            complete, failures = {}, {}
+            output = io.StringIO()
+            with mock.patch.object(campaign, "run_shard", side_effect=worker), contextlib.redirect_stdout(output):
+                campaign.run_pending(root, definition, list(campaign.shards(definition)),
+                                     2, False, threading.Event(), complete, failures, jobs_file=control)
+            self.assertEqual(peak, 4)
+            self.assertEqual(len(complete), 8)
+            self.assertFalse(failures)
+            self.assertIn("Concurrency 2 -> 4", output.getvalue())
+            self.assertIn("Concurrency 4 -> 2", output.getvalue())
 
     def test_a_failed_attempt_is_retried_beside_the_evidence_it_left(self) -> None:
         """A campaign ends when every shard has passed once, not when every

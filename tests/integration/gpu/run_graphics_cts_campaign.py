@@ -35,7 +35,7 @@ import run_vk_gl_cts as common  # noqa: E402
 import run_vk_cts as vk  # noqa: E402
 
 FRACTIONS = 8
-MAX_JOBS = 6
+MAX_JOBS = 8
 CPUS = 4
 MEMORY = "4G"
 KIND = "uml-venus-zink-graphics-cts-campaign"
@@ -975,18 +975,39 @@ def aggregate_opengl(campaign: Path, spec: dict[str, Any],
     }
 
 
+def current_jobs(jobs_file: Path | None, floor: int) -> int:
+    """The number of guests the pool may own right now.
+
+    ``--jobs`` is the floor the campaign always keeps. The control file can
+    only add to it, up to MAX_JOBS, so whatever an operator leaves in the file
+    (nothing, a word, a huge number) costs at most the raise.
+    """
+    if jobs_file is None:
+        return floor
+    try:
+        value = int(jobs_file.read_text().strip())
+    except (OSError, ValueError):
+        return floor
+    return max(floor, min(value, MAX_JOBS))
+
+
 def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
                 jobs: int, keep_going: bool, cancelled: threading.Event,
                 completed: dict[str, Any], failures: dict[str, str],
                 on_start: Callable[[Shard], Path] | None = None,
                 adoptions: Sequence[tuple[Shard, Path, dict[str, Any]]] = (),
                 detaching: threading.Event | None = None,
-                passed: dict[str, dict[str, Any]] | None = None) -> None:
+                passed: dict[str, dict[str, Any]] | None = None,
+                jobs_file: Path | None = None) -> None:
     """Finish the shards already running, then launch the ones still pending.
 
     An adopted shard occupies a slot exactly like one this pool started: its
     guest is real and holds real host resources, so counting it is what keeps
     a restart from doubling the load on the machine.
+
+    The control file is re-read before every launch, so the host's budget can
+    raise the pool above its floor while it runs and lower it again; a lowered
+    limit never ends a running guest, it only stops the next launch.
     """
     if detaching is None:
         detaching = threading.Event()
@@ -999,10 +1020,15 @@ def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
     total = len(queue)
     running: dict[Any, Shard] = {}
     next_heartbeat = time.monotonic() + 30
-    with ThreadPoolExecutor(max_workers=jobs) as executor:
+    limit = jobs
+    with ThreadPoolExecutor(max_workers=max(jobs, MAX_JOBS)) as executor:
         try:
             while queue or running:
-                while queue and len(running) < jobs and not cancelled.is_set():
+                wanted = current_jobs(jobs_file, jobs)
+                if wanted != limit:
+                    print(f"Concurrency {limit} -> {wanted}", flush=True)
+                    limit = wanted
+                while queue and len(running) < limit and not cancelled.is_set():
                     shard, attempt, generation_spec = queue.pop(0)
                     if generation_spec is not None:
                         future = executor.submit(
@@ -1071,7 +1097,11 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                         help="verified run.json from CTS-Configs.es32 on these exact inputs")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--jobs", type=common.positive_integer, default=MAX_JOBS,
-                        help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB")
+                        help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB; "
+                             "the floor when --jobs-file is given")
+    parser.add_argument("--jobs-file", type=Path,
+                        help=f"re-read before every launch: an integer above --jobs raises the owned guests up to "
+                             f"{MAX_JOBS}; a missing or invalid file means --jobs")
     parser.add_argument("--shard-timeout", type=common.positive_integer, default=21600)
     parser.add_argument("--guest-timeout", type=common.positive_integer, default=22200)
     parser.add_argument("--console-stall-busy-timeout", type=common.positive_integer, default=3600,
@@ -1363,7 +1393,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         try:
             run_pending(campaign, spec, pending, options.jobs, options.keep_going,
                         cancelled, completed, failures, mark_started,
-                        adoptions=adoptions, detaching=detaching, passed=passed)
+                        adoptions=adoptions, detaching=detaching, passed=passed,
+                        jobs_file=options.jobs_file)
         finally:
             for number, handler in handlers.items():
                 signal.signal(number, handler)

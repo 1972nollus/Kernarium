@@ -402,8 +402,11 @@ guest boots.
 
 `tests/integration/gpu/run_graphics_cts_campaign.py` coordinates the suites:
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
-most six owned guests at a time (`--jobs` may only lower that), immediately
-refilled. `--suite` selects them: `vulkan`, `opengl` (GL46), `gles32`, `both`
+most eight owned guests at a time (`--jobs` may only lower that), immediately
+refilled. With `--jobs-file`, `--jobs` is the floor: the file is re-read
+before every launch and an integer above the floor raises the owned guests up
+to eight, so the host's budget can move a running pool without restarting it;
+lowering it stops the next launch and never ends a guest. `--suite` selects them: `vulkan`, `opengl` (GL46), `gles32`, `both`
 (Vulkan and GL46), `gl` (both OpenGL matrices without Vulkan) or `all`. Every
 selection is a subsequence of the fixed suite order, so a campaign planned
 with one completes from its own suites alone, and a later launch may only add
