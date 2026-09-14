@@ -1,7 +1,7 @@
 From 282b6e477477ae4abb8f7051ee7c94c8596bbc92 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 17:25:46 +0900
-Subject: [PATCH 04/37] venus: keep pipelines created before a failure
+Subject: [PATCH 04/38] venus: keep pipelines created before a failure
 
 vkCreate*Pipelines is not all-or-nothing. When any pipeline fails the
 driver still returns valid handles for the ones it did create, sets only

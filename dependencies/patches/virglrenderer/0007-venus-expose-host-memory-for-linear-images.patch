@@ -1,7 +1,7 @@
 From a2af4f521bce6a0bd2c80201f9df2ae32b948964 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 18:00:57 +0900
-Subject: [PATCH 07/37] venus: expose host memory for linear images
+Subject: [PATCH 07/38] venus: expose host memory for linear images
 
 ---
  src/venus/vkr_image.c | 17 +++++++++++++----
