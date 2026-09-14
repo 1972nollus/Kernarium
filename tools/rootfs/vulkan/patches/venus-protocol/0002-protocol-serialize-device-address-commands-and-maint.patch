@@ -1,10 +1,20 @@
-From ee3ba3e2304b663867c3276541828f38d4ba715b Mon Sep 17 00:00:00 2001
+From 5d7ef766a0f6cd3aaceeff06c53b60cb31cbb9ea Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:51:38 +0900
 Subject: [PATCH 2/2] protocol: serialize device-address commands and
  maintenance features
 
-Append device-address and EndRendering2 command IDs without changing existing IDs or aliases. Transport maintenance8 and maintenance10 capability structures and their chained inputs through the paired driver and renderer codecs.
+Append device-address command IDs after the ones upstream assigns, without
+changing any existing ID or alias. Transport the maintenance8 capability
+structures and their chained inputs through the paired driver and renderer
+codecs, and keep VkMemoryBarrierAccessFlags3KHR reachable from VkMemoryBarrier2
+even though vk.xml cannot list a context-dependent child in structextends.
+
+Upstream now carries maintenance 8 to 11 and VkCmdEndRendering2, so what
+remains here is VK_KHR_device_address_commands, whose twenty-one command IDs
+follow upstream's last assignment.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  README                                |   8 ++
  tests/driver.c                        |  38 ++++++
@@ -15,9 +25,9 @@ Append device-address and EndRendering2 command IDs without changing existing ID
  tests/test_vn_protocol.py             |  54 +++++++++
  tests/vkr_cs.h                        |  26 ++++-
  tests/vn_cs.h                         |  19 ++-
- vn_protocol.py                        |  13 +++
- xmls/VK_EXT_command_serialization.xml |  27 +++++
- 11 files changed, 443 insertions(+), 11 deletions(-)
+ vn_protocol.py                        |  11 ++
+ xmls/VK_EXT_command_serialization.xml |  23 ++++
+ 11 files changed, 437 insertions(+), 11 deletions(-)
  create mode 100644 tests/test_stream.h
  create mode 100644 tests/test_vn_protocol.py
 
@@ -388,7 +398,7 @@ index 0000000..6e321c6
 +#endif /* VN_TEST_STREAM_H */
 diff --git a/tests/test_vn_protocol.py b/tests/test_vn_protocol.py
 new file mode 100644
-index 0000000..48384e9
+index 0000000..381630f
 --- /dev/null
 +++ b/tests/test_vn_protocol.py
 @@ -0,0 +1,54 @@
@@ -402,7 +412,7 @@ index 0000000..48384e9
 +
 +sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 +from vkxml import VkRegistry
-+from vn_protocol import Gen, VN_PROTOCOL_PRIVATE_XMLS
++from vn_protocol import Gen, VN_PROTOCOL_DIR, get_vk_xmls
 +
 +
 +class MemoryBarrierChains(unittest.TestCase):
@@ -412,8 +422,8 @@ index 0000000..48384e9
 +    def setUpClass(cls):
 +        if cls.registry_path is None:
 +            raise ValueError('test requires an explicit --registry input')
-+        cls.registry = VkRegistry.parse(cls.registry_path,
-+                                       VN_PROTOCOL_PRIVATE_XMLS)
++        _, private_xmls = get_vk_xmls(VN_PROTOCOL_DIR)
++        cls.registry = VkRegistry.parse(cls.registry_path, private_xmls)
 +        cls.generators = [Gen(is_driver, cls.registry)
 +                          for is_driver in (True, False)]
 +
@@ -598,26 +608,18 @@ index 67fbd32..07e6474 100644
  
  static inline vn_object_id
 diff --git a/vn_protocol.py b/vn_protocol.py
-index 03d97e7..a723e23 100755
+index dd84c99..cb932af 100755
 --- a/vn_protocol.py
 +++ b/vn_protocol.py
-@@ -128,12 +128,15 @@ VK_XML_EXTENSION_LIST = [
-     'VK_KHR_cooperative_matrix',
+@@ -122,6 +122,7 @@ VK_XML_EXTENSION_LIST = [
+     'VK_KHR_copy_memory_indirect',
      'VK_KHR_deferred_host_operations',
      'VK_KHR_depth_clamp_zero_one',
 +    'VK_KHR_device_address_commands',
      'VK_KHR_external_fence_fd',
      'VK_KHR_external_memory_fd',
      'VK_KHR_external_semaphore_fd',
-     'VK_KHR_fragment_shader_barycentric',
-     'VK_KHR_fragment_shading_rate',
-     'VK_KHR_maintenance7',
-+    'VK_KHR_maintenance8',
-+    'VK_KHR_maintenance10',
-     'VK_KHR_pipeline_library',
-     'VK_KHR_ray_query',
-     'VK_KHR_ray_tracing_maintenance1',
-@@ -351,6 +354,16 @@ class Gen:
+@@ -357,6 +358,16 @@ class Gen:
                  ty.ret.ty.set_attribute('need_encode', True)
  
      def _fixup_registry(self):
@@ -635,39 +637,35 @@ index 03d97e7..a723e23 100755
              if ty.category == ty.COMMAND:
                  ty.attrs['c_type'] = 'VK_COMMAND_TYPE_' + ty.name + '_EXT'
 diff --git a/xmls/VK_EXT_command_serialization.xml b/xmls/VK_EXT_command_serialization.xml
-index 1007a91..6fc6958 100644
+index d205838..93e2c69 100644
 --- a/xmls/VK_EXT_command_serialization.xml
 +++ b/xmls/VK_EXT_command_serialization.xml
-@@ -538,6 +538,33 @@ virtualization or remoting, and are not exposed to applications.
-         <comment>VK_EXT_depth_clamp_control</comment>
-         <enum value="330"   name="VK_COMMAND_TYPE_vkCmdSetDepthClampRangeEXT_EXT"/>
+@@ -549,6 +549,29 @@ virtualization or remoting, and are not exposed to applications.
+         <comment>VK_EXT_primitive_restart_index</comment>
+         <enum value="347"   name="VK_COMMAND_TYPE_vkCmdSetPrimitiveRestartIndexEXT_EXT"/>
  
 +        <comment>VK_KHR_device_address_commands</comment>
-+        <enum value="346"   name="VK_COMMAND_TYPE_vkCmdBindIndexBuffer3KHR_EXT"/>
-+        <enum value="347"   name="VK_COMMAND_TYPE_vkCmdBindVertexBuffers3KHR_EXT"/>
-+        <enum value="348"   name="VK_COMMAND_TYPE_vkCmdDrawIndirect2KHR_EXT"/>
-+        <enum value="349"   name="VK_COMMAND_TYPE_vkCmdDrawIndexedIndirect2KHR_EXT"/>
-+        <enum value="350"   name="VK_COMMAND_TYPE_vkCmdDispatchIndirect2KHR_EXT"/>
-+        <enum value="351"   name="VK_COMMAND_TYPE_vkCmdCopyMemoryKHR_EXT"/>
-+        <enum value="352"   name="VK_COMMAND_TYPE_vkCmdCopyMemoryToImageKHR_EXT"/>
-+        <enum value="353"   name="VK_COMMAND_TYPE_vkCmdCopyImageToMemoryKHR_EXT"/>
-+        <enum value="354"   name="VK_COMMAND_TYPE_vkCmdUpdateMemoryKHR_EXT"/>
-+        <enum value="355"   name="VK_COMMAND_TYPE_vkCmdFillMemoryKHR_EXT"/>
-+        <enum value="356"   name="VK_COMMAND_TYPE_vkCmdCopyQueryPoolResultsToMemoryKHR_EXT"/>
-+        <enum value="357"   name="VK_COMMAND_TYPE_vkCmdDrawIndirectCount2KHR_EXT"/>
-+        <enum value="358"   name="VK_COMMAND_TYPE_vkCmdDrawIndexedIndirectCount2KHR_EXT"/>
-+        <enum value="359"   name="VK_COMMAND_TYPE_vkCmdBeginConditionalRendering2EXT_EXT"/>
-+        <enum value="360"   name="VK_COMMAND_TYPE_vkCmdBindTransformFeedbackBuffers2EXT_EXT"/>
-+        <enum value="361"   name="VK_COMMAND_TYPE_vkCmdBeginTransformFeedback2EXT_EXT"/>
-+        <enum value="362"   name="VK_COMMAND_TYPE_vkCmdEndTransformFeedback2EXT_EXT"/>
-+        <enum value="363"   name="VK_COMMAND_TYPE_vkCmdDrawIndirectByteCount2EXT_EXT"/>
-+        <enum value="364"   name="VK_COMMAND_TYPE_vkCmdDrawMeshTasksIndirect2EXT_EXT"/>
-+        <enum value="365"   name="VK_COMMAND_TYPE_vkCmdDrawMeshTasksIndirectCount2EXT_EXT"/>
-+        <enum value="366"   name="VK_COMMAND_TYPE_vkCreateAccelerationStructure2KHR_EXT"/>
-+
-+        <comment>VK_KHR_maintenance10</comment>
-+        <enum value="367"   name="VK_COMMAND_TYPE_vkCmdEndRendering2KHR_EXT"/>
-+        <enum               name="VK_COMMAND_TYPE_vkCmdEndRendering2EXT_EXT" alias="VK_COMMAND_TYPE_vkCmdEndRendering2KHR_EXT"/>
++        <enum value="350"   name="VK_COMMAND_TYPE_vkCmdBindIndexBuffer3KHR_EXT"/>
++        <enum value="351"   name="VK_COMMAND_TYPE_vkCmdBindVertexBuffers3KHR_EXT"/>
++        <enum value="352"   name="VK_COMMAND_TYPE_vkCmdDrawIndirect2KHR_EXT"/>
++        <enum value="353"   name="VK_COMMAND_TYPE_vkCmdDrawIndexedIndirect2KHR_EXT"/>
++        <enum value="354"   name="VK_COMMAND_TYPE_vkCmdDispatchIndirect2KHR_EXT"/>
++        <enum value="355"   name="VK_COMMAND_TYPE_vkCmdCopyMemoryKHR_EXT"/>
++        <enum value="356"   name="VK_COMMAND_TYPE_vkCmdCopyMemoryToImageKHR_EXT"/>
++        <enum value="357"   name="VK_COMMAND_TYPE_vkCmdCopyImageToMemoryKHR_EXT"/>
++        <enum value="358"   name="VK_COMMAND_TYPE_vkCmdUpdateMemoryKHR_EXT"/>
++        <enum value="359"   name="VK_COMMAND_TYPE_vkCmdFillMemoryKHR_EXT"/>
++        <enum value="360"   name="VK_COMMAND_TYPE_vkCmdCopyQueryPoolResultsToMemoryKHR_EXT"/>
++        <enum value="361"   name="VK_COMMAND_TYPE_vkCmdDrawIndirectCount2KHR_EXT"/>
++        <enum value="362"   name="VK_COMMAND_TYPE_vkCmdDrawIndexedIndirectCount2KHR_EXT"/>
++        <enum value="363"   name="VK_COMMAND_TYPE_vkCmdBeginConditionalRendering2EXT_EXT"/>
++        <enum value="364"   name="VK_COMMAND_TYPE_vkCmdBindTransformFeedbackBuffers2EXT_EXT"/>
++        <enum value="365"   name="VK_COMMAND_TYPE_vkCmdBeginTransformFeedback2EXT_EXT"/>
++        <enum value="366"   name="VK_COMMAND_TYPE_vkCmdEndTransformFeedback2EXT_EXT"/>
++        <enum value="367"   name="VK_COMMAND_TYPE_vkCmdDrawIndirectByteCount2EXT_EXT"/>
++        <enum value="368"   name="VK_COMMAND_TYPE_vkCmdDrawMeshTasksIndirect2EXT_EXT"/>
++        <enum value="369"   name="VK_COMMAND_TYPE_vkCmdDrawMeshTasksIndirectCount2EXT_EXT"/>
++        <enum value="370"   name="VK_COMMAND_TYPE_vkCreateAccelerationStructure2KHR_EXT"/>
 +
          <comment>VK_MESA_venus_protocol</comment>
          <enum value="178"   name="VK_COMMAND_TYPE_vkSetReplyCommandStreamMESA_EXT"/>

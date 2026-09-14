@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 component	repository	base_commit	base_tree	release_ref	release_object	series
 mesa	https://gitlab.freedesktop.org/mesa/mesa.git	da14d65e4499e66468094be52bff9ea0915a695e	a41b271df29845735895fd23bfcef54076ec4515	mesa-26.2.1	0a4021394f884aa79f6653e7056fe7e7a7eac6d1	patches/mesa/series.tsv
-venus-protocol	https://gitlab.freedesktop.org/virgl/venus-protocol.git	70991d4c7e4e5a7bfa2fbb8a6e77e4eac350145d	8c1f432de2710c664f7f70c6af2c5df3b73f1ba8	-	-	patches/venus-protocol/series.tsv
+venus-protocol	https://gitlab.freedesktop.org/virgl/venus-protocol.git	ca19b6358d7cc491bc3e4de76f04c6700876a8fa	d74479d8a8f8797dd7bb1173898188a9e98504cb	v1.1.3	ca19b6358d7cc491bc3e4de76f04c6700876a8fa	patches/venus-protocol/series.tsv
 vulkan-headers	https://github.com/KhronosGroup/Vulkan-Headers.git	e3b1eec08173d6b825cd3ac88c885a63b621504a	7509994568d7423209793fb72c3ac793d9aec0c9	vulkan-sdk-1.4.357.0	e3b1eec08173d6b825cd3ac88c885a63b621504a	-
 vulkan-loader	https://github.com/KhronosGroup/Vulkan-Loader.git	5f157b62e333c63260d05d81bf66faa216ab0fb8	9a68aaf7a98185b4e9224323003df0699033d0c4	vulkan-sdk-1.4.357.0	5f157b62e333c63260d05d81bf66faa216ab0fb8	-
 vk-gl-cts	https://github.com/KhronosGroup/VK-GL-CTS.git	f6a29701220f34dd1407513bfe80d74ca7b392ce	15b0f51b91c2c967994c9fc3bc22e2f1224274ef	vulkan-cts-1.4.6.2	42c723aa10d2652590f02741827aef43b0421d23	patches/vk-gl-cts/series.tsv

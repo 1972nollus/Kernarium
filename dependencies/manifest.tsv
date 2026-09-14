@@ -19,7 +19,7 @@ libepoxy	1.5.10	apple-gpu,apple-gpu-vulkan-experiment	https://github.com/anholt/
 virglrenderer	1.3.0-cf6c62da	apple-gpu,apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/virglrenderer.git	cf6c62da2a1384b194f463e6221371962fe99575	.	patches/virglrenderer/series.tsv
 mesa	26.2.1	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/mesa/mesa.git	da14d65e4499e66468094be52bff9ea0915a695e	.	patches/mesa/series.tsv
 vulkan-headers	1.4.357.0	apple-gpu-vulkan-experiment	https://github.com/KhronosGroup/Vulkan-Headers.git	e3b1eec08173d6b825cd3ac88c885a63b621504a	.	-
-venus-protocol	70991d4	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/venus-protocol.git	70991d4c7e4e5a7bfa2fbb8a6e77e4eac350145d	.	rootfs-vulkan:patches/venus-protocol/series.tsv
+venus-protocol	1.1.3	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/venus-protocol.git	ca19b6358d7cc491bc3e4de76f04c6700876a8fa	.	rootfs-vulkan:patches/venus-protocol/series.tsv
 fex	FEX-2608	macos,ios-x86,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
 wine	10.0	wine-arm64ec-rootfs	https://github.com/wine-mirror/wine.git	b073859675060c9211fcbccfd90e4e87520dc2c2	.	-
 nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-

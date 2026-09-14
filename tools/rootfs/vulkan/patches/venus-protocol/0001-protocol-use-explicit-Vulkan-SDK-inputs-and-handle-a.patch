@@ -1,21 +1,23 @@
-From 08bf9d454b1f255068d0964e84aec90c47ac9efc Mon Sep 17 00:00:00 2001
+From aded316bac423421ccca586a294f2495772aa059 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:50:15 +0900
 Subject: [PATCH 1/2] protocol: use explicit Vulkan SDK inputs and handle
  aliases
 
 Consume registry and headers from an explicit prepared Vulkan-Headers source. Keep generated codecs in the build directory, preserve promoted-alias resolution and initialized size-only returns, and leave the upstream vendored SDK copies unchanged. Input authentication belongs to the invoking preparation workflow.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  README                      | 10 ++---
- meson.build                 | 25 ++++++++++-
+ meson.build                 | 19 ++++++++-
  meson_options.txt           |  4 ++
  templates/types_command.h   |  4 +-
  tests/meson.build           |  6 ++-
  tests/test_vkxml.py         | 85 +++++++++++++++++++++++++++++++++++++
- tests/test_vulkan_inputs.py | 49 +++++++++++++++++++++
- vkxml.py                    | 18 +++++++-
- vn_protocol.py              | 18 +++++---
- 9 files changed, 202 insertions(+), 17 deletions(-)
+ tests/test_vulkan_inputs.py | 50 ++++++++++++++++++++++
+ vkxml.py                    | 23 ++++++++--
+ vn_protocol.py              | 20 ++++++---
+ 9 files changed, 202 insertions(+), 19 deletions(-)
  create mode 100644 meson_options.txt
  create mode 100644 tests/test_vkxml.py
  create mode 100644 tests/test_vulkan_inputs.py
@@ -40,22 +42,13 @@ index 0c459e8..cc84bda 100644
  Add an extension
  
 diff --git a/meson.build b/meson.build
-index 5e0fdc2..fb65e00 100644
+index ed927fe..5756096 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -6,7 +6,7 @@ project(
-   'c',
-   version: '0.1',
-   license: 'MIT',
--  meson_version: '>=0.51.0',
-+  meson_version: '>=0.54.0',
-   default_options: ['buildtype=debugoptimized',
-                     'warning_level=2',
-                     'werror=true',
-@@ -14,6 +14,21 @@ project(
- )
+@@ -15,6 +15,21 @@ project(
  
  py = import('python').find_installation('python3', modules: ['mako'])
+ pkg = import('pkgconfig')
 +fs = import('fs')
 +
 +vulkan_headers_dir = get_option('vulkan-headers-dir')
@@ -74,7 +67,7 @@ index 5e0fdc2..fb65e00 100644
  
  vn_script_files = files(
    'vkxml.py',
-@@ -21,7 +36,7 @@ vn_script_files = files(
+@@ -22,7 +37,7 @@ vn_script_files = files(
  )
  
  vn_xml_files = files(
@@ -83,36 +76,7 @@ index 5e0fdc2..fb65e00 100644
    'xmls/VK_EXT_command_serialization.xml',
    'xmls/VK_MESA_venus_protocol.xml',
  )
-@@ -65,10 +80,12 @@ renderer_base_headers = [
- ]
- 
- command_headers = [
-+  'acceleration_structure',
-   'buffer',
-   'buffer_view',
-   'command_buffer',
-   'command_pool',
-+  'descriptor_heap',
-   'descriptor_pool',
-   'descriptor_set',
-   'descriptor_set_layout',
-@@ -78,6 +95,7 @@ command_headers = [
-   'event',
-   'fence',
-   'framebuffer',
-+  'host_copy',
-   'image',
-   'image_view',
-   'instance',
-@@ -92,6 +110,7 @@ command_headers = [
-   'sampler_ycbcr_conversion',
-   'semaphore',
-   'shader_module',
-+  'structs',
-   'transport',
- ]
- 
-@@ -125,6 +144,7 @@ vn_protocol_driver = custom_target(
+@@ -132,6 +147,7 @@ vn_protocol_driver = custom_target(
    output: vn_protocol_driver_outputs,
    command: [
      py, '@INPUT0@', '--outdir', meson.current_build_dir(),
@@ -120,7 +84,7 @@ index 5e0fdc2..fb65e00 100644
      '--banner', vn_template_banner.full_path(),
    ],
    depends: vn_template_banner,
-@@ -143,6 +163,7 @@ vn_protocol_renderer = custom_target(
+@@ -152,6 +168,7 @@ vn_protocol_renderer = custom_target(
    output: vn_protocol_renderer_outputs,
    command: [
      py, '@INPUT0@', '--outdir', meson.current_build_dir(),
@@ -268,10 +232,10 @@ index 0000000..f1bdf76
 +    unittest.main()
 diff --git a/tests/test_vulkan_inputs.py b/tests/test_vulkan_inputs.py
 new file mode 100644
-index 0000000..f40e279
+index 0000000..4cbf7c4
 --- /dev/null
 +++ b/tests/test_vulkan_inputs.py
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,50 @@
 +#!/usr/bin/env python3
 +# SPDX-License-Identifier: MIT
 +
@@ -310,7 +274,8 @@ index 0000000..f40e279
 +                    patch.object(vn_protocol.VkRegistry, 'parse', side_effect=RuntimeError('stop')) as parse:
 +                with self.assertRaisesRegex(RuntimeError, 'stop'):
 +                    vn_protocol.main()
-+                parse.assert_called_once_with(registry, vn_protocol.VN_PROTOCOL_PRIVATE_XMLS)
++                _, private_xmls = vn_protocol.get_vk_xmls(args.srcdir)
++                parse.assert_called_once_with(registry, private_xmls)
 +
 +    def test_source_root_is_not_a_generated_output_directory(self):
 +        registry = vn_protocol.VN_PROTOCOL_DIR / 'xmls/vk.xml'
@@ -322,19 +287,24 @@ index 0000000..f40e279
 +if __name__ == '__main__':
 +    unittest.main()
 diff --git a/vkxml.py b/vkxml.py
-index d74d0e5..4049357 100644
+index b3f22c1..aaa1b39 100644
 --- a/vkxml.py
 +++ b/vkxml.py
-@@ -1016,7 +1016,23 @@ class VkRegistry:
+@@ -1042,10 +1042,25 @@ class VkRegistry:
  
      def _parse_types(self, types_elem):
          """Parse <types>."""
+-        types_elem[:] = sorted(
+-            types_elem, key=lambda type_elem: 'alias' in type_elem.attrib, reverse=True
+-        )
 -        for type_elem in types_elem.iterfind('type'):
 +        types = list(types_elem.iterfind('type'))
 +        # A promoted alias can be referenced by an earlier structure, before
-+        # either the alias or its canonical type is defined in the registry.
-+        # Resolve aliases first so pointer/array types retain the canonical
-+        # object rather than a separate, never-initialized forward declaration.
++        # either the alias or its canonical type is defined in the registry,
++        # and an alias can name another alias.  Resolving aliases in
++        # dependency order rather than merely before the other types keeps a
++        # pointer or array type pointing at the canonical object instead of a
++        # separate, never-initialized forward declaration.
 +        aliases = {elem.attrib['name']: elem for elem in types
 +                   if 'alias' in elem.attrib}
 +        while aliases:
@@ -351,26 +321,30 @@ index d74d0e5..4049357 100644
  
      def _parse_enums(self, enums_elem):
 diff --git a/vn_protocol.py b/vn_protocol.py
-index 6b9ec50..03d97e7 100755
+index a0b1753..dd84c99 100755
 --- a/vn_protocol.py
 +++ b/vn_protocol.py
-@@ -17,7 +17,6 @@ VN_PROTOCOL_DIR = Path(__file__).resolve().parent
- VN_TEMPLATE_DIR = VN_PROTOCOL_DIR.joinpath('templates')
- VN_TEMPLATE_LOOKUP = TemplateLookup(str(VN_TEMPLATE_DIR))
+@@ -13,6 +13,8 @@ from mako.template import Template
  
--VN_PROTOCOL_VK_XML = VN_PROTOCOL_DIR.joinpath('xmls/vk.xml')
- VN_PROTOCOL_PRIVATE_XMLS = [
-     VN_PROTOCOL_DIR.joinpath('xmls/VK_EXT_command_serialization.xml'),
-     VN_PROTOCOL_DIR.joinpath('xmls/VK_MESA_venus_protocol.xml'),
-@@ -1822,15 +1821,24 @@ class GenDispatches:
+ from vkxml import VkRegistry, VkType, VkVariable, VkExtension
+ 
++VN_PROTOCOL_DIR = Path(__file__).resolve().parent
++
+ # This is bumped whenever a backward-incompatible change is made, and please
+ # ensure to clean up all the existing WAs before bumping this up.
+ VN_WIRE_FORMAT_VERSION = 1
+@@ -1855,19 +1857,27 @@ class GenDispatches:
                  COMMAND_TYPES=self.commands,
                  COMMAND_SKIPPED=self.skipped)
  
 -def get_args():
 +def get_args(arguments=None):
      parser = argparse.ArgumentParser()
--    parser.add_argument('--outdir', help='Where to write the files.',
-+    parser.add_argument('--outdir', type=Path,
+     parser.add_argument('--srcdir', type=Path,
+                         default=Path(__file__).parent,
+                         help='Path to venus-protocol source directory.')
+     parser.add_argument('--outdir', type=Path,
+-                        help='Where to write the files.',
 +                        help='Existing build directory for generated files.',
 +                        required=True)
 +    parser.add_argument('--registry', type=Path,
@@ -390,12 +364,14 @@ index 6b9ec50..03d97e7 100755
  
  def get_generators(gen):
      classes = [
-@@ -1884,7 +1892,7 @@ def generate_command_headers(generator, variant, banner, outdir):
- def main():
+@@ -1935,8 +1945,8 @@ def main():
      args = get_args()
  
--    reg = VkRegistry.parse(VN_PROTOCOL_VK_XML, VN_PROTOCOL_PRIVATE_XMLS)
-+    reg = VkRegistry.parse(args.registry, VN_PROTOCOL_PRIVATE_XMLS)
+     tmpl_loader = TemplateLoader(args.srcdir.joinpath('templates'))
+-    vk_xml, private_xmls = get_vk_xmls(args.srcdir)
+-    reg = VkRegistry.parse(vk_xml, private_xmls)
++    _, private_xmls = get_vk_xmls(args.srcdir)
++    reg = VkRegistry.parse(args.registry, private_xmls)
      gen = Gen(not args.renderer, reg)
      generators = get_generators(gen)
  
