@@ -1,7 +1,7 @@
 From fb443a9cb8a0ac7b98208dc9db882d1342b42e39 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 05:06:20 +0900
-Subject: [PATCH 32/38] vrend: alias an imported shared-memory blob instead of
+Subject: [PATCH 32/39] vrend: alias an imported shared-memory blob instead of
  copying it
 
 Topic 28 gave an imported blob an ordinary texture and refreshed it from the
