@@ -1,7 +1,7 @@
 From 8bcb438d888cd1a536e8fec8edc277a269d67a0d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:26:16 +0000
-Subject: [PATCH 2/2] UML-ANDROID-LOCAL: share GPU buffers as blob resources
+Subject: [PATCH 2/3] UML-ANDROID-LOCAL: share GPU buffers as blob resources
 
 A classic 3D resource lives inside the context that created it and has no
 handle the renderer can export, so a second context cannot open it. The
