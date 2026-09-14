@@ -1,7 +1,7 @@
 From 0946189e873bbbf05dd8294911a63d961957ad01 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 22:58:59 +0900
-Subject: [PATCH 36/74] kosmickrisp: read every merged clip/cull fragment
+Subject: [PATCH 36/76] kosmickrisp: read every merged clip/cull fragment
  element
 
 A fragment shader reads gl_ClipDistance and gl_CullDistance through the one

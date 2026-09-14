@@ -1,7 +1,7 @@
 From 3c8fe5ebd53c7ffb3b37d3f6d5a17cc0063331f3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 18:41:01 +0900
-Subject: [PATCH 59/74] kosmickrisp: let Metal fetch vertex attributes where
+Subject: [PATCH 59/76] kosmickrisp: let Metal fetch vertex attributes where
  Metal can express them
 
 kk_lower_vs_vbo bakes the vertex-input state into the vertex shader: every

@@ -1,7 +1,7 @@
 From bfc8d82d62b9299038cc4ec8bc47d4a53d3a386d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:12:22 +0900
-Subject: [PATCH 66/74] poly: compute a tessellation shader's index once, not
+Subject: [PATCH 66/76] poly: compute a tessellation shader's index once, not
  once per load
 
 Lowering a tessellation evaluation shader to compute replaces every
