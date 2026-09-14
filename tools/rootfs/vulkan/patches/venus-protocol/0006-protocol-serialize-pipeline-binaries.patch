@@ -1,0 +1,69 @@
+From 45b3bfd385e2f01b1a20615c23d6403e6dc07f79 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 14:05:13 +0900
+Subject: [PATCH 6/6] protocol: serialize pipeline binaries
+
+VP_ANDROID_17_requirements lists VK_KHR_pipeline_binary. Unlike the other
+extensions the profile still wanted, it is not struct-only: it introduces the
+VkPipelineBinaryKHR object and five commands, so it needs command identifiers
+as well as a list entry. They take 371 to 375, after the range the local
+device-address topic already claimed.
+
+The five commands are also grouped with the pipeline module rather than left
+to the catch-all. Only vkDestroyPipelineBinaryKHR matched a rule, through the
+DestroyPipeline prefix, which would have put VkPipelineBinaryKeyKHR's codecs
+in one header and four of the five commands that use them in another that is
+included first.
+
+The extension table grows from 204 entries to 205.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ vn_protocol.py                        | 5 +++++
+ xmls/VK_EXT_command_serialization.xml | 7 +++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/vn_protocol.py b/vn_protocol.py
+index b909948..26b39ab 100755
+--- a/vn_protocol.py
++++ b/vn_protocol.py
+@@ -133,6 +133,7 @@ VK_XML_EXTENSION_LIST = [
+     'VK_KHR_maintenance9',
+     'VK_KHR_maintenance10',
+     'VK_KHR_maintenance11',
++    'VK_KHR_pipeline_binary',
+     'VK_KHR_pipeline_library',
+     'VK_KHR_ray_query',
+     'VK_KHR_ray_tracing_maintenance1',
+@@ -1602,9 +1603,13 @@ class GenStructsAndCommands:
+         'pipeline': [
+             'CreateComputePipeline',
+             'CreateGraphicsPipeline',
++            'CreatePipelineBinaries',
+             'CreateRayTracingPipeline',
+             'DestroyPipeline',
++            'GetPipelineBinaryData',
++            'GetPipelineKey',
+             'GetRayTracing',
++            'ReleaseCapturedPipelineData',
+         ],
+         'pipeline_layout': [
+             'CreatePipelineLayout',
+diff --git a/xmls/VK_EXT_command_serialization.xml b/xmls/VK_EXT_command_serialization.xml
+index 93e2c69..ab3c75b 100644
+--- a/xmls/VK_EXT_command_serialization.xml
++++ b/xmls/VK_EXT_command_serialization.xml
+@@ -572,6 +572,13 @@ virtualization or remoting, and are not exposed to applications.
+         <enum value="369"   name="VK_COMMAND_TYPE_vkCmdDrawMeshTasksIndirectCount2EXT_EXT"/>
+         <enum value="370"   name="VK_COMMAND_TYPE_vkCreateAccelerationStructure2KHR_EXT"/>
+ 
++        <comment>VK_KHR_pipeline_binary</comment>
++        <enum value="371"   name="VK_COMMAND_TYPE_vkCreatePipelineBinariesKHR_EXT"/>
++        <enum value="372"   name="VK_COMMAND_TYPE_vkDestroyPipelineBinaryKHR_EXT"/>
++        <enum value="373"   name="VK_COMMAND_TYPE_vkGetPipelineKeyKHR_EXT"/>
++        <enum value="374"   name="VK_COMMAND_TYPE_vkGetPipelineBinaryDataKHR_EXT"/>
++        <enum value="375"   name="VK_COMMAND_TYPE_vkReleaseCapturedPipelineDataKHR_EXT"/>
++
+         <comment>VK_MESA_venus_protocol</comment>
+         <enum value="178"   name="VK_COMMAND_TYPE_vkSetReplyCommandStreamMESA_EXT"/>
+         <enum value="179"   name="VK_COMMAND_TYPE_vkSeekReplyCommandStreamMESA_EXT"/>

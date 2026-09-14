@@ -1,7 +1,7 @@
 From aded316bac423421ccca586a294f2495772aa059 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:50:15 +0900
-Subject: [PATCH 1/5] protocol: use explicit Vulkan SDK inputs and handle
+Subject: [PATCH 1/6] protocol: use explicit Vulkan SDK inputs and handle
  aliases
 
 Consume registry and headers from an explicit prepared Vulkan-Headers source. Keep generated codecs in the build directory, preserve promoted-alias resolution and initialized size-only returns, and leave the upstream vendored SDK copies unchanged. Input authentication belongs to the invoking preparation workflow.

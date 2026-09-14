@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	59617b0fcf7330551e262f366f55dab6aba3b753884cfff23bb3b8360e94224b	protocol: use explicit Vulkan SDK inputs and handle aliases
-2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	76fa5b9041b51cb4a20f8da2ec2d766f2e86cbd86a63cd62e9d3da7787c87ed6	protocol: serialize device-address commands and maintenance features
-3	0003-protocol-serialize-image-compression-control.patch	940140c73021d1fe5cab2345eef1e19a58cf085f	d62141051a9cafd5a645bb06484c036667844771d099897ca8ff8509543c4451	protocol: serialize image compression control
-4	0004-protocol-serialize-the-address-binding-report-featur.patch	1bdc14a90f936adef786f006bed2aa8289944c3f	8607f54be6c2ab60fb4f267bed531323399585ff8a9d6ba1eec453e9b32371a7	protocol: serialize the address binding report feature
-5	0005-protocol-measure-a-renderer-reply-that-carries-a-blo.patch	d72a53d40a7e5d9962bb13943dc7e48b98886f4f	ce39d4be70858a5640edd8617c4950aea6ccc65c4b9f269a58ac48d2696c02b0	protocol: measure a renderer reply that carries a blob beside a structure
+1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	30456ae7b55a0ed01675bedc0bd55c601a7c1b589ba450b5f7cdd36c1258298f	protocol: use explicit Vulkan SDK inputs and handle aliases
+2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	84ae1c15b8f668f62edd3c18973fdf7aea45cb5ea7acc3fd49e3dcd9616d0094	protocol: serialize device-address commands and maintenance features
+3	0003-protocol-serialize-image-compression-control.patch	940140c73021d1fe5cab2345eef1e19a58cf085f	259b0c50b5f8470868aecd2a512221d90004e2cd42d41ad29685e8c9859def3b	protocol: serialize image compression control
+4	0004-protocol-serialize-the-address-binding-report-featur.patch	1bdc14a90f936adef786f006bed2aa8289944c3f	e1c71efdc718bfbac04de42d9d8b276f1a1b59c3b2a5d7afbb3d8840a7e04bb4	protocol: serialize the address binding report feature
+5	0005-protocol-measure-a-renderer-reply-that-carries-a-blo.patch	d72a53d40a7e5d9962bb13943dc7e48b98886f4f	4f268318f74b6e06eca23bbf2263363b639454783dfc7d11e3b199fbe5a39e37	protocol: measure a renderer reply that carries a blob beside a structure
+6	0006-protocol-serialize-pipeline-binaries.patch	1752a726ca0a9de5dcbce0a25e344b6400f07838	6a592e8e179093dd91e5bf417d848b6be131b8fca38c16ee7990491d0c5eea25	protocol: serialize pipeline binaries

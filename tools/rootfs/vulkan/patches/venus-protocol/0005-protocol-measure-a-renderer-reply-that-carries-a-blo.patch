@@ -1,7 +1,7 @@
 From 83016b924624f7923e6d0fea5c61c4504df1a495 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:04:48 +0900
-Subject: [PATCH 5/5] protocol: measure a renderer reply that carries a blob
+Subject: [PATCH 5/6] protocol: measure a renderer reply that carries a blob
  beside a structure
 
 A command that returns a blob is decoded with running reply-size accounting,
