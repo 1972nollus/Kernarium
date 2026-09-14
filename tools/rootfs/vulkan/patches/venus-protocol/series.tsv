@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	cd84a1275a7e00577066ec08f659743fbe236f72cd62e7dc221eb536633035f9	protocol: use explicit Vulkan SDK inputs and handle aliases
-2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	16a822cbcde7d3fd3050fa50273338cd270d3fbb01dc184ea561a0a2f542dfde	protocol: serialize device-address commands and maintenance features
+1	0001-protocol-use-explicit-Vulkan-SDK-inputs-and-handle-a.patch	8038146e6e0d3423b337522d632c7675fe88c7bb	89dc11c4ce9cb54dfa2eaa49b302629d8156544b575b30f2034f1d2861a1617d	protocol: use explicit Vulkan SDK inputs and handle aliases
+2	0002-protocol-serialize-device-address-commands-and-maint.patch	1c0772d0cd54ed909bd4090e0e3063f0973b16c0	71c659b8f8a0aadbaab74691f23fc990eeb29dc14349153c43f45a94138f0fa5	protocol: serialize device-address commands and maintenance features
+3	0003-protocol-serialize-image-compression-control.patch	940140c73021d1fe5cab2345eef1e19a58cf085f	2fecfb1536c7e07d5fbddf39cbfdc3b4fc76e54252459237c2c5db0e9972f152	protocol: serialize image compression control
