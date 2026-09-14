@@ -1,7 +1,7 @@
 From 7cd747045aeb7e1e19b37d0774861ca73dd39e0e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:11:34 +0900
-Subject: [PATCH 73/81] kosmickrisp: write every channel of a swizzled colour
+Subject: [PATCH 73/82] kosmickrisp: write every channel of a swizzled colour
  attachment
 
 Metal refuses a swizzled view of a renderable texture, so a colour format

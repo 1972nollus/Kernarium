@@ -1,7 +1,7 @@
 From 9780b37ffcb1c11fff25b3140b26c63416213dbe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 09:45:37 +0900
-Subject: [PATCH 72/81] nir/opt_vectorize_io: merge xfb elements a dword apart,
+Subject: [PATCH 72/82] nir/opt_vectorize_io: merge xfb elements a dword apart,
  in order
 
 vectorize_store() merged the xfb elements of the scalar stores it replaces by
