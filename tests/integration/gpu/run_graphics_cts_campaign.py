@@ -94,7 +94,13 @@ def validate_opengl_run_plan(spec: dict[str, Any], suite: str) -> None:
     item = spec[GL_SUITES[suite]]
     plan = (common.opengl_cts_plan if suite == "gl46" else common.gles_cts_plan)
     try:
-        expected = plan.expand_runs(suite_manifest(spec, suite), item["egl_configs"])
+        expected = (
+            plan.expand_runs(suite_manifest(spec, suite), item["egl_configs"])
+            if suite == "gl46"
+            else plan.expand_runs(suite_manifest(spec, suite),
+                                  item["egl_configs"],
+                                  item["egl_config_attributes"])
+        )
     except plan.PlanError as error:
         raise common.CampaignError(str(error)) from error
     if item["runs"] != expected:
@@ -147,6 +153,8 @@ def source_identity() -> dict[str, Any]:
         root / "tests/integration/gpu/vk_gl_cts_gles_mustpass.xml",
         root / "tests/integration/gpu/vk_gl_cts_gles_mustpass_noctx.xml",
         root / "tests/integration/gpu/vk_gl_cts_gles_mustpass_single.xml",
+        root / "tests/integration/gpu/vk_gl_cts_gles_aosp_mustpass.xml",
+        root / "tests/integration/gpu/vk_gl_cts_egl_aosp_mustpass.xml",
         root / "tests/integration/gpu/vk_gl_cts_waivers.json",
         root / "scripts/boot_kde_vnc.py",
         root / "dependencies/manifest.tsv",
@@ -211,7 +219,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
                 continue
             inventory = (options.opengl_config_inventory_run if suite == "gl46"
                          else options.gles32_config_inventory_run).resolve()
-            configs, digest = common.load_config_inventory_evidence(
+            configs, digest, attributes = common.load_config_inventory_evidence(
                 inventory, suite, options.page_profile, "vnc", contract,
                 {key: spec[key] for key in ("emulator_sha256", "kosmickrisp_sha256")},
             )
@@ -228,7 +236,8 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
                 ):
                     raise common.CampaignError(
                         "the ES 3.2 run table and the sealed runner source disagree")
-                runs = common.gles_cts_plan.expand_runs(manifest, config_rows)
+                runs = common.gles_cts_plan.expand_runs(
+                    manifest, config_rows, attributes)
             inventory_files = [inventory, inventory.parent / "console.log",
                                inventory.parent / common.ARTIFACT_TRANSPORT_LOG,
                                *(inventory.parent / "artifacts" / name
@@ -247,6 +256,9 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
             }
             if manifest is not None and suite == "gles32":
                 item["manifest"] = manifest
+                item["egl_config_attributes"] = attributes
+                item["egl_config_attributes_sha256"] = (
+                    common.egl_attribute_digest(attributes))
             spec[GL_SUITES[suite]] = item
     return spec
 

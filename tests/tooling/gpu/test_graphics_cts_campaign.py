@@ -120,13 +120,17 @@ def with_gles32(directory: Path, definition: dict, renderer: str = "zink") -> di
     )
     manifest = gl.load_gles32_matrix()
     config_rows = definition["opengl"]["egl_configs"]
+    attributes = json.loads(inventory.read_text())["egl_config_attributes"]
     definition["suites"] = ["vulkan", "gl46", "gles32"]
     definition["gles32"] = {
         **{key: definition["opengl"][key] for key in
            ("renderer", "rootfs", "receipt", "receipt_path", "receipt_sha256")},
         "config_inventory_run": str(inventory), "egl_configs": config_rows,
         "egl_config_sha256": "f" * 64, "manifest": manifest,
-        "runs": campaign.common.gles_cts_plan.expand_runs(manifest, config_rows),
+        "egl_config_attributes": attributes,
+        "egl_config_attributes_sha256": gl.egl_attribute_digest(attributes),
+        "runs": campaign.common.gles_cts_plan.expand_runs(
+            manifest, config_rows, attributes),
     }
     return definition
 
@@ -374,13 +378,14 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertEqual(counts["vulkan"], 8)
             self.assertEqual(counts["gl46"], 90)
             # Three one-time runs plus eight first-config and five other-config
-            # rows, eight fractions each, minus the provably empty fractions of
-            # the one-case ES 2.0 no-context leaf.
-            self.assertEqual(len(definition["gles32"]["runs"]), 16)
-            self.assertEqual(counts["gles32"], 16 * 8 - 7)
+            # rows and the six AOSP runs, eight fractions each, minus the
+            # provably empty fractions of the one-case ES 2.0 no-context leaf.
+            self.assertEqual(len(definition["gles32"]["runs"]), 22)
+            self.assertEqual(counts["gles32"], 22 * 8 - 7)
             names = [key.name() for key in keys if key.suite == "gles32"]
             self.assertIn("gles32-run0000-00of08", names)
             self.assertIn("gles32-run0015-07of08", names)
+            self.assertIn("gles32-run0021-07of08", names)
             self.assertEqual(len(set(names)), len(names))
             shard = next(key for key in keys if key.suite == "gles32"
                          and key.run_index == 15)
@@ -394,6 +399,12 @@ class GraphicsCampaignTests(unittest.TestCase):
             run = definition["gles32"]["runs"][15]
             self.assertEqual(command[command.index("--mustpass-config-index") + 1],
                              str(run["configuration_index"]))
+            # The AOSP runs address the configuration they resolved out of
+            # aospConfigs, which the conformant list need not contain.
+            aosp = definition["gles32"]["runs"][-1]
+            self.assertEqual(aosp["config_scope"], "aosp")
+            self.assertEqual(aosp["surface_type"], "none")
+            self.assertEqual(definition["gles32"]["runs"][-4]["egl_config_id"], 3)
 
     def test_adding_the_es32_matrix_keeps_every_recorded_shard(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
