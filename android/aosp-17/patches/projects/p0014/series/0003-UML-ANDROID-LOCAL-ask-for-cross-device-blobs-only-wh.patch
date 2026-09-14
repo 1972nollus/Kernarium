@@ -1,4 +1,4 @@
-From 47d9214421b00cc0396e5ac4a822e16162919983 Mon Sep 17 00:00:00 2001
+From b93217bc2a7aa7ad0a9bf58b63f1e24ca2b86b5f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:41:17 +0000
 Subject: [PATCH 3/3] UML-ANDROID-LOCAL: ask for cross-device blobs only when
@@ -25,7 +25,7 @@ Change-Id: I44e4d0bfd2fdfb81155cdb3dcd0158ecaa7cf8fc
  1 file changed, 7 insertions(+), 3 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 73b6003dbfe5fb8c0ffa808b5097182060f23c52..9bc04c11d52ba54e297f2cb66ba3bb397d7f2dfb 100644
+index 86a892f30667ded89aba8fd6636810588eca7dd8..cd0936f5288a7faa1cd3f6279db02ec8fbd079ab 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
 @@ -780,9 +780,13 @@ static uint32_t blob_flags_from_use_flags(uint32_t use_flags)
