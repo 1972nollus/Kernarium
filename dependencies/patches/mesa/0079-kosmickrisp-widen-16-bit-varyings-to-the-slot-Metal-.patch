@@ -1,7 +1,7 @@
 From c10c2f0bd69f5ce9a06826fa0da15f2be0139146 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:45:56 +0900
-Subject: [PATCH 79/82] kosmickrisp: widen 16-bit varyings to the slot Metal
+Subject: [PATCH 79/83] kosmickrisp: widen 16-bit varyings to the slot Metal
  carries
 
 storageInputOutput16 was withheld with a note that

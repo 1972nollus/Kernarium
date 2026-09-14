@@ -1,7 +1,7 @@
 From 35db8fd41f79af77d2a75d6fff20429df007a6f2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:24:15 +0900
-Subject: [PATCH 78/82] kosmickrisp: implement VK_EXT_image_drm_format_modifier
+Subject: [PATCH 78/83] kosmickrisp: implement VK_EXT_image_drm_format_modifier
 
 The Android 2025 baseline that VP_ANDROID_17_requirements inherits makes this
 extension mandatory, and the guest Venus driver uses it as the other of the two
