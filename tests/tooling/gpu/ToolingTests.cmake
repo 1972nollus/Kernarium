@@ -36,6 +36,13 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
+    NAME gles-cts-plan-safety
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_gles_cts_plan.py
+    LABELS gpu;cts;rootfs
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME graphics-cts-pool-safety
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_graphics_cts_campaign.py

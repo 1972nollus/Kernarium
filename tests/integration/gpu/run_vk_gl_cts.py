@@ -47,6 +47,7 @@ import virgl_capset  # noqa: E402
 import vulkan_cts_receipt  # noqa: E402
 import guest_process  # noqa: E402
 import opengl_cts_plan  # noqa: E402
+import gles_cts_plan  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -59,6 +60,9 @@ APPLE_MATRIX_PATH = Path(__file__).with_name(
 )
 GLES_MUSTPASS_PATH = Path(__file__).with_name(
     "vk_gl_cts_gles_mustpass.xml"
+)
+GLES32_MATRIX_PATH = Path(__file__).with_name(
+    "vk_gl_cts_gles32_matrix.json"
 )
 RUNNER_ORACLE_PATH = Path(__file__).with_name(
     "vk_gl_cts_runner_oracle.json"
@@ -100,8 +104,13 @@ BASELINE_GLES_APIS = ("gles2", "gles3")
 CONFIG_CASES = {
     "gles2": "CTS-Configs.es2",
     "gles3": "CTS-Configs.es3",
+    "gles32": "CTS-Configs.es32",
     "gl46": "CTS-Configs.gl46",
 }
+# The official matrices whose run records come from must-pass XML documents
+# rather than the two-row GLES baseline split, and which therefore select one
+# XML configuration per shard and bind their inventory to the emulator build.
+XML_MATRIX_APIS = ("gl46", "gles32")
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -4779,7 +4788,7 @@ def load_config_inventory_evidence(
         "completed_cases": 1,
         "status_totals": {"Pass": 1},
     }
-    if api == "gl46":
+    if api in XML_MATRIX_APIS:
         if runtime_identity is None or set(runtime_identity) != {
             "emulator_sha256", "kosmickrisp_sha256",
         }:
@@ -4816,7 +4825,7 @@ def load_config_inventory_evidence(
     parsed = parse_egl_config_qpa(qpa_text, api)
     if parsed != configs:
         raise CampaignError("config-inventory QPA and metadata disagree")
-    if api == "gl46":
+    if api in XML_MATRIX_APIS:
         directory = path.parent
         console = directory / "console.log"
         if sha256_file(console) != metadata.get("console_sha256"):
@@ -4869,6 +4878,146 @@ def opengl_matrix_run(
     return MatrixRun(
         configuration=MustpassConfiguration(
             api="gl46", leaf=leaf, name=row["name"],
+            use_for_first_egl_config=row["use_for_first_egl_config"],
+            screen_rotation="unspecified", surface_width=row["surface_width"],
+            surface_height=row["surface_height"], base_seed=row["base_seed"],
+            watchdog="disable", fbo_config=row["fbo_config"],
+            xml_arguments=tuple(row["xml_arguments"]),
+        ),
+        egl_config=configs[config_index], egl_config_index=config_index,
+        config_inventory_sha256=digest,
+        selection=Selection(leaf, exact_cases, *fraction),
+        mustpass_xml_path=document["path"], mustpass_xml_size=document["size"],
+        mustpass_xml_sha256=document["sha256"],
+        opengl_configuration_index=configuration_index,
+    )
+
+
+def load_gles32_matrix(
+    identity: dict[str, Any] | None = None,
+    path: Path = GLES32_MATRIX_PATH,
+) -> dict[str, Any]:
+    """Build the ES 3.2 must-pass manifest from the repository's pinned XML.
+
+    The ES caselists live only in the guest image, so their identities are
+    pinned here and re-checked inside the guest before a shard runs. Every
+    leaf this document shares with the CTS identity must agree with it.
+    """
+    if identity is None:
+        identity = load_identity()
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CampaignError(f"cannot read ES 3.2 matrix {path}: {error}") from error
+    if (
+        not isinstance(value, dict)
+        or set(value) != {
+            "schema_version", "api", "captured_from_rootfs", "documents", "leaves",
+        }
+        or value["schema_version"] != 1
+        or value["api"] != gles_cts_plan.API
+        or not isinstance(value["captured_from_rootfs"], str)
+        or not value["captured_from_rootfs"]
+    ):
+        raise CampaignError("invalid ES 3.2 matrix document")
+    rows = value["documents"]
+    if (
+        not isinstance(rows, list)
+        or len(rows) != len(gles_cts_plan.COLLECTIONS)
+        or any(
+            not isinstance(row, dict)
+            or set(row) != {"collection", "file", "path"}
+            or row["collection"] != collection
+            or Path(row["file"]).name != row["file"]
+            for row, (collection, *_) in zip(rows, gles_cts_plan.COLLECTIONS)
+        )
+    ):
+        raise CampaignError("invalid ES 3.2 matrix document set")
+    documents: dict[str, bytes] = {}
+    for row in rows:
+        document_path = path.with_name(row["file"])
+        try:
+            documents[row["collection"]] = document_path.read_bytes()
+        except OSError as error:
+            raise CampaignError(
+                f"cannot read ES 3.2 must-pass XML {document_path}: {error}"
+            ) from error
+    known = leaf_identities(identity)
+    by_path = {leaf.path: leaf for leaf in known.values()}
+    leaves: dict[str, dict[str, Any]] = {}
+    for leaf in value["leaves"]:
+        if (
+            not isinstance(leaf, dict)
+            or set(leaf) != gles_cts_plan.LEAF_KEYS
+            or not isinstance(leaf["path"], str)
+            or leaf["path"] in leaves
+            or type(leaf["case_count"]) is not int
+            or leaf["case_count"] < 1
+            or type(leaf["size"]) is not int
+            or leaf["size"] < leaf["case_count"]
+            or not isinstance(leaf["sha256"], str)
+            or SHA256.fullmatch(leaf["sha256"]) is None
+            or Path(leaf["path"]).name != f"{leaf['id']}.txt"
+        ):
+            raise CampaignError("invalid ES 3.2 matrix leaf identity")
+        shared = by_path.get(leaf["path"])
+        if shared is not None and (
+            shared.case_count != leaf["case_count"]
+            or shared.sha256 != leaf["sha256"]
+        ):
+            raise CampaignError(
+                f"ES 3.2 matrix leaf disagrees with the CTS identity: {leaf['id']}"
+            )
+        leaves[leaf["path"]] = leaf
+    xml_identity = identity["mustpass"]["gles_xml"]
+    main = documents["main"]
+    if (
+        len(main) != xml_identity["size"]
+        or hashlib.sha256(main).hexdigest() != xml_identity["sha256"]
+    ):
+        raise CampaignError("ES 3.2 main must-pass XML differs from the CTS identity")
+    try:
+        manifest = gles_cts_plan.build_manifest(
+            documents.__getitem__, leaves.__getitem__
+        )
+    except (KeyError, gles_cts_plan.PlanError) as error:
+        raise CampaignError(f"invalid ES 3.2 must-pass scope: {error}") from error
+    if manifest["documents"][-1]["path"] != xml_identity["path"]:
+        raise CampaignError("ES 3.2 main must-pass XML path changed")
+    return manifest
+
+
+def gles32_matrix_run(
+    manifest: dict[str, Any], receipt: dict[str, Any],
+    configs: tuple[EglConfig, ...], digest: str, config_index: int,
+    configuration_index: int, fraction: tuple[int, int],
+    exact_cases: tuple[str, ...] = (),
+) -> MatrixRun:
+    if receipt.get("schema_version") != 4:
+        raise CampaignError("ES 3.2 matrix requires the XML-scoped schema-4 receipt")
+    try:
+        runs = gles_cts_plan.expand_runs(manifest, [
+            {"id": config.identifier, "surface_types": list(config.surface_types)}
+            for config in configs
+        ])
+    except gles_cts_plan.PlanError as error:
+        raise CampaignError(str(error)) from error
+    matching = [run for run in runs if run["egl_config_index"] == config_index
+                and run["configuration_index"] == configuration_index]
+    if len(matching) != 1:
+        raise CampaignError("ES 3.2 XML configuration does not apply to this EGL config")
+    row = manifest["configurations"][configuration_index]
+    identity = next(leaf for leaf in manifest["leaves"] if leaf["id"] == row["leaf_id"])
+    leaf = LeafIdentity(identity["id"], identity["path"],
+                        identity["case_count"], identity["sha256"])
+    document = next(item for item in manifest["documents"]
+                    if item["collection"] == row["collection"])
+    return MatrixRun(
+        configuration=MustpassConfiguration(
+            api=gles_cts_plan.API, leaf=leaf, name=row["name"],
             use_for_first_egl_config=row["use_for_first_egl_config"],
             screen_rotation="unspecified", surface_width=row["surface_width"],
             surface_height=row["surface_height"], base_seed=row["base_seed"],
@@ -4978,7 +5127,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--config-inventory-run", type=Path)
     parser.add_argument("--egl-config-index", type=nonnegative_integer)
     parser.add_argument("--mustpass-config-index", type=nonnegative_integer,
-                        help="authenticated GL46 XML configuration index")
+                        help="authenticated must-pass XML configuration index")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
@@ -5096,8 +5245,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error("--matrix requires --qualification")
         if options.display != "vnc":
             parser.error("a macOS qualification matrix requires --display vnc")
-        if (options.matrix == "gl46") != (options.mustpass_config_index is not None):
-            parser.error("only --matrix gl46 requires --mustpass-config-index")
+        if (options.matrix in XML_MATRIX_APIS) != (
+            options.mustpass_config_index is not None
+        ):
+            parser.error(
+                "only an XML-scoped matrix requires --mustpass-config-index: "
+                + ", ".join(XML_MATRIX_APIS)
+            )
     elif options.campaign is not None:
         if (
             options.leaf is not None
@@ -5163,11 +5317,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     # and its receipt, whichever stack renders it: guest Zink over Venus, or
     # the guest Virgl driver over the host's Zink provider. A developer shard
     # of the gl46 leaf is in that scope too; it asks the guest for the same
-    # desktop OpenGL context an official matrix does.
+    # desktop OpenGL context an official matrix does. The ES 3.2 matrix runs
+    # from the same authenticated image and shares the scope.
     options.gl46_scope = (
         options.renderer == "zink"
-        or options.matrix == "gl46"
-        or options.config_inventory == "gl46"
+        or options.matrix in XML_MATRIX_APIS
+        or options.config_inventory in XML_MATRIX_APIS
         or options.api == "gl46"
     )
     if options.gl46_scope and (
@@ -5216,17 +5371,32 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                 contract,
                 ({"emulator_sha256": sha256_file(options.emulator.resolve()),
                   "kosmickrisp_sha256": verify_staged_kosmickrisp(options.emulator.resolve())}
-                 if options.matrix == "gl46" else None),
+                 if options.matrix in XML_MATRIX_APIS else None),
                 (options.width, options.height),
                 options.renderer,
             )
-            if options.matrix == "gl46":
-                options.matrix_run = opengl_matrix_run(
-                    receipt, configs, config_digest, options.egl_config_index,
-                    options.mustpass_config_index, options.fraction,
-                    tuple(options.case) if options.case else (),
-                )
+            if options.matrix in XML_MATRIX_APIS:
+                if options.matrix == "gl46":
+                    options.matrix_run = opengl_matrix_run(
+                        receipt, configs, config_digest, options.egl_config_index,
+                        options.mustpass_config_index, options.fraction,
+                        tuple(options.case) if options.case else (),
+                    )
+                else:
+                    options.matrix_run = gles32_matrix_run(
+                        load_gles32_matrix(identity), receipt, configs,
+                        config_digest, options.egl_config_index,
+                        options.mustpass_config_index, options.fraction,
+                        tuple(options.case) if options.case else (),
+                    )
                 source = receipt["opengl_cts"]["mustpass"]["runner_source"]
+                if (
+                    options.matrix == gles_cts_plan.API
+                    and source != gles_cts_plan.RUNNER_SOURCE
+                ):
+                    parser.error(
+                        "the ES 3.2 run table and the sealed runner source disagree"
+                    )
                 options.runner_oracle = RunnerOracle(
                     source["path"], source["size"], source["sha256"], (),
                     tuple(receipt["runner_oracle"]["successful"]),

@@ -1,0 +1,80 @@
+{
+  "api": "gles32",
+  "captured_from_rootfs": "kosmickrisp-source22-20260914-v1/rootfs-vulkan-zink-gl.ext4",
+  "documents": [
+    {
+      "collection": "no-context",
+      "file": "vk_gl_cts_gles_mustpass_noctx.xml",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass_noctx/main/mustpass.xml"
+    },
+    {
+      "collection": "single",
+      "file": "vk_gl_cts_gles_mustpass_single.xml",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass_single/main/mustpass.xml"
+    },
+    {
+      "collection": "main",
+      "file": "vk_gl_cts_gles_mustpass.xml",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/mustpass.xml"
+    }
+  ],
+  "leaves": [
+    {
+      "case_count": 1,
+      "id": "gles2-khr-noctx-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass_noctx/main/gles2-khr-noctx-main.txt",
+      "sha256": "b48f67906878da23d9fb0e1ae4ce27972ff00fa5d75fdd5782a70b9bad64b39e",
+      "size": 42
+    },
+    {
+      "case_count": 13,
+      "id": "gles32-khr-noctx-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass_noctx/main/gles32-khr-noctx-main.txt",
+      "sha256": "aa98aa8b353020d7f8c5fab07312d4c967370044a192d03443f919ff00d116da",
+      "size": 724
+    },
+    {
+      "case_count": 6053,
+      "id": "gles32-khr-single",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass_single/main/gles32-khr-single.txt",
+      "sha256": "a01f6511dc66a66d1c1da3d37c88ef3ea62183cee0f9a8aedf9027795f5abbb5",
+      "size": 486279
+    },
+    {
+      "case_count": 473,
+      "id": "gles2-khr-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/gles2-khr-main.txt",
+      "sha256": "aed17d34d64047973c439835ee7cfa8a109c2159512fe1fe59fb07fc05d395f2",
+      "size": 38127
+    },
+    {
+      "case_count": 6498,
+      "id": "gles3-khr-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/gles3-khr-main.txt",
+      "sha256": "c79097f9f9c69a4556e235b3301c0dc9a5d73375c05f193a6f5e127d853ace72",
+      "size": 443126
+    },
+    {
+      "case_count": 4101,
+      "id": "gles31-khr-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/gles31-khr-main.txt",
+      "sha256": "9fd8e4ff51616262c567f7a9eec83f69d2d311a4293a45d2d377306d426d520e",
+      "size": 288777
+    },
+    {
+      "case_count": 1405,
+      "id": "gles32-khr-main",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/gles32-khr-main.txt",
+      "sha256": "426fa31d557e08e214b75fda5d9efcaec54a42cdc14d4915939a7d02ccb6f249",
+      "size": 105294
+    },
+    {
+      "case_count": 1097,
+      "id": "gles32-khr-glesext",
+      "path": "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles/khronos_mustpass/main/gles32-khr-glesext.txt",
+      "sha256": "789b0474c61693baaa7cbc941575f23b383e2ba3c4991b1a910e046a17a6e0e6",
+      "size": 81374
+    }
+  ],
+  "schema_version": 1
+}

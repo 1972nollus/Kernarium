@@ -237,7 +237,7 @@ def write_config_inventory_evidence(
             for config in configs
         ],
     }
-    if api == "gl46":
+    if api in cts.XML_MATRIX_APIS:
         metadata.update({"backend": cts.host_backend_label(renderer),
                          "renderer": renderer,
                          "surface": [1280, 720], **(runtime_identity or {})})

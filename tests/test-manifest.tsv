@@ -653,6 +653,7 @@ vulkan-probe-guest-safety	tests/tooling/gpu/test_run_vulkan_probe.py	tooling	ret
 vk-gl-cts-campaign-safety	tests/tooling/gpu/test_run_vk_gl_cts.py	tooling	retained
 vk-gl-cts-matrix-orchestrator-safety	tests/tooling/gpu/test_run_vk_gl_cts_matrix.py	tooling	retained
 opengl-cts-plan-safety	tests/tooling/gpu/test_opengl_cts_plan.py	tooling	retained
+gles-cts-plan-safety	tests/tooling/gpu/test_gles_cts_plan.py	tooling	retained
 cts-shard-resumption-safety	tests/tooling/gpu/test_cts_shard_resilience.py	tooling	retained
 graphics-cts-pool-safety	tests/tooling/gpu/test_graphics_cts_campaign.py	tooling	retained
 vulkan-cts-campaign-safety	tests/tooling/gpu/test_run_vk_cts.py	tooling	retained
