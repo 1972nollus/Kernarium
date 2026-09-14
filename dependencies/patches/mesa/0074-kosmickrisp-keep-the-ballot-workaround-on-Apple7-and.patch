@@ -1,7 +1,7 @@
 From 1e86d1b409563b2b4f3c3d5adddc17d29aca4456 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:05:49 +0900
-Subject: [PATCH 74/78] kosmickrisp: keep the ballot workaround on Apple7 and
+Subject: [PATCH 74/79] kosmickrisp: keep the ballot workaround on Apple7 and
  Apple8
 
 KK_WORKAROUND_3 routes every ballot and vote through simd_or, because Metal's

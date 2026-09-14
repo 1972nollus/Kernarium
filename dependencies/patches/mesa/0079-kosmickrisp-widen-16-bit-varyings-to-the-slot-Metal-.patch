@@ -1,0 +1,372 @@
+From c10c2f0bd69f5ce9a06826fa0da15f2be0139146 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 11:45:56 +0900
+Subject: [PATCH 79/79] kosmickrisp: widen 16-bit varyings to the slot Metal
+ carries
+
+storageInputOutput16 was withheld with a note that
+dEQP-VK.spirv_assembly.instruction.graphics.16bit_storage.* failed on a vertex
+to fragment interface mismatch.
+
+Varying compaction gives every varying a float type of its own size, to help
+it vectorize the interface, so a 16-bit integer varying reaches the backend
+typed float16 and is transported as the bits of a half. Metal's raster
+interface does not carry every half bit pattern: the 16-bit integer cases fail
+on the values whose bits are a half denormal or a NaN payload, while the 16-bit
+float cases, which only ever carry numbers, pass. The declared width was the
+second half of the problem, because the two stages are translated separately
+and a slot's Metal type came from whichever access the gather saw last, so a
+vertex shader writing four components and a fragment shader reading two
+disagreed.
+
+Widen a varying narrower than 32 bits to 32 bits before the chain is linked,
+while the intrinsics still say whether the varying holds an integer or a float.
+A 16-bit varying already occupies a whole 32-bit slot here, because this driver
+does not let compaction pack two of them into one, so the widening costs no
+varying space and puts 16-bit input and output on the path the 32-bit varyings
+have always used - including the bit-exact transport an integer varying needs.
+Widening a float converts rather than reinterprets, which is exact in both
+directions and leaves interpolation to run at the higher precision Vulkan
+allows.
+
+The two interfaces Metal describes in their own widths are left alone: vertex
+attributes, which Metal fetches in the vertex format's width, and fragment
+outputs, which are render targets.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../compiler/msl_nir_lower_common.c           |  69 ++++++++
+ src/kosmickrisp/compiler/nir_to_msl.h         |   1 +
+ src/kosmickrisp/vulkan/kk_physical_device.c   |   9 +-
+ src/kosmickrisp/vulkan/kk_shader.c            |   9 +
+ src/kosmickrisp/vulkan/meson.build            |  14 ++
+ .../vulkan/tests/test_16bit_varying_io.c      | 163 ++++++++++++++++++
+ 6 files changed, 260 insertions(+), 5 deletions(-)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
+
+diff --git a/src/kosmickrisp/compiler/msl_nir_lower_common.c b/src/kosmickrisp/compiler/msl_nir_lower_common.c
+index d6186ee7..86ed330d 100644
+--- a/src/kosmickrisp/compiler/msl_nir_lower_common.c
++++ b/src/kosmickrisp/compiler/msl_nir_lower_common.c
+@@ -620,6 +620,75 @@ msl_nir_lower_cull_distance_fs(nir_shader *s, unsigned nr_distances)
+    return nir_progress(true, b->impl, nir_metadata_control_flow);
+ }
+ 
++/* Carry a varying narrower than 32 bits in a 32-bit slot.
++ *
++ * Metal has no way to name the halves of a component, and a "half" varying
++ * does not carry an arbitrary bit pattern: the raster interface does not
++ * preserve every half denormal or NaN payload, which a 16-bit integer varying
++ * needs it to, because nir_opt_varyings gives every varying a float type of
++ * its size to help vectorization and the backend then transports the integer
++ * as the bits of a half.  A 32-bit slot does preserve every pattern, and a
++ * 16-bit varying already occupies a whole 32-bit slot here, so widening the
++ * value costs no varying space and puts 16-bit input and output on the same
++ * path the 32-bit varyings have always used.
++ *
++ * Widening a float converts rather than reinterprets, which is exact in both
++ * directions and leaves interpolation to run at the higher precision Vulkan
++ * allows; widening an integer is the ordinary zero or sign extension.
++ */
++static bool
++widen_narrow_varying(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
++{
++   const mesa_shader_stage stage = b->shader->info.stage;
++   nir_alu_type type;
++   nir_def *value;
++
++   switch (intrin->intrinsic) {
++   case nir_intrinsic_store_output:
++      /* A fragment shader's outputs are render targets, not varyings. */
++      if (stage == MESA_SHADER_FRAGMENT)
++         return false;
++      if (nir_src_bit_size(intrin->src[0]) >= 32u)
++         return false;
++      type = nir_intrinsic_src_type(intrin);
++      b->cursor = nir_before_instr(&intrin->instr);
++      value = nir_convert_to_bit_size(b, intrin->src[0].ssa,
++                                      nir_alu_type_get_base_type(type), 32u);
++      nir_src_rewrite(&intrin->src[0], value);
++      nir_intrinsic_set_src_type(intrin,
++                                 nir_alu_type_get_base_type(type) | 32u);
++      return true;
++
++   case nir_intrinsic_load_input:
++   case nir_intrinsic_load_interpolated_input:
++      /* A vertex shader's inputs are attributes, which Metal fetches in the
++       * vertex format's own width. */
++      if (stage == MESA_SHADER_VERTEX)
++         return false;
++      if (intrin->def.bit_size >= 32u)
++         return false;
++      type = nir_intrinsic_dest_type(intrin);
++      intrin->def.bit_size = 32u;
++      nir_intrinsic_set_dest_type(intrin,
++                                  nir_alu_type_get_base_type(type) | 32u);
++      b->cursor = nir_after_instr(&intrin->instr);
++      value = nir_convert_to_bit_size(b, &intrin->def,
++                                      nir_alu_type_get_base_type(type), 16u);
++      nir_def_rewrite_uses_after(&intrin->def, value);
++      return true;
++
++   default:
++      return false;
++   }
++}
++
++void
++msl_nir_lower_narrow_varyings(nir_shader *nir)
++{
++   NIR_PASS(_, nir, nir_shader_intrinsics_pass, widen_narrow_varying,
++            nir_metadata_control_flow, NULL);
++}
++
+ /* Scalarize accesses to the merged CLIP_DIST* varyings */
+ static bool
+ scalarize_clip_cull_distance_filter(const nir_intrinsic_instr *intrin,
+diff --git a/src/kosmickrisp/compiler/nir_to_msl.h b/src/kosmickrisp/compiler/nir_to_msl.h
+index a983cade..5c7792db 100644
+--- a/src/kosmickrisp/compiler/nir_to_msl.h
++++ b/src/kosmickrisp/compiler/nir_to_msl.h
+@@ -80,6 +80,7 @@ bool msl_nir_fake_guard_for_discards(struct nir_shader *nir);
+ bool msl_nir_lower_sample_shading(nir_shader *nir);
+ void msl_nir_lower_clip_cull_distance(nir_shader *nir,
+                                       unsigned num_cull_distances);
++void msl_nir_lower_narrow_varyings(nir_shader *nir);
+ bool msl_nir_lower_instance_id(nir_shader *nir);
+ 
+ bool msl_gather_uses_per_draw_data(nir_shader *nir);
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index ce2b4046..5749fb5e 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -269,11 +269,10 @@ kk_get_device_features(
+       .samplerYcbcrConversion = true,
+       .shaderDrawParameters = true,
+       .storageBuffer16BitAccess = true,
+-      /* TODO KOSMICKRISP
+-       * Disabled due to failing tests (vertex fragment interface mismatch):
+-       * dEQP-VK.spirv_assembly.instruction.graphics.16bit_storage.*
+-       */
+-      .storageInputOutput16 = false,
++      /* A 16-bit varying is widened to a 32-bit one before the chain is
++       * linked, because the raster interface does not carry every half bit
++       * pattern; see msl_nir_lower_narrow_varyings(). */
++      .storageInputOutput16 = true,
+       .storagePushConstant16 = true,
+       .uniformAndStorageBuffer16BitAccess = true,
+       .variablePointers = true,
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index 0ca5c5aa..9adae2af 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -5242,6 +5242,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+       nir_shader_gather_info(fs, nir_shader_get_entrypoint(fs));
+    }
+ 
++   /* A varying narrower than 32 bits is widened before the chain is linked,
++    * while the intrinsics still say whether it holds an integer or a float.
++    * Varying compaction gives every varying a float type of its own size
++    * afterwards, which leaves a 16-bit integer varying travelling as the bits
++    * of a half, and the raster interface does not carry every half bit
++    * pattern. */
++   for (uint32_t i = 0u; i < total_shaders; ++i)
++      msl_nir_lower_narrow_varyings(nir_shaders[i]);
++
+    /* The final line stage is generated after GS/XFB decomposition.  For this
+     * path, link only the application pre-raster chain now; linking an
+     * unmatched internal line input to the old final stage would discard it. */
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index 36a6d15f..e29584b1 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -1037,6 +1037,20 @@ if with_tests
+     suite : ['kosmickrisp'],
+   )
+ 
++  test(
++    'kosmickrisp_16bit_varying_io',
++    executable(
++      'test_kosmickrisp_16bit_varying_io',
++      files('tests/test_16bit_varying_io.c'),
++      include_directories : kk_test_include_directories,
++      dependencies : [
++        idep_nir,
++        idep_msl_to_nir,
++      ],
++    ),
++    suite : ['kosmickrisp'],
++  )
++
+   test(
+     'kosmickrisp_msl_temporaries',
+     executable(
+diff --git a/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c b/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
+new file mode 100644
+index 00000000..f3594b6f
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
+@@ -0,0 +1,163 @@
++/*
++ * Copyright 2026 Google LLC
++ * SPDX-License-Identifier: MIT
++ */
++
++/* A 16-bit varying does not survive Metal's raster interface as a half.
++ * Varying compaction gives every varying a float type of its own size, so a
++ * 16-bit integer varying would travel as the bits of a half, and those bits
++ * are not all carried: half denormals and NaN payloads come back changed.
++ * Widen the varying to 32 bits instead, which costs no varying space because
++ * a 16-bit varying already occupies a whole slot, and leave the two
++ * interfaces Metal describes in their own widths - vertex attributes, which
++ * Metal fetches in the vertex format's width, and fragment outputs, which are
++ * render targets.
++ */
++
++#include "compiler/glsl_types.h"
++#include "compiler/nir/nir.h"
++#include "compiler/nir/nir_builder.h"
++#include "kosmickrisp/compiler/nir_to_msl.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define CHECK(condition)                                                       \
++   do {                                                                        \
++      if (!(condition)) {                                                      \
++         fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__,      \
++                 #condition);                                                  \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
++
++/* A vertex shader that reads a 16-bit attribute and writes it to a 16-bit
++ * varying, which is the shape the 16-bit storage tests build. */
++static nir_shader *
++build_vs(void)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, &kk_nir_options, "16-bit varying vertex stage");
++   nir_shader *nir = b.shader;
++   nir->info.io_lowered = true;
++
++   nir_store_output(&b, nir_imm_vec4(&b, 0.0f, 0.0f, 0.0f, 1.0f),
++                    nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .write_mask = 0xf, .component = 0,
++                    .src_type = nir_type_float32,
++                    .io_semantics.location = VARYING_SLOT_POS,
++                    .io_semantics.num_slots = 1);
++
++   nir_def *attribute = nir_load_input(
++      &b, 1, 16, nir_imm_int(&b, 0), .base = 0, .component = 0,
++      .dest_type = nir_type_uint16,
++      .io_semantics.location = VERT_ATTRIB_GENERIC0,
++      .io_semantics.num_slots = 1);
++   nir_store_output(&b, attribute, nir_imm_int(&b, 0), .base = 1, .range = 1,
++                    .write_mask = 0x1, .component = 0,
++                    .src_type = nir_type_uint16,
++                    .io_semantics.location = VARYING_SLOT_VAR0,
++                    .io_semantics.num_slots = 1);
++
++   nir->info.inputs_read = BITFIELD64_BIT(VERT_ATTRIB_GENERIC0);
++   nir->info.outputs_written = BITFIELD64_BIT(VARYING_SLOT_POS) |
++                               BITFIELD64_BIT(VARYING_SLOT_VAR0);
++   nir_validate_shader(nir, "16-bit varying vertex stage");
++   return nir;
++}
++
++/* A fragment shader that reads a 16-bit varying and returns a 16-bit colour,
++ * so one shader covers both the varying and the render target. */
++static nir_shader *
++build_fs(void)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_FRAGMENT, &kk_nir_options, "16-bit varying fragment stage");
++   nir_shader *nir = b.shader;
++   nir->info.io_lowered = true;
++
++   nir_def *value = nir_load_input(
++      &b, 1, 16, nir_imm_int(&b, 0), .base = 0, .component = 0,
++      .dest_type = nir_type_uint16,
++      .io_semantics.location = VARYING_SLOT_VAR0,
++      .io_semantics.num_slots = 1);
++   nir_def *colour = nir_replicate(&b, nir_iadd_imm(&b, value, 1), 4);
++
++   nir->info.inputs_read = BITFIELD64_BIT(VARYING_SLOT_VAR0);
++   nir_store_output(&b, colour, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .write_mask = 0xf, .component = 0,
++                    .src_type = nir_type_uint16,
++                    .io_semantics.location = FRAG_RESULT_DATA0,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written = BITFIELD64_BIT(FRAG_RESULT_DATA0);
++   nir_validate_shader(nir, "16-bit varying fragment stage");
++   return nir;
++}
++
++static char *
++translate(nir_shader *nir)
++{
++   msl_nir_lower_narrow_varyings(nir);
++   msl_optimize_nir(nir);
++   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
++
++   struct nir_to_msl_options options = {0};
++   for (unsigned i = 0; i < MAX_DRAW_BUFFERS; i++)
++      options.rts_component_count[i] = 4;
++   char *msl = nir_to_msl(nir, &options);
++   CHECK(msl != NULL);
++   return msl;
++}
++
++/* Return the declaration of one member of a generated struct. */
++static const char *
++member(const char *msl, const char *block, const char *name)
++{
++   const char *start = strstr(msl, block);
++   CHECK(start != NULL);
++   const char *end = strstr(start, "};");
++   CHECK(end != NULL);
++
++   const char *line = strstr(start, name);
++   if (line == NULL || line > end)
++      return NULL;
++   while (line > start && line[-1] != '\n')
++      line--;
++   while (*line == ' ')
++      line++;
++   return line;
++}
++
++static bool
++declares(const char *msl, const char *block, const char *name,
++         const char *type)
++{
++   const char *declaration = member(msl, block, name);
++   if (declaration == NULL)
++      return false;
++   size_t length = strlen(type);
++   return strncmp(declaration, type, length) == 0 &&
++          declaration[length] == ' ';
++}
++
++int
++main(void)
++{
++   glsl_type_singleton_init_or_ref();
++
++   /* The varying is widened; the attribute keeps the width Metal fetches. */
++   char *msl = translate(build_vs());
++   CHECK(declares(msl, "struct VertexOut", "vary_00", "uint"));
++   CHECK(declares(msl, "struct VertexIn", "attribute_0", "ushort4"));
++
++   /* The same varying arrives 32 bits wide, and the render target keeps its
++    * own 16-bit format. */
++   msl = translate(build_fs());
++   CHECK(declares(msl, "struct FragmentIn", "vary_00", "uint"));
++   CHECK(declares(msl, "struct FragmentOut", "color_0", "ushort4"));
++
++   glsl_type_singleton_decref();
++   printf("16-bit varying interface PASS\n");
++   return 0;
++}
