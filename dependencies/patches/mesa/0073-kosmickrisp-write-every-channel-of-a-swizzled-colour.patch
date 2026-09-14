@@ -1,4 +1,4 @@
-From 8f2dc027c55489c60d4627367ad2af2efc883eda Mon Sep 17 00:00:00 2001
+From 7cd747045aeb7e1e19b37d0774861ca73dd39e0e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:11:34 +0900
 Subject: [PATCH 73/73] kosmickrisp: write every channel of a swizzled colour
@@ -27,8 +27,8 @@ it, and cover every channel count and both channel orders.
  src/kosmickrisp/vulkan/kk_shader.c            |  54 +-----
  src/kosmickrisp/vulkan/kk_shader.h            |   4 +
  src/kosmickrisp/vulkan/meson.build            |  21 +++
- .../tests/test_fragment_output_swizzle.c      | 155 ++++++++++++++++++
- 5 files changed, 306 insertions(+), 53 deletions(-)
+ .../tests/test_fragment_output_swizzle.c      | 160 ++++++++++++++++++
+ 5 files changed, 311 insertions(+), 53 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_nir_lower_fragment_output_swizzle.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c
 
@@ -291,10 +291,10 @@ index afa9cd5b..36a6d15f 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c b/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c
 new file mode 100644
-index 00000000..0288949d
+index 00000000..2cff3789
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,160 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -340,11 +340,11 @@ index 00000000..0288949d
 +
 +   nir_def *channels[4];
 +   for (unsigned i = 0; i < components; ++i)
-+      channels[i] = nir_imm_float(&b, 0.125f * (float)(i + 1));
++      channels[i] = nir_imm_int(&b, 0x10u + i);
 +
 +   nir_store_output(&b, nir_vec(&b, channels, components), nir_imm_int(&b, 0),
 +                    .base = 0, .range = 1, .write_mask = BITFIELD_MASK(components),
-+                    .component = 0, .src_type = nir_type_float32,
++                    .component = 0, .src_type = nir_type_uint32,
 +                    .io_semantics.location = FRAG_RESULT_DATA0,
 +                    .io_semantics.num_slots = 1);
 +   nir->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DATA0);
@@ -368,16 +368,21 @@ index 00000000..0288949d
 +   return NULL;
 +}
 +
-+/* The constant a lane of the rebuilt store carries, or -1.0 where the lane is
-+ * undefined. */
-+static float
++/* The constant a lane of the rebuilt store carries; a lane the shader never
++ * wrote is left undefined instead. */
++static uint64_t
 +lane_value(nir_def *value, unsigned lane)
 +{
 +   nir_scalar scalar = nir_scalar_resolved(value, lane);
-+   if (nir_scalar_is_undef(scalar))
-+      return -1.0f;
 +   CHECK(nir_scalar_is_const(scalar));
-+   return nir_scalar_as_float(scalar);
++   return nir_scalar_as_uint(scalar);
++}
++
++static bool
++lane_is_undef(nir_def *value, unsigned lane)
++{
++   nir_scalar scalar = nir_scalar_resolved(value, lane);
++   return nir_def_instr(scalar.def)->type == nir_instr_type_undef;
 +}
 +
 +static void
@@ -421,12 +426,12 @@ index 00000000..0288949d
 +   CHECK(value->num_components == 4);
 +   for (unsigned i = 0; i < components; ++i) {
 +      const unsigned lane = supported->unswizzle.channels[i];
-+      CHECK(lane_value(value, lane) == 0.125f * (float)(i + 1));
++      CHECK(lane_value(value, lane) == 0x10u + i);
 +   }
 +   for (unsigned lane = 0; lane < 4; ++lane) {
 +      if (expected_mask & BITFIELD_BIT(lane))
 +         continue;
-+      CHECK(lane_value(value, lane) == -1.0f);
++      CHECK(lane_is_undef(value, lane));
 +   }
 +   ralloc_free(nir);
 +}
