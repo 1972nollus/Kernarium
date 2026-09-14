@@ -1,7 +1,7 @@
 From 8367de73a689c86387eb5c88ab9fae5c2fd29747 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 11 Sep 2026 16:33:14 +0900
-Subject: [PATCH 11/40] virgl: reference-count the shared fence table
+Subject: [PATCH 11/41] virgl: reference-count the shared fence table
 
 virgl_fence_table is one process-global singleton, but two independent
 owners create and destroy it. The VMM side takes it in

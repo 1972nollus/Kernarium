@@ -1,7 +1,7 @@
 From d81a126c18ca5cd8a18feb89fcd762e2fe3ed451 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:29:09 +0900
-Subject: [PATCH 40/40] venus: serve VK_KHR_pipeline_binary
+Subject: [PATCH 40/41] venus: serve VK_KHR_pipeline_binary
 
 The local protocol series gives the extension's five commands their command
 ids and codecs, so the renderer can now dispatch them. Four are plain

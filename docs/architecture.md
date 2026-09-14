@@ -271,6 +271,17 @@ shared staging buffer, keeps at most one newer pending frame, and publishes to
 LibVNCServer only after GPU completion, so neither readback nor encoding blocks
 the guest flush timeline.
 
+Sharing runs the other way too, for a guest whose buffer allocator is not the
+Vulkan driver: when another context asks to import a GL resource, the renderer
+gives that resource a host shared-memory segment the size of its tightly
+packed linear layout and hands out the segment's descriptor. The texture is
+refreshed from the segment before each GL read of it, and the segment is
+rewritten from the texture at the end of a submission that drew into it and
+before its descriptor is handed out. Ordering between the two consumers is the
+guest's own fences; the renderer adds none. A resource no other context
+imports keeps ordinary texture storage, and a host with dma-buf shares through
+that instead.
+
 Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
 Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
 serial terminal view. Android additionally receives the Apple host's battery
