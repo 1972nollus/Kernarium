@@ -1,7 +1,7 @@
 From 46a5d9f8a2b006bc8585de5548387ebb9220a887 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 14:26:52 +0900
-Subject: [PATCH 15/17] venus: serve reference-counted layouts from the
+Subject: [PATCH 15/18] venus: serve reference-counted layouts from the
  caller's allocator
 
 vkCreateDescriptorSetLayout and vkCreatePipelineLayout ignored the

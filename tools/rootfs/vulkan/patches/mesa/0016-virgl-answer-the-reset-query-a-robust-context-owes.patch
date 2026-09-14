@@ -1,7 +1,7 @@
 From e4f112a717fc95d0d6369ba399b1ea59184b353a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 07:57:03 +0900
-Subject: [PATCH 16/17] virgl: answer the reset query a robust context owes
+Subject: [PATCH 16/18] virgl: answer the reset query a robust context owes
 
 Mesa's EGL advertises EGL_EXT_create_context_robustness, and with it
 EXT_query_reset_notification_strategy, only when the screen sets
