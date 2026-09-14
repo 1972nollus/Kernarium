@@ -1,7 +1,7 @@
 From c9b5140211c1f9e1e326eacb356e7a1941b8046d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
-Subject: [PATCH 42/80] kosmickrisp: restrict the coherency workaround to loops
+Subject: [PATCH 42/81] kosmickrisp: restrict the coherency workaround to loops
 
 Large compute kernels miscompile on macOS 26 when a global access is marked
 coherent: part way through the kernel every device load starts returning zero,
