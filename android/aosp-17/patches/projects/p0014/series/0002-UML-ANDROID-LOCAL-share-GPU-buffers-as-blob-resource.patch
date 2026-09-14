@@ -1,0 +1,53 @@
+From 8bcb438d888cd1a536e8fec8edc277a269d67a0d Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 10:26:16 +0000
+Subject: [PATCH 2/2] UML-ANDROID-LOCAL: share GPU buffers as blob resources
+
+A classic 3D resource lives inside the context that created it and has no
+handle the renderer can export, so a second context cannot open it. The
+Vulkan driver imports gralloc buffers exactly that way, and every import
+failed here with "invalid res_id" because the allocator had created a
+classic resource.
+
+The driver only considered a blob when host_gbm_enabled was set, which it
+derives from whether the host implements NV12 natively. That probe asks
+whether the host allocator is minigbm; it says nothing about whether blob
+resources work, and a host with a different allocator fails it while
+supporting blobs perfectly well. Allocate a blob for any buffer the GPU
+shares, and leave the probe gating only the rules that really describe the
+other host. The caller has already established that the device offers blob
+resources and a host-visible window.
+
+Change-Id: Id05472c5fa529fa59965f563f41d1c7bc491a10e
+---
+ virtgpu_virgl.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
+index 7d798aeef29dff3b7fb7a4714f765e62c61721a9..73b6003dbfe5fb8c0ffa808b5097182060f23c52 100644
+--- a/virtgpu_virgl.c
++++ b/virtgpu_virgl.c
+@@ -972,7 +972,22 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
+ {
+ 	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
+ 
+-	// Only use blob when host gbm is available
++	/*
++	 * Only a blob resource carries a handle the renderer can hand to a
++	 * second context, so a buffer the GPU shares has to be one: the Vulkan
++	 * driver imports gralloc buffers that way, and a classic 3D resource
++	 * has nothing to export. The caller already established that the
++	 * device offers blob resources and a host-visible window.
++	 */
++	if (use_flags & (BO_USE_RENDERING | BO_USE_SCANOUT | BO_USE_TEXTURE))
++		return true;
++
++	/*
++	 * The remaining rules describe a host whose allocator is minigbm, which
++	 * this driver detects by asking whether the host implements YUV natively
++	 * rather than emulating it. That probe says nothing about whether blob
++	 * resources work, so it stays where it is and gates only its own rules.
++	 */
+ 	if (!priv->host_gbm_enabled)
+ 		return false;
+ 
