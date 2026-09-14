@@ -1,7 +1,7 @@
 From 1a430c3202d2aef4b2998396d7cb9fa9b6f98d67 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:28:43 +0900
-Subject: [PATCH 39/39] venus: allow image compression control and the address
+Subject: [PATCH 39/40] venus: allow image compression control and the address
  binding report
 
 VK_EXT_image_compression_control, its swapchain companion and

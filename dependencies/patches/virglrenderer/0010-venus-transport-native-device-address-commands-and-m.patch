@@ -1,7 +1,7 @@
 From 2552205f64ffd3dd3ab4aab4396c0647511337cb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:23:49 +0900
-Subject: [PATCH 10/39] venus: transport native device-address commands and
+Subject: [PATCH 10/40] venus: transport native device-address commands and
  maintenance
 
 ---
