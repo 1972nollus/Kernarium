@@ -1,4 +1,4 @@
-From 9a1dc2442002f0dd7ea970a31d841c0493e085c0 Mon Sep 17 00:00:00 2001
+From 6954b55b55854878e58f38e2b9056d6e65b34c02 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:26:16 +0000
 Subject: [PATCH 2/3] UML-ANDROID-LOCAL: share GPU buffers as blob resources
@@ -20,14 +20,14 @@ resources and a host-visible window.
 
 Change-Id: Id05472c5fa529fa59965f563f41d1c7bc491a10e
 ---
- virtgpu_virgl.c | 17 ++++++++++++++++-
- 1 file changed, 16 insertions(+), 1 deletion(-)
+ virtgpu_virgl.c | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 17a70c5e44cf166ac08cae1cbd54103e3bed4f62..86a892f30667ded89aba8fd6636810588eca7dd8 100644
+index 17a70c5e44cf166ac08cae1cbd54103e3bed4f62..a5c996b84edeadf8b68cb3586b7786093ff06857 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -973,7 +973,22 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
+@@ -973,7 +973,27 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
  {
  	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
  
@@ -38,8 +38,13 @@ index 17a70c5e44cf166ac08cae1cbd54103e3bed4f62..86a892f30667ded89aba8fd663681058
 +	 * driver imports gralloc buffers that way, and a classic 3D resource
 +	 * has nothing to export. The caller already established that the
 +	 * device offers blob resources and a host-visible window.
++	 *
++	 * A buffer the guest also reads or writes itself stays a classic
++	 * resource: its contents reach the guest through transfers, which a
++	 * blob backed by renderer-owned storage does not serve.
 +	 */
-+	if (use_flags & (BO_USE_RENDERING | BO_USE_SCANOUT | BO_USE_TEXTURE))
++	if (!(use_flags & BO_USE_SW_MASK) &&
++	    (use_flags & (BO_USE_RENDERING | BO_USE_SCANOUT | BO_USE_TEXTURE)))
 +		return true;
 +
 +	/*
