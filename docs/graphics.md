@@ -171,15 +171,23 @@ standing limits of this stack rather than work that is merely outstanding:
   does not provide.
 * `shaderFloat16` is withheld on purpose, because native half arithmetic can
   time out Apple GPUs when NaN-heavy graphics shaders run concurrently.
-* The Android hardware-buffer path cannot open. The guest Venus driver enables
-  `VK_ANDROID_native_buffer` and
-  `VK_ANDROID_external_memory_android_hardware_buffer` only when the renderer
-  offers both `VK_EXT_queue_family_foreign` and
-  `VK_EXT_image_drm_format_modifier`, and DRM format modifiers describe dma-buf
-  tiling layouts that Metal does not have. Without `VK_ANDROID_native_buffer`
-  the Android loader cannot create a swapchain, so `VK_KHR_android_surface`,
-  `VK_ANDROID_external_format_resolve`, and the rest of the Android window
-  system stay out of reach even if a HAL were built.
+* `storageInputOutput16` is withheld: a Metal struct member has one type, and a
+  varying slot that carries a 16-bit component has no single one.
+
+The Android window-system prerequisites the renderer owns are in place.
+KosmicKrisp advertises `VK_EXT_queue_family_foreign`, which costs it nothing on
+a single-queue device over unified memory, and implements
+`VK_EXT_image_drm_format_modifier` with `DRM_FORMAT_MOD_LINEAR` as its only
+modifier, because Metal describes no tiling an agent outside the driver could
+agree on. A modifier image is therefore exactly a linear image with a name for
+its layout and inherits every linear limit: one 2D level and layer, a dedicated
+allocation, no use as a colour or depth/stencil attachment, and an explicit
+plane layout accepted only where it matches the layout Metal's own alignment
+rule produces. The guest Venus driver's two conditions for
+`VK_ANDROID_native_buffer` and
+`VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and
+what remains between an Android guest and a Vulkan swapchain is the Android
+Vulkan HAL and its gralloc integration, not the renderer.
 
 The remaining gaps are ordinary work with owners: the guest's common WSI does
 not implement `VK_EXT_present_timing`,
