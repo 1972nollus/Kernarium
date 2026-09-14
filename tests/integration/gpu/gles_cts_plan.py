@@ -9,11 +9,17 @@ EGL configuration list. Text files not referenced by these XML documents do
 not define executable coverage. EGL configurations remain an ordered runtime
 input.
 
-The two AOSP collections that getTestRunsForES also visits (dEQP-EGL and
-dEQP-GLES2/3/31) are outside this scope: the official runner resolves their
-surface type from ``ConfigList::aospConfigs``, which the ``CTS-Configs`` case
-does not log, so no authenticated runtime input reproduces their command
-lines.
+The two AOSP collections it also visits (dEQP-EGL and dEQP-GLES2/3/31) name a
+GL configuration instead of an EGL configuration id. The runner resolves that
+name against ``ConfigList::aospConfigs``, so this module reconstructs that list
+from the EGL attribute table the inventory records and matches the name's bits
+the way isGLConfigCompatible does. The reconstruction is checked against the
+``CTS-Configs`` list it must reproduce.
+
+The collection order here is not the runner's emission order: the AOSP
+collections come last so that adding them never renumbers an existing run.
+Runs are independent guest boots, so only the set of runs and each run's own
+command line are observable.
 """
 
 from __future__ import annotations
@@ -27,22 +33,45 @@ from typing import Any, Callable
 from xml.etree import ElementTree
 
 
-ROOT = "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gles"
+ROOT = "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass"
 API = "gles32"
 # The run table selects a row when the context supports the row's API
 # ("supported"), except the single-configuration collection, which the runner
-# admits only on an exact API match ("exact").
+# admits only on an exact API match ("exact"). The AOSP collections select the
+# same way ("aosp-supported") or unconditionally ("aosp-any", the EGL run,
+# whose records carry no API at all).
 COLLECTIONS = (
-    ("no-context", "khronos_mustpass_noctx", "Khronos Mustpass ES NoContext", "supported"),
-    ("single", "khronos_mustpass_single", "Khronos Mustpass ES Single Config", "exact"),
-    ("main", "khronos_mustpass", "Khronos Mustpass ES", "supported"),
+    ("no-context", "gles/khronos_mustpass_noctx", "Khronos Mustpass ES NoContext", "supported"),
+    ("single", "gles/khronos_mustpass_single", "Khronos Mustpass ES Single Config", "exact"),
+    ("main", "gles/khronos_mustpass", "Khronos Mustpass ES", "supported"),
+    ("aosp-es", "gles/aosp_mustpass", "AOSP Mustpass ES", "aosp-supported"),
+    ("aosp-egl", "egl/aosp_mustpass", "AOSP Mustpass EGL", "aosp-any"),
 )
+AOSP_PREDICATES = frozenset({"aosp-supported", "aosp-any"})
 # ES caselist stems name a version without a separator: 3 is ES 3.0, 31 is
 # ES 3.1 and 32 is ES 3.2.
 ES_VERSIONS = {"2": (2, 0), "3": (3, 0), "31": (3, 1), "32": (3, 2)}
 TARGET_VERSION = ES_VERSIONS["32"]
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-CASELIST = re.compile(r"gles(2|3|31|32)-(khr-[a-z0-9-]+)\.txt\Z")
+CASELISTS = {
+    "supported": re.compile(r"gles(2|3|31|32)-(khr-[a-z0-9-]+)\.txt\Z"),
+    "exact": re.compile(r"gles(2|3|31|32)-(khr-[a-z0-9-]+)\.txt\Z"),
+    "aosp-supported": re.compile(r"gles(2|3|31|32)-([a-z0-9-]+)\.txt\Z"),
+    "aosp-any": re.compile(r"(egl)-([a-z0-9-]+)\.txt\Z"),
+}
+# parseConfigBitsFromName, as the runner spells the AOSP configuration names.
+COLOR_BITS = {"rgba8888": (8, 8, 8, 8), "rgb565": (5, 6, 5, 0)}
+DEPTH_BITS = {"d0": 0, "d24": 24}
+STENCIL_BITS = {"s0": 0, "s8": 8}
+SAMPLE_BITS = {"ms0": 0, "ms4": 4}
+SURFACE_BITS = (("EGL_WINDOW_BIT", "window"), ("EGL_PIXMAP_BIT", "pixmap"),
+                ("EGL_PBUFFER_BIT", "pbuffer"))
+# The rotated AOSP records exist only for Android builds, which this one is
+# not; they are parsed so a changed document is still rejected, then dropped.
+ROTATIONS = ("unspecified", "0", "90", "180", "270")
+ES3_BIT = "EGL_OPENGL_ES3_BIT_KHR"
+ATTRIBUTE_KEYS = {"id", "red", "green", "blue", "alpha", "depth", "stencil",
+                  "samples", "renderable", "conformant", "surface_types"}
 SCHEMA = 1
 RUNNER_SOURCE = {
     "path": "external/openglcts/modules/runner/glcTestRunner.cpp",
@@ -69,7 +98,14 @@ def file_identity(path: str, payload: bytes) -> dict[str, Any]:
     return {"path": path, "size": len(payload), "sha256": digest(payload)}
 
 
-def command_values(arguments: list[str]) -> dict[str, Any]:
+def command_values(arguments: list[str], predicate: str) -> dict[str, Any]:
+    """The run parameters one XML record carries.
+
+    A Khronos record always seeds itself and names a configuration only for the
+    framework framebuffer object; an AOSP record never seeds itself and always
+    names the GL configuration its EGL configuration is resolved from.
+    """
+    aosp = predicate in AOSP_PREDICATES
     allowed = {
         "deqp-screen-rotation", "deqp-surface-width", "deqp-surface-height",
         "deqp-base-seed", "deqp-gl-config-name", "deqp-surface-type",
@@ -83,27 +119,98 @@ def command_values(arguments: list[str]) -> dict[str, Any]:
         require(key in allowed and key not in values,
                 "unknown or duplicate OpenGL ES must-pass argument")
         values[key] = value
-    required = allowed - {"deqp-gl-config-name", "deqp-surface-type"}
+    required = {"deqp-screen-rotation", "deqp-surface-width",
+                "deqp-surface-height", "deqp-watchdog"}
+    required |= {"deqp-gl-config-name"} if aosp else {"deqp-base-seed"}
     require(required.issubset(values), "incomplete OpenGL ES must-pass command")
-    require(values["deqp-screen-rotation"] == "unspecified", "unsupported OpenGL ES rotation")
+    require(aosp != ("deqp-base-seed" in values),
+            "OpenGL ES AOSP records carry no base seed")
+    require(not aosp or "deqp-surface-type" not in values,
+            "an OpenGL ES AOSP record never names its surface type")
+    require(values["deqp-screen-rotation"] in ROTATIONS, "unsupported OpenGL ES rotation")
     require(values["deqp-watchdog"] == "disable", "unsupported OpenGL ES watchdog policy")
     try:
         width = int(values["deqp-surface-width"])
         height = int(values["deqp-surface-height"])
-        seed = int(values["deqp-base-seed"])
+        seed = None if aosp else int(values["deqp-base-seed"])
     except ValueError as error:
         raise PlanError("invalid OpenGL ES must-pass numeric argument") from error
     require(width == -1 or 0 < width <= 0x7FFFFFFF, "invalid OpenGL ES surface width")
     require(height == -1 or 0 < height <= 0x7FFFFFFF, "invalid OpenGL ES surface height")
-    require(0 <= seed <= 0xFFFFFFFF, "invalid OpenGL ES base seed")
+    require(seed is None or 0 <= seed <= 0xFFFFFFFF, "invalid OpenGL ES base seed")
     config = values.get("deqp-gl-config-name")
     surface = values.get("deqp-surface-type")
     require(config is None or re.fullmatch(r"[a-z0-9]+", config) is not None,
             "invalid OpenGL ES named config")
     require(surface is None or surface == "fbo", "unsupported OpenGL ES XML surface type")
-    require((config is None) == (surface is None), "incomplete OpenGL ES FBO configuration")
-    return {"surface_width": width, "surface_height": height,
-            "base_seed": seed, "fbo_config": config}
+    require(aosp or (config is None) == (surface is None),
+            "incomplete OpenGL ES FBO configuration")
+    if aosp:
+        parse_config_bits(config)
+    return {"screen_rotation": values["deqp-screen-rotation"],
+            "surface_width": width, "surface_height": height,
+            "base_seed": seed,
+            "fbo_config": None if aosp else config,
+            "aosp_config": config if aosp else None}
+
+
+def parse_config_bits(name: str) -> tuple[int, ...]:
+    """The seven-component configuration a GL configuration name selects.
+
+    parseConfigBitsFromName consumes the colour, depth, stencil and sample
+    prefixes in that order; a name it cannot consume entirely never matches a
+    configuration, so refuse it instead of matching on uninitialised bits.
+    """
+    rest = name
+    bits: list[int] = []
+    for table in (COLOR_BITS, DEPTH_BITS, STENCIL_BITS, SAMPLE_BITS):
+        prefix = next((key for key in table if rest.startswith(key)), None)
+        require(prefix is not None, f"unsupported OpenGL ES config name: {name}")
+        value = table[prefix]
+        bits.extend(value if isinstance(value, tuple) else (value,))
+        rest = rest[len(prefix):]
+    require(not rest, f"unsupported OpenGL ES config name: {name}")
+    return tuple(bits)
+
+
+def aosp_config_list(attributes: Any) -> list[dict[str, Any]]:
+    """ConfigList::aospConfigs for an ES 3.2 context, in enumeration order.
+
+    getDefaultEglConfigList keeps every configuration that both renders and
+    conforms to ES 3, with its EGL surface bits; the multisample, float and
+    YUV exclusions apply to the conformant list only, never to this one.
+    """
+    require(isinstance(attributes, list) and bool(attributes),
+            "OpenGL ES run plan has no EGL configuration attributes")
+    result = []
+    seen: set[int] = set()
+    for row in attributes:
+        require(isinstance(row, dict) and set(row) == ATTRIBUTE_KEYS,
+                "invalid OpenGL ES EGL configuration attributes")
+        require(type(row["id"]) is int and row["id"] > 0 and row["id"] not in seen,
+                "duplicate or invalid OpenGL ES EGL config ID")
+        seen.add(row["id"])
+        require(all(type(row[key]) is int and row[key] >= 0 for key in
+                    ("red", "green", "blue", "alpha", "depth", "stencil", "samples")),
+                "invalid OpenGL ES EGL configuration attribute")
+        surfaces = row["surface_types"]
+        require(isinstance(surfaces, list)
+                and all(value in {"window", "pbuffer", "pixmap"} for value in surfaces)
+                and len(surfaces) == len(set(surfaces)),
+                "invalid OpenGL ES EGL surface list")
+        require(surfaces == [value for _, value in SURFACE_BITS if value in surfaces],
+                "OpenGL ES EGL surface list is out of order")
+        for key in ("renderable", "conformant"):
+            require(isinstance(row[key], list)
+                    and all(isinstance(value, str) and value for value in row[key]),
+                    "invalid OpenGL ES EGL API bits")
+        if ES3_BIT in row["renderable"] and ES3_BIT in row["conformant"]:
+            result.append({"id": row["id"], "surface_types": list(surfaces),
+                           "bits": tuple(row[key] for key in
+                                         ("red", "green", "blue", "alpha",
+                                          "depth", "stencil", "samples"))})
+    require(bool(result), "no EGL configuration renders and conforms to ES 3")
+    return result
 
 
 def uses_fbo_surface(configuration: dict[str, Any]) -> bool:
@@ -117,6 +224,8 @@ def uses_fbo_surface(configuration: dict[str, Any]) -> bool:
 
 
 def selected(version: str, predicate: str) -> bool:
+    if predicate == "aosp-any":
+        return version == "egl"
     if predicate == "exact":
         return ES_VERSIONS[version] == TARGET_VERSION
     return ES_VERSIONS[version] <= TARGET_VERSION
@@ -161,9 +270,12 @@ def parse_documents(documents: Any) -> list[dict[str, Any]]:
             require(not (element.text or "").strip(),
                     "unexpected OpenGL ES configuration content")
             row = element.attrib
-            require(row["os"] == "any" and row["useForFirstEGLConfig"] in {"True", "False"},
+            aosp = predicate in AOSP_PREDICATES
+            require(row["os"] == "any" or (aosp and row["os"] == "android"),
                     "unsupported OpenGL ES configuration scope")
-            match = CASELIST.fullmatch(row["caseListFile"])
+            require(row["useForFirstEGLConfig"] in {"True", "False"},
+                    "unsupported OpenGL ES configuration scope")
+            match = CASELISTS[predicate].fullmatch(row["caseListFile"])
             require(match is not None, "unsafe or unsupported OpenGL ES caselist reference")
             version, name = match.groups()
             require(row["name"] == name, "OpenGL ES configuration name differs from caselist")
@@ -171,12 +283,18 @@ def parse_documents(documents: Any) -> list[dict[str, Any]]:
                 arguments = shlex.split(row["commandLine"])
             except ValueError as error:
                 raise PlanError("malformed OpenGL ES must-pass command") from error
-            values = command_values(arguments)
-            if not selected(version, predicate):
+            values = command_values(arguments, predicate)
+            # The generated RunParams tables guard every non-"any" record with
+            # the Android build condition, so this build never emits them.
+            if row["os"] != "any" or not selected(version, predicate):
                 continue
             first = row["useForFirstEGLConfig"] == "True"
             require(collection == "main" or first,
                     "one-time OpenGL ES collection has an other-config row")
+            require(not aosp or values["aosp_config"] is not None,
+                    "an OpenGL ES AOSP record names no GL configuration")
+            require(values.pop("screen_rotation") == "unspecified",
+                    "unsupported OpenGL ES rotation")
             configurations.append({
                 "index": len(configurations), "collection": collection,
                 "xml_index": xml_index, "leaf_id": row["caseListFile"][:-4],
@@ -267,12 +385,16 @@ def validate_manifest(manifest: Any) -> dict[str, Any]:
     return manifest
 
 
-def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]],
+                attributes: Any = None) -> list[dict[str, Any]]:
     """Expand the manifest over the ordered EGL configuration list.
 
     getTestRunsForES emits the NoContext and Single Config collections against
     the first configuration only, then walks every configuration and emits the
-    Khronos ES rows whose first/other role matches.
+    Khronos ES rows whose first/other role matches. The AOSP collections are
+    appended last, each record on the first configuration whose bits its GL
+    configuration name selects: the ES records fail closed when none matches
+    (TCU_FAIL) and the EGL record is simply omitted.
     """
     validate_manifest(manifest)
     require(isinstance(configs, list) and bool(configs),
@@ -298,16 +420,50 @@ def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]]) -> list
         )
         runs.append({"index": len(runs), "configuration_index": configuration["index"],
                      "egl_config_index": config_index, "egl_config_id": config["id"],
-                     "surface_type": surface, "leaf_id": configuration["leaf_id"]})
+                     "surface_type": surface, "leaf_id": configuration["leaf_id"],
+                     "config_scope": "conformant"})
 
     rows = manifest["configurations"]
     for row in rows:
-        if row["collection"] != "main":
+        if row["collection"] not in {"main", "aosp-es", "aosp-egl"}:
             append(row, 0)
     for index in range(len(configs)):
         for row in rows:
             if row["collection"] == "main" and row["use_for_first_egl_config"] == (index == 0):
                 append(row, index)
+    if not any(row["collection"] in {"aosp-es", "aosp-egl"} for row in rows):
+        return runs
+    aosp = aosp_config_list(attributes)
+    conformant = [
+        row for row in aosp
+        if row["bits"][6] == 0 and any(
+            row["id"] == config["id"] for config in configs)
+    ]
+    require([(row["id"], set(row["surface_types"])) for row in conformant]
+            == [(row["id"], set(row["surface_types"])) for row in configs],
+            "EGL configuration attributes do not reproduce the conformant list")
+    for row in rows:
+        if row["collection"] not in {"aosp-es", "aosp-egl"}:
+            continue
+        wanted = parse_config_bits(row["aosp_config"])
+        index = next((position for position, config in enumerate(aosp)
+                      if config["bits"] == wanted), None)
+        if index is None:
+            # getTestRunsForAOSPES fails the whole run list; the EGL record is
+            # skipped instead.
+            require(row["collection"] == "aosp-egl",
+                    f"no EGL configuration matches {row['aosp_config']}")
+            continue
+        config = aosp[index]
+        # The EGL record names no surface type at all, and an ES record whose
+        # configuration offers none of the three named types names none either.
+        surface = "none" if row["collection"] == "aosp-egl" else next(
+            (value for value in ("window", "pbuffer", "pixmap")
+             if value in config["surface_types"]), "none")
+        runs.append({"index": len(runs), "configuration_index": row["index"],
+                     "egl_config_index": index, "egl_config_id": config["id"],
+                     "surface_type": surface, "leaf_id": row["leaf_id"],
+                     "config_scope": "aosp"})
     return runs
 
 
@@ -320,8 +476,16 @@ def runner_arguments(manifest: dict[str, Any], run: dict[str, Any], caselist_pat
         f"--deqp-surface-width={row['surface_width']}",
         f"--deqp-surface-height={row['surface_height']}",
         "--deqp-watchdog=disable",
-        f"--deqp-base-seed={row['base_seed']}",
     ]
+    if row["aosp_config"] is not None:
+        # An AOSP record names its GL configuration and, outside the EGL run,
+        # a surface type its resolved configuration offers. It never names an
+        # EGL configuration id, a context type or a base seed.
+        arguments.append(f"--deqp-gl-config-name={row['aosp_config']}")
+        if run["surface_type"] != "none":
+            arguments.append(f"--deqp-surface-type={run['surface_type']}")
+        return arguments
+    arguments.append(f"--deqp-base-seed={row['base_seed']}")
     if uses_fbo_surface(row):
         arguments.extend((f"--deqp-gl-config-name={row['fbo_config']}",
                           "--deqp-surface-type=fbo"))

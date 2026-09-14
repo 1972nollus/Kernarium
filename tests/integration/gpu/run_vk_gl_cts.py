@@ -107,6 +107,24 @@ CONFIG_CASES = {
     "gles32": "CTS-Configs.es32",
     "gl46": "CTS-Configs.gl46",
 }
+# The ES 3.2 matrix also runs the AOSP collections, whose GL configuration
+# names the official runner resolves against ConfigList::aospConfigs. That
+# list is built from EGL attributes CTS-Configs does not log, so the ES 3.2
+# inventory runs dEQP-EGL.info.configs in the same session and records the
+# attribute table beside the conformant list.
+EGL_ATTRIBUTE_CASE = "dEQP-EGL.info.configs"
+CONFIG_INVENTORY_SCOPES = {
+    "gles2": ("CTS-Configs.es2",),
+    "gles3": ("CTS-Configs.es3",),
+    "gles32": ("CTS-Configs.es32", EGL_ATTRIBUTE_CASE),
+    "gl46": ("CTS-Configs.gl46",),
+}
+CONFIG_INVENTORY_SCOPE_NAMES = {
+    "gles2": "configs",
+    "gles3": "configs",
+    "gles32": "configs-egl-attributes",
+    "gl46": "configs",
+}
 # The official matrices whose run records come from must-pass XML documents
 # rather than the two-row GLES baseline split, and which therefore select one
 # XML configuration per shard and bind their inventory to the emulator build.
@@ -358,10 +376,15 @@ class MustpassConfiguration:
     screen_rotation: str
     surface_width: int
     surface_height: int
-    base_seed: int
+    base_seed: int | None
     watchdog: str
     fbo_config: str | None
     xml_arguments: tuple[str, ...]
+    # An AOSP record names its GL configuration instead of an EGL
+    # configuration id, and carries the surface type its resolved
+    # configuration offers (None where the record names none at all).
+    aosp_config: str | None = None
+    aosp_surface_type: str | None = None
 
     @property
     def uses_fbo_surface(self) -> bool:
@@ -1358,8 +1381,21 @@ def matrix_runner_arguments(
         f"--deqp-surface-width={configuration.surface_width}",
         f"--deqp-surface-height={configuration.surface_height}",
         f"--deqp-watchdog={configuration.watchdog}",
-        f"--deqp-base-seed={configuration.base_seed}",
     ]
+    if configuration.aosp_config is not None:
+        # getTestRunsForAOSPEGL and getTestRunsForAOSPES name the record's own
+        # GL configuration and, for the ES records, the surface type their
+        # resolved configuration offers. Neither seeds the run or names an EGL
+        # configuration id.
+        arguments.append(f"--deqp-gl-config-name={configuration.aosp_config}")
+        if configuration.aosp_surface_type is not None:
+            arguments.append(
+                f"--deqp-surface-type={configuration.aosp_surface_type}"
+            )
+        if waiver_path is not None:
+            arguments.append(f"--deqp-waiver-file={waiver_path}")
+        return arguments
+    arguments.append(f"--deqp-base-seed={configuration.base_seed}")
     if configuration.uses_fbo_surface:
         arguments.extend(
             (
@@ -1457,6 +1493,8 @@ def load_waivers(path: Path = WAIVERS_PATH) -> tuple[Waiver, ...]:
 
 
 def matrix_draw_surface_type(matrix: MatrixRun) -> str:
+    if matrix.configuration.aosp_config is not None:
+        return matrix.configuration.aosp_surface_type or "none"
     if matrix.configuration.uses_fbo_surface:
         return "fbo"
     return matrix.egl_config.selected_surface_type
@@ -2428,11 +2466,84 @@ def egl_config_digest(configs: Sequence[EglConfig]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def egl_attribute_digest(attributes: Sequence[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        list(attributes), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def parse_egl_config_attributes(qpa: str) -> list[dict[str, Any]]:
+    """The EGL attribute table dEQP-EGL.info.configs logs, in EGL order.
+
+    ConfigList::aospConfigs keeps the configurations that render and conform
+    to the context API, with their colour, depth, stencil, sample and surface
+    attributes. Those are exactly the attributes this case already reports,
+    so the run plan reconstructs the list from them rather than approximating
+    it.
+    """
+    root = qpa_case_xml(qpa, EGL_ATTRIBUTE_CASE)
+    sets = [element for element in root.findall("EglConfigSet")
+            if element.attrib.get("Name") == "EGL-configs"]
+    if len(sets) != 1:
+        raise CampaignError("EGL attribute QPA has no unique config set")
+    integers = {"id": "ConfigID", "red": "RedSize", "green": "GreenSize",
+                "blue": "BlueSize", "alpha": "AlphaSize", "depth": "DepthSize",
+                "stencil": "StencilSize", "samples": "Samples"}
+    attributes: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for element in sets[0]:
+        if element.tag != "EglConfig" or list(element):
+            raise CampaignError("EGL attribute QPA has an invalid config row")
+        row: dict[str, Any] = {}
+        for key, name in integers.items():
+            value = element.attrib.get(name)
+            if value is None or re.fullmatch(r"(0|[1-9][0-9]{0,6})", value) is None:
+                raise CampaignError(
+                    f"EGL attribute QPA has an invalid {name} attribute"
+                )
+            row[key] = int(value)
+        if row["id"] < 1 or row["id"] in seen:
+            raise CampaignError("EGL attribute QPA has a duplicate config ID")
+        seen.add(row["id"])
+        for key, name in (("renderable", "RenderableType"),
+                          ("conformant", "Conformant")):
+            value = element.attrib.get(name)
+            if value is None or any(
+                re.fullmatch(r"[A-Z0-9_]+", bit) is None
+                for bit in value.split("|")
+            ):
+                raise CampaignError(
+                    f"EGL attribute QPA has an invalid {name} attribute"
+                )
+            row[key] = value.split("|")
+        surfaces = element.attrib.get("SurfaceTypes")
+        if surfaces is None or any(
+            re.fullmatch(r"[A-Z0-9_]+", bit) is None
+            for bit in surfaces.split("|")
+        ):
+            raise CampaignError(
+                "EGL attribute QPA has an invalid SurfaceTypes attribute"
+            )
+        bits = set(surfaces.split("|"))
+        row["surface_types"] = [
+            name for bit, name in gles_cts_plan.SURFACE_BITS if bit in bits
+        ]
+        if set(row) != gles_cts_plan.ATTRIBUTE_KEYS:
+            raise CampaignError("EGL attribute QPA row is incomplete")
+        attributes.append(row)
+    if not attributes:
+        raise CampaignError("EGL attribute QPA enumerated no configs")
+    return attributes
+
+
 def parse_egl_config_qpa(qpa: str, api: str) -> tuple[EglConfig, ...]:
     case = CONFIG_CASES.get(api)
     if case is None:
         raise CampaignError(f"unsupported EGL config inventory API: {api}")
-    results = validate_qpa_union(qpa, [case])
+    results = parse_qpa(qpa)
+    if set(results) != set(CONFIG_INVENTORY_SCOPES[api]):
+        raise CampaignError(f"config inventory QPA is not the {api} scope")
     validate_required_passes(results)
     root = qpa_case_xml(qpa, case)
     sections = [
@@ -3412,6 +3523,7 @@ def build_guest_launcher(
     renderer = f"{output}/renderer.txt"
     summary = f"{output}/summary.txt"
     inventory_report = f"{output}/inventory.txt"
+    config_caselist = f"{output}/configs.txt"
     hierarchy_inventory = selection is None and config_inventory_api is None
     config_inventory = config_inventory_api is not None
     derivative_checks = ""
@@ -3451,9 +3563,11 @@ actual_receipt_sha=$(sha256sum \
             )
         command = ["/bin/sh", "-c", " &&\n".join(inventory_commands)]
     elif config_inventory:
+        inventory_cases = CONFIG_INVENTORY_SCOPES[config_inventory_api]
         command = [
             glcts,
-            f"--deqp-case={CONFIG_CASES[config_inventory_api]}",
+            (f"--deqp-case={inventory_cases[0]}" if len(inventory_cases) == 1
+             else f"--deqp-caselist-file={config_caselist}"),
             "--deqp-gl-context-type=egl",
             f"--deqp-archive-dir={archive}",
             "--deqp-log-flush=enable",
@@ -3579,6 +3693,18 @@ caselist_count=$(awk '$1 == "TEST:" { count++ } END { print count + 0 }' "$selec
     printf 'registered_module=KHR-GLES3\n'
 } > "$inventory_report"
 chown uml:uml "$inventory_report" "$renderer"
+"""
+    elif config_inventory and len(CONFIG_INVENTORY_SCOPES[config_inventory_api]) > 1:
+        # A scope wider than one case needs a caselist: --deqp-case selects a
+        # single filter, and both cases must share one session so one QPA
+        # carries the conformant list and the attribute table together.
+        payload = "".join(
+            f"{case}\n"
+            for case in CONFIG_INVENTORY_SCOPES[config_inventory_api]
+        )
+        prepare_command = f"""
+printf '%s' {shlex.quote(payload)} > {shlex.quote(config_caselist)}
+chown uml:uml {shlex.quote(config_caselist)}
 """
     elif config_inventory:
         pass
@@ -4762,7 +4888,7 @@ def load_config_inventory_evidence(
     runtime_identity: dict[str, str] | None = None,
     surface: tuple[int, int] = (1280, 720),
     renderer: str = "virgl",
-) -> tuple[tuple[EglConfig, ...], str]:
+) -> tuple[tuple[EglConfig, ...], str, list[dict[str, Any]] | None]:
     try:
         metadata = json.loads(
             path.read_text(encoding="utf-8"),
@@ -4785,9 +4911,12 @@ def load_config_inventory_evidence(
         "rootfs_sha256": rootfs_contract.sha256,
         "glcts_sha256": rootfs_contract.glcts_sha256,
         "emulator_return_code": 0,
-        "completed_cases": 1,
-        "status_totals": {"Pass": 1},
+        "completed_cases": len(CONFIG_INVENTORY_SCOPES[api]),
+        "status_totals": {"Pass": len(CONFIG_INVENTORY_SCOPES[api])},
     }
+    if len(CONFIG_INVENTORY_SCOPES[api]) > 1:
+        expected["config_scope"] = CONFIG_INVENTORY_SCOPE_NAMES[api]
+        expected["config_cases"] = list(CONFIG_INVENTORY_SCOPES[api])
     if api in XML_MATRIX_APIS:
         if runtime_identity is None or set(runtime_identity) != {
             "emulator_sha256", "kosmickrisp_sha256",
@@ -4825,6 +4954,20 @@ def load_config_inventory_evidence(
     parsed = parse_egl_config_qpa(qpa_text, api)
     if parsed != configs:
         raise CampaignError("config-inventory QPA and metadata disagree")
+    attributes: list[dict[str, Any]] | None = None
+    if EGL_ATTRIBUTE_CASE in CONFIG_INVENTORY_SCOPES[api]:
+        attributes = parse_egl_config_attributes(qpa_text)
+        if metadata.get("egl_config_attributes") != attributes:
+            raise CampaignError(
+                "config-inventory EGL attributes and QPA disagree"
+            )
+        attribute_digest = metadata.get("egl_config_attributes_sha256")
+        if (
+            not isinstance(attribute_digest, str)
+            or SHA256.fullmatch(attribute_digest) is None
+            or attribute_digest != egl_attribute_digest(attributes)
+        ):
+            raise CampaignError("config-inventory EGL attribute digest changed")
     if api in XML_MATRIX_APIS:
         directory = path.parent
         console = directory / "console.log"
@@ -4847,7 +4990,7 @@ def load_config_inventory_evidence(
             16384 if page_profile == "16k" else 4096, renderer,
             host_backend_label(renderer),
         )
-    return configs, digest
+    return configs, digest, attributes
 
 
 def opengl_matrix_run(
@@ -4985,7 +5128,8 @@ def load_gles32_matrix(
         )
     except (KeyError, gles_cts_plan.PlanError) as error:
         raise CampaignError(f"invalid ES 3.2 must-pass scope: {error}") from error
-    if manifest["documents"][-1]["path"] != xml_identity["path"]:
+    if next(row["path"] for row in manifest["documents"]
+            if row["collection"] == "main") != xml_identity["path"]:
         raise CampaignError("ES 3.2 main must-pass XML path changed")
     return manifest
 
@@ -4995,6 +5139,7 @@ def gles32_matrix_run(
     configs: tuple[EglConfig, ...], digest: str, config_index: int,
     configuration_index: int, fraction: tuple[int, int],
     exact_cases: tuple[str, ...] = (),
+    attributes: list[dict[str, Any]] | None = None,
 ) -> MatrixRun:
     if receipt.get("schema_version") != 4:
         raise CampaignError("ES 3.2 matrix requires the XML-scoped schema-4 receipt")
@@ -5002,19 +5147,27 @@ def gles32_matrix_run(
         runs = gles_cts_plan.expand_runs(manifest, [
             {"id": config.identifier, "surface_types": list(config.surface_types)}
             for config in configs
-        ])
+        ], attributes)
     except gles_cts_plan.PlanError as error:
         raise CampaignError(str(error)) from error
     matching = [run for run in runs if run["egl_config_index"] == config_index
                 and run["configuration_index"] == configuration_index]
     if len(matching) != 1:
         raise CampaignError("ES 3.2 XML configuration does not apply to this EGL config")
+    run = matching[0]
     row = manifest["configurations"][configuration_index]
     identity = next(leaf for leaf in manifest["leaves"] if leaf["id"] == row["leaf_id"])
     leaf = LeafIdentity(identity["id"], identity["path"],
                         identity["case_count"], identity["sha256"])
     document = next(item for item in manifest["documents"]
                     if item["collection"] == row["collection"])
+    egl_config = configs[config_index]
+    if run["config_scope"] == "aosp":
+        # An AOSP record resolves its own configuration out of aospConfigs,
+        # which also holds the multisample configurations the conformant list
+        # excludes, so its EGL configuration is not configs[config_index].
+        entry = gles_cts_plan.aosp_config_list(attributes)[run["egl_config_index"]]
+        egl_config = EglConfig(entry["id"], tuple(entry["surface_types"]))
     return MatrixRun(
         configuration=MustpassConfiguration(
             api=gles_cts_plan.API, leaf=leaf, name=row["name"],
@@ -5023,8 +5176,11 @@ def gles32_matrix_run(
             surface_height=row["surface_height"], base_seed=row["base_seed"],
             watchdog="disable", fbo_config=row["fbo_config"],
             xml_arguments=tuple(row["xml_arguments"]),
+            aosp_config=row["aosp_config"],
+            aosp_surface_type=(None if run["surface_type"] == "none"
+                               else run["surface_type"]),
         ),
-        egl_config=configs[config_index], egl_config_index=config_index,
+        egl_config=egl_config, egl_config_index=config_index,
         config_inventory_sha256=digest,
         selection=Selection(leaf, exact_cases, *fraction),
         mustpass_xml_path=document["path"], mustpass_xml_size=document["size"],
@@ -5060,7 +5216,13 @@ def matrix_metadata(options: argparse.Namespace) -> dict[str, Any]:
         "egl_config_index": matrix.egl_config_index,
         "egl_config_id": matrix.egl_config.identifier,
         "egl_surface_types": list(matrix.egl_config.surface_types),
-        "egl_surface_type": matrix.egl_config.selected_surface_type,
+        "egl_surface_type": (
+            matrix_draw_surface_type(matrix)
+            if matrix.configuration.aosp_config is not None
+            else matrix.egl_config.selected_surface_type
+        ),
+        **({"aosp_gl_config": matrix.configuration.aosp_config}
+           if matrix.configuration.aosp_config is not None else {}),
         "config_inventory_sha256": matrix.config_inventory_sha256,
         "config_inventory_run": str(options.config_inventory_run.resolve()),
         **({"opengl_configuration_index": matrix.opengl_configuration_index,
@@ -5363,7 +5525,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                 "an official matrix requires the authenticated derivative ext4 rootfs"
             )
         try:
-            configs, config_digest = load_config_inventory_evidence(
+            configs, config_digest, config_attributes = load_config_inventory_evidence(
                 options.config_inventory_run.resolve(),
                 options.matrix,
                 options.page_profile,
@@ -5388,6 +5550,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                         config_digest, options.egl_config_index,
                         options.mustpass_config_index, options.fraction,
                         tuple(options.case) if options.case else (),
+                        config_attributes,
                     )
                 source = receipt["opengl_cts"]["mustpass"]["runner_source"]
                 if (
@@ -5603,6 +5766,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
             {
                 "api": api_identifier,
                 "config_case": CONFIG_CASES[api_identifier],
+                **(
+                    {
+                        "config_scope": CONFIG_INVENTORY_SCOPE_NAMES[api_identifier],
+                        "config_cases": list(CONFIG_INVENTORY_SCOPES[api_identifier]),
+                    }
+                    if len(CONFIG_INVENTORY_SCOPES[api_identifier]) > 1
+                    else {}
+                ),
                 "expected_artifacts": [
                     "renderer.txt",
                     "results.qpa",
@@ -5808,11 +5979,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         qpa_payload = artifacts["results.qpa"]
         qpa_text = decode_qpa(qpa_payload)
         configs = parse_egl_config_qpa(qpa_text, options.config_inventory)
-        totals = {"Pass": 1}
+        inventory_cases = CONFIG_INVENTORY_SCOPES[options.config_inventory]
+        totals = {"Pass": len(inventory_cases)}
         metadata.update(
             {
                 "emulator_return_code": emulator_return_code,
-                "completed_cases": 1,
+                "completed_cases": len(inventory_cases),
                 "status_totals": totals,
                 "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
                 "egl_config_sha256": egl_config_digest(configs),
@@ -5826,6 +5998,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 ],
             }
         )
+        if EGL_ATTRIBUTE_CASE in inventory_cases:
+            attributes = parse_egl_config_attributes(qpa_text)
+            metadata.update(
+                {
+                    "egl_config_attributes": attributes,
+                    "egl_config_attributes_sha256": egl_attribute_digest(attributes),
+                }
+            )
         write_json(artifact_directory / "run.json", metadata)
         print(
             f"VK-GL-CTS {options.config_inventory} config inventory "

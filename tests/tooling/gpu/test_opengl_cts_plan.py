@@ -235,7 +235,7 @@ class OpenGLPlanTests(unittest.TestCase):
             path = fixtures.write_config_inventory_evidence(
                 directory, "gl46", contract, runtime_identity=runtime,
             )
-            configs, _ = common.load_config_inventory_evidence(
+            configs, _, _ = common.load_config_inventory_evidence(
                 path, "gl46", "16k", "vnc", contract, runtime, renderer="zink")
             self.assertEqual([row.identifier for row in configs], [1, 2])
             original = path.read_text()

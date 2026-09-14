@@ -339,7 +339,7 @@ def build_definition(options: argparse.Namespace) -> CampaignDefinition:
 
     config_inventory_run = options.config_inventory_run.resolve()
     regular_file(config_inventory_run, "config-inventory run")
-    configs, config_digest = cts.load_config_inventory_evidence(
+    configs, config_digest, _ = cts.load_config_inventory_evidence(
         config_inventory_run,
         options.api,
         options.page_profile,

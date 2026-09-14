@@ -176,6 +176,37 @@ def qpa(*results: str) -> str:
     ) + "#endSession\n"
 
 
+EGL_ATTRIBUTE_ROWS = (
+    # id, surface bits, samples, conformant to ES 3
+    (1, "EGL_WINDOW_BIT|EGL_PIXMAP_BIT|EGL_PBUFFER_BIT", 0, True),
+    (2, "EGL_PIXMAP_BIT|EGL_PBUFFER_BIT", 0, True),
+    (3, "EGL_WINDOW_BIT|EGL_PBUFFER_BIT", 4, True),
+    (4, "EGL_WINDOW_BIT", 0, False),
+)
+
+
+def egl_attribute_qpa(rows: tuple[tuple[int, str, int, bool], ...] = EGL_ATTRIBUTE_ROWS) -> str:
+    """dEQP-EGL.info.configs as the ES 3.2 inventory scope records it."""
+    case = cts.EGL_ATTRIBUTE_CASE
+    configs = "".join(
+        f'  <EglConfig RedSize="8" GreenSize="8" BlueSize="8" AlphaSize="8"'
+        f' DepthSize="24" StencilSize="8" Samples="{samples}" ConfigID="{identifier}"'
+        f' RenderableType="EGL_OPENGL_ES2_BIT|EGL_OPENGL_ES3_BIT_KHR"'
+        f' Conformant="{"EGL_OPENGL_ES2_BIT|EGL_OPENGL_ES3_BIT_KHR" if conformant else "EGL_OPENGL_ES2_BIT"}"'
+        f' SurfaceTypes="{surfaces}" />\n'
+        for identifier, surfaces, samples, conformant in rows
+    )
+    return f"""#beginTestCaseResult {case}
+<?xml version="1.0" encoding="UTF-8"?>
+<TestCaseResult Version="0.3.4" CasePath="{case}" CaseType="SelfValidate">
+ <EglConfigSet Name="EGL-configs" Description="List of all EGL configs">
+{configs} </EglConfigSet>
+ <Result StatusCode="Pass">Pass</Result>
+</TestCaseResult>
+#endTestCaseResult
+"""
+
+
 def config_qpa(
     api: str,
     rows: tuple[str, ...] = (
@@ -183,6 +214,7 @@ def config_qpa(
         "EGL(2): pbuffer, pixmap",
     ),
     status: str = "Pass",
+    attribute_rows: tuple[tuple[int, str, int, bool], ...] = EGL_ATTRIBUTE_ROWS,
 ) -> str:
     case = cts.CONFIG_CASES[api]
     messages = "".join(f"  <Text>{row}</Text>\n" for row in rows)
@@ -195,6 +227,8 @@ def config_qpa(
 </TestCaseResult>
 #endTestCaseResult
 """
+    if cts.EGL_ATTRIBUTE_CASE in cts.CONFIG_INVENTORY_SCOPES[api]:
+        result += egl_attribute_qpa(attribute_rows)
     return qpa(result)
 
 
@@ -224,8 +258,8 @@ def write_config_inventory_evidence(
         "rootfs_sha256": contract.sha256,
         "glcts_sha256": contract.glcts_sha256,
         "emulator_return_code": 0,
-        "completed_cases": 1,
-        "status_totals": {"Pass": 1},
+        "completed_cases": len(cts.CONFIG_INVENTORY_SCOPES[api]),
+        "status_totals": {"Pass": len(cts.CONFIG_INVENTORY_SCOPES[api])},
         "qpa_sha256": hashlib.sha256(payload).hexdigest(),
         "egl_config_sha256": cts.egl_config_digest(configs),
         "egl_configs": [
@@ -237,6 +271,14 @@ def write_config_inventory_evidence(
             for config in configs
         ],
     }
+    if len(cts.CONFIG_INVENTORY_SCOPES[api]) > 1:
+        attributes = cts.parse_egl_config_attributes(payload.decode())
+        metadata.update({
+            "config_scope": cts.CONFIG_INVENTORY_SCOPE_NAMES[api],
+            "config_cases": list(cts.CONFIG_INVENTORY_SCOPES[api]),
+            "egl_config_attributes": attributes,
+            "egl_config_attributes_sha256": cts.egl_attribute_digest(attributes),
+        })
     if api in cts.XML_MATRIX_APIS:
         metadata.update({"backend": cts.host_backend_label(renderer),
                          "renderer": renderer,
@@ -1736,7 +1778,7 @@ native_display_cleanup
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             run = write_config_inventory_evidence(directory, "gles2", contract)
-            configs, digest = cts.load_config_inventory_evidence(
+            configs, digest, _ = cts.load_config_inventory_evidence(
                 run, "gles2", "16k", "vnc", contract
             )
             self.assertEqual(len(configs), 2)
@@ -1763,7 +1805,7 @@ native_display_cleanup
                     root / renderer, "gl46", contract,
                     runtime_identity=runtime, renderer=renderer,
                 )
-                configs, digest = cts.load_config_inventory_evidence(
+                configs, digest, _ = cts.load_config_inventory_evidence(
                     run, "gl46", "16k", "vnc", contract, runtime,
                     (1280, 720), renderer,
                 )
