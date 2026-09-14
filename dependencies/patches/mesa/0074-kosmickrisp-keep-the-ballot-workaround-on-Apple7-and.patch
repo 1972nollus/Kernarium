@@ -1,0 +1,86 @@
+From 1e86d1b409563b2b4f3c3d5adddc17d29aca4456 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 11:05:49 +0900
+Subject: [PATCH 74/74] kosmickrisp: keep the ballot workaround on Apple7 and
+ Apple8
+
+KK_WORKAROUND_3 routes every ballot and vote through simd_or, because Metal's
+simd_ballot, quad_any and quad_all answer for every thread the SIMD group
+entered the shader with rather than the threads active where the call sits.
+The block that retires workarounds on macOS 27 clears the whole first seven,
+so an Apple7 or Apple8 GPU loses it as soon as the operating system is new
+enough, and the workaround's own entry already names the test that then fails:
+dEQP-VK.subgroups.shader_quad_control.divergent_condition.
+
+The test puts subgroupQuadAny and subgroupQuadAll inside a condition that only
+part of each 2x2 quad satisfies, and checks that the votes saw exactly the
+invocations that entered. On an Apple7 GPU under macOS 27.0 (build 26A428) the
+native quad votes answer for the whole quad instead, so a fragment whose quad
+partners did not enter still reads its partners' values and the green channel
+comes out set where the test requires it clear. The same entry lists
+dEQP-VK.subgroups.ballot_other.*.subgroupballotfindlsb and
+dEQP-VK.subgroups.arithmetic.graphics.* for the simd_ballot form of the defect.
+
+This is the shape KK_WORKAROUND_4 already has: a defect the operating system
+cannot resolve because it is in the silicon, blanket-retired by a version
+check that only knows about the operating system. Carve the ballot workaround
+out of the retired set on Apple family eight and below alongside it, and
+retire the rest as before.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ docs/drivers/kosmickrisp/workarounds.rst |  9 +++++++++
+ src/kosmickrisp/vulkan/kk_device.c       | 12 +++++++-----
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
+index 8d672860..ef37fc4c 100644
+--- a/docs/drivers/kosmickrisp/workarounds.rst
++++ b/docs/drivers/kosmickrisp/workarounds.rst
+@@ -508,10 +508,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
+       temp = 2u;
+ 
+ 
++Because the defect is in the silicon, an operating system release cannot
++resolve it there: the workaround is therefore kept on Apple7 and Apple8 GPUs
++whatever version the operating system reports.
++
+ | Log:
+ | 2025-09-09: Workaround implemented and reported to Apple
+ | 2026-04-28: Workaround updated to expand to all ballot/vote ops.
+ | 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
++| 2026-09-14: Still reproduces on an Apple7 GPU under macOS 27.0 (build
++  26A428), where ``quad_all`` and ``quad_any`` reached inside a conditional
++  answer for every thread the SIMD group entered the shader with and
++  ``dEQP-VK.subgroups.shader_quad_control.divergent_condition`` fails; kept
++  for Apple7 and Apple8
+ 
+ KK_WORKAROUND_2
+ ---------------
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index f4c61695..4a8f20b4 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -245,15 +245,17 @@ kk_parse_device_environment_options(struct kk_device *dev)
+       dev->disabled_workarounds |= BITFIELD64_BIT(index);
+    }
+ 
+-   /* Workarounds resolved on macOS 27.  KK_WORKAROUND_4 is not one of them on
+-    * every GPU: it compensates for Apple7 and Apple8 silicon, where
+-    * simd_is_helper_thread() does not observe a discard_fragment() that ran
+-    * before it, so the query stays unusable there whatever the operating
++   /* Workarounds resolved on macOS 27.  KK_WORKAROUND_3 and KK_WORKAROUND_4
++    * are not among them on every GPU: both compensate for Apple7 and Apple8
++    * silicon, where simd_is_helper_thread() does not observe a
++    * discard_fragment() that ran before it and a ballot or vote inside a
++    * conditional block answers for every thread the SIMD group entered the
++    * shader with.  Neither query becomes usable there whatever the operating
+     * system reports. */
+    if (ns_is_os_version_at_least(27, 0, 0)) {
+       uint64_t resolved = BITFIELD64_MASK(7) | BITFIELD64_BIT(12);
+       if (kk_device_physical(dev)->info.gpu_apple_family <= 8u)
+-         resolved &= ~BITFIELD64_BIT(4);
++         resolved &= ~(BITFIELD64_BIT(3) | BITFIELD64_BIT(4));
+       dev->disabled_workarounds |= resolved;
+    }
+ }
