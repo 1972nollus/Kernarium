@@ -265,6 +265,14 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES_EXCLUDE += com.google.cf.vulkan
 PRODUCT_PACKAGES += vulkan.virtio
 PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
+
+# Mesa reads a buffer's DRM format, modifier and plane layout through the
+# gralloc0 interface of minigbm, the product's allocator. The passthrough
+# gralloc.default module cannot answer those queries, so Mesa would fall
+# back to guessing and the driver could not describe the buffers the window
+# system hands it. The module is a same-process HAL like the driver above.
+PRODUCT_PACKAGES += gralloc.minigbm
+PRODUCT_VENDOR_PROPERTIES += ro.hardware.gralloc=minigbm
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.vulkan.level-1.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.level-1.xml \
     frameworks/native/data/etc/android.hardware.vulkan.compute-0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.compute-0.xml \

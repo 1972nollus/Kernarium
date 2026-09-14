@@ -34,6 +34,8 @@
 
 #include <vector>
 
+#include <android/hardware_buffer.h>
+
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
@@ -231,6 +233,65 @@ bool createDevice(Vulkan* vk) {
     return true;
 }
 
+uint32_t ahbFormatFor(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8G8B8A8_UNORM:
+            return AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+        case VK_FORMAT_R8G8B8_UNORM:
+            return AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+            return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            return AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            return AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM;
+        default:
+            return 0;
+    }
+}
+
+/*
+ * Report, for one surface format, what the platform allocator and the driver
+ * each say about the Android hardware buffer a swapchain image would be. The
+ * loader asks the driver exactly this before it creates a swapchain, so a
+ * format that fails here cannot become a presentable image.
+ */
+void reportSurfaceFormat(const Vulkan& vk, const VkSurfaceFormatKHR& format) {
+    const uint32_t ahbFormat = ahbFormatFor(format.format);
+    AHardwareBuffer_Desc desc = {};
+    desc.width = 16;
+    desc.height = 16;
+    desc.layers = 1;
+    desc.format = ahbFormat;
+    desc.usage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER;
+    const bool framebuffer = ahbFormat != 0 && AHardwareBuffer_isSupported(&desc);
+    desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+    const bool sampled = ahbFormat != 0 && AHardwareBuffer_isSupported(&desc);
+
+    VkPhysicalDeviceExternalImageFormatInfo external = {};
+    external.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
+    external.handleType =
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+    VkPhysicalDeviceImageFormatInfo2 info = {};
+    info.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+    info.pNext = &external;
+    info.format = format.format;
+    info.type = VK_IMAGE_TYPE_2D;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VkAndroidHardwareBufferUsageANDROID ahbUsage = {};
+    ahbUsage.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_USAGE_ANDROID;
+    VkImageFormatProperties2 props = {};
+    props.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+    props.pNext = &ahbUsage;
+    const VkResult result =
+            vkGetPhysicalDeviceImageFormatProperties2(vk.physicalDevice, &info, &props);
+    printf("  format %d colorSpace %d ahbFormat %u framebuffer %d sampled %d "
+           "driver %d ahbUsage 0x%llx\n",
+           format.format, format.colorSpace, ahbFormat, framebuffer, sampled, result,
+           static_cast<unsigned long long>(ahbUsage.androidHardwareBufferUsage));
+}
+
 bool createSwapchain(Vulkan* vk, VkExtent2D* extent, VkFormat* format) {
     VkSurfaceCapabilitiesKHR caps = {};
     if (!check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk->physicalDevice, vk->surface, &caps),
@@ -254,6 +315,9 @@ bool createSwapchain(Vulkan* vk, VkExtent2D* extent, VkFormat* format) {
                                               modes.data());
     printf("surface formats %u, present modes %u, images %u..%u, usage 0x%x\n", formatCount,
            modeCount, caps.minImageCount, caps.maxImageCount, caps.supportedUsageFlags);
+    for (uint32_t i = 0; i < formatCount; ++i) {
+        reportSurfaceFormat(*vk, formats[i]);
+    }
     for (uint32_t i = 0; i < modeCount; ++i) {
         printf("  present mode %s\n", presentModeName(modes[i]));
     }

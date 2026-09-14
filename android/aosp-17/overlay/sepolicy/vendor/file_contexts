@@ -7,3 +7,7 @@
 # The Venus Vulkan HAL is loaded into every application process that uses
 # Vulkan, like the Mesa EGL/GLES stack beside it.
 /vendor/lib(64)?/hw/vulkan\.virtio\.so  u:object_r:same_process_hal_file:s0
+
+# Mesa loads the allocator's gralloc0 module in the same processes to read
+# buffer metadata.
+/vendor/lib(64)?/hw/gralloc\.minigbm\.so  u:object_r:same_process_hal_file:s0
