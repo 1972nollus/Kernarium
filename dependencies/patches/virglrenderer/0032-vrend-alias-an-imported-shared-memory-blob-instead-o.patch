@@ -1,4 +1,4 @@
-From a2954628366a7107eea5dfeac0a5a7d4bb1ba6a9 Mon Sep 17 00:00:00 2001
+From fb443a9cb8a0ac7b98208dc9db882d1342b42e39 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 05:06:20 +0900
 Subject: [PATCH 32/35] vrend: alias an imported shared-memory blob instead of
@@ -25,7 +25,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 132 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index e5065ea..144a93e 100644
+index c9620fc..b78206b 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -9171,8 +9171,50 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
@@ -143,7 +143,7 @@ index e5065ea..144a93e 100644
        munmap(res->shm_import_map, res->shm_import_size);
  
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index dfa6a73..db792bf 100644
+index 586bbee..0290460 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -125,6 +125,9 @@ struct vrend_resource {

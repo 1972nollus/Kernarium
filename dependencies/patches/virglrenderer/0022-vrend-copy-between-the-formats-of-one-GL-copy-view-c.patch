@@ -1,4 +1,4 @@
-From 2f606605d7a6ac56cc935532d57d6e48f79a7dbe Mon Sep 17 00:00:00 2001
+From bf7e8077a98c551d655df7207354eb8e6d3d7d73 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:50:05 +0900
 Subject: [PATCH 22/35] vrend: copy between the formats of one GL copy view
@@ -16,13 +16,18 @@ came back holding the converted numbers.
 
 Keep the view test for what it decides and add the copy view class as
 its own reason to use the copy, so a legal cross-format copy takes the
-path that preserves the bits.
+path that preserves the bits. Give that reason to the copy caller only:
+the blit caller shares this predicate, and a blit between two formats of
+one view class is a conversion the guest asked for, so moving its bits
+would hand back the source's numbers reinterpreted instead.
 ---
- src/vrend/vrend_formats.c | 45 ++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 44 insertions(+), 1 deletion(-)
+ src/vrend/vrend_formats.c  | 50 +++++++++++++++++++++++++++++++++++++-
+ src/vrend/vrend_renderer.c |  3 ++-
+ src/vrend/vrend_renderer.h |  3 +++
+ 3 files changed, 54 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
-index 670b3a4..90891b3 100644
+index 670b3a4..69ceb82 100644
 --- a/src/vrend/vrend_formats.c
 +++ b/src/vrend/vrend_formats.c
 @@ -888,6 +888,35 @@ static bool format_compressed_compressed_copy_compatible(enum virgl_formats src,
@@ -61,7 +66,7 @@ index 670b3a4..90891b3 100644
  bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
                                 unsigned int flags)
  {
-@@ -909,9 +938,23 @@ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
+@@ -909,9 +938,28 @@ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
     if (util_format_is_plain(src) && util_format_is_plain(dst))  {
        const struct util_format_description *src_desc = util_format_description(src);
        const struct util_format_description *dst_desc = util_format_description(dst);
@@ -76,8 +81,13 @@ index 670b3a4..90891b3 100644
 +    * which groups every uncompressed colour format of the same texel size.
 +    * Answering the copy question with the view question sends a legal
 +    * cross-format copy down a converting blit, which rewrites the values.
++    *
++    * Only a caller that is copying may ask this. A blit between two formats
++    * of one view class is a conversion the guest asked for, and moving its
++    * bits instead would hand back the source's numbers reinterpreted.
 +    */
-+   if (format_is_same_copy_view_class(src, dst))
++   if ((flags & VREND_COPY_COMPAT_FLAG_COPY_VIEW_CLASS) &&
++       format_is_same_copy_view_class(src, dst))
 +      return true;
 +
 +   if (util_format_is_plain(src) && util_format_is_plain(dst))
@@ -85,4 +95,32 @@ index 670b3a4..90891b3 100644
 +
     if (!(flags & VREND_COPY_COMPAT_FLAG_ALLOW_COMPRESSED))
        return false;
+ 
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 88f8eae..ca6945a 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -10940,7 +10940,8 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
+       return;
+    }
+ 
+-   comp_flags = VREND_COPY_COMPAT_FLAG_ALLOW_COMPRESSED;
++   comp_flags = VREND_COPY_COMPAT_FLAG_ALLOW_COMPRESSED |
++                VREND_COPY_COMPAT_FLAG_COPY_VIEW_CLASS;
+    if (src_res->egl_image)
+       comp_flags |= VREND_COPY_COMPAT_FLAG_ONE_IS_EGL_IMAGE;
+    if (dst_res->egl_image)
+diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
+index bbf2635..8bac5d8 100644
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -596,6 +596,9 @@ bool vrend_format_is_bgra(enum virgl_formats format);
+ 
+ #define VREND_COPY_COMPAT_FLAG_ALLOW_COMPRESSED (1u << 0)
+ #define VREND_COPY_COMPAT_FLAG_ONE_IS_EGL_IMAGE (1u << 1)
++/* The caller is copying texels, not blitting them, so the GL copy view class
++ * decides compatibility. A blit may convert, and must not set this. */
++#define VREND_COPY_COMPAT_FLAG_COPY_VIEW_CLASS (1u << 2)
+ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
+                                unsigned int flags);
  

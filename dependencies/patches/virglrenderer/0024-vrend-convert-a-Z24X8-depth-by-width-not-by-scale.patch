@@ -1,4 +1,4 @@
-From e4b5cae2192be42eef3d979effa5bc62ca48c9ea Mon Sep 17 00:00:00 2001
+From 7be78ecf6bf08d33ad11109b66faf805313d8a79 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 07:06:41 +0900
 Subject: [PATCH 24/35] vrend: convert a Z24X8 depth by width, not by scale
@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 22 insertions(+), 14 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 88f8eae..26d4ceb 100644
+index ca6945a..49d35ac 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -9160,19 +9160,29 @@ static void iov_buffer_upload(void *cookie, uint32_t doff, void *src, int len)

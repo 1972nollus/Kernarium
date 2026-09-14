@@ -1,4 +1,4 @@
-From a750c01293ed78aa294e1800f0ea1258794fb8cc Mon Sep 17 00:00:00 2001
+From d2180dfd18358e4770dc0e125c8bb2290d42586a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
 Subject: [PATCH 23/35] vrend: keep an integer result integer at an integer

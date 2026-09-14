@@ -1,4 +1,4 @@
-From a4ee83538c1aa6834e3421feb2b26a0350d12325 Mon Sep 17 00:00:00 2001
+From 0699007b1c106c40f7bd4f83ec44cfc6e18868c8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
 Subject: [PATCH 25/35] vrend: recover the byte offset a texture buffer view
@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 39 insertions(+), 9 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 26d4ceb..25f7f7c 100644
+index 49d35ac..e3725d7 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -382,6 +382,7 @@ struct global_renderer_state {

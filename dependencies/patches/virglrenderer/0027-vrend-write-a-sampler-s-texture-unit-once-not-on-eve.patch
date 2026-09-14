@@ -1,4 +1,4 @@
-From 4d3c096d2fd5763b0e60172d9004857ef6014ecc Mon Sep 17 00:00:00 2001
+From 2b0476628531fbfac12ffb00dddd567654960f04 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:49:05 +0900
 Subject: [PATCH 27/35] vrend: write a sampler's texture unit once, not on
@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 25f7f7c..9a882bb 100644
+index e3725d7..aaf1c5a 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -472,6 +472,8 @@ struct vrend_linked_shader_program {

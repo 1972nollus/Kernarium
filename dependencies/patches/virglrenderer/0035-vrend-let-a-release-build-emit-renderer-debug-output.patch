@@ -1,4 +1,4 @@
-From 65f545b55552a7c6ac0ecce0c599866617de91bb Mon Sep 17 00:00:00 2001
+From 56dc7dfe9f401b21e3cfb9635500ba3554f9c394 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 08:17:36 +0900
 Subject: [PATCH 35/35] vrend: let a release build emit renderer debug output
@@ -83,7 +83,7 @@ index 86288cb..bcec835 100644
  #define VREND_DEBUG(flag, ctx,  ...) \
     if (VREND_DEBUG_ENABLED && vrend_debug(ctx, flag)) \
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 144a93e..53f7f1d 100644
+index b78206b..b9de14c 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7710,9 +7710,7 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)

@@ -1,4 +1,4 @@
-From a6a6bc7a0a1193af8fb81008f0c5a1cf52407b00 Mon Sep 17 00:00:00 2001
+From b1d9ee253814f448ad7bcb33f77e6b9536bb3b22 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 21:26:15 +0900
 Subject: [PATCH 28/35] vrend: import a shared-memory blob by copy where
@@ -35,7 +35,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 159 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 9a882bb..e5065ea 100644
+index aaf1c5a..c9620fc 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -29,6 +29,8 @@
@@ -177,7 +177,7 @@ index 9a882bb..e5065ea 100644
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
     } else if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
-@@ -11457,6 +11566,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+@@ -11458,6 +11567,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
        .swizzle =  {0, 1, 2, 3}
     };
  
@@ -187,7 +187,7 @@ index 9a882bb..e5065ea 100644
     /* We create the texture views in this function instead of doing it in
      * vrend_renderer_prepare_blit_extra_info because we also delete them here */
     if ((src_res->base.format != info->src.format) && has_feature(feat_texture_view) &&
-@@ -13710,8 +13822,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13711,8 +13823,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
        };
        struct vrend_resource *gr;
  
@@ -203,7 +203,7 @@ index 9a882bb..e5065ea 100644
  
        gr = vrend_resource_create(&create_args);
        if (!gr)
-@@ -13760,6 +13879,30 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13761,6 +13880,30 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              return ret;
           }
  
@@ -235,7 +235,7 @@ index 9a882bb..e5065ea 100644
           FREE(gr);
           virgl_error("%s: no EGL/GBM support \n", __func__);
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index bbf2635..dfa6a73 100644
+index 8bac5d8..586bbee 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -118,11 +118,27 @@ struct vrend_resource {
