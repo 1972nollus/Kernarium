@@ -1,7 +1,7 @@
 From 6bc6258843912011736025285c789531330920cc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 14:45:03 +0000
-Subject: [PATCH 17/40] UML-DARWIN-LOCAL: trace: guard PM sleep exports for UML
+Subject: [PATCH 17/41] UML-DARWIN-LOCAL: trace: guard PM sleep exports for UML
 
 Change-Id: I9b504df86aabeba5b0f03fb22e22fb42759c3c19
 ---

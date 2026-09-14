@@ -75,10 +75,11 @@ addresses, and terminates under the default host disposition. This too is the
 same source change the mainline line carries.
 
 The standardized vhost-user shared-memory-region transport the mainline line
-adds for host-visible Virtio-GPU blobs has no Android product: this line does
-not negotiate `VHOST_USER_PROTOCOL_F_SHMEM_MAP` or reserve the guarded
-guest-physical aperture, so that topic and its mapping-capacity policy stay
-outside the ACK series.
+adds for host-visible Virtio-GPU blobs is carried here as well. The Android
+product's Vulkan HAL is Mesa's Venus driver, which refuses to initialize
+without `VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM, so this line negotiates
+`VHOST_USER_PROTOCOL_F_SHMEM_MAP` and reserves the same guarded guest-physical
+aperture under the same mapping-capacity policy as the mainline topic.
 
 ## Build and artifact boundary
 

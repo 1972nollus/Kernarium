@@ -1,7 +1,7 @@
 From cbedec5f3d5a8a76934b2d771ced660fb9a09a06 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 10:58:16 +0000
-Subject: [PATCH 32/40] UML-DARWIN-LOCAL: um: let vmalloc use the whole
+Subject: [PATCH 32/41] UML-DARWIN-LOCAL: um: let vmalloc use the whole
  auxiliary window
 
 The native hole is guest RAM plus an auxiliary allowance, and that allowance
