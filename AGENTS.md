@@ -203,6 +203,11 @@ Update documentation in the same change whenever its current contract changes.
   unrelated Simulator Documents siblings.
 - Do not delete or overwrite a rootfs, dependency prefix, replay checkout, or
   another developer's artifacts without explicit authorization.
+- Remove a worktree and delete its branch as soon as their work is merged,
+  cherry-picked, or superseded; keep only trees with live work, unmerged
+  commits, or a canonical replay that other trees reference. Before removing
+  one, confirm no process uses it, commit or archive any uncommitted change
+  worth keeping, and repoint scripts or replay references that name it.
 - Keep pure moves, behavior changes, performance changes, and generated or
   provenance updates independently reviewable when practical.
 - Commit with the repository's configured Git identity. Never put a custom
