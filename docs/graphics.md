@@ -163,16 +163,20 @@ Khronos publishes Android's mandatory Vulkan functionality as the
 `VP_ANDROID_17_requirements` profile, which chains the
 `VP_ANDROID_vulkan_profile_2025` baseline. The Linux Venus guest meets its API
 version (the guest reports 1.4.354 against a required 1.4.335), its limits, its
-formats, and both of its either-or capability groups, but four requirements are
+formats, and both of its either-or capability groups, but three requirements are
 standing limits of this stack rather than work that is merely outstanding:
 
 * `protectedMemory` has no Metal equivalent.
 * `shaderBufferInt64Atomics` needs 64-bit buffer atomics this Metal feature set
   does not provide.
 * `shaderFloat16` is withheld on purpose, because native half arithmetic can
-  time out Apple GPUs when NaN-heavy graphics shaders run concurrently.
-* `storageInputOutput16` is withheld: a Metal struct member has one type, and a
-  varying slot that carries a 16-bit component has no single one.
+  time out Apple GPUs when NaN-heavy graphics shaders run concurrently. The
+  16-bit storage classes are separate from it and are supported, including
+  `storageInputOutput16`: a varying narrower than 32 bits is widened to a
+  32-bit one before the shader chain is linked, because Metal's raster
+  interface does not carry every half bit pattern and a 16-bit integer varying
+  needs it to. The widening costs no varying space, since a 16-bit varying
+  occupies a whole slot here either way.
 
 The Android window-system prerequisites the renderer owns are in place.
 KosmicKrisp advertises `VK_EXT_queue_family_foreign`, which costs it nothing on
@@ -189,18 +193,37 @@ rule produces. The guest Venus driver's two conditions for
 what remains between an Android guest and a Vulkan swapchain is the Android
 Vulkan HAL and its gralloc integration, not the renderer.
 
-The remaining gaps are ordinary work with owners: the guest's common WSI does
-not implement `VK_EXT_present_timing`,
-`VK_EXT_present_mode_fifo_latest_ready`, `VK_GOOGLE_display_timing`, or
-`VK_GOOGLE_surfaceless_query`, and `VK_KHR_maintenance9`,
-`VK_KHR_pipeline_binary`, `VK_EXT_image_compression_control` with its
-swapchain companion, and `VK_EXT_device_address_binding_report` need a
-venus-protocol release that carries their structures. The pinned protocol
-tracks `vk.xml` 1.4.343 and its
-extension table ends at `VK_KHR_maintenance7`, which is why the guest reports
-`VK_KHR_maintenance9` unsupported even though KosmicKrisp advertises it; the
-same gap makes the driver's `VK_KHR_maintenance8` and `VK_KHR_maintenance10`
-passthrough entries inert.
+The four window-system extensions the profile lists are the Android Vulkan
+loader's own work, not an ICD's. `frameworks/native/vulkan/libvulkan`
+implements `VK_GOOGLE_surfaceless_query`,
+`VK_EXT_present_mode_fifo_latest_ready`, `VK_GOOGLE_display_timing` and
+`VK_EXT_present_timing` on top of `VK_ANDROID_native_buffer` and advertises
+them as loader extensions: the first unconditionally, the second behind a
+build flag, the third when `service.sf.present_timestamp` is set, and the
+fourth additionally only when the ICD exposes `VK_KHR_calibrated_timestamps`.
+Every layer of this stack already carries that one dependency, so the guest
+Venus driver owes no common-WSI work for any of the four.
+
+The pinned venus-protocol is v1.1.3, which tracks the Vulkan 1.4.357 registry
+and carries 201 extensions. An extension the protocol does not name has no
+index in `vn_info_extension_index`, so the guest silently refuses it however
+the other layers are configured; the uprev is what makes `VK_KHR_maintenance8`,
+`VK_KHR_maintenance9`, `VK_KHR_maintenance10`,
+`VK_KHR_device_address_commands`, `VK_KHR_unified_image_layouts`,
+`VK_EXT_vertex_attribute_robustness` and `VK_EXT_primitive_restart_index`
+reachable at all. Both the guest driver and the renderer generate their halves
+of the encoder from that one pin at build time - the driver through
+`-Dvenus-protocol-dir`, which makes Mesa's vendored `src/virtio/venus-protocol`
+copies unused here - so the two halves must be replaced together: a guest image
+sealed against one protocol cannot talk to a renderer built from another.
+
+What the protocol still does not describe is `VK_KHR_pipeline_binary`,
+`VK_EXT_image_compression_control` with its swapchain companion, and
+`VK_EXT_device_address_binding_report`. All but pipeline binaries define no
+command, so each of those needs only an entry in the generator's extension
+list; pipeline binaries additionally need command ids for five entrypoints and a
+`VkPipelineBinaryKHR` object type in the renderer's object tracking, which is
+the real cost of that one.
 
 ### Experimental host memory
 
