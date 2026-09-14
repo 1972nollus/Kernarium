@@ -371,21 +371,34 @@ inventory captured from the exact emulator, image, and provider
 the first/other EGL configuration roles.
 
 `--matrix gles32` runs the OpenGL ES 3.2 must-pass matrix from the same
-authenticated image, on the EGL configurations an ordered `CTS-Configs.es32`
-inventory reports (`--config-inventory gles32`); a GL46 inventory never stands
-in for it. Its run records come from the three ES must-pass documents pinned
-beside the runner (`vk_gl_cts_gles_mustpass*.xml`, with the caselist
-identities in `vk_gl_cts_gles32_matrix.json`, which must agree with the CTS
-identity wherever they name the same file), and the guest re-checks the
-document and caselist digests before a shard runs. Following getTestRunsForES
-in the pinned runner source, the NoContext and Khronos ES collections admit
-every API an ES 3.2 context supports (`KHR-GLES2/3/31/32`, `KHR-GLESEXT`,
-`KHR-NoContext`) and Single Config only the exact API (`KHR-Single-GLES32`);
-the NoContext and Single Config runs happen once, on the first configuration.
-The two AOSP collections the official runner also visits (`dEQP-EGL` and
-`dEQP-GLES2/3/31`) are out of scope: it resolves their surface type from the
-AOSP configuration list, which `CTS-Configs` does not log, so no authenticated
-runtime input reproduces their command lines.
+authenticated image, on the EGL configurations an ordered ES 3.2 inventory
+reports (`--config-inventory gles32`); a GL46 inventory never stands in for
+it. That inventory has its own scope, `configs-egl-attributes`: one guest
+session runs `CTS-Configs.es32` and `dEQP-EGL.info.configs` from a two-line
+caselist, and records both the conformant configuration list and the EGL
+attribute table, each with its own digest. Its run records come from the five
+ES must-pass documents pinned beside the runner (`vk_gl_cts_gles_mustpass*.xml`
+and `vk_gl_cts_*_aosp_mustpass.xml`, with the caselist identities in
+`vk_gl_cts_gles32_matrix.json`, which must agree with the CTS identity
+wherever they name the same file), and the guest re-checks the document and
+caselist digests before a shard runs. Following getTestRunsForES in the pinned
+runner source, the NoContext and Khronos ES collections admit every API an
+ES 3.2 context supports (`KHR-GLES2/3/31/32`, `KHR-GLESEXT`, `KHR-NoContext`)
+and Single Config only the exact API (`KHR-Single-GLES32`); the NoContext and
+Single Config runs happen once, on the first configuration.
+
+The two AOSP collections the runner also visits (`dEQP-EGL` and
+`dEQP-GLES2/3/31`) name a GL configuration such as `rgba8888d24s8ms0` instead
+of an EGL configuration id. The plan reconstructs `ConfigList::aospConfigs`
+from the recorded EGL attribute table — every configuration that renders and
+conforms to ES 3, multisample ones included — and resolves each name against
+it exactly as the runner does, refusing the plan unless that reconstruction
+reproduces the conformant list the same inventory reports. An AOSP run names
+its GL configuration and, outside the EGL run, the surface type its resolved
+configuration offers; it never seeds itself or names an EGL configuration id.
+These collections come last in the plan, so adding them renumbers no existing
+run; plan order is not the runner's emission order, and runs are independent
+guest boots.
 
 `tests/integration/gpu/run_graphics_cts_campaign.py` coordinates the suites:
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
