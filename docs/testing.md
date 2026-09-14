@@ -404,7 +404,10 @@ guest boots.
 eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
 most six owned guests at a time (`--jobs` may only lower that), immediately
 refilled. `--suite` selects them: `vulkan`, `opengl` (GL46), `gles32`, `both`
-(Vulkan and GL46) or `all`. Each OpenGL matrix owns its shard prefix
+(Vulkan and GL46), `gl` (both OpenGL matrices without Vulkan) or `all`. Every
+selection is a subsequence of the fixed suite order, so a campaign planned
+with one completes from its own suites alone, and a later launch may only add
+suites to it. Each OpenGL matrix owns its shard prefix
 (`gl46-runNNNN-kkof08`, `gles32-runNNNN-kkof08`) and its own configuration
 inventory (`--opengl-config-inventory-run`, `--gles32-config-inventory-run`). It freezes source, runner, emulator, framework, rootfs, receipt,
 selection, and timeout identities per attempt, and reverifies completed ones.

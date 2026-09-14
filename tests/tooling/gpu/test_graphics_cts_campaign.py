@@ -459,6 +459,49 @@ class GraphicsCampaignTests(unittest.TestCase):
             self.assertIn("gl46-run0000-00of08", record["attempts"])
             self.assertEqual(record["generations"][0], definition)
 
+    def test_the_gl_suite_runs_both_opengl_matrices_without_vulkan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = ["--campaign-dir", str(root / "campaign"),
+                      "--emulator", str(root / "uml-darwin"),
+                      "--opengl-rootfs", str(root / "gl.ext4"),
+                      "--opengl-receipt", str(root / "gl.json"),
+                      "--opengl-config-inventory-run", str(root / "gl46/run.json"),
+                      "--gles32-config-inventory-run", str(root / "gles32/run.json")]
+            options = campaign.parse_arguments(["--suite", "gl", *inputs])
+            self.assertEqual(options.suite, "gl")
+            # The GL pair is "all" without Vulkan, in the same order, so a
+            # campaign planned with it completes from those two suites alone.
+            self.assertEqual(
+                list(campaign.SUITE_SELECTIONS["gl"]),
+                [suite for suite in campaign.SUITE_SELECTIONS["all"]
+                 if suite != "vulkan"])
+            self.assertIsNone(options.vulkan_rootfs)
+            for dropped in ("--opengl-rootfs", "--opengl-receipt",
+                            "--opengl-config-inventory-run",
+                            "--gles32-config-inventory-run"):
+                index = inputs.index(dropped)
+                trimmed = inputs[:index] + inputs[index + 2:]
+                with self.subTest(dropped=dropped), \
+                        contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit):
+                    campaign.parse_arguments(["--suite", "gl", *trimmed])
+            definition = with_gles32(root, spec(root))
+            pair = {**definition, "suites": list(campaign.SUITE_SELECTIONS["gl"])}
+            keys = campaign.shards(pair)
+            self.assertEqual({key.suite for key in keys}, {"gl46", "gles32"})
+            self.assertEqual(len(keys),
+                             len(campaign.shards(definition))
+                             - sum(1 for key in campaign.shards(definition)
+                                   if key.suite == "vulkan"))
+            order = [key.suite for key in keys if key.index == 0]
+            self.assertEqual(
+                order,
+                sorted(order, key=campaign.SUITE_ORDER.index))
+            plan = campaign.plan_identity(pair)
+            self.assertNotIn("vulkan", plan)
+            self.assertEqual(plan["suites"], ["gl46", "gles32"])
+
     def test_cli_rejects_resource_and_selector_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             args = self.arguments(Path(temporary))

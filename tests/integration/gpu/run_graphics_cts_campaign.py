@@ -49,6 +49,17 @@ RUNNERS = {
 # The official OpenGL matrices, and the specification section each one owns.
 GL_SUITES = {"gl46": "opengl", "gles32": "gles32"}
 SUITE_ORDER = ("vulkan", "gl46", "gles32")
+# What each --suite selector plans. Every selection is a subsequence of
+# SUITE_ORDER, so a campaign planned with one is completable from its own
+# suites alone and a later launch may only add suites to it.
+SUITE_SELECTIONS = {
+    "vulkan": ("vulkan",),
+    "opengl": ("gl46",),
+    "gles32": ("gles32",),
+    "both": ("vulkan", "gl46"),
+    "gl": ("gl46", "gles32"),
+    "all": ("vulkan", "gl46", "gles32"),
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -171,13 +182,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
     regular_file(emulator)
     if not os.access(emulator, os.X_OK):
         raise common.CampaignError("emulator is not executable")
-    suites = {
-        "vulkan": ["vulkan"],
-        "opengl": ["gl46"],
-        "gles32": ["gles32"],
-        "both": ["vulkan", "gl46"],
-        "all": ["vulkan", "gl46", "gles32"],
-    }[options.suite]
+    suites = list(SUITE_SELECTIONS[options.suite])
     spec = {
         "suites": suites, "fraction_count": FRACTIONS,
         "cpus": CPUS, "memory": MEMORY, "engine": "jit",
@@ -1043,10 +1048,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--suite",
-        choices=("vulkan", "opengl", "gles32", "both", "all"),
+        choices=tuple(SUITE_SELECTIONS),
         required=True,
-        help="vulkan, opengl (GL46), gles32 (ES 3.2), both (vulkan+opengl) "
-             "or all three",
+        help="vulkan, opengl (GL46), gles32 (ES 3.2), both (vulkan+opengl), "
+             "gl (opengl+gles32) or all three",
     )
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--emulator", type=Path, required=True)
@@ -1104,19 +1109,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         parser.error("--max-attempts must not be negative")
     if options.verify_only and options.dry_run:
         parser.error("--verify-only and --dry-run are mutually exclusive")
-    if options.suite in ("vulkan", "both", "all") and options.vulkan_rootfs is None:
+    selected = SUITE_SELECTIONS[options.suite]
+    if "vulkan" in selected and options.vulkan_rootfs is None:
         parser.error("Vulkan requires --vulkan-rootfs")
-    if options.suite != "vulkan" and (
+    if any(suite in GL_SUITES for suite in selected) and (
         options.opengl_rootfs is None or options.opengl_receipt is None
     ):
         parser.error("an OpenGL matrix requires --opengl-rootfs and --opengl-receipt")
-    if options.suite in ("opengl", "both", "all") and (
-        options.opengl_config_inventory_run is None
-    ):
+    if "gl46" in selected and options.opengl_config_inventory_run is None:
         parser.error("the GL46 matrix requires --opengl-config-inventory-run")
-    if options.suite in ("gles32", "all") and (
-        options.gles32_config_inventory_run is None
-    ):
+    if "gles32" in selected and options.gles32_config_inventory_run is None:
         parser.error("the ES 3.2 matrix requires --gles32-config-inventory-run")
     return options
 
