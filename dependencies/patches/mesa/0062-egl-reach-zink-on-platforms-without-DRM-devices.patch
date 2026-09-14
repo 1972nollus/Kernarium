@@ -1,7 +1,7 @@
 From 335fe7fd777caa0c4792cc94dbeb1112b4c7ab7b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:11:01 +0900
-Subject: [PATCH 62/71] egl: reach zink on platforms without DRM devices
+Subject: [PATCH 62/72] egl: reach zink on platforms without DRM devices
 
 The surfaceless platform only falls back to its DRM-less probe when software
 rendering is forced, so a platform with no DRM devices at all, such as Apple,
