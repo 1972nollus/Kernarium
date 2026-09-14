@@ -1,7 +1,7 @@
 From 00c1fa498af0fabc79954691a1cbc38cf2c2ef26 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 01:28:59 +0900
-Subject: [PATCH 10/16] mesa/st: store integer pixel transfers without a blit
+Subject: [PATCH 10/17] mesa/st: store integer pixel transfers without a blit
 
 A pixel transfer saturates an integer into the destination range. The blit
 paths hand the texels to a colour attachment, which keeps only the

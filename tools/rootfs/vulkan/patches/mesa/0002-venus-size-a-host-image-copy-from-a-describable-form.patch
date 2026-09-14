@@ -1,7 +1,7 @@
 From 46651b7f2625dba3e1108a8dd6f483da273cb492 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 21:33:52 +0900
-Subject: [PATCH 02/16] venus: size a host image copy from a describable format
+Subject: [PATCH 02/17] venus: size a host image copy from a describable format
 
 vn_get_copy_size() takes the texel block size from
 vk_format_get_blocksize(), which describes a Vulkan format through its
