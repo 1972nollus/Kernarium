@@ -1,7 +1,7 @@
 From 02859447bd2ad4c74387ac8d2dfdc07e18f93c1c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:27:07 +0900
-Subject: [PATCH 18/22] venus: pass through the extensions the uprevved
+Subject: [PATCH 18/23] venus: pass through the extensions the uprevved
  protocol reaches
 
 VK_KHR_maintenance9, VK_KHR_unified_image_layouts and

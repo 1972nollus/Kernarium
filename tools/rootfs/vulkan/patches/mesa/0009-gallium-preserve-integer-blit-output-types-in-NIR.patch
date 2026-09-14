@@ -1,7 +1,7 @@
 From 17ebc7f9b670275dbd16d50210c7cd6a0f6eeae3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 13:24:15 +0900
-Subject: [PATCH 09/22] gallium: preserve integer blit output types in NIR
+Subject: [PATCH 09/23] gallium: preserve integer blit output types in NIR
 
 Generated color blits already know their integer destination type. Carry it into NIR before driver finalization instead of losing it in the untyped TGSI output declaration. Preserve existing sample payloads and signedness clamps, and leave TGSI-only consumers, floating-point color, depth, and stencil paths unchanged.
 
