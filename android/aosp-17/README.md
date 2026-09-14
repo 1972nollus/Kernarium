@@ -153,6 +153,37 @@ codec at the tree path the upstream snapshot reserves for it.
 that uses Vulkan, so the product labels it `same_process_hal_file` beside the
 Mesa EGL/GLES libraries.
 
+Mesa reads a buffer's DRM format, modifier and plane layout through gralloc, so
+the product installs the allocator's own `gralloc.minigbm` module and sets
+`ro.hardware.gralloc=minigbm`: the passthrough module answers none of those
+queries and the driver would have to guess the layout of the buffers the window
+system hands it. That module is labelled `same_process_hal_file` too. minigbm
+allocates a GPU-only buffer as a virtio-gpu blob, which is the form the renderer
+can share with the Vulkan render server, and keeps a buffer the guest itself
+reads or writes on the classic transfer path, which a CPU mapping still needs.
+
+Presentation is `VK_ANDROID_native_buffer`: the platform loader allocates the
+swapchain images from gralloc and the driver imports them. Those blobs belong to
+the renderer's GL context, and an Apple host has no dma-buf to hand across, so
+the renderer gives such a resource a host shared-memory segment and exports
+that; the contract is in
+[`../../docs/architecture.md`](../../docs/architecture.md). SurfaceFlinger then
+takes the presented layer on the scanout as a device composition. The product
+ships `kernarium_vk_present`, which owns a layer, wraps it through
+`VK_KHR_android_surface` and presents a swapchain, as the pass-or-fail check of
+that path.
+
+The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
+`compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
+this driver has not been qualified against Android's Vulkan dEQP must-pass list.
+
+The Android hardware buffer handle type a swapchain needs is guest Mesa work,
+so it arrives with the guest Vulkan epoch pinned in
+`third_party/mesa-venus/metadata.env`. The pinned `source-24` epoch does not
+carry it: a HAL built from it enumerates Venus and serves ordinary rendering,
+but refuses the loader's hardware-buffer image-format query, and presentation
+needs the `source-25` epoch.
+
 ## Payload reduction
 
 Payload reduction is done through product configuration and regenerated AOSP

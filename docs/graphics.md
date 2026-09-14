@@ -154,10 +154,14 @@ passes.
 
 ### Android guest requirements
 
-The Android guest does not use this path. Its Mesa is a GLES-only Soong port
-that installs `gallium_dri`, the Mesa EGL and GLES libraries, and a
-`virtio_gpu_dri.so` symlink; it builds no Vulkan HAL, so an Android guest has
-no Vulkan at all. See [`../android/aosp-17/README.md`](../android/aosp-17/README.md).
+The Android guest reaches the same renderer by a separate route. Its GLES stack
+is a GLES-only Soong port that installs `gallium_dri`, the Mesa EGL and GLES
+libraries, and a `virtio_gpu_dri.so` symlink; its Vulkan HAL is Mesa's Venus
+driver, built from this project's own guest Mesa source and installed as
+`vulkan.virtio.so`, with gralloc buffers from minigbm and presentation through
+`VK_ANDROID_native_buffer`. That contract, including which guest epoch the
+hardware-buffer path needs and why no dEQP level is declared, lives in
+[`../android/aosp-17/README.md`](../android/aosp-17/README.md#graphics).
 
 Khronos publishes Android's mandatory Vulkan functionality as the
 `VP_ANDROID_17_requirements` profile, which chains the
@@ -189,9 +193,8 @@ allocation, no use as a colour or depth/stencil attachment, and an explicit
 plane layout accepted only where it matches the layout Metal's own alignment
 rule produces. The guest Venus driver's two conditions for
 `VK_ANDROID_native_buffer` and
-`VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and
-what remains between an Android guest and a Vulkan swapchain is the Android
-Vulkan HAL and its gralloc integration, not the renderer.
+`VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and an
+Android guest presents its swapchain through them.
 
 The four window-system extensions the profile lists are the Android Vulkan
 loader's own work, not an ICD's. `frameworks/native/vulkan/libvulkan`
