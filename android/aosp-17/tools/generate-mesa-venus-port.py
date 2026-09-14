@@ -241,7 +241,9 @@ def main() -> None:
         "--platforms", type=Path, required=True, help="builder-local platforms toml"
     )
     parser.add_argument(
-        "--dependencies", type=Path, help="builder-local dependencies toml"
+        "--dependencies",
+        type=Path,
+        help="dependency map override; defaults to the port's own map",
     )
     args = parser.parse_args()
     args.android_root = args.android_root.resolve()
@@ -249,6 +251,12 @@ def main() -> None:
     args.config = args.android_root / "third_party/mesa-venus/soong-port.toml"
     if not args.config.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the port configuration is missing")
+    if args.dependencies is None:
+        args.dependencies = (
+            args.android_root / "third_party/mesa-venus/soong-dependencies.toml"
+        )
+    if not args.dependencies.is_file():
+        raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
     convert(args)
     scope(args.checkout)
 
