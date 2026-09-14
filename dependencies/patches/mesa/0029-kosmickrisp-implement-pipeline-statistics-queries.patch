@@ -1,7 +1,7 @@
 From d1b9fbad61cbb8ca661dfd24124bbccd90b549cf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 14:57:09 +0900
-Subject: [PATCH 29/77] kosmickrisp: implement pipeline statistics queries
+Subject: [PATCH 29/78] kosmickrisp: implement pipeline statistics queries
 
 ---
  src/kosmickrisp/compiler/msl_iomap.c          |  24 +
