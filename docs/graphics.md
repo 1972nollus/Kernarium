@@ -152,6 +152,48 @@ its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
 passes.
 
+### Android guest requirements
+
+The Android guest does not use this path. Its Mesa is a GLES-only Soong port
+that installs `gallium_dri`, the Mesa EGL and GLES libraries, and a
+`virtio_gpu_dri.so` symlink; it builds no Vulkan HAL, so an Android guest has
+no Vulkan at all. See [`../android/aosp-17/README.md`](../android/aosp-17/README.md).
+
+Khronos publishes Android's mandatory Vulkan functionality as the
+`VP_ANDROID_17_requirements` profile, which chains the
+`VP_ANDROID_vulkan_profile_2025` baseline. The Linux Venus guest meets its API
+version (the guest reports 1.4.354 against a required 1.4.335), its limits, its
+formats, and both of its either-or capability groups, but four requirements are
+standing limits of this stack rather than work that is merely outstanding:
+
+* `protectedMemory` has no Metal equivalent.
+* `shaderBufferInt64Atomics` needs 64-bit buffer atomics this Metal feature set
+  does not provide.
+* `shaderFloat16` is withheld on purpose, because native half arithmetic can
+  time out Apple GPUs when NaN-heavy graphics shaders run concurrently.
+* The Android hardware-buffer path cannot open. The guest Venus driver enables
+  `VK_ANDROID_native_buffer` and
+  `VK_ANDROID_external_memory_android_hardware_buffer` only when the renderer
+  offers both `VK_EXT_queue_family_foreign` and
+  `VK_EXT_image_drm_format_modifier`, and DRM format modifiers describe dma-buf
+  tiling layouts that Metal does not have. Without `VK_ANDROID_native_buffer`
+  the Android loader cannot create a swapchain, so `VK_KHR_android_surface`,
+  `VK_ANDROID_external_format_resolve`, and the rest of the Android window
+  system stay out of reach even if a HAL were built.
+
+The remaining gaps are ordinary work with owners: the guest's common WSI does
+not implement `VK_EXT_present_timing`,
+`VK_EXT_present_mode_fifo_latest_ready`, `VK_GOOGLE_display_timing`, or
+`VK_GOOGLE_surfaceless_query`, and `VK_KHR_maintenance9`,
+`VK_KHR_pipeline_binary`, `VK_EXT_image_compression_control` with its
+swapchain companion, and `VK_EXT_device_address_binding_report` need a
+venus-protocol release that carries their structures. The pinned protocol
+tracks `vk.xml` 1.4.343 and its
+extension table ends at `VK_KHR_maintenance7`, which is why the guest reports
+`VK_KHR_maintenance9` unsupported even though KosmicKrisp advertises it; the
+same gap makes the driver's `VK_KHR_maintenance8` and `VK_KHR_maintenance10`
+passthrough entries inert.
+
 ### Experimental host memory
 
 Native graphics allocations are separate from the configured guest RAM limit.
