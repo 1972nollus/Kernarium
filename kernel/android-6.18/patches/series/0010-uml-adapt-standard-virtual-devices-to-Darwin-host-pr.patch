@@ -1,7 +1,7 @@
-From 35d2c01604f6ec254eb5620b981978f4414895f3 Mon Sep 17 00:00:00 2001
+From 1af876af285c60bdbf66c3eb40fc04d9f54d3528 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:11 +0900
-Subject: [PATCH 10/41] uml: adapt standard virtual devices to Darwin host
+Subject: [PATCH 10/42] uml: adapt standard virtual devices to Darwin host
  providers
 
 Apply the reviewed final-state topic without intermediate churn.

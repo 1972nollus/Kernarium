@@ -22,10 +22,11 @@ namespace {
 	output.fault = {
 		.address = result.address,
 		.access = result_access,
+		.alignment = result.alignment,
 	};
 	output.syndrome = result.syndrome;
 	if (result.reason == StopReason::memory_fault) {
-		if (memory.has_fault())
+		if (!result.alignment && memory.has_fault())
 			output.fault.address = memory.last_fault().address;
 		/* The static MMU reports the failed page, while Dispatcher::run
 		 * retains the architectural direction for compound operations such as

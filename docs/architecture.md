@@ -103,6 +103,10 @@ The interpreter is the reference oracle. The gadget engine executes arrays of
 precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines.
+Data-alignment faults retain the effective data address and the faulting PC.
+The host exports a distinct bridge event, and both kernel lines deliver
+`SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
+do not enter page-fault repair or retire the faulting instruction.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

@@ -254,12 +254,72 @@ void bridge_contract(EngineKind kind, unsigned long generation)
 	}
 }
 
+void data_alignment_contract(EngineKind kind, unsigned long generation)
+{
+	JitBacking backing{1};
+	backing.put32(0, 0x9100'0508U); // add x8, x8, #1
+	backing.put32(4, 0x9940'00f5U); // ldapur w21, [x7] (FEX TSO load)
+	backing.put32(8, system_call);
+	backing.put32(12, 0x9900'00f5U); // stlur w21, [x7]
+	backing.put32(16, system_call);
+	backing.put32(0x100, 0x1234'5678U);
+	JitMapping mapping{generation, code_base, backing, 1};
+	::uml::memory::StaticGuestMemory memory;
+	memory.set_generation(generation);
+	auto engine = ::uml::cpu::make_cpu_engine(kind);
+	for (const bool write : {false, true}) {
+		::uml::cpu::arm64::CpuState cpu;
+		cpu.pc = code_base + (write ? 12 : 0);
+		cpu.registers[7] = code_base + 0x102;
+		cpu.registers[8] = 40;
+		cpu.registers[21] = 0xaabb'ccdd;
+		const auto result = run(*engine, cpu, memory, generation);
+		require(result.reason == ::uml::cpu::ExitReason::memory_fault &&
+			result.fault.alignment &&
+			result.fault.address == code_base + 0x102 &&
+			result.fault.access == (write ?
+				::uml::memory::MemoryAccess::write :
+				::uml::memory::MemoryAccess::read),
+			"engine lost data-alignment cause, address, or direction");
+		require(cpu.pc == code_base + (write ? 12 : 4) &&
+			result.retired_instructions == (write ? 0U : 1U) &&
+			cpu.registers[21] == 0xaabb'ccdd &&
+			cpu.registers[8] == (write ? 40U : 41U),
+			"data-alignment fault changed the precise architectural state");
+		cpu.registers[7] = code_base + 0x100;
+		const auto retry = run(*engine, cpu, memory, generation);
+		require(retry.reason == ::uml::cpu::ExitReason::system_call,
+			"aligned retry failed after a data-alignment fault");
+		cpu.pc = code_base + 4;
+		cpu.registers[7] = code_base + 2 * DARWIN_UML_GUEST_PAGE_SIZE;
+		const auto missing = run(*engine, cpu, memory, generation);
+		require(missing.reason == ::uml::cpu::ExitReason::memory_fault &&
+			!missing.fault.alignment,
+			"ordinary page fault inherited a stale alignment cause");
+	}
+	const auto enter = bridge_for(kind);
+	darwin_uml_guest_fp_registers fp{};
+	unsigned long tls = 0;
+	darwin_uml_guest_registers registers{};
+	registers.pc = code_base;
+	registers.x[7] = code_base + 0x102;
+	registers.x[21] = 0xaabb'ccdd;
+	engine.reset();
+	const auto event = enter(&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_DATA_ALIGNMENT &&
+		registers.pc == code_base + 4 &&
+		registers.fault.address == code_base + 0x102 &&
+		registers.x[21] == 0xaabb'ccdd,
+		"bridge did not preserve the FEX alignment-fault contract");
+}
+
 int run_child(EngineKind kind)
 {
 	if (!::uml::cpu::cpu_engine_available(kind))
 		return 77;
 	const auto ordinal = static_cast<unsigned long>(kind);
 	direct_engine_contract(kind, 0x8d00 + ordinal * 2);
+	data_alignment_contract(kind, 0x8e00 + ordinal);
 	bridge_contract(kind, 0x8d01 + ordinal * 2);
 	return EXIT_SUCCESS;
 }

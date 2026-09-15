@@ -1,7 +1,7 @@
-From 2e88050d84f84395b877cf9e84855f97362d4f0f Mon Sep 17 00:00:00 2001
+From 8e3883018a8df76c1b1ab38acc0204e9def873dc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 04/41] uml: add execution and capability core support
+Subject: [PATCH 04/42] uml: add execution and capability core support
 
 Keep task lifecycle, architecture capability reporting, stack handling, and execution initialization in one reviewable final-state topic.
 ---

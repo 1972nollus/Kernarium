@@ -120,6 +120,7 @@ public:
 	[[nodiscard]] bool preempted() const noexcept;
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
+	[[nodiscard]] bool fault_alignment() const noexcept;
 	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
 	/* False when the process-wide configured executor ceiling was full, or when
 	 * standalone construction raced or overlapped a managed pool session. Such

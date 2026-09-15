@@ -1,7 +1,7 @@
-From 2abe7def20ce4a4a8e9858ea2bd994c5ecc02660 Mon Sep 17 00:00:00 2001
+From 55b0be4d25f86966c8ece07864dd92b4fbc7251d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
-Subject: [PATCH 03/30] uml: add SMP timer and interrupt core support
+Subject: [PATCH 03/31] uml: add SMP timer and interrupt core support
 
 Keep CPU bring-up, per-CPU timing, interrupt dispatch, and the normal-mode
 nanosecond scheduler clock together as one reviewable final-state topic.

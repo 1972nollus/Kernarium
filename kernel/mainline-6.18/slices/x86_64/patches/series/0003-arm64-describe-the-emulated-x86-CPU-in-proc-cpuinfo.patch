@@ -1,4 +1,4 @@
-From 54737934ad5acf80cff43459135335191e3db4fe Mon Sep 17 00:00:00 2001
+From e36c883fa24c7da174b1b93dce663cb98bb1c74a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:19:23 +0900
 Subject: [PATCH 3/3] arm64: describe the emulated x86 CPU in /proc/cpuinfo

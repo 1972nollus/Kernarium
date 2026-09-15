@@ -1,7 +1,7 @@
-From 4116a36c7b7fc9ab2bc6b2aa376beede95fb058c Mon Sep 17 00:00:00 2001
+From 79b3f893f830e502ef2a5a5d08a54a1e4ccbcb3c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 11:28:39 +0000
-Subject: [PATCH 41/41] UML-DARWIN-LOCAL: media: add the shared Virtio video
+Subject: [PATCH 41/42] UML-DARWIN-LOCAL: media: add the shared Virtio video
  decoder
 
 Change-Id: I7bcd52774ff2241bc917359b3fb64c7ea66826f2

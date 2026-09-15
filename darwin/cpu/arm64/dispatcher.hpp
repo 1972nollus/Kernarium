@@ -36,7 +36,17 @@ struct RunResult final {
 		::uml::memory::MemoryAccess::read};
 	/* ESR-shaped metadata for StopReason::floating_point_trap. */
 	std::uint32_t syndrome{};
+	bool alignment{};
 };
+
+/* Alignment faults precede translation and must never be repaired as missing
+ * pages. Preserve the effective address without retiring the instruction. */
+[[nodiscard]] inline RunResult alignment_fault(std::uint64_t address,
+	std::uint32_t instruction, bool write) noexcept
+{
+	return {StopReason::memory_fault, address, instruction, 0, write,
+		::uml::memory::MemoryAccess::read, 0, true};
+}
 
 class Dispatcher final {
 public:

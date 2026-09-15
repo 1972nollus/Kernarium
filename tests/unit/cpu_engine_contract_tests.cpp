@@ -123,6 +123,8 @@ public:
 		return 0;
 	}
 
+	[[nodiscard]] bool fault_alignment() const noexcept { return false; }
+
 	[[nodiscard]] uml::memory::Access fault_access() const noexcept
 	{
 		return uml::memory::Access::read;
@@ -169,6 +171,8 @@ public:
 
 	[[nodiscard]] bool preempted() const noexcept { return false; }
 	[[nodiscard]] std::uint64_t fault_address() const noexcept { return 0; }
+	[[nodiscard]] bool fault_alignment() const noexcept { return false; }
+
 	[[nodiscard]] uml::memory::Access fault_access() const noexcept
 	{
 		return uml::memory::Access::read;

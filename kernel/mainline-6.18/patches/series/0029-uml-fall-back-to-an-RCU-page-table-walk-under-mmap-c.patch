@@ -1,7 +1,7 @@
-From 4c3f36a2aea73e8743a55cfb921cb4eff8648dbc Mon Sep 17 00:00:00 2001
+From 68aee6a1b3e4dddcb8202abcd41a113146f9526a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 15:22:03 +0900
-Subject: [PATCH 29/30] uml: fall back to an RCU page-table walk under mmap
+Subject: [PATCH 29/31] uml: fall back to an RCU page-table walk under mmap
  contention
 
 pin_user_mapping() answered a contended mmap_read_trylock() with a fault

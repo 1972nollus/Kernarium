@@ -122,6 +122,7 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 	    (size != 2U && size != 4U && size != 8U))
 		return nullptr;
 	if (base_sp != 0U && (tagged_address & 15U) != 0U) {
+		tlb->fault_alignment = 1;
 		tlb->fault_address = tagged_address;
 		tlb->fault_access = Access::write;
 		return nullptr;
@@ -130,6 +131,7 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & (size - 1U)) != 0U) {
+		tlb->fault_alignment = 1;
 		tlb->fault_address = address;
 		tlb->fault_access = Access::write;
 		return nullptr;
@@ -159,6 +161,7 @@ extern "C" void uml_arm64_alignment_fault(
 {
 	if (tlb == nullptr)
 		return;
+	tlb->fault_alignment = 1;
 	tlb->fault_address = address;
 	tlb->fault_access = access == static_cast<std::uint32_t>(
 		::uml::memory::Access::write) ?

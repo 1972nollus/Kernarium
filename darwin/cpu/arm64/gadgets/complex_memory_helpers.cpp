@@ -71,6 +71,7 @@ template <Ls64Operation operation, bool base_sp, bool status_discard = false>
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	constexpr bool load = operation == Ls64Operation::load;
 	if ((address & 63U) != 0) {
+		tlb->fault_alignment = 1;
 		tlb->fault_address = address;
 		tlb->fault_access = load ? Access::read : Access::write;
 		return 0;
@@ -200,6 +201,7 @@ template <MteMemoryOperation operation, MteAddressMode mode,
 	constexpr bool load = operation == MteMemoryOperation::load_tag;
 	if constexpr (base_sp) {
 		if ((base_address & 15U) != 0) {
+			tlb->fault_alignment = 1;
 			mte_fault(tlb, base_address,
 				load ? Access::read : Access::write);
 			return 0;
@@ -227,6 +229,7 @@ template <MteMemoryOperation operation, MteAddressMode mode,
 	 * faults before translation unless the effective address is aligned.
 	 */
 	if ((address & 15U) != 0) {
+		tlb->fault_alignment = 1;
 		mte_fault(tlb, address, Access::write);
 		return 0;
 	}

@@ -42,7 +42,8 @@ template<bool PollCallback, typename Executor>
 					std::uint64_t address = 0,
 					::uml::memory::MemoryAccess access =
 						::uml::memory::MemoryAccess::read,
-					std::uint32_t syndrome = 0) {
+					std::uint32_t syndrome = 0,
+					bool alignment = false) {
 		/* Return a materialized architectural FP state. The application
 		 * boundary also normalizes it before exporting a task frame, but the
 		 * common engine contract must be stable for host callers too. */
@@ -50,7 +51,8 @@ template<bool PollCallback, typename Executor>
 		return ExecutionResult{
 			.reason = reason,
 			.retired_instructions = retired,
-			.fault = {.address = address, .access = access},
+			.fault = {.address = address, .access = access,
+				.alignment = alignment},
 			.syndrome = syndrome,
 		};
 	};
@@ -103,7 +105,8 @@ template<bool PollCallback, typename Executor>
 				return finish(ExitReason::memory_fault, retired,
 					executor.fault_address(),
 					::uml::memory::guest_access(
-						executor.fault_access()));
+						executor.fault_access()), 0,
+					executor.fault_alignment());
 			case EngineEvent::interrupt:
 				/* Translated blocks use the interrupt event as their ordinary
 				 * cold-boundary/fairness exit. It becomes guest-visible only when

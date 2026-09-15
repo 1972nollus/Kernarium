@@ -1397,6 +1397,7 @@ const BuildResult &GadgetExecutor::store(
 {
 	executed = 0;
 	floating_point_syndrome_ = 0;
+	tlb_.fault_alignment = 0;
 	select_cpu(cpu);
 	auto *context = execution_context(generation);
 	if (context == nullptr)
@@ -1602,6 +1603,11 @@ const BuildResult &GadgetExecutor::store(
 	cpu = isolated;
 	executed = isolated_executed;
 	return ::uml::cpu::EngineEvent::continued;
+}
+
+bool GadgetExecutor::fault_alignment() const noexcept
+{
+	return tlb_.fault_alignment != 0;
 }
 
 std::uint64_t GadgetExecutor::fault_address() const noexcept

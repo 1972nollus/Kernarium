@@ -856,7 +856,8 @@ int run_common_guest(
 		}
 		mutable_registers.fault.address = result.fault.address;
 		mutable_registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
-		event = DARWIN_UML_EVENT_FAULT;
+		event = result.fault.alignment ? DARWIN_UML_EVENT_DATA_ALIGNMENT :
+			DARWIN_UML_EVENT_FAULT;
 		break;
 	case uml::cpu::ExitReason::interrupt:
 		if (context->stop_requested()) {

@@ -66,6 +66,7 @@ uml_arm64_jit_alignment_fault(CpuState *cpu, Tlb *tlb,
     return pack_jit_result(Event::fatal, 0);
   materialize_semantic_cpu_state(*cpu);
   const unsigned base = (instruction >> 5) & 31U;
+  tlb->fault_alignment = 1;
   tlb->fault_address = cpu->read_register(base, true);
   const unsigned operation = (instruction >> 22) & 3U;
   const bool vector = (instruction & 0x0400'0000U) != 0;
@@ -272,8 +273,10 @@ private:
 void record_semantic_fault(Tlb &tlb, const JitSemanticMemory &memory,
                            const arm64::RunResult &result) noexcept {
   tlb.fault_address =
-      memory.has_fault() ? memory.last_fault().address : result.address;
+      !result.alignment && memory.has_fault() ? memory.last_fault().address
+                                             : result.address;
   tlb.fault_access = result.write ? Access::write : Access::read;
+  tlb.fault_alignment = result.alignment;
 }
 
 extern "C" std::uint64_t
@@ -445,6 +448,7 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
   const unsigned base_register = (instruction >> 5) & 31U;
   const auto tagged_base = cpu->read_register(base_register, true);
   if (base_register == 31U && (tagged_base & 15U) != 0) {
+    tlb->fault_alignment = 1;
     tlb->fault_address = tagged_base;
     tlb->fault_access = load ? Access::read : Access::write;
     return pack_jit_result(Event::memory_fault, 0);
@@ -586,6 +590,7 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const auto tagged_address = cpu->read_register(base, true);
   const auto address = cpu->untag_data_address(tagged_address, base == 31U);
   if ((address & (size - 1U)) != 0) {
+    tlb->fault_alignment = 1;
     tlb->fault_address = address;
     tlb->fault_access = Access::read;
     return pack_jit_result(Event::memory_fault, 0);
@@ -625,6 +630,7 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
   const unsigned first_register = instruction & 31U;
   const auto tagged_address = cpu->read_register(base_register, true);
   if (base_register == 31U && (tagged_address & 15U) != 0) {
+    tlb->fault_alignment = 1;
     tlb->fault_address = tagged_address;
     tlb->fault_access = load ? Access::read : Access::write;
     return pack_jit_result(Event::memory_fault, 0);

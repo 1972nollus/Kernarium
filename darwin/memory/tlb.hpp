@@ -73,7 +73,8 @@ struct alignas(32) Tlb final {
 	std::uint64_t changes{};
 	std::uint64_t fault_address{};
 	Access fault_access{Access::read};
-	std::uint32_t reserved{};
+	/* Cold fault cause; each executor clears it at the next block entry. */
+	std::uint32_t fault_alignment{};
 	std::array<std::uint8_t, tlb_set_count> replacement_way{};
 	/* Whether the address space owning the current entries ignores the top
 	 * address byte (TBI or MTE). Set by the executor that fills the TLB

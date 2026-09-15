@@ -128,6 +128,14 @@ void JitExecutor::Implementation::end_execution() noexcept {
   return tlb_.fault_address;
 }
 
+bool JitExecutor::Implementation::fault_alignment() const noexcept {
+  return tlb_.fault_alignment != 0;
+}
+
+bool JitExecutor::fault_alignment() const noexcept {
+  return implementation_ != nullptr && implementation_->fault_alignment();
+}
+
 [[nodiscard]] Access JitExecutor::Implementation::fault_access() const noexcept {
   return tlb_.fault_access;
 }

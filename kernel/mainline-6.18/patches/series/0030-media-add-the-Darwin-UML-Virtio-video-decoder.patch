@@ -1,7 +1,7 @@
-From 171f52ca13147e7e704d003fae313be639a49d4d Mon Sep 17 00:00:00 2001
+From 98c140eb7ba118b9d2159bb05ac3f489f142fdac Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 20:12:50 +0900
-Subject: [PATCH 30/30] media: add the Darwin UML Virtio video decoder
+Subject: [PATCH 30/31] media: add the Darwin UML Virtio video decoder
 
 ---
  drivers/media/Kconfig                       |    2 +

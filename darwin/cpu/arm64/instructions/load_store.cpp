@@ -51,7 +51,7 @@ RunResult Dispatcher::load_store_64b(CpuState &cpu, GuestMemory &memory,
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & 63U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 	if (tagchecked) {
 		const auto logical_tag =
 			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
@@ -113,7 +113,8 @@ RunResult Dispatcher::load_store_allocation_tag(
 			address & 0x00ff'ffff'ffff'ffffULL, instruction, 0, write};
 	};
 	const auto sp_alignment_fault = [&](std::uint64_t address, bool write) {
-		return (address & 15U) != 0 ? std::optional{fault(address, write)} :
+		return (address & 15U) != 0 ? std::optional{alignment_fault(
+			address & 0x00ff'ffff'ffff'ffffULL, instruction, write)} :
 			std::optional<RunResult>{};
 	};
 
@@ -148,7 +149,7 @@ RunResult Dispatcher::load_store_allocation_tag(
 			base_address + offset;
 		const auto address = tagged_address & 0x00ff'ffff'ffff'ffffULL;
 		if ((address & 15U) != 0)
-			return fault(address, true);
+			return alignment_fault(address, instruction, true);
 		std::array<std::byte, 16> bytes{};
 		detail::encode_little_endian(cpu.read_register(first, false),
 			std::span{bytes}.first<8>());
@@ -215,7 +216,7 @@ RunResult Dispatcher::load_store_allocation_tag(
 	 * alignment before it can round the address down.
 	 */
 	if ((address & 15U) != 0)
-		return fault(address, true);
+		return alignment_fault(address, instruction, true);
 	const auto source = cpu.read_register(transfer, true);
 	const auto tag = static_cast<std::uint8_t>(source >> 56) & 15U;
 	const std::size_t length = two_granules ? 32 : 16;
@@ -458,7 +459,7 @@ RunResult Dispatcher::load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 	 * transfer register or GuestMemory.
 	 */
 	if (base_register == 31U && (base & 15U) != 0)
-		return {StopReason::memory_fault, base, instruction, 0, !load};
+		return alignment_fault(base, instruction, !load);
 	const auto tagged_address = base +
 		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
 	std::uint64_t address{};
@@ -579,7 +580,7 @@ RunResult Dispatcher::load_store_other(CpuState &cpu, GuestMemory &memory,
 	 * effective-address generation and any transfer-register or memory effect.
 	 */
 	if (base_register == 31U && (base & 15U) != 0)
-		return {StopReason::memory_fault, base, instruction, 0, !load};
+		return alignment_fault(base, instruction, !load);
 	std::uint64_t address = base;
 	bool writeback = false;
 	std::uint64_t adjusted = base;
@@ -681,7 +682,7 @@ RunResult Dispatcher::load_pointer_authenticated(CpuState &cpu,
 	const auto displacement = sign_extend(encoded_offset, 10) * 8;
 	auto address = cpu.read_register(base_register, true);
 	if (base_register == 31U && (address & 15U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, false};
+		return alignment_fault(address, instruction, false);
 	address = detail::execute_pointer_auth(
 		cpu, address, 0,
 		(instruction & 0x0080'0000U) != 0 ?
@@ -735,7 +736,7 @@ RunResult Dispatcher::load_store_pair(CpuState &cpu, GuestMemory &memory,
 	    (base_register == first || base_register == second))
 		writeback = false;
 	if (base_register == 31U && (base & 15U) != 0)
-		return {StopReason::memory_fault, base, instruction, 0, !load};
+		return alignment_fault(base, instruction, !load);
 	std::uint64_t fault_address{};
 	if (!simd_structure_address(cpu, memory, tagged_address,
 		    base_register == 31U,
@@ -819,8 +820,7 @@ RunResult Dispatcher::load_store_simd_structure(
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto tagged_address = cpu.read_register(base_register, true);
 	if (base_register == 31U && (tagged_address & 15U) != 0)
-		return {StopReason::memory_fault, tagged_address, instruction, 0,
-			!load};
+		return alignment_fault(tagged_address, instruction, !load);
 	std::uint64_t address{};
 	std::uint64_t tag_fault{};
 	if (!simd_structure_address(cpu, memory, tagged_address,
@@ -941,8 +941,7 @@ RunResult Dispatcher::load_store_simd_single_structure(
 	const std::size_t transfer_size = element_size * register_count;
 	const auto tagged_address = cpu.read_register(base_register, true);
 	if (base_register == 31U && (tagged_address & 15U) != 0)
-		return {StopReason::memory_fault, tagged_address, instruction, 0,
-			!load};
+		return alignment_fault(tagged_address, instruction, !load);
 	std::uint64_t address{};
 	std::uint64_t tag_fault{};
 	if (!simd_structure_address(cpu, memory, tagged_address,

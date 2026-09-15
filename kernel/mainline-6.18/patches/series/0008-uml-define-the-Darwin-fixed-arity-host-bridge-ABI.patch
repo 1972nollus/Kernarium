@@ -1,7 +1,7 @@
-From 0b059853d4e00d74bff035e4f5d83fe87a1dc246 Mon Sep 17 00:00:00 2001
+From a6f05ed040bd60162ed2df6b927f88e7df65d6e1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 08/30] uml: define the Darwin fixed-arity host bridge ABI
+Subject: [PATCH 08/31] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
