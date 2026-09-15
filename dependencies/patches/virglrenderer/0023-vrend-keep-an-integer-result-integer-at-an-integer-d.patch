@@ -1,4 +1,4 @@
-From a7b1957c44012c06eb5180f73678cbf8c17e1b13 Mon Sep 17 00:00:00 2001
+From 6c71ea7aca846333df369bb7d004b950db256a92 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
 Subject: [PATCH 23/44] vrend: keep an integer result integer at an integer
@@ -73,7 +73,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 178 insertions(+), 70 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index d2efe20..c6db307 100644
+index bbd6a60..452d87d 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -481,6 +481,93 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
@@ -268,7 +268,7 @@ index d2efe20..c6db307 100644
     switch (inst->Texture.Texture) {
     case TGSI_TEXTURE_1D:
     case TGSI_TEXTURE_BUFFER:
-@@ -3470,20 +3569,35 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3483,20 +3582,35 @@ static void translate_tex(struct dump_ctx *ctx,
           /* To inject the swizzle for texturebufffers with emulated formats do
            *
            * {
@@ -310,7 +310,7 @@ index d2efe20..c6db307 100644
  
              for (int i = 0; i < 4; ++i) {
                 if (i > 0)
-@@ -3491,20 +3605,8 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3504,20 +3618,8 @@ static void translate_tex(struct dump_ctx *ctx,
  
                 int swz = (packed_swizzles >> (i * 3)) & 7;
                 switch (swz) {
@@ -333,7 +333,7 @@ index d2efe20..c6db307 100644
                 default:
                    emit_buff(&ctx->glsl_strbufs,  "val%s", get_swizzle_string(swz));
                 }
-@@ -3513,8 +3615,9 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3526,8 +3628,9 @@ static void translate_tex(struct dump_ctx *ctx,
              emit_buff(&ctx->glsl_strbufs,  ");\n");
           }
  
@@ -345,7 +345,7 @@ index d2efe20..c6db307 100644
        }
     } else if ((ctx->cfg->glsl_version < 140 && (ctx->shader_req_bits & SHADER_REQ_SAMPLER_RECT)) &&
                !vrend_shader_sampler_views_mask_get(ctx->key->sampler_views_emulated_rect_mask, sinfo->sreg_index)) {
-@@ -4009,6 +4112,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4022,6 +4125,8 @@ translate_load(const struct dump_ctx *ctx,
            (ctx->images[sinfo->sreg_index].decl.Format != PIPE_FORMAT_R32_UINT))
           images[sinfo->sreg_index].decl.Writable = 0;
  
@@ -354,7 +354,7 @@ index d2efe20..c6db307 100644
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_buff(glsl_strbufs, "%s = %s(imageLoad(%s, %s(%s(%s))%s)%s);\n",
                 dst, get_string(dtypeprefix),
-@@ -4060,6 +4165,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4073,6 +4178,7 @@ translate_load(const struct dump_ctx *ctx,
        }
  
        dtypeprefix = (is_integer_memory(ctx, src->Register.File, src->Register.Index)) ? INT_BITS_TO_FLOAT : UINT_BITS_TO_FLOAT;
@@ -362,7 +362,7 @@ index d2efe20..c6db307 100644
  
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_load_mem(glsl_strbufs, mydst, inst->Dst[0].Register.WriteMask, get_string(dtypeprefix), atomic_op, srcs[0], atomic_src);
-@@ -4082,7 +4188,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4095,7 +4201,8 @@ translate_load(const struct dump_ctx *ctx,
           emit_buf(glsl_strbufs, "}\n");
        }
     } else if (src->Register.File == TGSI_FILE_HW_ATOMIC) {
@@ -372,7 +372,7 @@ index d2efe20..c6db307 100644
     }
     return true;
  }
-@@ -4165,6 +4272,7 @@ static void
+@@ -4178,6 +4285,7 @@ static void
  translate_atomic(struct dump_ctx *ctx,
                   const struct tgsi_full_instruction *inst,
                   struct source_info *sinfo,
@@ -380,7 +380,7 @@ index d2efe20..c6db307 100644
                   const char *srcs[4],
                   char *dst)
  {
-@@ -4210,6 +4318,8 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4223,6 +4331,8 @@ translate_atomic(struct dump_ctx *ctx,
       stypecast = UINT;
     }
  
@@ -389,7 +389,7 @@ index d2efe20..c6db307 100644
     opname = get_atomic_opname(inst->Instruction.Opcode, &is_cas);
     if (!opname) {
        set_buf_error(&ctx->glsl_strbufs);
-@@ -4278,6 +4388,7 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4291,6 +4401,7 @@ translate_atomic(struct dump_ctx *ctx,
           dtypeprefix = UINT_BITS_TO_FLOAT;
           stypeprefix = FLOAT_BITS_TO_UINT;
        }
@@ -397,7 +397,7 @@ index d2efe20..c6db307 100644
  
        if (is_cas)
           snprintf(cas_str, sizeof(cas_str), ", %s(%s(%s))", get_string(type), get_string(stypeprefix), srcs[3]);
-@@ -4488,7 +4599,7 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4501,7 +4612,7 @@ get_destination_info(struct dump_ctx *ctx,
              }
              strbuf_fmt(&dst_bufs[i], "%s[%d]", output->glsl_name, idx);
              if (output->is_int) {
@@ -406,7 +406,7 @@ index d2efe20..c6db307 100644
                 dinfo->dstconv = INT;
              }
           } else {
-@@ -4522,18 +4633,15 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4535,18 +4646,15 @@ get_destination_info(struct dump_ctx *ctx,
                 dinfo->dst_override_no_wm[i] = output->override_no_wm;
              }
              if (output->is_int) {
@@ -428,7 +428,7 @@ index d2efe20..c6db307 100644
                 dinfo->dstconv = dinfo->idstconv;
              }
              if (output->name == TGSI_SEMANTIC_PSIZE) {
-@@ -5644,22 +5752,22 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5657,22 +5765,22 @@ iter_instruction(struct tgsi_iterate_context *iter,
     switch (inst->Instruction.Opcode) {
     case TGSI_OPCODE_SQRT:
     case TGSI_OPCODE_DSQRT:
@@ -457,7 +457,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_MAX:
     case TGSI_OPCODE_DMAX:
-@@ -5699,11 +5807,11 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5712,11 +5820,11 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "discard;\n");
        break;
     case TGSI_OPCODE_DST:
@@ -472,7 +472,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_EX2:
        emit_op1("exp2");
-@@ -5712,10 +5820,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5725,10 +5833,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_op1("log2");
        break;
     case TGSI_OPCODE_EXP:
@@ -485,7 +485,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_COS:
        emit_op1("cos");
-@@ -5724,8 +5832,8 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5737,8 +5845,8 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_op1("sin");
        break;
     case TGSI_OPCODE_SCS:
@@ -496,7 +496,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_DDX:
        emit_op1("dFdx");
-@@ -5742,7 +5850,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5755,7 +5863,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_op1("dFdyFine");
        break;
     case TGSI_OPCODE_RCP:
@@ -505,7 +505,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_DRCP:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(1.0LF/(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -5797,7 +5905,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5810,7 +5918,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        break;
     case TGSI_OPCODE_RSQ:
     case TGSI_OPCODE_DRSQ:
@@ -514,7 +514,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_FBFETCH:
     case TGSI_OPCODE_MOV:
-@@ -5842,7 +5950,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5855,7 +5963,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_arit_op2("<<");
        break;
     case TGSI_OPCODE_MAD:
@@ -523,7 +523,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_UMAD:
     case TGSI_OPCODE_DMAD:
-@@ -5876,13 +5984,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5889,13 +5997,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_lodq(ctx, inst, &sinfo, &dinfo, srcs, dsts[0], writemask);
        break;
     case TGSI_OPCODE_TXQ:
@@ -540,7 +540,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_I2D:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(ivec4(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -5891,7 +5999,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5904,7 +6012,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = %s(%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
        break;
     case TGSI_OPCODE_U2F:
@@ -549,7 +549,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_U2D:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(uvec4(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -5912,10 +6020,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5925,10 +6033,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), srcs[0]);
        break;
     case TGSI_OPCODE_NOT:
@@ -562,7 +562,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_DNEG:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(-%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -5969,13 +6077,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5982,13 +6090,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_ucompare("greaterThanEqual");
        break;
     case TGSI_OPCODE_POW:
@@ -579,7 +579,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_END:
        if (iter->processor.Processor == TGSI_PROCESSOR_VERTEX) {
-@@ -6009,7 +6117,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6022,7 +6130,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = int(%s);\n", dsts[0], srcs[0]);
        break;
     case TGSI_OPCODE_XPD:
@@ -588,7 +588,7 @@ index d2efe20..c6db307 100644
        break;
     case TGSI_OPCODE_BGNLOOP:
        emit_buf(&ctx->glsl_strbufs, "do {\n");
-@@ -6097,7 +6205,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6110,7 +6218,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BFI:
@@ -597,7 +597,7 @@ index d2efe20..c6db307 100644
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BREV:
-@@ -6194,7 +6302,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6207,7 +6315,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
              return false;
           srcs[1] = ctx->src_bufs[1].buf;
        }

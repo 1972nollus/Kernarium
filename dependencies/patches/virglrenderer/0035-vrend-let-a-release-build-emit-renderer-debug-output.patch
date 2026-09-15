@@ -1,4 +1,4 @@
-From 3b199b3e016674e5d125d3b436d4ba157da857e0 Mon Sep 17 00:00:00 2001
+From d9c0891001aa52f0c46f7241befd5de61edc5b90 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 08:17:36 +0900
 Subject: [PATCH 35/44] vrend: let a release build emit renderer debug output

@@ -1,4 +1,4 @@
-From aa2a6c113831e4d39bc4836cc823a10296d2172b Mon Sep 17 00:00:00 2001
+From f4f0bd6f5a2a3e4fcc7594c134c270f20ad307be Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 20:46:45 +0900
 Subject: [PATCH 41/44] vrend: share an exported texture through host memory

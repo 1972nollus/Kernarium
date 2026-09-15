@@ -1,4 +1,4 @@
-From 4a8f01dc985f8c6b13622cb28ff22767e19640b5 Mon Sep 17 00:00:00 2001
+From 47e68694921200009732672b4967a91687366a65 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
 Subject: [PATCH 26/44] vrend: read a texture offset at the type its register
@@ -28,7 +28,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 17 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index c6db307..1b5a28a 100644
+index 452d87d..bf4bbcf 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -3060,6 +3060,33 @@ get_temp(const struct dump_ctx *ctx,

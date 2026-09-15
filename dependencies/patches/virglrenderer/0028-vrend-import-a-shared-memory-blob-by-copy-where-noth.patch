@@ -1,4 +1,4 @@
-From 741df64454a6eeec4c98c98c51c281262cdbaa6b Mon Sep 17 00:00:00 2001
+From c28a23d37edec0bb137ee8b1d70857cf9abbe081 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 21:26:15 +0900
 Subject: [PATCH 28/44] vrend: import a shared-memory blob by copy where

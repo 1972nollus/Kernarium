@@ -1,4 +1,4 @@
-From bfbd7193dfe51056d349907709d3812a97e3f7a2 Mon Sep 17 00:00:00 2001
+From eec114e402bd966c5d6bff93896b687bf8cda0dd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 05:06:20 +0900
 Subject: [PATCH 32/44] vrend: alias an imported shared-memory blob instead of
