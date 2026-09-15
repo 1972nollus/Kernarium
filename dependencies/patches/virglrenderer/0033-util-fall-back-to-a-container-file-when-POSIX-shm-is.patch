@@ -1,7 +1,7 @@
 From 474f7a09a855c3a00adae33a0740c721799adc9c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 02:26:42 +0900
-Subject: [PATCH 33/44] util: fall back to a container file when POSIX shm is
+Subject: [PATCH 33/45] util: fall back to a container file when POSIX shm is
  denied
 
 A sandboxed Apple application may only create POSIX shared memory under a

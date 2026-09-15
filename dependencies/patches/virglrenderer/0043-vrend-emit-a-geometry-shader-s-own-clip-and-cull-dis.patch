@@ -1,7 +1,7 @@
 From 3401b4a5051534a0fcd6b18ae891d96103482eef Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 08:56:52 +0900
-Subject: [PATCH 43/44] vrend: emit a geometry shader's own clip and cull
+Subject: [PATCH 43/45] vrend: emit a geometry shader's own clip and cull
  distances
 
 A geometry shader copies TGSI's CLIPDIST outputs into clip_dist_temp and
