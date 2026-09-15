@@ -1,7 +1,7 @@
 From 0063b29aaf0d9895052976ada855415846ce280a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 16:08:25 +0900
-Subject: [PATCH 83/84] zink: publish a batch's id before clearing its
+Subject: [PATCH 83/85] zink: publish a batch's id before clearing its
  unflushed flag
 
 A buffer read map waits for the batch that last wrote the buffer, and it

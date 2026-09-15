@@ -379,6 +379,27 @@ if(TARGET uml_gpu_service)
         LABELS gpu
         TIMEOUT 600)
 
+    # One thread drives every host GL context, so a read in one context of a
+    # texture another context left unsubmitted has to finish without a second
+    # thread. Blocking there parks the GPU thread and wedges the whole guest.
+    add_executable(uml_gpu_cross_context_readback_tests
+        host_gl_cross_context_readback_tests.cpp)
+    target_link_libraries(uml_gpu_cross_context_readback_tests PRIVATE
+        uml_gpu_renderer
+        UML::ThirdPartyVirglrenderer
+        UML::ThirdPartyEpoxy)
+    target_include_directories(uml_gpu_cross_context_readback_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_features(uml_gpu_cross_context_readback_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_gpu_cross_context_readback_tests PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    uml_add_unit_test(NAME gpu-cross-context-readback
+        COMMAND uml_gpu_cross_context_readback_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu
+        TIMEOUT 600)
+
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
     # contract, and losing it faults the GPU thread.

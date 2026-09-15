@@ -1,7 +1,7 @@
 From 983f659741205d911e4db375bae42994aaf1615c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:12:45 +0900
-Subject: [PATCH 81/84] kosmickrisp: implement
+Subject: [PATCH 81/85] kosmickrisp: implement
  VK_EXT_device_address_binding_report
 
 VP_ANDROID_17_requirements makes this extension mandatory. It asks an

@@ -36,6 +36,7 @@ gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	co
 gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
 gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
 gpu-host-pointer-image	tests/unit/gpu/host_gl_host_pointer_image_tests.cpp	unit	conditional
+gpu-cross-context-readback	tests/unit/gpu/host_gl_cross_context_readback_tests.cpp	unit	conditional
 gpu-virgl-fence-table-ownership	tests/unit/gpu/virgl_fence_table_ownership_tests.cpp	unit	conditional
 gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional
 gpu-display-resize	tests/unit/gpu/display_resize_tests.cpp	unit	conditional
