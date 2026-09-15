@@ -1,7 +1,7 @@
 From 6f6df52ec6d44691a27f53ca2935b716e2c666a6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:41:23 +0900
-Subject: [PATCH 14/42] vrend: back coherent buffers with shared host pages
+Subject: [PATCH 14/43] vrend: back coherent buffers with shared host pages
 
 A guest that asks for GL_ARB_buffer_storage needs host storage it can map
 coherently. vrend allocated such buffers with glBufferStorage, whose pages
