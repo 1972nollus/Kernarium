@@ -1,4 +1,4 @@
-From 45651ff4f7c5925d4c02c71be8383f08dd63d670 Mon Sep 17 00:00:00 2001
+From 502190c419e66f5bf37f6eec6f45c7fc762317f1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:49:05 +0900
 Subject: [PATCH 27/44] vrend: write a sampler's texture unit once, not on

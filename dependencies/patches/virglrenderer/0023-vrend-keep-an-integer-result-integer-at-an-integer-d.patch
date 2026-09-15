@@ -1,4 +1,4 @@
-From 4c6d604808690076dc6a09c81c549be5f9743083 Mon Sep 17 00:00:00 2001
+From a7b1957c44012c06eb5180f73678cbf8c17e1b13 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
 Subject: [PATCH 23/44] vrend: keep an integer result integer at an integer
@@ -48,16 +48,35 @@ decides the cast on its own and the integer destination adjusts it,
 which covers texture, textureGather and the shadow and GLES texel
 fetch forms alike.
 
+The float arithmetic carried the mistake the third way round. Most
+emitters store their result through dstconv(dtypeprefix(...)), which the
+rule above already adjusts, but a handful spell their own conversion and
+never consult dtypeprefix: LRP and the SQRT, DST, CMP and UCMP forms
+name no conversion at all, and the DP2/DP3/DP4/DPH dot products, LIT,
+EXP, LOG, SCS, RCP, RSQ, MAD, POW, XPD, I2F, U2F and the LOD query name
+only the destination's constructor. A float result written straight to a
+pure-integer colour attachment therefore arrived converted where it was
+constructed and did not compile at all where it was not: an ES fragment
+shader executor bit casts its float outputs into uvec attachments, so
+out0 = mix(in0, in1, in2) on a vec2 emitted a vec2 assignment to a uvec2
+variable, which failed to compile and dropped the draw, and
+out0 = dot(in0, in1) emitted uvec4(dot(...)), so a dot product of 1.98
+reached the reader as the integer 1, that is 1.4e-45. These emitters now
+take the destination's own conversion too, which is nothing at all at a
+float or double destination and the bit cast at an integer one. The
+texture size and sample queries take it from the same place instead of
+assuming a float register.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_shader.c | 175 ++++++++++++++++++++++++++++++---------
- 1 file changed, 134 insertions(+), 41 deletions(-)
+ src/vrend/vrend_shader.c | 248 ++++++++++++++++++++++++++++-----------
+ 1 file changed, 178 insertions(+), 70 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index d2efe20..63eeffe 100644
+index d2efe20..c6db307 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -481,6 +481,83 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
+@@ -481,6 +481,93 @@ static inline bool prefer_generic_io_block(const struct dump_ctx *ctx, enum io_t
     }
  }
  
@@ -138,10 +157,20 @@ index d2efe20..63eeffe 100644
 +   return dinfo->dstconv;
 +}
 +
++/* The conversion a float-valued expression needs on its way to this
++ * instruction's destination. A float register takes the expression as it
++ * stands; a destination declared at an integer type stores its bit pattern,
++ * because the destination is a constructor and would convert the value. */
++static enum vrend_type_qualifier
++float_conv_for_dest(const struct dest_info *dinfo)
++{
++   return result_conv_for_dest(dinfo, TYPE_CONVERSION_NONE);
++}
++
  static inline const char *get_string(enum vrend_type_qualifier key)
  {
     if (key >= ARRAY_SIZE(conversion_table)) {
-@@ -2549,7 +2626,7 @@ static void emit_fog_fixup_write(const struct dump_ctx *ctx,
+@@ -2549,7 +2636,7 @@ static void emit_fog_fixup_write(const struct dump_ctx *ctx,
  #define emit_op1(op) emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s(%s))%s);\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), op, srcs[0], writemask)
  #define emit_compare(op) emit_buff(&ctx->glsl_strbufs, "%s = %s(%s((%s(%s(%s), %s(%s))))%s);\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), op, get_string(sinfo.svec4), srcs[0], get_string(sinfo.svec4), srcs[1], writemask)
  
@@ -150,7 +179,61 @@ index d2efe20..63eeffe 100644
  
  static void handle_vertex_proc_exit(const struct dump_ctx *ctx,
                                      struct vrend_glsl_strbufs *glsl_strbufs,
-@@ -3169,21 +3246,28 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -2768,6 +2855,7 @@ static bool set_texture_reqs(struct dump_ctx *ctx,
+ static void emit_txq(struct dump_ctx *ctx,
+                      const struct tgsi_full_instruction *inst,
+                      uint32_t sreg_index,
++                     const struct dest_info *dinfo,
+                      const char *srcs[4],
+                      const char *dst,
+                      const char *writemask)
+@@ -2775,7 +2863,8 @@ static void emit_txq(struct dump_ctx *ctx,
+    unsigned twm = TGSI_WRITEMASK_NONE;
+    char bias[128] = "";
+    const int sampler_index = 1;
+-   enum vrend_type_qualifier dtypeprefix = INT_BITS_TO_FLOAT;
++   enum vrend_type_qualifier dtypeprefix =
++      result_conv_for_dest(dinfo, INT_BITS_TO_FLOAT);
+ 
+    set_texture_reqs(ctx, inst, sreg_index);
+ 
+@@ -2890,11 +2979,13 @@ static void emit_txq(struct dump_ctx *ctx,
+ static void emit_txqs(struct dump_ctx *ctx,
+                       const struct tgsi_full_instruction *inst,
+                       uint32_t sreg_index,
++                      const struct dest_info *dinfo,
+                       const char *srcs[4],
+                       const char *dst)
+ {
+    const int sampler_index = 0;
+-   enum vrend_type_qualifier dtypeprefix = INT_BITS_TO_FLOAT;
++   enum vrend_type_qualifier dtypeprefix =
++      result_conv_for_dest(dinfo, INT_BITS_TO_FLOAT);
+ 
+    ctx->shader_req_bits |= SHADER_REQ_TXQS;
+    set_texture_reqs(ctx, inst, sreg_index);
+@@ -3102,8 +3193,9 @@ emit_lodq(struct dump_ctx *ctx,
+ 
+    set_texture_reqs(ctx, inst, sinfo->sreg_index);
+ 
+-   emit_buff(&ctx->glsl_strbufs, "%s = %s(textureQueryLOD(%s, ",
+-          dst, get_string(dinfo->dstconv), srcs[1]);
++   emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(textureQueryLOD(%s, ",
++          dst, get_string(dinfo->dstconv),
++          get_string(float_conv_for_dest(dinfo)), srcs[1]);
+ 
+    switch (inst->Texture.Texture) {
+    case TGSI_TEXTURE_1D:
+@@ -3137,7 +3229,7 @@ emit_lodq(struct dump_ctx *ctx,
+       break;
+    }
+ 
+-   emit_buff(&ctx->glsl_strbufs, ")%s);\n", writemask);
++   emit_buff(&ctx->glsl_strbufs, ")%s));\n", writemask);
+ }
+ 
+ // TODO Consider exposing non-const ctx-> members as args to make *ctx const
+@@ -3169,21 +3261,28 @@ static void translate_tex(struct dump_ctx *ctx,
  
     is_shad = samplertype_is_shadow(inst->Texture.Texture);
  
@@ -185,7 +268,7 @@ index d2efe20..63eeffe 100644
     switch (inst->Texture.Texture) {
     case TGSI_TEXTURE_1D:
     case TGSI_TEXTURE_BUFFER:
-@@ -3470,20 +3554,35 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3470,20 +3569,35 @@ static void translate_tex(struct dump_ctx *ctx,
           /* To inject the swizzle for texturebufffers with emulated formats do
            *
            * {
@@ -227,7 +310,7 @@ index d2efe20..63eeffe 100644
  
              for (int i = 0; i < 4; ++i) {
                 if (i > 0)
-@@ -3491,20 +3590,8 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3491,20 +3605,8 @@ static void translate_tex(struct dump_ctx *ctx,
  
                 int swz = (packed_swizzles >> (i * 3)) & 7;
                 switch (swz) {
@@ -250,7 +333,7 @@ index d2efe20..63eeffe 100644
                 default:
                    emit_buff(&ctx->glsl_strbufs,  "val%s", get_swizzle_string(swz));
                 }
-@@ -3513,8 +3600,9 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3513,8 +3615,9 @@ static void translate_tex(struct dump_ctx *ctx,
              emit_buff(&ctx->glsl_strbufs,  ");\n");
           }
  
@@ -262,7 +345,7 @@ index d2efe20..63eeffe 100644
        }
     } else if ((ctx->cfg->glsl_version < 140 && (ctx->shader_req_bits & SHADER_REQ_SAMPLER_RECT)) &&
                !vrend_shader_sampler_views_mask_get(ctx->key->sampler_views_emulated_rect_mask, sinfo->sreg_index)) {
-@@ -4009,6 +4097,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4009,6 +4112,8 @@ translate_load(const struct dump_ctx *ctx,
            (ctx->images[sinfo->sreg_index].decl.Format != PIPE_FORMAT_R32_UINT))
           images[sinfo->sreg_index].decl.Writable = 0;
  
@@ -271,7 +354,7 @@ index d2efe20..63eeffe 100644
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_buff(glsl_strbufs, "%s = %s(imageLoad(%s, %s(%s(%s))%s)%s);\n",
                 dst, get_string(dtypeprefix),
-@@ -4060,6 +4150,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4060,6 +4165,7 @@ translate_load(const struct dump_ctx *ctx,
        }
  
        dtypeprefix = (is_integer_memory(ctx, src->Register.File, src->Register.Index)) ? INT_BITS_TO_FLOAT : UINT_BITS_TO_FLOAT;
@@ -279,7 +362,7 @@ index d2efe20..63eeffe 100644
  
        if (!ctx->cfg->use_gles || !inst->Src[0].Register.Indirect) {
           emit_load_mem(glsl_strbufs, mydst, inst->Dst[0].Register.WriteMask, get_string(dtypeprefix), atomic_op, srcs[0], atomic_src);
-@@ -4082,7 +4173,8 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4082,7 +4188,8 @@ translate_load(const struct dump_ctx *ctx,
           emit_buf(glsl_strbufs, "}\n");
        }
     } else if (src->Register.File == TGSI_FILE_HW_ATOMIC) {
@@ -289,7 +372,7 @@ index d2efe20..63eeffe 100644
     }
     return true;
  }
-@@ -4165,6 +4257,7 @@ static void
+@@ -4165,6 +4272,7 @@ static void
  translate_atomic(struct dump_ctx *ctx,
                   const struct tgsi_full_instruction *inst,
                   struct source_info *sinfo,
@@ -297,7 +380,7 @@ index d2efe20..63eeffe 100644
                   const char *srcs[4],
                   char *dst)
  {
-@@ -4210,6 +4303,8 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4210,6 +4318,8 @@ translate_atomic(struct dump_ctx *ctx,
       stypecast = UINT;
     }
  
@@ -306,7 +389,7 @@ index d2efe20..63eeffe 100644
     opname = get_atomic_opname(inst->Instruction.Opcode, &is_cas);
     if (!opname) {
        set_buf_error(&ctx->glsl_strbufs);
-@@ -4278,6 +4373,7 @@ translate_atomic(struct dump_ctx *ctx,
+@@ -4278,6 +4388,7 @@ translate_atomic(struct dump_ctx *ctx,
           dtypeprefix = UINT_BITS_TO_FLOAT;
           stypeprefix = FLOAT_BITS_TO_UINT;
        }
@@ -314,7 +397,7 @@ index d2efe20..63eeffe 100644
  
        if (is_cas)
           snprintf(cas_str, sizeof(cas_str), ", %s(%s(%s))", get_string(type), get_string(stypeprefix), srcs[3]);
-@@ -4488,7 +4584,7 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4488,7 +4599,7 @@ get_destination_info(struct dump_ctx *ctx,
              }
              strbuf_fmt(&dst_bufs[i], "%s[%d]", output->glsl_name, idx);
              if (output->is_int) {
@@ -323,7 +406,7 @@ index d2efe20..63eeffe 100644
                 dinfo->dstconv = INT;
              }
           } else {
-@@ -4522,18 +4618,15 @@ get_destination_info(struct dump_ctx *ctx,
+@@ -4522,18 +4633,15 @@ get_destination_info(struct dump_ctx *ctx,
                 dinfo->dst_override_no_wm[i] = output->override_no_wm;
              }
              if (output->is_int) {
@@ -345,7 +428,128 @@ index d2efe20..63eeffe 100644
                 dinfo->dstconv = dinfo->idstconv;
              }
              if (output->name == TGSI_SEMANTIC_PSIZE) {
-@@ -5912,10 +6005,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5644,22 +5752,22 @@ iter_instruction(struct tgsi_iterate_context *iter,
+    switch (inst->Instruction.Opcode) {
+    case TGSI_OPCODE_SQRT:
+    case TGSI_OPCODE_DSQRT:
+-      emit_buff(&ctx->glsl_strbufs, "%s = sqrt(vec4(%s))%s;\n", dsts[0], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(sqrt(vec4(%s))%s);\n", dsts[0], get_string(float_conv_for_dest(&dinfo)), srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_LRP:
+-      emit_buff(&ctx->glsl_strbufs, "%s = mix(vec4(%s), vec4(%s), vec4(%s))%s;\n", dsts[0], srcs[2], srcs[1], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(mix(vec4(%s), vec4(%s), vec4(%s))%s);\n", dsts[0], get_string(float_conv_for_dest(&dinfo)), srcs[2], srcs[1], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_DP2:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(dot(vec2(%s), vec2(%s)));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(dot(vec2(%s), vec2(%s))));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_DP3:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(dot(vec3(%s), vec3(%s)));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(dot(vec3(%s), vec3(%s))));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_DP4:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(dot(vec4(%s), vec4(%s)));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(dot(vec4(%s), vec4(%s))));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_DPH:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(dot(vec4(vec3(%s), 1.0), vec4(%s)));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(dot(vec4(vec3(%s), 1.0), vec4(%s))));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_MAX:
+    case TGSI_OPCODE_DMAX:
+@@ -5699,11 +5807,11 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_buff(&ctx->glsl_strbufs, "discard;\n");
+       break;
+    case TGSI_OPCODE_DST:
+-      emit_buff(&ctx->glsl_strbufs, "%s = vec4(1.0, %s.y * %s.y, %s.z, %s.w);\n", dsts[0],
+-               srcs[0], srcs[1], srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(vec4(1.0, %s.y * %s.y, %s.z, %s.w));\n", dsts[0],
++               get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1], srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_LIT:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(vec4(1.0, max(%s.x, 0.0), step(0.0, %s.x) * pow(max(0.0, %s.y), clamp(%s.w, -128.0, 128.0)), 1.0)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(1.0, max(%s.x, 0.0), step(0.0, %s.x) * pow(max(0.0, %s.y), clamp(%s.w, -128.0, 128.0)), 1.0)%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_EX2:
+       emit_op1("exp2");
+@@ -5712,10 +5820,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_op1("log2");
+       break;
+    case TGSI_OPCODE_EXP:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(vec4(pow(2.0, floor(%s.x)), %s.x - floor(%s.x), exp2(%s.x), 1.0)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(pow(2.0, floor(%s.x)), %s.x - floor(%s.x), exp2(%s.x), 1.0)%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_LOG:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(vec4(floor(log2(%s.x)), %s.x / pow(2.0, floor(log2(%s.x))), log2(%s.x), 1.0)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(floor(log2(%s.x)), %s.x / pow(2.0, floor(log2(%s.x))), log2(%s.x), 1.0)%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[0], srcs[0], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_COS:
+       emit_op1("cos");
+@@ -5724,8 +5832,8 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_op1("sin");
+       break;
+    case TGSI_OPCODE_SCS:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(vec4(cos(%s.x), sin(%s.x), 0, 1)%s);\n", dsts[0], get_string(dinfo.dstconv),
+-               srcs[0], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(cos(%s.x), sin(%s.x), 0, 1)%s));\n", dsts[0], get_string(dinfo.dstconv),
++               get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_DDX:
+       emit_op1("dFdx");
+@@ -5742,7 +5850,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_op1("dFdyFine");
+       break;
+    case TGSI_OPCODE_RCP:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(1.0/(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(1.0/(%s)));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0]);
+       break;
+    case TGSI_OPCODE_DRCP:
+       emit_buff(&ctx->glsl_strbufs, "%s = %s(1.0LF/(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
+@@ -5797,7 +5905,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       break;
+    case TGSI_OPCODE_RSQ:
+    case TGSI_OPCODE_DRSQ:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(inversesqrt(%s.x));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(inversesqrt(%s.x)));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0]);
+       break;
+    case TGSI_OPCODE_FBFETCH:
+    case TGSI_OPCODE_MOV:
+@@ -5842,7 +5950,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_arit_op2("<<");
+       break;
+    case TGSI_OPCODE_MAD:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s((%s * %s + %s)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1], srcs[2], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s((%s * %s + %s)%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1], srcs[2], writemask);
+       break;
+    case TGSI_OPCODE_UMAD:
+    case TGSI_OPCODE_DMAD:
+@@ -5876,13 +5984,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_lodq(ctx, inst, &sinfo, &dinfo, srcs, dsts[0], writemask);
+       break;
+    case TGSI_OPCODE_TXQ:
+-      emit_txq(ctx, inst, sinfo.sreg_index, srcs, dsts[0], writemask);
++      emit_txq(ctx, inst, sinfo.sreg_index, &dinfo, srcs, dsts[0], writemask);
+       break;
+    case TGSI_OPCODE_TXQS:
+-      emit_txqs(ctx, inst, sinfo.sreg_index, srcs, dsts[0]);
++      emit_txqs(ctx, inst, sinfo.sreg_index, &dinfo, srcs, dsts[0]);
+       break;
+    case TGSI_OPCODE_I2F:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(ivec4(%s)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(ivec4(%s))%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_I2D:
+       emit_buff(&ctx->glsl_strbufs, "%s = %s(ivec4(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
+@@ -5891,7 +5999,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_buff(&ctx->glsl_strbufs, "%s = %s(%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
+       break;
+    case TGSI_OPCODE_U2F:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(uvec4(%s)%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(vec4(uvec4(%s))%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_U2D:
+       emit_buff(&ctx->glsl_strbufs, "%s = %s(uvec4(%s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
+@@ -5912,10 +6020,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(%s));\n", dsts[0], get_string(dinfo.dstconv), get_string(dinfo.dtypeprefix), srcs[0]);
        break;
     case TGSI_OPCODE_NOT:
@@ -358,7 +562,33 @@ index d2efe20..63eeffe 100644
        break;
     case TGSI_OPCODE_DNEG:
        emit_buff(&ctx->glsl_strbufs, "%s = %s(-%s);\n", dsts[0], get_string(dinfo.dstconv), srcs[0]);
-@@ -6097,7 +6190,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -5969,13 +6077,13 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_ucompare("greaterThanEqual");
+       break;
+    case TGSI_OPCODE_POW:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(pow(%s, %s));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(pow(%s, %s)));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_CMP:
+-      emit_buff(&ctx->glsl_strbufs, "%s = mix(%s, %s, greaterThanEqual(%s, vec4(0.0)))%s;\n", dsts[0], srcs[1], srcs[2], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(mix(%s, %s, greaterThanEqual(%s, vec4(0.0)))%s);\n", dsts[0], get_string(float_conv_for_dest(&dinfo)), srcs[1], srcs[2], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_UCMP:
+-      emit_buff(&ctx->glsl_strbufs, "%s = mix(%s, %s, notEqual(floatBitsToUint(%s), uvec4(0.0)))%s;\n", dsts[0], srcs[2], srcs[1], srcs[0], writemask);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(mix(%s, %s, notEqual(floatBitsToUint(%s), uvec4(0.0)))%s);\n", dsts[0], get_string(float_conv_for_dest(&dinfo)), srcs[2], srcs[1], srcs[0], writemask);
+       break;
+    case TGSI_OPCODE_END:
+       if (iter->processor.Processor == TGSI_PROCESSOR_VERTEX) {
+@@ -6009,7 +6117,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+       emit_buff(&ctx->glsl_strbufs, "%s = int(%s);\n", dsts[0], srcs[0]);
+       break;
+    case TGSI_OPCODE_XPD:
+-      emit_buff(&ctx->glsl_strbufs, "%s = %s(cross(vec3(%s), vec3(%s)));\n", dsts[0], get_string(dinfo.dstconv), srcs[0], srcs[1]);
++      emit_buff(&ctx->glsl_strbufs, "%s = %s(%s(cross(vec3(%s), vec3(%s))));\n", dsts[0], get_string(dinfo.dstconv), get_string(float_conv_for_dest(&dinfo)), srcs[0], srcs[1]);
+       break;
+    case TGSI_OPCODE_BGNLOOP:
+       emit_buf(&ctx->glsl_strbufs, "do {\n");
+@@ -6097,7 +6205,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BFI:
@@ -367,7 +597,7 @@ index d2efe20..63eeffe 100644
        ctx->shader_req_bits |= SHADER_REQ_GPU_SHADER5;
        break;
     case TGSI_OPCODE_BREV:
-@@ -6194,7 +6287,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6194,7 +6302,7 @@ iter_instruction(struct tgsi_iterate_context *iter,
              return false;
           srcs[1] = ctx->src_bufs[1].buf;
        }

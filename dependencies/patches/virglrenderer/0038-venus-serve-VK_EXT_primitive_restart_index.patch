@@ -1,4 +1,4 @@
-From 2e0a063bf060e5aad5b6faab55224944187fdef9 Mon Sep 17 00:00:00 2001
+From b67336a95fb3cca7f78c170d07a1d60b167532ca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:29:50 +0900
 Subject: [PATCH 38/44] venus: serve VK_EXT_primitive_restart_index

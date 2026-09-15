@@ -1,4 +1,4 @@
-From 92b61ac5a55a19c485ccfd0ee0bcec1d38201930 Mon Sep 17 00:00:00 2001
+From 4a8f01dc985f8c6b13622cb28ff22767e19640b5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 08:14:02 +0900
 Subject: [PATCH 26/44] vrend: read a texture offset at the type its register
@@ -28,10 +28,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 17 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 63eeffe..c44094e 100644
+index c6db307..1b5a28a 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -3046,6 +3046,33 @@ get_temp(const struct dump_ctx *ctx,
+@@ -3060,6 +3060,33 @@ get_temp(const struct dump_ctx *ctx,
     }
  }
  
@@ -65,7 +65,7 @@ index 63eeffe..c44094e 100644
  static bool fill_offset_buffer(const struct dump_ctx *ctx,
                                 const struct tgsi_full_instruction *inst,
                                 struct vrend_strbuf *offset_buf,
-@@ -3109,7 +3136,7 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3123,7 +3150,7 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
                    get_swiz_char(inst->TexOffsets[0].SwizzleY));
              break;
        case TGSI_TEXTURE_3D:
@@ -74,7 +74,7 @@ index 63eeffe..c44094e 100644
                    temp_buf,
                    get_swiz_char(inst->TexOffsets[0].SwizzleX),
                    temp_buf,
-@@ -3124,16 +3151,18 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3138,16 +3165,18 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
        }
     } else if (inst->TexOffsets[0].File == TGSI_FILE_INPUT) {
        for (uint32_t j = 0; j < ctx->num_inputs; j++) {
@@ -97,7 +97,7 @@ index 63eeffe..c44094e 100644
              break;
           case TGSI_TEXTURE_RECT:
           case TGSI_TEXTURE_SHADOWRECT:
-@@ -3141,20 +3170,20 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3155,20 +3184,20 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
           case TGSI_TEXTURE_2D_ARRAY:
           case TGSI_TEXTURE_SHADOW2D:
           case TGSI_TEXTURE_SHADOW2D_ARRAY:

@@ -1,4 +1,4 @@
-From 0dad1c217a718f61789dc7512be2eba708f6227b Mon Sep 17 00:00:00 2001
+From 565f0cb94a4a2004ae879230673ff24c44b6fb1e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:28:43 +0900
 Subject: [PATCH 39/44] venus: allow image compression control and the address
