@@ -1,4 +1,4 @@
-From b51d91d2a0996d6c604af9eda582187e3fe34c99 Mon Sep 17 00:00:00 2001
+From c04038c4f0d7446733a74639f9009b519267bd0c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 15:37:29 +0900
 Subject: [PATCH 85/85] zink: do not wait forever for another context to flush
@@ -33,11 +33,11 @@ spurious wakeup.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/gallium/drivers/zink/zink_batch.c | 44 +++++++++++++++++++++++++--
- 1 file changed, 42 insertions(+), 2 deletions(-)
+ src/gallium/drivers/zink/zink_batch.c | 48 +++++++++++++++++++++++++--
+ 1 file changed, 46 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index b9eeb6d2..8c3df3b6 100644
+index b9eeb6d2..f73dc23a 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -8,6 +8,8 @@
@@ -49,7 +49,7 @@ index b9eeb6d2..8c3df3b6 100644
  #ifdef VK_USE_PLATFORM_METAL_EXT
  #include "QuartzCore/CAMetalLayer.h"
  #endif
-@@ -1194,6 +1196,31 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
+@@ -1194,6 +1196,35 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
     return zink_check_batch_completion(ctx, u->usage);
  }
  
@@ -72,16 +72,20 @@ index b9eeb6d2..8c3df3b6 100644
 +   if (reported)
 +      return;
 +   reported = true;
-+   mesa_logw("zink: batch %u of another context stayed unflushed for %u seconds; "
-+             "continuing without it (a single-threaded multi-context caller "
-+             "cannot flush it from here)",
-+             u->usage, (unsigned)(ZINK_UNFLUSHED_WAIT_NS / 1000000000ull));
++   /* An unflushed batch has no id yet -- submit_queue assigns it -- so name
++    * the batch by the submission it is waiting to become.
++    */
++   mesa_logw("zink: submission %u of another context stayed unflushed for %u "
++             "seconds; continuing without it (a single-threaded multi-context "
++             "caller cannot flush it from here)",
++             u->submit_count + 1u,
++             (unsigned)(ZINK_UNFLUSHED_WAIT_NS / 1000000000ull));
 +}
 +
  bool
  zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usage *u, unsigned submit_count, bool trywait)
  {
-@@ -1212,8 +1239,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
+@@ -1212,8 +1243,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
           if (trywait) {
              struct timespec ts = {0, 10000};
              cnd_timedwait(&u->flush, &u->mtx, &ts);
