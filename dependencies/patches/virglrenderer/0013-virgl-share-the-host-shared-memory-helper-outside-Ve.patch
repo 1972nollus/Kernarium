@@ -1,7 +1,7 @@
 From 50ea2e99b93cba8ff0dc691bf5e1576730b7a785 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:28:07 +0900
-Subject: [PATCH 13/43] virgl: share the host shared-memory helper outside
+Subject: [PATCH 13/44] virgl: share the host shared-memory helper outside
  Venus
 
 The anonymous-file allocator that gives a host-visible Venus allocation a
