@@ -2614,6 +2614,94 @@ class ArtifactGuestWaitTests(unittest.TestCase):
             self.wait()
         self.transport.close.assert_called_once()
 
+    # The seven lines a wedged guest repeated 236 times over 4.4 hours, while
+    # the CTS process spun in the guest kernel and printed nothing itself.
+    STALL_REPORT = (
+        "[ 1095.744601] rcu: INFO: rcu_sched detected stalls on CPUs/tasks:\n"
+        "[ 1095.585777] rcu: \t1-...0: (1 GPs behind) idle=1254/1/0x4000000000000000"
+        " softirq=16642/16643 fqs=650237\n"
+        "[ 1095.586004] rcu: \t(detected by 0, t=1490087 jiffies, g=47617,"
+        " q=4867 ncpus=4)\n"
+        "[ 1095.586004] Task dump for CPU 1:\n"
+        "[ 1095.586006] task:glcts           state:R  running task     stack:0"
+        "     pid:588   tgid:588   ppid:586    task_flags:0x400100 flags:0x00000004\n"
+        "[ 1095.586010] Stack:\n"
+        "[ 1095.586011] Call Trace:\n"
+    )
+
+    def appending(self, period: float, text: str):
+        """Append ``text`` to the console every ``period`` seconds of clock."""
+        due = [period]
+
+        def service(timeout: float) -> None:
+            self.advance(timeout)
+            if self.clock >= due[0]:
+                due[0] += period
+                with self.log.open("a", encoding="utf-8") as console:
+                    console.write(text)
+
+        return service
+
+    def test_kernel_stall_reports_do_not_hold_off_the_console_bound(self) -> None:
+        # The kernel reprints on its own timer far more often than the bound,
+        # so counting console growth alone leaves the guest running forever.
+        self.transport.service.side_effect = self.appending(10, self.STALL_REPORT)
+        with self.assertRaisesRegex(TimeoutError, "no progress for 60 seconds"):
+            self.wait(timeout=300, stall_timeout=60)
+        self.assertLess(self.clock, 300)
+        self.transport.close.assert_called_once()
+
+    def test_guest_output_among_stall_reports_is_still_progress(self) -> None:
+        # A guest that is still running its cases must never be cut, however
+        # much the kernel prints beside it.
+        self.transport.service.side_effect = self.appending(
+            10, self.STALL_REPORT + "[ 1096.0] uml-vk-gl-cts[588]:   Pass (Pass)\n",
+        )
+        with self.assertRaisesRegex(TimeoutError, "exceeded 300 seconds"):
+            self.wait(timeout=300, stall_timeout=60)
+        self.transport.close.assert_called_once()
+
+    def test_console_progress_classification(self) -> None:
+        stall = self.STALL_REPORT.encode()
+        self.log.write_bytes(stall)
+        self.assertEqual(
+            cts.console_progressed(self.log, 0, len(stall)), (len(stall), False)
+        )
+
+        # A trailing partial line is held back rather than judged by half.
+        partial = stall + b"[ 1100.0] uml-vk-gl-cts[588]: Test case 'x'.."
+        self.log.write_bytes(partial)
+        self.assertEqual(
+            cts.console_progressed(self.log, 0, len(partial)), (len(stall), False)
+        )
+
+        # Completing that line is progress, and only the whole line counts.
+        whole = partial + b"\n"
+        self.log.write_bytes(whole)
+        self.assertEqual(
+            cts.console_progressed(self.log, len(stall), len(whole)),
+            (len(whole), True),
+        )
+
+        # Blank lines carry nothing either way.
+        blanks = b"\n\n\n"
+        self.log.write_bytes(blanks)
+        self.assertEqual(
+            cts.console_progressed(self.log, 0, len(blanks)), (len(blanks), False)
+        )
+
+    def test_unclassifiable_console_is_treated_as_progress(self) -> None:
+        # The bound must never cut a guest on a reading failure or on a flood
+        # too large to classify: that volume is itself evidence of activity.
+        self.assertEqual(
+            cts.console_progressed(
+                self.log, 0, cts.MAX_CONSOLE_PROGRESS_SCAN + 1
+            ),
+            (cts.MAX_CONSOLE_PROGRESS_SCAN + 1, True),
+        )
+        missing = self.log.with_name("absent.log")
+        self.assertEqual(cts.console_progressed(missing, 0, 10), (10, True))
+
 
 
 class WaiverTests(unittest.TestCase):

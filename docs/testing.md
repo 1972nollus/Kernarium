@@ -487,7 +487,14 @@ for `--console-stall-timeout` seconds while its `glcts` processes also burn no
 CPU is abandoned, while a case that is silent but computing survives until
 `--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
 software fp64 cases run for 700-2000 s without logging whereas a wedged Venus
-wait consumes nothing. An emulator exit -- an abandoned case, a host fault, a
+wait consumes nothing. That watchdog runs inside the guest, so a guest wedged
+in its own kernel starves the watchdog with everything else; the host keeps a
+second bound on the same `--console-stall-timeout`, ending a session whose
+console and artifact transport both stop advancing. Kernel stall diagnostics --
+RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
+are not console progress for that bound, because a wedged kernel reprints them
+on its own timer and would otherwise hold the bound off indefinitely.
+An emulator exit -- an abandoned case, a host fault, a
 signal -- aborts the session rather than producing a result: the host invents
 no status for the case that was in flight, keeps the last `Test case` name the
 guest console printed as a diagnostic, and starts a fresh guest at the same

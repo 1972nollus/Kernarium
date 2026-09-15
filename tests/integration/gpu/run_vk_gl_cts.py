@@ -207,6 +207,25 @@ SUMMARY_ARTIFACT = "summary.txt"
 # derived from console silence; the completed transfer gets its own deadline.
 FINAL_ARTIFACT_FRAME = f"UML_CTS_ARTIFACT_END|{SUMMARY_ARTIFACT}|"
 SHUTDOWN_GRACE_SECONDS = 180
+# The same kernel printing defeats a mid-run bound derived from console
+# silence.  A wedged guest emits an RCU stall report and its task dump on the
+# kernel's own timer -- every 63 seconds, whether or not the workload still
+# runs -- so console growth made only of these lines is not evidence of
+# progress.  Counting it cost one shard 4.4 hours of a guest slot: the CTS
+# process was spinning in the guest kernel, which starved the in-guest
+# watchdog as well, leaving this bound the only thing able to end the session.
+KERNEL_CONSOLE_TIMESTAMP = re.compile(r"\[\s*\d+\.\d+\]\s*")
+KERNEL_STALL_DIAGNOSTICS = (
+    re.compile(r"rcu:"),
+    re.compile(r"Task dump for CPU\b"),
+    re.compile(r"task:\S+\s+state:"),
+    re.compile(r"(?:Stack|Call Trace):"),
+    re.compile(r"INFO: task \S+:\d+ blocked for more than"),
+    re.compile(r"watchdog: BUG: soft lockup"),
+)
+# Beyond this much new output the classification is skipped: that volume is
+# itself evidence of activity, and the bound must never cut a working guest.
+MAX_CONSOLE_PROGRESS_SCAN = 4 * 1024 * 1024
 QPA_SEGMENT = re.compile(r"results\.qpa\.([0-9]{4})\Z")
 MAX_QPA_SEGMENTS = 4096
 QPA_CHECKPOINT_BYTES = 8 * 1024 * 1024
@@ -4158,6 +4177,36 @@ def stop_guest(process: subprocess.Popen[bytes]) -> None:
     guest_process.stop_process(process, guest_process.HARNESS_STOP)
 
 
+def console_progressed(log_path: Path, start: int, end: int) -> tuple[int, bool]:
+    """Classify console bytes ``[start, end)`` as progress or stall noise.
+
+    Returns how far the console has been consumed and whether the new output
+    carries evidence that the guest is still working.  Only whole lines are
+    classified; a trailing partial line is left for the next observation so a
+    line is never judged on half of itself.
+    """
+    if end - start > MAX_CONSOLE_PROGRESS_SCAN:
+        return end, True
+    try:
+        with log_path.open("rb") as console:
+            console.seek(start)
+            chunk = console.read(end - start)
+    except OSError:
+        # An unreadable console is not evidence that the guest stopped.
+        return end, True
+    boundary = chunk.rfind(b"\n")
+    if boundary < 0:
+        return start, False
+    consumed = start + boundary + 1
+    for line in chunk[:boundary].decode("utf-8", errors="replace").splitlines():
+        body = KERNEL_CONSOLE_TIMESTAMP.sub("", line, count=1).strip()
+        if body and not any(
+            pattern.match(body) for pattern in KERNEL_STALL_DIAGNOSTICS
+        ):
+            return consumed, True
+    return consumed, False
+
+
 def wait_for_guest(
     process: subprocess.Popen[bytes],
     log_path: Path,
@@ -4220,11 +4269,21 @@ def wait_for_guest(
             if now >= next_heartbeat:
                 size = log_path.stat().st_size if log_path.exists() else 0
                 artifact_frames = len(transport.lines)
+                if size < last_console_size:
+                    # Rotated or truncated: resynchronise rather than judge a
+                    # console that is still being written.
+                    last_console_size = size
+                    console_progress = True
+                elif size > last_console_size:
+                    last_console_size, console_progress = console_progressed(
+                        log_path, last_console_size, size
+                    )
+                else:
+                    console_progress = False
                 if (
-                    size != last_console_size
+                    console_progress
                     or artifact_frames != last_artifact_frames
                 ):
-                    last_console_size = size
                     last_artifact_frames = artifact_frames
                     last_progress = now
                 elif (
