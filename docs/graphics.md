@@ -67,6 +67,15 @@ GLES reaches the guest over the same path and from the same capsets: the
 guest's Mesa derives its GLES version from what Virgl advertises, so nothing
 targets GLES separately and no GLES-only host provider exists.
 
+The formats Virgl advertises are the formats the host really stores. A sized
+depth internal format is only a request in OpenGL -- the host may satisfy
+`GL_DEPTH_COMPONENT32` with 24 bits, as Zink does -- and the guest's Mesa turns
+the advertised list into its EGL and GLX configs, so an inexact one becomes the
+storage of a default framebuffer the guest cannot name. vrend therefore offers
+a depth format only where the host's own storage has the width and datatype
+that format names, and a guest config with 32 depth bits is backed by a real
+32-bit float depth buffer.
+
 That version is the profile the guest reports, not a conformance result. Guest
 Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
 own conformance standing is whatever its recorded campaigns show.
