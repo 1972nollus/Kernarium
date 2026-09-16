@@ -30,6 +30,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
 		} else if (operation == 3U) {
+#if !UML_GADGET_INPLACE_IMMEDIATE
 			static constexpr Gadget keep[2][4]{
 				{uml_arm64_gadget_move_wide_keep_w0,
 				 uml_arm64_gadget_move_wide_keep_w1, nullptr, nullptr},
@@ -37,7 +38,15 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				 uml_arm64_gadget_move_wide_keep_x1,
 				 uml_arm64_gadget_move_wide_keep_x2,
 				 uml_arm64_gadget_move_wide_keep_x3}};
+#endif
+#if UML_GADGET_INPLACE_IMMEDIATE
+			/* MOVK reads and writes Rd, so every one of these is
+			 * the in-place shape. */
+			emit(words, move_wide_keep_inplace_gadget(
+				is_64_bit, halfword, destination));
+#else
 			emit(words, keep[is_64_bit][halfword]);
+#endif
 			emit(words, destination |
 				(static_cast<std::uintptr_t>(
 					(instruction >> 5) & 0xffffU) << 8));
@@ -174,10 +183,37 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				return DecodeResult::terminal;
 			}
 		}
-		emit(words, add_sub_immediate_gadget(
-			wide, subtract, set_flags,
-			source == 31U, destination == 31U));
-		emit(words, operand);
+#if UML_GADGET_INPLACE_IMMEDIATE
+		/* Rd == Rn and neither is the SP/XZR encoding: the entry can
+		 * name one CpuState displacement for both accesses. The operand
+		 * word is unchanged, so the two now-dead register fields cost
+		 * nothing and the fused and SP paths above are untouched. */
+		if (destination == source && destination != 31U) {
+			emit(words, add_sub_immediate_inplace_gadget(
+				wide, subtract, set_flags, destination));
+			emit(words, operand);
+		} else
+#endif
+		{
+#if UML_GADGET_TEMPLATE_COPIES > 1
+			/* Ordinary destination and source: pick one of the
+			 * identical copies by destination register, so two
+			 * chains do not share a load or store program
+			 * counter. The SP and discard modes keep the single
+			 * established entry. */
+			if (source != 31U && destination != 31U) {
+				emit(words, add_sub_immediate_copy_gadget(
+					wide, subtract, set_flags, destination));
+				emit(words, operand);
+			} else
+#endif
+			{
+				emit(words, add_sub_immediate_gadget(
+					wide, subtract, set_flags,
+					source == 31U, destination == 31U));
+				emit(words, operand);
+			}
+		}
 	} else if ((instruction & 0x1f20'0000U) == 0x0b00'0000U ||
 		   (instruction & 0x1fe0'0000U) == 0x0b20'0000U) {
 		const bool extended = (instruction & 0x0020'0000U) != 0;
@@ -270,11 +306,27 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				return DecodeResult::terminal;
 			}
 		}
-		emit(words, add_sub_register_gadget(is_64_bit,
-			(instruction & 0x4000'0000U) != 0, set_flags, extended,
-			transform, (instruction >> 13) & 7U, shift != 0U,
-			left_zero, right_zero, destination_discard));
-		emit(words, operand);
+#if UML_GADGET_INPLACE_IMMEDIATE
+		/* "add/sub Rd, Rd, Rm" with no shift or extension: the
+		 * destination and left source name one CpuState slot, so one
+		 * baked displacement serves both while Rm keeps its indexed
+		 * load. An XZR operand or an SP/discard destination keeps the
+		 * established entry. */
+		if (!extended && transform == 0U && destination == left &&
+		    destination != 31U && right != 31U) {
+			emit(words, add_sub_register_inplace_gadget(is_64_bit,
+				(instruction & 0x4000'0000U) != 0, set_flags,
+				destination));
+			emit(words, operand);
+		} else
+#endif
+		{
+			emit(words, add_sub_register_gadget(is_64_bit,
+				(instruction & 0x4000'0000U) != 0, set_flags, extended,
+				transform, (instruction >> 13) & 7U, shift != 0U,
+				left_zero, right_zero, destination_discard));
+			emit(words, operand);
+		}
 	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'1000U) {
 		emit(words, mte_irg_gadget(
 			((instruction >> 5) & 31U) == 31U,
@@ -673,9 +725,15 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		}
 		const unsigned destination = instruction & 31U;
 		const unsigned source = (instruction >> 5) & 31U;
-		emit(words, logical_immediate_gadget(is_64_bit,
-			(instruction >> 29) & 3U, source == 31U,
-			destination == 31U));
+#if UML_GADGET_INPLACE_IMMEDIATE
+		if (destination == source && destination != 31U)
+			emit(words, logical_immediate_inplace_gadget(is_64_bit,
+				(instruction >> 29) & 3U, destination));
+		else
+#endif
+			emit(words, logical_immediate_gadget(is_64_bit,
+				(instruction >> 29) & 3U, source == 31U,
+				destination == 31U));
 		emit(words, destination |
 			(static_cast<std::uintptr_t>(source) << 8));
 		emit(words, *immediate);

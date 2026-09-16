@@ -147,6 +147,27 @@ option(UML_GADGET_SIMD_DESTINATION_RESIDENCY
     "Keep one bounded SIMD MLA destination resident within a block"
     ON)
 
+# Experimental A/B arm, off by default. An in-place "add Rd, Rd, #imm" writes
+# and re-reads one CpuState slot; addressing that slot with a baked
+# displacement instead of a decoded register index lets the host forward the
+# store to the load at rename. Bounded at 31 entries per operation because the
+# in-place shape needs one index for both accesses.
+option(UML_GADGET_INPLACE_IMMEDIATE
+    "Bake the CpuState displacement into in-place ADD/SUB-immediate entries"
+    OFF)
+
+# Experimental A/B arm, 1 is off. Every guest register that flows through one
+# template shares that template's load and store program counters, and the
+# host's memory-dependence predictor is keyed on those, so it serializes
+# independent chains. Byte-identical copies selected by destination register
+# give them distinct program counters. 1, 2 or 4.
+set(UML_GADGET_TEMPLATE_COPIES "1" CACHE STRING
+    "Byte-identical copies of the ordinary ADD/SUB-immediate entry (1, 2 or 4)")
+if(NOT UML_GADGET_TEMPLATE_COPIES MATCHES "^(1|2|4)$")
+    message(FATAL_ERROR
+        "UML_GADGET_TEMPLATE_COPIES must be 1, 2 or 4")
+endif()
+
 # Retain decoded programs across a code-change sequence only after validating
 # every guest word the program consumed. Direct and indirect activations are
 # reset before any retained program can be reached again.
@@ -276,6 +297,8 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
+    UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
+    UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>

@@ -319,6 +319,8 @@
     target_compile_definitions(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
+        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
+        UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
         UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
     target_compile_options(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
@@ -1157,6 +1159,9 @@
     target_include_directories(uml_arm64_gadget_hot_path_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_definitions(
+        uml_arm64_gadget_hot_path_tests PRIVATE
+        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>)
     target_compile_options(uml_arm64_gadget_hot_path_tests PRIVATE
 		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)

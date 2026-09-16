@@ -1823,6 +1823,31 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	return (decoded.subtract ? fmls : fmla)[shape];
 }
 
+#if UML_GADGET_INPLACE_IMMEDIATE
+/* fmla/fmls Vd, Vn, Vm: rows are 4h 8h 2s 4s 2d per operation. */
+[[nodiscard]] Gadget simd_fused_inplace_gadget(bool subtract,
+	unsigned int arrangement, unsigned int vector_index) noexcept
+{
+	const auto row = static_cast<unsigned>(subtract) * 5U + arrangement;
+	return uml_arm64_gadget_simd_fused_inplace_table[row * 32U + vector_index];
+}
+
+/* Same shape decision as above, for the baked-accumulator entries. Only the
+ * vector forms have them; a scalar FMADD names a separate destination. */
+[[nodiscard]] Gadget fused_floating_inplace_gadget(
+	const detail::FusedFloatingArithmetic &decoded,
+	unsigned int vector_index) noexcept
+{
+	if (decoded.scalar)
+		return nullptr;
+	const unsigned shape = decoded.width == 16U ?
+		(decoded.vector_bytes == 16U ? 1U : 0U) :
+		decoded.width == 32U ?
+		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	return simd_fused_inplace_gadget(decoded.subtract, shape, vector_index);
+}
+#endif
+
 [[nodiscard]] Gadget simd_bitwise_gadget(unsigned operation, bool q) noexcept
 {
 	const unsigned shape = q ? 1U : 0U;

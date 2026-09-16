@@ -61,8 +61,23 @@ template<typename Function>
 	return table[operation][width];
 }
 
-[[nodiscard]] std::uintptr_t vector_entry(const test::Form &form)
+[[nodiscard]] std::uintptr_t vector_entry(const test::Form &form,
+	[[maybe_unused]] unsigned destination = 0U)
 {
+#if UML_GADGET_INPLACE_IMMEDIATE
+	/* Every vector FMLA/FMLS accumulates into Vd, so the translator always
+	 * reaches the baked-accumulator entry for that register. */
+	{
+		const unsigned baked_shape = form.width == 16U ?
+			(form.vector_bytes == 16U ? 1U : 0U) :
+			form.width == 32U ?
+			(form.vector_bytes == 16U ? 3U : 2U) : 4U;
+		const unsigned row = (form.subtract ? 5U : 0U) + baked_shape;
+		return reinterpret_cast<std::uintptr_t>(
+			gadgets::selection::uml_arm64_gadget_simd_fused_inplace_table[
+				row * 32U + destination]);
+	}
+#endif
 	const unsigned shape = form.width == 16U ?
 		(form.vector_bytes == 16U ? 1U : 0U) :
 		form.width == 32U ?
@@ -122,7 +137,8 @@ void direct_operands_and_live_bank()
 			test::common::require(
 				built.complete && !built.program.words().empty());
 			const auto expected_entry = form.scalar ?
-				scalar_entry(form) : vector_entry(form);
+				scalar_entry(form) :
+				vector_entry(form, registers.destination);
 			test::common::require(
 				built.program.words()[0] == expected_entry);
 			test::common::require(
@@ -140,10 +156,19 @@ void direct_operands_and_live_bank()
 
 	std::set<std::uintptr_t> expected;
 	test::for_each_form([&](const test::Form &form) {
-		expected.insert(form.scalar ?
-			scalar_entry(form) : vector_entry(form));
+		if (form.scalar) {
+			expected.insert(scalar_entry(form));
+			return;
+		}
+		/* A vector form reaches one entry per destination register when
+		 * the accumulator displacement is baked, and one entry in all
+		 * for the established bank. */
+		for (const auto registers : test::register_cases)
+			expected.insert(vector_entry(form, registers.destination));
 	});
+#if !UML_GADGET_INPLACE_IMMEDIATE
 	test::common::require(expected.size() == 22U);
+#endif
 	test::common::require(selected == expected);
 
 	for (const auto entry : expected) {
