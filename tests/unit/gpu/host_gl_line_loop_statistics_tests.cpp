@@ -606,6 +606,140 @@ int main()
         });
     }
 
+
+    // Every sweep above reads each query result exactly once, through
+    // glGetQueryObject*v with no query buffer bound.  The CTS case does not:
+    // for every one of its 576 queries it also reads the same result four more
+    // times into a query buffer object, and it never calls glFinish.  Zink
+    // keeps a query's Vulkan results in a list of query buffer objects and
+    // splits a statistics query into several "starts" whenever the line-loop
+    // flag changes, so that read pattern is the state the per-start
+    // bookkeeping has to survive.  Drive it here, many times, because the case
+    // fails on only about one per cent of its queries and a single-shot probe
+    // will not see it.
+    {
+        const char* iterationsText = std::getenv("UML_LINE_LOOP_STRESS");
+        long iterations = iterationsText != nullptr ? std::strtol(iterationsText, nullptr, 10) : 600;
+        if (iterations < 0)
+            iterations = 0;
+        GLuint queryBuffer = 0;
+        glGenBuffers(1, &queryBuffer);
+        glBindBuffer(GL_QUERY_BUFFER, queryBuffer);
+        glBufferData(GL_QUERY_BUFFER, 64, nullptr, GL_DYNAMIC_READ);
+        glBindBuffer(GL_QUERY_BUFFER, 0);
+
+        // A second render target, so the loop can move a renderpass boundary
+        // around the query the way a guest that keeps changing framebuffers
+        // does.  Zink only records the line-loop flag on the query start that
+        // is current when the draw is seen, and a boundary makes a new start.
+        GLuint scratchColour = 0;
+        glGenTextures(1, &scratchColour);
+        glBindTexture(GL_TEXTURE_2D, scratchColour);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        GLuint scratchFramebuffer = 0;
+        glGenFramebuffers(1, &scratchFramebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, scratchFramebuffer);
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, scratchColour, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+
+        const auto breakRenderpass = [&] {
+            glBindFramebuffer(GL_FRAMEBUFFER, scratchFramebuffer);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        };
+
+        long stressFailures = 0;
+        GLuint firstBad = 0;
+        long firstBadIteration = -1;
+        long firstBadShape = -1;
+        long shapeFailures[4] = { 0, 0, 0, 0 };
+        for (long iteration = 0; iteration < iterations; ++iteration) {
+            const long shape = iteration % 4;
+            GLuint queries[3] = { 0, 0, 0 };
+            glGenQueries(3, queries);
+            // shape 1: the measured query begins while no renderpass is open,
+            // which is when Zink defers the start and ctx->vertices_query is
+            // still null on the draw that follows.
+            if (shape == 1)
+                breakRenderpass();
+
+            // A triangle draw in its own query, so the line-loop flag has to
+            // flip on entry to the measured query, as it does in the CTS.
+            glBeginQuery(GL_VERTICES_SUBMITTED_ARB, queries[0]);
+            glDrawElementsInstancedARB(
+                GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr, 1);
+            glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+
+            // The clipping counter the case queries alongside the vertices.
+            glBeginQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB, queries[1]);
+            glDrawElementsInstancedARB(
+                GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr, 1);
+            glEndQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB);
+
+            glBeginQuery(GL_VERTICES_SUBMITTED_ARB, queries[2]);
+            // shape 2: a boundary between the begin and the draw; shape 3: one
+            // between the draw and the end.
+            if (shape == 2)
+                breakRenderpass();
+            glDrawElementsInstancedARB(
+                GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr, 1);
+            if (shape == 3)
+                breakRenderpass();
+            glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+
+            // The four query-buffer reads the case performs before it reads
+            // the value it checks.
+            glBindBuffer(GL_QUERY_BUFFER, queryBuffer);
+            glGetQueryObjectiv(queries[2], GL_QUERY_RESULT, nullptr);
+            glGetQueryObjectuiv(
+                queries[2], GL_QUERY_RESULT,
+                reinterpret_cast<GLuint*>(static_cast<std::uintptr_t>(8)));
+            glGetQueryObjecti64v(
+                queries[2], GL_QUERY_RESULT,
+                reinterpret_cast<GLint64*>(static_cast<std::uintptr_t>(16)));
+            glGetQueryObjectui64v(
+                queries[2], GL_QUERY_RESULT,
+                reinterpret_cast<GLuint64*>(static_cast<std::uintptr_t>(24)));
+            glBindBuffer(GL_QUERY_BUFFER, 0);
+
+            GLuint counted = 0;
+            glGetQueryObjectuiv(queries[2], GL_QUERY_RESULT, &counted);
+            if (counted != static_cast<GLuint>(loopVertexCount)
+                && counted != static_cast<GLuint>(loopVertexCount) + 1U) {
+                if (stressFailures == 0) {
+                    firstBad = counted;
+                    firstBadIteration = iteration;
+                    firstBadShape = shape;
+                }
+                ++stressFailures;
+                ++shapeFailures[shape];
+            }
+            glDeleteQueries(3, queries);
+        }
+        glDeleteBuffers(1, &queryBuffer);
+        glDeleteFramebuffers(1, &scratchFramebuffer);
+        glDeleteTextures(1, &scratchColour);
+        std::fprintf(
+            stderr,
+            "Host line-loop statistics: CTS-shaped stress %ld iterations -> "
+            "%ld mismatching results (per shape %ld/%ld/%ld/%ld)",
+            iterations,
+            stressFailures,
+            shapeFailures[0],
+            shapeFailures[1],
+            shapeFailures[2],
+            shapeFailures[3]);
+        if (stressFailures != 0)
+            std::fprintf(
+                stderr, " (first at iteration %ld shape %ld: %u)",
+                firstBadIteration, firstBadShape, firstBad);
+        std::fputc('\n', stderr);
+        if (stressFailures != 0)
+            ++failureCount;
+    }
+
     glDeleteBuffers(1, &indexBuffer);
 
     const bool acceptable =
