@@ -114,17 +114,28 @@ class ReceiptSelection:
     generated_expected: bool
 
 
+def case_needs_wsi(case: str) -> bool:
+    # WSI cases are not confined to the dEQP-VK.wsi group: the
+    # image_compression_control swapchain family creates real surfaces and
+    # swapchains from dEQP-VK.api, and reports NotSupported without a display.
+    return case.startswith("dEQP-VK.wsi.") or ".swapchain." in case
+
+
+def case_needs_wayland(case: str) -> bool:
+    return case_needs_wsi(case) and ".wayland." in case
+
+
 def receipt_selection_uses_wsi(selection: ReceiptSelection) -> bool:
     # The authenticated top-level list includes WSI. Its native fractions are
     # enumerated in the guest, so generated selections have no source_cases yet.
     return selection.generated_expected or any(
-        case.startswith("dEQP-VK.wsi.") for case in selection.source_cases
+        case_needs_wsi(case) for case in selection.source_cases
     )
 
 
 def receipt_selection_uses_wayland(selection: ReceiptSelection) -> bool:
     return selection.generated_expected or any(
-        case.startswith("dEQP-VK.wsi.wayland.") for case in selection.source_cases
+        case_needs_wayland(case) for case in selection.source_cases
     )
 
 

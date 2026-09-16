@@ -1,4 +1,4 @@
-From e260ac009b77e8df0d359e8dc6ce9cbe77d6633c Mon Sep 17 00:00:00 2001
+From a5c9c5bf01c079b65e356c8a1bc7dfc450f2ea46 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:51 +0900
 Subject: [PATCH 80/88] kosmickrisp: implement VK_EXT_image_compression_control
@@ -29,10 +29,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 46 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 038735f8..345f4ed3 100644
+index b2d12e26..54321d3a 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -245,6 +245,15 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -251,6 +251,15 @@ kk_GetPhysicalDeviceImageFormatProperties2(
     memset(&pImageFormatProperties->imageFormatProperties, 0,
            sizeof(pImageFormatProperties->imageFormatProperties));
  
@@ -48,7 +48,7 @@ index 038735f8..345f4ed3 100644
     /* A modifier image is a linear image with an agreed layout, and
      * DRM_FORMAT_MOD_LINEAR is the only modifier this driver offers. Every
      * limit a linear image has applies, so ask the rest of this function about
-@@ -547,6 +556,11 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -548,6 +557,11 @@ kk_GetPhysicalDeviceImageFormatProperties2(
           host_props->identicalMemoryLayout = host_props->optimalDeviceAccess;
           break;
        }
@@ -60,7 +60,7 @@ index 038735f8..345f4ed3 100644
        default:
           vk_debug_ignored_stype(s->sType);
           break;
-@@ -949,6 +963,11 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
+@@ -950,6 +964,11 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
     if (memcpy_size) {
        memcpy_size->size = pLayout->subresourceLayout.size;
     }

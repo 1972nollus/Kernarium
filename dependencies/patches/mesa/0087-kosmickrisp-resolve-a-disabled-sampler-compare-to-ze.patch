@@ -1,4 +1,4 @@
-From d19968eedf481aa1ca32aeaaa2b5a5209447dd4a Mon Sep 17 00:00:00 2001
+From db5ae47616111df5a020eb3afb4757ef8707a55d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:44:03 +0900
 Subject: [PATCH 87/88] kosmickrisp: resolve a disabled sampler compare to

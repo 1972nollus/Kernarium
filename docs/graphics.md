@@ -197,10 +197,20 @@ a single-queue device over unified memory, and implements
 `VK_EXT_image_drm_format_modifier` with `DRM_FORMAT_MOD_LINEAR` as its only
 modifier, because Metal describes no tiling an agent outside the driver could
 agree on. A modifier image is therefore exactly a linear image with a name for
-its layout and inherits every linear limit: one 2D level and layer, a dedicated
-allocation, no use as a colour or depth/stencil attachment, and an explicit
-plane layout accepted only where it matches the layout Metal's own alignment
-rule produces. The guest Venus driver's two conditions for
+its layout and inherits nearly every linear limit: one 2D level and layer, a
+dedicated allocation, no depth or stencil attachment, no input attachment, and
+an explicit plane layout accepted only where it matches the layout Metal's own
+alignment rule produces. The one capability it carries that plain linear tiling
+does not is a colour attachment, because a swapchain image is one and Mesa's
+common WSI has no fallback when no modifier can hold one: it filters the
+modifier list with `vkGetPhysicalDeviceImageFormatProperties2` and, when nothing
+survives, fails `vkCreateSwapchainKHR` with `VK_ERROR_OUT_OF_HOST_MEMORY`, which
+dEQP records as a `ResourceError` that ends the whole CTS session. Metal renders
+into a linear texture; what it refuses, by an assertion that ends the host
+process, is a linear texture of any type but `MTLTextureType2D`, and this driver
+binds every input attachment as a 2D array. An input attachment is therefore
+what a linear layout has to refuse, and a layout Metal could not represent
+becomes a Vulkan error before Metal sees the descriptor. The guest Venus driver's two conditions for
 `VK_ANDROID_native_buffer` and
 `VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and an
 Android guest presents its swapchain through them.

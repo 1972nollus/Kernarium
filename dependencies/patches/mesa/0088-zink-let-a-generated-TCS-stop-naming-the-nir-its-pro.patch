@@ -1,4 +1,4 @@
-From ef27738c45487a0f5c1b9fc9e9a8de2a6ed25f43 Mon Sep 17 00:00:00 2001
+From 0d5e2e4d4bb25e18ed168c9c603c5514eb186805 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 19:03:28 +0900
 Subject: [PATCH 88/88] zink: let a generated TCS stop naming the nir its

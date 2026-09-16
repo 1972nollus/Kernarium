@@ -1,4 +1,4 @@
-From 50c44a0e27ccc0d5a27e6f6d9e085b8d065893a0 Mon Sep 17 00:00:00 2001
+From 9ad96372297806c2fd010dd328810274e8c8313b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:12:45 +0900
 Subject: [PATCH 81/88] kosmickrisp: implement
@@ -101,10 +101,10 @@ index a52d7737..f504640d 100644
  
     vk_device_memory_destroy(&dev->vk, pAllocator, &mem->vk);
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 345f4ed3..323ede3a 100644
+index 54321d3a..54965017 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -23,6 +23,12 @@
+@@ -25,6 +25,12 @@
  
  #include "drm-uapi/drm_fourcc.h"
  
@@ -117,7 +117,7 @@ index 345f4ed3..323ede3a 100644
  #include <vulkan/vulkan_metal.h>
  
  static VkFormatFeatureFlags2
-@@ -800,6 +806,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
+@@ -801,6 +807,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
     if (!image)
        return;
  
@@ -127,7 +127,7 @@ index 345f4ed3..323ede3a 100644
     kk_image_finish(dev, image, pAllocator);
     vk_free2(&dev->vk.alloc, pAllocator, image);
  }
-@@ -1070,6 +1079,24 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1071,6 +1080,24 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
     return VK_SUCCESS;
  }
  
@@ -152,7 +152,7 @@ index 345f4ed3..323ede3a 100644
  static VkResult
  kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
  {
-@@ -1127,6 +1154,9 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+@@ -1128,6 +1155,9 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
        }
     }
  

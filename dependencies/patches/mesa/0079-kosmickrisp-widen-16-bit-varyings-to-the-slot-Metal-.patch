@@ -1,4 +1,4 @@
-From e895563298cb8e7002792fafe7500baae721200e Mon Sep 17 00:00:00 2001
+From e32ea14bd45e2b0ccb1c4da0d838063b3a1ceea4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:45:56 +0900
 Subject: [PATCH 79/88] kosmickrisp: widen 16-bit varyings to the slot Metal
@@ -177,10 +177,10 @@ index b81512ce..bb548fa9 100644
      * path, link only the application pre-raster chain now; linking an
      * unmatched internal line input to the old final stage would discard it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 36a6d15f..e29584b1 100644
+index 31202fb9..c66f257a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1037,6 +1037,20 @@ if with_tests
+@@ -1047,6 +1047,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

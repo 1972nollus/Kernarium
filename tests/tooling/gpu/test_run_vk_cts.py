@@ -881,6 +881,56 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("ncpus=4", command)
         self.assertIn("--virtio-serial-socket=", " ".join(command))
 
+    def test_a_swapchain_family_outside_the_wsi_group_still_gets_a_display(
+        self,
+    ) -> None:
+        """dEQP-VK.api.image_compression_control.swapchain.* creates real
+        surfaces and swapchains, so an exact-family run of it needs the same
+        native Xorg session and nested Wayland server the dEQP-VK.wsi group
+        does. Without one every case reports NotSupported for want of a
+        display and the run proves nothing."""
+        wayland = (
+            "dEQP-VK.api.image_compression_control.swapchain.wayland.disabled"
+        )
+        xcb = "dEQP-VK.api.image_compression_control.swapchain.xcb.disabled"
+
+        self.assertTrue(cts.case_needs_wsi(wayland))
+        self.assertTrue(cts.case_needs_wayland(wayland))
+        self.assertTrue(cts.case_needs_wsi(xcb))
+        self.assertFalse(cts.case_needs_wayland(xcb))
+        self.assertFalse(
+            cts.case_needs_wsi("dEQP-VK.api.info.device_properties")
+        )
+        self.assertFalse(
+            cts.case_needs_wayland("dEQP-VK.api.info.device_properties")
+        )
+
+        selection = cts.resolve_receipt_selection(
+            "exact-family", (xcb, wayland), None, cts.Fraction(0, 1)
+        )
+        self.assertTrue(cts.receipt_selection_uses_wsi(selection))
+        self.assertTrue(cts.receipt_selection_uses_wayland(selection))
+
+        launcher = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            page_size=16384,
+            timeout=900,
+            progress_timeout=600,
+            use_wsi=True,
+        )
+        self.assertIn(cts.common.native_x11_setup(wayland=True), launcher)
+        self.assertIn("WAYLAND_DISPLAY=wayland-0", launcher)
+        self.assertIn('DISPLAY="$xdisplay"', launcher)
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
