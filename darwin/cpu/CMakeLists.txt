@@ -156,6 +156,15 @@ option(UML_GADGET_INPLACE_IMMEDIATE
     "Bake the CpuState displacement into in-place ADD/SUB-immediate entries"
     OFF)
 
+# Experimental A/B arm, off by default, and the companion to the entry above.
+# An unsigned-offset transfer reaches CpuState through the register it moves;
+# baking that displacement both forwards the value at rename and keeps the two
+# ends of the hop in the same addressing form, which a baked arithmetic entry
+# alone does not. Covers the 32- and 64-bit forms at 31 entries per mode.
+option(UML_GADGET_INPLACE_MEMORY
+    "Bake the CpuState displacement into unsigned-offset scalar transfer entries"
+    OFF)
+
 # Experimental A/B arm, 1 is off. Every guest register that flows through one
 # template shares that template's load and store program counters, and the
 # host's memory-dependence predictor is keyed on those, so it serializes
@@ -299,6 +308,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
     UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
+    UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>

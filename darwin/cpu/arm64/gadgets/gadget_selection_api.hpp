@@ -263,6 +263,7 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 
 [[nodiscard]] Gadget literal_load_gadget(bool, unsigned int, bool) noexcept;
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned int, unsigned int, bool, bool) noexcept;
+[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(unsigned int, unsigned int, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(unsigned int, unsigned int, bool) noexcept;
 [[nodiscard]] const ScalarOtherGadgets * scalar_other_gadgets(unsigned int, unsigned int) noexcept;
 [[nodiscard]] const VectorOtherGadgets * vector_other_gadgets(unsigned int, unsigned int) noexcept;

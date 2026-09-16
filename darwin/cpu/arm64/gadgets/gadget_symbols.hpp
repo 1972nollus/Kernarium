@@ -36,6 +36,11 @@ extern void (*const uml_arm64_gadget_move_wide_keep_inplace_table[])();
 extern void (*const uml_arm64_gadget_add_sub_register_inplace_table[])();
 extern void (*const uml_arm64_gadget_simd_fused_inplace_table[])();
 #endif
+#if UML_GADGET_INPLACE_MEMORY
+/* Unsigned-offset transfers whose transferred register is baked, indexed by
+ * ((operation * 2 + bits64) * 2 + base_sp) * 31 + register. */
+extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
+#endif
 #if UML_GADGET_TEMPLATE_COPIES > 1
 /* Byte-identical copies of the ordinary entry, indexed by
  * (((bits64 * 2 + subtract) * 2 + flags) * copies) + copy. */

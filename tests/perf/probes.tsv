@@ -21,6 +21,7 @@ guest_gadget_reindex_loop.S	control-flow	base	run_guest_link_bench.py	Reactivate
 guest_gpr_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page scalar memory runs through an allocated base register.
 guest_indirect_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures monomorphic indirect-call and return successor linking.
 guest_inplace_chain_loop.S	integer	base	run_guest_link_bench.py	Matched control for in-place ADD-immediate lowering, interleaving three chains so no adjacent forward is selected and every word reaches its guest register through CpuState.
+guest_inplace_memory_loop.S	memory	base	run_guest_link_bench.py	Matched control for unsigned-offset transfers whose transferred register is a baked CpuState displacement. Three load/modify/store chains run interleaved through one same-page buffer, so no adjacent forward is ever selected and every value crosses CpuState between the load that produced it and the store that consumes it.
 guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.
 guest_link_loop.S	control-flow	base	run_guest_link_bench.py	Baseline for cached direct successor-link throughput.
 guest_logical_move_loop.S	integer	base	run_guest_link_bench.py	Matched control for logical-register move alias lowering.

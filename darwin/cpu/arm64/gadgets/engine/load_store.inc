@@ -91,13 +91,17 @@ literal_vector_fast literal_load_vector128_fast, ldr, q, 16
  * a distinct entry. Stream: [Rt offset, Rn offset, byte displacement][PC].
  * The only conditional branches left are the runtime cross-page and TLB/fault
  * decisions; valid same-page hits execute no opcode or register-mode tests. */
-.macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix, forward=0
+.macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix, baked=0, forward=0
 	.set .Lsd\@, scalar_offset0
+	.set .Lsm\@, scalar_offset0
+	.if \baked
+	.set .Lsd\@, \baked
+	.set .Lsm\@, \baked
+	.endif
 	.if !\load || \transfer_zero
 	.set .Lsd\@, scalar_none
 	.endif
 	.set .Lsn\@, scalar_offset16
-	.set .Lsm\@, scalar_offset0
 	.if \load || \transfer_zero
 	.set .Lsm\@, scalar_none
 	.endif
@@ -106,7 +110,9 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	mov x22, x0
 	.endif
 	ldr x8, [_stream], #8
+	.if !\baked
 	and x19, x8, #0xffff
+	.endif
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
 	scalar_read \forward, 1, x7, x20
@@ -149,7 +155,11 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	ldr w0, [x7]
 		.endif
 		.if !\transfer_zero
+	.if \baked
+	str x0, [_cpu, #(\baked & 0x7fff)]
+	.else
 	str x0, [_cpu, x19]
+	.endif
 		.endif
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
@@ -157,7 +167,11 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	mov x0, xzr
 		.else
 	.if !(\forward & 2)
+	.if \baked
+	ldr x0, [_cpu, #(\baked & 0x7fff)]
+	.else
 	ldr x0, [_cpu, x19]
+	.endif
 	.endif
 		.endif
 		.if \bits64
@@ -184,14 +198,22 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	fmov w0, s0
 		.endif
 		.if !\transfer_zero
+	.if \baked
+	str x0, [_cpu, #(\baked & 0x7fff)]
+	.else
 	str x0, [_cpu, x19]
+	.endif
 		.endif
 	.else
 		.if \transfer_zero
 	mov x0, xzr
 		.else
 	.if !(\forward & 2)
+	.if \baked
+	ldr x0, [_cpu, #(\baked & 0x7fff)]
+	.else
 	ldr x0, [_cpu, x19]
+	.endif
 	.endif
 		.endif
 		.if \bits64
@@ -216,7 +238,7 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	/* Matched-layout padding for the removed top-byte check; unreachable. */
 	.space 12
 #endif
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix
+	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix, \baked
 .endm
 
 .macro scalar_unsigned_modes load, bits64, name
@@ -232,7 +254,9 @@ scalar_unsigned_modes 0, 0, store32_unsigned_fast
 scalar_unsigned_modes 0, 1, store64_unsigned_fast
 
 .purgem scalar_unsigned_modes
+#if !UML_GADGET_INPLACE_MEMORY
 .purgem scalar_unsigned_fast
+#endif
 
 /* Translation-specialized byte/halfword and sign-extending unsigned-offset
  * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn

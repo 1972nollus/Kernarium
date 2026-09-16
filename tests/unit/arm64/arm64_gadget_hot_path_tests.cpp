@@ -24,6 +24,9 @@ void uml_arm64_gadget_move_wide_keep_x1();
 #if UML_GADGET_INPLACE_IMMEDIATE
 extern void (*const uml_arm64_gadget_move_wide_keep_inplace_table[])();
 #endif
+#if UML_GADGET_INPLACE_MEMORY
+extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
+#endif
 void uml_arm64_gadget_add_sub_immediate_x_add_n_rr();
 void uml_arm64_gadget_add_sub_immediate_x_add_s_ss();
 void uml_arm64_gadget_add_sub_carry_x_adc_n_rr_r();
@@ -310,8 +313,17 @@ int main()
 	}
 	{
 		const auto program = build_one(0xf940'0462U); // ldr x2,[x3,#8]
+#if UML_GADGET_INPLACE_MEMORY
+		/* The transferred register is baked, so the translator selects the
+		 * entry for x2. Index is ((operation * 2 + bits64) * 2 + base_sp)
+		 * * 31 + register, with operation 1 for a load. */
+		require(program.words()[0] == address_of(
+			uml_arm64_gadget_scalar_unsigned_inplace_table[
+				((1U * 2U + 1U) * 2U + 0U) * 31U + 2U]));
+#else
 		require(program.words()[0] ==
 			address_of(uml_arm64_gadget_load64_unsigned_fast_r));
+#endif
 		/* The opcode is not carried into the runtime stream: operand then PC. */
 		require(program.words()[2] == 0x4000U);
 	}

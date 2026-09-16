@@ -154,6 +154,9 @@
 	    uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests PRIVATE
 	    ${PROJECT_SOURCE_DIR}/darwin
 	    ${PROJECT_SOURCE_DIR}/darwin/include)
+	target_compile_definitions(
+	    uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests PRIVATE
+	    UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>)
 	target_compile_options(
 	    uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests PRIVATE
 	    -Wall -Wextra -Werror)

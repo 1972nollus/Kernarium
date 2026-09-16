@@ -34,6 +34,10 @@ DECLARE_UNSIGNED(store64_unsigned_fast)
 DECLARE_UNSIGNED(load64_unsigned_fast)
 #undef DECLARE_UNSIGNED
 
+#if UML_GADGET_INPLACE_MEMORY
+extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
+#endif
+
 #define DECLARE_OTHER_REGISTERS(name, mode) \
 	void uml_arm64_gadget_scalar_other_##name##_##mode##_r(); \
 	void uml_arm64_gadget_scalar_other_##name##_##mode##_z(); \
@@ -140,6 +144,37 @@ template<typename Function>
 		offsetof(arm64::CpuState, sp);
 }
 
+/* The scaled 32- and 64-bit unsigned-offset shapes bake their transferred
+ * register, so for those the translator selects a per-register entry rather
+ * than the shared one. Rows 8 and 11 are the stores, 9 and 12 the loads. */
+[[nodiscard]] Gadget unsigned_offset_entry(Gadget shared,
+	[[maybe_unused]] unsigned row_index,
+	[[maybe_unused]] unsigned base_sp,
+	[[maybe_unused]] unsigned transfer_zero,
+	[[maybe_unused]] unsigned transferred)
+{
+#if UML_GADGET_INPLACE_MEMORY
+	if (transfer_zero == 0U) {
+		unsigned operation = 2U;
+		unsigned bits64 = 0U;
+		switch (row_index) {
+		case 8U: operation = 0U; bits64 = 0U; break;
+		case 9U: operation = 1U; bits64 = 0U; break;
+		case 11U: operation = 0U; bits64 = 1U; break;
+		case 12U: operation = 1U; bits64 = 1U; break;
+		default: break;
+		}
+		if (operation < 2U) {
+			const unsigned slot = ((operation * 2U + bits64) * 2U +
+				base_sp) * 31U + transferred;
+			return reinterpret_cast<Gadget>(
+				uml_arm64_gadget_scalar_unsigned_inplace_table[slot]);
+		}
+	}
+#endif
+	return shared;
+}
+
 [[nodiscard]] gadgets::BuildResult build(std::uint32_t instruction)
 {
 	return gadgets::Builder{}.build(engine_tests::engine_test_code_base,
@@ -179,8 +214,10 @@ void select_all_reachable_gadgets()
 				const auto rt =
 					transfer_zero != 0 ? 31U : 5U;
 				const unsigned imm12 = 0xa5U;
-				const auto &entry = row.unsigned_offset[base_sp]
-					[transfer_zero];
+				const auto entry = unsigned_offset_entry(
+					row.unsigned_offset[base_sp]
+						[transfer_zero],
+					index, base_sp, transfer_zero, rt);
 				const auto instruction = test::encode(
 					variant, test::Form::unsigned_offset,
 					imm12, rn, rt);
