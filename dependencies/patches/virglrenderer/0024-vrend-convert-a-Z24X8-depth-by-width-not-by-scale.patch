@@ -1,7 +1,7 @@
 From b191983b378bdb20c6d66d4175a4c726143567f5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 07:06:41 +0900
-Subject: [PATCH 24/45] vrend: convert a Z24X8 depth by width, not by scale
+Subject: [PATCH 24/46] vrend: convert a Z24X8 depth by width, not by scale
 
 The guest keeps a Z24X8 texel as a 24-bit depth in the low bits of a
 word; the host reads and writes the same texel as a 32-bit normalised

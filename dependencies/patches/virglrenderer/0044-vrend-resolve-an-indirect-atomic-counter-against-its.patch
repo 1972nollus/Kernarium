@@ -1,7 +1,7 @@
 From a3d560eeae90aabc678ce9a2ed11027a0fc21f1e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 09:03:51 +0900
-Subject: [PATCH 44/45] vrend: resolve an indirect atomic counter against its
+Subject: [PATCH 44/46] vrend: resolve an indirect atomic counter against its
  buffer
 
 A dynamically indexed atomic counter reaches vrend as a TGSI HW_ATOMIC

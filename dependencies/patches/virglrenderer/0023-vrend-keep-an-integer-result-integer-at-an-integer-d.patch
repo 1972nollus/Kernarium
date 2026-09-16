@@ -1,7 +1,7 @@
 From 6c71ea7aca846333df369bb7d004b950db256a92 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:23:35 +0900
-Subject: [PATCH 23/45] vrend: keep an integer result integer at an integer
+Subject: [PATCH 23/46] vrend: keep an integer result integer at an integer
  destination
 
 A shader value lives in a float register, so vrend bit casts an integer
