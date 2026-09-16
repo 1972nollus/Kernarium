@@ -1,7 +1,7 @@
 From f3bf250fb0fa6aad126f8617ed3d4f7df6209417 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:29:40 +0900
-Subject: [PATCH 49/86] kosmickrisp: read coherent global memory through
+Subject: [PATCH 49/87] kosmickrisp: read coherent global memory through
  relaxed atomics
 
 A compute kernel that reads device memory through a coherent pointer inside a loop miscompiles on macOS 27: the first such load in an iteration returns the right value and every later one returns zero. Two coherent loads are enough and one is not, and any unrelated edit moves the failure to a different kernel rather than removing it.
