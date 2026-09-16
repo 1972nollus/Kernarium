@@ -1,7 +1,7 @@
 From 128ddb81f6be15baaa1b18843c8f1f352f963611 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:44:03 +0900
-Subject: [PATCH 87/87] kosmickrisp: resolve a disabled sampler compare to
+Subject: [PATCH 87/88] kosmickrisp: resolve a disabled sampler compare to
  zero, not one
 
 A depth-compare instruction issued against a sampler whose compare is

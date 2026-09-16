@@ -1,7 +1,7 @@
 From 8b6a22ea44b2029e578a71f93361cacd1960e890 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:43:58 +0900
-Subject: [PATCH 28/87] kosmickrisp: implement legacy vertex attributes
+Subject: [PATCH 28/88] kosmickrisp: implement legacy vertex attributes
 
 ---
  src/kosmickrisp/compiler/nir_to_msl.c         |   2 +-
