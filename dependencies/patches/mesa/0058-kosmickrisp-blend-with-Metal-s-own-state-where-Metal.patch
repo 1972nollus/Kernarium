@@ -1,4 +1,4 @@
-From 1a6745ad020903b2c3a2e1a858843bf1b9ee2739 Mon Sep 17 00:00:00 2001
+From ba7fba5d90d18335eae5f2db1b1ae288d2217c21 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:19:59 +0900
 Subject: [PATCH 58/88] kosmickrisp: blend with Metal's own state where Metal
@@ -88,10 +88,10 @@ no slower and is the better default for a monolithic pipeline as well.
  src/kosmickrisp/vulkan/kk_debug.c             |   1 +
  src/kosmickrisp/vulkan/kk_debug.h             |   5 +
  src/kosmickrisp/vulkan/kk_gpl.h               |   1 +
- src/kosmickrisp/vulkan/kk_shader.c            | 227 +++++-
+ src/kosmickrisp/vulkan/kk_shader.c            | 248 +++++-
  src/kosmickrisp/vulkan/kk_shader.h            |  14 +
  src/kosmickrisp/vulkan/meson.build            |  24 +
- .../vulkan/tests/bench_blend_path.cpp         | 411 ++++++++++
+ .../vulkan/tests/bench_blend_path.cpp         | 411 +++++++++
  .../tests/metal_blend_shaders/blend.frag      |   9 +
  .../tests/metal_blend_shaders/blend.frag.h    |  26 +
  .../tests/metal_blend_shaders/blend.vert      |   7 +
@@ -99,8 +99,8 @@ no slower and is the better default for a monolithic pipeline as well.
  .../tests/metal_blend_shaders/blend_dual.frag |  13 +
  .../metal_blend_shaders/blend_dual.frag.h     |  35 +
  .../tests/metal_blend_shaders/generate.sh     |   7 +
- .../vulkan/tests/test_metal_blend.cpp         | 759 ++++++++++++++++++
- 25 files changed, 1816 insertions(+), 16 deletions(-)
+ .../vulkan/tests/test_metal_blend.cpp         | 803 ++++++++++++++++++
+ 25 files changed, 1881 insertions(+), 16 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/bench_blend_path.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag.h
@@ -526,7 +526,7 @@ index fe1de5ed..9a3f458f 100644
  #include "kk_logic_op.h"
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 0d5609f9..2dfec72c 100644
+index 0d5609f9..ec175936 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -615,6 +615,142 @@ kk_nir_remove_undeclared_fs_output(nir_builder *b,
@@ -732,7 +732,34 @@ index 0d5609f9..2dfec72c 100644
           }
        }
     }
-@@ -3745,6 +3903,39 @@ gather_graphics_pipeline_create_info(
+@@ -3713,6 +3871,26 @@ kk_compile_depth_stencil_state(struct kk_device *device,
+    return kk_compile_ds_state(device, &info);
+ }
+ 
++/* Metal stores R9G9B9E5 as three mantissas that share one exponent, so no
++ * colour channel of that format can be written without the other two.  Its
++ * render pipelines therefore accept only an all-or-nothing write mask there
++ * and fail descriptor validation - which aborts the process - on any other.
++ * The format stores no alpha, so the alpha bit of a Vulkan mask on it names
++ * nothing, and Vulkan requires the R, G and B bits to move together; dropping
++ * the alpha bit leaves a mask that is already all or nothing.
++ */
++static enum mtl_color_write_mask
++kk_metal_color_write_mask(enum mtl_pixel_format format, uint32_t mask)
++{
++   if (format != MTL_PIXEL_FORMAT_R9G9B9E5_FLOAT)
++      return vk_color_write_mask_to_mtl(mask);
++
++   const uint32_t colour = VK_COLOR_COMPONENT_R_BIT |
++                           VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
++   return (mask & colour) ? MTL_COLOR_WRITE_MASK_ALL
++                          : MTL_COLOR_WRITE_MASK_NONE;
++}
++
+ /* Copies all msl shader data to the vertex and gathers information for pipeline
+  * compilation. */
+ static void
+@@ -3745,6 +3923,40 @@ gather_graphics_pipeline_create_info(
                 ? MTL_PIXEL_FORMAT_INVALID
                 : vk_format_to_mtl_pixel_format(format);
        }
@@ -750,7 +777,8 @@ index 0d5609f9..2dfec72c 100644
 +            const struct vk_color_blend_attachment_state *att =
 +               &state->cb->attachments[i];
 +            info->vs.blend[logical_index].write_mask =
-+               vk_color_write_mask_to_mtl(att->write_mask);
++               kk_metal_color_write_mask(info->vs.rt_formats[logical_index],
++                                         att->write_mask);
 +            info->vs.blend[logical_index].enabled = att->blend_enable;
 +            if (!att->blend_enable)
 +               continue;
@@ -772,7 +800,7 @@ index 0d5609f9..2dfec72c 100644
        info->vs.d_format =
           has_depth ? vk_format_to_mtl_pixel_format(rp->depth_attachment_format)
                     : MTL_PIXEL_FORMAT_INVALID;
-@@ -3948,6 +4139,18 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -3948,6 +4160,18 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
        assert(vs->info.vs.rt_formats[i] != MTL_PIXEL_FORMAT_INVALID);
        mtl_render_pipeline_descriptor_set_color_attachment_format(
           pipeline_descriptor, i, vs->info.vs.rt_formats[i]);
@@ -1463,10 +1491,10 @@ index 00000000..c16500ee
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
 new file mode 100644
-index 00000000..889b8c4a
+index 00000000..3fc30861
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
-@@ -0,0 +1,759 @@
+@@ -0,0 +1,803 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -1628,6 +1656,13 @@ index 00000000..889b8c4a
 +   uint32_t texel_bytes;
 +   bool encoded;
 +   float tolerance;
++   /* The largest value the format stores: a normalized format clamps a blend
++    * result to one, a floating-point one does not. */
++   float maximum;
++   /* One exponent shared by the three colour channels: none of them can be
++    * written on its own, so Vulkan requires their write-mask bits to move
++    * together and Metal accepts only an all-or-nothing mask. */
++   bool shared_exponent;
 +   /* Render with a fragment shader that also declares an index 1 output, which
 +    * no blend state here names.  Metal has no second colour source, so a
 +    * pipeline that keeps its fixed-function blend has to drop the dead output
@@ -1636,21 +1671,30 @@ index 00000000..889b8c4a
 +};
 +
 +static const Format kFormats[] = {
-+   {VK_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", 4u, 4u, false, 1.5f / 255.0f, false},
-+   {VK_FORMAT_R8G8B8A8_SRGB, "R8G8B8A8_SRGB", 4u, 4u, true, 1.5f / 255.0f, false},
++   {VK_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", 4u, 4u, false, 1.5f / 255.0f,
++    1.0f, false, false},
++   {VK_FORMAT_R8G8B8A8_SRGB, "R8G8B8A8_SRGB", 4u, 4u, true, 1.5f / 255.0f, 1.0f,
++    false, false},
 +   /* Fewer than four components: Metal still weights with the source alpha the
 +    * fragment function returns, so the return value may not be narrowed to the
 +    * attachment. */
 +   {VK_FORMAT_R5G6B5_UNORM_PACK16, "R5G6B5_UNORM_PACK16", 3u, 2u, false,
-+    1.5f / 31.0f, false},
-+   {VK_FORMAT_R8G8_UNORM, "R8G8_UNORM", 2u, 2u, false, 1.5f / 255.0f, false},
-+   {VK_FORMAT_R8_UNORM, "R8_UNORM", 1u, 1u, false, 1.5f / 255.0f, false},
++    1.5f / 31.0f, 1.0f, false, false},
++   {VK_FORMAT_R8G8_UNORM, "R8G8_UNORM", 2u, 2u, false, 1.5f / 255.0f, 1.0f,
++    false, false},
++   {VK_FORMAT_R8_UNORM, "R8_UNORM", 1u, 1u, false, 1.5f / 255.0f, 1.0f, false,
++    false},
 +   /* Metal has no B4G4R4A4, so the view reaches a compatible format through a
 +    * channel swizzle that the blend unit does not apply. */
 +   {VK_FORMAT_B4G4R4A4_UNORM_PACK16, "B4G4R4A4_UNORM_PACK16", 4u, 2u, false,
-+    1.5f / 15.0f, false},
++    1.5f / 15.0f, 1.0f, false, false},
++   /* Three 9-bit mantissas over one shared 5-bit exponent.  It stores values
++    * above one, and at every value this test renders the quantum is at most
++    * 2^-8, which 1.5/255 covers. */
++   {VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, "E5B9G9R9_UFLOAT_PACK32", 3u, 4u, false,
++    1.5f / 255.0f, 65408.0f, true, false},
 +   {VK_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM (dead index 1 output)", 4u, 4u,
-+    false, 1.5f / 255.0f, true},
++    false, 1.5f / 255.0f, 1.0f, false, true},
 +};
 +
 +static float decode_channel(const Format &format, const uint8_t *texel,
@@ -1672,6 +1716,16 @@ index 00000000..889b8c4a
 +      static const uint32_t shift[4] = {4u, 8u, 12u, 0u};
 +      const uint32_t v = (uint32_t)texel[0] | ((uint32_t)texel[1] << 8);
 +      return ((v >> shift[channel]) & 0xfu) / 15.0f;
++   }
++   case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32: {
++      /* PACK32 names the fields from the most significant end - E5 B9 G9 R9 -
++       * so R occupies bits 8..0, G 17..9 and B 26..18, and every mantissa is
++       * scaled by the one exponent in 31..27. */
++      const uint32_t v = (uint32_t)texel[0] | ((uint32_t)texel[1] << 8) |
++                         ((uint32_t)texel[2] << 16) | ((uint32_t)texel[3] << 24);
++      const uint32_t mantissa = (v >> (channel * 9u)) & 0x1ffu;
++      const int exponent = (int)(v >> 27) - 24;
++      return (float)mantissa * std::ldexp(1.0f, exponent);
 +   }
 +   default:
 +      return texel[channel] / 255.0f;
@@ -1736,6 +1790,12 @@ index 00000000..889b8c4a
 +   {"write_mask_alpha_only_disabled", false, VK_BLEND_FACTOR_ONE,
 +    VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE,
 +    VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, VK_COLOR_COMPONENT_A_BIT},
++   /* Every colour channel and no alpha: the only partial mask a
++    * shared-exponent attachment accepts. */
++   {"write_mask_rgb", true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
++    VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD,
++    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
++       VK_COLOR_COMPONENT_B_BIT},
 +};
 +
 +int main()
@@ -1998,6 +2058,18 @@ index 00000000..889b8c4a
 +      const Rgba constant{{0.25f, 0.5f, 0.75f, 0.5f}};
 +
 +      for (const Case &test : kCases) {
++         const VkColorComponentFlags colour_bits =
++            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
++            VK_COLOR_COMPONENT_B_BIT;
++         const VkColorComponentFlags colour_written =
++            test.write_mask & colour_bits;
++         if (target.shared_exponent && colour_written != 0u &&
++             colour_written != colour_bits) {
++            /* Masking one channel of a shared exponent is invalid usage. */
++            std::printf("  %-32s skipped\n", test.name);
++            continue;
++         }
++
 +         VkPipelineShaderStageCreateInfo stages[2]{};
 +         stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
 +         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -2179,7 +2251,7 @@ index 00000000..889b8c4a
 +            const bool written = (test.write_mask & (1u << c)) != 0;
 +            if (!written)
 +               value = reference_destination.v[c];
-+            value = std::fmin(std::fmax(value, 0.0f), 1.0f);
++            value = std::fmin(std::fmax(value, 0.0f), target.maximum);
 +            /* Only the three colour channels carry the transfer function. */
 +            expected.v[c] = (encoded && c < 3u) ? srgb_encode(value) : value;
 +         }

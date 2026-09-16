@@ -1,4 +1,4 @@
-From c10c2f0bd69f5ce9a06826fa0da15f2be0139146 Mon Sep 17 00:00:00 2001
+From e895563298cb8e7002792fafe7500baae721200e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:45:56 +0900
 Subject: [PATCH 79/88] kosmickrisp: widen 16-bit varyings to the slot Metal
@@ -157,10 +157,10 @@ index ce2b4046..5749fb5e 100644
        .uniformAndStorageBuffer16BitAccess = true,
        .variablePointers = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 0ca5c5aa..9adae2af 100644
+index b81512ce..bb548fa9 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -5242,6 +5242,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5263,6 +5263,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        nir_shader_gather_info(fs, nir_shader_get_entrypoint(fs));
     }
  

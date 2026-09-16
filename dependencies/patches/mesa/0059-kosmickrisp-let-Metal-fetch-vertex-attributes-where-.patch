@@ -1,4 +1,4 @@
-From 3c8fe5ebd53c7ffb3b37d3f6d5a17cc0063331f3 Mon Sep 17 00:00:00 2001
+From e059cbcf153b7f39e17b7cb173e03dda5710ce31 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 18:41:01 +0900
 Subject: [PATCH 59/88] kosmickrisp: let Metal fetch vertex attributes where
@@ -559,7 +559,7 @@ index a31eadde..4e246852 100644
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 2dfec72c..e70fb883 100644
+index ec175936..b2787b43 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -384,6 +384,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
@@ -909,7 +909,7 @@ index 2dfec72c..e70fb883 100644
  
     struct nir_to_msl_options translate_options = {
        .mem_ctx = NULL,
-@@ -4131,6 +4433,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4152,6 +4454,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
     mtl_render_pipeline_descriptor_set_input_primitive_topology(
        pipeline_descriptor, vs->info.vs.topology);
  
