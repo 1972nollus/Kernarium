@@ -529,6 +529,83 @@ int main()
 
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glDeleteBuffers(1, &indirectBuffer);
+
+    // Everything above measured one draw per query with a glFinish after it and
+    // never changed primitive type in between. The CTS does none of that: it
+    // runs 576 queries back to back in one context, interleaves primitive
+    // types, and synchronises only through the blocking query read. Zink
+    // records the line-loop flag per query start and only resynchronises the
+    // start when the flag CHANGES, so alternating primitive types is the state
+    // the flag logic actually has to survive. Repeat the sweep that way.
+    const auto measureInterleaved = [](const char* entryPoint, GLsizei instances, auto&& draw) {
+        // A triangle draw in its own query first, so the line-loop flag has to
+        // flip on every measurement rather than staying constant.
+        GLuint warmQuery = 0;
+        glGenQueries(1, &warmQuery);
+        glBeginQuery(GL_VERTICES_SUBMITTED_ARB, warmQuery);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+        GLuint warm = 0;
+        glGetQueryObjectuiv(warmQuery, GL_QUERY_RESULT, &warm);
+        glDeleteQueries(1, &warmQuery);
+
+        GLuint entryQuery = 0;
+        glGenQueries(1, &entryQuery);
+        glBeginQuery(GL_VERTICES_SUBMITTED_ARB, entryQuery);
+        draw();
+        glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+        // No glFinish: the blocking result read is the only sync, as in the CTS.
+        GLuint counted = 0;
+        glGetQueryObjectuiv(entryQuery, GL_QUERY_RESULT, &counted);
+        glDeleteQueries(1, &entryQuery);
+
+        const GLuint expected = static_cast<GLuint>(loopVertexCount)
+            * static_cast<GLuint>(instances);
+        const GLuint tolerated = expected + static_cast<GLuint>(instances);
+        const bool ok = counted == expected || counted == tolerated;
+        std::fprintf(
+            stderr,
+            "Host line-loop statistics: interleaved %-36s -> %3u "
+            "(expected %u or %u, triangles control %u) %s%s\n",
+            entryPoint,
+            counted,
+            expected,
+            tolerated,
+            warm,
+            ok ? "ok" : "MISMATCH",
+            counted == expected * 2U ? " EXACTLY DOUBLE" : "");
+        if (!ok)
+            ++failureCount;
+    };
+
+    measureInterleaved("glDrawArrays", 1, [] {
+        glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    });
+    measureInterleaved("glDrawElements", 1, [] {
+        glDrawElements(GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr);
+    });
+    measureInterleaved("glDrawRangeElements", 1, [] {
+        glDrawRangeElements(
+            GL_LINE_LOOP, 0, static_cast<GLuint>(loopVertexCount) - 1U,
+            loopVertexCount, GL_UNSIGNED_INT, nullptr);
+    });
+    measureInterleaved("glDrawRangeElementsBaseVertex", 1, [] {
+        glDrawRangeElementsBaseVertex(
+            GL_LINE_LOOP, 0, static_cast<GLuint>(loopVertexCount) - 1U,
+            loopVertexCount, GL_UNSIGNED_INT, nullptr, 0);
+    });
+    if (glVersion >= 42) {
+        measureInterleaved("glDrawArraysInstancedBaseInstance", instanceCount, [] {
+            glDrawArraysInstancedBaseInstance(
+                GL_LINE_LOOP, 0, loopVertexCount, instanceCount, 0);
+        });
+        measureInterleaved("glDrawElementsInstancedBaseInstance", instanceCount, [] {
+            glDrawElementsInstancedBaseInstance(
+                GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr,
+                instanceCount, 0);
+        });
+    }
+
     glDeleteBuffers(1, &indexBuffer);
 
     const bool acceptable =
