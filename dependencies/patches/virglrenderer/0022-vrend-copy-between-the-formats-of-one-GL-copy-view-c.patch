@@ -1,7 +1,7 @@
 From 76c3c24300c3647a67a64b9caa5ee0dea7d4d30b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:50:05 +0900
-Subject: [PATCH 22/47] vrend: copy between the formats of one GL copy view
+Subject: [PATCH 22/48] vrend: copy between the formats of one GL copy view
  class
 
 glCopyImageSubData moves texel bits, and GL puts every uncompressed

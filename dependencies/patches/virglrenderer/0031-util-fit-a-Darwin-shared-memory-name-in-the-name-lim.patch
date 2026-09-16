@@ -1,7 +1,7 @@
 From c608a83b705cd168b49968ad65f35e7216e3e2dc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 01:21:22 +0900
-Subject: [PATCH 31/47] util: fit a Darwin shared-memory name in the name limit
+Subject: [PATCH 31/48] util: fit a Darwin shared-memory name in the name limit
 
 Darwin accepts a POSIX shared-memory name of at most 31 characters including
 the leading slash and fails a longer one with ENAMETOOLONG rather than

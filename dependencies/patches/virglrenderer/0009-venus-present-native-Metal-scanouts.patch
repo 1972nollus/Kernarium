@@ -1,7 +1,7 @@
 From 4b4f388415bb7a60539e757db25084eaa5d5e8b3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:14 +0900
-Subject: [PATCH 09/47] venus: present native Metal scanouts
+Subject: [PATCH 09/48] venus: present native Metal scanouts
 
 ---
  src/venus/vkr_device.c          |  17 ++++
