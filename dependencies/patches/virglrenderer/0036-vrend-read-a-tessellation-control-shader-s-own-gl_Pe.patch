@@ -1,7 +1,7 @@
 From 453a3bdad6cd7f7e1b8eae922fdc6c3b6aa5339f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 13:58:27 +0900
-Subject: [PATCH 36/46] vrend: read a tessellation control shader's own
+Subject: [PATCH 36/47] vrend: read a tessellation control shader's own
  gl_PerVertex output
 
 A tessellation control shader may read any patch vertex's gl_Position or
