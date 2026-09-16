@@ -1,4 +1,4 @@
-From bcf0bb6822062952174bc0ab61c81ede74a37b02 Mon Sep 17 00:00:00 2001
+From 47d032dcd38b20ffb440e5a5de08937bba275230 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:45:41 +0900
 Subject: [PATCH 19/47] vrend: require EXT_texture_shadow_lod only for a real
@@ -33,30 +33,38 @@ only the extension line is rejected: "0:2(12): error: extension
 `GL_EXT_texture_shadow_lod' unsupported in vertex shader", after which the
 context fails to dispatch DRAW_VBO.
 
-Ask for the extension from the four opcodes that pass a bias or an explicit
-LOD instead of naming the ones that do not, so a later operand in that buffer
-cannot reintroduce the same mistake. The GLES-only requirement that covers
-the textureOffset forms core ESSL leaves out follows the same rule and keeps
-its offset case, except for TXD: textureGradOffset on sampler2DArrayShadow is
-core ESSL as well. A host that does advertise the extension is unaffected,
-because the requirement was never what made any of these forms work: the
-generated call is the same either way.
+Ask for the extension from the opcodes that pass a bias or an explicit LOD
+instead of naming the ones that do not, so a later operand in that buffer
+cannot reintroduce the same mistake, and pair each of those two forms with
+the samplers core really leaves it out for. They are not the same set:
+texture(samplerCubeShadow, vec4, float) is core GLSL and core ESSL, and only
+textureLod on that sampler is an addition, whereas both forms are additions
+on sampler2DArrayShadow and samplerCubeArrayShadow. Asking for the extension
+on the biased cube-shadow lookup rejected the shader of
+dEQP-GLES3.functional.shaders.texture_functions.texture.
+samplercubeshadow_bias_fragment, which reported the dropped draw as an image
+difference of 3187.09 against a threshold of 0.07 while every one of its
+unbiased and non-shadow siblings passed. The GLES-only requirement that
+covers the textureOffset forms core ESSL leaves out follows the same rule and
+keeps its offset case, except for TXD: textureGradOffset on
+sampler2DArrayShadow is core ESSL as well. A host that does advertise the
+extension is unaffected, because the requirement was never what made any of
+these forms work: the generated call is the same either way.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_shader.c | 29 +++++++++++++++++++++++++----
- 1 file changed, 25 insertions(+), 4 deletions(-)
+ src/vrend/vrend_shader.c | 44 ++++++++++++++++++++++++++++++++++------
+ 1 file changed, 38 insertions(+), 6 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 83f8bad..5d9d12f 100644
+index 83f8bad..be7fdce 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -3366,15 +3366,36 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3366,15 +3366,47 @@ static void translate_tex(struct dump_ctx *ctx,
  
     bool has_bias = strbuf_get_len (&bias_buf) != 0;
     bool has_offset = strbuf_get_len (&offset_buf) != 0;
 -   // EXT_texture_shadow_lod defines a few more functions handling bias
--   if (has_bias &&
 +   // Every operand that does not fit the coordinate vector is appended to the
 +   // same buffer a LOD bias uses, so several lookups look biased although
 +   // nothing about them is. EXT_texture_shadow_lod only adds the bias and
@@ -69,16 +77,30 @@ index 83f8bad..5d9d12f 100644
 +   // sampler2DArrayShadow or samplerCubeShadow are all core GLSL and core
 +   // ESSL. Requiring the extension for them fails to compile on a host that
 +   // has no reason to implement it.
-+   const bool lookup_passes_lod =
++   const bool lookup_passes_bias =
 +      inst->Instruction.Opcode == TGSI_OPCODE_TXB ||
++      inst->Instruction.Opcode == TGSI_OPCODE_TXB2;
++   const bool lookup_passes_explicit_lod =
 +      inst->Instruction.Opcode == TGSI_OPCODE_TXL ||
-+      inst->Instruction.Opcode == TGSI_OPCODE_TXB2 ||
 +      inst->Instruction.Opcode == TGSI_OPCODE_TXL2;
++   const bool lookup_passes_lod = lookup_passes_bias || lookup_passes_explicit_lod;
 +
-+   if (has_bias && lookup_passes_lod &&
-        (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
-         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE ||
-         inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY))
++   // Core does not leave the same form out for every one of those samplers.
++   // texture(samplerCubeShadow, vec4, float) is core GLSL and core ESSL, so a
++   // biased cube-shadow lookup must not ask for the extension either, while
++   // textureLod on that sampler, and both forms on sampler2DArrayShadow and
++   // samplerCubeArrayShadow, really are additions.
+    if (has_bias &&
+-       (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
+-        inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE ||
+-        inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY))
++       ((lookup_passes_bias &&
++         (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
++          inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY)) ||
++        (lookup_passes_explicit_lod &&
++         (inst->Texture.Texture == TGSI_TEXTURE_SHADOW2D_ARRAY ||
++          inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE ||
++          inst->Texture.Texture == TGSI_TEXTURE_SHADOWCUBE_ARRAY))))
        ctx->shader_req_bits |= SHADER_REQ_TEXTURE_SHADOW_LOD;
  
 -   // EXT_texture_shadow_lod also adds the missing textureOffset for 2DArrayShadow in GLES

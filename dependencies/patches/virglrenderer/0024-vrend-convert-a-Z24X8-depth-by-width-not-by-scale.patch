@@ -1,4 +1,4 @@
-From b191983b378bdb20c6d66d4175a4c726143567f5 Mon Sep 17 00:00:00 2001
+From be8353428a72d029268000eb4ab51c83a343c19d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 07:06:41 +0900
 Subject: [PATCH 24/47] vrend: convert a Z24X8 depth by width, not by scale

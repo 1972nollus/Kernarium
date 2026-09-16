@@ -1,4 +1,4 @@
-From a3d560eeae90aabc678ce9a2ed11027a0fc21f1e Mon Sep 17 00:00:00 2001
+From 5dd85a9a8f2ce6bfa190df90e88b60bc2ab284f3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 09:03:51 +0900
 Subject: [PATCH 44/47] vrend: resolve an indirect atomic counter against its
@@ -28,10 +28,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 16 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index d42c41f..44a9326 100644
+index e29aef3..8ea2e99 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -5397,26 +5397,43 @@ get_source_info(struct dump_ctx *ctx,
+@@ -5408,26 +5408,43 @@ get_source_info(struct dump_ctx *ctx,
              return false;
        } break;
        case TGSI_FILE_HW_ATOMIC: {

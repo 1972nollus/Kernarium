@@ -1,4 +1,4 @@
-From 52a1b2413f4f94a0a48058e06f3dcc902c2e569d Mon Sep 17 00:00:00 2001
+From 6e280e87ec49707b6f71a473a18a82595d41d6fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:43:43 +0900
 Subject: [PATCH 46/47] vrend: give an unbound shader image its own empty image

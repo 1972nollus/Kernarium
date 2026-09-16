@@ -1,4 +1,4 @@
-From 3401b4a5051534a0fcd6b18ae891d96103482eef Mon Sep 17 00:00:00 2001
+From ec4bee6186bb520ee8e5a6090fdd04c8eb6c152e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 08:56:52 +0900
 Subject: [PATCH 43/47] vrend: emit a geometry shader's own clip and cull
@@ -36,10 +36,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index d6eb82a..d42c41f 100644
+index ef77db6..e29aef3 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -6198,7 +6198,16 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6209,7 +6209,16 @@ iter_instruction(struct tgsi_iterate_context *iter,
           struct immed *imd = &ctx->imm[inst->Src[0].Register.Index];
           if (ctx->so && ctx->key->gs_present)
              emit_so_movs(ctx, &ctx->glsl_strbufs, &ctx->has_clipvertex_so);
