@@ -1,0 +1,562 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// GL_VERTICES_SUBMITTED_ARB counts the vertices an application submitted, not
+// the vertices the driver went on to assemble. A GL_LINE_LOOP over N vertices
+// is N segments, so a driver that closes the loop by decomposing it into N
+// independent lines hands the rasterizer 2N vertices. If the statistic is read
+// after that decomposition it reports 2N, which is what
+// KHR-GL46.pipeline_statistics_query_tests_ARB.functional_primitives_vertices_
+// submitted_and_clipping_input_output_primitives checks and rejects.
+//
+// This matters here because the host stack decomposes: Zink does not advertise
+// MESA_PRIM_LINE_LOOP (zink_screen.c clears the bit unconditionally), so Mesa
+// converts every line loop through u_primconvert before the driver sees it,
+// while virglrenderer does advertise PIPE_PRIM_LINE_LOOP to the guest and so
+// passes guest line loops through untouched. Mesa flags the conversion with
+// pipe_draw_info::was_line_loop precisely so a driver can subtract it back out
+// of the statistic.
+//
+// The contract under test is that contract, on the host GL stack alone, with
+// no guest and no virtio transport: a line loop of N vertices must report N
+// submitted vertices. The spec permits N+1 -- an implementation may count the
+// vertex that closes the loop -- so both are accepted, and only the doubled
+// count is a failure.
+
+#include "host_gl_provider.hpp"
+
+#include <epoxy/gl.h>
+
+extern "C" {
+#include <virglrenderer.h>
+}
+
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string_view>
+
+namespace {
+
+int failureCount = 0;
+
+void check(bool condition, std::string_view description)
+{
+    if (condition)
+        return;
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: %.*s\n",
+        static_cast<int>(description.size()),
+        description.data());
+    ++failureCount;
+}
+
+constexpr GLsizei loopVertexCount = 7;
+
+constexpr const char* vertexSource =
+    "#version 330 core\n"
+    "layout(location = 0) in vec2 position;\n"
+    "void main() { gl_Position = vec4(position, 0.0, 1.0); }\n";
+
+constexpr const char* fragmentSource =
+    "#version 330 core\n"
+    "out vec4 colour;\n"
+    "void main() { colour = vec4(1.0); }\n";
+
+[[nodiscard]] GLuint compile(GLenum stage, const char* source)
+{
+    const GLuint shader = glCreateShader(stage);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint compiled = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (compiled == GL_FALSE) {
+        std::array<char, 512> log {};
+        glGetShaderInfoLog(shader, log.size(), nullptr, log.data());
+        std::fprintf(stderr, "Host line-loop statistics: shader: %s\n", log.data());
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+} // namespace
+
+int main()
+{
+    uml::gpu::HostGlProvider provider;
+    if (provider.display() == nullptr) {
+        std::fputs("no host GL display; skipping\n", stderr);
+        return 0;
+    }
+    // virglrenderer builds its contexts either way depending on
+    // use_core_profile, and the statistic path may differ between them, so let
+    // the probe cover both.
+    const char* compat = std::getenv("UML_LINE_LOOP_COMPAT_CTX");
+    virgl_renderer_gl_ctx_param parameters {
+        .version = 2,
+        .shared = false,
+        .major_ver = 4,
+        .minor_ver = 6,
+        .compat_ctx = (compat != nullptr && compat[0] == '1') ? 1 : 0,
+    };
+    void* context = provider.createContext(parameters);
+    if (context == nullptr) {
+        std::fputs("no host GL context; skipping\n", stderr);
+        return 0;
+    }
+    if (provider.makeCurrent(context) != 0) {
+        std::fputs("host GL context would not bind; skipping\n", stderr);
+        return 0;
+    }
+
+    // The statistic is an ARB_pipeline_statistics_query counter; without it
+    // there is nothing to assert against.
+    if (epoxy_gl_version() < 46 && !epoxy_has_gl_extension("GL_ARB_pipeline_statistics_query")) {
+        std::fputs("no ARB_pipeline_statistics_query; skipping\n", stderr);
+        return 0;
+    }
+
+    GLuint colour = 0;
+    glGenTextures(1, &colour);
+    glBindTexture(GL_TEXTURE_2D, colour);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    GLuint framebuffer = 0;
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colour, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::fputs("host framebuffer incomplete; skipping\n", stderr);
+        return 0;
+    }
+    glViewport(0, 0, 64, 64);
+
+    const GLuint vertex = compile(GL_VERTEX_SHADER, vertexSource);
+    const GLuint fragment = compile(GL_FRAGMENT_SHADER, fragmentSource);
+    if (vertex == 0 || fragment == 0)
+        return EXIT_FAILURE;
+    const GLuint program = glCreateProgram();
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glLinkProgram(program);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    check(linked == GL_TRUE, "the probe program did not link");
+    if (linked != GL_TRUE)
+        return EXIT_FAILURE;
+    glUseProgram(program);
+
+    // A regular heptagon, so every vertex is distinct and inside the viewport.
+    std::array<float, loopVertexCount * 2> positions {};
+    for (int index = 0; index < loopVertexCount; ++index) {
+        const double angle = 6.283185307179586 * index / loopVertexCount;
+        positions[static_cast<std::size_t>(index) * 2] =
+            static_cast<float>(0.5 * std::cos(angle));
+        positions[static_cast<std::size_t>(index) * 2 + 1] =
+            static_cast<float>(0.5 * std::sin(angle));
+    }
+    GLuint array = 0;
+    glGenVertexArrays(1, &array);
+    glBindVertexArray(array);
+    GLuint buffer = 0;
+    glGenBuffers(1, &buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(positions.size() * sizeof(float)),
+        positions.data(),
+        GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+
+    while (glGetError() != GL_NO_ERROR) { }
+
+    GLuint query = 0;
+    glGenQueries(1, &query);
+    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, query);
+    glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+    glFinish();
+
+    check(glGetError() == GL_NO_ERROR, "the line-loop draw raised a GL error");
+
+    GLuint submitted = 0;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &submitted);
+
+    // Say what was measured and on what, so a pass is evidence the path ran
+    // rather than evidence the driver never converted anything.
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: renderer=\"%s\" version=\"%s\"\n",
+        reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
+        reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: GL_LINE_LOOP n=%d -> "
+        "GL_VERTICES_SUBMITTED_ARB=%u\n",
+        loopVertexCount,
+        submitted);
+
+    // Same draw as independent lines: the count the decomposition would give.
+    GLuint linesQuery = 0;
+    glGenQueries(1, &linesQuery);
+    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, linesQuery);
+    glDrawArrays(GL_LINES, 0, loopVertexCount - 1);
+    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+    glFinish();
+    GLuint lines = 0;
+    glGetQueryObjectuiv(linesQuery, GL_QUERY_RESULT, &lines);
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: GL_LINES n=%d -> "
+        "GL_VERTICES_SUBMITTED_ARB=%u (control)\n",
+        loopVertexCount - 1,
+        lines);
+    glDeleteQueries(1, &linesQuery);
+
+    // virglrenderer issues an ordinary guest draw through the INSTANCED entry
+    // point whenever instance_count is set, which it is for a plain draw, so
+    // this is the call the guest's line loop actually reaches.
+    GLuint instancedQuery = 0;
+    glGenQueries(1, &instancedQuery);
+    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, instancedQuery);
+    glDrawArraysInstancedARB(GL_LINE_LOOP, 0, loopVertexCount, 1);
+    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+    glFinish();
+    GLuint instanced = 0;
+    glGetQueryObjectuiv(instancedQuery, GL_QUERY_RESULT, &instanced);
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: glDrawArraysInstanced GL_LINE_LOOP n=%d "
+        "instances=1 -> GL_VERTICES_SUBMITTED_ARB=%u\n",
+        loopVertexCount,
+        instanced);
+    glDeleteQueries(1, &instancedQuery);
+
+    // The CTS case queries clipping primitives alongside the submitted
+    // vertices, and Zink splits a statistics query's starts when the line-loop
+    // flag changes. Run the same line loop with a second statistics query
+    // active, which is the shape the failing case actually uses.
+    GLuint pairVertices = 0;
+    GLuint pairClipping = 0;
+    glGenQueries(1, &pairVertices);
+    glGenQueries(1, &pairClipping);
+    glBeginQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB, pairClipping);
+    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, pairVertices);
+    glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+    glEndQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB);
+    glFinish();
+    GLuint paired = 0;
+    GLuint clipped = 0;
+    glGetQueryObjectuiv(pairVertices, GL_QUERY_RESULT, &paired);
+    glGetQueryObjectuiv(pairClipping, GL_QUERY_RESULT, &clipped);
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: with a clipping query active, "
+        "GL_LINE_LOOP n=%d -> GL_VERTICES_SUBMITTED_ARB=%u "
+        "(clipping input primitives=%u)\n",
+        loopVertexCount,
+        paired,
+        clipped);
+    glDeleteQueries(1, &pairVertices);
+    glDeleteQueries(1, &pairClipping);
+
+    // Zink suspends and resumes statistics queries across renderpass
+    // boundaries, and the line-loop flag is recorded per query start. A guest
+    // driving the host through virglrenderer changes render targets constantly,
+    // so bracket the draw with a framebuffer change -- the shape a standalone
+    // probe otherwise never produces.
+    GLuint scratch = 0;
+    glGenTextures(1, &scratch);
+    glBindTexture(GL_TEXTURE_2D, scratch);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 32, 32, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    GLuint scratchFbo = 0;
+    glGenFramebuffers(1, &scratchFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, scratchFbo);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, scratch, 0);
+
+    GLuint rpQuery = 0;
+    glGenQueries(1, &rpQuery);
+    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, rpQuery);
+    // Force a renderpass boundary inside the query, then draw the loop.
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, 64, 64);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    glBindFramebuffer(GL_FRAMEBUFFER, scratchFbo);
+    glViewport(0, 0, 32, 32);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, 64, 64);
+    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+    glFinish();
+    GLuint acrossRenderpass = 0;
+    glGetQueryObjectuiv(rpQuery, GL_QUERY_RESULT, &acrossRenderpass);
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: across a renderpass change, GL_LINE_LOOP "
+        "n=%d -> GL_VERTICES_SUBMITTED_ARB=%u\n",
+        loopVertexCount,
+        acrossRenderpass);
+    glDeleteQueries(1, &rpQuery);
+
+    // The CTS case reports the entry point with every mismatch, and it fails on
+    // six of them while passing on the plain ones. So the entry point, not the
+    // primitive mode alone, decides whether the line-loop compensation applies.
+    // Measure each entry point the case names, with the plain draws as controls.
+    std::array<std::uint32_t, loopVertexCount> indices {};
+    for (std::uint32_t index = 0;
+         index < static_cast<std::uint32_t>(loopVertexCount);
+         ++index)
+        indices[index] = index;
+    GLuint indexBuffer = 0;
+    glGenBuffers(1, &indexBuffer);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glBufferData(
+        GL_ELEMENT_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)),
+        indices.data(),
+        GL_STATIC_DRAW);
+
+    constexpr GLsizei instanceCount = 3;
+
+    const std::array<std::uint32_t, 5> indirectCommand {
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount),
+        0U,
+        0U,
+        0U,
+    };
+    GLuint indirectBuffer = 0;
+    glGenBuffers(1, &indirectBuffer);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
+    glBufferData(
+        GL_DRAW_INDIRECT_BUFFER,
+        static_cast<GLsizeiptr>(indirectCommand.size() * sizeof(std::uint32_t)),
+        indirectCommand.data(),
+        GL_STATIC_DRAW);
+
+    while (glGetError() != GL_NO_ERROR) { }
+
+    const auto measure = [](const char* entryPoint, GLsizei instances, auto&& draw) {
+        GLuint entryQuery = 0;
+        glGenQueries(1, &entryQuery);
+        glBeginQuery(GL_VERTICES_SUBMITTED_ARB, entryQuery);
+        draw();
+        glEndQuery(GL_VERTICES_SUBMITTED_ARB);
+        glFinish();
+        const GLenum error = glGetError();
+        GLuint counted = 0;
+        glGetQueryObjectuiv(entryQuery, GL_QUERY_RESULT, &counted);
+        glDeleteQueries(1, &entryQuery);
+
+        const GLuint expected = static_cast<GLuint>(loopVertexCount)
+            * static_cast<GLuint>(instances);
+        const GLuint tolerated = expected + static_cast<GLuint>(instances);
+        const bool ok = counted == expected || counted == tolerated;
+        std::fprintf(
+            stderr,
+            "Host line-loop statistics: %-36s instances=%d -> %3u "
+            "(expected %u or %u) %s%s\n",
+            entryPoint,
+            instances,
+            counted,
+            expected,
+            tolerated,
+            ok ? "ok" : "MISMATCH",
+            counted == expected * 2U ? " EXACTLY DOUBLE" : "");
+        if (error != GL_NO_ERROR)
+            std::fprintf(
+                stderr,
+                "Host line-loop statistics: %s raised GL error 0x%04x\n",
+                entryPoint,
+                error);
+        if (!ok)
+            ++failureCount;
+    };
+
+    const int glVersion = epoxy_gl_version();
+
+    measure("glDrawArrays (control)", 1, [] {
+        glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    });
+    measure("glDrawArraysInstanced (control)", instanceCount, [] {
+        glDrawArraysInstanced(GL_LINE_LOOP, 0, loopVertexCount, instanceCount);
+    });
+    measure("glDrawElements (control)", 1, [] {
+        glDrawElements(GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr);
+    });
+    measure("glDrawRangeElements", 1, [] {
+        glDrawRangeElements(
+            GL_LINE_LOOP,
+            0,
+            static_cast<GLuint>(loopVertexCount) - 1U,
+            loopVertexCount,
+            GL_UNSIGNED_INT,
+            nullptr);
+    });
+    measure("glDrawRangeElementsBaseVertex", 1, [] {
+        glDrawRangeElementsBaseVertex(
+            GL_LINE_LOOP,
+            0,
+            static_cast<GLuint>(loopVertexCount) - 1U,
+            loopVertexCount,
+            GL_UNSIGNED_INT,
+            nullptr,
+            0);
+    });
+    if (glVersion >= 42) {
+        measure("glDrawArraysInstancedBaseInstance", instanceCount, [] {
+            glDrawArraysInstancedBaseInstance(
+                GL_LINE_LOOP, 0, loopVertexCount, instanceCount, 0);
+        });
+        measure("glDrawElementsInstancedBaseInstance", instanceCount, [] {
+            glDrawElementsInstancedBaseInstance(
+                GL_LINE_LOOP,
+                loopVertexCount,
+                GL_UNSIGNED_INT,
+                nullptr,
+                instanceCount,
+                0);
+        });
+    } else {
+        std::fprintf(
+            stderr,
+            "Host line-loop statistics: no base-instance draws, GL %d.%d\n",
+            glVersion / 10,
+            glVersion % 10);
+    }
+    if (glVersion >= 40) {
+        measure("glDrawElementsIndirect", instanceCount, [] {
+            glDrawElementsIndirect(GL_LINE_LOOP, GL_UNSIGNED_INT, nullptr);
+        });
+    }
+
+    // virglrenderer picks its GL entry point from the virgl draw info, and a
+    // Gallium draw always carries instance_count >= 1, so a plain guest draw
+    // still reaches an *Instanced* entry point here. Cover every call in
+    // vrend_renderer.c's dispatch, so "the host is correct" means correct for
+    // everything the host can actually be asked to do.
+    measure("glDrawElementsInstancedARB", instanceCount, [] {
+        glDrawElementsInstancedARB(
+            GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr, instanceCount);
+    });
+    measure("glDrawElementsBaseVertex", 1, [] {
+        glDrawElementsBaseVertex(
+            GL_LINE_LOOP, loopVertexCount, GL_UNSIGNED_INT, nullptr, 0);
+    });
+    measure("glDrawElementsInstancedBaseVertex", instanceCount, [] {
+        glDrawElementsInstancedBaseVertex(
+            GL_LINE_LOOP,
+            loopVertexCount,
+            GL_UNSIGNED_INT,
+            nullptr,
+            instanceCount,
+            0);
+    });
+    if (glVersion >= 42) {
+        measure("glDrawElementsInstancedBaseVertexBaseInstance", instanceCount, [] {
+            glDrawElementsInstancedBaseVertexBaseInstance(
+                GL_LINE_LOOP,
+                loopVertexCount,
+                GL_UNSIGNED_INT,
+                nullptr,
+                instanceCount,
+                0,
+                0);
+        });
+    }
+
+    // glDrawArraysIndirect takes a four-word command, not the five-word
+    // elements one, so it needs its own buffer.
+    const std::array<std::uint32_t, 4> arraysIndirectCommand {
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount),
+        0U,
+        0U,
+    };
+    GLuint arraysIndirectBuffer = 0;
+    glGenBuffers(1, &arraysIndirectBuffer);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, arraysIndirectBuffer);
+    glBufferData(
+        GL_DRAW_INDIRECT_BUFFER,
+        static_cast<GLsizeiptr>(arraysIndirectCommand.size() * sizeof(std::uint32_t)),
+        arraysIndirectCommand.data(),
+        GL_STATIC_DRAW);
+    measure("glDrawArraysIndirect", instanceCount, [] {
+        glDrawArraysIndirect(GL_LINE_LOOP, nullptr);
+    });
+
+    // Two back-to-back commands, so the multi-draw entry points take their
+    // draw_count > 1 branch the way vrend does.
+    const std::array<std::uint32_t, 8> multiArraysCommands {
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount), 0U, 0U,
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount), 0U, 0U,
+    };
+    glBufferData(
+        GL_DRAW_INDIRECT_BUFFER,
+        static_cast<GLsizeiptr>(multiArraysCommands.size() * sizeof(std::uint32_t)),
+        multiArraysCommands.data(),
+        GL_STATIC_DRAW);
+    measure("glMultiDrawArraysIndirect", instanceCount * 2, [] {
+        glMultiDrawArraysIndirect(GL_LINE_LOOP, nullptr, 2, 0);
+    });
+
+    const std::array<std::uint32_t, 10> multiElementsCommands {
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount), 0U, 0U, 0U,
+        static_cast<std::uint32_t>(loopVertexCount),
+        static_cast<std::uint32_t>(instanceCount), 0U, 0U, 0U,
+    };
+    glBufferData(
+        GL_DRAW_INDIRECT_BUFFER,
+        static_cast<GLsizeiptr>(multiElementsCommands.size() * sizeof(std::uint32_t)),
+        multiElementsCommands.data(),
+        GL_STATIC_DRAW);
+    measure("glMultiDrawElementsIndirect", instanceCount * 2, [] {
+        glMultiDrawElementsIndirect(GL_LINE_LOOP, GL_UNSIGNED_INT, nullptr, 2, 0);
+    });
+
+    glDeleteBuffers(1, &arraysIndirectBuffer);
+
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glDeleteBuffers(1, &indirectBuffer);
+    glDeleteBuffers(1, &indexBuffer);
+
+    const bool acceptable =
+        submitted == static_cast<GLuint>(loopVertexCount)
+        || submitted == static_cast<GLuint>(loopVertexCount) + 1U;
+    if (!acceptable) {
+        std::fprintf(
+            stderr,
+            "Host line-loop statistics: GL_VERTICES_SUBMITTED_ARB reported %u "
+            "for a %d-vertex GL_LINE_LOOP; expected %d or %d%s\n",
+            submitted,
+            loopVertexCount,
+            loopVertexCount,
+            loopVertexCount + 1,
+            submitted == static_cast<GLuint>(loopVertexCount) * 2U
+                ? " (exactly double: the decomposed lines were counted)"
+                : "");
+        ++failureCount;
+    }
+
+    glDeleteQueries(1, &query);
+    glDeleteProgram(program);
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+
+    if (failureCount != 0)
+        return EXIT_FAILURE;
+
+    std::puts("Host line-loop statistics tests passed");
+    return 0;
+}
