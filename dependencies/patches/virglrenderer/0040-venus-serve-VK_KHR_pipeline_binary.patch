@@ -1,4 +1,4 @@
-From 775b9809308b9ce99ae136fefb1bf931ff75a2d3 Mon Sep 17 00:00:00 2001
+From 737eef7e70df6e0ff65fa1baa5f23412e3094742 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:29:09 +0900
 Subject: [PATCH 40/48] venus: serve VK_KHR_pipeline_binary
@@ -27,9 +27,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  src/venus/vkr_common.h   |   3 +
  src/venus/vkr_context.c  |   1 +
  src/venus/vkr_device.c   |   3 +
- src/venus/vkr_pipeline.c | 142 +++++++++++++++++++++++++++++++++++++++
+ src/venus/vkr_pipeline.c | 159 +++++++++++++++++++++++++++++++++++++++
  src/venus/vkr_pipeline.h |  10 +++
- 6 files changed, 160 insertions(+)
+ 6 files changed, 177 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
 index 7d6fb0f..d84de61 100644
@@ -91,10 +91,10 @@ index c2870a0..3dce07d 100644
           vkr_log("Unhandled vkr_object(%p) with VkObjectType(%u)", obj,
                   (uint32_t)obj->type);
 diff --git a/src/venus/vkr_pipeline.c b/src/venus/vkr_pipeline.c
-index d0d6f83..3a534ef 100644
+index d0d6f83..edc7022 100644
 --- a/src/venus/vkr_pipeline.c
 +++ b/src/venus/vkr_pipeline.c
-@@ -199,6 +199,132 @@ vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR(
+@@ -199,6 +199,149 @@ vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR(
                                                          args->group, args->groupShader);
  }
  
@@ -191,6 +191,23 @@ index d0d6f83..3a534ef 100644
 +   struct vkr_device *dev = vkr_device_from_handle(args->device);
 +   struct vn_device_proc_table *vk = &dev->proc_table;
 +
++   /* A pipeline key is derived from the pipeline create info the caller
++    * chains onto VkPipelineCreateInfoKHR.  No create info extends that
++    * structure, so the generated codecs know of nothing to carry in its chain
++    * and always deliver it empty; the driver, entitled to the structure the
++    * specification promises, reads the chain without checking it and faults.
++    * Refuse the request instead of handing over what the protocol emptied.
++    * Only a key for the device itself, which names no pipeline, survives the
++    * round trip.  VK_ERROR_UNKNOWN, not one of the out-of-memory codes the
++    * command otherwise returns: an out-of-memory result tells a caller that
++    * retrying may work and makes a test suite abandon its whole run, while
++    * this request can never be served. */
++   if (args->pPipelineCreateInfo != NULL &&
++       args->pPipelineCreateInfo->pNext == NULL) {
++      args->ret = VK_ERROR_UNKNOWN;
++      return;
++   }
++
 +   vn_replace_vkGetPipelineKeyKHR_args_handle(args);
 +   args->ret = vk->GetPipelineKeyKHR(args->device, args->pPipelineCreateInfo,
 +                                     args->pPipelineKey);
@@ -227,7 +244,7 @@ index d0d6f83..3a534ef 100644
  void
  vkr_context_init_shader_module_dispatch(struct vkr_context *ctx)
  {
-@@ -247,3 +373,19 @@ vkr_context_init_pipeline_dispatch(struct vkr_context *ctx)
+@@ -247,3 +390,19 @@ vkr_context_init_pipeline_dispatch(struct vkr_context *ctx)
     dispatch->dispatch_vkGetRayTracingShaderGroupStackSizeKHR =
        vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR;
  }
