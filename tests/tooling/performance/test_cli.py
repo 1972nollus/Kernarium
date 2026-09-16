@@ -245,6 +245,27 @@ def verify_kernarium_geekbench_contract() -> None:
                 f"Kernarium discard bootstrap is missing {token!r}"
             )
 
+    script_declaration = "constexpr std::string_view guestScriptBootstrap"
+    script_start = source.index(script_declaration)
+    script_end = source.index(")krn\";", script_start)
+    script_bootstrap = source[script_start:script_end]
+    for token in (
+        "KERNARIUM_GUEST_SCRIPT_READY",
+        "KERNARIUM_GUEST_SCRIPT_END:%s",
+        "pivot_root . .uml-lower",
+        'printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d',
+        "sh /tmp/kernarium-guest-script",
+        "poweroff -f",
+    ):
+        if token not in script_bootstrap:
+            raise RuntimeError(
+                f"Kernarium guest script bootstrap is missing {token!r}"
+            )
+    if "systemd" in script_bootstrap:
+        raise RuntimeError(
+            "Kernarium guest script bootstrap must not start systemd"
+        )
+
     run_source = source[source.index("int runtimeRun(") :]
     required_run_contract = (
         'environmentEnabled("KERNARIUM_GEEKBENCH")',
@@ -257,9 +278,13 @@ def verify_kernarium_geekbench_contract() -> None:
         "            bootMode,\n"
         "            geekbenchWorkloads,\n"
         "            discardBenchmarkMode,\n"
+        "            guestScript,\n"
         "            ctsCampaign,\n"
         "            derivativeRootfs}",
-        "if (!geekbench)",
+        'std::getenv("KERNARIUM_GUEST_SCRIPT")',
+        "validGuestScript(guestScript)",
+        "ConsoleBootMode::guestScript",
+        "if (!geekbench && !guestScriptRequested)",
         'arguments.emplace_back("systemd.unit=graphical.target")',
         ".run = runtimeRun",
     )

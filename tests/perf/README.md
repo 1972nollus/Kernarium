@@ -24,6 +24,16 @@ guest shell. A successful run must reach the ready/end markers, guest poweroff,
 and status-zero managed emulator return. Attached Instruments or other sampling
 changes the run into a diagnostic capture.
 
+`KERNARIUM_GUEST_SCRIPT` carries one base64 POSIX shell script over that same
+overlay, which is how a device runs the probe payloads and a Geekbench command
+line the fixed modes do not express. It is mutually exclusive with the other
+console modes. A host driving it must not key completion on a marker inside the
+script: the guest console echoes what it is fed and kernel timestamps interleave
+with that echo, so only the emulator's own return line is unambiguous. Back-to-
+back device runs also need a settle pause, because iOS releases the previous
+guest's wired window asynchronously and a run started too soon fails to wire
+its own.
+
 Profile readers under this directory summarize aggregate stacks, group them by
 workload, and compare two diagnostic captures. They do not decide acceptance
 without a matched benchmark or focused mechanism control.

@@ -103,14 +103,15 @@ def main() -> int:
         "Kernarium systemd boots must disable the Plymouth handoff that "
         "blocks before greetd on iOS",
     )
-    systemd_policy = """if (!geekbench) {
+    systemd_policy = """if (!geekbench && !guestScriptRequested) {
             arguments.emplace_back("systemd.unit=graphical.target");
             arguments.emplace_back("plymouth.enable=0");
         }"""
     require(
         systemd_policy in runtime_source,
         "Kernarium must apply the Plymouth policy with its systemd boot "
-        "arguments, leaving the direct Geekbench shell unchanged",
+        "arguments, leaving the direct Geekbench and guest script shells "
+        "unchanged",
     )
     bootstrap_fragments = []
     for name in ("desktopBootstrapPrefix", "desktopBootstrapSuffix"):
