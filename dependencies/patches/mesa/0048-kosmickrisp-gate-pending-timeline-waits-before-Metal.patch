@@ -1,7 +1,7 @@
 From 496997989e37b124dc2743ea8dd4df4ddde12ee7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
-Subject: [PATCH 48/85] kosmickrisp: gate pending timeline waits before Metal
+Subject: [PATCH 48/86] kosmickrisp: gate pending timeline waits before Metal
  submission
 
 Use on-demand common submission for unsatisfied timeline waits so Metal cannot retire a native event wait before the host signals it. Move reusable binary payloads correctly and stop the worker before device resource destruction.

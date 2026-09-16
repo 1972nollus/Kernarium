@@ -1,7 +1,7 @@
 From aedfbbffb21ff63d9ee384e9ee9bffa8a57b99b7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 02:12:09 +0900
-Subject: [PATCH 70/85] spirv: take vtn_bindgen2 from the system with the
+Subject: [PATCH 70/86] spirv: take vtn_bindgen2 from the system with the
  precomp compilers
 
 A cross build cannot compile vtn_bindgen2 itself: it is a build machine
