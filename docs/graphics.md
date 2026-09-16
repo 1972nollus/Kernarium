@@ -264,6 +264,16 @@ is keyed by internal pipeline descriptors and serializes only as a whole
 archive to a file URL, so it can neither produce one binary per pipeline nor
 return a binary's bytes.
 
+One of its five commands does not cross the ring. `vkGetPipelineKeyKHR` names
+the pipeline it should key through `VkPipelineCreateInfoKHR::pNext`, and no
+create info declares itself an extension of that structure, so the generated
+codecs carry nothing in that chain and the renderer receives it empty. The
+renderer refuses such a request with `VK_ERROR_UNKNOWN` instead of handing an
+empty chain to a driver entitled to read it; only a key for the device itself,
+which names no pipeline, survives the round trip. Carrying the create info
+would change the wire format, so it belongs with a guest image epoch built
+against the same protocol.
+
 ### Experimental host memory
 
 Native graphics allocations are separate from the configured guest RAM limit.
