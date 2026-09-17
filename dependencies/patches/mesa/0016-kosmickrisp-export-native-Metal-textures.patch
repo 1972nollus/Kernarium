@@ -1,7 +1,7 @@
 From e25d6b8185b66005b436fcfca9b7a2e0af05aae1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:09 +0900
-Subject: [PATCH 16/91] kosmickrisp: export native Metal textures
+Subject: [PATCH 16/92] kosmickrisp: export native Metal textures
 
 ---
  src/kosmickrisp/vulkan/kk_image.c           | 30 +++++++++++++++++++++

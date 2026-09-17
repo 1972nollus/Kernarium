@@ -1,7 +1,7 @@
 From 8eaf80d07bd890a3adc14409e0fe5477d97cd188 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
-Subject: [PATCH 33/91] kosmickrisp: precompile bounded raster executable
+Subject: [PATCH 33/92] kosmickrisp: precompile bounded raster executable
  classes
 
 kk_test_line_planner_bounds hands Metal a commit feedback block that points at

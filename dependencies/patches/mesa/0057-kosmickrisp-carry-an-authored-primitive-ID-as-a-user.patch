@@ -1,7 +1,7 @@
 From 1b56680161e94f81c65aadff9e403c89feb16718 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 19:01:17 +0900
-Subject: [PATCH 57/91] kosmickrisp: carry an authored primitive ID as a user
+Subject: [PATCH 57/92] kosmickrisp: carry an authored primitive ID as a user
  varying
 
 Metal's [[primitive_id]] is an unsigned value the rasterizer hands to the

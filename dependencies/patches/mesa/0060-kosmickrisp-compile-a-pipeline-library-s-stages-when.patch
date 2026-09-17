@@ -1,7 +1,7 @@
 From 365461faa4d2dcc33d4b8a83175798fbbea1387c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 20:36:41 +0900
-Subject: [PATCH 60/91] kosmickrisp: compile a pipeline library's stages when
+Subject: [PATCH 60/92] kosmickrisp: compile a pipeline library's stages when
  it is created
 
 VK_EXT_graphics_pipeline_library promises that linking libraries is cheap
