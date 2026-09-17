@@ -60,8 +60,13 @@ The main thread remains available for UIKit and MetalKit.
 
 All products use the same 128 TiB sparse software-MMU task range. The native
 kernel window contains guest RAM plus a page-rounded auxiliary allowance equal
-to RAM, bounded from 1 GiB to 4 GiB. macOS places the window at 96 TiB; iOS
-places it below its address ceiling.
+to RAM, bounded from 1 GiB to 4 GiB. macOS places the window at 96 TiB. iOS
+asks for the address below its ceiling and, when the host declines that hint,
+for wherever a window of that size fits: an iOS app's usable virtual range is
+not guaranteed to contain the compile-time envelope, and iOS 27 moved it out.
+The window is reserved before the guest starts so nothing else can take part of
+it, with only its first pages released for the kernel image and the reserved
+physical prefix, which their loaders place by hint.
 
 Accepted arm64-userspace mainline artifacts are shared by macOS and iOS within
 each page profile. The x86_64-userspace 4 KiB slice has a distinct artifact
