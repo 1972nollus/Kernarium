@@ -274,15 +274,18 @@ is keyed by internal pipeline descriptors and serializes only as a whole
 archive to a file URL, so it can neither produce one binary per pipeline nor
 return a binary's bytes.
 
-One of its five commands does not cross the ring. `vkGetPipelineKeyKHR` names
-the pipeline it should key through `VkPipelineCreateInfoKHR::pNext`, and no
-create info declares itself an extension of that structure, so the generated
-codecs carry nothing in that chain and the renderer receives it empty. The
-renderer refuses such a request with `VK_ERROR_UNKNOWN` instead of handing an
-empty chain to a driver entitled to read it; only a key for the device itself,
-which names no pipeline, survives the round trip. Carrying the create info
-would change the wire format, so it belongs with a guest image epoch built
-against the same protocol.
+`vkGetPipelineKeyKHR` names the pipeline it should key through
+`VkPipelineCreateInfoKHR::pNext`, and `vk.xml` gives that chain no member,
+because each structure a caller chains there is a pipeline create info in its
+own right rather than an extension of anything. The generator is told about
+the chain instead: the three pipeline create infos the command can be asked
+about, together with the structures that extend them, because a Venus chain
+travels flat and a node's own chain is encoded by the codec of the chain it
+belongs to. Without those siblings a dynamic-rendering or pipeline-binary
+chain would be dropped along with the create info's own extensions. The
+renderer still refuses a request that arrives with an empty chain, which the
+specification gives a caller no way to make and which the host driver would
+read without checking.
 
 ### Experimental host memory
 
