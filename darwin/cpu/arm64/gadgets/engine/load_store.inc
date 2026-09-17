@@ -182,13 +182,42 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	/* The baked family is one entry per guest register, so whatever each
+	 * copy holds is multiplied by 31. Only the fast path differs between
+	 * the copies; the TLB-miss and page-crossing tails are two thirds of
+	 * an entry and are reached only when the access leaves the cached
+	 * page, so they go to a cold section and the fast paths of a mode pack
+	 * together. Branches between the two are ordinary direct branches. */
+	.if \baked
+.Ltt_cold\@:
+	b .Ltt_cold_out\@
+.Lscalar_unsigned_cross\@:
+	b .Lscalar_unsigned_cross_out\@
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+	.endif
 	.if \load
+	.if \baked
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, .Lsb\@, x7, .Ltt_cold_out\@, .Ltt_resume\@, .Lscalar_unsigned_cross_out\@, \forward, outofline=1
+	.else
 	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
+	.endif
+	.else
+	.if \baked
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, .Lsb\@, x7, .Ltt_cold_out\@, .Ltt_resume\@, .Lscalar_unsigned_cross_out\@, \forward, outofline=1
 	.else
 	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, .Lsb\@, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_cross\@, \forward
 	.endif
+	.endif
 
+	.if \baked
+.Lscalar_unsigned_cross_out\@:
+	.else
 .Lscalar_unsigned_cross\@:
+	.endif
 	.if \load
 		.if \bits64
 	transfer_slow 0, x7, 8
@@ -226,6 +255,9 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.if \baked
+	.popsection
+	.endif
 	.if \forward
 .Lscalar_forward_alignment_read\@:
 	b .Lscalar_alignment_fault_read

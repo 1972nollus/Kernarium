@@ -203,7 +203,10 @@ NAME(uml_arm64_gadget_\name):
  * two builds emit different word counts per entry; whichever is shorter pads
  * the difference after its last branch, so both keep every later entry at the
  * same address for matched A/B layouts. */
-.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0
+/* outofline=1 when the caller places this tail in a section of its own: a
+ * conditional branch cannot leave its section, so the fault exit takes the
+ * same trampoline the forwarding arm already uses. */
+.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, outofline=0
 #if UML_GADGET_FUSED_TRANSLATE
 \cold:
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -224,7 +227,7 @@ NAME(uml_arm64_gadget_\name):
 	mov w2, #\access
 	bl NAME(uml_arm64_tlb_miss)
 	ldp x1, x2, [sp], #16
-	.if \forward
+	.if \forward || \outofline
 	cbnz x0, 94f
 	b uml_arm64_gadget_memory_fault
 94:
