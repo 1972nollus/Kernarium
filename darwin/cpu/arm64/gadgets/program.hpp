@@ -136,10 +136,13 @@ public:
 
 	void reserve(std::size_t requested)
 	{
-		if (requested <= capacity_)
+		/* Borrowed words are exactly the stream the cache allocated, and
+		 * nothing appends to or assigns over a stored program. Reaching
+		 * here with them is a bug either way, so let it fault on the
+		 * absent resource rather than quietly rewrite a live stream that
+		 * happened to be long enough. */
+		if (!borrowed_ && requested <= capacity_)
 			return;
-		/* Borrowed words are exactly the stream the owner allocated;
-		 * nothing appends to a stored program. */
 		assert(!borrowed_);
 		auto *replacement = static_cast<std::uintptr_t *>(
 			resource_->allocate(requested * sizeof(std::uintptr_t),
