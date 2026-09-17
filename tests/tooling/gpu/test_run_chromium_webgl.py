@@ -383,5 +383,42 @@ class AquariumCaptureTests(unittest.TestCase):
             )
 
 
+class AuthenticatedRootfsValidationTests(unittest.TestCase):
+    """The erofs branch of validate_rootfs shells out to tools/rootfs/verify.py.
+
+    It reaches for `subprocess` and `sys`, which the module did not import, so
+    every erofs-backed runner (run_chromium_webgl, run_webgl_samples) died with
+    NameError before it ever launched a guest. The ext4 branch returns earlier
+    and hid it.
+    """
+
+    def test_erofs_rootfs_validation_invokes_the_image_verifier(self) -> None:
+        common = run_chromium_webgl.kernarium_common
+        contract = mock.Mock(filesystem_type="erofs")
+        with tempfile.TemporaryDirectory() as directory:
+            rootfs = Path(directory) / "rootfs.erofs"
+            rootfs.write_bytes(b"\x00" * 64)
+            identity = {"rootfs": {"size": rootfs.stat().st_size}}
+            with mock.patch.object(common.subprocess, "run") as run:
+                common.validate_rootfs(rootfs, identity, contract)
+            run.assert_called_once()
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[0], common.sys.executable)
+            self.assertIn("--image", argv)
+            self.assertIn(str(rootfs), argv)
+
+    def test_erofs_rootfs_of_the_wrong_size_is_refused(self) -> None:
+        common = run_chromium_webgl.kernarium_common
+        contract = mock.Mock(filesystem_type="erofs")
+        with tempfile.TemporaryDirectory() as directory:
+            rootfs = Path(directory) / "rootfs.erofs"
+            rootfs.write_bytes(b"\x00" * 64)
+            identity = {"rootfs": {"size": 65}}
+            with mock.patch.object(common.subprocess, "run") as run:
+                with self.assertRaises(Exception):
+                    common.validate_rootfs(rootfs, identity, contract)
+            run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
