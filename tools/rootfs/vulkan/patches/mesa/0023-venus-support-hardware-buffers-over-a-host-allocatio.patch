@@ -1,4 +1,4 @@
-From 4be5eb1f63e647c0f5f069bf18c521d64505f361 Mon Sep 17 00:00:00 2001
+From daf60fae5c5eb3c29862353d93904641750f4489 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 18:19:44 +0900
 Subject: [PATCH 23/23] venus: support hardware buffers over a host-allocation
@@ -18,10 +18,10 @@ is answered instead of refused and a swapchain can reach the driver.
  1 file changed, 5 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 63646b5..b910cba 100644
+index fb990e8..e0d42db 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
-@@ -1099,9 +1099,14 @@ vn_physical_device_init_external_memory(
+@@ -1090,9 +1090,14 @@ vn_physical_device_init_external_memory(
         */
        physical_dev->external_memory.renderer_handle_type =
           VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;

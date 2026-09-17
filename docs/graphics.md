@@ -270,11 +270,18 @@ does not express what they describe:
   passes costs nothing, because there is nothing to turn off.
 * An address binding report is delivered through a debug messenger callback.
   The host driver emits one for every buffer, image plane and device memory
-  allocation it binds or unbinds, so a messenger on the host sees them, but
-  Venus answers `VK_EXT_debug_utils` in the guest and the protocol carries no
-  host-side callback, so a report cannot cross the ring. The guest advertises
-  the extension, which is what the profile asks for, and leaves
-  `reportAddressBinding` false.
+  allocation it binds or unbinds, and the guest reports `reportAddressBinding`
+  as the renderer answers it, so a device that enables the feature is backed by
+  a host device that reports. What no report reaches is an application: Venus
+  answers `VK_EXT_debug_utils` in the guest, and the protocol carries nothing
+  from the renderer to a guest callback, so a report the host driver raises
+  finds no messenger listening and stops there. Delivering one needs a
+  host-to-guest path the protocol does not have: a renderer-side messenger, a
+  queue of reports named by the guest object ids the renderer already maps, and
+  a guest drain after each command that can bind or unbind. That is the one
+  part of this extension the stack still owes, and it is what a client would
+  notice; conformance does not, because it checks only that every reported bind
+  has a matching unbind.
 
 `VK_KHR_pipeline_binary` needs no host driver entrypoints: KosmicKrisp compiles
 shader objects rather than monolithic pipelines, so Mesa's common runtime

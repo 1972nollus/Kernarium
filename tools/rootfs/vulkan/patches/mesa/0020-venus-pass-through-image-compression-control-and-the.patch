@@ -1,4 +1,4 @@
-From c97a820cc8d0b98fcae522cb4e92c3fb8338e684 Mon Sep 17 00:00:00 2001
+From b2fca218c52a0a892c9fbb87192e447a15085552 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:37:27 +0900
 Subject: [PATCH 20/23] venus: pass through image compression control and the
@@ -12,20 +12,23 @@ ring, and so do the compression properties the host answers with, so the
 driver carries all three by naming them in the passthrough table and chaining
 their feature structures onto the query it already makes.
 
-reportAddressBinding is forced false. A binding report is delivered through a
-debug messenger callback, Venus answers VK_EXT_debug_utils in the guest, and
-the protocol has no way to carry a host-side callback, so a report the
-renderer receives has nowhere to go. The extension is still advertised because
-VP_ANDROID_17_requirements asks for its presence, and an implementation that
-reports nothing is a conformant one.
+reportAddressBinding is carried as the renderer answers it. The renderer's
+driver raises a binding report for every allocation, buffer and image plane it
+binds or releases, so the feature the guest advertises is the feature the
+device behind it has, and a device that enables it gets a host device that
+reports. What the guest cannot yet do is deliver such a report to an
+application: a report is observable only as a VK_EXT_debug_utils messenger
+callback, Venus answers that extension inside the guest, and the protocol
+carries nothing from the renderer to a guest callback, so a report the
+renderer's driver raises has no messenger listening and stops there.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/virtio/vulkan/vn_physical_device.c | 20 ++++++++++++++++++++
- 1 file changed, 20 insertions(+)
+ src/virtio/vulkan/vn_physical_device.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 63226f6..4776ae7 100644
+index 63226f6..a77bf4e 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -211,6 +211,7 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
@@ -64,23 +67,7 @@ index 63226f6..4776ae7 100644
     VN_ADD_PNEXT_EXT(feats2, IMAGE_SLICED_VIEW_OF_3D_FEATURES_EXT, local_feats.image_sliced_view_of_3d, exts->EXT_image_sliced_view_of_3d);
     VN_ADD_PNEXT_EXT(feats2, IMAGE_VIEW_MIN_LOD_FEATURES_EXT, local_feats.image_view_min_lod, exts->EXT_image_view_min_lod);
     VN_ADD_PNEXT_EXT(feats2, LEGACY_DITHERING_FEATURES_EXT, local_feats.legacy_dithering, exts->EXT_legacy_dithering);
-@@ -468,6 +476,15 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
-    if (exts->KHR_acceleration_structure)
-       feats->accelerationStructureHostCommands = false;
- 
-+   /* A binding report is delivered through a debug messenger callback, and
-+    * Venus answers VK_EXT_debug_utils in the guest, so a report the renderer
-+    * receives has nowhere to go and the protocol carries no callback. The
-+    * extension stays advertised because VP_ANDROID_17_requirements asks for
-+    * it, and an implementation that reports nothing is a conformant one.
-+    */
-+   if (exts->EXT_device_address_binding_report)
-+      feats->reportAddressBinding = false;
-+
-    /* Disable unsupported ExtendedDynamicState3Features */
-    if (exts->EXT_extended_dynamic_state3) {
-       /* VK_NV_* extensions required */
-@@ -1362,6 +1379,7 @@ vn_physical_device_get_passthrough_extensions(
+@@ -1362,6 +1370,7 @@ vn_physical_device_get_passthrough_extensions(
        .EXT_depth_clip_enable = true,
        .EXT_depth_range_unrestricted = true,
        .EXT_descriptor_heap = !VN_DEBUG(NO_DESC_HEAP),
@@ -88,7 +75,7 @@ index 63226f6..4776ae7 100644
        .EXT_extended_dynamic_state3 = true,
        .EXT_dynamic_rendering_unused_attachments = true,
        .EXT_external_memory_acquire_unmodified = true,
-@@ -1371,6 +1389,8 @@ vn_physical_device_get_passthrough_extensions(
+@@ -1371,6 +1380,8 @@ vn_physical_device_get_passthrough_extensions(
        .EXT_global_priority_query = true,
        .EXT_graphics_pipeline_library = !VN_DEBUG(NO_GPL),
        .EXT_image_2d_view_of_3d = true,

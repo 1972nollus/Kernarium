@@ -1,4 +1,4 @@
-From 902cc48e6586310e90072123ad98ea965f0824fb Mon Sep 17 00:00:00 2001
+From 3f2f578132673c2f95ab824933258167bdbb1b68 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:39:23 +0900
 Subject: [PATCH 21/23] venus: pass through VK_KHR_pipeline_binary
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 176 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 4776ae7..63646b5 100644
+index a77bf4e..fb990e8 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -188,6 +188,7 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
@@ -48,7 +48,7 @@ index 4776ae7..63646b5 100644
     VN_ADD_PNEXT_EXT(feats2, RAY_QUERY_FEATURES_KHR, local_feats.ray_query, exts->KHR_ray_query);
     VN_ADD_PNEXT_EXT(feats2, RAY_TRACING_MAINTENANCE_1_FEATURES_KHR, local_feats.ray_tracing_maintenance_1, exts->KHR_ray_tracing_maintenance1);
     VN_ADD_PNEXT_EXT(feats2, RAY_TRACING_PIPELINE_FEATURES_KHR, local_feats.ray_tracing_pipeline, exts->KHR_ray_tracing_pipeline);
-@@ -670,6 +672,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
+@@ -661,6 +663,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
        VkPhysicalDeviceMaintenance7PropertiesKHR maintenance_7;
        VkPhysicalDeviceMaintenance9PropertiesKHR maintenance_9;
        VkPhysicalDeviceMaintenance10PropertiesKHR maintenance_10;
@@ -56,7 +56,7 @@ index 4776ae7..63646b5 100644
        VkPhysicalDeviceRayTracingPipelinePropertiesKHR ray_tracing_pipeline;
        VkPhysicalDeviceRobustness2PropertiesKHR robustness_2;
  
-@@ -769,6 +772,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
+@@ -760,6 +763,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
     VN_ADD_PNEXT_EXT(props2, MAINTENANCE_7_PROPERTIES_KHR, local_props.maintenance_7, exts->KHR_maintenance7);
     VN_ADD_PNEXT_EXT(props2, MAINTENANCE_9_PROPERTIES_KHR, local_props.maintenance_9, exts->KHR_maintenance9);
     VN_ADD_PNEXT_EXT(props2, MAINTENANCE_10_PROPERTIES_KHR, local_props.maintenance_10, exts->KHR_maintenance10);
@@ -64,7 +64,7 @@ index 4776ae7..63646b5 100644
     VN_ADD_PNEXT_EXT(props2, RAY_TRACING_PIPELINE_PROPERTIES_KHR, local_props.ray_tracing_pipeline, exts->KHR_ray_tracing_pipeline);
     VN_ADD_PNEXT_EXT(props2, ROBUSTNESS_2_PROPERTIES_KHR, local_props.robustness_2, exts->KHR_robustness2 || exts->EXT_robustness2);
  
-@@ -855,6 +859,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
+@@ -846,6 +850,7 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
     VN_SET_VK_PROPS_EXT(props, &local_props.maintenance_7, exts->KHR_maintenance7);
     VN_SET_VK_PROPS_EXT(props, &local_props.maintenance_9, exts->KHR_maintenance9);
     VN_SET_VK_PROPS_EXT(props, &local_props.maintenance_10, exts->KHR_maintenance10);
@@ -72,7 +72,7 @@ index 4776ae7..63646b5 100644
     VN_SET_VK_PROPS_EXT(props, &local_props.ray_tracing_pipeline, exts->KHR_ray_tracing_pipeline);
     VN_SET_VK_PROPS_EXT(props, &local_props.robustness_2, exts->KHR_robustness2 || exts->EXT_robustness2);
  
-@@ -1343,6 +1348,7 @@ vn_physical_device_get_passthrough_extensions(
+@@ -1334,6 +1339,7 @@ vn_physical_device_get_passthrough_extensions(
        .KHR_maintenance8 = true,
        .KHR_maintenance9 = true,
        .KHR_maintenance10 = true,
