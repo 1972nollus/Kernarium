@@ -24,18 +24,47 @@ ALLOWED_WARNING = re.compile(
 )
 
 
-def find_llvm_mc(explicit: Path | None = None) -> Path:
+def homebrew_llvm_mc_candidates() -> list[Path]:
+    """Homebrew decoders, pinned keg first.
+
+    The unversioned ``llvm`` keg tracks the newest release, so an unrelated
+    upgrade would otherwise silently retire the pinned decoder.
+    """
+
+    major = PINNED_LLVM_VERSION.split(".")[0]
+    return [
+        Path(f"/opt/homebrew/opt/llvm@{major}/bin/llvm-mc"),
+        Path("/opt/homebrew/opt/llvm/bin/llvm-mc"),
+    ]
+
+
+def find_llvm_mc(
+    explicit: Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> Path:
     if explicit is not None:
         if not explicit.is_file():
             raise ValueError(f"LLVM decoder does not exist: {explicit}")
         return explicit
-    candidate = shutil.which("llvm-mc")
-    if candidate is not None:
-        return Path(candidate)
-    homebrew = Path("/opt/homebrew/opt/llvm/bin/llvm-mc")
-    if homebrew.is_file():
-        return homebrew
-    raise ValueError("LLVM llvm-mc was not found; pass --llvm-mc")
+    candidates = []
+    path_tool = shutil.which("llvm-mc")
+    if path_tool is not None:
+        candidates.append(Path(path_tool))
+    candidates.extend(
+        candidate
+        for candidate in homebrew_llvm_mc_candidates()
+        if candidate.is_file()
+    )
+    if not candidates:
+        raise ValueError("LLVM llvm-mc was not found; pass --llvm-mc")
+    for candidate in candidates:
+        try:
+            if llvm_version(candidate, runner) == PINNED_LLVM_VERSION:
+                return candidate
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+    # Leave the pinned-version diagnostic to require_pinned_llvm.
+    return candidates[0]
 
 
 def byte_line(word: int) -> str:
