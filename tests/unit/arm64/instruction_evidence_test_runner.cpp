@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -332,15 +333,36 @@ int main(int argc, char **argv) {
   if (child < 0)
     fail("cannot fork test command");
   if (child == 0) {
-    if (::setpgid(0, 0) != 0)
-      ::_exit(126);
+    // The parent sets the same group, and whichever call loses the race is
+    // refused with EPERM on Darwin. An already-correct group is the benign
+    // outcome; anything else is transient and one retry has always been
+    // enough, so bound the wait rather than abandoning the test. The group has
+    // to be right because the supervisor signals it by negated pid.
+    for (int attempt = 0; ::setpgid(0, 0) != 0;) {
+      const int error_number = errno;
+      if (::getpgrp() == ::getpid())
+        break;
+      if (++attempt >= 64) {
+        std::fprintf(stderr, "cannot join child process group: %s\n",
+                     std::strerror(error_number));
+        ::_exit(126);
+      }
+      constexpr timespec retry_delay{.tv_sec = 0, .tv_nsec = 100'000};
+      ::nanosleep(&retry_delay, nullptr);
+    }
     restore_child_signals(signals);
     ::execvp(argv[1], &argv[1]);
     std::fprintf(stderr, "cannot execute unit test: %s\n", argv[1]);
     ::_exit(127);
   }
-  if (::setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH)
-    fail("cannot create child process group");
+  // The child establishes the group itself, so the parent's call only closes
+  // the window before that runs. Once the child reaches execvp the call is
+  // refused: Darwin answers EPERM far more often than the POSIX EACCES, and
+  // treating either as fatal aborted roughly one unit test in five hundred.
+  if (::setpgid(child, child) != 0 && errno != EACCES && errno != EPERM &&
+      errno != ESRCH)
+    fail(std::string("cannot create child process group: ") +
+         std::strerror(errno));
   child_group = child;
   if (::sigprocmask(SIG_UNBLOCK, &signals, nullptr) != 0)
     fail("cannot unblock supervised signals");
