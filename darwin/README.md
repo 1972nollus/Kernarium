@@ -123,6 +123,13 @@ must match every consumed guest word before reuse. Shared gadget translations
 contain no executor-owned link pointers after publication; consumers relocate
 links into their own state.
 
+A cache slot indexes a translation rather than holding one. Each stored program
+is a single exact-sized allocation carrying its stream and the guest words it is
+validated against, taken from an arena with sixteen-byte size classes, and the
+program refers to those words rather than owning a second copy. A build
+assembles its stream in a scratch buffer that the next build rewinds, so a
+translation allocates only when it is stored.
+
 The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
 result in host `x0` between adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the

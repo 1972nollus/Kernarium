@@ -259,6 +259,127 @@ private:
 	std::size_t bytes_{};
 };
 
+/* Storage for stored translations.
+ *
+ * A translation is one allocation: its body, the stream words behind it, and
+ * the guest words it is validated against behind those, sized exactly. The
+ * cache holds tens of thousands of them per executor, so a rounding allocator
+ * costs more than the streams do: a pmr pool asked its upstream for 204 MiB to
+ * hold 64 MiB of programs on a measured six-vCPU guest, between its own size
+ * classes and the capacity a stream reached by doubling. Sixteen-byte classes
+ * over bump-allocated chunks hold the same programs in 65 MiB.
+ *
+ * Freed bodies return to the class they came from, so retranslating a block
+ * reuses its predecessor's bytes; chunks are returned only when the cache is
+ * destroyed, which is what keeps retiring an address space proportional to
+ * what it owned rather than to a serialised allocator walk. See G167.
+ */
+class BodyArena final {
+public:
+	explicit BodyArena(std::pmr::memory_resource *upstream) noexcept
+		: upstream_{upstream}
+	{}
+
+	BodyArena(const BodyArena &) = delete;
+	BodyArena &operator=(const BodyArena &) = delete;
+
+	~BodyArena()
+	{
+		for (const auto &chunk : chunks_)
+			upstream_->deallocate(chunk.base, chunk.bytes,
+				alignof(std::max_align_t));
+	}
+
+	[[nodiscard]] void *allocate(std::size_t bytes)
+	{
+		const auto size = rounded(bytes);
+		if (size > largest_class) {
+			/* Too big for a class to recycle, so it is not carved
+			 * out of a chunk either; it is freed on its own. */
+			direct_ += size;
+			return upstream_->allocate(size,
+				alignof(std::max_align_t));
+		}
+		if (auto *block = free_[size / granule]; block != nullptr) {
+			free_[size / granule] = next_of(block);
+			return block;
+		}
+		if (size > limit_ - used_) {
+			const auto wanted = std::max(size, chunk_bytes);
+			auto *base = static_cast<std::byte *>(
+				upstream_->allocate(wanted,
+					alignof(std::max_align_t)));
+			chunks_.push_back({base, wanted});
+			/* The tail of the chunk being left behind is at most one
+			 * body, and one partly used chunk is the arena's whole
+			 * slack. */
+			current_ = base;
+			used_ = 0;
+			limit_ = wanted;
+		}
+		auto *block = current_ + used_;
+		used_ += size;
+		return block;
+	}
+
+	void deallocate(void *block, std::size_t bytes) noexcept
+	{
+		const auto size = rounded(bytes);
+		if (size > largest_class) {
+			direct_ -= size;
+			upstream_->deallocate(block, size,
+				alignof(std::max_align_t));
+			return;
+		}
+		next_of(static_cast<std::byte *>(block)) = free_[size / granule];
+		free_[size / granule] = static_cast<std::byte *>(block);
+	}
+
+	/* What the arena holds, which is what the cache costs. */
+	[[nodiscard]] std::size_t bytes() const noexcept
+	{
+		std::size_t total = direct_;
+		for (const auto &chunk : chunks_)
+			total += chunk.bytes;
+		return total;
+	}
+
+private:
+	/* Eight bytes would fit the free-list link, but sixteen keeps every
+	 * body's stream tail aligned for a pair access and still rounds a mean
+	 * body by eight bytes. */
+	static constexpr std::size_t granule = 16;
+	/* Up to 16 KiB in classes, which a 64-instruction block reaches only at
+	 * 32 stream words per guest instruction. */
+	static constexpr std::size_t classes = 1024;
+	static constexpr std::size_t largest_class = (classes - 1) * granule;
+	static constexpr std::size_t chunk_bytes = std::size_t{256} << 10;
+
+	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
+	{
+		return (std::max(bytes, granule) + granule - 1) & ~(granule - 1);
+	}
+
+	[[nodiscard]] static std::byte *&next_of(std::byte *block) noexcept
+	{
+		return *reinterpret_cast<std::byte **>(block);
+	}
+
+	struct Chunk final {
+		std::byte *base;
+		std::size_t bytes;
+	};
+
+	std::pmr::memory_resource *upstream_;
+	std::vector<Chunk> chunks_;
+	std::byte *current_{};
+	std::size_t used_{};
+	std::size_t limit_{};
+	/* Blocks above the largest class, which the chunks do not hold. */
+	std::size_t direct_{};
+	std::array<std::byte *, classes> free_{};
+};
+
 class GadgetExecutor::ProgramCache final {
 	/* Named by member declarations below and defined with the rest of the
 	 * private state. */
@@ -267,10 +388,25 @@ class GadgetExecutor::ProgramCache final {
 
 public:
 	ProgramCache()
-		: program_storage_{&counted_},
+		: bodies_{&counted_},
+		  build_scratch_{scratch_.data(), scratch_.size()},
 		  stream_index_{std::make_unique<StreamIndexSet[]>(
 			  stream_index_set_count)}
 	{}
+
+	~ProgramCache()
+	{
+		for (auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (auto &slot : slab->slots) {
+				if (slot.body == nullptr)
+					continue;
+				delete_body(slot.body);
+				slot.body = nullptr;
+			}
+		}
+	}
 
 	struct Footprint final {
 		std::size_t stream_index, slabs, streams, links, indirect;
@@ -308,7 +444,7 @@ public:
 			.stream_index = stream_index_set_count *
 				sizeof(StreamIndexSet),
 			.slabs = slabs,
-			.streams = counted_.bytes(),
+			.streams = bodies_.bytes(),
 			.links = links,
 			.indirect = indirect,
 		};
@@ -328,7 +464,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (slot.epoch == epoch_ && slot.result)
+				if (slot.epoch == epoch_ && slot.body != nullptr)
 					++occupied;
 		}
 		return occupied;
@@ -419,11 +555,12 @@ public:
 		for (std::size_t way = 0; way < ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
 			if (slot.epoch != epoch_ || slot.pc != pc ||
-			    slot.generation != current_generation_ || !slot.result)
+			    slot.generation != current_generation_ ||
+			    slot.body == nullptr)
 				continue;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 			if (slot.validated_changes == changes) {
-				return &*slot.result;
+				return &slot.body->result;
 			}
 			++diagnostics.validation_attempts;
 			if (!validate(slot, changes, mapping_changes, memory,
@@ -431,14 +568,14 @@ public:
 				return nullptr;
 			}
 			activate(pc, slot);
-			return &*slot.result;
+			return &slot.body->result;
 #else
 			(void)changes;
 			(void)mapping_changes;
 			(void)memory;
 			(void)execution_context;
 			(void)diagnostics;
-			return &*slot.result;
+			return &slot.body->result;
 #endif
 		}
 		return nullptr;
@@ -455,9 +592,10 @@ public:
 			const auto *slot = entry.slot;
 			if (slot != nullptr && slot->epoch == epoch_ &&
 			    slot->activation == entry.activation &&
-			    slot->result &&
-			    program_contains_stream(slot->result->program, stream))
-				return &*slot->result;
+			    slot->body != nullptr &&
+			    program_contains_stream(
+				    slot->body->result.program, stream))
+				return &slot->body->result;
 		}
 
 		/*
@@ -470,10 +608,11 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (slot.epoch == epoch_ && slot.result &&
+				if (slot.epoch == epoch_ &&
+				    slot.body != nullptr &&
 				    program_contains_stream(
-					    slot.result->program, stream))
-					return &*slot.result;
+					    slot.body->result.program, stream))
+					return &slot.body->result;
 		}
 		return nullptr;
 	}
@@ -544,7 +683,7 @@ public:
 	[[nodiscard]] const BuildResult *adopt(
 		const arm64::gadgets::SharedKey &key, std::uint64_t changes)
 	{
-		std::pmr::vector<std::uintptr_t> words{&program_storage_};
+		std::pmr::vector<std::uintptr_t> words{program_storage()};
 		arm64::gadgets::SharedTranslation translation;
 		if (!arm64::gadgets::SharedProgramStore::instance().adopt(
 			    key, words, translation))
@@ -609,9 +748,30 @@ public:
 				state.slots.shrink_to_fit();
 			}
 		}
-		if (slot.epoch == epoch_ && slot.result) {
-			deactivate(slot.generation, slot.pc,
-				slot.result->program);
+		/* The words a validating find() will compare against guest
+		 * memory: the program's runs concatenated, plus the word a
+		 * stopped build read without retiring. */
+		std::span<const std::uint32_t> validation;
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		const auto validation_words =
+			result.program.instruction_count() +
+			static_cast<std::size_t>(!result.complete);
+		if (validation_words != 0 &&
+		    validation_words <= block_instruction_count &&
+		    validation_words <= guest_words.size())
+			validation = guest_words.first(validation_words);
+#endif
+		auto *replacement_body = new_body(result, validation);
+		/* An epoch this slot no longer belongs to means its former owner
+		 * is already gone, so only a current occupant has a link record
+		 * left to reset -- but either way the body it holds is this
+		 * cache's to release. */
+		if (slot.body != nullptr) {
+			if (slot.epoch == epoch_)
+				deactivate(slot.generation, slot.pc,
+					slot.body->result.program);
+			delete_body(slot.body);
+			slot.body = nullptr;
 		}
 		/* The memoised binding describes whoever held the slot until
 		 * now, and a store may hand the slot to a different address
@@ -625,30 +785,12 @@ public:
 		 */
 		slot.link = nullptr;
 		slot.link_epoch = 0;
-		slot.result.emplace(std::move(result));
+		slot.body = replacement_body;
 		slot.pc = pc;
 		slot.generation = current_generation_;
 		slot.epoch = epoch_;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		slot.validated_changes = changes;
-		const auto validation_words =
-			slot.result->program.instruction_count() +
-			static_cast<std::size_t>(!slot.result->complete);
-		if (validation_words != 0 &&
-		    validation_words <= block_instruction_count &&
-		    validation_words <= guest_words.size()) {
-			if (slot.source_word_capacity < validation_words) {
-				slot.source_words =
-					std::make_unique_for_overwrite<std::uint32_t[]>(
-						validation_words);
-				slot.source_word_capacity = validation_words;
-			}
-			std::copy_n(guest_words.begin(), validation_words,
-				slot.source_words.get());
-			slot.source_word_count = validation_words;
-		} else {
-			slot.source_word_count = 0;
-		}
 #else
 		(void)guest_words;
 		(void)changes;
@@ -657,7 +799,7 @@ public:
 		if (slot.activation == 0)
 			slot.activation = 1;
 		activate(pc, slot);
-		return *slot.result;
+		return slot.body->result;
 	}
 
 	/* Whether a callee may be translated inline here.
@@ -676,9 +818,17 @@ public:
 		return inlined_callees_.emplace(callee, epoch_).second;
 	}
 
+	/* Where a build assembles its stream.
+	 *
+	 * store() copies the finished words into the body it allocates, so the
+	 * scratch is rewound at the start of every build and a translation
+	 * costs no allocation until it is stored. Only one build is ever in
+	 * flight on an executor.
+	 */
 	[[nodiscard]] std::pmr::memory_resource *program_storage() noexcept
 	{
-		return &program_storage_;
+		build_scratch_.release();
+		return &build_scratch_;
 	}
 
 private:
@@ -699,8 +849,51 @@ private:
 	static_assert(slot_count >= slab_slots * 4,
 		"cache must hold at least four slabs");
 
+	/* One translation, allocated apart from the slot that indexes it.
+	 *
+	 * A set way exists whether or not it holds a translation, so every byte
+	 * kept inline is paid for by the whole cache. With the program, its
+	 * stream and its validation words moved into one separately allocated
+	 * body, an empty way costs a tag rather than a full BuildResult, and the
+	 * words a spilling stream used to allocate on their own now share the
+	 * body's allocation.
+	 */
+	struct Body final {
+		BuildResult result;
+		/* What the arena must be given back, so the body carries it
+		 * rather than the slot that indexes it. */
+		std::uint32_t bytes{};
+		std::uint32_t word_count{};
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		std::uint32_t source_word_count{};
+#endif
+
+		/* The stream follows the body, and the guest words it is
+		 * validated against follow the stream. */
+		[[nodiscard]] std::uintptr_t *words() noexcept
+		{
+			return reinterpret_cast<std::uintptr_t *>(this + 1);
+		}
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		[[nodiscard]] std::uint32_t *source_words() noexcept
+		{
+			return reinterpret_cast<std::uint32_t *>(
+				words() + word_count);
+		}
+		[[nodiscard]] const std::uint32_t *source_words() const noexcept
+		{
+			return reinterpret_cast<const std::uint32_t *>(
+				reinterpret_cast<const std::uintptr_t *>(
+					this + 1) + word_count);
+		}
+#endif
+	};
+	static_assert(alignof(Body) == alignof(std::uintptr_t) &&
+		sizeof(Body) % alignof(std::uintptr_t) == 0,
+		"the stream tail follows the body at pointer alignment");
+
 	struct Slot final {
-		std::optional<BuildResult> result;
+		Body *body{};
 		/* The address space this translation belongs to. A guest virtual
 		 * address only means something inside one, so a slot is a match
 		 * only when the generation matches too; that is what lets
@@ -708,9 +901,6 @@ private:
 		 * instead of being wiped at every switch.
 		 */
 		unsigned long generation{};
-#if UML_GADGET_EXACT_CACHE_VALIDATION
-		std::unique_ptr<std::uint32_t[]> source_words;
-#endif
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
 		std::uint64_t activation{};
@@ -739,10 +929,15 @@ private:
 		std::uint64_t indexed_activation{};
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::uint64_t validated_changes{};
-		std::size_t source_word_count{};
-		std::size_t source_word_capacity{};
 #endif
 	};
+
+	/* The cache commits a slot per way whether or not it is occupied, so
+	 * the tag size multiplies by slot_count: at 65,536 slots every eight
+	 * bytes here is half a mebibyte per executor. Anything that belongs to
+	 * one translation belongs in its Body. */
+	static_assert(sizeof(Slot) <= 80,
+		"cache slots index translations; they do not hold them");
 
 	struct Slab final {
 		std::array<Slot, slab_slots> slots;
@@ -917,7 +1112,7 @@ private:
 	{
 		if (slot.indexed_activation == slot.activation)
 			return;
-		const auto &result = *slot.result;
+		const auto &result = slot.body->result;
 		for_each_stream_index_set(result.program, [&](std::size_t location) {
 			auto &set = stream_index_[location];
 			std::size_t selected =
@@ -929,7 +1124,7 @@ private:
 					entry.slot->epoch == epoch_ &&
 					entry.slot->activation ==
 						entry.activation &&
-					entry.slot->result;
+					entry.slot->body != nullptr;
 				if (!current || entry.slot == &slot) {
 					selected = way;
 					break;
@@ -1005,11 +1200,64 @@ private:
 	void release(Slot &slot, unsigned long generation) noexcept
 	{
 		if (slot.epoch != epoch_ || slot.generation != generation ||
-		    !slot.result)
+		    slot.body == nullptr)
 			return;
-		slot.result.reset();
+		delete_body(slot.body);
+		slot.body = nullptr;
 		slot.epoch = 0;
 		slot.link = nullptr;
+	}
+
+	/* Store a freshly built translation as one exact allocation.
+	 *
+	 * The build's own words live in the scratch the next build reuses, so
+	 * they are copied into the body's tail and the stored program is given
+	 * those words to refer to rather than a second copy of them.
+	 */
+	[[nodiscard]] Body *new_body(
+		const BuildResult &built, std::span<const std::uint32_t> validation)
+	{
+		const auto words = built.program.words();
+		const auto bytes = sizeof(Body) +
+			words.size() * sizeof(std::uintptr_t) +
+			validation.size() * sizeof(std::uint32_t);
+		auto *storage = static_cast<std::byte *>(bodies_.allocate(bytes));
+		auto *tail = reinterpret_cast<std::uintptr_t *>(
+			storage + sizeof(Body));
+		std::copy(words.begin(), words.end(), tail);
+		auto *body = new (storage) Body{
+			.result = BuildResult{
+				arm64::gadgets::Program{
+					built.program.runs(),
+					built.program.instruction_count(),
+					arm64::gadgets::ProgramWords{
+						arm64::gadgets::ProgramWords::
+							Borrowed{tail,
+								words.size()}},
+					built.program.accesses_fp_state()},
+				built.complete, built.stop_address,
+				built.stop_instruction},
+			.bytes = static_cast<std::uint32_t>(bytes),
+			.word_count = static_cast<std::uint32_t>(words.size()),
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+			.source_word_count =
+				static_cast<std::uint32_t>(validation.size()),
+#endif
+		};
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		std::copy(validation.begin(), validation.end(),
+			body->source_words());
+#else
+		(void)validation;
+#endif
+		return body;
+	}
+
+	void delete_body(Body *body) noexcept
+	{
+		const auto bytes = body->bytes;
+		body->~Body();
+		bodies_.deallocate(body, bytes);
 	}
 
 	[[nodiscard]] Slot &slot_at(std::uint32_t index) noexcept
@@ -1046,12 +1294,13 @@ private:
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 	void discard(Slot &slot) noexcept
 	{
-		if (slot.result)
+		if (slot.body != nullptr) {
 			deactivate(slot.generation, slot.pc,
-				slot.result->program);
-		slot.result.reset();
+				slot.body->result.program);
+			delete_body(slot.body);
+			slot.body = nullptr;
+		}
 		slot.epoch = 0;
-		slot.source_word_count = 0;
 		slot.validated_changes = 0;
 	}
 
@@ -1060,9 +1309,8 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		if (slot.source_words == nullptr || slot.source_word_count == 0 ||
-		    slot.source_word_count > slot.source_word_capacity ||
-		    slot.source_word_count > block_instruction_count) {
+		if (slot.body == nullptr || slot.body->source_word_count == 0 ||
+		    slot.body->source_word_count > block_instruction_count) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
 			return false;
@@ -1073,13 +1321,13 @@ private:
 		 * The word a stopped build read without retiring belongs to the
 		 * last run, which is where the build stopped. */
 		std::array<std::uint32_t, block_instruction_count> fetched;
-		const auto &program = slot.result->program;
+		const auto &program = slot.body->result.program;
 		const auto runs = program.runs();
 		std::size_t saved = 0;
 		for (std::size_t index = 0; index < runs.size(); ++index) {
 			auto remaining = std::size_t{runs[index].instructions};
 			if (index + 1 == runs.size())
-				remaining += slot.source_word_count -
+				remaining += slot.body->source_word_count -
 					program.instruction_count();
 			std::size_t offset = 0;
 			while (offset < remaining) {
@@ -1101,8 +1349,8 @@ private:
 					return false;
 				}
 				if (std::memcmp(words.data(),
-						slot.source_words.get() + saved +
-							offset,
+						slot.body->source_words() +
+							saved + offset,
 						run * sizeof(std::uint32_t)) != 0) {
 					++diagnostics.validation_mismatches;
 					discard(slot);
@@ -1130,7 +1378,7 @@ private:
 
 	void activate(std::uint64_t pc, Slot &slot)
 	{
-		const auto &result = *slot.result;
+		const auto &result = slot.body->result;
 		if (!result.complete || result.program.instruction_count() == 0)
 			return;
 		index_stream(slot);
@@ -1200,7 +1448,12 @@ public:
 private:
 #endif
 	CountingResource counted_;
-	std::pmr::unsynchronized_pool_resource program_storage_;
+	BodyArena bodies_;
+	/* Large enough that an ordinary build never reaches the upstream: a
+	 * stream that doubles its way to 272 words consumes 510 words of
+	 * scratch on the way. */
+	std::array<std::byte, 32U << 10> scratch_;
+	std::pmr::monotonic_buffer_resource build_scratch_;
 	/* Bounded: a guest that keeps generating code would otherwise accumulate
 	 * every callee it ever called. */
 	static constexpr std::size_t maximum_inlined_callees = 1U << 16;
