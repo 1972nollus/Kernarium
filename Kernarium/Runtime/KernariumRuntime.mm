@@ -498,12 +498,67 @@ sync
 poweroff -f
 )krn";
 
+/* A measured guest payload supplied by the host as one base64 shell script.
+ *
+ * The connected-device benchmarks need the same guest work the macOS probe and
+ * Geekbench runners drive through a command line, which no fixed bootstrap can
+ * express. The script arrives in the shell variable the relay assigns before
+ * this text, so no line carries the whole payload, and it runs over the same
+ * writable overlay the Geekbench bootstrap establishes.
+ */
+constexpr std::string_view guestScriptBootstrap = R"krn(set -eu
+script_fail()
+{
+    echo "KERNARIUM_GUEST_SCRIPT_ERROR: $*" >&2
+    sync
+    poweroff -f
+}
+[ -b /dev/ubdb ] || script_fail "overlay block device is unavailable"
+/usr/sbin/mkfs.ext4 -F -q -m 0 \
+    -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
+    script_fail "ext4 format failed"
+mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || \
+    script_fail "ext4 mount failed"
+mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || \
+    script_fail "overlay workspace failed"
+mount -o bind / /mnt/lower || script_fail "EROFS lower bind failed"
+mount -t overlay overlay \
+    -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
+    /mnt/root || script_fail "overlay mount failed"
+mount -t devtmpfs devtmpfs /mnt/root/dev || \
+    script_fail "devtmpfs mount failed"
+mkdir -p /mnt/root/.uml-lower || script_fail "old-root directory failed"
+cd /mnt/root || script_fail "new-root chdir failed"
+pivot_root . .uml-lower || script_fail "pivot_root failed"
+mount -t proc proc /proc || script_fail "proc mount failed"
+mount -t sysfs sysfs /sys || script_fail "sysfs mount failed"
+mkdir -p /run /tmp
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || \
+    script_fail "run tmpfs mount failed"
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || \
+    script_fail "temporary tmpfs mount failed"
+printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d >/tmp/kernarium-guest-script ||
+    script_fail "guest script decode failed"
+unset KERNARIUM_GUEST_SCRIPT
+export HOME=/root
+echo "KERNARIUM_GUEST_SCRIPT_READY"
+set +e
+sh /tmp/kernarium-guest-script
+script_rc=$?
+printf '\nKERNARIUM_GUEST_SCRIPT_END:%s\n' "$script_rc"
+sync
+poweroff -f
+exit "$script_rc"
+)krn";
+
 enum class ConsoleBootMode {
     desktop,
     aquarium,
     cts,
     geekbench,
     discardBenchmark,
+    /* A host-supplied measured payload; see guestScriptBootstrap. */
+    guestScript,
     /* Android brings up its own init from the selected GPT ramdisk range. The
      * relay carries its console in both directions and injects nothing. */
     android,
@@ -573,6 +628,7 @@ public:
         ConsoleBootMode bootMode,
         std::string geekbenchWorkloads,
         std::string discardBenchmarkMode,
+        std::string guestScript,
         const kernarium::cts::Campaign* ctsCampaign,
         bool derivativeRootfs)
     {
@@ -608,6 +664,7 @@ public:
                 bootMode,
                 geekbenchWorkloads = std::move(geekbenchWorkloads),
                 discardBenchmarkMode = std::move(discardBenchmarkMode),
+                guestScript = std::move(guestScript),
                 ctsCampaign,
                 derivativeRootfs] {
                 constexpr std::string_view shellReady =
@@ -658,6 +715,30 @@ public:
                                     bootstrap.append(
                                         discardBenchmarkBootstrap);
                                 } else if (
+                                    bootMode ==
+                                    ConsoleBootMode::guestScript) {
+                                    /* The payload is assigned in fixed-size
+                                     * pieces because the guest console's line
+                                     * discipline bounds a single line. */
+                                    bootstrap =
+                                        "KERNARIUM_GUEST_SCRIPT=\n";
+                                    constexpr std::size_t piece = 256U;
+                                    for (std::size_t offset = 0U;
+                                         offset < guestScript.size();
+                                         offset += piece) {
+                                        bootstrap.append(
+                                            "KERNARIUM_GUEST_SCRIPT="
+                                            "\"$KERNARIUM_GUEST_SCRIPT\"'");
+                                        bootstrap.append(
+                                            guestScript,
+                                            offset,
+                                            piece);
+                                        bootstrap.append("'\n");
+                                    }
+                                    bootstrap.append(
+                                        "export KERNARIUM_GUEST_SCRIPT\n");
+                                    bootstrap.append(guestScriptBootstrap);
+                                } else if (
                                     bootMode == ConsoleBootMode::geekbench) {
                                     if (!geekbenchWorkloads.empty()) {
                                         bootstrap =
@@ -692,7 +773,9 @@ public:
                                     std::fprintf(
                                         stderr,
                                         "Kernarium: %s bootstrap delivered\n",
-                                        bootMode == ConsoleBootMode::geekbench
+                                        bootMode == ConsoleBootMode::guestScript
+                                            ? "guest script"
+                                            : bootMode == ConsoleBootMode::geekbench
                                             ? "Geekbench"
                                             : bootMode ==
                                                     ConsoleBootMode::discardBenchmark
@@ -1119,6 +1202,24 @@ bool validGeekbenchWorkloads(std::string_view workloads)
     }
     return !needsDigit;
 }
+
+/* A guest script crosses into the guest as shell single-quoted pieces, so it is
+ * accepted only as base64 and never as text a quote could escape from. */
+bool validGuestScript(std::string_view script)
+{
+    if (script.empty() || script.size() > 65536U)
+        return false;
+    for (const char character : script) {
+        const bool allowed =
+            (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') ||
+            character == '+' || character == '/' || character == '=';
+        if (!allowed)
+            return false;
+    }
+    return script.size() % 4U == 0U;
+}
 #endif
 
 /* The translating engine to run guest userspace under.
@@ -1375,10 +1476,12 @@ int runtimeRun(
         const kernarium::cts::Campaign* ctsCampaign = nullptr;
         const std::string geekbenchWorkloads;
         const std::string discardBenchmarkMode;
+        const std::string guestScript;
         ConsoleBridge consoleBridge {
             bootMode,
             geekbenchWorkloads,
             discardBenchmarkMode,
+            guestScript,
             ctsCampaign,
             derivativeRootfs};
         /* Android tags heap pointers, so the guest must run with the top byte
@@ -1400,6 +1503,12 @@ int runtimeRun(
             ? std::string {}
             : std::string {discardBenchmarkEnvironment};
         const bool discardBenchmark = !discardBenchmarkMode.empty();
+        const char* guestScriptEnvironment =
+            std::getenv("KERNARIUM_GUEST_SCRIPT");
+        const std::string guestScript = guestScriptEnvironment == nullptr
+            ? std::string {}
+            : std::string {guestScriptEnvironment};
+        const bool guestScriptRequested = !guestScript.empty();
         const char* ctsCampaignEnvironment =
             std::getenv("KERNARIUM_CTS_CAMPAIGN");
         const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
@@ -1429,11 +1538,18 @@ int runtimeRun(
             static_cast<unsigned int>(aquarium) +
             static_cast<unsigned int>(geekbench) +
             static_cast<unsigned int>(discardBenchmark) +
+            static_cast<unsigned int>(guestScriptRequested) +
             static_cast<unsigned int>(ctsRequested);
         if (specialModeCount > 1U) {
             std::fputs(
-                "Kernarium: Aquarium, CTS, Geekbench, and discard benchmark "
-                "modes are mutually exclusive\n",
+                "Kernarium: Aquarium, CTS, Geekbench, guest script, and "
+                "discard benchmark modes are mutually exclusive\n",
+                stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        if (guestScriptRequested && !validGuestScript(guestScript)) {
+            std::fputs(
+                "Kernarium: a guest script must be base64 of at most 64 KiB\n",
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
@@ -1447,6 +1563,7 @@ int runtimeRun(
         }
         const ConsoleBootMode bootMode = geekbench
             ? ConsoleBootMode::geekbench
+            : guestScriptRequested ? ConsoleBootMode::guestScript
             : discardBenchmark ? ConsoleBootMode::discardBenchmark
             : ctsRequested ? ConsoleBootMode::cts
             : aquarium ? ConsoleBootMode::aquarium
@@ -1455,6 +1572,7 @@ int runtimeRun(
             bootMode,
             geekbenchWorkloads,
             discardBenchmarkMode,
+            guestScript,
             ctsCampaign,
             derivativeRootfs};
         if (ctsCampaign != nullptr && ctsCampaign->namedSerialArtifacts)
@@ -1471,6 +1589,12 @@ int runtimeRun(
         }
         if (geekbench)
             std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
+        if (guestScriptRequested)
+            std::fprintf(
+                stderr,
+                "Kernarium: measured guest script requested: %zu base64 "
+                "bytes\n",
+                guestScript.size());
         if (discardBenchmark)
             std::fprintf(
                 stderr,
@@ -1524,7 +1648,7 @@ int runtimeRun(
             arguments.emplace_back("rootfstype=ext4");
             arguments.emplace_back("ro");
         }
-        if (!geekbench) {
+        if (!geekbench && !guestScriptRequested) {
             /* A CTS campaign owns the display itself: its launcher starts
              * Xorg on VT 1 and asks the stack for a GL context through it.
              * The image's display manager claims its own VT as soon as

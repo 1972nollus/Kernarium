@@ -263,6 +263,7 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 
 [[nodiscard]] Gadget literal_load_gadget(bool, unsigned int, bool) noexcept;
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned int, unsigned int, bool, bool) noexcept;
+[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(unsigned int, unsigned int, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(unsigned int, unsigned int, bool) noexcept;
 [[nodiscard]] const ScalarOtherGadgets * scalar_other_gadgets(unsigned int, unsigned int) noexcept;
 [[nodiscard]] const VectorOtherGadgets * vector_other_gadgets(unsigned int, unsigned int) noexcept;
@@ -353,6 +354,17 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] Gadget architectural_hint_gadget(std::uint32_t) noexcept;
 [[nodiscard]] Gadget integer_min_max_gadget(unsigned int, bool, bool) noexcept;
 [[nodiscard]] Gadget add_sub_immediate_gadget(bool, bool, bool, bool, bool) noexcept;
+#if UML_GADGET_INPLACE_IMMEDIATE
+[[nodiscard]] Gadget add_sub_immediate_inplace_gadget(bool, bool, bool, unsigned int) noexcept;
+[[nodiscard]] Gadget logical_immediate_inplace_gadget(bool, unsigned int, unsigned int) noexcept;
+[[nodiscard]] Gadget move_wide_keep_inplace_gadget(bool, unsigned int, unsigned int) noexcept;
+[[nodiscard]] Gadget add_sub_register_inplace_gadget(bool, bool, bool, unsigned int) noexcept;
+[[nodiscard]] Gadget simd_fused_inplace_gadget(bool, unsigned int, unsigned int) noexcept;
+[[nodiscard]] Gadget fused_floating_inplace_gadget(const detail::FusedFloatingArithmetic &, unsigned int) noexcept;
+#endif
+#if UML_GADGET_TEMPLATE_COPIES > 1
+[[nodiscard]] Gadget add_sub_immediate_copy_gadget(bool, bool, bool, unsigned int) noexcept;
+#endif
 [[nodiscard]] Gadget add_sub_register_gadget(bool, bool, bool, bool, unsigned int, unsigned int, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget add_sub_carry_gadget(bool, bool, bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget variable_shift_gadget(bool, unsigned int, bool, bool, bool) noexcept;

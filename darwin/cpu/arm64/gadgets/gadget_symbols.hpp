@@ -27,6 +27,25 @@ UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(x_add_s)
 UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(x_sub_n)
 UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(x_sub_s)
 #undef UML_DECLARE_ADD_SUB_IMMEDIATE_MODES
+#if UML_GADGET_INPLACE_IMMEDIATE
+/* Base entries for the in-place shape, indexed by
+ * ((bits64 * 2 + subtract) * 2 + flags) * 31 + register. */
+extern void (*const uml_arm64_gadget_add_sub_immediate_inplace_table[])();
+extern void (*const uml_arm64_gadget_logical_immediate_inplace_table[])();
+extern void (*const uml_arm64_gadget_move_wide_keep_inplace_table[])();
+extern void (*const uml_arm64_gadget_add_sub_register_inplace_table[])();
+extern void (*const uml_arm64_gadget_simd_fused_inplace_table[])();
+#endif
+#if UML_GADGET_INPLACE_MEMORY
+/* Unsigned-offset transfers whose transferred register is baked, indexed by
+ * ((operation * 2 + bits64) * 2 + base_sp) * 31 + register. */
+extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
+#endif
+#if UML_GADGET_TEMPLATE_COPIES > 1
+/* Byte-identical copies of the ordinary entry, indexed by
+ * (((bits64 * 2 + subtract) * 2 + flags) * copies) + copy. */
+extern void (*const uml_arm64_gadget_add_sub_immediate_copy_table[])();
+#endif
 #define UML_DECLARE_ADD_SUB_REGISTER_DESTINATIONS(prefix) \
 	void uml_arm64_gadget_add_sub_register_##prefix##_r(); \
 	void uml_arm64_gadget_add_sub_register_##prefix##_d();

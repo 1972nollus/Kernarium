@@ -24,6 +24,16 @@ guest shell. A successful run must reach the ready/end markers, guest poweroff,
 and status-zero managed emulator return. Attached Instruments or other sampling
 changes the run into a diagnostic capture.
 
+`KERNARIUM_GUEST_SCRIPT` carries one base64 POSIX shell script over that same
+overlay, which is how a device runs the probe payloads and a Geekbench command
+line the fixed modes do not express. It is mutually exclusive with the other
+console modes. A host driving it must not key completion on a marker inside the
+script: the guest console echoes what it is fed and kernel timestamps interleave
+with that echo, so only the emulator's own return line is unambiguous. Back-to-
+back device runs also need a settle pause, because iOS releases the previous
+guest's wired window asynchronously and a run started too soon fails to wire
+its own.
+
 Profile readers under this directory summarize aggregate stacks, group them by
 workload, and compare two diagnostic captures. They do not decide acceptance
 without a matched benchmark or focused mechanism control.
@@ -213,6 +223,20 @@ shortest helper-free host-instruction path of its symbol (from `objdump -d`)
 models the fast-path cost per guest instruction; per-thread hardware
 counters from an `xctrace` CPU Counters recording measure the whole engine.
 Both remain diagnostics, not scores.
+
+## Cache census
+
+A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
+cache still held when the run ended. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to a
+path; each executor appends its measured footprint and one record per resident
+translation, naming the address space, guest PC, stream length and a digest of
+the guest words the translation consumed. Summarize a capture with
+`analyze_gadget_cache_census.py --help`.
+
+Identity is the consumed guest words, not the produced stream, because two
+executors translating the same code embed pointers to their own link records.
+That is what lets the report separate duplication between executors sharing an
+address space from the same code translated again for another address space.
 
 ## Focused assembly probes
 

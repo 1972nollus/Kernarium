@@ -14,6 +14,12 @@
 #ifndef UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 #error "successor-hoist structure test needs the configured A/B value"
 #endif
+#ifndef UML_GADGET_INPLACE_IMMEDIATE
+#error "successor-hoist structure test needs the configured A/B value"
+#endif
+#ifndef UML_GADGET_TEMPLATE_COPIES
+#error "successor-hoist structure test needs the configured A/B value"
+#endif
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
@@ -231,8 +237,23 @@ void probe_shape_has_one_predecessor_and_eight_successors()
 	require(words.size() > successor_words.back());
 
 	const auto predecessor = words[predecessor_words.front()];
+#if UML_GADGET_INPLACE_IMMEDIATE
+	/* "add x20, x20, #1" is the in-place shape, so the baked-displacement
+	 * entry for x20 is the one the translator selects. */
+	require(predecessor == address(
+		selection::uml_arm64_gadget_add_sub_immediate_inplace_table[
+			((1U * 2U + 0U) * 2U + 0U) * 31U + 20U]));
+#elif UML_GADGET_TEMPLATE_COPIES > 1
+	/* The copies are identical, so the destination register alone decides
+	 * which of them the translator selects. */
+	require(predecessor == address(
+		selection::uml_arm64_gadget_add_sub_immediate_copy_table[
+			((1U * 2U + 0U) * 2U + 0U) * UML_GADGET_TEMPLATE_COPIES +
+			20U % UML_GADGET_TEMPLATE_COPIES]));
+#else
 	require(predecessor == address(
 		selection::uml_arm64_gadget_add_sub_immediate_x_add_n_rr));
+#endif
 	for (const auto word : predecessor_words)
 		require(words[word] == predecessor);
 	for (std::size_t index = 0; index < successor_words.size(); ++index) {

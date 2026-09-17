@@ -234,8 +234,18 @@ DecodeResult decode_load_store(DecodeContext &context)
 			opcode == 0xb900'0000U ? 2U : 3U;
 		const auto operation = opcode == 0xb940'0000U ||
 			opcode == 0xf940'0000U ? 1U : 0U;
-		emit(words, scalar_unsigned_memory_gadget(
-			scale, operation, base == 31U, transfer_zero));
+		Gadget transfer = nullptr;
+#if UML_GADGET_INPLACE_MEMORY
+		if (!transfer_zero) {
+			transfer = scalar_unsigned_memory_inplace_gadget(
+				scale, operation, base == 31U, reg);
+		}
+#endif
+		if (transfer == nullptr) {
+			transfer = scalar_unsigned_memory_gadget(
+				scale, operation, base == 31U, transfer_zero);
+		}
+		emit(words, transfer);
 		const auto offset = ((instruction >> 10) & 0xfffU) << scale;
 		const auto reg_offset = reg < 31U ?
 			reg * sizeof(std::uint64_t) : 0U;

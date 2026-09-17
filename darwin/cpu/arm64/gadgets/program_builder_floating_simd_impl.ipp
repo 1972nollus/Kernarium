@@ -416,8 +416,18 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 	} else if (const auto fused_floating =
 			detail::decode_fused_floating_arithmetic(instruction);
 		   fused_floating.recognized) {
-		const auto gadget = fused_floating.valid ?
+		auto gadget = fused_floating.valid ?
 			fused_floating_arithmetic_gadget(fused_floating) : nullptr;
+#if UML_GADGET_INPLACE_IMMEDIATE
+		/* A vector FMLA/FMLS accumulates into Vd, so its destination is
+		 * also its third source and every one of them is the in-place
+		 * shape. */
+		if (gadget != nullptr && !fused_floating.scalar)
+			if (const auto baked = fused_floating_inplace_gadget(
+				    fused_floating, instruction & 31U);
+			    baked != nullptr)
+				gadget = baked;
+#endif
 		if (gadget == nullptr) {
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);

@@ -108,10 +108,11 @@ def main() -> int:
                              : "systemd.unit=graphical.target");"""
     require(
         systemd_policy in runtime_source
-        and "if (!geekbench) {" in runtime_source,
+        and "if (!geekbench && !guestScriptRequested) {" in runtime_source,
         "Kernarium must apply the Plymouth policy with its systemd boot "
-        "arguments, leaving the direct Geekbench shell unchanged, and must "
-        "boot a CTS campaign into the session-free target",
+        "arguments, leaving the direct Geekbench and guest script shells "
+        "unchanged, and must boot a CTS campaign into the session-free "
+        "target",
     )
     for mask in (
         "systemd.mask=display-manager.service",

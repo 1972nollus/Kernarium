@@ -117,6 +117,14 @@ option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
     OFF)
 
+# Also default-off: the census walks every cache slot when the last executor
+# of a run is destroyed and writes one record per resident translation, which
+# is how duplication between executors and between address spaces is measured
+# rather than estimated.
+option(UML_GADGET_CACHE_CENSUS
+    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
+    OFF)
+
 option(UML_GADGET_SCALAR_FORWARDING
     "Forward adjacent write-through scalar results within gadget blocks"
     ON)
@@ -146,6 +154,39 @@ option(UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 option(UML_GADGET_SIMD_DESTINATION_RESIDENCY
     "Keep one bounded SIMD MLA destination resident within a block"
     ON)
+
+# An in-place "add Rd, Rd, #imm" writes and re-reads one CpuState slot;
+# addressing that slot with a baked displacement instead of a decoded register
+# index lets the host forward the store to the load at rename. Bounded at 31
+# entries per operation because the in-place shape needs one index for both
+# accesses. Turning this on without UML_GADGET_INPLACE_MEMORY leaves a baked
+# producer feeding an indexed consumer, which is slower than baking neither, so
+# the two belong on or off together.
+option(UML_GADGET_INPLACE_IMMEDIATE
+    "Bake the CpuState displacement into in-place ADD/SUB-immediate entries"
+    ON)
+
+# The companion to the entry above. An unsigned-offset transfer reaches CpuState
+# through the register it moves; baking that displacement both forwards the
+# value at rename and keeps the two ends of the hop in the same addressing form,
+# which a baked arithmetic entry alone does not. Covers the 32- and 64-bit forms
+# at 31 entries per mode, whose cold tails are out of line so the copies cost
+# only what differs between them.
+option(UML_GADGET_INPLACE_MEMORY
+    "Bake the CpuState displacement into unsigned-offset scalar transfer entries"
+    ON)
+
+# Experimental A/B arm, 1 is off. Every guest register that flows through one
+# template shares that template's load and store program counters, and the
+# host's memory-dependence predictor is keyed on those, so it serializes
+# independent chains. Byte-identical copies selected by destination register
+# give them distinct program counters. 1, 2 or 4.
+set(UML_GADGET_TEMPLATE_COPIES "1" CACHE STRING
+    "Byte-identical copies of the ordinary ADD/SUB-immediate entry (1, 2 or 4)")
+if(NOT UML_GADGET_TEMPLATE_COPIES MATCHES "^(1|2|4)$")
+    message(FATAL_ERROR
+        "UML_GADGET_TEMPLATE_COPIES must be 1, 2 or 4")
+endif()
 
 # Retain decoded programs across a code-change sequence only after validating
 # every guest word the program consumed. Direct and indirect activations are
@@ -276,6 +317,9 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
+    UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
+    UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
+    UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
@@ -479,6 +523,7 @@ target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
+    UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
