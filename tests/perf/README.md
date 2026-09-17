@@ -120,6 +120,20 @@ models the fast-path cost per guest instruction; per-thread hardware
 counters from an `xctrace` CPU Counters recording measure the whole engine.
 Both remain diagnostics, not scores.
 
+## Cache census
+
+A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
+cache still held when the run ended. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to a
+path; each executor appends its measured footprint and one record per resident
+translation, naming the address space, guest PC, stream length and a digest of
+the guest words the translation consumed. Summarize a capture with
+`analyze_gadget_cache_census.py --help`.
+
+Identity is the consumed guest words, not the produced stream, because two
+executors translating the same code embed pointers to their own link records.
+That is what lets the report separate duplication between executors sharing an
+address space from the same code translated again for another address space.
+
 ## Focused assembly probes
 
 [`probes.tsv`](probes.tsv) is the complete inventory of freestanding A64 probe

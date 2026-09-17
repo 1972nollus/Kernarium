@@ -7,9 +7,16 @@
 
 #include <algorithm>
 #include <array>
+#if UML_GADGET_CACHE_CENSUS
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <memory>
 #include <memory_resource>
+#if UML_GADGET_CACHE_CENSUS
+#include <mutex>
+#endif
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -449,6 +456,55 @@ public:
 			.indirect = indirect,
 		};
 	}
+
+#if UML_GADGET_CACHE_CENSUS
+	/* Write what this cache holds, so duplication can be counted instead of
+	 * estimated.
+	 *
+	 * A translation is identified by the guest words it consumed, not by the
+	 * stream it produced: two executors translating the same code emit the
+	 * same words but embed pointers to their own link records, so only the
+	 * source identifies the work. The stream length goes out with it because
+	 * it decides what a body costs.
+	 */
+	void census(std::FILE *out) const noexcept
+	{
+		const auto parts = footprint();
+		std::fprintf(out,
+			"E %p generations=%zu occupancy=%zu stream_index=%zu "
+			"slabs=%zu streams=%zu links=%zu indirect=%zu total=%zu\n",
+			static_cast<const void *>(this), resident_generations(),
+			occupancy(), parts.stream_index, parts.slabs,
+			parts.streams, parts.links, parts.indirect,
+			parts.total());
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots) {
+				if (slot.epoch != epoch_ || slot.body == nullptr)
+					continue;
+				const auto &program = slot.body->result.program;
+				std::uint64_t digest = 0xcbf29ce484222325ULL;
+				std::size_t sources = 0;
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+				sources = slot.body->source_word_count;
+				const auto *words = slot.body->source_words();
+				for (std::size_t index = 0; index < sources;
+				     ++index)
+					digest = (digest ^ words[index]) *
+						0x100000001b3ULL;
+#endif
+				std::fprintf(out,
+					"P %lu 0x%llx %zu %zu %zu 0x%llx\n",
+					slot.generation,
+					static_cast<unsigned long long>(slot.pc),
+					program.instruction_count(),
+					program.words().size(), sources,
+					static_cast<unsigned long long>(digest));
+			}
+		}
+	}
+#endif
 
 	/* How many address spaces currently hold translations here. With one
 	 * shared pool this is an outcome of the workload, not a build option. */
@@ -1483,6 +1539,19 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 
 GadgetExecutor::~GadgetExecutor()
 {
+#if UML_GADGET_CACHE_CENSUS
+	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
+	    path != nullptr && *path != '\0') {
+		/* Appended, because every executor of the run reports its own
+		 * cache and the union across them is the measurement. */
+		static std::mutex census_mutex;
+		const std::lock_guard guard{census_mutex};
+		if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
+			programs_->census(out);
+			std::fclose(out);
+		}
+	}
+#endif
 	arm64::gadgets::SharedProgramStore::executor_destroyed();
 	if (current_cpu_ != nullptr) {
 		current_cpu_->gadget_indirect_miss = nullptr;
