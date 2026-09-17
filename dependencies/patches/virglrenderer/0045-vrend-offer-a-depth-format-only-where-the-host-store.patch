@@ -1,4 +1,4 @@
-From 1f3543849e889ff1eaf18d0e1885ea527fb0a37b Mon Sep 17 00:00:00 2001
+From 575aa69a724fae1210e6cc9bf6a0deca47337cbf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 18:15:14 +0900
 Subject: [PATCH 45/48] vrend: offer a depth format only where the host stores
