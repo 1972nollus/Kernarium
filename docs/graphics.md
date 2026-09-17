@@ -302,6 +302,16 @@ is keyed by internal pipeline descriptors and serializes only as a whole
 archive to a file URL, so it can neither produce one binary per pipeline nor
 return a binary's bytes.
 
+A binary's key is a hash of the bytes that binary carries rather than the
+cache key of the shader they were compiled from. That cache key names what a
+compile was asked for - every stage of the linked partition, the pipeline
+state and the pipeline layout - and different requests regularly compile to
+the same output, so keying by it gave byte-identical binaries different names
+and left an application's own store holding each copy separately. The cost is
+that a binary loaded back into a pipeline names its entry in the driver's
+internal shader cache by those bytes, so a pipeline created later from the
+same state without binaries compiles again instead of finding it.
+
 `vkGetPipelineKeyKHR` names the pipeline it should key through
 `VkPipelineCreateInfoKHR::pNext`, and `vk.xml` gives that chain no member,
 because each structure a caller chains there is a pipeline create info in its

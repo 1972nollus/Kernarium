@@ -1,7 +1,7 @@
 From 66ac4144743ae1112b008fcfcc80cdd5b3fea2e6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:36:58 +0900
-Subject: [PATCH 64/90] kosmickrisp: reinterpret a mismatched fragment output,
+Subject: [PATCH 64/91] kosmickrisp: reinterpret a mismatched fragment output,
  do not convert it
 
 A fragment output whose numeric type disagrees with its colour attachment

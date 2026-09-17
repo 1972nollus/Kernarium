@@ -1,7 +1,7 @@
 From dee31528bd5f896388a3f6b0e996fc3af1730fc2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:23:31 +0900
-Subject: [PATCH 08/90] kosmickrisp: make timestamp queries reliable
+Subject: [PATCH 08/91] kosmickrisp: make timestamp queries reliable
 
 ---
  src/kosmickrisp/bridge/mtl_command_buffer.h   |  4 +-
