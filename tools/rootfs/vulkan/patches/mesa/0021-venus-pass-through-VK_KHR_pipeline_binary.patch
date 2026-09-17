@@ -1,4 +1,4 @@
-From 952c12bc8bfa0b51d336ced674c8c1328f9e7cb2 Mon Sep 17 00:00:00 2001
+From 902cc48e6586310e90072123ad98ea965f0824fb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:39:23 +0900
 Subject: [PATCH 21/23] venus: pass through VK_KHR_pipeline_binary

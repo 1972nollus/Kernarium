@@ -1,4 +1,4 @@
-From 65cd2e9fa77f383dc8a1cfd78e605db87737b206 Mon Sep 17 00:00:00 2001
+From c28393559248b774c4c70c7c04fa8732f0f20358 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:22 +0900
 Subject: [PATCH 17/23] nir: index the split 64-bit vec3/vec4 arrays by leaf

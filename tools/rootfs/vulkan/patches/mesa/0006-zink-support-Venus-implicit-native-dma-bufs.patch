@@ -1,24 +1,32 @@
-From 4d43840785bb953bfbb21332e724f11af2a914f5 Mon Sep 17 00:00:00 2001
+From 53e39909e99a8867d366525895d53b294808c077 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 19:31:13 +0900
 Subject: [PATCH 06/23] zink: support Venus implicit native dma-bufs
 
+DRM format modifiers are offered to common WSI only where the renderer has no
+native heap to share. A surface that offers modifiers takes common WSI's
+explicit-modifier path, which filters the modifiers through a colour
+attachment format query and presents whichever linear layout survives. On a
+paired Metal renderer that replaces the zero-copy native scanout this topic
+exists to provide with a linear presented image the compositor has to
+reinterpret. The policy sits beside the native envelope it belongs with, as a
+header-only predicate the native test covers.
 ---
  src/gallium/drivers/zink/zink_batch.c        |  10 +-
  src/gallium/drivers/zink/zink_context.c      |   2 +-
- src/gallium/drivers/zink/zink_resource.c     |  92 +++++++++--
+ src/gallium/drivers/zink/zink_resource.c     |  92 ++++++++--
  src/gallium/drivers/zink/zink_screen.c       |   3 +-
  src/gallium/drivers/zink/zink_screen.h       |  17 ++
  src/gallium/drivers/zink/zink_types.h        |   1 +
  src/virtio/vulkan/meson.build                |  18 ++
- src/virtio/vulkan/tests/vn_wsi_drm_test.c    |  65 ++++++++
- src/virtio/vulkan/tests/vn_wsi_native_test.c | 163 +++++++++++++++++++
+ src/virtio/vulkan/tests/vn_wsi_drm_test.c    |  65 +++++++
+ src/virtio/vulkan/tests/vn_wsi_native_test.c | 171 +++++++++++++++++++
  src/virtio/vulkan/vn_image.c                 |  13 ++
  src/virtio/vulkan/vn_image.h                 |   3 +
- src/virtio/vulkan/vn_wsi.c                   |  97 ++++++++++-
+ src/virtio/vulkan/vn_wsi.c                   | 102 ++++++++++-
  src/virtio/vulkan/vn_wsi_drm.h               |  30 ++++
- src/virtio/vulkan/vn_wsi_native.h            | 101 ++++++++++++
- 14 files changed, 591 insertions(+), 24 deletions(-)
+ src/virtio/vulkan/vn_wsi_native.h            | 115 +++++++++++++
+ 14 files changed, 617 insertions(+), 25 deletions(-)
  create mode 100644 src/virtio/vulkan/tests/vn_wsi_drm_test.c
  create mode 100644 src/virtio/vulkan/tests/vn_wsi_native_test.c
  create mode 100644 src/virtio/vulkan/vn_wsi_drm.h
@@ -448,10 +456,10 @@ index 0000000..f269ccf
 +}
 diff --git a/src/virtio/vulkan/tests/vn_wsi_native_test.c b/src/virtio/vulkan/tests/vn_wsi_native_test.c
 new file mode 100644
-index 0000000..788ad05
+index 0000000..dbce9e3
 --- /dev/null
 +++ b/src/virtio/vulkan/tests/vn_wsi_native_test.c
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,171 @@
 +/*
 + * Copyright 2026
 + * SPDX-License-Identifier: MIT
@@ -612,6 +620,14 @@ index 0000000..788ad05
 +   EXCLUDE(flags, VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT);
 +   EXCLUDE(flags, VK_IMAGE_CREATE_SPARSE_ALIASED_BIT);
 +#undef EXCLUDE
++   /* Modifiers replace the native scanout path, so they are offered only
++    * where the renderer has no native heap to share.
++    */
++   CHECK(vn_wsi_native_offers_modifiers(true, false));
++   CHECK(!vn_wsi_native_offers_modifiers(true, true));
++   CHECK(!vn_wsi_native_offers_modifiers(false, false));
++   CHECK(!vn_wsi_native_offers_modifiers(false, true));
++
 +   puts("Venus WSI native-heap envelope tests passed");
 +   return 0;
 +}
@@ -668,7 +684,7 @@ index 74bdeed..1439711 100644
        struct vn_device_memory *blit_mem;
     } wsi;
 diff --git a/src/virtio/vulkan/vn_wsi.c b/src/virtio/vulkan/vn_wsi.c
-index e73ab48..62c392c 100644
+index e73ab48..a099602 100644
 --- a/src/virtio/vulkan/vn_wsi.c
 +++ b/src/virtio/vulkan/vn_wsi.c
 @@ -18,6 +18,20 @@
@@ -721,7 +737,7 @@ index e73ab48..62c392c 100644
  VkResult
  vn_wsi_init(struct vn_physical_device *physical_dev)
  {
-@@ -186,7 +215,39 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
+@@ -186,9 +215,44 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
     if (result != VK_SUCCESS)
        return result;
  
@@ -760,9 +776,15 @@ index e73ab48..62c392c 100644
 +   }
 +#endif
     physical_dev->wsi_device.supports_modifiers =
-       physical_dev->base.vk.supported_extensions.EXT_image_drm_format_modifier;
+-      physical_dev->base.vk.supported_extensions.EXT_image_drm_format_modifier;
++      vn_wsi_native_offers_modifiers(
++         physical_dev->base.vk.supported_extensions
++            .EXT_image_drm_format_modifier,
++         physical_dev->external_memory.renderer_supports_metal_heap);
     physical_dev->base.vk.wsi_device = &physical_dev->wsi_device;
-@@ -227,7 +288,8 @@ vn_wsi_create_image(struct vn_device *dev,
+ 
+    return VK_SUCCESS;
+@@ -227,7 +291,8 @@ vn_wsi_create_image(struct vn_device *dev,
      * a workaround here, venus can once again force linear tiling when legacy
      * scanout is requested outside of common wsi.
      */
@@ -772,7 +794,7 @@ index e73ab48..62c392c 100644
        if (create_info != &local_create_info) {
           local_create_info = *create_info;
           local_create_info.tiling = VK_IMAGE_TILING_LINEAR;
-@@ -242,6 +304,37 @@ vn_wsi_create_image(struct vn_device *dev,
+@@ -242,6 +307,37 @@ vn_wsi_create_image(struct vn_device *dev,
     if (result != VK_SUCCESS)
        return result;
  
@@ -848,10 +870,10 @@ index 0000000..1fc35f2
 +#endif /* VN_WSI_DRM_H */
 diff --git a/src/virtio/vulkan/vn_wsi_native.h b/src/virtio/vulkan/vn_wsi_native.h
 new file mode 100644
-index 0000000..20b42a5
+index 0000000..25aa7f1
 --- /dev/null
 +++ b/src/virtio/vulkan/vn_wsi_native.h
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,115 @@
 +/*
 + * Copyright 2026
 + * SPDX-License-Identifier: MIT
@@ -950,6 +972,20 @@ index 0000000..20b42a5
 +
 +   *row_pitch = (uint32_t)stride;
 +   return true;
++}
++
++/* Common WSI takes its explicit-modifier path whenever a surface offers DRM
++ * format modifiers.  That path filters modifiers through a colour-attachment
++ * format query and presents whichever linear layout survives, in place of the
++ * native heap the renderer and the compositor already share.  Where a native
++ * heap exists the scanout path above is the one that presents without a copy,
++ * so offer modifiers only where there is no native heap to share.
++ */
++static inline bool
++vn_wsi_native_offers_modifiers(bool supports_drm_format_modifier,
++                               bool renderer_supports_metal_heap)
++{
++   return supports_drm_format_modifier && !renderer_supports_metal_heap;
 +}
 +
 +#endif /* VN_WSI_NATIVE_H */

@@ -1,4 +1,4 @@
-From 34b0b852f00c0cf420e783e1a8972957d8deacb4 Mon Sep 17 00:00:00 2001
+From ce09cdf3946dfae60f5687415f5b6b3792d6e2fd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 11 Sep 2026 16:40:47 +0900
 Subject: [PATCH 14/23] vulkan/wsi/wayland: bound the waits a compositor need

@@ -210,7 +210,18 @@ into a linear texture; what it refuses, by an assertion that ends the host
 process, is a linear texture of any type but `MTLTextureType2D`, and this driver
 binds every input attachment as a 2D array. An input attachment is therefore
 what a linear layout has to refuse, and a layout Metal could not represent
-becomes a Vulkan error before Metal sees the descriptor. The guest Venus driver's two conditions for
+becomes a Vulkan error before Metal sees the descriptor.
+
+The guest's common WSI does not take that path where the renderer can share a
+native Metal heap. A surface offers DRM format modifiers only when there is no
+native heap to share, so a Wayland compositor advertising
+`DRM_FORMAT_MOD_LINEAR` still presents through the MTLHeap scanout the
+renderer and the compositor already agree on, rather than through a linear
+image each of them has to reinterpret. Conformance checks that a swapchain is
+created and reads back what was drawn, which both paths satisfy; what only the
+scanout path gives is a presented image with no copy in it. The modifier path
+stays for an application that asks for a modifier image directly and for a
+renderer that has no native heap. The guest Venus driver's two conditions for
 `VK_ANDROID_native_buffer` and
 `VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and an
 Android guest presents its swapchain through them.
