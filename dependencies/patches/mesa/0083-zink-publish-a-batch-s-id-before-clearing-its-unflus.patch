@@ -1,4 +1,4 @@
-From 0a7f89d60b18a56bc9d631894583d5289fe12927 Mon Sep 17 00:00:00 2001
+From c609a8e58419953c1911b142106ea47629088d91 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 16:08:25 +0900
 Subject: [PATCH 83/88] zink: publish a batch's id before clearing its

@@ -1,4 +1,4 @@
-From 8e845cde78c515e49044ac23fc9b35449aa81171 Mon Sep 17 00:00:00 2001
+From 4e0a715a1a16ddeb093293a6614f103e0f9e3ff6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:15:23 +0900
 Subject: [PATCH 86/88] zink: do not answer a query from the fast path that

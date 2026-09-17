@@ -1,4 +1,4 @@
-From 313d5130894683c42f0c0bb75b583ecb08515a7e Mon Sep 17 00:00:00 2001
+From 135d39927cd32c8782d130ffa1bf819921473f1c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 22:44:01 +0900
 Subject: [PATCH 84/88] zink: keep a queued barrier's resource alive until it
