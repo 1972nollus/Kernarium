@@ -1,7 +1,7 @@
 From 03621e4f5a7e3de10c37882fb8fd2b67df4a21b8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:14:52 +0900
-Subject: [PATCH 77/89] kosmickrisp: advertise VK_EXT_queue_family_foreign
+Subject: [PATCH 77/90] kosmickrisp: advertise VK_EXT_queue_family_foreign
 
 The Android 2025 baseline that VP_ANDROID_17_requirements inherits makes this
 extension mandatory, and the guest Venus driver additionally uses it as one of

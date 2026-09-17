@@ -1,7 +1,7 @@
 From 3c1a970118396e9ce78b0b09a2fcd376752a97ca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:33:54 +0900
-Subject: [PATCH 75/89] kosmickrisp: advertise VK_KHR_shader_quad_control
+Subject: [PATCH 75/90] kosmickrisp: advertise VK_KHR_shader_quad_control
 
 The Android 17 Vulkan requirements profile (VP_ANDROID_17_requirements)
 lists VK_KHR_shader_quad_control among its mandatory extensions, and both

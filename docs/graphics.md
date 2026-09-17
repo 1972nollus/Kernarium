@@ -76,6 +76,16 @@ a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
 
+The same rule binds the compressed formats on an iOS device. Metal defines the
+BC/S3TC, RGTC and BPTC pixel formats everywhere, but only a device that reports
+`MTLDevice.supportsBCTextureCompression` accepts a texture in one; an Apple GPU
+on iOS does not, and Metal answers such a descriptor by aborting the process
+rather than failing the call, so a driver cannot recover from having offered
+one. KosmicKrisp therefore asks the device once and reports those three layouts
+as unsupported where it says no, which removes them from the Vulkan format
+features and so from the GL formats Virgl advertises above them. Every Apple
+silicon Mac supports BC, so macOS is unaffected.
+
 That version is the profile the guest reports, not a conformance result. Guest
 Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
 own conformance standing is whatever its recorded campaigns show.
