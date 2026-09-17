@@ -1389,7 +1389,7 @@ int runtimeRun(
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
         if (aquarium && KERNARIUM_AQUARIUM_SUPPORTED == 0) {
             std::fputs(
-                "Kernarium: WebGL Aquarium is Simulator-only\n", stderr);
+                "Kernarium: WebGL Aquarium needs an iOS product\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");

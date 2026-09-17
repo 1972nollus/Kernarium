@@ -214,7 +214,7 @@ target_compile_features(KernariumRuntime PRIVATE cxx_std_20)
 target_compile_options(KernariumRuntime PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     -Wall -Wextra -Werror)
-if(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+if(UML_APPLE_PLATFORM MATCHES "^ios")
     set(_kernarium_aquarium_supported 1)
 else()
     set(_kernarium_aquarium_supported 0)
