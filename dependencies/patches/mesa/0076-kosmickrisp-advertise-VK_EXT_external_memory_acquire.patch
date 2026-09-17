@@ -1,7 +1,7 @@
 From 908977f53f06516da8dcbeb513305dba97c9692a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:34:12 +0900
-Subject: [PATCH 76/88] kosmickrisp: advertise
+Subject: [PATCH 76/89] kosmickrisp: advertise
  VK_EXT_external_memory_acquire_unmodified
 
 VP_ANDROID_17_requirements makes this extension mandatory. It depends
