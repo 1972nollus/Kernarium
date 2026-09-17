@@ -147,23 +147,26 @@ option(UML_GADGET_SIMD_DESTINATION_RESIDENCY
     "Keep one bounded SIMD MLA destination resident within a block"
     ON)
 
-# Experimental A/B arm, off by default. An in-place "add Rd, Rd, #imm" writes
-# and re-reads one CpuState slot; addressing that slot with a baked
-# displacement instead of a decoded register index lets the host forward the
-# store to the load at rename. Bounded at 31 entries per operation because the
-# in-place shape needs one index for both accesses.
+# An in-place "add Rd, Rd, #imm" writes and re-reads one CpuState slot;
+# addressing that slot with a baked displacement instead of a decoded register
+# index lets the host forward the store to the load at rename. Bounded at 31
+# entries per operation because the in-place shape needs one index for both
+# accesses. Turning this on without UML_GADGET_INPLACE_MEMORY leaves a baked
+# producer feeding an indexed consumer, which is slower than baking neither, so
+# the two belong on or off together.
 option(UML_GADGET_INPLACE_IMMEDIATE
     "Bake the CpuState displacement into in-place ADD/SUB-immediate entries"
-    OFF)
+    ON)
 
-# Experimental A/B arm, off by default, and the companion to the entry above.
-# An unsigned-offset transfer reaches CpuState through the register it moves;
-# baking that displacement both forwards the value at rename and keeps the two
-# ends of the hop in the same addressing form, which a baked arithmetic entry
-# alone does not. Covers the 32- and 64-bit forms at 31 entries per mode.
+# The companion to the entry above. An unsigned-offset transfer reaches CpuState
+# through the register it moves; baking that displacement both forwards the
+# value at rename and keeps the two ends of the hop in the same addressing form,
+# which a baked arithmetic entry alone does not. Covers the 32- and 64-bit forms
+# at 31 entries per mode, whose cold tails are out of line so the copies cost
+# only what differs between them.
 option(UML_GADGET_INPLACE_MEMORY
     "Bake the CpuState displacement into unsigned-offset scalar transfer entries"
-    OFF)
+    ON)
 
 # Experimental A/B arm, 1 is off. Every guest register that flows through one
 # template shares that template's load and store program counters, and the
