@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #include <cstdlib>
 #endif
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <memory_resource>
 #if UML_GADGET_CACHE_CENSUS
@@ -280,6 +282,14 @@ private:
  * reuses its predecessor's bytes; chunks are returned only when the cache is
  * destroyed, which is what keeps retiring an address space proportional to
  * what it owned rather than to a serialised allocator walk. See G167.
+ *
+ * The arena also answers which live body holds an address. Each chunk keeps
+ * one bit per granule, set at the first granule of every live block, so the
+ * block holding an address is the nearest set bit at or below it. The cache
+ * asks this when a terminal exit lands in a linked successor, which a
+ * measured guest did about once per hundred and twenty stores; the index by
+ * stream address that this replaces was maintained at every one of those
+ * stores, five set installs per program. See G203.
  */
 class BodyArena final {
 public:
@@ -303,28 +313,40 @@ public:
 		if (size > largest_class) {
 			/* Too big for a class to recycle, so it is not carved
 			 * out of a chunk either; it is freed on its own. */
-			direct_ += size;
-			return upstream_->allocate(size,
-				alignof(std::max_align_t));
+			auto *block = static_cast<std::byte *>(
+				upstream_->allocate(size,
+					alignof(std::max_align_t)));
+			direct_.push_back({block, size});
+			return block;
 		}
 		if (auto *block = free_[size / granule]; block != nullptr) {
 			free_[size / granule] = next_of(block);
+			mark(block, true);
 			return block;
 		}
 		if (size > limit_ - used_) {
 			const auto wanted = std::max(size, chunk_bytes);
+			auto starts = std::make_unique<std::uint64_t[]>(
+				map_words(wanted));
 			auto *base = static_cast<std::byte *>(
 				upstream_->allocate(wanted,
 					alignof(std::max_align_t)));
-			chunks_.push_back({base, wanted});
+			/* Kept in address order, which is what owner() searches. */
+			const auto inserted = chunks_.insert(
+				std::upper_bound(chunks_.begin(), chunks_.end(),
+					base, before_chunk),
+				Chunk{base, wanted, std::move(starts)});
 			/* The tail of the chunk being left behind is at most one
 			 * body, and one partly used chunk is the arena's whole
 			 * slack. */
 			current_ = base;
+			current_starts_ = inserted->starts.get();
 			used_ = 0;
 			limit_ = wanted;
 		}
 		auto *block = current_ + used_;
+		current_starts_[used_ / granule / 64] |=
+			std::uint64_t{1} << (used_ / granule % 64);
 		used_ += size;
 		return block;
 	}
@@ -332,22 +354,72 @@ public:
 	void deallocate(void *block, std::size_t bytes) noexcept
 	{
 		const auto size = rounded(bytes);
+		auto *freed = static_cast<std::byte *>(block);
 		if (size > largest_class) {
-			direct_ -= size;
+			const auto held = std::find_if(direct_.begin(),
+				direct_.end(), [freed](const Direct &direct) {
+					return direct.base == freed;
+				});
+			if (held != direct_.end())
+				direct_.erase(held);
 			upstream_->deallocate(block, size,
 				alignof(std::max_align_t));
 			return;
 		}
-		next_of(static_cast<std::byte *>(block)) = free_[size / granule];
-		free_[size / granule] = static_cast<std::byte *>(block);
+		mark(freed, false);
+		next_of(freed) = free_[size / granule];
+		free_[size / granule] = freed;
+	}
+
+	/* The live block holding an address, or nullptr. */
+	[[nodiscard]] void *owner(const void *address) const noexcept
+	{
+		const auto *at = static_cast<const std::byte *>(address);
+		if (const auto *chunk = chunk_of(at); chunk != nullptr) {
+			const auto index =
+				static_cast<std::size_t>(at - chunk->base) / granule;
+			/* Nothing in a chunk spans more than the largest class,
+			 * so a start any further below is another block's. */
+			const auto floor = index >= largest_class / granule ?
+				(index - largest_class / granule) / 64 : 0;
+			auto word = index / 64;
+			auto bits = chunk->starts[word] &
+				(~std::uint64_t{0} >> (63 - index % 64));
+			for (;;) {
+				if (bits != 0)
+					return chunk->base +
+						(word * 64 + 63 -
+							static_cast<std::size_t>(
+								std::countl_zero(bits))) *
+						granule;
+				if (word == floor)
+					return nullptr;
+				bits = chunk->starts[--word];
+			}
+		}
+		for (const auto &direct : direct_)
+			if (at >= direct.base && at < direct.base + direct.bytes)
+				return direct.base;
+		return nullptr;
 	}
 
 	/* What the arena holds, which is what the cache costs. */
 	[[nodiscard]] std::size_t bytes() const noexcept
 	{
-		std::size_t total = direct_;
+		std::size_t total = 0;
+		for (const auto &direct : direct_)
+			total += direct.bytes;
 		for (const auto &chunk : chunks_)
 			total += chunk.bytes;
+		return total;
+	}
+
+	/* The start maps, which are what owner() costs. */
+	[[nodiscard]] std::size_t index_bytes() const noexcept
+	{
+		std::size_t total = 0;
+		for (const auto &chunk : chunks_)
+			total += map_words(chunk.bytes) * sizeof(std::uint64_t);
 		return total;
 	}
 
@@ -372,18 +444,63 @@ private:
 		return *reinterpret_cast<std::byte **>(block);
 	}
 
+	/* Words in the start map of a chunk of this many bytes. */
+	[[nodiscard]] static constexpr std::size_t map_words(
+		std::size_t bytes) noexcept
+	{
+		return (bytes / granule + 63) / 64;
+	}
+
 	struct Chunk final {
+		std::byte *base;
+		std::size_t bytes;
+		/* One bit per granule, set at the first granule of a live block. */
+		std::unique_ptr<std::uint64_t[]> starts;
+	};
+
+	/* A block above the largest class, held outside the chunks. */
+	struct Direct final {
 		std::byte *base;
 		std::size_t bytes;
 	};
 
+	[[nodiscard]] static bool before_chunk(
+		const std::byte *address, const Chunk &chunk) noexcept
+	{
+		return address < chunk.base;
+	}
+
+	[[nodiscard]] const Chunk *chunk_of(
+		const std::byte *address) const noexcept
+	{
+		const auto after = std::upper_bound(
+			chunks_.begin(), chunks_.end(), address, before_chunk);
+		if (after == chunks_.begin())
+			return nullptr;
+		const auto &chunk = *std::prev(after);
+		return address < chunk.base + chunk.bytes ? &chunk : nullptr;
+	}
+
+	void mark(const std::byte *block, bool live) noexcept
+	{
+		const auto *chunk = chunk_of(block);
+		const auto index =
+			static_cast<std::size_t>(block - chunk->base) / granule;
+		const auto bit = std::uint64_t{1} << (index % 64);
+		if (live)
+			chunk->starts[index / 64] |= bit;
+		else
+			chunk->starts[index / 64] &= ~bit;
+	}
+
 	std::pmr::memory_resource *upstream_;
+	/* In address order. */
 	std::vector<Chunk> chunks_;
+	std::vector<Direct> direct_;
 	std::byte *current_{};
+	std::uint64_t *current_starts_{};
 	std::size_t used_{};
 	std::size_t limit_{};
-	/* Blocks above the largest class, which the chunks do not hold. */
-	std::size_t direct_{};
 	std::array<std::byte *, classes> free_{};
 };
 
@@ -396,9 +513,7 @@ class GadgetExecutor::ProgramCache final {
 public:
 	ProgramCache()
 		: bodies_{&counted_},
-		  build_scratch_{scratch_.data(), scratch_.size()},
-		  stream_index_{std::make_unique<StreamIndexSet[]>(
-			  stream_index_set_count)}
+		  build_scratch_{scratch_.data(), scratch_.size()}
 	{}
 
 	~ProgramCache()
@@ -448,8 +563,7 @@ public:
 				state.live_indirect.capacity() * sizeof(void *);
 		}
 		return {
-			.stream_index = stream_index_set_count *
-				sizeof(StreamIndexSet),
+			.stream_index = bodies_.index_bytes(),
 			.slabs = slabs,
 			.streams = bodies_.bytes(),
 			.links = links,
@@ -470,13 +584,18 @@ public:
 	void census(std::FILE *out) const noexcept
 	{
 		const auto parts = footprint();
+		/* How often the stream lookup was asked, against how often a
+		 * store would have had to maintain an index for it. */
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu stream_index=%zu "
-			"slabs=%zu streams=%zu links=%zu indirect=%zu total=%zu\n",
+			"slabs=%zu streams=%zu links=%zu indirect=%zu total=%zu "
+			"stores=%llu stream_lookups=%llu\n",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), parts.stream_index, parts.slabs,
 			parts.streams, parts.links, parts.indirect,
-			parts.total());
+			parts.total(),
+			static_cast<unsigned long long>(stores_),
+			static_cast<unsigned long long>(stream_lookups_));
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
@@ -539,9 +658,6 @@ public:
 			if (slab)
 				for (auto &slot : slab->slots)
 					slot.epoch = 0;
-		for (std::size_t set = 0; set < stream_index_set_count; ++set)
-			for (auto &entry : stream_index_[set].entries)
-				entry = {};
 		epoch_ = 1;
 	}
 
@@ -637,40 +753,30 @@ public:
 		return nullptr;
 	}
 
+	/* The translation whose stream holds an address.
+	 *
+	 * A terminal exit inside a linked successor reports the successor's
+	 * stream, and the retirement correction needs that successor's program
+	 * rather than the entered block's. The arena knows which live body
+	 * holds any address, and a stream pointer the engine has just produced
+	 * always lies in a live body: links only ever name current
+	 * translations, and nothing is stored or released between the exit and
+	 * this lookup. The answer is exact, with no index to fall out of.
+	 */
 	[[nodiscard]] const BuildResult *find_stream(
 		const void *stream) const noexcept
 	{
 		if (stream == nullptr)
 			return nullptr;
-		const auto marker = reinterpret_cast<std::uintptr_t>(stream);
-		const auto &set = stream_index_[stream_index_location(marker)];
-		for (const auto &entry : set.entries) {
-			const auto *slot = entry.slot;
-			if (slot != nullptr && slot->epoch == epoch_ &&
-			    slot->activation == entry.activation &&
-			    slot->body != nullptr &&
-			    program_contains_stream(
-				    slot->body->result.program, stream))
-				return &slot->body->result;
-		}
-
-		/*
-		 * The fixed index deliberately permits replacement under unusual
-		 * host-address collisions. Preserve exact terminal accounting with
-		 * a cold correctness fallback; ordinary linked exits find one of
-		 * four allocation-free entries above.
-		 */
-		for (const auto &slab : slabs_) {
-			if (!slab)
-				continue;
-			for (const auto &slot : slab->slots)
-				if (slot.epoch == epoch_ &&
-				    slot.body != nullptr &&
-				    program_contains_stream(
-					    slot.body->result.program, stream))
-					return &slot.body->result;
-		}
-		return nullptr;
+#if UML_GADGET_CACHE_CENSUS
+		++stream_lookups_;
+#endif
+		const auto *body = static_cast<const Body *>(
+			bodies_.owner(stream));
+		if (body == nullptr ||
+		    !program_contains_stream(body->result.program, stream))
+			return nullptr;
+		return &body->result;
 	}
 
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(
@@ -851,9 +957,9 @@ public:
 		(void)guest_words;
 		(void)changes;
 #endif
-		++slot.activation;
-		if (slot.activation == 0)
-			slot.activation = 1;
+#if UML_GADGET_CACHE_CENSUS
+		++stores_;
+#endif
 		activate(pc, slot);
 		return slot.body->result;
 	}
@@ -893,13 +999,9 @@ private:
 	static constexpr std::size_t set_count = slot_count / ways;
 	static constexpr std::size_t slab_slots = 256;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
-	static constexpr unsigned stream_index_granule_shift = 6;
-	static constexpr std::size_t stream_index_ways = 4;
 	/* The unreachable guest PC an untrained indirect cell names; guest
 	 * targets are admitted only word-aligned, so none can collide. */
 	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
-	/* One index set per slot, as when both were fixed at 16384. */
-	static constexpr std::size_t stream_index_set_count = slot_count;
 	static_assert((slot_count & (slot_count - 1)) == 0,
 		"cache slot count must be a power of two");
 	static_assert(slot_count >= slab_slots * 4,
@@ -959,7 +1061,6 @@ private:
 		unsigned long generation{};
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
-		std::uint64_t activation{};
 		/* Reactivation resolves the same link record every time, so the
 		 * node address is memoised here rather than hashed again on each
 		 * pass. The owning address space's link map is node-based, so the
@@ -977,12 +1078,6 @@ private:
 		 */
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
-		/* The activation whose stream index entries are already installed.
-		 * store() gives every activation a nonzero value, so the zero this
-		 * starts at, and the zero an eviction writes back, both read as
-		 * "not indexed".
-		 */
-		std::uint64_t indexed_activation{};
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::uint64_t validated_changes{};
 #endif
@@ -992,7 +1087,7 @@ private:
 	 * the tag size multiplies by slot_count: at 65,536 slots every eight
 	 * bytes here is half a mebibyte per executor. Anything that belongs to
 	 * one translation belongs in its Body. */
-	static_assert(sizeof(Slot) <= 80,
+	static_assert(sizeof(Slot) <= 56,
 		"cache slots index translations; they do not hold them");
 
 	struct Slab final {
@@ -1003,19 +1098,6 @@ private:
 		std::size_t set;
 		std::size_t slab;
 		std::size_t offset;
-	};
-
-	struct StreamIndexEntry final {
-		/* A reused cache slot changes activation, invalidating every old
-		 * index entry without walking the former program's stream.
-		 */
-		Slot *slot{};
-		std::uint64_t activation{};
-	};
-
-	struct StreamIndexSet final {
-		std::array<StreamIndexEntry, stream_index_ways> entries;
-		std::uint8_t next_replacement{};
 	};
 
 	/* A link names a guest PC, which is only meaningful inside one address
@@ -1122,90 +1204,6 @@ private:
 		};
 	}
 
-	[[nodiscard]] static std::size_t stream_index_location(
-		std::uintptr_t stream) noexcept
-	{
-		const auto chunk = stream >> stream_index_granule_shift;
-		const auto mixed = chunk ^ (chunk >> 14) ^ (chunk >> 28);
-		return static_cast<std::size_t>(mixed) &
-			(stream_index_set_count - 1);
-	}
-
-	template <typename Operation>
-	static void for_each_stream_index_set(
-		const arm64::gadgets::Program &program, Operation operation)
-	{
-		const auto words = program.words();
-		if (words.empty())
-			return;
-		const auto begin = reinterpret_cast<std::uintptr_t>(words.data());
-		const auto last = begin +
-			words.size() * sizeof(std::uintptr_t) - 1;
-		auto chunk = begin >> stream_index_granule_shift;
-		const auto last_chunk = last >> stream_index_granule_shift;
-		for (;;) {
-			operation(stream_index_location(
-				chunk << stream_index_granule_shift));
-			if (chunk == last_chunk)
-				break;
-			++chunk;
-		}
-	}
-
-	/* Install this slot's stream index entries.
-	 *
-	 * Only store() changes a slot's activation, so a reactivation would
-	 * write back exactly the entries the previous pass wrote: same slot
-	 * address, same activation, same program. Repeating that walk matters
-	 * only where another program has since taken one of the ways for
-	 * itself, and that is observable at the moment it happens, so the
-	 * evicting pass clears the victim's marker and the victim rebuilds at
-	 * its own next activation -- which is when an unconditional walk would
-	 * have rebuilt it too. Index coverage is therefore identical either
-	 * way, and only the passes that would have changed nothing disappear.
-	 */
-	void index_stream(Slot &slot)
-	{
-		if (slot.indexed_activation == slot.activation)
-			return;
-		const auto &result = slot.body->result;
-		for_each_stream_index_set(result.program, [&](std::size_t location) {
-			auto &set = stream_index_[location];
-			std::size_t selected =
-				set.next_replacement & (stream_index_ways - 1);
-			for (std::size_t way = 0; way < stream_index_ways; ++way) {
-				const auto &entry = set.entries[way];
-				const bool current =
-					entry.slot != nullptr &&
-					entry.slot->epoch == epoch_ &&
-					entry.slot->activation ==
-						entry.activation &&
-					entry.slot->body != nullptr;
-				if (!current || entry.slot == &slot) {
-					selected = way;
-					break;
-				}
-			}
-			auto &chosen = set.entries[selected];
-			/* Taking a way from an entry that was still current is
-			 * what leaves its owner partially indexed. A way that had
-			 * already lapsed costs its owner nothing, and its owner
-			 * has moved on to an activation this cannot describe.
-			 */
-			if (chosen.slot != nullptr && chosen.slot != &slot &&
-			    chosen.slot->epoch == epoch_ &&
-			    chosen.slot->activation == chosen.activation)
-				chosen.slot->indexed_activation = 0;
-			chosen = {
-				.slot = &slot,
-				.activation = slot.activation,
-			};
-			set.next_replacement = static_cast<std::uint8_t>(
-				(selected + 1) & (stream_index_ways - 1));
-		});
-		slot.indexed_activation = slot.activation;
-	}
-
 	/* Least-recently-current first. */
 	void touch(unsigned long generation)
 	{
@@ -1224,8 +1222,7 @@ private:
 	 * storing, so this is proportional to what it owned rather than to the
 	 * size of the cache; the link records, indirect sites and live lists go
 	 * with the Generation itself. No deactivate() is needed on the way out,
-	 * because the records those calls would reset are about to be destroyed
-	 * and the cleared epoch already retires the slot's stream index entries.
+	 * because the records those calls would reset are about to be destroyed.
 	 */
 	void retire(unsigned long generation)
 	{
@@ -1437,7 +1434,6 @@ private:
 		const auto &result = slot.body->result;
 		if (!result.complete || result.program.instruction_count() == 0)
 			return;
-		index_stream(slot);
 		if (slot.link == nullptr || slot.link_epoch != epoch_ ||
 		    slot.link->link.guest_pc != pc) {
 			slot.link = &link_record(pc);
@@ -1523,7 +1519,10 @@ private:
 	Generation *current_{};
 	std::vector<unsigned long> resident_;
 	unsigned long current_generation_{};
-	std::unique_ptr<StreamIndexSet[]> stream_index_;
+#if UML_GADGET_CACHE_CENSUS
+	std::uint64_t stores_{};
+	mutable std::uint64_t stream_lookups_{};
+#endif
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 	std::uint64_t epoch_{1};

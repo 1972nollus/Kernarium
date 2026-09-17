@@ -303,7 +303,10 @@ void linked_successor_fpcr_exit_subtracts_only_its_suffix()
 	require(linked.cpu.gadget_indirect_miss == nullptr);
 }
 
-void reused_cache_slots_leave_no_live_stream_index_entries()
+/* Replacing a translation's slot frees its body, and the retranslation may be
+ * given those very bytes back; a fault linked into it must be attributed to
+ * the new translation. */
+void a_retranslated_successor_answers_from_its_new_body()
 {
 	constexpr unsigned long generation = 763;
 	constexpr auto source = code_base;
@@ -376,6 +379,108 @@ void reused_cache_slots_leave_no_live_stream_index_entries()
 	require(second.cpu.gadget_indirect_miss == nullptr);
 }
 
+/* A terminal exit inside a linked successor is attributed to that successor
+ * by asking the body arena which live block holds the exit stream. Enough
+ * blocks are translated here to spread their bodies over several arena
+ * chunks. With `fault_first` the faulting block is the first translation, so
+ * its body opens the first chunk and its exit lies far enough into the stream
+ * to sit past the first word of that chunk's start map; otherwise it is the
+ * last, so the search has to pick the newest chunk wherever the host placed
+ * it. Exact retirement over the whole chain is what proves the right body was
+ * found: a failed lookup leaves the faulting block's precharge uncorrected.
+ */
+void linked_successor_is_found_across_arena_chunks(bool fault_first)
+{
+	static unsigned long next_generation = 770;
+	const auto generation = next_generation++;
+	/* One instruction a block keeps the whole linked chain under the
+	 * 4,096-instruction limit, whose exit reports the unexecuted target's
+	 * precharge and would make the total inexact for a reason of its own. */
+	constexpr std::size_t chain = 4000;
+	constexpr std::size_t adds = 62;
+	constexpr auto fault_block = code_base;
+	constexpr auto first_link =
+		code_base + (adds + 2) * sizeof(std::uint32_t);
+	const auto link_address = [](std::size_t index) {
+		return first_link + (index - 1) * sizeof(std::uint32_t);
+	};
+	const auto mapped_bytes =
+		link_address(chain) + sizeof(std::uint32_t) - code_base;
+	const auto pages = static_cast<std::size_t>(
+		(mapped_bytes + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE);
+	const auto unmapped = code_base + pages * DARWIN_UML_GUEST_PAGE_SIZE;
+
+	JitBacking backing{pages};
+	/* The faulting block: adds, a load from an unmapped page, a syscall. */
+	for (std::size_t index = 0; index < adds; ++index)
+		backing.put32(index * sizeof(std::uint32_t),
+			0x9100'0421U); // add x1, x1, #1
+	backing.put32(adds * sizeof(std::uint32_t), 0xf940'0040U); // ldr x0, [x2]
+	backing.put32((adds + 1) * sizeof(std::uint32_t),
+		0xd400'0001U); // svc #0
+	/* Block i: b block i-1, with block 1 branching to the fault. */
+	for (std::size_t index = 1; index <= chain; ++index) {
+		const auto address = link_address(index);
+		const auto target =
+			index == 1 ? fault_block : link_address(index - 1);
+		backing.put32(address - code_base,
+			direct_branch(address, target));
+	}
+	JitMapping mapping{
+		generation, code_base, backing, pages, PROT_READ | PROT_EXEC};
+	StaticGuestMemory memory;
+	GadgetExecutor executor;
+
+	struct Run final {
+		std::size_t retired;
+		std::size_t last_round;
+	};
+	/* From an entry to the fault, over however many round trips the chain
+	 * takes; the last round's count says whether the fault was reached
+	 * through a link. */
+	const auto run_to_fault = [&](std::uint64_t entry) {
+		Outcome outcome{};
+		outcome.cpu.pc = entry;
+		outcome.cpu.registers[2] = unmapped;
+		std::size_t retired = 0;
+		for (std::size_t round = 0; round <= chain; ++round) {
+			outcome = execute_block(
+				executor, memory, generation, outcome.cpu);
+			retired += outcome.executed;
+			require(outcome.cpu.gadget_indirect_miss == nullptr);
+			if (outcome.event == ::uml::cpu::EngineEvent::memory_fault)
+				break;
+			require(outcome.event ==
+				::uml::cpu::EngineEvent::continued);
+		}
+		require(outcome.event == ::uml::cpu::EngineEvent::memory_fault);
+		require(outcome.cpu.pc ==
+			fault_block + adds * sizeof(std::uint32_t));
+		require(outcome.fault_address == unmapped);
+		require(outcome.cpu.registers[1] == adds);
+		return Run{retired, outcome.executed};
+	};
+
+	if (fault_first) {
+		const auto warm = run_to_fault(fault_block);
+		require(warm.retired == adds);
+		require(executor.cache_diagnostics().translations == 1);
+	}
+	/* Every block is translated as it is reached. */
+	const auto first = run_to_fault(link_address(chain));
+	require(first.retired == chain + adds);
+	require(executor.cache_diagnostics().translations == chain + 1);
+	require((first.last_round > adds) == fault_first);
+	/* The whole chain now runs linked, and the fault at its end is reached
+	 * from a block translated a chunk or more away. */
+	const auto linked = run_to_fault(link_address(chain));
+	require(linked.retired == chain + adds);
+	require(linked.last_round > adds);
+	require(executor.cache_diagnostics().translations == chain + 1);
+	require(executor.cache_diagnostics().validation_attempts == 0);
+}
+
 void indirect_link_learning_still_uses_and_clears_scratch()
 {
 	constexpr unsigned long generation = 762;
@@ -432,7 +537,9 @@ int main()
 	add_immediate_at_block_tail_reaches_synthetic_terminal();
 	linked_successor_terminal_subtracts_only_its_suffix();
 	linked_successor_fpcr_exit_subtracts_only_its_suffix();
-	reused_cache_slots_leave_no_live_stream_index_entries();
+	a_retranslated_successor_answers_from_its_new_body();
+	linked_successor_is_found_across_arena_chunks(true);
+	linked_successor_is_found_across_arena_chunks(false);
 	indirect_link_learning_still_uses_and_clears_scratch();
 	return 0;
 }

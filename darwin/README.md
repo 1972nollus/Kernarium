@@ -128,7 +128,11 @@ is a single exact-sized allocation carrying its stream and the guest words it is
 validated against, taken from an arena with sixteen-byte size classes, and the
 program refers to those words rather than owning a second copy. A build
 assembles its stream in a scratch buffer that the next build rewinds, so a
-translation allocates only when it is stored.
+translation allocates only when it is stored. The arena marks where every live
+translation starts, one bit per granule, and that map is how a terminal exit
+inside a linked successor is attributed to the successor's program; the cache
+keeps no index keyed by stream address and maintains nothing per store for
+that lookup.
 
 The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
 result in host `x0` between adjacent declared gadgets. Assembly templates emit

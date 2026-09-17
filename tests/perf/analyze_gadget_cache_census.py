@@ -101,7 +101,7 @@ def main() -> int:
                         help="file written by DARWIN_UML_GADGET_CACHE_CENSUS")
     parser.add_argument("--slots", type=int, default=65536,
                         help="cache slots per executor, for occupancy (%(default)s)")
-    parser.add_argument("--slot-bytes", type=int, default=72,
+    parser.add_argument("--slot-bytes", type=int, default=56,
                         help="bytes per cache slot in the measured build (%(default)s)")
     arguments = parser.parse_args()
 
@@ -124,6 +124,13 @@ def main() -> int:
               f"cache {total / 2**20:7.1f} MiB")
     measured = sum(e.footprint.get("total", 0) for e in executors)
     print(f"  measured cache total        {measured / 2**20:.1f} MiB")
+    # How often a stream address had to be mapped back to its translation,
+    # against the stores an index keyed by that address would be maintained at.
+    stores = sum(e.footprint.get("stores", 0) for e in executors)
+    lookups = sum(e.footprint.get("stream_lookups", 0) for e in executors)
+    if stores:
+        print(f"  stores {stores:,}   stream lookups {lookups:,}   "
+              f"one lookup per {stores / max(lookups, 1):.0f} stores")
 
     # What one address space's executors would share: identical guest words at
     # the same PC in the same address space is the same translation.
@@ -165,7 +172,7 @@ def main() -> int:
     print(f"  slot tags, {len(executors)} x {arguments.slots:,} x "
           f"{arguments.slot_bytes} B   {tags / 2**20:7.1f} MiB")
     index = sum(e.footprint.get("stream_index", 0) for e in executors)
-    print(f"  stream index                        {index / 2**20:7.1f} MiB")
+    print(f"  stream lookup maps                  {index / 2**20:7.1f} MiB")
     bodies = sum(e.footprint.get("streams", 0) for e in executors)
     links = sum(e.footprint.get("links", 0) +
                 e.footprint.get("indirect", 0) for e in executors)
