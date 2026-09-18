@@ -5895,8 +5895,20 @@ struct BakedExtendTables final {
 		instruction.operation == Operation::scalar_bmi;
 	if (instruction.locked && !native_locked_scalar && !native_locked_atomic)
 		return false;
-	if (append_baked(stream, gadget, mode, produced))
+	if (append_baked(stream, gadget, mode, produced)) {
+		/* Experiment: a baked entry that executes no flag-setting host
+		 * instruction leaves the producer's NZCV for a later consumer. */
+		const bool transparent =
+			(instruction.operation == Operation::move ||
+			 instruction.operation == Operation::move_zero_extend ||
+			 instruction.operation == Operation::move_sign_extend) ?
+				instruction.destination.kind != OperandKind::memory &&
+				instruction.source.kind != OperandKind::memory :
+			instruction.operation == Operation::lea;
+		if (transparent && produced == HostFlags::none)
+			produced = host_flags;
 		return true;
+	}
 	produced = host_flags_of(instruction);
 	switch (instruction.operation) {
 	case Operation::nop:

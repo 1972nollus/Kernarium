@@ -55,6 +55,11 @@ the top of a 32-bit register, which sets NZCV exactly as the guest-width
 operation would. The ordinary bank does not do this, so its narrow producers
 keep the deferred path.
 
+A transfer that defines no flags does not end a fusion. MOV, MOVZX and MOVSX
+between registers, and LEA, pass the producer's host flags through to the next
+consumer, which is what lets a compare reach a CMOVcc or a Jcc that a register
+copy sits between. A memory destination still ends it.
+
 ## Deferred flags
 
 Every flag-defining scalar operation records left operand, right operand,
