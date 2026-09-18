@@ -68,9 +68,16 @@
     # be reachable from a production engine factory or target.
     add_library(uml_arm64_engine_test_support STATIC
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_corpus_export.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_evidence.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reference_engine.cpp)
+    # Corpus export classifies words with the checked official decode
+    # partitions and allocations; ordinary runs never read either file.
+    set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_corpus_export.cpp
+        PROPERTIES COMPILE_DEFINITIONS
+            "UML_ARM64_DECODE_PARTITIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_decode_partitions.tsv\";UML_ARM64_ALLOCATIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_allocations.tsv\"")
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
         UML::Emulator
         ${_uml_instruction_evidence_zlib}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "arm64_instruction_corpus_export.hpp"
 #include "arm64_instruction_evidence.hpp"
 #include "arm64_instruction_materialization.hpp"
 #include "instruction_evidence_digest.hpp"
@@ -22,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -74,10 +76,91 @@ struct Outcome final {
   std::uint32_t syndrome{};
 };
 
+/* Corpus export verifies a state-minimized candidate before accepting it. A
+ * mismatch there only rejects the candidate, so harness checks throw instead
+ * of aborting while this is set. Test-owned validators keep their own abort
+ * semantics and are therefore never minimized. */
+thread_local bool soft_failures = false;
+
+struct SoftFailure final {};
+
+class SoftFailureScope final {
+public:
+  SoftFailureScope() noexcept : previous_{soft_failures} {
+    soft_failures = true;
+  }
+  ~SoftFailureScope() { soft_failures = previous_; }
+
+  SoftFailureScope(const SoftFailureScope &) = delete;
+  SoftFailureScope &operator=(const SoftFailureScope &) = delete;
+
+private:
+  bool previous_;
+};
+
+[[nodiscard]] bool diagnostics_enabled() noexcept { return !soft_failures; }
+
+/* Every check() and check_program() call in a process receives the next
+ * ordinal, starting at 1. An abort during a check names that ordinal, which
+ * the corpus exporter accepts as a force-include key. */
+std::uint64_t issued_check_ordinals = 0;
+volatile std::sig_atomic_t active_check_valid = 0;
+std::uint64_t active_check_ordinal = 0;
+std::string_view active_check_name;
+
+void report_active_check(int signal_number) {
+  if (active_check_valid != 0) {
+    char digits[24];
+    std::size_t length = 0;
+    auto value = active_check_ordinal;
+    do {
+      digits[sizeof(digits) - 1U - length++] =
+          static_cast<char>('0' + value % 10U);
+      value /= 10U;
+    } while (value != 0U && length < sizeof(digits));
+    constexpr std::string_view prefix{"arm64 engine harness: abort in check #"};
+    (void)!::write(STDERR_FILENO, prefix.data(), prefix.size());
+    (void)!::write(STDERR_FILENO, digits + sizeof(digits) - length, length);
+    (void)!::write(STDERR_FILENO, " (", 2);
+    (void)!::write(STDERR_FILENO, active_check_name.data(),
+                   active_check_name.size());
+    (void)!::write(STDERR_FILENO, ")\n", 2);
+  }
+  std::signal(signal_number, SIG_DFL);
+  std::raise(signal_number);
+}
+
+class CheckScope final {
+public:
+  explicit CheckScope(std::string_view name) noexcept {
+    static const bool installed = [] {
+      struct sigaction current {};
+      if (sigaction(SIGABRT, nullptr, &current) != 0 ||
+          current.sa_handler != SIG_DFL)
+        return false;
+      struct sigaction report {};
+      report.sa_handler = report_active_check;
+      sigemptyset(&report.sa_mask);
+      return sigaction(SIGABRT, &report, nullptr) == 0;
+    }();
+    (void)installed;
+    active_check_ordinal = ++issued_check_ordinals;
+    active_check_name = name;
+    active_check_valid = 1;
+  }
+
+  ~CheckScope() { active_check_valid = 0; }
+
+  CheckScope(const CheckScope &) = delete;
+  CheckScope &operator=(const CheckScope &) = delete;
+};
+
 [[noreturn]] void
 fail(std::string_view test_name, std::string_view engine,
      std::uint32_t instruction, std::string_view message,
      const std::source_location &location = std::source_location::current()) {
+  if (soft_failures)
+    throw SoftFailure{};
   std::fprintf(stderr,
                "%.*s: %.*s failed for instruction %#010x: %.*s at %s:%u\n",
                static_cast<int>(test_name.size()), test_name.data(),
@@ -449,11 +532,12 @@ public:
     for (std::size_t offset = 0; offset < actual_.size(); ++offset) {
       if (actual_[offset] == expected[offset])
         continue;
-      std::fprintf(stderr,
-                   "memory mismatch at %#llx: expected=%02x actual=%02x\n",
-                   static_cast<unsigned long long>(region_.address + offset),
-                   std::to_integer<unsigned>(expected[offset]),
-                   std::to_integer<unsigned>(actual_[offset]));
+      if (diagnostics_enabled())
+        std::fprintf(stderr,
+                     "memory mismatch at %#llx: expected=%02x actual=%02x\n",
+                     static_cast<unsigned long long>(region_.address + offset),
+                     std::to_integer<unsigned>(expected[offset]),
+                     std::to_integer<unsigned>(actual_[offset]));
       fail(test_name, engine, instruction, "unexpected data-region contents");
     }
     if (region_.initial_tags.empty() && region_.expected_tags.empty())
@@ -464,11 +548,13 @@ public:
               generation_, region_.address + index * 16, &actual_tag) !=
               DARWIN_UML_STATIC_TRANSLATED ||
           actual_tag != expected_tags_[index]) {
-        std::fprintf(
-            stderr, "allocation-tag mismatch at %#llx: expected=%x actual=%x\n",
-            static_cast<unsigned long long>(region_.address + index * 16),
-            static_cast<unsigned>(expected_tags_[index]),
-            static_cast<unsigned>(actual_tag));
+        if (diagnostics_enabled())
+          std::fprintf(
+              stderr,
+              "allocation-tag mismatch at %#llx: expected=%x actual=%x\n",
+              static_cast<unsigned long long>(region_.address + index * 16),
+              static_cast<unsigned>(expected_tags_[index]),
+              static_cast<unsigned>(actual_tag));
         fail(test_name, engine, instruction,
              "unexpected allocation-tag contents");
       }
@@ -660,7 +746,8 @@ void require_equal(bool equal, const arm64::CpuState &expected,
                    std::uint32_t instruction) {
   if (equal)
     return;
-  if (field == "general registers") {
+  if (!diagnostics_enabled()) {
+  } else if (field == "general registers") {
     for (std::size_t index = 0; index < expected.registers.size(); ++index)
       if (expected.registers[index] != actual.registers[index]) {
         std::fprintf(
@@ -1109,7 +1196,8 @@ void require_native_memory(
 class EngineHarness::Implementation final {
 public:
   explicit Implementation(EngineHarnessOptions options)
-      : generation_{next_generation()}, address_space_{generation_},
+      : options_{options}, generation_{next_generation()},
+        address_space_{generation_},
         backing_{DARWIN_UML_GUEST_PAGE_SIZE},
         mapping_{generation_,
                  code_base,
@@ -1195,6 +1283,11 @@ public:
         .after_engine_effect_id = test_case.after_engine_effect_id,
         .expected_instructions = instruction_count_expectation(test_case),
     }, evidence_words, InstructionNativeScope::instruction, location);
+
+    /* Corpus export replaces every per-case side channel, including the
+     * native hardware oracle, with its own sampled three-lane verification. */
+    if (corpus_export::Exporter::active() != nullptr)
+      return;
 
     auto selected = native_oracle::select_native_allocations(
         test_case.instruction, native_oracle::SelectionScope::instruction,
@@ -1392,6 +1485,16 @@ public:
 
     validate_memory_regions(test_case.name, diagnostic_instruction,
                             test_case.memory);
+    if (auto *exporter = corpus_export::Exporter::active();
+        exporter != nullptr) {
+      if (const auto reason = export_exclusion(test_case); !reason.empty()) {
+        exporter->exclude(test_case, reason, location, active_check_ordinal);
+      } else {
+        export_program(*exporter, test_case, diagnostic_instruction,
+                       location);
+        return;
+      }
+    }
     std::vector<std::unique_ptr<CaseRegion>> regions;
     regions.reserve(test_case.memory.size());
     for (const auto &region : test_case.memory)
@@ -1674,6 +1777,226 @@ public:
   }
 
 private:
+  /* Cases whose behavior depends on test-local callbacks or host-private
+   * entry state stay in their focused producer and are not exported. */
+  [[nodiscard]] static std::string_view
+  export_exclusion(const ProgramCase &test_case) noexcept {
+    if (test_case.before_engine != nullptr ||
+        test_case.after_engine != nullptr)
+      return "engine-hook";
+    if (!test_case.initial.fp_loaded || !test_case.expected.fp_loaded)
+      return "deferred-fp-entry";
+    const arm64::CpuState defaults{};
+    const auto &initial = test_case.initial;
+    bool return_stack_default = initial.gadget_return_top ==
+                                defaults.gadget_return_top;
+    for (std::size_t index = 0; index < initial.gadget_return_stack.size();
+         ++index)
+      return_stack_default =
+          return_stack_default &&
+          initial.gadget_return_stack[index].pc ==
+              defaults.gadget_return_stack[index].pc &&
+          initial.gadget_return_stack[index].link ==
+              defaults.gadget_return_stack[index].link;
+    if (initial.gadget_zero != defaults.gadget_zero ||
+        initial.gadget_host_fpcr != defaults.gadget_host_fpcr ||
+        initial.gadget_host_fpsr != defaults.gadget_host_fpsr ||
+        initial.gadget_fp_active != defaults.gadget_fp_active ||
+        initial.gadget_indirect_miss != defaults.gadget_indirect_miss ||
+        initial.gadget_host_fpmr != defaults.gadget_host_fpmr ||
+        initial.gadget_fpmr_active != defaults.gadget_fpmr_active ||
+        !return_stack_default)
+      return "host-private-state";
+    return {};
+  }
+
+  /* Export mode keeps each producer's own count assertions meaningful
+   * without executing the unsampled cases. */
+  void simulate_counts(const ProgramCase &test_case) {
+    ++counts_.interpreter;
+    ++counts_.gadgets;
+    if (!engine_available(Engine::jit)) {
+      ++counts_.jit_skipped;
+      ++counts_.jit_unavailable;
+    } else if (!test_case.invalid_encoding && !host_supports(test_case.native)) {
+      ++counts_.jit_skipped;
+      ++counts_.jit_skipped_host_feature;
+    } else {
+      ++counts_.jit;
+    }
+  }
+
+  void export_program(corpus_export::Exporter &exporter,
+                      const ProgramCase &test_case,
+                      std::uint32_t diagnostic_instruction,
+                      const std::source_location &location) {
+    const auto selection = exporter.observe(test_case, options_, location,
+                                            active_check_ordinal);
+    simulate_counts(test_case);
+    if (!selection.selected)
+      return;
+    const corpus_export::ExportCase full{test_case};
+    /* The unmodified case must pass exactly as it would in the producer. */
+    const auto verified = verify_lanes(full.view(), diagnostic_instruction);
+    if (full.validator == nullptr) {
+      for (const auto level : {corpus_export::Minimization::narrow,
+                               corpus_export::Minimization::broad}) {
+        corpus_export::ExportCase candidate{test_case};
+        if (corpus_export::minimize(candidate, level)) {
+          try {
+            const SoftFailureScope soft;
+            const auto minimized =
+                verify_lanes(candidate.view(), diagnostic_instruction);
+            if (minimized.interpreter_instructions !=
+                verified.interpreter_instructions)
+              continue;
+          } catch (const SoftFailure &) {
+            continue;
+          }
+        }
+        auto result = verified;
+        result.minimization = level;
+        exporter.write(candidate, selection, options_, result);
+        return;
+      }
+    }
+    exporter.write(full, selection, options_, verified);
+  }
+
+  /* Runs one case through every lane with the ordinary checks, but without
+   * counts, evidence, or native-oracle side effects. */
+  [[nodiscard]] corpus_export::ExportResult
+  verify_lanes(const ProgramCase &test_case,
+               std::uint32_t diagnostic_instruction) {
+    std::vector<std::unique_ptr<CaseRegion>> regions;
+    regions.reserve(test_case.memory.size());
+    for (const auto &region : test_case.memory)
+      regions.push_back(std::make_unique<CaseRegion>(generation_, region));
+    std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> expected_page{};
+    install_program(test_case.name, diagnostic_instruction, test_case.code,
+                    expected_page, installed_page_);
+    auto initial = test_case.initial;
+    initial.pc = code_base + test_case.entry_offset;
+    const auto &expected = test_case.expected;
+
+    corpus_export::ExportResult result;
+    for (const auto engine :
+         {Engine::interpreter, Engine::gadgets, Engine::jit}) {
+      if (!engine_available(engine)) {
+        if (engine != Engine::jit)
+          fail(test_case.name, "setup", diagnostic_instruction,
+               "required CPU engine is unavailable");
+        continue;
+      }
+      if (engine == Engine::jit && !test_case.invalid_encoding &&
+          !host_supports(test_case.native)) {
+        result.jit_skipped_host_feature = true;
+        continue;
+      }
+      for (const auto &region : regions)
+        region->restore();
+      void *translated = nullptr;
+      if (darwin_uml_static_vm_translate(
+              generation_, code_base, DARWIN_UML_STATIC_EXECUTE, &translated) !=
+              DARWIN_UML_STATIC_TRANSLATED ||
+          translated == nullptr)
+        fail(test_case.name, engine_name(engine), diagnostic_instruction,
+             "code mapping disappeared");
+      StaticGuestMemory memory;
+      const auto sequences = darwin_uml_static_vm_sequences(generation_);
+      memory.prepare(generation_, sequences.mapping_changes);
+      const auto current_engine = engine_name(engine);
+      Outcome outcome;
+      if (engine == Engine::gadgets && forced_gadget_executor_ != nullptr) {
+        outcome = run_forced_gadget_executor(
+            initial, memory, generation_, *forced_gadget_executor_);
+      } else if (engine == Engine::interpreter) {
+        outcome = run_engine(engine, initial, memory, generation_,
+                             *reference_engine_);
+      } else {
+        auto *selected_engine = engine_instance(engine);
+        if (selected_engine == nullptr)
+          fail(test_case.name, "setup", diagnostic_instruction,
+               "selected CPU engine was not constructed");
+        outcome = run_engine(engine, initial, memory, generation_,
+                             *selected_engine);
+      }
+      if (outcome.cpu.gadget_fp_active || outcome.cpu.gadget_fpmr_active ||
+          outcome.cpu.gadget_indirect_miss != nullptr)
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "engine-private execution state escaped the public boundary");
+      if (outcome.event != test_case.event)
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "unexpected terminal event");
+      if (test_case.expected_instructions.has_value()) {
+        if (outcome.instructions != *test_case.expected_instructions)
+          fail(test_case.name, current_engine, diagnostic_instruction,
+               "retired instruction count");
+      } else if (test_case.expected_instruction_pattern.has_value()) {
+        const auto &pattern = *test_case.expected_instruction_pattern;
+        const bool below_minimum = outcome.instructions < pattern.minimum;
+        const bool above_maximum = pattern.maximum.has_value() &&
+                                   outcome.instructions > *pattern.maximum;
+        const bool wrong_step =
+            !below_minimum &&
+            (outcome.instructions - pattern.minimum) % pattern.step != 0;
+        if (below_minimum || above_maximum || wrong_step)
+          fail(test_case.name, current_engine, diagnostic_instruction,
+               "retired instruction-count pattern");
+      } else if (test_case.event != ExpectedEvent::instruction_budget &&
+                 engine == Engine::interpreter) {
+        result.interpreter_instructions = outcome.instructions;
+      } else if (test_case.event != ExpectedEvent::instruction_budget &&
+                 result.interpreter_instructions.has_value() &&
+                 outcome.instructions != *result.interpreter_instructions) {
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "engine instruction-count mismatch");
+      }
+      auto compared_initial = initial;
+      auto compared_expected = expected;
+      auto compared_actual = outcome.cpu;
+      compared_initial.access_fp_state();
+      compared_expected.access_fp_state();
+      compared_actual.access_fp_state();
+      if (test_case.validator != nullptr)
+        test_case.validator(compared_initial, compared_expected,
+                            compared_actual, test_case.name, current_engine,
+                            diagnostic_instruction);
+      else
+        require_architecture_equal(compared_expected, compared_actual,
+                                   test_case.name, current_engine,
+                                   diagnostic_instruction);
+      if (test_case.compare_fault &&
+          (outcome.fault.address != test_case.fault.address ||
+           outcome.fault.access != test_case.fault.access))
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "fault metadata");
+      if (test_case.event == ExpectedEvent::floating_point_trap &&
+          outcome.syndrome != test_case.syndrome)
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "floating-point syndrome");
+      if (std::memcmp(translated, expected_page.data(),
+                      expected_page.size()) != 0)
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "unexpected code-page write");
+      for (const auto &region : regions)
+        region->require_expected(test_case.name, current_engine,
+                                 diagnostic_instruction);
+      switch (engine) {
+      case Engine::interpreter:
+        result.interpreter = true;
+        break;
+      case Engine::gadgets:
+        result.gadgets = true;
+        break;
+      case Engine::jit:
+        result.jit = true;
+        break;
+      }
+    }
+    return result;
+  }
+
   [[nodiscard]] ::uml::cpu::CpuEngine *
   engine_instance(Engine engine) noexcept {
     switch (engine) {
@@ -1687,6 +2010,7 @@ private:
     return nullptr;
   }
 
+  EngineHarnessOptions options_;
   unsigned long generation_;
   AddressSpace address_space_;
   Backing backing_;
@@ -1707,11 +2031,13 @@ EngineHarness::~EngineHarness() = default;
 
 void EngineHarness::check(const InstructionCase &test_case,
                           const std::source_location location) {
+  const CheckScope scope{test_case.name};
   implementation_->check(test_case, location);
 }
 
 void EngineHarness::check_program(const ProgramCase &test_case,
                                   const std::source_location location) {
+  const CheckScope scope{test_case.name};
   /* The declared entry word is necessarily attempted by every engine. A
    * terminal result and aggregate retirement count do not prove that any
    * other word in a branching program was reached, so only the entry may
