@@ -23,11 +23,14 @@ namespace uml::emulator::tests::corpus_export {
  * over every producer of a build tree.
  *
  * UML_ARM64_CORPUS_EXPORT_PASS=count classifies each case without running an
- * engine and records the size of every equivalence class.
+ * engine and records the size of every equivalence class and how many of its
+ * cases the boundary rule below selects.
  * UML_ARM64_CORPUS_EXPORT_PASS=sample repeats the deterministic case stream,
  * selects the first and last case of each class plus a fixed-seed uniform
- * sample of at most UML_ARM64_CORPUS_K cases (UML_ARM64_CORPUS_SEED), verifies
- * each selected case through every engine lane, and appends it to a
+ * sample of at most UML_ARM64_CORPUS_K cases (UML_ARM64_CORPUS_SEED), and
+ * every case that gives an operand field of one of its program words a
+ * boundary value that no earlier such case of its class gave it. It verifies
+ * each selected case through every engine lane and appends it to a
  * compressed export stream. Unselected cases run no engine in either pass.
  *
  * UML_ARM64_CORPUS_INCLUDE=<file> additionally forces cases into the sample
@@ -108,6 +111,7 @@ enum class Minimization : std::uint8_t {
 struct Selection final {
   bool selected{};
   bool sampled{};
+  bool covering{};
   bool forced{};
   std::uint64_t ordinal{};
   std::uint64_t index{};

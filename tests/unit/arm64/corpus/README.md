@@ -21,8 +21,9 @@ instead of an exact state.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
-- `provenance.json` records the producer commit, sampling limit and seed,
-  per-profile export and exclusion counts, and the pack hash.
+- `provenance.json` records the producer commit, the force-include file and
+  its hash, sampling limit and seed, per-profile export, boundary, forced,
+  and exclusion counts, and the pack hash.
 
 ## Sampling and minimization
 
@@ -31,10 +32,20 @@ invalid-encoding flag, harness options, retirement and fault expectation,
 validator relation, native requirements, entry offset, and, for every program
 word, its official decode partition, the allocation predicates it matches,
 and which register fields name register 31. Each class contributes its first
-and last case plus a fixed-seed uniform sample, at most eight cases. A case is
-exported only after the interpreter, gadget, and JIT lanes all pass it. Its
-retired count is the producer's declared count or, when none was declared,
-the count on which every lane agreed.
+and last case plus a fixed-seed uniform sample, at most eight cases.
+
+Each class also contributes every case that gives an operand field of one of
+its program words a boundary value that no earlier such case of the class
+gave that field. A word's operand fields are the bits its decode partition
+leaves free: a five-bit register field at bit 0, 5, 10, or 16 when all five
+bits are free, and each maximal run of free bits elsewhere. Boundary values
+are 0, 30, and 31 for a register field, 0 and 1 for a single bit, and 0 and
+all ones for a wider field. A decoder fault that only one register number or
+immediate extreme exposes therefore stays visible to the corpus.
+
+A case is exported only after the interpreter, gadget, and JIT lanes all pass
+it. Its retired count is the producer's declared count or, when none was
+declared, the count on which every lane agreed.
 
 Registers a program cannot name are replaced with a canonical fill, and the
 minimized case is verified through every lane again. A failing candidate falls

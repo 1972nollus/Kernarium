@@ -24,6 +24,7 @@
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -161,6 +162,49 @@ constexpr std::array<char, 8> export_magic{'A', '6', '4', 'C', 'E', 'X', 'P',
   return value;
 }
 
+/* The operand fields of a decode pattern are the bits its mask leaves free: a
+ * five-bit register field at each standard A64 register position (bits 0, 5,
+ * 10, and 16) that is entirely free, and each maximal run of free bits
+ * elsewhere. A field's boundary values are 0, 30, and 31 for a register, 0 and
+ * 1 for a single bit, and 0 and all ones for a wider field. */
+struct OperandField final {
+  unsigned low{};
+  unsigned width{};
+  bool register_field{};
+};
+
+[[nodiscard]] std::vector<OperandField> operand_fields(std::uint32_t mask) {
+  std::vector<OperandField> fields;
+  auto open = ~mask;
+  for (const unsigned low : {0U, 5U, 10U, 16U}) {
+    const auto bits = 31U << low;
+    if ((open & bits) == bits) {
+      fields.push_back({.low = low, .width = 5U, .register_field = true});
+      open &= ~bits;
+    }
+  }
+  for (unsigned bit = 0; bit < 32U;) {
+    if (((open >> bit) & 1U) == 0U) {
+      ++bit;
+      continue;
+    }
+    const auto low = bit;
+    while (bit < 32U && ((open >> bit) & 1U) != 0U)
+      ++bit;
+    fields.push_back({.low = low, .width = bit - low, .register_field = false});
+  }
+  return fields;
+}
+
+[[nodiscard]] bool boundary_value(const OperandField &field,
+                                  std::uint32_t value) noexcept {
+  if (field.register_field)
+    return value == 0U || value == 30U || value == 31U;
+  const auto top = field.width >= 32U ? ~std::uint32_t{0}
+                                      : (std::uint32_t{1} << field.width) - 1U;
+  return value == 0U || value == top;
+}
+
 /* A mask-bucketed copy of the official A64 decode hierarchy. A word selects
  * exactly one hierarchy leaf; an allocated class then selects exactly one row
  * of its instruction table. Unmatched words keep an explicit sentinel. The
@@ -209,6 +253,23 @@ public:
   }
 
   [[nodiscard]] const std::string &classify(std::uint32_t word) {
+    return classified(word).key;
+  }
+
+  /* Identities of the (partition, operand field, boundary value) features of
+   * one word; empty for a word outside every partition. */
+  [[nodiscard]] const std::vector<std::uint64_t> &
+  boundary_features(std::uint32_t word) {
+    return classified(word).boundaries;
+  }
+
+private:
+  struct Classified final {
+    std::string key;
+    std::vector<std::uint64_t> boundaries;
+  };
+
+  [[nodiscard]] const Classified &classified(std::uint32_t word) {
     if (const auto found = cache_.find(word); found != cache_.end())
       return found->second;
     const Pattern *leaf = nullptr;
@@ -219,9 +280,10 @@ public:
         ++leaves;
       }
     std::string result = unmatched_;
+    const Pattern *pattern = nullptr;
     if (leaves == 1U) {
       if (leaf->unallocated) {
-        result = leaf->id;
+        pattern = leaf;
       } else if (const auto table = tables_.find(leaf->decode_class);
                  table != tables_.end()) {
         const Pattern *row = nullptr;
@@ -232,9 +294,11 @@ public:
             ++rows;
           }
         if (rows == 1U)
-          result = row->id;
+          pattern = row;
       }
     }
+    if (pattern != nullptr)
+      result = pattern->id;
     std::vector<std::string> aliases;
     for (const auto index : allocation_buckets_[word >> 24U])
       if (allocations_[index].matches(word))
@@ -242,10 +306,24 @@ public:
     std::sort(aliases.begin(), aliases.end());
     for (const auto &alias : aliases)
       result += "+" + alias;
-    return cache_.emplace(word, std::move(result)).first->second;
+    Classified entry{.key = std::move(result), .boundaries = {}};
+    if (pattern != nullptr) {
+      const auto partition = fnv1a(entry.key);
+      for (const auto &field : operand_fields(pattern->mask)) {
+        const auto value =
+            (word >> field.low) &
+            (field.width >= 32U ? ~std::uint32_t{0}
+                                : (std::uint32_t{1} << field.width) - 1U);
+        if (boundary_value(field, value))
+          entry.boundaries.push_back(fnv1a(
+              std::to_string(field.low) + ":" + std::to_string(field.width) +
+                  "=" + std::to_string(value),
+              partition));
+      }
+    }
+    return cache_.emplace(word, std::move(entry)).first->second;
   }
 
-private:
   struct Constraint final {
     unsigned low{};
     unsigned width{};
@@ -367,7 +445,7 @@ private:
   std::unordered_map<std::string, std::vector<Pattern>> tables_;
   std::vector<Pattern> allocations_;
   std::array<std::vector<std::size_t>, 256> allocation_buckets_;
-  std::unordered_map<std::uint32_t, std::string> cache_;
+  std::unordered_map<std::uint32_t, Classified> cache_;
   std::string unmatched_{"unmatched"};
 };
 
@@ -451,8 +529,13 @@ struct ClassRecord final {
   std::uint64_t count{};
   std::string first_case;
   std::string site;
+  /* Boundary features of the cases selected for covering them, and how many
+   * cases that selected. */
+  std::unordered_set<std::uint64_t> boundaries;
+  std::uint64_t covering{};
   /* Sample pass only. */
   std::uint64_t expected{};
+  std::uint64_t expected_covering{};
   std::vector<std::uint64_t> selected;
   std::size_t next_selected{};
 };
@@ -561,6 +644,8 @@ public:
         record.first_case = test_case.name;
         record.site = selection.site;
       }
+      if (covers_boundary(record, test_case))
+        ++record.covering;
       return selection;
     }
     const auto found = classes_.find(selection.class_key);
@@ -576,6 +661,10 @@ public:
       ++record.next_selected;
       selection.sampled = true;
     }
+    if (covers_boundary(record, test_case)) {
+      ++record.covering;
+      selection.covering = true;
+    }
     if (const auto directive =
             force_directive(test_case, ordinal, &selection.class_key);
         !directive.empty()) {
@@ -584,7 +673,8 @@ public:
                                "\t" + tsv_field(test_case.name) +
                                "\texported");
     }
-    selection.selected = selection.sampled || selection.forced;
+    selection.selected =
+        selection.sampled || selection.covering || selection.forced;
     return selection;
   }
 
@@ -614,7 +704,8 @@ public:
     writer.u64(selection.size);
     writer.u64(selection.ordinal);
     writer.u8(static_cast<std::uint8_t>((selection.sampled ? 1U : 0U) |
-                                        (selection.forced ? 2U : 0U)));
+                                        (selection.forced ? 2U : 0U) |
+                                        (selection.covering ? 4U : 0U)));
     writer.u32(option_mask(options));
     writer.u8(static_cast<std::uint8_t>(test_case.event));
     writer.u8(static_cast<std::uint8_t>(
@@ -685,13 +776,16 @@ public:
     ++minimized_[static_cast<std::size_t>(result.minimization)];
     constexpr std::array<std::string_view, 3> levels{"full", "narrow",
                                                      "broad"};
+    std::string reasons;
+    for (const auto &[flag, reason] :
+         {std::pair{selection.sampled, "sampled"},
+          std::pair{selection.covering, "covering"},
+          std::pair{selection.forced, "forced"}})
+      if (flag)
+        reasons += (reasons.empty() ? "" : "+") + std::string{reason};
     case_index_.push_back(
         std::to_string(selection.ordinal) + "\t" + tsv_field(test_case.name) +
-        "\t" + selection.site + "\t" +
-        (selection.sampled && selection.forced ? "sampled+forced"
-         : selection.forced                    ? "forced"
-                                               : "sampled") +
-        "\t" +
+        "\t" + selection.site + "\t" + reasons + "\t" +
         std::string{levels[static_cast<std::size_t>(result.minimization)]});
   }
 
@@ -727,6 +821,23 @@ private:
           << register31_fields(word.instruction);
     }
     return key.str();
+  }
+
+  /* Selects a case that gives some operand field of some program word a
+   * boundary value no earlier covering case of its class gave it. */
+  [[nodiscard]] bool covers_boundary(ClassRecord &record,
+                                     const ProgramCase &test_case) {
+    bool covering = false;
+    for (const auto word : test_case.code)
+      for (const auto feature :
+           partitions_->boundary_features(word.instruction))
+        covering |= !record.boundaries.contains(feature);
+    if (covering)
+      for (const auto word : test_case.code)
+        for (const auto feature :
+             partitions_->boundary_features(word.instruction))
+          record.boundaries.insert(feature);
+    return covering;
   }
 
   /* Returns the directive that forces this case, or an empty string. */
@@ -808,16 +919,21 @@ private:
       export_failure("the count pass output is missing for " + producer_);
     std::string line;
     if (!std::getline(input, line) ||
-        line != "class\tcount\tsite\tfirst_case")
+        line != "class\tcount\tcovering\tsite\tfirst_case")
       export_failure("the count pass output has an unexpected header");
     while (std::getline(input, line)) {
       const auto first = line.find('\t');
       const auto second = line.find('\t', first + 1U);
-      if (first == std::string::npos || second == std::string::npos)
+      const auto third = second == std::string::npos
+                             ? std::string::npos
+                             : line.find('\t', second + 1U);
+      if (first == std::string::npos || third == std::string::npos)
         export_failure("malformed count pass row");
       const auto key = line.substr(0, first);
       auto &record = classes_[key];
       record.expected = std::stoull(line.substr(first + 1U, second - first - 1U));
+      record.expected_covering =
+          std::stoull(line.substr(second + 1U, third - second - 1U));
       record.selected = select_indices(
           record.expected, limit_,
           fnv1a(key, fnv1a(producer_ + "\n", seed_)));
@@ -863,10 +979,10 @@ private:
       const auto temporary = path(".classes.tsv.tmp");
       {
         std::ofstream output{temporary, std::ios::trunc};
-        output << "class\tcount\tsite\tfirst_case\n";
+        output << "class\tcount\tcovering\tsite\tfirst_case\n";
         for (const auto &[key, record] : classes_)
-          output << key << '\t' << record.count << '\t' << record.site << '\t'
-                 << record.first_case << '\n';
+          output << key << '\t' << record.count << '\t' << record.covering
+                 << '\t' << record.site << '\t' << record.first_case << '\n';
         if (!output)
           export_failure("cannot write " + temporary.string());
       }
@@ -877,11 +993,17 @@ private:
       if (!order)
         export_failure("cannot write the order record for " + producer_);
     } else {
-      for (const auto &[key, record] : classes_)
+      for (const auto &[key, record] : classes_) {
         if (record.count != record.expected)
           determinism_failures_.push_back(
               "class size changed from " + std::to_string(record.expected) +
               " to " + std::to_string(record.count) + ": " + key);
+        if (record.covering != record.expected_covering)
+          determinism_failures_.push_back(
+              "covering cases changed from " +
+              std::to_string(record.expected_covering) + " to " +
+              std::to_string(record.covering) + ": " + key);
+      }
       if (observed_ != expected_observed_ || order_ != expected_order_)
         determinism_failures_.push_back(
             "the ordered case stream differs from the count pass");
