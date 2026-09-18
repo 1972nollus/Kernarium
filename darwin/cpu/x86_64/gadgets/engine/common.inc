@@ -57,6 +57,14 @@ NAME(uml_x86_64_gadget_\name):
 	stp x13, x14, [x15, #16]
 .endm
 
+/* The same record from any three registers. */
+.macro record_deferred_from operation, width, left, right, result
+	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	stp \left, \right, [x15]
+	mov x14, #((\operation) | ((\width / 8) << 8))
+	stp \result, x14, [x15, #16]
+.endm
+
 /* A guest access no wider than one byte lies inside one page by construction,
  * so the boundary test folds away entirely at assembly time. `size` is the
  * access width in bytes and must be an absolute expression.
@@ -441,6 +449,97 @@ uml_x86_64_gadget_leave:
 	orr x9, x9, #0x800
 .endm
 
+/* The last bit a shift moved out, in bit 0 of x14: x7 is the original
+ * value, x8 the masked nonzero count. A count beyond the width shifts out
+ * zeros for SHL (8) and SHR (9) and the sign for SAR (10). */
+.macro shift_carry_bit operation, width
+	.if (\operation) == 8
+	mov x14, #((\width) * 8)
+	cmp x8, x14
+	b.hi 91f
+	sub x14, x14, x8
+	lsr x14, x7, x14
+	b 92f
+91:
+	mov x14, xzr
+92:
+	.elseif (\operation) == 9
+	cmp x8, #((\width) * 8)
+	b.hi 91f
+	sub x14, x8, #1
+	lsr x14, x7, x14
+	b 92f
+91:
+	mov x14, xzr
+92:
+	.else
+	cmp x8, #((\width) * 8)
+	b.ls 91f
+	mov x14, #((\width) * 8 - 1)
+	b 92f
+91:
+	sub x14, x8, #1
+92:
+	lsr x14, x7, x14
+	.endif
+.endm
+
+/* SHL, SHR and SAR from their record: the result defines zero, sign and
+ * parity, carry is the last bit shifted out, overflow is defined for a count
+ * of one and otherwise left as it was, and the auxiliary flag is untouched --
+ * exactly what the eager override used to leave. */
+.macro shift_flags_body operation, width
+	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	ldp x7, x8, [x6]
+	ldr x10, [x6, #16]
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	mov x13, #0xc5
+	bic x9, x9, x13
+	cbnz x10, 1f
+	orr x9, x9, #0x40
+1:
+	tbz x10, #((\width) * 8 - 1), 2f
+	orr x9, x9, #0x80
+2:
+	and w13, w10, #0xff
+	eor w13, w13, w13, lsr #4
+	eor w13, w13, w13, lsr #2
+	eor w13, w13, w13, lsr #1
+	tbnz w13, #0, 3f
+	orr x9, x9, #0x4
+3:
+	shift_carry_bit \operation, \width
+	tbz w14, #0, 4f
+	orr x9, x9, #0x1
+4:
+	cmp x8, #1
+	b.ne 5f
+	bic x9, x9, #0x800
+	.if (\operation) == 8
+	lsr x14, x10, #((\width) * 8 - 1)
+	eor x14, x14, x9
+	tbz x14, #0, 5f
+	orr x9, x9, #0x800
+	.elseif (\operation) == 9
+	tbz x7, #((\width) * 8 - 1), 5f
+	orr x9, x9, #0x800
+	.endif
+5:
+	b .Lx86_flags_apply_overrides
+.endm
+
+.macro shift_carry_body operation, width
+	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	ldp x7, x8, [x6]
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	bic x9, x9, #0x1
+	shift_carry_bit \operation, \width
+	tbz w14, #0, 4f
+	orr x9, x9, #0x1
+4:
+	b .Lx86_carry_apply_overrides
+.endm
+
 .macro flags_body operation, width
 	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
 	ldp x7, x8, [x6]
@@ -645,7 +744,7 @@ uml_x86_64_gadget_materialize_flags:
 	 */
 	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
 	adr x14, .Lx86_flags_table
-	and w12, w5, #7
+	and w12, w5, #15
 	and w13, w11, #0xf
 	add x14, x14, x12, lsl #6
 	add x14, x14, x13, lsl #2
@@ -653,9 +752,9 @@ uml_x86_64_gadget_materialize_flags:
 
 .p2align 2
 .Lx86_flags_table:
-.irp op,0,1,2,3,4,5,6,7
+.irp op,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
-	.if ((\op) >= 1) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
+	.if ((\op) >= 1) && ((\op) <= 10) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
 	b .Lx86_flags_o\op\()_w\w
 	.else
 	b .Lx86_flags_generic
@@ -667,6 +766,13 @@ uml_x86_64_gadget_materialize_flags:
 .irp w,1,2,4,8
 .Lx86_flags_o\op\()_w\w:
 	flags_body \op, \w
+.endr
+.endr
+
+.irp op,8,9,10
+.irp w,1,2,4,8
+.Lx86_flags_o\op\()_w\w:
+	shift_flags_body \op, \w
 .endr
 .endr
 
@@ -835,7 +941,7 @@ uml_x86_64_gadget_materialize_carry:
 .Lx86_carry_dispatch:
 	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
 	adr x14, .Lx86_carry_table
-	and w12, w5, #7
+	and w12, w5, #15
 	and w13, w11, #0xf
 	add x14, x14, x12, lsl #6
 	add x14, x14, x13, lsl #2
@@ -843,9 +949,9 @@ uml_x86_64_gadget_materialize_carry:
 
 .p2align 2
 .Lx86_carry_table:
-.irp op,0,1,2,3,4,5,6,7
+.irp op,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
-	.if ((\op) >= 1) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
+	.if ((\op) >= 1) && ((\op) <= 10) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
 	b .Lx86_carry_o\op\()_w\w
 	.else
 	b .Lx86_carry_generic
@@ -857,6 +963,13 @@ uml_x86_64_gadget_materialize_carry:
 .irp w,1,2,4,8
 .Lx86_carry_o\op\()_w\w:
 	carry_body \op, \w
+.endr
+.endr
+
+.irp op,8,9,10
+.irp w,1,2,4,8
+.Lx86_carry_o\op\()_w\w:
+	shift_carry_body \op, \w
 .endr
 .endr
 

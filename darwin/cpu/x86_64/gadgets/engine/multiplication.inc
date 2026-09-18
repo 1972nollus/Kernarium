@@ -64,16 +64,21 @@
 	.endif
 .endm
 
+/* A multiply defines carry and overflow (w19) and leaves the other flags
+ * undefined, so overlay the two bits on whatever producer is pending rather
+ * than materializing it: the next materialization applies the overlay after
+ * that producer's flags, exactly as the eager write did. */
 .macro multiply_flags
-	bl uml_x86_64_gadget_materialize_flags
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	mov x9, #0x801
-	bic x8, x8, x9
+	ldrh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	mov w10, #0x801
+	orr w8, w8, w10
+	bic w9, w9, w10
 	cbz w19, .Lx86_multiply_flags_done\@
-	orr x8, x8, x9
+	orr w9, w9, w10
 .Lx86_multiply_flags_done\@:
-	orr x8, x8, #0x2
-	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	strh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 .endm
 
 .macro multiply_write_pair width

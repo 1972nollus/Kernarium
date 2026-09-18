@@ -1768,13 +1768,145 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rbx) = 1;
 	const auto branch_result = gadgets::execute(
 		branch.program, cpu, branch_memory, 3);
+	/* SHL, SHR and SAR record their operands instead of overlaying: the
+	 * zero branch reads the recorded result and leaves the record pending. */
 	return expect(branch_result.event == uml::cpu::EngineEvent::continued &&
 			branch_result.retired_instructions == 3 && cpu.rip == 12,
-		"JE did not consume the deferred shift zero override") &&
-		expect(cpu.deferred_flags.operation == DeferredFlagOperation::add &&
-			(cpu.deferred_flags.override_mask & rflags_zero) != 0 &&
-			(cpu.deferred_flags.override_value & rflags_zero) != 0,
-			"zero-branch fast path eagerly materialized the shift overlay");
+		"JE did not consume the deferred shift result") &&
+		expect(cpu.deferred_flags.operation ==
+				DeferredFlagOperation::shift_right &&
+			cpu.deferred_flags.result == 0 &&
+			cpu.deferred_flags.override_mask == 0,
+			"zero-branch fast path materialized the deferred shift");
+}
+
+/* The deferred shift record is materialized by the engine (through the full
+ * and the carry-only routines) and by the C++ materializer; check all three
+ * against the architectural definition for every width, a spread of counts
+ * including ones at and beyond the width, and both shift directions. The
+ * auxiliary flag is undefined and overflow is only defined for a count of
+ * one, so those are not compared elsewhere.
+ */
+[[nodiscard]] bool lazy_shift_flags_match_the_definition()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<std::uint64_t, 9> values{
+		0U, 1U, 2U, 0x81U, 0x7fffU, 0x8001U, 0x4000'0001ULL,
+		0x8000'0000'0000'0001ULL, 0xc5a3'ffff'0000'a5c3ULL};
+	for (unsigned kind = 0; kind < 3U; ++kind) {
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
+			const unsigned bits = width;
+			const auto mask = bits == 64U ? ~std::uint64_t{} :
+				(std::uint64_t{1} << bits) - 1U;
+			const auto sign = std::uint64_t{1} << (bits - 1U);
+			for (const unsigned count : {1U, 3U, bits - 1U, bits, bits + 3U,
+					bits == 64U ? 63U : 31U}) {
+				if (count > (bits == 64U ? 63U : 31U))
+					continue;
+				for (const auto value : values) {
+					for (const bool then_inc : {false, true}) {
+						std::vector<std::byte> code;
+						const auto push = [&code](unsigned byte) {
+							code.push_back(static_cast<std::byte>(byte));
+						};
+						if (width == 16U)
+							push(0x66);
+						if (width == 64U)
+							push(0x48);
+						push(width == 8U ? 0xc0 : 0xc1);
+						push(kind == 0 ? 0xe0 : kind == 1 ? 0xe8 : 0xf8);
+						push(count);
+						if (then_inc) {
+							push(0xff); // inc ebx
+							push(0xc3);
+						}
+						push(0x0f);
+						push(0x05);
+						TestMemory memory;
+						memory.fill(0, code);
+						const auto built = gadgets::build(memory, 0);
+						if (!expect(built.status == gadgets::BuildStatus::built,
+							"shift flag program did not build"))
+							return false;
+						CpuState cpu{};
+						cpu.gpr(Register::rax) = value;
+						const auto result = gadgets::execute(
+							built.program, cpu, memory, 8);
+						if (!expect(result.event ==
+							uml::cpu::EngineEvent::system_call,
+							"shift flag program did not reach SYSCALL"))
+							return false;
+						materialize_flags(cpu);
+						const auto v = value & mask;
+						std::uint64_t expected_result;
+						bool carry;
+						if (kind == 0) {
+							expected_result = (v << count) & mask;
+							carry = count <= bits &&
+								((v >> (bits - count)) & 1U) != 0;
+						} else if (kind == 1) {
+							expected_result = v >> count;
+							carry = count <= bits &&
+								((v >> (count - 1U)) & 1U) != 0;
+						} else {
+							const auto extended = (v & sign) != 0 ?
+								v | ~mask : v;
+							expected_result = static_cast<std::uint64_t>(
+								static_cast<std::int64_t>(extended) >>
+									count) & mask;
+							carry = ((v >> (count <= bits ? count - 1U :
+								bits - 1U)) & 1U) != 0;
+						}
+						std::uint64_t expected = 0;
+						if (carry)
+							expected |= rflags_carry;
+						if (expected_result == 0)
+							expected |= rflags_zero;
+						if ((expected_result & sign) != 0)
+							expected |= rflags_sign;
+						unsigned ones = 0;
+						for (unsigned bit = 0; bit < 8U; ++bit)
+							ones += (expected_result >> bit) & 1U;
+						if (ones % 2U == 0)
+							expected |= rflags_parity;
+						auto compared = rflags_carry | rflags_zero |
+							rflags_sign | rflags_parity;
+						if (count == 1U && !then_inc) {
+							compared |= rflags_overflow;
+							if (kind == 0 && ((((expected_result & sign) != 0)
+									? 1U : 0U) ^ (carry ? 1U : 0U)) != 0)
+								expected |= rflags_overflow;
+							if (kind == 1 && (v & sign) != 0)
+								expected |= rflags_overflow;
+						}
+						/* INC keeps only the shift's carry; its own record
+						 * defines the rest. */
+						if (then_inc)
+							compared = rflags_carry;
+						const auto observed = cpu.rflags & compared;
+						if (observed != (expected & compared) ||
+							(cpu.gpr(Register::rax) & mask) != expected_result) {
+							char message[200];
+							std::snprintf(message, sizeof(message),
+								"lazy %s width %u count %u value %#llx%s: "
+								"flags %#llx expected %#llx, result %#llx",
+								kind == 0 ? "SHL" : kind == 1 ? "SHR" : "SAR",
+								width, count,
+								static_cast<unsigned long long>(value),
+								then_inc ? " then INC" : "",
+								static_cast<unsigned long long>(observed),
+								static_cast<unsigned long long>(
+									expected & compared),
+								static_cast<unsigned long long>(
+									cpu.gpr(Register::rax) & mask));
+							return expect(false, message);
+						}
+					}
+				}
+			}
+		}
+	}
+	return true;
 }
 
 [[nodiscard]] bool execute_segment_memory()
@@ -3696,6 +3828,7 @@ int main()
 		execute_compat32_test_greater_after_syscall() &&
 		execute_compat32_futex_result_validator() &&
 		shifts_overlay_lazy_arithmetic_flags() &&
+		lazy_shift_flags_match_the_definition() &&
 		execute_segment_memory() &&
 		execute_addressing_shapes() &&
 		execute_byte_sign_masks() &&

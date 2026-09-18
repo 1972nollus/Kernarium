@@ -29,7 +29,53 @@ void materialize_flags(CpuState &cpu) noexcept
 		return;
 
 	auto flags = cpu.rflags;
-	if (deferred.operation != DeferredFlagOperation::none) {
+	const bool shift = deferred.operation == DeferredFlagOperation::shift_left ||
+		deferred.operation == DeferredFlagOperation::shift_right ||
+		deferred.operation == DeferredFlagOperation::shift_arithmetic_right;
+	if (shift) {
+		/* Carry is the last bit shifted out; overflow is defined for a
+		 * count of one and otherwise left as it was; the auxiliary flag
+		 * is untouched. A count beyond the width shifts out zeros for the
+		 * logical shifts and the sign for the arithmetic one. */
+		const auto mask = mask_for_width(deferred.width);
+		const unsigned bits = deferred.width * 8U;
+		const auto sign = std::uint64_t{1} << (bits - 1U);
+		const auto left = deferred.left & mask;
+		const auto count = static_cast<unsigned>(deferred.right);
+		const auto result = deferred.result & mask;
+		flags &= ~(rflags_carry | rflags_parity | rflags_zero | rflags_sign);
+		if (result == 0)
+			flags |= rflags_zero;
+		if ((result & sign) != 0)
+			flags |= rflags_sign;
+		if (even_parity(static_cast<std::uint8_t>(result)))
+			flags |= rflags_parity;
+		bool carry = false;
+		switch (deferred.operation) {
+		case DeferredFlagOperation::shift_left:
+			carry = count <= bits && ((left >> (bits - count)) & 1U) != 0;
+			break;
+		case DeferredFlagOperation::shift_right:
+			carry = count <= bits && ((left >> (count - 1U)) & 1U) != 0;
+			break;
+		default:
+			carry = ((left >> (count <= bits ? count - 1U : bits - 1U)) &
+				1U) != 0;
+			break;
+		}
+		if (carry)
+			flags |= rflags_carry;
+		if (count == 1U) {
+			flags &= ~rflags_overflow;
+			if (deferred.operation == DeferredFlagOperation::shift_left) {
+				if ((((result & sign) != 0) ? 1U : 0U) ^ (carry ? 1U : 0U))
+					flags |= rflags_overflow;
+			} else if (deferred.operation ==
+				DeferredFlagOperation::shift_right && (left & sign) != 0) {
+				flags |= rflags_overflow;
+			}
+		}
+	} else if (deferred.operation != DeferredFlagOperation::none) {
 		const auto mask = mask_for_width(deferred.width);
 		const auto sign = std::uint64_t{1} << (deferred.width * 8U - 1U);
 		const auto left = deferred.left & mask;
@@ -80,6 +126,9 @@ void materialize_flags(CpuState &cpu) noexcept
 		case DeferredFlagOperation::logical:
 			break;
 		case DeferredFlagOperation::none:
+		case DeferredFlagOperation::shift_left:
+		case DeferredFlagOperation::shift_right:
+		case DeferredFlagOperation::shift_arithmetic_right:
 			break;
 		}
 	}

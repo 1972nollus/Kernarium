@@ -53,6 +53,11 @@ enum class DeferredFlagOperation : std::uint8_t {
 	decrement,
 	add_carry,
 	subtract_borrow,
+	/* The shifts record the original value, the masked nonzero count and
+	 * the result; see the engine's shift_flags_body for their flags. */
+	shift_left,
+	shift_right,
+	shift_arithmetic_right,
 };
 
 struct DeferredFlags final {

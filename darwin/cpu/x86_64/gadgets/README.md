@@ -55,6 +55,17 @@ the top of a 32-bit register, which sets NZCV exactly as the guest-width
 operation would. The ordinary bank does not do this, so its narrow producers
 keep the deferred path.
 
+## Deferred flags
+
+Every flag-defining scalar operation records left operand, right operand,
+result, operation and width, and consumers materialize on demand. SHL, SHR and
+SAR record the original value, the masked nonzero count and the result
+(operations 8 to 10 of `DeferredFlagOperation`); the materializer derives the
+shifted-out carry from them, defines overflow only for a count of one and
+leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
+whatever producer is pending instead of materializing it. Rotates keep the
+eager overlay.
+
 ## Code pages
 
 `code_page_registry.hpp` keeps, per address-space generation, the set of pages
