@@ -61,14 +61,6 @@ enum class PairMode : unsigned {
 		::uml::cpu::ArmFeature::floating_point);
 }
 
-[[nodiscard]] inline engine::NativeRequirements pair_native()
-{
-	return engine::NativeRequirements::features({
-		::uml::cpu::ArmFeature::floating_point,
-		::uml::cpu::ArmFeature::lsui,
-	});
-}
-
 [[nodiscard]] constexpr std::uint32_t unsigned_instruction(
 	unsigned size_code, unsigned operation, unsigned imm12,
 	unsigned rn, unsigned rt)
@@ -120,12 +112,6 @@ static_assert(pair_instruction(
 	false, PairMode::non_temporal, 0, 0, 0, 0) == 0xec00'0000U);
 static_assert(pair_instruction(
 	true, PairMode::pre_index, 0, 0, 0, 0) == 0xedc0'0000U);
-
-[[nodiscard]] constexpr std::int64_t signed_imm9(unsigned imm9)
-{
-	return static_cast<std::int64_t>(
-		static_cast<std::uint64_t>(imm9 & 0x1ffU) << 55) >> 55;
-}
 
 [[nodiscard]] constexpr std::int64_t signed_imm7(unsigned imm7)
 {
@@ -190,12 +176,6 @@ inline void fill_memory(std::span<std::byte> memory, std::uint64_t seed)
 			((offset * 61U + seed * 31U + (offset >> 5)) & 0x7fU));
 }
 
-[[nodiscard]] inline std::uint64_t read_base(
-	const arm64::CpuState &cpu, unsigned rn)
-{
-	return rn == 31U ? cpu.sp : cpu.registers[rn];
-}
-
 inline void write_base(
 	arm64::CpuState &cpu, unsigned rn, std::uint64_t value)
 {
@@ -221,50 +201,6 @@ inline void apply_single_oracle(
 		std::copy_n(initial.vectors[rt].bytes.begin(), variant.size,
 			expected_memory.begin() + static_cast<std::ptrdiff_t>(offset));
 	}
-}
-
-inline void apply_pair_oracle(
-	const arm64::CpuState &initial, arm64::CpuState &expected,
-	std::span<const std::byte> initial_memory,
-	std::span<std::byte> expected_memory, std::size_t offset,
-	bool load, unsigned rt, unsigned rt2)
-{
-	constexpr std::size_t size = 16;
-	if (load) {
-		std::copy_n(initial_memory.begin() +
-				static_cast<std::ptrdiff_t>(offset),
-			size, expected.vectors[rt].bytes.begin());
-		std::copy_n(initial_memory.begin() +
-				static_cast<std::ptrdiff_t>(offset + size),
-			size, expected.vectors[rt2].bytes.begin());
-	} else {
-		std::copy_n(initial.vectors[rt].bytes.begin(), size,
-			expected_memory.begin() + static_cast<std::ptrdiff_t>(offset));
-		std::copy_n(initial.vectors[rt2].bytes.begin(), size,
-			expected_memory.begin() +
-				static_cast<std::ptrdiff_t>(offset + size));
-	}
-}
-
-inline void check(
-	engine::EngineHarness &harness, std::string_view name,
-	std::uint32_t instruction, const arm64::CpuState &initial,
-	const arm64::CpuState &expected, engine::NativeRequirements native,
-	std::span<const engine::MemoryRegion> memory,
-	engine::ExpectedEvent event = engine::ExpectedEvent::system_call,
-	engine::MemoryFaultExpectation fault = {}, bool compare_fault = false)
-{
-	harness.check({
-		.name = name,
-		.instruction = instruction,
-		.initial = initial,
-		.expected = expected,
-		.event = event,
-		.native = native,
-		.fault = fault,
-		.compare_fault = compare_fault,
-		.memory = memory,
-	});
 }
 
 } // namespace arm64_simd_ordinary_memory_test

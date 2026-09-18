@@ -925,17 +925,15 @@ int main() {
   tagged_state_fallback_is_exact(harness);
   ordinary_store_run_behavior(harness);
   const auto &counts = harness.counts();
-  engine::require(counts.interpreter != 0);
-  engine::require(counts.gadgets == counts.interpreter);
+  engine::require(counts.gadgets != 0);
   if (engine::host_supports(memory::single_native())) {
-    engine::require(counts.jit == counts.interpreter);
+    engine::require(counts.jit == counts.gadgets);
     engine::require(counts.jit_skipped == 0);
     engine::require(counts.jit_skipped_host_feature == 0);
   } else {
     engine::require(counts.jit == 0);
-    engine::require(counts.jit_skipped == counts.interpreter);
-    engine::require(
-        counts.jit_skipped_host_feature == counts.interpreter);
+    engine::require(counts.jit_skipped == counts.gadgets);
+    engine::require(counts.jit_skipped_host_feature == counts.gadgets);
   }
   engine::require(counts.jit_unavailable == 0);
   harness.print_summary("arm64-jit-simd-memory-run-runtime");

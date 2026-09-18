@@ -97,8 +97,8 @@ precompiled entries, and the JIT publishes native code only through
 `cpu/arm64/jit/jit_arena.cpp`. The JIT owns its semantic slow path: generated
 code routes a fixed set of instruction classes to helpers that decode only
 those classes, and any other word is a fatal internal error. The arm64
-`Dispatcher` decodes and executes single instructions for the A64 conformance
-reference lane; it is not a selectable engine.
+`Dispatcher` decodes and executes single instructions; it is not a selectable
+engine, and only unit tests that call it directly exercise it.
 
 The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
 while UML kernel-mode execution remains arm64. The kernel slice cannot load

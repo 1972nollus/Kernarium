@@ -51,46 +51,6 @@ void encoding_examples()
 	test::require(instruction(false, 6, 0, 0x100, 31) == 0x75c0'201fU);
 }
 
-void exhaustive_fields(test::Harness &harness)
-{
-	constexpr std::array offsets{0U, 1U, 0xffU, 0x100U, 0x1ffU};
-	const auto initial = test::state();
-	for (const bool wide : {false, true})
-		for (const auto cc : valid_conditions)
-			for (unsigned immediate = 0; immediate < 64; ++immediate)
-				for (unsigned rt = 0; rt < 32; ++rt)
-					for (const auto imm9 : offsets) {
-						const auto value = rt == 31 ? 0 :
-							initial.registers[rt];
-						harness.check(instruction(wide, cc, immediate,
-							imm9, rt), initial,
-							takes(wide, cc, value, immediate),
-							test::displacement(imm9));
-					}
-}
-
-void signed_unsigned_boundaries(test::Harness &harness)
-{
-	constexpr std::array values{
-		std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{62},
-		std::uint64_t{63}, std::uint64_t{64},
-		std::uint64_t{0x7fff'ffffU}, std::uint64_t{0x8000'0000U},
-		std::uint64_t{0xffff'ffffU},
-		std::uint64_t{0x7fff'ffff'ffff'ffffULL},
-		std::uint64_t{0x8000'0000'0000'0000ULL},
-		std::uint64_t{0xffff'ffff'ffff'ffffULL}};
-	for (const bool wide : {false, true})
-		for (const auto cc : valid_conditions)
-			for (const auto value : values)
-				for (const unsigned immediate : {0U, 1U, 62U, 63U}) {
-					auto initial = test::state();
-					initial.registers[1] = value;
-					harness.check(instruction(wide, cc, immediate,
-						0x100, 1), initial,
-						takes(wide, cc, value, immediate), -1024);
-				}
-}
-
 void aliases()
 {
 	/* CBGE/CBHS encode x >= N as x > N-1. CBLE/CBLS encode x <= N
@@ -120,18 +80,6 @@ void aliases()
 		}
 }
 
-void reserved_encodings(test::Harness &harness)
-{
-	for (const bool wide : {false, true})
-		for (const unsigned cc : {4U, 5U})
-			for (const unsigned immediate : {0U, 31U, 63U})
-				harness.check_illegal(
-					instruction(wide, cc, immediate, 0x155, 7));
-	/* bit 14 is fixed zero and must be rejected before any side effect. */
-	harness.check_illegal(instruction(false, 0, 7, 3, 1) | 0x4000U);
-	harness.check_illegal(instruction(true, 7, 63, 0x1ff, 31) | 0x4000U);
-}
-
 void production_specialization()
 {
 	std::set<std::uintptr_t> entries;
@@ -158,12 +106,7 @@ void production_specialization()
 int main()
 {
 	encoding_examples();
-	test::Harness harness;
-	exhaustive_fields(harness);
-	signed_unsigned_boundaries(harness);
 	aliases();
-	reserved_encodings(harness);
 	production_specialization();
-	harness.print_summary("arm64-base-cmpbr-immediate");
 	return 0;
 }

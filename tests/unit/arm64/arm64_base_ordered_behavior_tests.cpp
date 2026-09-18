@@ -209,8 +209,6 @@ void stores_invalidate_reservations(engine::EngineHarness &harness)
 			.native = ordered::native(variant),
 			.memory = std::span<const engine::MemoryRegion>{regions},
 			.validator = &ordered::validate_failed_exclusive,
-			.validator_relation_id =
-				"permitted-exclusive-store-failure/v1",
 		});
 	}
 }

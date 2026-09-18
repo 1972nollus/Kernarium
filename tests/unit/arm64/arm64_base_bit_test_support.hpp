@@ -10,8 +10,6 @@ namespace base_bit_test {
 namespace arm64 = uml::cpu::arm64;
 namespace engine_tests = uml::emulator::tests;
 
-inline constexpr std::uint64_t seed_constant = 0x5a6b'7c8d'9eaf'b0c1ULL;
-
 [[nodiscard]] constexpr bool allocated(bool wide, unsigned operation) noexcept
 {
 	if (operation <= 2U)
@@ -27,34 +25,6 @@ inline constexpr std::uint64_t seed_constant = 0x5a6b'7c8d'9eaf'b0c1ULL;
 	return 0x5ac0'0000U | (wide ? 0x8000'0000U : 0U) |
 		((operation & 31U) << 10) | ((source & 31U) << 5) |
 		(destination & 31U);
-}
-
-[[nodiscard]] inline engine_tests::NativeRequirements
-native_requirement(unsigned operation) noexcept
-{
-	if (operation >= 6U)
-		return engine_tests::NativeRequirements::features(
-			::uml::cpu::ArmFeature::cssc);
-	return engine_tests::NativeRequirements::baseline();
-}
-
-[[nodiscard]] inline arm64::CpuState state(std::uint64_t seed = seed_constant)
-{
-	arm64::CpuState cpu{};
-	for (unsigned index = 0; index < cpu.registers.size(); ++index)
-		cpu.registers[index] =
-			seed ^ (0x0102'0304'0506'0708ULL * (index + 1U));
-	cpu.sp = seed ^ 0x7654'3210'fedc'ba98ULL;
-	cpu.nzcv = 0xb000'0000U;
-	cpu.fpcr = 0x0040'0000U;
-	cpu.fpsr = 0x0800'009fU;
-	cpu.tls = seed ^ 0x1234'5678'9abc'def0ULL;
-	for (unsigned index = 0; index < cpu.vectors.size(); ++index)
-		for (unsigned byte = 0; byte < cpu.vectors[index].bytes.size();
-		     ++byte)
-			cpu.vectors[index].bytes[byte] =
-				static_cast<std::byte>(seed + index * 17U + byte);
-	return cpu;
 }
 
 [[nodiscard]] constexpr std::uint64_t width_mask(bool wide) noexcept
@@ -128,19 +98,6 @@ native_requirement(unsigned operation) noexcept
 	default:
 		return 0;
 	}
-}
-
-[[nodiscard]] inline arm64::CpuState expected_state(
-	const arm64::CpuState &initial, bool wide, unsigned operation,
-	unsigned source, unsigned destination)
-{
-	auto expected = initial;
-	const auto input = source == 31U ? std::uint64_t{0} :
-		initial.registers[source];
-	if (destination != 31U)
-		expected.registers[destination] =
-			result(wide, operation, input) & width_mask(wide);
-	return expected;
 }
 
 } // namespace base_bit_test

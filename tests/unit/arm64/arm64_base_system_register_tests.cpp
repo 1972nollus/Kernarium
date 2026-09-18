@@ -260,7 +260,6 @@ void virtual_counter(test::Harness &harness)
 			.native =
 				engine_tests::NativeRequirements::baseline(),
 			.validator = validate_host_counter,
-			.validator_relation_id = "bounded-host-counter-read/v1",
 			.execution_context = &counter_bounds,
 			.before_engine = sample_counter_before,
 			.after_engine = sample_counter_after,

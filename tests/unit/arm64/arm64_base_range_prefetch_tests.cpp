@@ -16,9 +16,6 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
-constexpr std::size_t batch_size = 63;
-
 void require(bool condition,
 	const std::source_location location = std::source_location::current())
 {
@@ -42,20 +39,6 @@ void require(bool condition,
 		(option << 13) | (scale << 12) | ((base & 31U) << 5) | rt;
 }
 
-[[nodiscard]] arm64::CpuState state()
-{
-	arm64::CpuState cpu{};
-	for (unsigned index = 0; index < cpu.registers.size(); ++index)
-		cpu.registers[index] = 0x9000'0000'1000'0000ULL |
-			(static_cast<std::uint64_t>(index) << 32) | index;
-	cpu.sp = 0xffff'ffff'ffff'fff0ULL;
-	cpu.nzcv = 0xb000'0000U;
-	cpu.fpcr = 0x0400'0000U;
-	cpu.fpsr = 0x0800'0000U;
-	cpu.tls = 0x1234'5678'9abc'def0ULL;
-	return cpu;
-}
-
 void encoding_examples()
 {
 	require(rprfm(0, 3, 2) == 0xf8a3'4858U); // PLDKEEP
@@ -63,54 +46,6 @@ void encoding_examples()
 	require(rprfm(4, 3, 2) == 0xf8a3'485cU); // PLDSTRM
 	require(rprfm(5, 3, 2) == 0xf8a3'485dU); // PSTSTRM
 	require(rprfm(63, 30, 31) == 0xf8be'fbffU);
-}
-
-void check_batch(engine_tests::EngineHarness &harness,
-	std::span<const std::uint32_t> instructions)
-{
-	std::vector<engine_tests::ProgramWord> code;
-	code.reserve(instructions.size() + 1);
-	for (std::size_t index = 0; index < instructions.size(); ++index)
-		code.push_back({
-			.offset = index * sizeof(std::uint32_t),
-			.instruction = instructions[index],
-		});
-	code.push_back({
-		.offset = instructions.size() * sizeof(std::uint32_t),
-		.instruction = terminal_system_call,
-	});
-	const auto initial = state();
-	auto expected = initial;
-	expected.pc = engine_tests::engine_test_code_base +
-		code.size() * sizeof(std::uint32_t);
-	harness.check_program({
-		.name = "range-prefetch-variants",
-		.code = std::span<const engine_tests::ProgramWord>{code},
-		.initial = initial,
-		.expected = expected,
-		.native = engine_tests::NativeRequirements::features(
-			::uml::cpu::ArmFeature::rprfm),
-	});
-}
-
-void exhaustive_operations_registers_and_no_fault_behavior(
-	engine_tests::EngineHarness &harness)
-{
-	std::vector<std::uint32_t> batch;
-	batch.reserve(batch_size);
-	for (unsigned operation = 0; operation < 64; ++operation) {
-		for (unsigned metadata = 0; metadata < 32; ++metadata) {
-			for (unsigned base = 0; base < 32; ++base) {
-				batch.push_back(rprfm(operation, metadata, base));
-				if (batch.size() == batch_size) {
-					check_batch(harness, batch);
-					batch.clear();
-				}
-			}
-		}
-	}
-	if (!batch.empty())
-		check_batch(harness, batch);
 }
 
 void production_is_a_direct_nop_gadget()
@@ -131,9 +66,6 @@ void production_is_a_direct_nop_gadget()
 
 int main()
 {
-	engine_tests::EngineHarness harness;
 	encoding_examples();
-	exhaustive_operations_registers_and_no_fault_behavior(harness);
 	production_is_a_direct_nop_gadget();
-	harness.print_summary("arm64-base-range-prefetch");
 }

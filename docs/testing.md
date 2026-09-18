@@ -294,7 +294,10 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 the gadget and JIT engines of each page profile in one process, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
-options, and regeneration from the harness producers.
+options, and regeneration, which requires a producer commit. Cases that need
+engine hooks or a deferred floating-point entry state stay in focused tests
+that run the production gadget and JIT engines through
+`tests/unit/arm64/arm64_engine_test_support.hpp`.
 
 The corpus covers every A64 inventory entry with representative cases; it is
 not exhaustive variant proof.

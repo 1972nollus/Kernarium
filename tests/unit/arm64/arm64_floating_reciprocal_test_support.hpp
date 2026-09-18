@@ -204,11 +204,9 @@ inline constexpr std::uint32_t fpsr_overflow = 1U << 2;
 inline constexpr std::uint32_t fpsr_underflow = 1U << 3;
 inline constexpr std::uint32_t fpsr_inexact = 1U << 4;
 inline constexpr std::uint32_t fpsr_input_denormal = 1U << 7;
-inline constexpr std::uint32_t fpsr_saturation = 1U << 27;
 
 inline constexpr std::uint32_t fpcr_fiz = 1U << 0;
 inline constexpr std::uint32_t fpcr_ah = 1U << 1;
-inline constexpr std::uint32_t fpcr_nep = 1U << 2;
 inline constexpr std::uint32_t fpcr_fz16 = 1U << 19;
 inline constexpr std::uint32_t fpcr_fz = 1U << 24;
 inline constexpr std::uint32_t fpcr_dn = 1U << 25;
@@ -219,34 +217,11 @@ inline constexpr std::array vector_shapes{
 	std::array{32U, 8U}, std::array{32U, 16U},
 	std::array{64U, 16U},
 };
-inline constexpr std::array register_cases{
-	Registers{0, 1, 2},
-	Registers{1, 1, 2},
-	Registers{2, 1, 2},
-	Registers{0, 1, 1},
-	Registers{1, 1, 1},
-	Registers{31, 30, 29},
-	Registers{30, 31, 30},
-	Registers{31, 31, 31},
-};
 
 [[nodiscard]] constexpr bool unary(Operation operation) noexcept
 {
 	return operation != Operation::reciprocal_step &&
 		operation != Operation::reciprocal_sqrt_step;
-}
-
-[[nodiscard]] constexpr std::string_view operation_name(
-	Operation operation) noexcept
-{
-	switch (operation) {
-	case Operation::reciprocal_estimate: return "frecpe";
-	case Operation::reciprocal_step: return "frecps";
-	case Operation::reciprocal_exponent: return "frecpx";
-	case Operation::reciprocal_sqrt_estimate: return "frsqrte";
-	case Operation::reciprocal_sqrt_step: return "frsqrts";
-	}
-	return "floating-reciprocal";
 }
 
 template<typename Function>
@@ -316,23 +291,6 @@ void for_each_form(Function &&function)
 	return result;
 }
 
-[[nodiscard]] inline engine_tests::NativeRequirements native_requirements(
-	const Form &form, std::uint32_t fpcr = 0U)
-{
-	using ::uml::cpu::ArmFeature;
-	auto result = engine_tests::NativeRequirements::features(
-		ArmFeature::advanced_simd);
-	if (form.width == 16U)
-		result = result | ArmFeature::fp16;
-	const bool needs_afp =
-		(fpcr & fpcr_ah) != 0U ||
-		(form.width != 16U && (fpcr & fpcr_fiz) != 0U) ||
-		(form.scalar && (fpcr & fpcr_nep) != 0U);
-	if (needs_afp)
-		result = result | ArmFeature::afp;
-	return result;
-}
-
 [[noreturn]] inline void fail(const char *message)
 {
 	std::fprintf(stderr, "%s\n", message);
@@ -343,92 +301,6 @@ inline void require(bool condition, const char *message)
 {
 	if (!condition)
 		fail(message);
-}
-
-struct ExpectedEngineCounts final {
-	std::size_t total{};
-	std::size_t host_feature_skips{};
-
-	void add(engine_tests::NativeRequirements requirements,
-		std::size_t count = 1U) noexcept
-	{
-		total += count;
-		if (!engine_tests::host_supports(requirements))
-			host_feature_skips += count;
-	}
-
-	void add(const Form &form, std::uint32_t fpcr,
-		std::size_t count = 1U) noexcept
-	{
-		add(native_requirements(form, fpcr), count);
-	}
-};
-
-inline void require_engine_counts(
-	const engine_tests::EngineHarness &harness,
-	const ExpectedEngineCounts &expected)
-{
-	const auto &actual = harness.counts();
-	require(actual.interpreter == expected.total,
-		"reciprocal interpreter case count is incomplete");
-	require(actual.gadgets == expected.total,
-		"reciprocal gadget case count is incomplete");
-	require(actual.jit + actual.jit_skipped == expected.total,
-		"reciprocal JIT case accounting is incomplete");
-	require(actual.jit_skipped == expected.host_feature_skips,
-		"reciprocal JIT skipped an unexpected case");
-	require(actual.jit_skipped_host_feature ==
-			expected.host_feature_skips,
-		"reciprocal JIT host-feature skip count is wrong");
-	require(actual.jit_unavailable == 0U,
-		"reciprocal JIT family is unavailable");
-}
-
-[[nodiscard]] inline arm64::CpuState state(unsigned seed = 0)
-{
-	arm64::CpuState cpu{};
-	for (unsigned reg = 0; reg < cpu.vectors.size(); ++reg)
-		for (unsigned byte = 0; byte < cpu.vectors[reg].bytes.size();
-		     ++byte)
-			cpu.vectors[reg].bytes[byte] = static_cast<std::byte>(
-				seed * 67U + reg * 29U + byte * 17U + 3U);
-	for (unsigned reg = 0; reg < cpu.registers.size(); ++reg)
-		cpu.registers[reg] = 0x1020'3040'5060'7080ULL ^
-			(static_cast<std::uint64_t>(reg + seed) *
-			 0x0101'0101'0101'0101ULL);
-	cpu.sp = 0xfeed'face'cafe'bee0ULL;
-	cpu.nzcv = 0xa000'0000U;
-	cpu.fpcr = 0;
-	cpu.fpsr = (seed & 1U) != 0U ? fpsr_saturation : 0U;
-	cpu.fpmr = 0x0123'4567'89ab'cdefULL;
-	cpu.tls = 0xfedc'ba98'7654'3210ULL;
-	cpu.set_mte_configuration(true, 0xa55aU);
-	cpu.set_mte_generator(true, 0x1357U, 9U,
-		0x3141'5926'5358'9793ULL);
-	cpu.cpa_enabled = true;
-	cpu.cpa_multiply_enabled = true;
-	cpu.accdata = 0x89ab'cdefU;
-	cpu.pstate_ssbs = true;
-	cpu.pstate_dit = true;
-	cpu.pstate_tco = true;
-	cpu.pstate_sm = true;
-	cpu.pstate_za = true;
-	cpu.pstate_daif_access = true;
-	cpu.pstate_daif = 0xbU;
-	cpu.exclusive_address = 0x1234'5000ULL;
-	cpu.exclusive_key = 0x2468U;
-	cpu.exclusive_value = 0x1122'3344'5566'7788ULL;
-	cpu.exclusive_value2 = 0x8877'6655'4433'2211ULL;
-	cpu.exclusive_version = 0x1020'3040'5060'7080ULL;
-	cpu.exclusive_size = 8;
-	return cpu;
-}
-
-[[nodiscard]] constexpr Format format(unsigned width) noexcept
-{
-	return width == 16U ? Format{16U, 5U, 10U, 15} :
-		width == 32U ? Format{32U, 8U, 23U, 127} :
-		Format{64U, 11U, 52U, 1023};
 }
 
 [[nodiscard]] constexpr std::uint64_t low_mask(unsigned bits) noexcept
@@ -496,40 +368,6 @@ inline void require_engine_counts(
 	return zero_bits(value, negative) |
 		(static_cast<std::uint64_t>(exponent) << value.fraction_bits) |
 		(fraction & fraction_mask(value));
-}
-
-[[nodiscard]] inline std::uint64_t read_lane(
-	const std::array<std::byte, 16> &bytes, unsigned lane,
-	unsigned width)
-{
-	const unsigned lane_bytes = width / 8U;
-	std::uint64_t result = 0;
-	for (unsigned byte = 0; byte < lane_bytes; ++byte)
-		result |= static_cast<std::uint64_t>(std::to_integer<unsigned>(
-			bytes[lane * lane_bytes + byte])) << (byte * 8U);
-	return result;
-}
-
-inline void write_lane(std::array<std::byte, 16> &bytes, unsigned lane,
-	unsigned width, std::uint64_t value)
-{
-	const unsigned lane_bytes = width / 8U;
-	for (unsigned byte = 0; byte < lane_bytes; ++byte)
-		bytes[lane * lane_bytes + byte] =
-			static_cast<std::byte>(value >> (byte * 8U));
-}
-
-[[nodiscard]] constexpr unsigned active_lanes(const Form &form) noexcept
-{
-	return form.scalar ? 1U :
-		form.vector_bytes / (form.width / 8U);
-}
-
-inline void fill_lanes(arm64::CpuState &cpu, unsigned reg,
-	const Form &form, std::uint64_t value)
-{
-	for (unsigned lane = 0; lane < active_lanes(form); ++lane)
-		write_lane(cpu.vectors[reg].bytes, lane, form.width, value);
 }
 
 [[nodiscard]] inline Unpacked unpack(std::uint64_t raw, const Format &value,
@@ -997,86 +835,6 @@ inline void fill_lanes(arm64::CpuState &cpu, unsigned reg,
 		common_exponent - (square_root ? 1 : 0), value, fpcr);
 	result.flags |= flags;
 	return result;
-}
-
-[[nodiscard]] inline LaneResult oracle_lane(Operation operation,
-	std::uint64_t first, std::uint64_t second, unsigned width,
-	std::uint32_t fpcr)
-{
-	const auto value = format(width);
-	switch (operation) {
-	case Operation::reciprocal_estimate:
-		return reciprocal_estimate(first, value, fpcr);
-	case Operation::reciprocal_step:
-		return reciprocal_step(first, second, value, fpcr, false);
-	case Operation::reciprocal_exponent:
-		return reciprocal_exponent(first, value, fpcr);
-	case Operation::reciprocal_sqrt_estimate:
-		return reciprocal_sqrt_estimate(first, value, fpcr);
-	case Operation::reciprocal_sqrt_step:
-		return reciprocal_step(first, second, value, fpcr, true);
-	}
-	return {};
-}
-
-[[nodiscard]] inline arm64::CpuState expected_state(
-	const arm64::CpuState &initial, const Form &form, Registers registers)
-{
-	const auto first = initial.vectors[registers.first].bytes;
-	const auto second = initial.vectors[registers.second].bytes;
-	auto expected = initial;
-	std::array<std::byte, 16> result{};
-	if (form.scalar && (initial.fpcr & fpcr_nep) != 0U)
-		result = unary(form.operation) ?
-			initial.vectors[registers.destination].bytes : first;
-	for (unsigned lane = 0; lane < active_lanes(form); ++lane) {
-		const auto lane_result = oracle_lane(form.operation,
-			read_lane(first, lane, form.width),
-			read_lane(second, lane, form.width),
-			form.width, initial.fpcr);
-		write_lane(result, lane, form.width, lane_result.bits);
-		expected.fpsr |= lane_result.flags;
-	}
-	expected.vectors[registers.destination].bytes = result;
-	return expected;
-}
-
-inline void check_one(engine_tests::EngineHarness &harness,
-	const Form &form, Registers registers, const arm64::CpuState &initial)
-{
-	harness.check_one(operation_name(form.operation),
-		instruction(form, registers), initial,
-		expected_state(initial, form, registers),
-		native_requirements(form, initial.fpcr));
-}
-
-[[nodiscard]] constexpr std::uint64_t simple_first(
-	const Form &form) noexcept
-{
-	const auto value = format(form.width);
-	const unsigned exponent = static_cast<unsigned>(value.bias +
-		(form.operation == Operation::reciprocal_sqrt_estimate ||
-		 form.operation == Operation::reciprocal_sqrt_step ? 2 : 1));
-	return normal_bits(value, exponent, 0U);
-}
-
-[[nodiscard]] constexpr std::uint64_t simple_second(
-	const Form &form) noexcept
-{
-	const auto value = format(form.width);
-	const unsigned exponent = static_cast<unsigned>(value.bias -
-		(form.operation == Operation::reciprocal_sqrt_step ? 2 : 1));
-	return normal_bits(value, exponent, 0U);
-}
-
-inline void prepare_simple(arm64::CpuState &cpu, const Form &form,
-	Registers registers)
-{
-	fill_lanes(cpu, registers.first, form, simple_first(form));
-	if (!unary(form.operation))
-		fill_lanes(cpu, registers.second, form,
-			registers.first == registers.second ?
-				simple_first(form) : simple_second(form));
 }
 
 } // namespace arm64_floating_reciprocal_test

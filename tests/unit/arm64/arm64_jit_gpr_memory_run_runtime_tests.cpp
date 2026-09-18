@@ -762,9 +762,8 @@ int main() {
   precise_fault_cases(harness);
   prefixed_cold_faults_preserve_state(harness);
   const auto &counts = harness.counts();
-  engine::require(counts.interpreter != 0);
-  engine::require(counts.gadgets == counts.interpreter);
-  engine::require(counts.jit == counts.interpreter);
+  engine::require(counts.gadgets != 0);
+  engine::require(counts.jit == counts.gadgets);
   engine::require(counts.jit_skipped == 0);
   engine::require(counts.jit_skipped_host_feature == 0);
   engine::require(counts.jit_unavailable == 0);

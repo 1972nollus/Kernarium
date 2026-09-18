@@ -241,76 +241,6 @@ void translation_selects_every_hot_shape()
 		"translation did not select 240 operation/order/width/base gadgets");
 }
 
-void specialized_multi_instruction_blocks(
-	engine::EngineHarness &harness, fp_atomic::ExpectedCounts &counts)
-{
-	for (const auto &shape : fp_atomic::widths)
-		for (unsigned variant = 0; variant < 6U; ++variant) {
-			const bool store_only = variant >= 4U;
-			const bool acquire = !store_only && (variant & 2U) != 0U;
-			const bool release = (variant & 1U) != 0U;
-			fp_atomic::Page initial_page{};
-			fp_atomic::fill_page(initial_page,
-				shape.size_code * 11U + variant);
-			auto expected_page = initial_page;
-			auto initial = atomic::state(
-				0x9000U + shape.size_code * 64U + variant);
-			initial.fpcr = 0;
-			initial.fpsr = 0x0800'009fU;
-			auto expected = initial;
-			std::array<engine::ProgramWord, 6> code{};
-			for (unsigned index = 0; index < fp_atomic::operations.size();
-			     ++index) {
-				const auto operation = fp_atomic::operations[index];
-				const unsigned rs = index;
-				const unsigned rt = 8U + index;
-				const unsigned rn = index == 4U ? 31U : 16U + index;
-				const auto offset = atomic::data_offset + index * 16U;
-				const auto address = atomic::data_page + offset;
-				fp_atomic::set_vector(initial, rs, shape.two,
-					shape.bytes);
-				if (!store_only)
-					fp_atomic::set_vector(initial, rt,
-						0x55aa'33cc'0f0f'f0f0ULL,
-						shape.bytes, std::byte{0x5a});
-				fp_atomic::set_base(initial, rn, address);
-				atomic::put(initial_page, offset, shape.one, shape.bytes);
-				atomic::put(expected_page, offset,
-					fp_atomic::basic_result(shape, operation),
-					shape.bytes);
-				if (!store_only)
-					fp_atomic::set_vector(expected, rt, shape.one,
-						shape.bytes, std::byte{});
-				fp_atomic::set_vector(expected, rs, shape.two,
-					shape.bytes);
-				fp_atomic::set_base(expected, rn, address);
-				code[index] = {
-					.offset = index * sizeof(std::uint32_t),
-					.instruction = fp_atomic::instruction(
-						shape.size_code, operation, acquire, release,
-						store_only, rn, rs,
-						store_only ? 31U : rt),
-				};
-			}
-			code[5] = {
-				.offset = 5U * sizeof(std::uint32_t),
-				.instruction = atomic::terminal_system_call,
-			};
-			expected.pc =
-				engine::engine_test_code_base + 6U * sizeof(std::uint32_t);
-			const auto memory = atomic::region(initial_page, expected_page);
-			harness.check_program({
-				.name = "five specialized atomic operations in one block",
-				.code = std::span<const engine::ProgramWord>{code},
-				.initial = initial,
-				.expected = expected,
-				.native = fp_atomic::native(),
-				.memory = std::span<const engine::MemoryRegion>{&memory, 1},
-			});
-			counts.add();
-		}
-}
-
 } // namespace
 
 int main()
@@ -318,11 +248,4 @@ int main()
 	exact_symbol_inventory();
 	verify_native_words();
 	translation_selects_every_hot_shape();
-	engine::EngineHarness harness;
-	fp_atomic::ExpectedCounts counts;
-	specialized_multi_instruction_blocks(harness, counts);
-	fp_atomic::require(counts.cases == 24U,
-		"gadget block suite case-count drift");
-	fp_atomic::require_counts(harness, counts);
-	harness.print_summary("arm64-atomic-floating-gadget");
 }

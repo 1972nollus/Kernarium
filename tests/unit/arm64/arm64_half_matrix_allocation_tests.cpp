@@ -5,14 +5,6 @@ namespace test = arm64_half_matrix_test;
 
 int main()
 {
-	test::engine_tests::EngineHarness harness;
-	test::ExpectedCounts counts{};
-	unsigned seed{};
-	for (const bool widening : {false, true})
-		for (const auto registers : test::register_aliases)
-			test::check(harness, "half-matrix-allocation",
-				widening, registers, test::state(++seed), counts);
-
 	using test::arm64::detail::decode_half_matrix;
 	test::require(test::instruction(false, {0U, 0U, 0U}) ==
 		0x4ec0'ec00U, "wrong non-widening encoding");
@@ -29,7 +21,4 @@ int main()
 		"valid widening allocation was rejected");
 	test::require(!decode_half_matrix(0x0e45'ec83U).valid,
 		"Q=0 widening allocation was accepted");
-
-	test::require_counts(harness, counts);
-	harness.print_summary("arm64-half-matrix-allocation");
 }

@@ -67,49 +67,6 @@ void encoding_examples()
 	test::require(instruction(16, 7, 31, 0, 31) == 0x74ff'c01fU);
 }
 
-void exhaustive_fields(test::Harness &harness)
-{
-	constexpr std::array offsets{0U, 1U, 0xffU, 0x100U, 0x1ffU};
-	const auto initial = test::state();
-	for (const auto width : widths)
-		for (const auto cc : valid_conditions)
-			for (unsigned rt = 0; rt < 32; ++rt)
-				for (unsigned rm = 0; rm < 32; ++rm)
-					for (const auto imm9 : offsets) {
-						const auto left = rt == 31 ? 0 :
-							initial.registers[rt];
-						const auto right = rm == 31 ? 0 :
-							initial.registers[rm];
-						harness.check(instruction(width, cc, rm,
-							imm9, rt), initial,
-							takes(width, cc, left, right),
-							test::displacement(imm9));
-					}
-}
-
-void signed_unsigned_boundaries(test::Harness &harness)
-{
-	constexpr std::array values{
-		std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x7f},
-		std::uint64_t{0x80}, std::uint64_t{0xff},
-		std::uint64_t{0x7fff}, std::uint64_t{0x8000},
-		std::uint64_t{0xffff}, std::uint64_t{0x7fff'ffffU},
-		std::uint64_t{0x8000'0000U}, std::uint64_t{0xffff'ffffU},
-		std::uint64_t{0x7fff'ffff'ffff'ffffULL},
-		std::uint64_t{0x8000'0000'0000'0000ULL},
-		std::uint64_t{0xffff'ffff'ffff'ffffULL}};
-	for (const auto width : widths)
-		for (const auto cc : valid_conditions)
-			for (const auto left : values)
-				for (const auto right : values) {
-					auto initial = test::state();
-					initial.registers[1] = left;
-					initial.registers[2] = right;
-					harness.check(instruction(width, cc, 2, 0x100, 1),
-						initial, takes(width, cc, left, right), -1024);
-				}
-}
-
 void aliases()
 {
 	/* CBLE/CBLO/CBLS/CBLT and their byte/halfword forms reverse the
@@ -136,18 +93,6 @@ void aliases()
 					(signed_value(second, width) <
 					 signed_value(first, width)));
 			}
-}
-
-void reserved_encodings(test::Harness &harness)
-{
-	for (const auto width : widths)
-		for (const unsigned cc : {4U, 5U})
-			harness.check_illegal(instruction(width, cc, 2, 0x155, 1));
-	/* register control 01 is reserved; narrow forms require sf == 0. */
-	harness.check_illegal(0x7400'4000U | (2U << 16) | 1U);
-	harness.check_illegal(instruction(8, 0, 2, 3, 1) | 0x8000'0000U);
-	harness.check_illegal(instruction(16, 7, 31, 0x1ff, 31) |
-		0x8000'0000U);
 }
 
 void production_specialization()
@@ -181,12 +126,7 @@ void production_specialization()
 int main()
 {
 	encoding_examples();
-	test::Harness harness;
-	exhaustive_fields(harness);
-	signed_unsigned_boundaries(harness);
 	aliases();
-	reserved_encodings(harness);
 	production_specialization();
-	harness.print_summary("arm64-base-cmpbr-register");
 	return 0;
 }

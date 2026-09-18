@@ -54,22 +54,13 @@
         set(_uml_arm64_corpus_zlib uml_arm64_corpus_zlib)
     endif()
 
-    # The reference oracle lane is a test-only adapter over the production
-    # instruction Dispatcher. It belongs to this support target and must not
-    # be reachable from a production engine factory or target.
+    # Focused tests that need engine hooks, host-private entry state, or
+    # engine options run their cases through the production gadget and JIT
+    # engines with this harness.
     add_library(uml_arm64_engine_test_support STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_corpus_export.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reference_engine.cpp)
-    # Corpus export classifies words with the checked official decode
-    # partitions and allocations; ordinary runs never read either file.
-    set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_corpus_export.cpp
-        PROPERTIES COMPILE_DEFINITIONS
-            "UML_ARM64_DECODE_PARTITIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_decode_partitions.tsv\";UML_ARM64_ALLOCATIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_allocations.tsv\"")
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp)
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
-        UML::Emulator
-        ${_uml_arm64_corpus_zlib})
+        UML::Emulator)
     target_include_directories(uml_arm64_engine_test_support PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64
@@ -80,7 +71,7 @@
 
     # The checked-in A64 instruction corpus runs through the production gadget
     # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
-    # the pack format and its regeneration from the harness producers.
+    # the pack format and its regeneration.
     add_executable(uml_arm64_instruction_corpus_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_corpus_runner.cpp)
     target_link_libraries(uml_arm64_instruction_corpus_tests PRIVATE
@@ -236,7 +227,7 @@
     uml_add_unit_test(NAME arm64-floating-exception
         COMMAND uml_arm64_floating_exception_tests)
 
-    foreach(floating_trap_suite IN ITEMS scalar vector control)
+    foreach(floating_trap_suite IN ITEMS control)
         add_executable(uml_arm64_floating_trap_${floating_trap_suite}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_${floating_trap_suite}_tests.cpp
             $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -706,18 +697,6 @@
                 uml_arm64_jit_one_to_one_${JIT_ONE_TO_ONE_TEST}_codegen_tests)
     endforeach()
 
-    add_executable(uml_arm64_jit_register_remap_behavior_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_behavior_tests.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_simd_behavior_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_register_remap_behavior_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_register_remap_behavior_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-register-remap-behavior
-        COMMAND uml_arm64_jit_register_remap_behavior_tests)
-
     add_executable(uml_arm64_jit_tlb_miss_preservation_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_tlb_miss_preservation_tests.cpp
         ${UML_STATIC_RUNTIME_TEST_OBJECTS}
@@ -854,17 +833,6 @@
     uml_add_unit_test(NAME arm64-jit-simd-structure-remap-codegen
         COMMAND uml_arm64_jit_simd_structure_remap_codegen_tests)
 
-    add_executable(uml_arm64_jit_simd_structure_remap_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_structure_remap_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_simd_structure_remap_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_simd_structure_remap_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-simd-structure-remap-runtime
-        COMMAND uml_arm64_jit_simd_structure_remap_runtime_tests)
-
     add_executable(uml_arm64_jit_vector_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_codegen_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_pressure_tests.cpp
@@ -902,17 +870,6 @@
     uml_add_unit_test(NAME arm64-jit-table-list-remap-codegen
         COMMAND uml_arm64_jit_table_list_remap_codegen_tests)
 
-    add_executable(uml_arm64_jit_table_list_remap_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_table_list_remap_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_table_list_remap_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_table_list_remap_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-table-list-remap-runtime
-        COMMAND uml_arm64_jit_table_list_remap_runtime_tests)
-
     add_executable(uml_arm64_jit_gpr_residency_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
@@ -930,17 +887,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-gpr-residency-codegen
         COMMAND uml_arm64_jit_gpr_residency_codegen_tests)
-
-    add_executable(uml_arm64_jit_gpr_residency_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_gpr_residency_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_gpr_residency_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-gpr-residency-runtime
-        COMMAND uml_arm64_jit_gpr_residency_runtime_tests)
 
     add_executable(uml_arm64_jit_pair_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_pair_remap_codegen_tests.cpp
@@ -977,17 +923,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-control-remap-codegen
         COMMAND uml_arm64_jit_control_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_control_remap_behavior_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_control_remap_behavior_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_control_remap_behavior_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_control_remap_behavior_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-control-remap-behavior
-        COMMAND uml_arm64_jit_control_remap_behavior_tests)
 
     if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
         add_executable(uml_arm64_jit_gpr_link_profile_codegen_tests

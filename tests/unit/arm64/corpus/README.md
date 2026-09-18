@@ -8,8 +8,9 @@ engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. The runner needs no Python, network,
 or file other than the pack.
 
-A case is one engine-harness check exported from a producer unit test: a
-program on the code page at `0x4f000000`, the initial architectural state and
+A case is one engine-harness check exported from a producer unit test of a
+producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
+on the code page at `0x4f000000`, the initial architectural state and
 data regions, and the expected terminal event, retired-instruction count,
 fault address and access, floating-point syndrome, architectural state, data
 bytes, and allocation tags. The code page must be unchanged after every run.
@@ -32,16 +33,16 @@ validator relation, native requirements, entry offset, and, for every program
 word, its official decode partition, the allocation predicates it matches,
 and which register fields name register 31. Each class contributes its first
 and last case plus a fixed-seed uniform sample, at most eight cases. A case is
-exported only after the interpreter, gadget, and JIT lanes all pass it. Its
-retired count is the producer's declared count or, when none was declared,
-the count on which every lane agreed.
+exported only after the producer harness's interpreter, gadget, and JIT lanes
+all pass it. Its retired count is the producer's declared count or, when none
+was declared, the count on which every lane agreed.
 
 Registers a program cannot name are replaced with a canonical fill, and the
 minimized case is verified through every lane again. A failing candidate falls
 back to a broader register set and then to the unmodified state. Cases with a
 validator relation keep their complete state. Cases with engine hooks or a
-deferred floating-point entry state stay in their focused producer tests;
-`provenance.json` counts them.
+deferred floating-point entry state stay in focused tests that still run
+through the gadget and JIT harness; `provenance.json` counts them.
 
 Identical cases exported by both page profiles are stored once; a record with
 a `/16k` or `/4k` suffix holds profile-specific cases.
@@ -158,10 +159,16 @@ JIT runs skipped for each missing host feature.
 ## Regeneration and new cases
 
 Expected results come from independent derivation from the architecture or
-from observation on native hardware, never from an engine's output. Add a
-case by adding or extending a check in a producer unit test under that rule,
-or force an existing producer check into the export. Then build both page
-profiles of the producer commit and regenerate:
+from observation on native hardware, never from an engine's output.
+
+The exporter, its driver, and the producer unit tests exist only in producer
+commits: `0752912c` and `af71131f`, or a later producer commit that
+`provenance.json` names as `producer_commit`. Later commits removed the
+harness's interpreter lane and export mode,
+`tools/arm64-tests/export-unit-corpus.py`, and the producers whose cases the
+corpus holds. To add a case, check out a producer commit, add or extend a check
+in a producer unit test under the rule above or force an existing producer
+check into the export, build both page profiles there, and regenerate:
 
 ```sh
 python3 -B tools/arm64-tests/export-unit-corpus.py \
@@ -174,9 +181,11 @@ python3 -B tools/arm64-tests/build-unit-corpus.py \
 ```
 
 `export-unit-corpus.py --include FILE` forces cases in; the directive syntax is
-described in `../arm64_instruction_corpus_export.hpp`. A harness abort names
+described in the producer commit's
+`tests/unit/arm64/arm64_instruction_corpus_export.hpp`. A harness abort names
 the ordinal of the failing check, and each export directory lists the ordinal
-of every exported case in `<producer>.cases.tsv`.
+of every exported case in `<producer>.cases.tsv`. Carry the regenerated pack,
+`manifest.tsv`, `coverage.tsv`, and `provenance.json` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON

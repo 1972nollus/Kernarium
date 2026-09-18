@@ -255,7 +255,6 @@ void single_copy_atomicity(
 		.native = native,
 		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
 		.validator = validate_complete_return,
-		.validator_relation_id = "concurrent-complete-pair-return/v1",
 		.execution_context = &writer,
 		.before_engine = start_writer,
 		.after_engine = stop_writer,

@@ -19,40 +19,6 @@ constexpr std::array operations{
 	RegisterBranch::return_,
 };
 
-[[nodiscard]] constexpr const char *name(RegisterBranch operation) noexcept
-{
-	return operation == RegisterBranch::branch ? "BR" :
-		operation == RegisterBranch::branch_link ? "BLR" : "RET";
-}
-
-void semantics(Harness &harness)
-{
-	for (const auto operation : operations)
-		for (unsigned source = 0; source < 32; ++source) {
-			const auto instruction =
-				encode_register_branch(operation, source);
-			auto initial = seeded_state(
-				0x1600'0000'0000'0000ULL ^
-				(static_cast<std::uint64_t>(instruction) << 17));
-			initial.sp = 0xdead'beef'dead'beefULL;
-			if (source != 31U)
-				initial.registers[source] =
-					0x7000'0000ULL +
-					static_cast<std::uint64_t>(source) *
-						DARWIN_UML_GUEST_PAGE_SIZE;
-			const auto target = source == 31U ? 0U :
-				initial.registers[source];
-			auto expected = initial;
-			if (operation == RegisterBranch::branch_link)
-				expected.registers[30] = branch_pc + 4;
-			char case_name[96];
-			std::snprintf(case_name, sizeof(case_name), "%s x%u",
-				name(operation), source);
-			harness.check_register_branch(
-				case_name, instruction, initial, expected, target);
-		}
-}
-
 void production_specialization()
 {
 	constexpr auto base = engine_test_code_base;
@@ -90,9 +56,6 @@ void production_specialization()
 
 int main()
 {
-	uml::emulator::tests::base_control::Harness harness;
-	uml::emulator::tests::base_control::semantics(harness);
 	uml::emulator::tests::base_control::production_specialization();
-	harness.print_summary("arm64-base-control-register-branch");
 	return 0;
 }

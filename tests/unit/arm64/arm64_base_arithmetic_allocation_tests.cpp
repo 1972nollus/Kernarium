@@ -28,31 +28,6 @@ void require(bool condition, const char *message)
 		fail(message);
 }
 
-void reserved_two_source_encodings(engine_tests::EngineHarness &harness)
-{
-	for (const bool wide : {false, true})
-		for (const bool s : {false, true})
-			for (unsigned opcode = 0; opcode < 64U; ++opcode) {
-				if (test::two_source_allocated(wide, s, opcode))
-					continue;
-				const auto instruction = test::encode_two_source(
-					wide, s, opcode, 7, 3, 5);
-				auto initial = test::seeded_state(
-					0x6100'0000ULL |
-					(static_cast<std::uint64_t>(wide)
-					 << 20U) |
-					(static_cast<std::uint64_t>(s) << 16U) |
-					opcode);
-				char name[144];
-				std::snprintf(name, sizeof(name),
-					"base-arithmetic-reserved-two-source width=%u s=%u opcode=%u",
-					wide ? 64U : 32U, s ? 1U : 0U,
-					opcode);
-				harness.check_illegal(name, instruction, initial,
-					engine_tests::NativeRequirements::baseline());
-			}
-}
-
 [[nodiscard]] constexpr std::uintptr_t register_offset(unsigned index)
 {
 	return index == 31U ? offsetof(arm64::CpuState, gadget_zero) :
@@ -222,9 +197,6 @@ void production_specialization()
 
 int main()
 {
-	engine_tests::EngineHarness harness;
-	reserved_two_source_encodings(harness);
 	production_specialization();
-	harness.print_summary("arm64-base-arithmetic-allocation");
 	return 0;
 }

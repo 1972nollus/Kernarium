@@ -38,32 +38,6 @@ inline constexpr std::array descriptions{
 		"BASE-0503 UMIN (register)"},
 };
 
-[[nodiscard]] inline NativeRequirements native()
-{
-	return NativeRequirements::features(ArmFeature::cssc);
-}
-
-[[nodiscard]] inline arm64::CpuState state(std::uint64_t seed)
-{
-	arm64::CpuState cpu{};
-	for (unsigned index = 0; index < cpu.registers.size(); ++index)
-		cpu.registers[index] =
-			seed ^ (0x91a2'b3c4'd5e6'f708ULL +
-				index * 0x0102'0408'1020'4081ULL);
-	cpu.sp = seed ^ 0x1234'5678'9abc'def0ULL;
-	cpu.nzcv = static_cast<std::uint32_t>(seed) & 0xf000'0000U;
-	cpu.fpcr = 0x0040'0000U;
-	cpu.fpsr = 0x0800'009fU;
-	cpu.tls = seed ^ 0xfedc'ba98'7654'3210ULL;
-	for (unsigned index = 0; index < cpu.vectors.size(); ++index)
-		for (unsigned byte = 0;
-		     byte < cpu.vectors[index].bytes.size(); ++byte)
-			cpu.vectors[index].bytes[byte] =
-				static_cast<std::byte>(
-					seed + index * 13U + byte);
-	return cpu;
-}
-
 [[nodiscard]] constexpr std::uint32_t encode_immediate(
 	bool wide, Operation operation, unsigned immediate, unsigned rd,
 	unsigned rn)
@@ -159,40 +133,12 @@ inline constexpr std::array descriptions{
 	return output;
 }
 
-inline void check(EngineHarness &harness, std::string_view name,
-	std::uint32_t instruction, bool immediate,
-	const arm64::CpuState &initial)
-{
-	harness.check_one(name, instruction, initial,
-		expected(initial, instruction, immediate), native());
-}
-
 inline void require(bool condition, const char *message)
 {
 	if (!condition) {
 		std::fprintf(stderr, "%s\n", message);
 		std::abort();
 	}
-}
-
-inline void require_counts(const EngineHarness &harness, std::size_t cases,
-	const char *suite)
-{
-	const auto &counts = harness.counts();
-	require(counts.interpreter == cases && counts.gadgets == cases,
-		"min/max case was not executed by both software engines");
-	require(counts.jit_unavailable == 0,
-		"native JIT unexpectedly unavailable in min/max suite");
-	if (host_supports(native())) {
-		require(counts.jit == cases &&
-				counts.jit_skipped_host_feature == 0,
-			"host-supported min/max case did not execute in JIT");
-	} else {
-		require(counts.jit == 0 &&
-				counts.jit_skipped_host_feature == cases,
-			"host-unsupported min/max case was not feature-skipped");
-	}
-	harness.print_summary(suite);
 }
 
 } // namespace uml::emulator::tests::base_min_max

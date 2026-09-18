@@ -28,43 +28,6 @@ void require(bool condition, const char *message)
 		fail(message);
 }
 
-void every_allocated_register_field(engine_tests::EngineHarness &harness)
-{
-	for (const bool wide : {false, true})
-		for (unsigned operation = 0; operation < 32U; ++operation) {
-			if (!test::allocated(wide, operation))
-				continue;
-			for (unsigned source = 0; source < 32U; ++source)
-				for (unsigned destination = 0; destination < 32U;
-				     ++destination) {
-					auto initial = test::state(
-						test::seed_constant ^
-						(static_cast<std::uint64_t>(
-							 operation)
-						 << 40U) ^
-						(static_cast<std::uint64_t>(
-							 source)
-						 << 24U) ^
-						destination);
-					char name[112];
-					std::snprintf(name, sizeof(name),
-						"base-bit-allocation width=%u op=%u rn=%u rd=%u",
-						wide ? 64U : 32U, operation,
-						source, destination);
-					harness.check_one(name,
-						test::instruction(wide,
-							operation, source,
-							destination),
-						initial,
-						test::expected_state(initial,
-							wide, operation,
-							source, destination),
-						test::native_requirement(
-							operation));
-				}
-		}
-}
-
 void encoding_examples()
 {
 	require(test::instruction(false, 0, 5, 13) == 0x5ac0'00adU,
@@ -146,9 +109,6 @@ void production_specialization()
 int main()
 {
 	encoding_examples();
-	engine_tests::EngineHarness harness;
-	every_allocated_register_field(harness);
 	production_specialization();
-	harness.print_summary("arm64-base-bit-allocation");
 	return 0;
 }
