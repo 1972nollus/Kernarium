@@ -72,6 +72,16 @@ private:
     bool valid{};
   };
 
+  /* A private, unlinked translation of exactly one guest instruction. */
+  struct SingleInstructionTranslation final {
+    JitFunction function{};
+    std::uint64_t memory_write_mask{};
+    std::uint64_t direct_memory_write_mask{};
+    bool accesses_fp_state{};
+    bool native_fp{};
+    bool native_fpmr{};
+  };
+
   [[nodiscard]] JitFunction
   tracked_store_function(CompiledBlock &block, StaticGuestMemory &memory);
   void clear_tracked_store_cache() noexcept;
@@ -80,10 +90,33 @@ private:
   void select_cpu(CpuState &cpu) noexcept;
   void release_current_reservation() noexcept;
   void reconcile_reservation(CpuState &cpu) noexcept;
-  [[nodiscard]] Event run_semantic_instruction(
-      CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed);
+  [[nodiscard]] bool fetch_instruction(StaticGuestMemory &memory,
+                                       std::uint64_t pc,
+                                       std::uint32_t &instruction);
+  /* Builds the translation in the single-instruction arena, replacing the
+   * previous one. Empty when the instruction cannot be lowered or stored.
+   */
+  [[nodiscard]] std::optional<SingleInstructionTranslation>
+  translate_single_instruction(std::uint64_t pc, std::uint32_t instruction,
+                               bool track_direct_stores);
+  [[nodiscard]] Event invoke_single_instruction(
+      const SingleInstructionTranslation &translation, CpuState &target,
+      bool tracked_stores, bool restore_environment, std::size_t &executed,
+      std::uint32_t &deferred_exclusive);
+  /*
+   * Runs one guest instruction when its block cannot run natively: the block
+   * translation failed, did not fit the arena, or its tracked variant could
+   * not be built. The instruction runs as its own native translation under
+   * the ordinary store-publication protocol. Failing to translate a single
+   * instruction is an internal error and reports Event::fatal.
+   */
+  [[nodiscard]] Event run_single_instruction(CpuState &cpu,
+                                             std::uint32_t instruction,
+                                             std::size_t &executed);
+  /* Runs the exclusive instruction that generated code recorded in
+   * JitChainState after its direct-store publication has ended. */
   [[nodiscard]] Event run_deferred_exclusive_instruction(
-      CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed);
+      CpuState &cpu, std::uint32_t instruction, std::size_t &executed);
 
   [[nodiscard]] void *execution_context(unsigned long generation);
   [[nodiscard]] static const void *
@@ -204,7 +237,7 @@ private:
   std::uint64_t link_context_stamp_{};
   jit::detail::ExecutableArena arena_;
   jit::detail::ExecutableArena tracked_store_arena_;
-  jit::detail::ExecutableArena floating_transaction_arena_;
+  jit::detail::ExecutableArena single_instruction_arena_;
   Tlb tlb_;
   void *execution_context_{};
   unsigned long execution_generation_{};

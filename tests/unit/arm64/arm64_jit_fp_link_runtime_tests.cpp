@@ -657,6 +657,46 @@ void linked_vector_fault_is_precise_for_page_size() {
   executor.end_execution();
 }
 
+void trap_mode_runs_a_deferred_atomic() {
+  constexpr unsigned long generation = 8415;
+  constexpr std::uint64_t base = 0x124'0000;
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  constexpr std::uint32_t load_add = 0xf821'0002U; // ldadd x1, x2, [x0]
+  JitBacking backing{2};
+  backing.put32(0, load_add);
+  backing.put32(4, load_add);
+  backing.put64(page, 40);
+  JitMapping mapping{generation, base, backing, 2};
+  JitExecutor executor;
+  StaticGuestMemory memory;
+  arm64::CpuState cpu{};
+  /*
+   * An enabled trap runs each instruction as its own translation. Tagged
+   * addressing sends a native atomic to its exclusive helper, which a block
+   * with a direct store defers until its store publication has ended.
+   */
+  cpu.fpcr = 1U << 8U;
+  cpu.tbi_enabled = true;
+  cpu.registers[0] = base + page;
+  cpu.registers[1] = 2;
+  cpu.pc = base;
+
+  require(executor.begin_execution(generation, cpu.pc));
+  auto run = run_block(executor, memory, generation, cpu);
+  require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 1);
+  require(cpu.pc == base + 4);
+  require(cpu.registers[2] == 40);
+  require(backing.get64(page) == 42);
+
+  cpu.registers[0] = base + page + 1;
+  run = run_block(executor, memory, generation, cpu);
+  require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 0);
+  require(cpu.pc == base + 4);
+  require(executor.fault_address() == base + page + 1);
+  require(backing.get64(page) == 42);
+  executor.end_execution();
+}
+
 } // namespace
 
 int main() {
@@ -674,5 +714,6 @@ int main() {
   stateful_store_links_require_publication();
   linked_successor_observes_dirty_constrained_binding();
   linked_vector_fault_is_precise_for_page_size();
+  trap_mode_runs_a_deferred_atomic();
   return 0;
 }

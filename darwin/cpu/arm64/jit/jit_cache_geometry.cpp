@@ -205,7 +205,7 @@ std::size_t JitCacheGeometry::total_bytes() const noexcept
 	checked_add(total, rounded_mapping_bytes(arena_bytes));
 	checked_add(total, rounded_mapping_bytes(tracked_store_arena_bytes));
 	checked_add(total,
-		rounded_mapping_bytes(floating_transaction_arena_size));
+		rounded_mapping_bytes(single_instruction_arena_size));
 	return total;
 }
 
