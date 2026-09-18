@@ -94,9 +94,11 @@ file-backed.
 
 Engine selection is explicit. Gadgets execute non-executable data streams of
 precompiled entries, and the JIT publishes native code only through
-`cpu/arm64/jit/jit_arena.cpp`. The shared arm64 `Dispatcher` decodes and
-executes single instructions for the JIT's semantic memory path and for the
-A64 conformance reference lane; it is not a selectable engine.
+`cpu/arm64/jit/jit_arena.cpp`. The JIT owns its semantic slow path: generated
+code routes a fixed set of instruction classes to helpers that decode only
+those classes, and any other word is a fatal internal error. The arm64
+`Dispatcher` decodes and executes single instructions for the A64 conformance
+reference lane; it is not a selectable engine.
 
 The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
 while UML kernel-mode execution remains arm64. The kernel slice cannot load
@@ -205,8 +207,8 @@ compile eagerly.
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host
 exclusives after checking both mappings and permissions. Unsupported shapes
-and tagged accesses retain the semantic path. Native and semantic stores
-continue to share the reservation publication protocol.
+and tagged accesses take the JIT's semantic slow path. Native and semantic
+stores share the JIT's software reservation table and publication protocol.
 An ordered store through an alias invalidates the matching software reservation
 even when the stored value is unchanged.
 

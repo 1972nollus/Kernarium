@@ -1760,7 +1760,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
            ColdPath::Action::exclusive_slow});
       emitter_.branch(slow);
       /*
-       * The helper always returns to the dispatcher.  Ending the translated
+       * The helper always returns to the executor.  Ending the translated
        * block here also prevents an unreachable later store from publishing
        * this load-reservation block as a store in flight, which can otherwise
        * make concurrent reservation loops wait on one another forever.

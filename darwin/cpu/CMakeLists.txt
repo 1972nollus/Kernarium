@@ -618,8 +618,7 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
-    $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>)
+    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
 # The CPU-owned implementation carrier deliberately excludes memory objects.
 # Production and test runtime compositions can pair these exact engine objects
