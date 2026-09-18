@@ -121,7 +121,7 @@ int main()
 	LinkTarget empty{~std::uint64_t{}};
 
 	/* A cold site exits exactly once and reports its private cache cell to the
-	 * dispatcher without dereferencing either nonmatching entry. */
+	 * executor without dereferencing either nonmatching entry. */
 	{
 		gadgets::IndirectLink site{};
 		initialize(site, empty);
@@ -170,7 +170,7 @@ int main()
 		}
 
 		/* Target eviction resets the stable BlockLink, so a still-matching PIC
-		 * entry takes the safe dispatcher fallback rather than a stale stream. */
+		 * entry takes the safe executor fallback rather than a stale stream. */
 		second.reset();
 		arm64::CpuState cpu{};
 		cpu.registers[5] = 0x6000;

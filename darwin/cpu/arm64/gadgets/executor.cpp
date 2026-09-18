@@ -1898,7 +1898,7 @@ const BuildResult &GadgetExecutor::store(
 	if (event != ::uml::cpu::EngineEvent::interrupt &&
 	    event != ::uml::cpu::EngineEvent::continued) {
 		/* Reserved allocations and other non-executing events retain the
-		 * live architectural state, just like the strict interpreter.
+		 * live architectural state.
 		 */
 		correct_terminal_instruction_count(
 			built.program, event, isolated.pc, isolated_executed);

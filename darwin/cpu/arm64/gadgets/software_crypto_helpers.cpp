@@ -63,9 +63,9 @@ struct CarrylessProduct final {
 	std::uint64_t high{};
 };
 
-/* Keep the interpreter's size=11 path independent of optional host
- * instructions. In particular, do not let this body inherit simd_crypto's
- * target attributes: the interpreter must remain safe on hosts without the
+/* Keep the portable size=11 path independent of optional host instructions.
+ * Out of line, this body cannot inherit a caller's optional-extension target
+ * attributes, so the software helper remains safe on hosts without the
  * optional polynomial-multiply extension.
  */
 [[gnu::noinline]]

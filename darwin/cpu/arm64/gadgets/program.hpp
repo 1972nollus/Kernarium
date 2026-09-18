@@ -370,8 +370,8 @@ struct BuildOptions final {
 	 * Production selects native fixed-form gadgets at translation time.
 	 */
 	bool force_software_flags{};
-	/* Exercise portable SIMD logical/rotation bodies while leaving the
-	 * interpreter and JIT portions of a shared conformance case unchanged.
+	/* Exercise portable SIMD logical/rotation bodies while leaving the JIT
+	 * portion of a shared conformance case unchanged.
 	 */
 	bool force_software_sha3{};
 	/* Exercise portable fixed-transform bodies on capable hosts. Production

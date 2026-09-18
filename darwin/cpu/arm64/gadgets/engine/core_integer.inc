@@ -2532,8 +2532,8 @@ gadget axflag
 
 /* The builder selects these one-instruction host forms only after detecting
  * the exact extension.  The software bodies above remain the portable gadget
- * implementation and keep interpreter/gadget conformance independent of the
- * JIT eligibility decision. */
+ * implementation and keep gadget conformance independent of the JIT
+ * eligibility decision. */
 gadget axflag_native
 	msr nzcv, x27
 	.inst 0xd500405f

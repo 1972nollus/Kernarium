@@ -53,11 +53,10 @@ template <Ls64Operation operation, bool base_sp, bool status_discard = false>
 [[nodiscard]] std::uint32_t ls64_transfer(CpuState *cpu, Tlb *tlb,
 	std::uintptr_t operand) noexcept
 {
-	/* The gadget engine owns both pointers and guarantees that they are valid.
-	 * Keep debug-grade pointer validation in the interpreter rather than adding
-	 * two always-not-taken branches to every production LS64 transfer.
-	 * Translation also packs direct CpuState byte offsets, so the hot helper
-	 * does not decode architectural register numbers.
+	/* The gadget engine owns both pointers and guarantees that they are valid,
+	 * so production LS64 transfers carry no always-not-taken validation
+	 * branches. Translation also packs direct CpuState byte offsets, so the
+	 * hot helper does not decode architectural register numbers.
 	 */
 	const auto first_offset = static_cast<std::uint16_t>(operand);
 	const auto base_offset = static_cast<std::uint16_t>(operand >> 16);

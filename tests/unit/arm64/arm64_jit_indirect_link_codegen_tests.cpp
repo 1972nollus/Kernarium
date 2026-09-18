@@ -221,7 +221,7 @@ void stable_site_storage_is_bounded() {
   require(jit_test::indirect_link_table_is_bounded(7),
           "multi-entry indirect table is not stable and bounded");
   require(jit_test::link_chain_instruction_limit() == 4096,
-          "JIT link fairness limit diverges from the dispatcher checkpoint");
+          "JIT link fairness limit diverges from the executor checkpoint");
   require(jit_test::indirect_link_entry_size() == 16,
           "production PIC way no longer contains one key and one pointer");
 }

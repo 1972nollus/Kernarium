@@ -578,7 +578,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0xffff'fc00U) == 0xd9a0'0000U ||
 		   (instruction & 0xffff'fc00U) == 0xd920'0000U) {
 		/* LDGM/STGM/STZGM are undefined at EL0. Reject them before
-		 * observing CpuState or memory, matching the strict interpreter.
+		 * observing CpuState or memory.
 		 */
 		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
