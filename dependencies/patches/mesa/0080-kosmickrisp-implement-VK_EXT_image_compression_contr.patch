@@ -1,7 +1,7 @@
 From 7c5529c261431c09e975ada50a9fec54f5df65ba Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:51 +0900
-Subject: [PATCH 80/92] kosmickrisp: implement VK_EXT_image_compression_control
+Subject: [PATCH 80/93] kosmickrisp: implement VK_EXT_image_compression_control
 
 VP_ANDROID_17_requirements makes this extension and its swapchain companion
 mandatory. Both are queries: an application asks what compression an image
