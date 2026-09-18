@@ -1,7 +1,7 @@
 From 2aeb81881e6cbea2eb5c65a2f69523cc001e4810 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:35:49 +0900
-Subject: [PATCH 50/96] kosmickrisp: round depth clears into normalized depth
+Subject: [PATCH 50/97] kosmickrisp: round depth clears into normalized depth
  formats
 
 Round a render pass clear depth to the attachment's representable value

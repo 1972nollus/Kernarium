@@ -1,7 +1,7 @@
 From 8a241b114cf408ad41f0b7277f39c2c27f737b93 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 15:37:29 +0900
-Subject: [PATCH 85/96] zink: do not wait forever for another context to flush
+Subject: [PATCH 85/97] zink: do not wait forever for another context to flush
 
 A read map that finds the resource's last write recorded on a batch state
 belonging to a different context waits for that batch to be submitted, and

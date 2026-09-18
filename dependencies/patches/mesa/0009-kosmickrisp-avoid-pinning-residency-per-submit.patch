@@ -1,7 +1,7 @@
 From 34147fe8c3cfd4662c6361afcee496efb60dc937 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 21:34:01 +0900
-Subject: [PATCH 09/96] kosmickrisp: avoid pinning residency per submit
+Subject: [PATCH 09/97] kosmickrisp: avoid pinning residency per submit
 
 ---
  src/kosmickrisp/vulkan/kk_buffer_view.c | 11 ++++++++++-
