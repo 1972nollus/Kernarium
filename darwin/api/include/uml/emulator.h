@@ -37,11 +37,12 @@ enum uml_emulator_error {
 	UML_EMULATOR_RUNTIME_ERROR = 4,
 };
 
+/* Retired selections keep their number, so a value this build no longer
+ * produces is never reused for a different engine. */
 enum uml_emulator_execution_model {
 	UML_EMULATOR_EXECUTION_AUTO = 0,
 	UML_EMULATOR_STATIC_GADGETS = 1,
 	UML_EMULATOR_NATIVE_JIT = 2,
-	UML_EMULATOR_INTERPRETER = 3,
 };
 
 struct uml_emulator_config {
