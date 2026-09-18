@@ -5,7 +5,7 @@
 #include "cpu/arm64/code_synchronization.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
-#include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>

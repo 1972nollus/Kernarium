@@ -21,7 +21,7 @@
 #include "cpu/arm64/detail/half_dot.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
-#include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 
 namespace uml::cpu::arm64 {
 
