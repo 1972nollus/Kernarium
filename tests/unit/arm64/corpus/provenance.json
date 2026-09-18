@@ -1,5 +1,5 @@
 {
-  "cases": 171134,
+  "cases": 171142,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
@@ -7,12 +7,12 @@
     "illegal-instruction": 24306,
     "instruction-budget": 863,
     "memory-fault": 17462,
-    "system-call": 128393
+    "system-call": 128401
   },
   "cases_by_profile": {
-    "16k": 37307,
+    "16k": 37311,
     "16k+4k": 96508,
-    "4k": 37319
+    "4k": 37323
   },
   "coverage": {
     "entries": 983,
@@ -23,9 +23,9 @@
   },
   "exports": {
     "16k": {
-      "classes": 24160,
+      "classes": 24164,
       "covering_cases": 16752,
-      "declared_cases": 18217690,
+      "declared_cases": 18217694,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -38,14 +38,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 133815,
+      "exported_cases": 133819,
       "forced_cases": 4198,
       "producers": 451
     },
     "4k": {
-      "classes": 24159,
+      "classes": 24163,
       "covering_cases": 16765,
-      "declared_cases": 18217689,
+      "declared_cases": 18217693,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -58,7 +58,7 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 133827,
+      "exported_cases": 133831,
       "forced_cases": 4198,
       "producers": 451
     }
@@ -68,18 +68,18 @@
     "sha256": "88603b6a571ddde585b4e22826e2d52c3297ab5ed146c221127df674af0c9597"
   },
   "memory_blobs": 3338,
-  "pack_bytes": 14842804,
-  "pack_sha256": "6b3d2b02bbc19d2381324708e5b26e503207bf1ffa46da9fe42619c02ca1599f",
-  "producer_commit": "38110797b768bc6170f6df01b42c273b2205b7a1",
-  "programs": 146770,
-  "records": 1331,
+  "pack_bytes": 14842676,
+  "pack_sha256": "747c9176603c6246dd5aa10c78534a82bf1c39b438e4ff2e5dc24a79579adf80",
+  "producer_commit": "12694a6d22c70ae5dd8edd2d14a21b6a955a6cd4",
+  "programs": 146778,
+  "records": 1333,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 63,
     "full": 1176,
-    "narrow": 169895
+    "narrow": 169903
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,
