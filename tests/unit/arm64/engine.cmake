@@ -1116,9 +1116,9 @@
 
     add_executable(uml_arm64_gadget_dependency_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_reference.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_memory_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_vector_dependency_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
