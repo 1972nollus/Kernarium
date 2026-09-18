@@ -71,6 +71,16 @@ leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
 whatever producer is pending instead of materializing it. Rotates keep the
 eager overlay.
 
+## Software TLB
+
+`Executor::prepare` enters an address-space generation, and it must not leave
+behind a translation of a page whose mapping has changed. The address space
+describes the mapping ranges a reader has not yet seen, so a reader only a few
+changes behind replays exactly those ranges and retires just the entries they
+cover. The whole table is cleared only when the address space cannot describe
+the span, when the span covers more than a quarter of the entries, or when the
+memory or the generation changed.
+
 ## Code pages
 
 `code_page_registry.hpp` keeps, per address-space generation, the set of pages

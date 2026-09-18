@@ -1277,6 +1277,11 @@ struct Executor::Storage final {
 	std::uint64_t code_changes{};
 	void *execution_context{};
 	ProgramCacheSequenceReader sequence_reader{};
+	MappingChangeReader mapping_change_reader{};
+	/* The mapping sequence every resident software-TLB entry is coherent
+	 * for. A replay advances it to what the address space reported, which
+	 * can be newer than the sequence the caller asked about. */
+	std::uint64_t tlb_mapping_sequence{};
 	ProgramCacheDiagnostics diagnostics{};
 	bool prepared{};
 	bool cache_ready{};
@@ -1293,11 +1298,42 @@ Executor::~Executor() = default;
 Executor::Executor(Executor &&) noexcept = default;
 Executor &Executor::operator=(Executor &&) noexcept = default;
 
+namespace {
+
+/* Retire the software-TLB entries covering one changed guest range. A write
+ * entry carries its publication tags in the low bits of the page it holds, so
+ * the compare masks them exactly as the engine's own hit path does. */
+void retire_mapping_range(std::span<NativeTlbEntry> entries,
+	std::uint64_t address, std::uint64_t length) noexcept
+{
+	constexpr std::uint64_t page_mask = ~std::uint64_t{0xfff};
+	constexpr std::uint64_t write_tags =
+		UML_X86_64_TLB_WRITE_CODE | UML_X86_64_TLB_WRITE_CACHED_CODE;
+	const auto first = address & page_mask;
+	const auto last = (address + length - 1) & page_mask;
+	for (auto page = first;; page += 0x1000) {
+		auto &entry = entries[native_tlb_index(page)];
+		if ((entry.read_page & page_mask) == page)
+			entry.read_page = NativeTlbEntry{}.read_page;
+		if ((entry.write_page & ~write_tags & page_mask) == page)
+			entry.write_page = NativeTlbEntry{}.write_page;
+		if (page == last)
+			break;
+	}
+}
+
+/* Replaying a range list costs a lookup per page, so a span wider than a
+ * fraction of the table is retired by clearing the table instead. */
+constexpr std::uint64_t maximum_replayed_pages = tlb_entry_count / 4;
+
+} // namespace
+
 void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t generation, std::uint64_t mapping_changes,
 	std::uint64_t code_changes, void *execution_context,
 	ProgramCacheSequenceReader sequence_reader,
-	ProgramCacheCodeChangeReader code_change_reader) noexcept
+	ProgramCacheCodeChangeReader code_change_reader,
+	MappingChangeReader mapping_change_reader) noexcept
 {
 	const bool memory_changed = storage_->memory != &memory;
 	const bool mapping_changed = memory_changed || !storage_->prepared ||
@@ -1306,8 +1342,40 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 	const bool cache_binding_changed = memory_changed || !storage_->prepared ||
 		storage_->generation != generation ||
 		storage_->code_changes != code_changes;
-	if (mapping_changed)
-		std::ranges::fill(storage_->entries, NativeTlbEntry{});
+	storage_->mapping_change_reader = mapping_change_reader;
+	if (mapping_changed) {
+		/* The address space hands a reader the ranges it has not seen, so a
+		 * reader only a few changes behind retires exactly those pages
+		 * instead of every entry it holds. Anything it cannot describe, and
+		 * any move to another address space or generation, still clears the
+		 * whole table. */
+		bool replayed = false;
+		if (!memory_changed && storage_->prepared &&
+			storage_->generation == generation &&
+			mapping_change_reader != nullptr) {
+			std::array<ProgramMappingChange, 128> ranges{};
+			std::uint64_t current = mapping_changes;
+			const int count = mapping_change_reader(execution_context,
+				generation, storage_->tlb_mapping_sequence, ranges.data(),
+				ranges.size(), &current);
+			if (count >= 0) {
+				std::uint64_t pages = 0;
+				for (int index = 0; index < count; ++index)
+					pages += ranges[index].length / 0x1000 + 2;
+				if (pages <= maximum_replayed_pages) {
+					for (int index = 0; index < count; ++index)
+						retire_mapping_range(storage_->entries,
+							ranges[index].address, ranges[index].length);
+					storage_->tlb_mapping_sequence = current;
+					replayed = true;
+				}
+			}
+		}
+		if (!replayed) {
+			std::ranges::fill(storage_->entries, NativeTlbEntry{});
+			storage_->tlb_mapping_sequence = mapping_changes;
+		}
+	}
 	if (memory_changed)
 		storage_->programs.invalidate();
 	if (memory_changed || !storage_->prepared ||
