@@ -3,7 +3,12 @@
 
 
 .macro bmi_flags width, host_register
-	bl uml_x86_64_gadget_materialize_flags
+	/* CF, ZF, SF and OF are defined below and AF and PF are undefined, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x9, #0x8c1
 	bic x8, x8, x9

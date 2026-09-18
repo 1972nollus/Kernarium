@@ -339,7 +339,12 @@
 
 .macro vector_map3_string_execute opcode, descriptor
 	mov x19, x\descriptor
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	and w13, w27, #0xff
 	mov w12, #(\opcode <= 0x61)
 	ubfx w11, w27, #8, #1

@@ -76,6 +76,12 @@ leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
 whatever producer is pending instead of materializing it. Rotates keep the
 eager overlay.
 
+An operation that defines every arithmetic flag it does not leave undefined --
+COMISS and UCOMISS, PTEST, the packed string compares, the bit scans and
+counts, and the BMI flag writers -- discards the pending record instead of
+materializing it, because nothing of it survives. BT and its siblings leave
+ZF alone, so they keep the record and write their carry into its override.
+
 ## Blocks and branches
 
 A block ends at an unconditional transfer or at the 64-instruction fetch

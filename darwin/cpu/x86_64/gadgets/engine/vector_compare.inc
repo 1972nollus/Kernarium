@@ -27,7 +27,12 @@
 
 .macro vector_compare_register width, fp_register
 gadget vector_compare_\width\()_rr
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
@@ -39,7 +44,12 @@ gadget vector_compare_\width\()_rr
 
 .macro vector_compare_memory width, fp_register, load, host_register
 gadget vector_compare_\width\()_rm
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	effective_address
 	mov x25, x7
 	page_cross_check (\width / 8), .Lx86_vector_compare_cross\@
