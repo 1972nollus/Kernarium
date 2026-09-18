@@ -373,38 +373,78 @@ def extend_register(o):
         o.table(f'{name}_rr', entries)
 
 
+def unary_body(o, name, width, d, ld, st, hr, sr, flagop):
+    o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
+    # At 32 and 64 bits the flag-setting host form leaves N, Z and V
+    # describing the guest operation; only C differs (INC and DEC preserve it,
+    # NEG inverts it), and the builder keeps the carry conditions off these
+    # producers.
+    s = 's' if width >= 32 else ''
+    if name == 'increment':
+        o.emit(f'\tadd{s} {hr}13, {hr}11, #1')
+        o.emit('\tmov x12, #1')
+    elif name == 'decrement':
+        o.emit(f'\tsub{s} {hr}13, {hr}11, #1')
+        o.emit('\tmov x12, #1')
+    else:
+        o.emit(f'\tneg{s} {hr}13, {hr}11')
+        o.emit('\tmov x12, x11')
+        o.emit('\tmov x11, xzr')
+    normalize(o, width, f'{hr}13')
+    o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
+    record(o, flagop, width)
+    o.emit('\tretire_and_next')
+
+
+# INC and DEC preserve the carry flag, so the flag the previous producer
+# defined has to reach RFLAGS before this one records its own. Calling the
+# materializer is the general answer; when the builder knows what the producer
+# left, the carry is one condition away and the call goes.
+CARRY_PROLOGUE = {
+    'settled': [],                  # a previous INC or DEC already settled it
+    'borrow': ['\tcset w16, cc'],   # a subtraction: CF is the inverted borrow
+    'carry': ['\tcset w16, cs'],    # an addition: CF is the carry out
+    'clear': [],                    # a logical operation defined CF as zero
+}
+
+
+def carry_prologue(o, kind):
+    for line in CARRY_PROLOGUE[kind]:
+        o.emit(line)
+    if kind == 'settled':
+        return
+    o.emit('\tldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]')
+    if kind == 'clear':
+        o.emit('\tbic x9, x9, #1')
+    else:
+        o.emit('\tbfi x9, x16, #0, #1')
+    o.emit('\torr x9, x9, #2')
+    o.emit('\tstr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]')
+
+
 def unary_register(o):
     """INC, DEC, NEG and NOT on a register. INC and DEC preserve carry, so the
     previous producer's carry is settled first exactly as the ordinary entry does."""
     for width, (ld, st, hr, sr) in WIDTHS.items():
         regs = regs_for(width)
         for name, flagop, materialize in (('increment', 4, True), ('decrement', 5, True), ('negate', 2, False)):
+            if materialize:
+                for kind in CARRY_PROLOGUE:
+                    entries = []
+                    for d in regs:
+                        entry = f'{name}_{kind}_{width}_r_{d}'
+                        o.gadget(entry)
+                        carry_prologue(o, kind)
+                        unary_body(o, name, width, d, ld, st, hr, sr, flagop)
+                        entries.append(entry)
+                    o.table(f'{name}_{kind}_{width}_r', entries)
             entries = []
             for d in regs:
                 entry = f'{name}_{width}_r_{d}'
                 o.gadget(entry)
                 if materialize:
                     o.emit('\tbl uml_x86_64_gadget_materialize_carry')
-                o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
-                # At 32 and 64 bits the flag-setting host form leaves N, Z and
-                # V describing the guest operation; only C differs (INC and
-                # DEC preserve it, NEG inverts it), and the builder keeps the
-                # carry conditions off these producers.
-                s = 's' if width >= 32 else ''
-                if name == 'increment':
-                    o.emit(f'\tadd{s} {hr}13, {hr}11, #1')
-                    o.emit('\tmov x12, #1')
-                elif name == 'decrement':
-                    o.emit(f'\tsub{s} {hr}13, {hr}11, #1')
-                    o.emit('\tmov x12, #1')
-                else:
-                    o.emit(f'\tneg{s} {hr}13, {hr}11')
-                    o.emit('\tmov x12, x11')
-                    o.emit('\tmov x11, xzr')
-                normalize(o, width, f'{hr}13')
-                o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
-                record(o, flagop, width)
-                o.emit('\tretire_and_next')
+                unary_body(o, name, width, d, ld, st, hr, sr, flagop)
                 entries.append(entry)
             o.table(f'{name}_{width}_r', entries)
         entries = []

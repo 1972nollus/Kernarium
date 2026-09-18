@@ -9,41 +9,12 @@
 	frintz d\output, d\input
 	.endif
 	.else
-	ldr w13, [_cpu, #UML_X86_64_CPU_MXCSR]
-	ubfx w13, w13, #13, #2
-	cmp w13, #1
-	b.eq .Lx86_vector_scalar_round_down\@
-	cmp w13, #2
-	b.eq .Lx86_vector_scalar_round_up\@
-	cmp w13, #3
-	b.eq .Lx86_vector_scalar_round_zero\@
+	/* The dispatch already holds the guest's rounding mode. */
 	.if \element == 32
-	frintn s\output, s\input
+	frinti s\output, s\input
 	.else
-	frintn d\output, d\input
+	frinti d\output, d\input
 	.endif
-	b .Lx86_vector_scalar_round_done\@
-.Lx86_vector_scalar_round_down\@:
-	.if \element == 32
-	frintm s\output, s\input
-	.else
-	frintm d\output, d\input
-	.endif
-	b .Lx86_vector_scalar_round_done\@
-.Lx86_vector_scalar_round_up\@:
-	.if \element == 32
-	frintp s\output, s\input
-	.else
-	frintp d\output, d\input
-	.endif
-	b .Lx86_vector_scalar_round_done\@
-.Lx86_vector_scalar_round_zero\@:
-	.if \element == 32
-	frintz s\output, s\input
-	.else
-	frintz d\output, d\input
-	.endif
-.Lx86_vector_scalar_round_done\@:
 	.endif
 .endm
 

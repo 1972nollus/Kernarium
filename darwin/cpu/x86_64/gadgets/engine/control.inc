@@ -212,6 +212,32 @@ gadget jump_\condition\()_linked
 	follow_block_link x8
 .endm
 
+/* The fall-through translated into this same stream. Not taking the branch is
+ * then one dispatch rather than a link follow, and the block keeps growing
+ * past what is otherwise its first and usually only branch. The stream holds
+ * one operand, the taken target's link; the fall-through is the next gadget.
+ */
+.macro jump_condition_inline condition
+gadget jump_\condition\()_inline
+	.ifc \condition,e
+	evaluate_deferred_zero \condition
+	.else
+	.ifc \condition,ne
+	evaluate_deferred_zero \condition
+	.else
+	bl uml_x86_64_gadget_materialize_flags
+	evaluate_condition \condition
+	.endif
+	.endif
+	ldr x12, [_stream], #8
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	cbz w11, .Lx86_jump_inline_next\@
+	follow_block_link x12
+.Lx86_jump_inline_next\@:
+	next_gadget
+.endm
+
 .macro condition_family condition
 set_condition \condition
 set_condition_memory \condition
@@ -223,6 +249,7 @@ conditional_move_memory \condition, 32, ldr, w, str, x
 conditional_move_memory \condition, 64, ldr, x, str, x
 jump_condition \condition
 jump_condition_linked \condition
+jump_condition_inline \condition
 .endm
 
 condition_family o
@@ -299,6 +326,19 @@ gadget jump_\condition\()_linked_nzcv
 	follow_block_link x8
 .endm
 
+/* The fused fall-through. Loading the operand and retiring leave NZCV alone,
+ * so the host condition the producer defined is still live at the branch. */
+.macro jump_condition_inline_nzcv condition, host
+gadget jump_\condition\()_inline_nzcv
+	ldr x12, [_stream], #8
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	b.\host .Lx86_jump_inline_nzcv_taken\@
+	next_gadget
+.Lx86_jump_inline_nzcv_taken\@:
+	follow_block_link x12
+.endm
+
 .macro condition_family_nzcv condition, host
 set_condition_nzcv \condition, \host
 conditional_move_nzcv \condition, \host, 16, ldrh, strh, w, w
@@ -306,6 +346,7 @@ conditional_move_nzcv \condition, \host, 32, ldr, str, w, x
 conditional_move_nzcv \condition, \host, 64, ldr, str, x, x
 jump_condition_nzcv \condition, \host
 jump_condition_linked_nzcv \condition, \host
+jump_condition_inline_nzcv \condition, \host
 .endm
 
 condition_family_nzcv o, vs
@@ -324,12 +365,14 @@ condition_family_nzcv le, le
 condition_family_nzcv g, gt
 
 .purgem condition_family_nzcv
+.purgem jump_condition_inline_nzcv
 .purgem jump_condition_linked_nzcv
 .purgem jump_condition_nzcv
 .purgem conditional_move_nzcv
 .purgem set_condition_nzcv
 
 .purgem condition_family
+.purgem jump_condition_inline
 .purgem jump_condition_linked
 .purgem jump_condition
 .purgem conditional_move_memory
