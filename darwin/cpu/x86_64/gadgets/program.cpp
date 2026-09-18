@@ -97,8 +97,18 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 			current = advance_instruction_pointer(
 				mode, current, decoded.instruction.length);
 			bytes += decoded.instruction.length;
-			if (decoded.instruction.terminal())
-				break;
+			if (decoded.instruction.terminal()) {
+				/* A conditional branch's fall-through continues in this same
+				 * block, so not taking the branch costs one dispatch instead
+				 * of a link follow. Without a link resolver the branch has no
+				 * taken record to enter and the block ends at it as before.
+				 * The block still ends at an unconditional transfer or at the
+				 * fetch window, so its size stays bounded. */
+				if (decoded.instruction.operation !=
+						Operation::jump_conditional ||
+					links.resolve == nullptr)
+					break;
+			}
 		}
 		if (stream.empty())
 			return {BuildStatus::illegal_instruction, {}, address};

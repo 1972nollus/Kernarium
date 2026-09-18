@@ -76,6 +76,15 @@ leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
 whatever producer is pending instead of materializing it. Rotates keep the
 eager overlay.
 
+## Blocks and branches
+
+A block ends at an unconditional transfer or at the 64-instruction fetch
+window, not at its first conditional branch. The fall-through is translated
+into the same stream, so not taking the branch costs one dispatch where it
+used to cost a link follow, and the taken edge keeps its link. A build with no
+link resolver -- the budget-limited replay of a cached block -- keeps the
+terminal form instead and leaves the translated tail unreachable.
+
 ## Software TLB
 
 `Executor::prepare` enters an address-space generation, and it must not leave

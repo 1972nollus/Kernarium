@@ -4706,6 +4706,20 @@ struct FlagState final {
 	}
 }
 
+[[nodiscard]] std::uintptr_t jump_condition_inline_fused_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_INLINE_FUSED_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address( \
+			native::uml_x86_64_gadget_jump_##name##_inline_nzcv);
+	UML_X86_FUSED_CONDITION_CASES(UML_X86_JUMP_INLINE_FUSED_CASE)
+#undef UML_X86_JUMP_INLINE_FUSED_CASE
+	default: return 0;
+	}
+}
+
 [[nodiscard]] std::uintptr_t conditional_move_fused_entry(
 	Condition condition, OperandWidth width) noexcept
 {
@@ -4768,6 +4782,20 @@ struct FlagState final {
 			native::uml_x86_64_gadget_jump_##name);
 	UML_X86_CONDITION_CASES(UML_X86_JUMP_CASE)
 #undef UML_X86_JUMP_CASE
+	}
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t jump_condition_inline_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_INLINE_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address( \
+			native::uml_x86_64_gadget_jump_##name##_inline);
+	UML_X86_CONDITION_CASES(UML_X86_JUMP_INLINE_CASE)
+#undef UML_X86_JUMP_INLINE_CASE
 	}
 	return 0;
 }
@@ -5952,11 +5980,13 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 }
 
 /* `state` is what the previous gadget left for a fused condition and for a
- * carry-preserving consumer; `produced` receives what this one leaves. */
+ * carry-preserving consumer; `produced` receives what this one leaves.
+ * `has_following` says whether more of this block is translated behind this
+ * gadget, which is what lets a conditional branch inline its fall-through. */
 [[nodiscard]] bool append_native(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
 	ExecutionMode mode, ProgramLinkResolver links, const FlagState &state,
-	FlagState &produced)
+	bool has_following, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
 	const bool native_locked_scalar =
@@ -6408,6 +6438,24 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		const auto next = next_instruction_pointer(gadget, mode);
 		const auto *taken = links.resolve == nullptr ? nullptr :
 			links.resolve(links.context, target, mode);
+		/* The fall-through is already translated behind this branch, so it
+		 * needs neither a link record nor an operand. A build without a link
+		 * resolver -- a budget-limited replay of a cached block -- keeps the
+		 * terminal form and simply leaves the translated tail unreachable. */
+		if (has_following && taken != nullptr) {
+			const auto inlined =
+				fused_condition(instruction.condition, state.condition) ?
+					jump_condition_inline_fused_entry(
+						fused_consumer_condition(
+							instruction.condition, state.condition)) :
+					jump_condition_inline_entry(instruction.condition);
+			if (inlined != 0) {
+				stream.push_back(inlined);
+				stream.push_back(
+					reinterpret_cast<std::uintptr_t>(taken));
+				return true;
+			}
+		}
 		const auto *fallthrough = links.resolve == nullptr ? nullptr :
 			links.resolve(links.context, next, mode);
 		const bool linked = taken != nullptr && fallthrough != nullptr;
@@ -6967,9 +7015,10 @@ std::vector<std::uintptr_t> build_native_stream(
 	std::vector<std::uintptr_t> stream;
 	stream.reserve(gadgets.size() * 3U + 2U);
 	FlagState state{};
-	for (const auto &gadget : gadgets) {
+	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
-		if (!append_native(stream, gadget, mode, links, state, produced))
+		if (!append_native(stream, gadgets[index], mode, links, state,
+			index + 1U < gadgets.size(), produced))
 			throw std::logic_error{
 				"x86-64 operation has no native assembly gadget"};
 		state = produced;
