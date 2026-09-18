@@ -3,6 +3,7 @@
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
+#include "cpu/x86_64/gadgets/native_baked.hpp"
 #include "cpu/x86_64/gadgets/native_entry.hpp"
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
@@ -2717,26 +2718,42 @@ read_test_sequences(void *context) noexcept
 [[nodiscard]] bool fused_conditions_match_the_deferred_evaluation()
 {
 	using namespace uml::cpu::x86_64;
-	static constexpr std::array<unsigned, 4> producers{
-		0x39, 0x29, 0x85, 0x21};
+	/* CMP, SUB, TEST, AND and ADD register forms, then INC, DEC and NEG. */
+	static constexpr std::array<unsigned, 5> producers{
+		0x39, 0x29, 0x85, 0x21, 0x01};
+	static constexpr std::array<std::array<unsigned, 2>, 3> unary{{
+		{0xff, 0xc0}, {0xff, 0xc8}, {0xf7, 0xd8}}};
 	static constexpr std::array<std::uint64_t, 12> values{
 		0U, 1U, 2U, 0xffU, 0x7fff'ffffULL, 0x8000'0000ULL,
 		0xffff'ffffULL, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
 	};
-	for (const auto &producer : producers) {
-		for (const unsigned width : {32U, 64U}) {
+	for (std::size_t index = 0; index < producers.size() + unary.size();
+		++index) {
+		const bool binary = index < producers.size();
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				for (const auto left : values) {
 					for (const auto right : values) {
+						if (!binary && right != values.front())
+							break;
 						std::vector<std::byte> code;
 						const auto push = [&code](unsigned byte) {
 							code.push_back(static_cast<std::byte>(byte));
 						};
+						if (width == 16U)
+							push(0x66);
 						if (width == 64U)
 							push(0x48);
-						push(producer);
-						push(0xd8);
+						if (binary) {
+							const auto producer = producers[index];
+							push(width == 8U ? producer - 1U : producer);
+							push(0xd8);
+						} else {
+							const auto &form = unary[index - producers.size()];
+							push(width == 8U ? form[0] - 1U : form[0]);
+							push(form[1]);
+						}
 						/* SYSCALL writes its return address to RCX and
 						 * the flags to R11, so the two results live in RDX
 						 * and RBX. */
@@ -2770,10 +2787,20 @@ read_test_sequences(void *context) noexcept
 							cpu.gpr(Register::rdx) & 0xffU;
 						const auto deferred =
 							cpu.gpr(Register::rbx) & 0xffU;
-						if (!expect(fused == deferred,
-							"a fused condition disagreed with the deferred "
-							"evaluation of the same flags"))
-							return false;
+						if (fused != deferred) {
+							char message[160];
+							std::snprintf(message, sizeof(message),
+								"a fused condition disagreed with the "
+								"deferred evaluation of the same flags "
+								"(producer %zu width %u condition %u left "
+								"%#llx right %#llx: fused %u deferred %u)",
+								index, width, condition,
+								static_cast<unsigned long long>(left),
+								static_cast<unsigned long long>(right),
+								static_cast<unsigned>(fused),
+								static_cast<unsigned>(deferred));
+							return expect(false, message);
+						}
 					}
 				}
 			}
@@ -2792,18 +2819,34 @@ read_test_sequences(void *context) noexcept
 [[nodiscard]] bool fused_conditions_cover_exactly_the_legal_pairs()
 {
 	using namespace uml::cpu::x86_64;
-	static constexpr std::array<unsigned, 4> opcodes{0x39, 0x29, 0x85, 0x21};
+	static constexpr std::array<unsigned, 5> opcodes{
+		0x39, 0x29, 0x85, 0x21, 0x01};
+	/* The producer's stream length depends on which bank the builder chose,
+	 * so find the consumer where the two streams part: the plain stream holds
+	 * the NOP entry there, the fused one the consumer's entry. */
+	const auto consumer_index = [](std::span<const std::uintptr_t> fused,
+		std::span<const std::uintptr_t> plain) {
+		std::size_t index = 0;
+		while (index < fused.size() && index < plain.size() &&
+			fused[index] == plain[index])
+			++index;
+		return index;
+	};
 	for (std::size_t index = 0; index < opcodes.size(); ++index) {
-		const bool logical = index >= 2;
+		const bool logical = index == 2 || index == 3;
 		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				const bool carry_condition = condition >= 2U && condition <= 3U;
 				const bool ordered_carry =
 					condition >= 6U && condition <= 7U;
 				const bool parity = condition >= 10U && condition <= 11U;
-				const bool wide = width >= 32U;
-				const bool expected_fusion = wide && !parity &&
-					!(logical && (carry_condition || ordered_carry));
+				/* The register-baked bank leaves host flags at every width;
+				 * its narrow entries compare the operands shifted to the top
+				 * of a 32-bit register. */
+				const bool add = index == 4;
+				const bool expected_fusion = !parity &&
+					!(logical && (carry_condition || ordered_carry)) &&
+					!(add && ordered_carry);
 				std::vector<std::byte> fused;
 				std::vector<std::byte> plain;
 				const auto emit = [&](std::vector<std::byte> &code,
@@ -2843,7 +2886,12 @@ read_test_sequences(void *context) noexcept
 					fused_stream.size() > 3U,
 					"condition pairing changed the stream layout"))
 					return false;
-				const bool differs = fused_stream[2] != plain_stream[3];
+				const auto consumer = consumer_index(fused_stream, plain_stream);
+				if (!expect(consumer + 1U < fused_stream.size(),
+					"condition pairing streams do not part at the consumer"))
+					return false;
+				const bool differs =
+					fused_stream[consumer] != plain_stream[consumer + 1U];
 				if (!expect(differs == expected_fusion,
 					"the builder fused a condition it should not have, or "
 					"declined one it should have fused"))
@@ -2895,8 +2943,12 @@ read_test_sequences(void *context) noexcept
 					jump_fused.size() > 4U,
 					"jump pairing changed the stream layout"))
 					return false;
-				if (!expect((jump_fused[2] != jump_plain[3]) ==
-					expected_fusion,
+				const auto jump_consumer = consumer_index(jump_fused, jump_plain);
+				if (!expect(jump_consumer + 1U < jump_fused.size(),
+					"jump pairing streams do not part at the consumer"))
+					return false;
+				if (!expect((jump_fused[jump_consumer] !=
+					jump_plain[jump_consumer + 1U]) == expected_fusion,
 					"the builder fused a conditional jump it should not have, "
 					"or declined one it should have fused"))
 					return false;
@@ -3344,12 +3396,15 @@ read_test_sequences(void *context) noexcept
 		expect(first_native_entry({0x87, 0x08, 0x0f, 0x05}) ==
 			gadget_entry(native::uml_x86_64_gadget_exchange_32_mr),
 			"XCHG did not select the memory gadget") &&
-		/* An unprefixed update keeps the cheaper non-exclusive gadget. */
+		/* An unprefixed update keeps a cheaper non-exclusive gadget: the
+		 * ordinary one, or the register-baked bank's ECX-into-[RAX] entry. */
 		expect(first_native_entry({0xff, 0x00, 0x0f, 0x05}) ==
 			gadget_entry(native::uml_x86_64_gadget_increment_32_m),
 			"unlocked INC lost its plain gadget") &&
 		expect(first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_add_32_mr),
+				gadget_entry(native::uml_x86_64_gadget_add_32_mr) ||
+			first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
+				baked::uml_x86_64_baked_add_32_mr[1U * baked::base_slots],
 			"unlocked ADD lost its plain gadget");
 }
 

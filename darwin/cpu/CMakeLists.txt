@@ -44,6 +44,26 @@ if(UML_BUILD_X86_64_GUEST)
         UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
     set_target_properties(uml_x86_64_gadgets PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
+
+    # The register-baked scalar bank is enumerated by a generator: one entry
+    # per operand combination is thousands of entries, which the assembler's
+    # own macro expansion takes minutes to produce.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(_uml_x86_64_baked_dir ${CMAKE_CURRENT_BINARY_DIR}/x86_64_baked)
+    set(_uml_x86_64_baked_generator
+        ${CMAKE_CURRENT_SOURCE_DIR}/x86_64/gadgets/engine/generate_baked.py)
+    add_custom_command(
+        OUTPUT ${_uml_x86_64_baked_dir}/baked_scalar.inc
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_uml_x86_64_baked_dir}
+        COMMAND ${Python3_EXECUTABLE} -B ${_uml_x86_64_baked_generator}
+            --output ${_uml_x86_64_baked_dir}/baked_scalar.inc
+        DEPENDS ${_uml_x86_64_baked_generator}
+        COMMENT "Generating the x86-64 register-baked gadget bank"
+        VERBATIM)
+    set_source_files_properties(x86_64/gadgets/engine.S PROPERTIES
+        OBJECT_DEPENDS ${_uml_x86_64_baked_dir}/baked_scalar.inc)
+    target_include_directories(uml_x86_64_gadgets PRIVATE
+        ${_uml_x86_64_baked_dir})
 endif()
 
 add_library(uml_arm64_dispatch OBJECT

@@ -70,7 +70,7 @@ arithmetic_width \operation, \instruction, \flag_operation, \writes, 64, ldr, st
 .endm
 
 /* DeferredFlagOperation: add=1, subtract=2, logical=3. */
-arithmetic_family add, add, 1, 1
+arithmetic_family add, add, 1, 1, 1
 arithmetic_family sub, sub, 2, 1, 1
 arithmetic_family and, and, 3, 1, 1
 arithmetic_family or, orr, 3, 1
@@ -166,16 +166,32 @@ gadget \name\()_\width\()_r
 	.endif
 	ldr x8, [_stream], #8
 	\load \host_register\()11, [_cpu, x8]
+	/* At 32 and 64 bits the flag-setting host form leaves N, Z and V
+	 * describing the guest operation; only C differs (INC and DEC preserve
+	 * it, NEG inverts it), and the builder keeps the carry conditions off
+	 * these producers. */
 	.ifc \instruction,add
+	.if \width >= 32
+	adds \host_register\()13, \host_register\()11, #1
+	.else
 	add \host_register\()13, \host_register\()11, #1
+	.endif
 	mov x12, #1
 	.endif
 	.ifc \instruction,sub
+	.if \width >= 32
+	subs \host_register\()13, \host_register\()11, #1
+	.else
 	sub \host_register\()13, \host_register\()11, #1
+	.endif
 	mov x12, #1
 	.endif
 	.ifc \instruction,neg
+	.if \width >= 32
+	negs \host_register\()13, \host_register\()11
+	.else
 	neg \host_register\()13, \host_register\()11
+	.endif
 	mov x12, x11
 	mov x11, xzr
 	.endif
