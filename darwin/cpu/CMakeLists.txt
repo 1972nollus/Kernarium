@@ -318,6 +318,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/shared_programs.cpp
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
+    arm64/gadgets/software_crypto_helpers.cpp
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S)
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
