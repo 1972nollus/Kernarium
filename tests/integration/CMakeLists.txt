@@ -326,3 +326,24 @@ if(APPLE AND UML_IOS_MAC_CTS_ROOTFS)
         PROCESSORS 8
         RESOURCE_GROUPS cpus:8,gpus:1)
 endif()
+
+# The device counterpart drives a connected iOS device through devicectl. The
+# guest runs on the device, so the host only holds a console; what a checkout
+# cannot provide is the paired device and an installed application already
+# carrying the campaign, so this lane is opt-in too: name the device and it
+# registers.
+if(APPLE AND UML_IOS_DEVICE_VK_CTS_DEVICE)
+    if(NOT UML_IOS_DEVICE_VK_CTS_CAMPAIGN)
+        set(UML_IOS_DEVICE_VK_CTS_CAMPAIGN "vulkan-info-receipt-smoke-v1")
+    endif()
+    uml_add_integration_test(
+        NAME apple-ios-device-vk-cts
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_ios_device_vk_cts.py
+            --device ${UML_IOS_DEVICE_VK_CTS_DEVICE}
+            --campaign ${UML_IOS_DEVICE_VK_CTS_CAMPAIGN}
+            --artifact-root ${CMAKE_CURRENT_BINARY_DIR}/ios-device-vk-cts
+        LABELS gpu;apple;ios;external;full
+        TIMEOUT 5400
+        PROCESSORS 1)
+endif()

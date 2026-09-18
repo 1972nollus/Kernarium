@@ -721,6 +721,7 @@ guest-jit-smoke	tests/integration/jit	integration	retained
 guest-slirp-network	tests/integration/network	integration	retained
 guest-wine-arm64ec-smoke	tests/integration/wine_arm64ec	integration	conditional
 apple-ios-mac-vk-gl-cts	tests/integration/gpu	integration	conditional
+apple-ios-device-vk-cts	tests/integration/gpu	integration	conditional
 guest-mmu-stress	tests/integration/smp	integration	retained
 guest-docker-hello-world	tests/integration	integration	conditional
 guest-external-network	tests/integration/network	integration	conditional

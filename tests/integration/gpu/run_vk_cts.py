@@ -82,6 +82,46 @@ import vulkan_cts_receipt as receipt_contract  # noqa: E402
 CampaignError = common.CampaignError
 
 
+# The identifiers the Kernarium campaign generator bakes into the application.
+# Both the generator and the lanes that name a campaign read them from here, so
+# a campaign cannot exist in the bundle under a name no runner will accept.
+APPLE_DEVELOPMENT_CAMPAIGN = "vulkan-info-development-v1"
+APPLE_RECEIPT_SMOKE_CAMPAIGN = "vulkan-info-receipt-smoke-v1"
+# The released CTS permits at most sixteen native fractions, and a device runs
+# one campaign per launch, so the finest sharding the receipt allows is also
+# the one that gives a slow device the shortest resumable unit.
+APPLE_MUSTPASS_FRACTIONS = 16
+# A fraction of the released mustpass is far longer than any GL campaign, and
+# the application cannot resume one, so the guest-side bound is a whole day and
+# the progress guard is what actually ends a wedged run.
+APPLE_MUSTPASS_TIMEOUT = 86400
+APPLE_MUSTPASS_PROGRESS_TIMEOUT = 1800
+
+
+def apple_mustpass_campaign(index: int) -> str:
+    """Name the campaign that runs fraction ``index`` of the released list."""
+
+    if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
+        raise CampaignError(f"Vulkan mustpass fraction out of range: {index}")
+    return (
+        f"vulkan-mustpass-{index:02d}"
+        f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v1"
+    )
+
+
+def apple_campaigns() -> tuple[str, ...]:
+    """Every Vulkan campaign an experimental-Venus application carries."""
+
+    return (
+        APPLE_DEVELOPMENT_CAMPAIGN,
+        APPLE_RECEIPT_SMOKE_CAMPAIGN,
+        *(
+            apple_mustpass_campaign(index)
+            for index in range(APPLE_MUSTPASS_FRACTIONS)
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class Fraction:
     index: int
