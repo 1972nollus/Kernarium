@@ -1,29 +1,30 @@
 {
-  "cases": 145960,
+  "cases": 171134,
   "cases_by_event": {
-    "breakpoint": 58,
+    "breakpoint": 75,
     "floating-point-trap": 21,
     "gcs-fault": 14,
-    "illegal-instruction": 20572,
-    "instruction-budget": 772,
-    "memory-fault": 16740,
-    "system-call": 107783
+    "illegal-instruction": 24306,
+    "instruction-budget": 863,
+    "memory-fault": 17462,
+    "system-call": 128393
   },
   "cases_by_profile": {
-    "16k": 33096,
-    "16k+4k": 79769,
-    "4k": 33095
+    "16k": 37307,
+    "16k+4k": 96508,
+    "4k": 37319
   },
   "coverage": {
     "entries": 983,
     "entries_with_cases": 937,
     "entries_with_illegal_cases": 822,
     "unattributed_cases": 0,
-    "unattributed_illegal_cases": 885
+    "unattributed_illegal_cases": 1153
   },
   "exports": {
     "16k": {
       "classes": 24160,
+      "covering_cases": 16752,
       "declared_cases": 18217690,
       "excluded_cases": {
         "deferred-fp-entry": {
@@ -37,12 +38,13 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 112865,
-      "forced_cases": 0,
+      "exported_cases": 133815,
+      "forced_cases": 4198,
       "producers": 451
     },
     "4k": {
       "classes": 24159,
+      "covering_cases": 16765,
       "declared_cases": 18217689,
       "excluded_cases": {
         "deferred-fp-entry": {
@@ -56,35 +58,39 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 112864,
-      "forced_cases": 0,
+      "exported_cases": 133827,
+      "forced_cases": 4198,
       "producers": 451
     }
   },
-  "memory_blobs": 3210,
-  "pack_bytes": 12835586,
-  "pack_sha256": "6d66007c68e0f80e774d616b1c4963ee60453489fc813d0844f6cedc899c262a",
-  "producer_commit": "0752912cb6b792ab014b9736b9f9ae8d0591e6ad",
-  "programs": 122975,
+  "force_include": {
+    "file": "tests/unit/arm64/corpus/forced-cases.tsv",
+    "sha256": "88603b6a571ddde585b4e22826e2d52c3297ab5ed146c221127df674af0c9597"
+  },
+  "memory_blobs": 3338,
+  "pack_bytes": 14842804,
+  "pack_sha256": "6b3d2b02bbc19d2381324708e5b26e503207bf1ffa46da9fe42619c02ca1599f",
+  "producer_commit": "38110797b768bc6170f6df01b42c273b2205b7a1",
+  "programs": 146770,
   "records": 1331,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "broad": 355,
-    "full": 1713,
-    "narrow": 143892
+    "broad": 63,
+    "full": 1176,
+    "narrow": 169895
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,
     "guarded-control-return-fault/v1": 8,
     "guarded-control-zero-target-fault/v1": 8,
     "ignore-host-counter-register/v1": 1,
-    "permitted-exclusive-store-failure/v1": 344,
+    "permitted-exclusive-store-failure/v1": 358,
     "permitted-tag-generator-choice/v1": 64,
     "permitted-transformed-branch-failure/v1": 42,
-    "permitted-transformed-code/v1": 232,
-    "permitted-transformed-generic/v1": 57,
+    "permitted-transformed-code/v1": 260,
+    "permitted-transformed-generic/v1": 66,
     "transformed-address-fault-state/v1": 4
   }
 }

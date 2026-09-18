@@ -24,6 +24,8 @@ instead of an exact state.
 - `provenance.json` records the producer commit, the force-include file and
   its hash, sampling limit and seed, per-profile export, boundary, forced,
   and exclusion counts, and the pack hash.
+- `forced-cases.tsv` forces producer checks that the class samples leave out;
+  see [Regeneration and new cases](#regeneration-and-new-cases).
 
 ## Sampling and minimization
 
@@ -176,18 +178,27 @@ profiles of the producer commit and regenerate:
 
 ```sh
 python3 -B tools/arm64-tests/export-unit-corpus.py \
-  --build-dir .build/presets/macos-unit-16k --output .build/a64-corpus/16k
+  --build-dir .build/presets/macos-unit-16k --output .build/a64-corpus/16k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv
 python3 -B tools/arm64-tests/export-unit-corpus.py \
-  --build-dir .build/presets/macos-unit-4k --output .build/a64-corpus/4k
+  --build-dir .build/presets/macos-unit-4k --output .build/a64-corpus/4k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv
 python3 -B tools/arm64-tests/build-unit-corpus.py \
   --export-16k .build/a64-corpus/16k --export-4k .build/a64-corpus/4k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv \
   --producer-commit "$(git rev-parse HEAD)"
 ```
 
-`export-unit-corpus.py --include FILE` forces cases in; the directive syntax is
-described in `../arm64_instruction_corpus_export.hpp`. A harness abort names
-the ordinal of the failing check, and each export directory lists the ordinal
-of every exported case in `<producer>.cases.tsv`.
+`forced-cases.tsv` holds the force-include directives; their syntax is
+described in `../arm64_instruction_corpus_export.hpp`. Each directive forces a
+producer check that reaches something no sampled case reaches, and the
+comments before it name that gadget entry, code region or branch direction,
+or injected engine fault. Its `case` directives name check ordinals of the
+producer commit, so a producer change that renumbers checks must re-pin that
+producer's directives; the export summary reports a directive whose check is
+missing or excluded. A harness abort names the ordinal of the failing check,
+and each export directory lists the ordinal of every exported case in
+`<producer>.cases.tsv`.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON
