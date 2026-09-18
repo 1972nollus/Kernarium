@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
 
+#include "cpu/floating_point_contract.hpp"
 #include "uml_darwin_guest.h"
 
 #include <array>
@@ -160,6 +161,33 @@ void deferred_control_writes_persist(engine::EngineHarness &harness) {
   });
 }
 
+void deferred_trap_enable(engine::EngineHarness &harness) {
+  // FDIV S0, S1, S2 divides one by zero. Only the deferred FPCR enables the
+  // divide-by-zero trap, so the engine must load the deferred state before it
+  // decides that the instruction traps, and must then commit nothing.
+  constexpr std::uint32_t divide_by_zero = 1U << 1U;
+  constexpr std::uint32_t deferred_fpcr = divide_by_zero << 8U;
+  constexpr std::uint32_t deferred_fpsr = (1U << 27U) | (1U << 7U);
+  auto vectors = deferred_vectors();
+  constexpr std::uint32_t one = 0x3f80'0000U;
+  constexpr std::uint32_t zero = 0U;
+  std::memcpy(vectors[1].bytes.data(), &one, sizeof(one));
+  std::memcpy(vectors[2].bytes.data(), &zero, sizeof(zero));
+  const auto initial = deferred_state(vectors, deferred_fpcr, deferred_fpsr);
+  auto expected = initial;
+  expected.access_fp_state();
+
+  harness.check({
+      .name = "deferred-trap-enable",
+      .instruction = 0x1e22'1820U, // FDIV S0, S1, S2
+      .initial = initial,
+      .expected = expected,
+      .event = engine::ExpectedEvent::floating_point_trap,
+      .native = native_requirements(),
+      .syndrome = ::uml::cpu::floating_point_syndrome(divide_by_zero),
+  });
+}
+
 void deferred_state_survives_integer_block(engine::EngineHarness &harness) {
   const auto vectors = deferred_vectors();
   const auto initial = deferred_state(vectors, 0x0440'0000U, 0x8800'001fU);
@@ -183,11 +211,12 @@ int main() {
   deferred_vector_load(harness);
   deferred_control_reads(harness);
   deferred_control_writes_persist(harness);
+  deferred_trap_enable(harness);
   deferred_state_survives_integer_block(harness);
   harness.print_summary("arm64-deferred-fp-state");
   const auto &counts = harness.counts();
-  if (counts.gadgets != 6 ||
-      counts.jit + counts.jit_skipped != 6)
+  if (counts.gadgets != 7 ||
+      counts.jit + counts.jit_skipped != 7)
     return 1;
   return 0;
 }

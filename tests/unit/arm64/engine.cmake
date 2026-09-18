@@ -218,8 +218,7 @@
         COMMAND uml_arm64_dispatcher_internal_tests)
 
     add_executable(uml_arm64_floating_exception_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>)
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp)
     target_include_directories(uml_arm64_floating_exception_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_options(uml_arm64_floating_exception_tests PRIVATE
