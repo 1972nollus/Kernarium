@@ -393,13 +393,19 @@ NAME(uml_x86_64_gadget_enter):
 	/* x0 = immutable threaded stream, x1 = CpuState, x2 = execution
 	 * context. x18 is reserved by Apple and is preserved untouched.
 	 */
-	stp x18, x19, [sp, #-0x70]!
+	stp x18, x19, [sp, #-0xb0]!
 	stp x20, x21, [sp, #0x10]
 	stp x22, x23, [sp, #0x20]
 	stp x24, x25, [sp, #0x30]
 	stp x26, x27, [sp, #0x40]
 	stp x28, x29, [sp, #0x50]
 	str lr, [sp, #0x60]
+	/* Gadgets use the whole vector file, and the procedure call standard
+	 * makes the low halves of v8 to v15 the callee's to preserve. */
+	stp d8, d9, [sp, #0x70]
+	stp d10, d11, [sp, #0x80]
+	stp d12, d13, [sp, #0x90]
+	stp d14, d15, [sp, #0xa0]
 	mov _stream, x0
 	mov _cpu, x1
 	mov _context, x2
@@ -428,13 +434,17 @@ uml_x86_64_gadget_leave:
 .Lx86_leave_rounding_ready:
 	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
 	add x1, _executed, x9
+	ldp d14, d15, [sp, #0xa0]
+	ldp d12, d13, [sp, #0x90]
+	ldp d10, d11, [sp, #0x80]
+	ldp d8, d9, [sp, #0x70]
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
 	ldp x26, x27, [sp, #0x40]
 	ldp x24, x25, [sp, #0x30]
 	ldp x22, x23, [sp, #0x20]
 	ldp x20, x21, [sp, #0x10]
-	ldp x18, x19, [sp], #0x70
+	ldp x18, x19, [sp], #0xb0
 	ret
 
 /* Materialize the lazy x86 arithmetic flags without entering C++. Common
