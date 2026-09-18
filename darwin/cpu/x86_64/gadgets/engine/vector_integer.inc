@@ -364,10 +364,26 @@ gadget vector_integer_\opcode\()_\width\()_rr
 	.else
 	add x10, _cpu, x10
 	add x11, _cpu, x11
+	/* Bit 62 says the gadget before this one left the left operand in v4,
+	 * and v5 with it at 256 bits: take it from there rather than reading
+	 * back the state slot it has just written, whose store the load has to
+	 * wait for. The builder sets the bit only when that gadget is the one
+	 * immediately before in the stream, wrote exactly this register at
+	 * exactly this width, and cannot have called out in between. */
+	tbz x8, #62, .Lx86_vector_integer_load_left\@
+	mov v0.16b, v4.16b
+	.if \width == 256
+	mov v2.16b, v5.16b
+	.endif
+	b .Lx86_vector_integer_left_ready\@
+.Lx86_vector_integer_load_left\@:
 	ldr q0, [x10]
-	ldr q1, [x11]
 	.if \width == 256
 	ldr q2, [x10, #16]
+	.endif
+.Lx86_vector_integer_left_ready\@:
+	ldr q1, [x11]
+	.if \width == 256
 	ldr q3, [x11, #16]
 	.endif
 	.endif

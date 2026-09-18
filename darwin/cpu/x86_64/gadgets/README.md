@@ -68,6 +68,19 @@ the TLB tag without touching NZCV, its store epilogue orders addresses by the
 sign of a difference, and its miss tails save NZCV around the calls they make.
 The ordinary bank's transfers still end a fusion.
 
+## Vector result forwarding
+
+A vector integer register form writes its result to the state and leaves it in
+v4, and in v5 with it at 256 bits. When the gadget immediately after it reads
+exactly that register at exactly that width as its left operand, the builder
+sets bit 62 of the descriptor and the gadget takes the operand from those
+registers instead of reading the slot back, which would wait on the store.
+Only register forms qualify on either side: v4 and v5 are call-clobbered, so a
+memory form's miss or page-crossing path would destroy them. The builder
+starts each block with nothing available, so a consumer is never the first
+gadget of a block and a budget-limited replay cannot inherit a stale register.
+The map2 and floating-point families keep the load; see X50.
+
 ## Deferred flags
 
 Every flag-defining scalar operation records left operand, right operand,

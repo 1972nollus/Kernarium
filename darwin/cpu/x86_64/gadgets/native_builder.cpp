@@ -3313,8 +3313,42 @@ enum class VectorFloatKind {
 	return nullptr;
 }
 
-[[nodiscard]] bool append_vector_integer(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+/* What the gadget before this one left in the vector result registers, for a
+ * consumer that would otherwise read the state slot back. Zero means nothing
+ * may be taken from them: every gadget that is not a whitelisted producer
+ * leaves it so, because v4 and v5 are call-clobbered and a gadget that calls
+ * out -- a memory form, a publication, a materializer -- destroys them. */
+struct VectorResult final {
+	std::uint16_t destination{};
+	OperandWidth width{};
+};
+
+/* The register forms whose result stays in v4, and v5 with it at 256 bits,
+ * after the gadget has written it to the state. A memory form calls out on
+ * its miss and page-crossing paths, so only the register forms qualify, and
+ * only at the two widths whose result fills those registers. */
+[[nodiscard]] bool vector_integer_forwards(
+	const Instruction &instruction) noexcept
+{
+	return instruction.auxiliary.kind != OperandKind::memory &&
+		(instruction.destination.width == OperandWidth::xmm ||
+		 instruction.destination.width == OperandWidth::ymm) &&
+		!(instruction.vector_opcode >= 0x71 &&
+		  instruction.vector_opcode <= 0x73);
+}
+
+/* What this gadget leaves in v4 and v5 for the gadget after it. */
+inline void note_vector_result(const Instruction &instruction,
+	VectorResult &produced, bool forwards) noexcept
+{
+	if (!forwards)
+		return;
+	if (const auto destination = vector_state_offset(instruction.destination))
+		produced = {*destination, instruction.destination.width};
+}
+
+[[nodiscard]] bool append_vector_integer(std::vector<std::uintptr_t> &stream,
+	const Gadget &gadget, const VectorResult &available) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_state_offset(instruction.destination);
@@ -3348,10 +3382,14 @@ enum class VectorFloatKind {
 		const auto right = vector_state_offset(instruction.auxiliary);
 		if (!right)
 			return false;
+		const bool forwarded = vector_integer_forwards(instruction) &&
+			available.destination == *left &&
+			available.width == instruction.destination.width;
 		stream.push_back(entry_address(entry));
 		stream.push_back(static_cast<std::uintptr_t>(*destination) |
 			(static_cast<std::uintptr_t>(*left) << 16U) |
 			(static_cast<std::uintptr_t>(*right) << 32U) |
+			(static_cast<std::uintptr_t>(forwarded ? 1U : 0U) << 62U) |
 			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
 		if (instruction.vector_opcode == 0x70)
 			stream.push_back(shuffle);
@@ -4574,6 +4612,7 @@ enum class CarrySource : std::uint8_t {
 struct FlagState final {
 	HostFlags condition{HostFlags::none};
 	CarrySource carry{CarrySource::unknown};
+	VectorResult vector{};
 };
 
 [[nodiscard]] CarrySource carry_of(HostFlags flags) noexcept
@@ -6990,7 +7029,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	case Operation::vector_sha:
 		return append_vector_sha(stream, gadget);
 	case Operation::vector_integer:
-		return append_vector_integer(stream, gadget);
+		if (!append_vector_integer(stream, gadget, state.vector))
+			return false;
+		note_vector_result(instruction, produced.vector,
+			vector_integer_forwards(instruction));
+		return true;
 	case Operation::vector_integer_map2:
 		return append_vector_integer_map2(stream, gadget);
 	case Operation::vector_map2_misc:
