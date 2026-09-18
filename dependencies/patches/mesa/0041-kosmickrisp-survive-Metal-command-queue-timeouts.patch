@@ -1,7 +1,7 @@
-From b8d764a2d23494f6edd848c326f256b234d25afb Mon Sep 17 00:00:00 2001
+From 76729da02ee84e9623b9a13ee93709f18fe6cc70 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
-Subject: [PATCH 41/93] kosmickrisp: survive Metal command queue timeouts
+Subject: [PATCH 41/96] kosmickrisp: survive Metal command queue timeouts
 
 Metal reports MTL4CommandQueueErrorTimeout when one submission exceeds the
 time the system allows, which is not the same as the GPU failing or the

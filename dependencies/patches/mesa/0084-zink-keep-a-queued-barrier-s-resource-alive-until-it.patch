@@ -1,7 +1,7 @@
-From 135d39927cd32c8782d130ffa1bf819921473f1c Mon Sep 17 00:00:00 2001
+From d47e3a4e93d6b9cd587b80af64c236b314b6332f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 22:44:01 +0900
-Subject: [PATCH 84/93] zink: keep a queued barrier's resource alive until it
+Subject: [PATCH 84/96] zink: keep a queued barrier's resource alive until it
  is emitted
 
 ctx->need_barriers[] holds bare struct zink_resource pointers, but every
