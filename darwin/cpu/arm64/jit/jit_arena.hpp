@@ -11,7 +11,7 @@
 namespace uml::cpu::arm64::jit::detail {
 
 /* The only first-party owner of writable JIT mappings and code publication.
- * Interpreter and gadget builds do not include or call this interface.
+ * Gadget builds do not include or call this interface.
  */
 class ExecutableArena final {
 public:

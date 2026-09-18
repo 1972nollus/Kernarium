@@ -383,31 +383,24 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND VIOLATIONS
             "${PATH}: platform layer includes a CPU-owned contract")
     endif()
-    if(PATH MATCHES "/darwin/cpu/arm64/interpreter/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/(gadgets|jit)/")
-            list(APPEND VIOLATIONS
-                "${PATH}: interpreter includes another engine implementation")
-        endif()
-    elseif(PATH MATCHES "/darwin/cpu/arm64/gadgets/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/(interpreter|jit)/")
+    if(PATH MATCHES "/darwin/cpu/arm64/gadgets/")
+        if(NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/arm64/jit/")
             list(APPEND VIOLATIONS
                 "${PATH}: gadget engine includes another engine implementation")
         endif()
     elseif(PATH MATCHES "/darwin/cpu/arm64/jit/")
         if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/(interpreter|gadgets)/")
+           "(^|\n)(darwin/)?cpu/arm64/gadgets/")
             list(APPEND VIOLATIONS
                 "${PATH}: JIT includes another engine implementation")
         endif()
     endif()
-    # Sandboxed iOS can execute the interpreter and precompiled gadget engine
-    # without a dynamic-code entitlement. Keep executable allocation and
+    # Sandboxed iOS can execute the precompiled gadget engine without a
+    # dynamic-code entitlement. Keep executable allocation and
     # publication primitives confined to the explicitly selected JIT module;
     # merely avoiding a simultaneous W+X mapping is not sufficient because an
     # RW-to-RX transition is also dynamic code publication.
-    if(PATH MATCHES "/darwin/cpu/arm64/(interpreter|gadgets)/" AND
+    if(PATH MATCHES "/darwin/cpu/arm64/gadgets/" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
         list(APPEND VIOLATIONS

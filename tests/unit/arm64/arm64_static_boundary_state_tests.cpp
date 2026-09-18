@@ -268,7 +268,6 @@ void guest_keys_survive_every_engine_boundary()
 		std::uint64_t base;
 		};
 		const std::array engines{
-			Engine{&darwin_uml_interpreter_enter_guest, 205, 0x55'0000},
 			Engine{&darwin_uml_static_enter_guest, 206, 0x56'0000},
 			Engine{&darwin_uml_jit_enter_guest, 207, 0x57'0000},
 		};

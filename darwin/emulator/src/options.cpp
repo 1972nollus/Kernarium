@@ -171,8 +171,6 @@ namespace {
 		engine = ::uml::runtime::ExecutionEngine::jit;
 	else if (value == "gadgets")
 		engine = ::uml::runtime::ExecutionEngine::gadgets;
-	else if (value == "interpreter")
-		engine = ::uml::runtime::ExecutionEngine::interpreter;
 	else
 		return false;
 	return true;

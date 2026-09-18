@@ -220,7 +220,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument(
         "--engine",
-        choices=("jit", "gadgets", "interpreter"),
+        choices=("jit", "gadgets"),
         default="jit",
     )
     parser.add_argument("--memory", default="8G")

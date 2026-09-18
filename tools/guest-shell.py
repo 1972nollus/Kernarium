@@ -78,7 +78,7 @@ def parse_arguments() -> argparse.Namespace:
         help="attach the macOS Virtio Sound playback provider",
     )
     parser.add_argument(
-        "--engine", choices=("jit", "gadgets", "interpreter"), default="gadgets"
+        "--engine", choices=("jit", "gadgets"), default="gadgets"
     )
     parser.add_argument("--core-class", choices=CORE_CLASSES, default="performance")
     parser.add_argument("--boot-timeout", type=int, default=300)

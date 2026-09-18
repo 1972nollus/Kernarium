@@ -1,8 +1,9 @@
 # A64 instruction coverage
 
 The catalog contains 983 A64 entries: 516 Base and 467 FP/SIMD. Every entry has
-representative interpreter, gadget, and JIT execution evidence, so all rows in
-`tests/unit/arm64/a64_instruction_inventory.tsv` are marked `verified`.
+representative reference-oracle, gadget, and JIT execution evidence, so all
+rows in `tests/unit/arm64/a64_instruction_inventory.tsv` are marked
+`verified`.
 
 That status is not exhaustive variant proof. No inventory entry currently has
 an independently reviewed complete partition of all forms, widths, aliases,

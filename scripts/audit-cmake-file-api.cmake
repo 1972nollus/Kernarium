@@ -59,7 +59,7 @@ foreach(ROW IN LISTS ARCHITECTURE_ROWS)
     endif()
     if(LAYER STREQUAL "cpu")
         if(NOT ENGINE_KIND MATCHES
-           "^(native|gadget|interpreter|shared|mixed)$")
+           "^(native|gadget|shared|mixed)$")
             message(FATAL_ERROR
                 "CPU architecture target ${TARGET} has invalid engine kind: "
                 "${ENGINE_KIND}")
@@ -132,7 +132,7 @@ function(uml_architecture_engine_kind TARGET OUTPUT)
     if(NOT ENGINE_INDEX EQUAL -1)
         list(GET ARCHITECTURE_ENGINE_KINDS ${ENGINE_INDEX} ENGINE_KIND)
         if(ENGINE_KIND MATCHES
-           "^(native|gadget|interpreter|shared|mixed)$")
+           "^(native|gadget|shared|mixed)$")
             set(${OUTPUT} "${ENGINE_KIND}" PARENT_SCOPE)
             return()
         endif()
@@ -258,7 +258,6 @@ set(TARGET_FILES)
 set(TARGET_SOURCE_PATHS)
 set(ENGINE_INCLUDE_DIRECTORIES_native)
 set(ENGINE_INCLUDE_DIRECTORIES_gadget)
-set(ENGINE_INCLUDE_DIRECTORIES_interpreter)
 set(ENGINE_INCLUDE_DIRECTORIES_shared)
 set(ENGINE_INCLUDE_DIRECTORIES_mixed)
 foreach(INDEX RANGE 0 ${TARGET_COUNT})
@@ -317,7 +316,7 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
         endif()
     endif()
 endforeach()
-foreach(ENGINE_KIND IN ITEMS native gadget interpreter shared mixed)
+foreach(ENGINE_KIND IN ITEMS native gadget shared mixed)
     list(REMOVE_DUPLICATES ENGINE_INCLUDE_DIRECTORIES_${ENGINE_KIND})
 endforeach()
 
@@ -576,8 +575,8 @@ endforeach()
 
 # Resolve an on-disk path to its concrete engine owner. Shared ARM64 headers
 # live above these directories and intentionally have no concrete owner.
-set(UML_ENGINE_DIRECTORY_NAMES jit gadgets interpreter)
-set(UML_ENGINE_KINDS native gadget interpreter)
+set(UML_ENGINE_DIRECTORY_NAMES jit gadgets)
+set(UML_ENGINE_KINDS native gadget)
 function(uml_engine_path_kind INPUT_PATH OUTPUT)
     set(CANDIDATE_PATH "${INPUT_PATH}")
     if(EXISTS "${CANDIDATE_PATH}")
@@ -782,7 +781,7 @@ endforeach()
 # Audit configured include directories first. A foreign engine directory is
 # already an architecture edge even if today's source does not happen to name
 # one of its headers. This also catches transitive interface include paths.
-foreach(FROM_ENGINE_KIND IN ITEMS native gadget interpreter shared mixed)
+foreach(FROM_ENGINE_KIND IN ITEMS native gadget shared mixed)
     foreach(INCLUDE_DIRECTORY IN LISTS
             ENGINE_INCLUDE_DIRECTORIES_${FROM_ENGINE_KIND})
         uml_engine_path_kind("${INCLUDE_DIRECTORY}" INCLUDE_ENGINE_KIND)
@@ -793,7 +792,7 @@ foreach(FROM_ENGINE_KIND IN ITEMS native gadget interpreter shared mixed)
            FROM_ENGINE_KIND STREQUAL INCLUDE_ENGINE_KIND)
             continue()
         endif()
-        if(FROM_ENGINE_KIND MATCHES "^(native|gadget|interpreter)$" AND
+        if(FROM_ENGINE_KIND MATCHES "^(native|gadget)$" AND
            INCLUDE_ENGINE_KIND STREQUAL FROM_ENGINE_KIND)
             continue()
         endif()

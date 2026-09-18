@@ -14,8 +14,8 @@ device -> memory / platform
 ```
 
 `darwin/CMakeLists.txt` composes owning subdirectories. Each module owns its
-targets and source manifest. The neutral CPU factory selects the interpreter,
-gadget, or JIT adapter; engines do not depend on one another.
+targets and source manifest. The neutral CPU factory selects the gadget or JIT
+adapter; engines do not depend on one another.
 
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
@@ -59,7 +59,7 @@ non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
 Physical iOS wires all guest-allocatable pages before publishing them, while
 macOS and Simulator retain demand allocation.
 
-Interpreter state, gadget streams, MMU backing, and shadow mappings are data.
+Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
 publish RW pages as RX, control JIT write protection, or publish the instruction
 cache.
@@ -110,10 +110,12 @@ threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
 deadlines take over. Kernarium runs the guest on its named `uml-launcher`
 thread, never the main thread.
 
-The interpreter is the reference oracle. The gadget engine executes arrays of
+The product has two selectable engines. The gadget engine executes arrays of
 precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
-and feature exposure must agree across engines.
+and feature exposure must agree across engines and with the arm64 instruction
+Dispatcher, which remains the reference oracle of the A64 conformance evidence
+and is exercised only from the unit-test support target.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

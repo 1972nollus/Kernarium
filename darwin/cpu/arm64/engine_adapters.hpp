@@ -7,8 +7,6 @@
 
 namespace uml::cpu::arm64::detail {
 
-[[nodiscard]] std::unique_ptr<CpuEngine> make_interpreter_engine(
-	EngineConfiguration configuration);
 [[nodiscard]] std::unique_ptr<CpuEngine> make_gadget_engine(
 	EngineConfiguration configuration);
 [[nodiscard]] std::unique_ptr<CpuEngine> make_jit_engine(

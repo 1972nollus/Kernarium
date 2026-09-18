@@ -44,7 +44,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--engine",
-        choices=("jit", "gadgets", "interpreter"),
+        choices=("jit", "gadgets"),
         default="jit",
     )
     parser.add_argument(

@@ -495,20 +495,6 @@ if(UML_BUILD_UNIT_TESTS)
         POSITION_INDEPENDENT_CODE ON)
 endif()
 
-add_library(uml_arm64_interpreter_engine OBJECT
-    arm64/interpreter/engine.cpp)
-uml_declare_architecture_target(uml_arm64_interpreter_engine cpu interpreter)
-target_link_libraries(uml_arm64_interpreter_engine PRIVATE
-    UML::CpuContract)
-target_link_libraries(uml_arm64_interpreter_engine PUBLIC uml_arm64_dispatch)
-target_include_directories(uml_arm64_interpreter_engine PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_interpreter_engine PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_interpreter_engine PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_arm64_interpreter_engine PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
-
 add_library(uml_arm64_gadget_executor OBJECT
     arm64/gadgets/executor.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_executor cpu gadget)
@@ -565,7 +551,6 @@ uml_declare_architecture_target(uml_cpu_engine_factory cpu mixed)
 target_link_libraries(uml_cpu_engine_factory PRIVATE
     UML::CpuContract)
 target_link_libraries(uml_cpu_engine_factory PUBLIC
-    uml_arm64_interpreter_engine
     uml_arm64_gadget_engine
     uml_arm64_jit_engine
     uml_arm64_execution_helpers)
@@ -580,15 +565,6 @@ set_target_properties(uml_cpu_engine_factory PROPERTIES
 # OBJECT libraries avoid duplicate compilation, but CMake does not propagate
 # their contents transitively. These link components expose the supported
 # adapter graph for consumers that select one engine or the factory.
-add_library(uml_cpu_interpreter_component INTERFACE)
-uml_declare_architecture_target(uml_cpu_interpreter_component cpu interpreter)
-target_link_libraries(uml_cpu_interpreter_component INTERFACE
-    UML::CpuContract
-    UML::MemoryComponent)
-target_sources(uml_cpu_interpreter_component INTERFACE
-    $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>)
-
 add_library(uml_cpu_gadget_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_gadget_component cpu gadget)
 target_link_libraries(uml_cpu_gadget_component INTERFACE
@@ -630,7 +606,6 @@ target_link_libraries(uml_cpu_engine_objects INTERFACE
     UML::CpuContract)
 target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_cpu_engine_factory>
-    $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
     $<TARGET_OBJECTS:uml_arm64_dispatch>
     $<TARGET_OBJECTS:uml_arm64_gadget_engine>
     $<TARGET_OBJECTS:uml_arm64_gadget_executor>

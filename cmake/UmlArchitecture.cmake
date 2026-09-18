@@ -19,11 +19,10 @@ function(uml_declare_architecture_target TARGET LAYER)
         set(_engine_kind "${ARGV2}")
     endif()
     if(LAYER STREQUAL "cpu")
-        if(NOT _engine_kind MATCHES
-           "^(native|gadget|interpreter|shared|mixed)$")
+        if(NOT _engine_kind MATCHES "^(native|gadget|shared|mixed)$")
             message(FATAL_ERROR
                 "CPU architecture target ${TARGET} requires an explicit "
-                "engine kind: native, gadget, interpreter, shared, or mixed")
+                "engine kind: native, gadget, shared, or mixed")
         endif()
     elseif(NOT _engine_kind STREQUAL "-")
         message(FATAL_ERROR

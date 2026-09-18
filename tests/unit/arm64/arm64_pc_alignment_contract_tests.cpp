@@ -49,8 +49,6 @@ void require(bool condition, const char *message)
 
 [[nodiscard]] EngineKind parse_engine(std::string_view name)
 {
-	if (name == "interpreter")
-		return EngineKind::interpreter;
 	if (name == "gadgets")
 		return EngineKind::gadgets;
 	if (name == "jit")
@@ -61,8 +59,6 @@ void require(bool condition, const char *message)
 [[nodiscard]] const char *engine_name(EngineKind kind) noexcept
 {
 	switch (kind) {
-	case EngineKind::interpreter:
-		return "interpreter";
 	case EngineKind::gadgets:
 		return "gadgets";
 	case EngineKind::jit:
@@ -77,8 +73,6 @@ using EntryPoint = int (*)(void *, void *, unsigned long, unsigned long,
 [[nodiscard]] EntryPoint bridge_for(EngineKind kind) noexcept
 {
 	switch (kind) {
-	case EngineKind::interpreter:
-		return &darwin_uml_interpreter_enter_guest;
 	case EngineKind::gadgets:
 		return &darwin_uml_static_enter_guest;
 	case EngineKind::jit:
@@ -308,8 +302,7 @@ int main(int argc, char **argv)
 		return run_child(parse_engine(argv[2]));
 	require(argc >= 1 && argv[0] != nullptr,
 		"test executable path is unavailable");
-	for (const auto kind : {EngineKind::interpreter, EngineKind::gadgets,
-	     EngineKind::jit})
+	for (const auto kind : {EngineKind::gadgets, EngineKind::jit})
 		run_subprocess(argv[0], kind);
 	std::puts("arm64-pc-alignment-contract: passed");
 	return EXIT_SUCCESS;

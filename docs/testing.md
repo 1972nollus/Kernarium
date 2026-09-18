@@ -319,10 +319,6 @@ Benchmarks, full LTP, external networking, KDE/VNC/WebGL desktop campaigns,
 GPU conformance, SMP stress, official A64 semantics, and connected-device runs
 are opt-in. Run them only when the change or question crosses that boundary.
 
-Heavy guest campaigns use gadgets or JIT. The interpreter is a reference
-oracle and has only a short registered guest smoke; answer interpreter-specific
-questions with a focused payload.
-
 Geekbench uses the image-local payload with `--no-upload` and requires no
 Internet preflight. Manual performance tools and the probe inventory are under
 [`../tests/perf/README.md`](../tests/perf/README.md). Record conclusions in
