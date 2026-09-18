@@ -23,6 +23,11 @@ Two banks implement the scalar integer instructions.
   is an immediate in the entry, so the host forwards the CPU-state stores into
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
+  INC and DEC are enumerated a second time by the carry their producer left,
+  because they preserve the carry flag and so have to settle the pending one
+  before recording their own: a settled, borrow, carry or cleared source
+  reaches RFLAGS with at most one condition instead of a call to the carry
+  materializer.
   `native_baked.hpp` declares the tables. Their enumeration order (registers
   in offset order, the four high-byte registers after the sixteen low ones,
   the sixteen bases followed by "none") is shared with the generator and must
