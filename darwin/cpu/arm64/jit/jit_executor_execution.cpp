@@ -2,8 +2,9 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "jit_semantic_reservation.hpp"
+
 #include "cpu/arm64/detail/floating_exception.hpp"
-#include "cpu/arm64/instructions/load_store_memory.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <array>
@@ -283,10 +284,9 @@ namespace uml::cpu::arm64 {
     if (block->native_fpmr)
       arm64::restore_native_fpmr_environment(cpu);
     if (tracked_stores)
-      uml_arm64_jit_invalidate_store_ranges(
-          reinterpret_cast<const std::uint64_t *>(
-              tracked_store_ranges_.data()),
-          block->instruction_count);
+      jit::semantic::invalidate_store_ranges(
+          std::span<const JitStoreRange>{tracked_store_ranges_}.first(
+              block->instruction_count));
     const auto current_executed =
         static_cast<std::size_t>(result >> 32);
     const auto event =
@@ -524,9 +524,8 @@ JitExecutor::Implementation::translate_single_instruction(
   if (restore_environment)
     arm64::restore_native_fp_environment(target);
   if (tracked_stores)
-    uml_arm64_jit_invalidate_store_ranges(
-        reinterpret_cast<const std::uint64_t *>(tracked_store_ranges_.data()),
-        1U);
+    jit::semantic::invalidate_store_ranges(
+        std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
   executed = static_cast<std::size_t>(result >> 32U);
   deferred_exclusive = chain.deferred_exclusive_instruction;
   const auto event =

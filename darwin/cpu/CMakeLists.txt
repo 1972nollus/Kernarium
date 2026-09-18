@@ -413,6 +413,7 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_linking.cpp
     arm64/jit/jit_publication_state.cpp
     arm64/jit/jit_semantic_atomic.cpp
+    arm64/jit/jit_semantic_classes.cpp
     arm64/jit/jit_semantic_control.cpp
     arm64/jit/jit_semantic_load_store.cpp
     arm64/jit/jit_semantic_memory.cpp
