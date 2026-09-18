@@ -92,7 +92,7 @@ RunResult load_store_simd_ordered(CpuState &cpu,
 		} else {
 			/* A 128-bit ASIMD acquire is not required to be single-copy atomic.
 			 * Commit the destination only after the complete checked read, then
-			 * use a stronger acquire fence in this safety-first reference path. */
+			 * use a stronger acquire fence in this safety-first slow path. */
 			if (!memory.read(address, result))
 				return {StopReason::memory_fault, address, instruction, 0,
 					false};
@@ -794,9 +794,9 @@ RunResult load_store_ordered_pair(CpuState &cpu,
 		std::uint64_t first_value = 0;
 		std::uint64_t second_value = 0;
 		/* LDAP/LDAPP suppress their acquire effect unless both results are
-		 * visible. LDIAPP always has AcquirePC semantics. The reference
-		 * interpreter deliberately uses the stronger C++ acquire order for
-		 * both architectural acquire models.
+		 * visible. LDIAPP always has AcquirePC semantics. The semantic slow
+		 * path deliberately uses the stronger C++ acquire order for both
+		 * architectural acquire models.
 		 */
 		const auto order = !consistent_pair ||
 			(first != 31U && second != 31U) ?

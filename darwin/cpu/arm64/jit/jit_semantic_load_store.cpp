@@ -109,8 +109,8 @@ RunResult memory_copy_set(CpuState &cpu, GuestMemory &memory,
 	/* This implementation uses architectural MOPS option B. The prologue and
 	 * main stages transfer zero bytes, and the epilogue transfers everything
 	 * remaining. Both stage-size choices are explicitly implementation defined.
-	 * Keeping the pure interpreter byte-granular makes fault restart state exact
-	 * and favors diagnostics and safety over throughput.
+	 * Keeping the semantic slow path byte-granular makes fault restart state
+	 * exact and favors diagnostics and safety over throughput.
 	 */
 	const bool set_tag =
 		(instruction & 0x3fe0'0c00U) == 0x1dc0'0400U;
@@ -314,7 +314,7 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto base = cpu.read_register(base_register, true);
 	/* CheckSPAlignment precedes address generation and memory observation.
-	 * The interpreter deliberately diagnoses this before touching either the
+	 * The slow path deliberately diagnoses this before touching either the
 	 * transfer register or GuestMemory.
 	 */
 	if (base_register == 31U && (base & 15U) != 0)

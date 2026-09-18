@@ -117,9 +117,9 @@ void atomic_compare_swap_pair_128_at(std::byte *pointer,
 	std::uint64_t &observed_first, std::uint64_t &observed_second) noexcept
 {
 	/* CASPAL is deliberately stronger than the requested guest ordering. The
-	 * pure interpreter favors a compact, race-free reference operation over
-	 * weakening the host instruction for each encoding variant. Fixed adjacent
-	 * registers satisfy CASP's architectural pair constraints.
+	 * slow path favors a compact, race-free operation over weakening the host
+	 * instruction for each encoding variant. Fixed adjacent registers satisfy
+	 * CASP's architectural pair constraints.
 	 */
 	__asm__ volatile(
 		"mov x9, %6\n"
@@ -578,8 +578,8 @@ rcw_result(unsigned operation, bool soft, std::uint64_t observed,
 		std::atomic_thread_fence(std::memory_order_release);
 	arm64::detail::encode_little_endian(desired, bytes);
 	/* Choosing the permitted write-back-on-failed-check behavior makes the
-	 * access permission and reservation effects deterministic in the strict
-	 * interpreter, even when the comparison or RCWS check fails.
+	 * access permission and reservation effects deterministic in the slow
+	 * path, even when the comparison or RCWS check fails.
 	 */
 	if (!memory.write(address, bytes))
 		return false;
@@ -786,9 +786,9 @@ struct RcwPairResult final {
 		if (total_size == 16 &&
 		    reinterpret_cast<std::uintptr_t>(pointer) % 16 == 0) {
 			/* A pair marked single-copy atomic must not inherit memcpy's
-			 * tearing behavior in the strict interpreter. LDXP supplies one
-			 * atomic 128-bit snapshot on the AArch64 host; CLREX prevents this
-			 * internal implementation detail from retaining a reservation. */
+			 * tearing behavior in the slow path. LDXP supplies one atomic
+			 * 128-bit snapshot on the AArch64 host; CLREX prevents this internal
+			 * implementation detail from retaining a reservation. */
 			atomic_load_pair_128_at(pointer, first, second);
 			if (order != std::memory_order_relaxed)
 				std::atomic_thread_fence(order);
@@ -832,9 +832,9 @@ struct RcwPairResult final {
 			std::atomic_thread_fence(order);
 		if (total_size == 16 &&
 		    reinterpret_cast<std::uintptr_t>(pointer) % 16 == 0) {
-			/* CASP gives the reference interpreter a true 128-bit atomic
-			 * store on hosts without FEAT_LSE128. The speculative LDP only
-			 * seeds the comparison; CASP validates it before committing. */
+			/* CASP gives the slow path a true 128-bit atomic store on
+			 * hosts without FEAT_LSE128. The speculative LDP only seeds the
+			 * comparison; CASP validates it before committing. */
 			__asm__ volatile(
 				"mov x9, %0\n"
 				"mov x12, %1\n"
@@ -892,7 +892,7 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 [[nodiscard]] bool ordinary_store(GuestMemory &memory, std::uint64_t address,
 	std::span<const std::byte> bytes)
 {
-	/* Serialize the write itself with interpreter-exclusive operations. Doing
+	/* Serialize the write itself with the exclusive operations. Doing
 	 * only the version update under the lock leaves a window in which STXR can
 	 * incorrectly succeed after a conflicting ordinary store has committed.
 	 */
