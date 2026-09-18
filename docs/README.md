@@ -11,6 +11,7 @@ investigation date.
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
+| x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |
 | External dependencies | [`../dependencies/README.md`](../dependencies/README.md) |
 | Kernel families | [`../kernel/README.md`](../kernel/README.md) |
 | Mainline kernel policy | [`../kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) |

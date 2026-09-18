@@ -109,7 +109,8 @@ public:
 	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
 	{
 		executable_queries_.fetch_add(1, std::memory_order_relaxed);
-		return (address & ~std::uint64_t{4095}) == executable_page_;
+		return every_page_executable_ ||
+			(address & ~std::uint64_t{4095}) == executable_page_;
 	}
 
 	[[nodiscard]] bool code_page_stamp(std::uint64_t address, void *,
@@ -134,6 +135,12 @@ public:
 	void set_executable_page(std::uint64_t address) noexcept
 	{
 		executable_page_ = address & ~std::uint64_t{4095};
+	}
+	/* What READ_IMPLIES_EXEC makes of a process: data pages that qualify as
+	 * code too. */
+	void set_every_page_executable(bool value) noexcept
+	{
+		every_page_executable_ = value;
 	}
 
 	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
@@ -221,6 +228,7 @@ private:
 	std::vector<std::uint64_t> code_stamp_versions_;
 	bool code_stamps_available_{};
 	std::uint64_t executable_page_{~std::uint64_t{}};
+	bool every_page_executable_{};
 	std::uint64_t *code_changes_{};
 };
 
@@ -965,25 +973,86 @@ read_test_sequences(void *context) noexcept
 	 */
 	memory.load(0, {0xc6, 0x00, 0x7f, 0xc6, 0x40, 0x01, 0x6e, 0x0f, 0x05});
 	memory.set_executable_page(0);
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"executable-store block did not build"))
-		return false;
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x800;
 	gadgets::Executor executor;
 	executor.prepare(memory, 1, 1, 1);
+	/* Cached, so the page is on the shared code-page list and its stores
+	 * have a translation to protect. */
+	const auto selected = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(selected.program != nullptr,
+		"executable-store block did not build"))
+		return false;
 	const auto result = gadgets::execute(
-		built.program, cpu, memory, executor, 64);
+		*selected.program, cpu, memory, executor, 64);
 	return expect(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3 && cpu.rip == 9,
 		"non-overlapping executable stores did not stay in one native block") &&
-		expect(memory.executable_queries() == 1,
-			"write-TLB executable tag was redundantly revalidated") &&
 		expect(memory.invalidations() == 1,
 			"batched executable stores did not publish one code change") &&
 		expect(memory.byte(0x800) == 0x7f && memory.byte(0x801) == 0x6e,
 			"batched executable stores did not update guest memory");
+}
+
+/* A store publishes a code change to protect cached translations, and only
+ * the executors know where those are. With every page executable, a store to
+ * a page no executor has translated publishes nothing; once another executor
+ * caches code on that page, this executor's next store to it publishes even
+ * though its own write translation was filled before the page gained code.
+ */
+[[nodiscard]] bool store_publishes_only_where_some_executor_caches_code()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* Page 0: MOV byte ptr [RAX], 0x7f; SYSCALL. Page 1: SYSCALL. */
+	memory.load(0, {0xc6, 0x00, 0x7f, 0x0f, 0x05});
+	memory.load(0x1000, {0x0f, 0x05});
+	memory.set_every_page_executable(true);
+	gadgets::Executor writer;
+	writer.prepare(memory, 7, 1, 1);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(block.program != nullptr, "code-page registry block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x1800;
+	auto result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1800) == 0x7f,
+		"store to an untranslated executable page did not run") ||
+		!expect(memory.invalidations() == 0,
+			"store to a page holding no cached code published a change"))
+		return false;
+
+	gadgets::Executor reader;
+	reader.prepare(memory, 7, 1, 1);
+	const auto target = reader.select_program(
+		memory, 0x1000, ExecutionMode::long64);
+	if (!expect(target.program != nullptr, "code-page registry target did not build"))
+		return false;
+	cpu = {};
+	cpu.rip = 0;
+	cpu.gpr(Register::rax) = 0x1801;
+	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1801) == 0x7f,
+		"store to a newly translated page did not run") ||
+		!expect(memory.invalidations() == 1,
+			"store to a page another executor translated did not publish"))
+		return false;
+
+	/* Retiring the reader's translations takes the page off the list again. */
+	reader = gadgets::Executor{};
+	cpu = {};
+	cpu.rip = 0;
+	cpu.gpr(Register::rax) = 0x1802;
+	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1802) == 0x7f,
+		"store after the other executor retired did not run") &&
+		expect(memory.invalidations() == 1,
+			"store to a page that lost its cached code still published");
 }
 
 [[nodiscard]] bool overlapping_executable_store_stops_immediately()
@@ -2397,14 +2466,16 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rax) = 0x5a;
 	cpu.gpr(Register::rcx) = 256;
 	cpu.gpr(Register::rdi) = 0x800;
-	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"executable-destination REP STOSB did not build"))
-		return false;
 	gadgets::Executor executor;
 	executor.prepare(memory, 1, 1, 1);
+	/* Cached, so the destination page is on the shared code-page list. */
+	const auto built = executor.select_program(
+		memory, 0, ExecutionMode::long64, 1);
+	if (!expect(built.program != nullptr,
+		"executable-destination REP STOSB did not build"))
+		return false;
 	const auto result = gadgets::execute(
-		built.program, cpu, memory, executor, 64);
+		*built.program, cpu, memory, executor, 64);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 2 &&
 		cpu.gpr(Register::rcx) == 0 && cpu.gpr(Register::rdi) == 0x900,
@@ -3556,6 +3627,7 @@ int main()
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		executable_store_publishes_code_change() &&
+		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&
 		distant_code_write_cools_its_linked_block() &&

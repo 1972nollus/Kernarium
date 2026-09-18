@@ -22,6 +22,7 @@ if(UML_BUILD_X86_64_GUEST)
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
         x86_64/decoder.cpp
+		x86_64/gadgets/code_page_registry.cpp
 		x86_64/gadgets/engine.S
 		x86_64/gadgets/executor.cpp
 		x86_64/gadgets/native_builder.cpp

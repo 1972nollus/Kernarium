@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "code_page_registry.hpp"
 #include "native_entry.hpp"
 #include "native_symbols.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -263,6 +265,98 @@ struct ProgramCodeStamps final {
 	return table;
 }
 
+/* The registries of every address-space generation this executor holds
+ * translations for, and its participation in the one it is running. A page
+ * is counted once per executor that caches code on it, so a translation
+ * retired here is subtracted here.
+ */
+struct CodePageRegistries final {
+	std::unordered_map<std::uint64_t, std::shared_ptr<CodePageRegistry>> held;
+	std::shared_ptr<CodePageRegistry> current;
+	std::uint64_t current_generation{};
+	CodePageRegistry::Participant participant;
+	bool conservative{};
+
+	~CodePageRegistries() { unbind(); }
+
+	[[nodiscard]] CodePageRegistry &of(std::uint64_t generation)
+	{
+		auto [entry, inserted] = held.try_emplace(generation);
+		if (inserted) {
+			entry->second = CodePageRegistry::acquire(generation);
+			if (conservative)
+				entry->second->set_conservative(true);
+		}
+		return *entry->second;
+	}
+
+	void bind(std::uint64_t generation)
+	{
+		if (current && current_generation == generation)
+			return;
+		unbind();
+		auto &registry = of(generation);
+		registry.join(participant);
+		current = held.find(generation)->second;
+		current_generation = generation;
+	}
+
+	void unbind() noexcept
+	{
+		if (current)
+			current->leave(participant);
+		current.reset();
+	}
+
+	void release(std::uint64_t generation) noexcept
+	{
+		if (current && current_generation == generation)
+			return;
+		held.erase(generation);
+	}
+
+	void drop_all() noexcept
+	{
+		unbind();
+		held.clear();
+	}
+};
+
+/* Holds a translation's possible pages in the registry while their bytes are
+ * read, so any store another executor has already translated for them lands
+ * first. The cache's own index keeps whichever pages the program turns out to
+ * cover. */
+class CodePageHold final {
+public:
+	CodePageHold(CodePageRegistries *registries, std::uint64_t address) noexcept
+	{
+		if (registries == nullptr || !registries->current)
+			return;
+		registry_ = registries->current.get();
+		first_ = address & ~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+		last_ = (address + maximum_cached_source_bytes - 1U) &
+			~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+		registry_->add(first_, &registries->participant);
+		if (last_ != first_)
+			registry_->add(last_, &registries->participant);
+	}
+	~CodePageHold()
+	{
+		if (registry_ == nullptr)
+			return;
+		registry_->remove(first_);
+		if (last_ != first_)
+			registry_->remove(last_);
+	}
+	CodePageHold(const CodePageHold &) = delete;
+	CodePageHold &operator=(const CodePageHold &) = delete;
+
+private:
+	CodePageRegistry *registry_{};
+	std::uint64_t first_{};
+	std::uint64_t last_{};
+};
+
 class ProgramCache final {
 private:
 	struct LinkRecord;
@@ -356,6 +450,10 @@ private:
 public:
 	void invalidate() noexcept
 	{
+		if (registries_ != nullptr)
+			for (auto &[generation, state] : generations_)
+				for (const auto &[page, link] : state.code_pages)
+					registries_->of(generation).remove(page);
 		resident_.clear();
 		generations_.clear();
 		current_ = nullptr;
@@ -410,6 +508,11 @@ public:
 	void set_write_translations(NativeTlbEntry *entries) noexcept
 	{
 		write_translations_ = entries;
+	}
+
+	void set_code_page_registries(CodePageRegistries *registries) noexcept
+	{
+		registries_ = registries;
 	}
 
 	[[nodiscard]] bool page_holds_code(std::uint64_t address) const noexcept
@@ -715,7 +818,9 @@ private:
 			for (; completed < pages.count; ++completed) {
 				auto [bucket, inserted] =
 					index.try_emplace(pages.pages[completed], nullptr);
-				(void)inserted;
+				if (inserted && registries_ != nullptr)
+					registries_->of(slot.generation).add(
+						pages.pages[completed], &registries_->participant);
 				auto &link = slot.page_links[completed];
 				link = {
 					.slot = &slot,
@@ -730,12 +835,14 @@ private:
 			}
 		} catch (...) {
 			for (std::size_t entry = 0; entry < completed; ++entry)
-				unlink(current(), slot.page_links[entry]);
+				unlink(current_generation_, current(),
+					slot.page_links[entry]);
 			throw;
 		}
 	}
 
-	static void unlink(Generation &state, PageLink &link) noexcept
+	void unlink(std::uint64_t generation, Generation &state,
+		PageLink &link) noexcept
 	{
 		if (!link.linked)
 			return;
@@ -746,8 +853,11 @@ private:
 			if (bucket != state.code_pages.end() &&
 			    bucket->second == &link) {
 				bucket->second = link.next;
-				if (bucket->second == nullptr)
+				if (bucket->second == nullptr) {
 					state.code_pages.erase(bucket);
+					if (registries_ != nullptr)
+						registries_->of(generation).remove(link.page);
+				}
 			}
 		}
 		if (link.next != nullptr)
@@ -764,7 +874,7 @@ private:
 			return;
 		}
 		for (auto &link : slot.page_links)
-			unlink(owner->second, link);
+			unlink(slot.generation, owner->second, link);
 	}
 
 	[[nodiscard]] bool matches(const Slot &slot, std::uint64_t address,
@@ -1020,8 +1130,13 @@ private:
 		if (owner != generations_.end()) {
 			if (current_ == &owner->second)
 				current_ = nullptr;
+			if (registries_ != nullptr)
+				for (const auto &[page, link] : owner->second.code_pages)
+					registries_->of(generation).remove(page);
 			generations_.erase(owner);
 		}
+		if (registries_ != nullptr)
+			registries_->release(generation);
 		const auto found = std::find(
 			resident_.begin(), resident_.end(), generation);
 		if (found != resident_.end())
@@ -1132,6 +1247,7 @@ private:
 	SuccessorSet *preceding_{};
 	std::uint64_t epoch_{1};
 	NativeTlbEntry *write_translations_{};
+	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
 };
@@ -1139,7 +1255,20 @@ private:
 } // namespace
 
 struct Executor::Storage final {
+	Storage() = default;
+	/* A move-assigned executor drops its old storage here, so the pages it
+	 * counted on the shared list are subtracted here rather than in the
+	 * executor's own destructor. */
+	~Storage()
+	{
+		programs.invalidate();
+		registries.drop_all();
+	}
+	Storage(const Storage &) = delete;
+	Storage &operator=(const Storage &) = delete;
+
 	std::array<NativeTlbEntry, tlb_entry_count> entries{};
+	CodePageRegistries registries;
 	ProgramCache programs;
 	std::optional<Program> transient_program;
 	::uml::memory::GuestAddressSpace *memory{};
@@ -1156,6 +1285,9 @@ struct Executor::Storage final {
 Executor::Executor() : storage_{std::make_unique<Storage>()}
 {
 	storage_->programs.set_write_translations(storage_->entries.data());
+	storage_->registries.participant.write_translations =
+		storage_->entries.data();
+	storage_->programs.set_code_page_registries(&storage_->registries);
 }
 Executor::~Executor() = default;
 Executor::Executor(Executor &&) noexcept = default;
@@ -1178,6 +1310,16 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 		std::ranges::fill(storage_->entries, NativeTlbEntry{});
 	if (memory_changed)
 		storage_->programs.invalidate();
+	if (memory_changed || !storage_->prepared ||
+	    storage_->generation != generation) {
+		try {
+			storage_->registries.bind(generation);
+		} catch (...) {
+			/* Without a registry every executable store publishes, which
+			 * is the conservative contract this replaces. */
+			storage_->registries.unbind();
+		}
+	}
 	storage_->memory = &memory;
 	storage_->generation = generation;
 	storage_->mapping_changes = mapping_changes;
@@ -1207,6 +1349,30 @@ bool Executor::page_holds_cached_code(std::uint64_t address) noexcept
 {
 	return storage_->prepared && storage_->cache_ready &&
 		storage_->programs.page_holds_code(address);
+}
+
+CodePageRegistry *Executor::code_page_registry() const noexcept
+{
+	return storage_->registries.current.get();
+}
+
+void Executor::enter_engine() noexcept
+{
+	storage_->registries.participant.engine_epoch.fetch_add(
+		1, std::memory_order_seq_cst);
+}
+
+void Executor::leave_engine() noexcept
+{
+	storage_->registries.participant.engine_epoch.fetch_add(
+		1, std::memory_order_release);
+}
+
+void Executor::publish_every_executable_store(bool value) noexcept
+{
+	storage_->registries.conservative = value;
+	for (auto &[generation, registry] : storage_->registries.held)
+		registry->set_conservative(value);
 }
 
 void *Executor::execution_context() const noexcept
@@ -1290,6 +1456,8 @@ ProgramSelection Executor::select_program(
 			},
 		};
 	}
+	const CodePageHold hold{
+		storage_->cache_ready ? &storage_->registries : nullptr, address};
 	auto built = build(
 		memory, address, mode, maximum_instructions, links);
 	if (built.status != BuildStatus::built) {
