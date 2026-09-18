@@ -144,6 +144,27 @@ verify_archive()
 	' "$audit_dir/global-defined.txt" ||
 		fail "$platform archive does not implement the exact public C API"
 
+	# A product that runs a guest force-loads the archive, because the kernel
+	# reaches the host bridge through dlsym(). Every first-party symbol that
+	# any member references must therefore be defined by another member.
+	xcrun nm -g -P "$archive" > "$audit_dir/global-symbols.txt"
+	awk '
+		NF >= 2 && $2 == "U" { undefined[$1] = 1; next }
+		NF >= 2 { defined[$1] = 1 }
+		END {
+			for (symbol in undefined) {
+				if (symbol in defined)
+					continue
+				if (symbol ~ /^__Z.*3uml/ || symbol ~ /^_(darwin_)?uml_/) {
+					printf("unresolved first-party symbol: %s\n",
+					       symbol) > "/dev/stderr"
+					failed = 1
+				}
+			}
+			exit failed
+		}
+	' "$audit_dir/global-symbols.txt" ||
+		fail "$platform archive does not carry every first-party object it references"
 }
 
 build_consumer()

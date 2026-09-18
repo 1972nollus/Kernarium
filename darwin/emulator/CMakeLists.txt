@@ -41,8 +41,17 @@ endfunction()
 
 _uml_add_emulator_boundary(uml_emulator_boundary 0)
 
+# An emulator archive is a final product, and CMake merges only object
+# libraries and interface-carried objects into it, never a linked static
+# archive. Socket-path ownership remains a separate archive for the in-tree
+# device libraries, so each emulator archive also carries its object; a link
+# that names both archives loads only one copy of the slot table.
+set(_uml_emulator_carried_objects
+    $<TARGET_OBJECTS:uml_device_socket_paths>)
+
 add_library(uml_emulator STATIC
-    $<TARGET_OBJECTS:uml_emulator_boundary>)
+    $<TARGET_OBJECTS:uml_emulator_boundary>
+    ${_uml_emulator_carried_objects})
 
 add_library(UML::Emulator ALIAS uml_emulator)
 uml_declare_architecture_target(uml_emulator emulator)
@@ -77,7 +86,8 @@ if(UML_BUILD_WINE_ARM64EC)
     # boundary objects from this product configuration, but its name prevents
     # an ordinary 4 KiB runtime from being packaged by accident.
     add_library(uml_wine_arm64ec_emulator STATIC
-        $<TARGET_OBJECTS:uml_emulator_boundary>)
+        $<TARGET_OBJECTS:uml_emulator_boundary>
+        ${_uml_emulator_carried_objects})
     add_library(UML::WineArm64ECEmulator ALIAS
         uml_wine_arm64ec_emulator)
     uml_declare_architecture_target(uml_wine_arm64ec_emulator emulator)
@@ -113,7 +123,8 @@ if(_uml_need_admission_test_variant)
     # the exact production source manifests under compile-time test policies.
     _uml_add_emulator_boundary(uml_emulator_boundary_test_variant 1)
     add_library(uml_emulator_admission_test_variant STATIC
-        $<TARGET_OBJECTS:uml_emulator_boundary_test_variant>)
+        $<TARGET_OBJECTS:uml_emulator_boundary_test_variant>
+        ${_uml_emulator_carried_objects})
     uml_declare_architecture_target(
         uml_emulator_admission_test_variant emulator)
     set(_uml_test_runtime_core UML::RuntimeCore)
