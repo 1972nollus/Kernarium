@@ -100,6 +100,19 @@ cover. The whole table is cleared only when the address space cannot describe
 the span, when the span covers more than a quarter of the entries, or when the
 memory or the generation changed.
 
+## Floating-point environment
+
+A dispatch runs in the guest's rounding mode. Entry maps MXCSR's two-bit
+field onto FPCR's, which numbers the directed modes the other way round, and
+every write to MXCSR republishes it; FPCR is written only when the mode would
+change, which for a guest that never leaves round-to-nearest is never. The
+rounding gadgets therefore round with the host's current mode instead of
+branching on MXCSR, and the arithmetic honours the guest's mode as well.
+
+`uml_x86_64_gadget_leave` restores round-to-nearest from FPCR itself rather
+than from a copy saved at entry, because a gadget that faults out of a
+stack-using sequence can reach it with a different stack pointer.
+
 ## Code pages
 
 `code_page_registry.hpp` keeps, per address-space generation, the set of pages
