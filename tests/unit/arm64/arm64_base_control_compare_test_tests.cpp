@@ -201,6 +201,93 @@ void immediate_basis(Harness &harness)
 	}
 }
 
+/*
+ * A taken CBZ or CBNZ closing a short loop, "cb{n}z {w,x}0, .-8": imm19 is -2,
+ * whose low five bits are 30. The loop body counts iterations in x1 and then
+ * steps x0; the counter passes a value whose low word and full register
+ * disagree about zero, so the operand width decides when the loop exits. A
+ * target one word off skips the count or never ends the loop.
+ */
+void counted_loops(Harness &harness)
+{
+	constexpr std::uint32_t count_iteration = 0x9100'0421U; // add x1, x1, #1
+	constexpr std::uint32_t subtract_one = 0xd100'0400U;    // sub x0, x0, #1
+	constexpr std::uint32_t subtract_x2 = 0xcb02'0000U;     // sub x0, x0, x2
+	constexpr std::uint32_t add_x2 = 0x8b02'0000U;          // add x0, x0, x2
+	struct Loop final {
+		bool wide;
+		bool nonzero;
+		std::uint32_t step;
+		std::uint64_t counter;
+		std::uint64_t operand;
+		unsigned iterations;
+	};
+	constexpr std::array loops{
+		/* x0 counts down to 0x1'0000'0000, whose low word is zero. */
+		Loop{false, true, subtract_one, 0x1'0000'0003ULL, 0, 3},
+		/* x0 passes 0x1'0000'0000 on its way down to zero. */
+		Loop{true, true, subtract_x2, 0x1'8000'0000ULL, 0x8000'0000ULL, 3},
+		/* 0x2'0000'0000 has a zero low word; 0x3'0000'0001 does not. */
+		Loop{false, false, add_x2, 0xffff'ffffULL, 0x1'0000'0001ULL, 2},
+		/* x0 wraps to zero, then reaches 0x1'0000'0000. */
+		Loop{true, false, add_x2, 0xffff'ffff'0000'0000ULL,
+			0x1'0000'0000ULL, 2},
+	};
+	for (const auto &loop : loops) {
+		const auto branch = encode_compare_branch(
+			loop.wide, loop.nonzero, -8, 0);
+		const std::array code{
+			ProgramWord{.offset = branch_entry_offset,
+				.instruction = count_iteration},
+			ProgramWord{.offset = branch_entry_offset + 4,
+				.instruction = loop.step},
+			ProgramWord{.offset = branch_entry_offset + 8,
+				.instruction = branch},
+			ProgramWord{.offset = branch_entry_offset + 12,
+				.instruction = terminal_system_call},
+		};
+		auto initial = seeded_state(0x1420'0000'0000'0000ULL ^
+			(static_cast<std::uint64_t>(branch) << 7));
+		initial.registers[0] = loop.counter;
+		if (loop.step != subtract_one)
+			initial.registers[2] = loop.operand;
+		/* The architectural result: each iteration steps x0 with
+		 * 64-bit wrap-around, then the branch tests the low word or the
+		 * whole register. */
+		const auto mask = loop.wide ? ~std::uint64_t{0} :
+			std::uint64_t{0xffff'ffffU};
+		auto counter = loop.counter;
+		unsigned iterations = 0;
+		for (bool taken = true; taken;) {
+			require(++iterations <= loop.iterations,
+				"counted loop runs longer than intended");
+			counter = loop.step == subtract_one ? counter - 1U :
+				loop.step == subtract_x2 ? counter - loop.operand :
+				counter + loop.operand;
+			taken = loop.nonzero ? (counter & mask) != 0 :
+				(counter & mask) == 0;
+		}
+		require(iterations == loop.iterations,
+			"counted loop exits earlier than intended");
+		auto expected = initial;
+		expected.registers[0] = counter;
+		expected.registers[1] = initial.registers[1] + loop.iterations;
+		expected.pc = branch_pc + 16;
+		char name[96];
+		std::snprintf(name, sizeof(name), "%s %c0 counted loop .-8",
+			loop.nonzero ? "CBNZ" : "CBZ", loop.wide ? 'x' : 'w');
+		harness.check_program({
+			.name = name,
+			.code = std::span<const ProgramWord>{code},
+			.entry_offset = branch_entry_offset,
+			.initial = initial,
+			.expected = expected,
+			.native = NativeRequirements::baseline(),
+			.expected_instructions = 3U * loop.iterations + 1U,
+		});
+	}
+}
+
 void production_specialization()
 {
 	constexpr auto base = engine_test_code_base;
@@ -281,6 +368,7 @@ int main()
 	uml::emulator::tests::base_control::compare_semantics(harness);
 	uml::emulator::tests::base_control::test_semantics(harness);
 	uml::emulator::tests::base_control::immediate_basis(harness);
+	uml::emulator::tests::base_control::counted_loops(harness);
 	uml::emulator::tests::base_control::production_specialization();
 	harness.print_summary("arm64-base-control-compare-test");
 	return 0;

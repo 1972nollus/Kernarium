@@ -286,6 +286,13 @@ public:
 		engines_.print_summary(suite);
 	}
 
+	void check_program(const ProgramCase &test_case,
+		const std::source_location location =
+			std::source_location::current())
+	{
+		engines_.check_program(test_case, location);
+	}
+
 private:
 	EngineHarness engines_;
 };
