@@ -434,6 +434,7 @@ class ExportCase:
     options: int
     ordinal: int
     sampled: bool
+    covering: bool
     forced: bool
     case: Case
 
@@ -448,6 +449,7 @@ class ExportProfile:
     declared: int
     exclusions: dict[str, dict[str, int]]
     producers: int
+    covering: int
     forced: int
 
 
@@ -458,17 +460,19 @@ def read_export_directory(directory: pathlib.Path, page_size: int,
         fail(f"{directory}: contains no export streams")
     limit = seed = None
     cases: list[ExportCase] = []
-    classes = declared = forced = 0
+    classes = declared = covering = forced = 0
     exclusions: dict[str, dict[str, int]] = collections.defaultdict(dict)
     for stream in streams:
         producer = stream.name[:-len(".cases.gz")]
         counts = {}
+        covering_counts = {}
         with (directory / f"{producer}.classes.tsv").open(encoding="utf-8") as source:
             rows = list(csv.reader(source, delimiter="\t"))
-        if rows[0] != ["class", "count", "site", "first_case"]:
+        if rows[0] != ["class", "count", "covering", "site", "first_case"]:
             fail(f"{producer}: unexpected class table header")
-        for key, count, _site, _first in rows[1:]:
+        for key, count, covering_count, _site, _first in rows[1:]:
             counts[key] = int(count)
+            covering_counts[key] = int(covering_count)
         data = gzip.decompress(stream.read_bytes())
         reader = ByteReader(data)
         if reader.take(8) != EXPORT_MAGIC:
@@ -485,6 +489,7 @@ def read_export_directory(directory: pathlib.Path, page_size: int,
         elif (limit, seed) != (stream_limit, stream_seed):
             fail(f"{stream}: sample limit or seed differs")
         exported = collections.Counter()
+        covered = collections.Counter()
         stream_cases = 0
         trailer = None
         while not reader.done():
@@ -500,7 +505,10 @@ def read_export_directory(directory: pathlib.Path, page_size: int,
             item = read_export_case(reader, producer, blobs)
             if item.sampled:
                 exported[item.class_key] += 1
-            else:
+            if item.covering:
+                covered[item.class_key] += 1
+                covering += not item.sampled
+            if not item.sampled and not item.covering:
                 forced += 1
             stream_cases += 1
             cases.append(item)
@@ -514,7 +522,10 @@ def read_export_directory(directory: pathlib.Path, page_size: int,
         for key, count in counts.items():
             if exported[key] != min(count, limit):
                 fail(f"{producer}: class is not fully represented: {key}")
-        if set(exported) - set(counts):
+            if covered[key] != covering_counts[key]:
+                fail(f"{producer}: class boundary values are not fully "
+                     f"represented: {key}")
+        if (set(exported) | set(covered)) - set(counts):
             fail(f"{producer}: exported an undeclared class")
         classes += len(counts)
         declared += observed
@@ -531,6 +542,7 @@ def read_export_directory(directory: pathlib.Path, page_size: int,
         exclusions={key: dict(sorted(value.items()))
                     for key, value in sorted(exclusions.items())},
         producers=len(streams),
+        covering=covering,
         forced=forced,
     )
 
@@ -544,7 +556,7 @@ def read_export_case(reader: ByteReader, producer: str,
     reader.u64()  # class size
     ordinal = reader.u64()
     selection = reader.u8()
-    if ordinal == 0 or ordinal > 0xFFFF_FFFF or not selection & 3:
+    if ordinal == 0 or ordinal > 0xFFFF_FFFF or not selection & 7:
         fail(f"{producer}: {name}: invalid check ordinal or selection")
     options = reader.u32()
     event = EVENTS[reader.u8()]
@@ -603,7 +615,7 @@ def read_export_case(reader: ByteReader, producer: str,
     return ExportCase(
         producer=producer, site=site, class_key=class_key, options=options,
         ordinal=ordinal, sampled=bool(selection & 1),
-        forced=bool(selection & 2),
+        covering=bool(selection & 4), forced=bool(selection & 2),
         case=Case(
             name=name, entry=entry, words=words, event=event,
             invalid_encoding=bool(flags & 1), minimization=minimization,
@@ -1280,6 +1292,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
     provenance = {
         "schema": 1,
         "producer_commit": corpus.meta["producer_commit"],
+        **({"force_include": corpus.meta["force_include"]}
+           if "force_include" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],
@@ -1307,6 +1321,17 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
 # Commands
 
 
+def force_include_meta(include: pathlib.Path | None) -> dict:
+    if include is None:
+        return {}
+    path = include.resolve()
+    try:
+        name = path.relative_to(REPOSITORY).as_posix()
+    except ValueError:
+        fail(f"{include}: force-include directives must be checked in")
+    return {"force_include": {"file": name, "sha256": sha256(path.read_bytes())}}
+
+
 def build(options: argparse.Namespace) -> int:
     tokens = feature_tokens()
     blobs: dict[str, bytes] = {}
@@ -1320,6 +1345,7 @@ def build(options: argparse.Namespace) -> int:
     limit, seed = limits.pop()
     meta = {
         "producer_commit": options.producer_commit,
+        **force_include_meta(options.include),
         "sample_limit": limit,
         "seed": f"0x{seed:016x}",
         "exports": {
@@ -1328,6 +1354,7 @@ def build(options: argparse.Namespace) -> int:
                 "classes": profile.classes,
                 "declared_cases": profile.declared,
                 "exported_cases": len(profile.cases),
+                "covering_cases": profile.covering,
                 "forced_cases": profile.forced,
                 "excluded_cases": profile.exclusions,
             }
@@ -1358,6 +1385,11 @@ def check(options: argparse.Namespace) -> int:
             stale.append(name)
     if encode_pack(corpus, tokens) != pack:
         stale.append(PACK_NAME + " (canonical encoding)")
+    if "force_include" in corpus.meta:
+        include = corpus.meta["force_include"]
+        path = REPOSITORY / include["file"]
+        if not path.is_file() or sha256(path.read_bytes()) != include["sha256"]:
+            stale.append(include["file"] + " (changed since the export)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     print(f"A64 instruction corpus is fresh: "
@@ -1407,6 +1439,8 @@ def main() -> int:
     parser.add_argument("--export-4k", type=pathlib.Path)
     parser.add_argument("--producer-commit",
                         help="commit whose harness produced both exports")
+    parser.add_argument("--include", type=pathlib.Path,
+                        help="force-include directives both exports used")
     parser.add_argument("--text", type=pathlib.Path,
                         help="dump destination (default: standard output)")
     options = parser.parse_args()

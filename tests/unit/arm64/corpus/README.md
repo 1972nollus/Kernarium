@@ -22,8 +22,11 @@ instead of an exact state.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
-- `provenance.json` records the producer commit, sampling limit and seed,
-  per-profile export and exclusion counts, and the pack hash.
+- `provenance.json` records the producer commit, the force-include file and
+  its hash, sampling limit and seed, per-profile export, boundary, forced,
+  and exclusion counts, and the pack hash.
+- `forced-cases.tsv` forces producer checks that the class samples leave out;
+  see [Regeneration and new cases](#regeneration-and-new-cases).
 
 ## Sampling and minimization
 
@@ -32,10 +35,20 @@ invalid-encoding flag, harness options, retirement and fault expectation,
 validator relation, native requirements, entry offset, and, for every program
 word, its official decode partition, the allocation predicates it matches,
 and which register fields name register 31. Each class contributes its first
-and last case plus a fixed-seed uniform sample, at most eight cases. A case is
-exported only after the producer harness's interpreter, gadget, and JIT lanes
-all pass it. Its retired count is the producer's declared count or, when none
-was declared, the count on which every lane agreed.
+and last case plus a fixed-seed uniform sample, at most eight cases.
+
+Each class also contributes every case that gives an operand field of one of
+its program words a boundary value that no earlier such case of the class
+gave that field. A word's operand fields are the bits its decode partition
+leaves free: a five-bit register field at bit 0, 5, 10, or 16 when all five
+bits are free, and each maximal run of free bits elsewhere. Boundary values
+are 0, 30, and 31 for a register field, 0 and 1 for a single bit, and 0 and
+all ones for a wider field. A decoder fault that only one register number or
+immediate extreme exposes therefore stays visible to the corpus.
+
+A case is exported only after the producer harness's interpreter, gadget, and
+JIT lanes all pass it. Its retired count is the producer's declared count or,
+when none was declared, the count on which every lane agreed.
 
 Registers a program cannot name are replaced with a canonical fill, and the
 minimized case is verified through every lane again. A failing candidate falls
@@ -162,30 +175,39 @@ Expected results come from independent derivation from the architecture or
 from observation on native hardware, never from an engine's output.
 
 The exporter, its driver, and the producer unit tests exist only in producer
-commits: `0752912c` and `af71131f`, or a later producer commit that
-`provenance.json` names as `producer_commit`. Later commits removed the
-harness's interpreter lane and export mode,
-`tools/arm64-tests/export-unit-corpus.py`, and the producers whose cases the
-corpus holds. To add a case, check out a producer commit, add or extend a check
-in a producer unit test under the rule above or force an existing producer
-check into the export, build both page profiles there, and regenerate:
+commits; `provenance.json` names the one that produced the current pack as
+`producer_commit`. Later commits removed the harness's interpreter lane and
+export mode, `tools/arm64-tests/export-unit-corpus.py`, and the producers whose
+cases the corpus holds. To add a case, check out the producer commit and copy
+the current `forced-cases.tsv` into it, add or extend a check in a producer
+unit test under the rule above or force an existing producer check into the
+export, build both page profiles there, and regenerate:
 
 ```sh
 python3 -B tools/arm64-tests/export-unit-corpus.py \
-  --build-dir .build/presets/macos-unit-16k --output .build/a64-corpus/16k
+  --build-dir .build/presets/macos-unit-16k --output .build/a64-corpus/16k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv
 python3 -B tools/arm64-tests/export-unit-corpus.py \
-  --build-dir .build/presets/macos-unit-4k --output .build/a64-corpus/4k
+  --build-dir .build/presets/macos-unit-4k --output .build/a64-corpus/4k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv
 python3 -B tools/arm64-tests/build-unit-corpus.py \
   --export-16k .build/a64-corpus/16k --export-4k .build/a64-corpus/4k \
+  --include tests/unit/arm64/corpus/forced-cases.tsv \
   --producer-commit "$(git rev-parse HEAD)"
 ```
 
-`export-unit-corpus.py --include FILE` forces cases in; the directive syntax is
+`forced-cases.tsv` holds the force-include directives; their syntax is
 described in the producer commit's
-`tests/unit/arm64/arm64_instruction_corpus_export.hpp`. A harness abort names
-the ordinal of the failing check, and each export directory lists the ordinal
-of every exported case in `<producer>.cases.tsv`. Carry the regenerated pack,
-`manifest.tsv`, `coverage.tsv`, and `provenance.json` back as one change.
+`tests/unit/arm64/arm64_instruction_corpus_export.hpp`. Each directive forces a
+producer check that reaches something no sampled case reaches, and the
+comments before it name that gadget entry, code region or branch direction,
+or injected engine fault. Its `case` directives name check ordinals of the
+producer commit, so a producer change that renumbers checks must re-pin that
+producer's directives; the export summary reports a directive whose check is
+missing or excluded. A harness abort names the ordinal of the failing check,
+and each export directory lists the ordinal of every exported case in
+`<producer>.cases.tsv`. Carry the regenerated pack, `manifest.tsv`,
+`coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON
