@@ -121,8 +121,11 @@ verify_archive()
 			allowed["_uml_emulator_create"] = 1
 			allowed["_uml_emulator_destroy"] = 1
 			allowed["_uml_emulator_get_capabilities"] = 1
+			allowed["_uml_emulator_quiesce"] = 1
 			allowed["_uml_emulator_request_stop"] = 1
+			allowed["_uml_emulator_resume"] = 1
 			allowed["_uml_emulator_run"] = 1
+			allowed["_uml_emulator_sync"] = 1
 		}
 		$NF ~ /^_uml_emulator_/ {
 			if (!($NF in allowed)) {
