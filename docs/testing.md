@@ -280,6 +280,15 @@ operations. See the runner's current options with:
 python3 tests/integration/ltp/run_guest_ltp.py --help
 ```
 
+## A64 instruction corpus
+
+`arm64-instruction-corpus` runs the checked-in corpus in
+[`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
+the gadget and JIT engines of each page profile in one process, and the
+`arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
+against its pack. The corpus README owns the format, sampling policy, runner
+options, and regeneration from the harness producers.
+
 ## A64 instruction evidence
 
 The ordinary instruction suites exercise all inventory entries with

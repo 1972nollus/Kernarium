@@ -1,0 +1,90 @@
+{
+  "cases": 145960,
+  "cases_by_event": {
+    "breakpoint": 58,
+    "floating-point-trap": 21,
+    "gcs-fault": 14,
+    "illegal-instruction": 20572,
+    "instruction-budget": 772,
+    "memory-fault": 16740,
+    "system-call": 107783
+  },
+  "cases_by_profile": {
+    "16k": 33096,
+    "16k+4k": 79769,
+    "4k": 33095
+  },
+  "coverage": {
+    "entries": 983,
+    "entries_with_cases": 937,
+    "entries_with_illegal_cases": 822,
+    "unattributed_cases": 0,
+    "unattributed_illegal_cases": 885
+  },
+  "exports": {
+    "16k": {
+      "classes": 24160,
+      "declared_cases": 18217690,
+      "excluded_cases": {
+        "deferred-fp-entry": {
+          "arm64-deferred-fp-state": 6
+        },
+        "engine-hook": {
+          "arm64-base-lse128-pair-behavior": 2,
+          "arm64-base-ordered-behavior": 1,
+          "arm64-base-system-registers": 1,
+          "arm64-engine-harness": 2,
+          "arm64-floating-trap-control": 1
+        }
+      },
+      "exported_cases": 112865,
+      "forced_cases": 0,
+      "producers": 451
+    },
+    "4k": {
+      "classes": 24159,
+      "declared_cases": 18217689,
+      "excluded_cases": {
+        "deferred-fp-entry": {
+          "arm64-deferred-fp-state": 6
+        },
+        "engine-hook": {
+          "arm64-base-lse128-pair-behavior": 2,
+          "arm64-base-ordered-behavior": 1,
+          "arm64-base-system-registers": 1,
+          "arm64-engine-harness": 2,
+          "arm64-floating-trap-control": 1
+        }
+      },
+      "exported_cases": 112864,
+      "forced_cases": 0,
+      "producers": 451
+    }
+  },
+  "memory_blobs": 3210,
+  "pack_bytes": 12835586,
+  "pack_sha256": "6d66007c68e0f80e774d616b1c4963ee60453489fc813d0844f6cedc899c262a",
+  "producer_commit": "0752912cb6b792ab014b9736b9f9ae8d0591e6ad",
+  "programs": 122975,
+  "records": 1331,
+  "sample_limit": 8,
+  "schema": 1,
+  "seed": "0xa64c0b055eed2026",
+  "state_minimization": {
+    "broad": 355,
+    "full": 1713,
+    "narrow": 143892
+  },
+  "validator_cases": {
+    "guarded-control-call-fault-atomicity/v1": 8,
+    "guarded-control-return-fault/v1": 8,
+    "guarded-control-zero-target-fault/v1": 8,
+    "ignore-host-counter-register/v1": 1,
+    "permitted-exclusive-store-failure/v1": 344,
+    "permitted-tag-generator-choice/v1": 64,
+    "permitted-transformed-branch-failure/v1": 42,
+    "permitted-transformed-code/v1": 232,
+    "permitted-transformed-generic/v1": 57,
+    "transformed-address-fault-state/v1": 4
+  }
+}

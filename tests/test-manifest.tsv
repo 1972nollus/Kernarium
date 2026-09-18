@@ -10,6 +10,7 @@ test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cm
 symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained
 kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained
 kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained
+arm64-instruction-corpus	tests/unit/arm64/instruction_corpus_runner.cpp	unit	retained
 arm64-engine-harness	tests/unit/arm64	unit	retained
 arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained
 arm64-deferred-fp-state	tests/unit/arm64	unit	retained
@@ -668,6 +669,7 @@ jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_pro
 gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
 performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
 arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
+arm64-instruction-corpus-freshness	tests/tooling/arm64/test_arm64_instruction_corpus.py	tooling	retained
 arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained
 arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained
 arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained

@@ -91,6 +91,25 @@
     target_compile_options(uml_arm64_engine_test_support PRIVATE
         -Wall -Wextra -Werror)
 
+    # The checked-in A64 instruction corpus runs through the production gadget
+    # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
+    # the pack format and its regeneration from the harness producers.
+    add_executable(uml_arm64_instruction_corpus_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_corpus_runner.cpp)
+    target_link_libraries(uml_arm64_instruction_corpus_tests PRIVATE
+        UML::Emulator
+        ${_uml_instruction_evidence_zlib})
+    target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_features(uml_arm64_instruction_corpus_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_arm64_instruction_corpus_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-instruction-corpus
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
+
     add_library(uml_native_hardware_oracle STATIC
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_evidence.cpp
