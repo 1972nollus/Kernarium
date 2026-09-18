@@ -118,7 +118,7 @@ def base_address(o, base):
         o.emit('\tadd x7, x14, x10')
 
 
-def translate(o, write, size):
+def translate(o, write, size, record_stack=False):
     """The ordinary translation with its miss tail shared; x19 carries the continuation."""
     hit, done = o.label('hit'), o.label('done')
     if write:
@@ -129,6 +129,8 @@ def translate(o, write, size):
     o.emit('\tand w10, w10, #0x7fff')
     o.emit('\tldr x11, [_context, #UML_X86_64_CONTEXT_TLB]')
     o.emit('\tadd x11, x11, x10, lsl #5')
+    if record_stack:
+        o.emit('\tstr x11, [_context, #UML_X86_64_CONTEXT_STACK_ENTRY]')
     o.emit(f'\tldp x12, x13, [x11, #{16 if write else 0}]')
     # An exclusive-or and a compare-with-zero branch keep NZCV as the gadget
     # found it, so a fused condition survives a transfer between its producer
@@ -161,10 +163,14 @@ def translate(o, write, size):
     o.emit(f'{done}:')
 
 
-def finish_store(o, size):
+def finish_store(o, size, check=None):
     """The ordinary store epilogue with its publication and overlap tails shared.
-    x25 is the guest address, x23 the length word, x22 the RIP."""
-    check, done, overlap = o.label('check'), o.label('sdone'), o.label('soverlap')
+    x25 is the guest address, x23 the length word, x22 the RIP. `check` names
+    the overlap test for a caller that has already settled publication.
+    """
+    done, overlap = o.label('sdone'), o.label('soverlap')
+    if check is None:
+        check = o.label('check')
     o.emit(f'\ttbnz x23, #60, {check}')
     o.emit('\tldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
     o.emit(f'\tcbz w8, {check}')
@@ -778,12 +784,21 @@ def push_pop(o):
         o.emit('\tsub x25, x25, #8')
         o.emit('\tmov x7, x25')
         crossed, done = o.label('pushcross'), o.label('pushdone')
+        slow, check = o.label('pushslow'), o.label('pushcheck')
         page_cross(o, 8, crossed)
-        translate(o, True, 8)
+        # The stack page's own entry first. A plain page owes no publication;
+        # the write may still land in the block that is running, so the fast
+        # path joins the epilogue at its overlap test.
+        o.emit(f'\tstack_fast 1, {slow}')
+        o.emit('\tstr x24, [x7]')
+        o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit(f'\tb {check}')
+        o.emit(f'{slow}:')
+        translate(o, True, 8, record_stack=True)
         o.emit('\tstr x24, [x7]')
         o.emit(f'{done}:')
         o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
-        finish_store(o, 8)
+        finish_store(o, 8, check)
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')
         o.emit('\tb .Lx86_baked_cross_store_8')
@@ -796,9 +811,13 @@ def push_pop(o):
         o.emit('\tldp x23, x22, [_stream], #16')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tmov x7, x25')
-        crossed, done = o.label('popcross'), o.label('popdone')
+        crossed, done, slow = o.label('popcross'), o.label('popdone'), o.label('popslow')
         page_cross(o, 8, crossed)
-        translate(o, False, 8)
+        o.emit(f'\tstack_fast 0, {slow}')
+        o.emit('\tldr x11, [x7]')
+        o.emit(f'\tb {done}')
+        o.emit(f'{slow}:')
+        translate(o, False, 8, record_stack=True)
         o.emit('\tldr x11, [x7]')
         o.emit(f'{done}:')
         o.emit('\tadd x9, x25, #8')

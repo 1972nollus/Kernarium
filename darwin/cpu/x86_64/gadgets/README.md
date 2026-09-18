@@ -123,6 +123,14 @@ entries, 1 MiB, indexed by the page number folded once at that width;
 `native_tlb_entry_count` is the one constant, and the four assembly copies of
 the index must change with it.
 
+PUSH, POP, CALL and RET re-check the entry the last stack access translated
+through, which the execution context carries, before hashing an address of
+their own. A tag equal to the page, with no code bit and, for a write, no
+publication left pending by an earlier store, hands back the host address; a
+store still joins its epilogue at the overlap test, because the write can land
+in the block that is running. Anything else takes the ordinary translation,
+which records the new entry for the next access.
+
 ## Floating-point environment
 
 A dispatch runs in the guest's rounding mode. Entry maps MXCSR's two-bit

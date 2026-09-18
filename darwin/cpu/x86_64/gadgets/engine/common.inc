@@ -211,7 +211,30 @@ NAME(uml_x86_64_gadget_\name):
 .Lx86_segment_ready\@:
 .endm
 
-.macro translate access, entry_offset, size
+/* The stack's own entry, re-checked before any hashing: x25 holds the guest
+ * address, and a tag equal to its page -- with no code bit set, which a
+ * page holding a cached translation always has -- leaves the host address in
+ * x7. Anything else takes \miss, which is the full translation with
+ * `record_stack` so the next access finds the new entry here. A write also
+ * requires that no earlier store left a publication pending, because the
+ * ordinary translation would settle it here; with both conditions the store
+ * owes no publication. It may still land in the block that is running, so a
+ * store's caller joins its epilogue at the overlap test.
+ */
+.macro stack_fast access, miss
+	ldr x11, [_context, #UML_X86_64_CONTEXT_STACK_ENTRY]
+	and x9, x25, #0xfffffffffffff000
+	ldp x12, x13, [x11, #((\access) * 16)]
+	eor x14, x9, x12
+	.if \access == 1
+	ldrb w15, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	orr x14, x14, x15
+	.endif
+	cbnz x14, \miss
+	add x7, x25, x13
+.endm
+
+.macro translate access, entry_offset, size, record_stack=0
 	.if \access == 1
 	/* Only a translation that reaches the decision below may skip the store's
 	 * publication; the miss and page-crossing paths leave this clear.
@@ -224,6 +247,9 @@ NAME(uml_x86_64_gadget_\name):
 	and w10, w10, #0x7fff
 	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
 	add x11, x11, x10, lsl #5
+	.if \record_stack
+	str x11, [_context, #UML_X86_64_CONTEXT_STACK_ENTRY]
+	.endif
 	ldp x12, x13, [x11, #\entry_offset]
 	.if \access == 1
 	bic x14, x12, #(UML_X86_64_TLB_WRITE_CODE | UML_X86_64_TLB_WRITE_CACHED_CODE)
