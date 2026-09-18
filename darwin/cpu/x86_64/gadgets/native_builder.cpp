@@ -6038,15 +6038,19 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	if (instruction.locked && !native_locked_scalar && !native_locked_atomic)
 		return false;
 	if (append_baked(stream, gadget, mode, state, produced)) {
-		/* Experiment: a baked entry that executes no flag-setting host
-		 * instruction leaves the producer's NZCV for a later consumer. */
+		/* A baked entry that executes no flag-setting host instruction
+		 * leaves the producer's NZCV for a later consumer. The bank's
+		 * transfers are all such entries: their translation tests the TLB
+		 * tag with an exclusive-or, their store epilogue orders addresses by
+		 * the sign of a difference, and their miss tails save NZCV around
+		 * the calls they make. */
 		const bool transparent =
-			(instruction.operation == Operation::move ||
-			 instruction.operation == Operation::move_zero_extend ||
-			 instruction.operation == Operation::move_sign_extend) ?
-				instruction.destination.kind != OperandKind::memory &&
-				instruction.source.kind != OperandKind::memory :
-			instruction.operation == Operation::lea;
+			instruction.operation == Operation::move ||
+			instruction.operation == Operation::move_zero_extend ||
+			instruction.operation == Operation::move_sign_extend ||
+			instruction.operation == Operation::lea ||
+			instruction.operation == Operation::push ||
+			instruction.operation == Operation::pop;
 		if (transparent && produced.condition == HostFlags::none &&
 			produced.carry == CarrySource::unknown)
 			produced = state;
