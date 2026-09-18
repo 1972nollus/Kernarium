@@ -62,7 +62,6 @@ JitExecutor::Implementation::Implementation(
       shared_publication_context_{diagnostics.shared_publication_context},
       before_shared_publication_{diagnostics.before_shared_publication},
 #endif
-      defer_cold_translation_{options.defer_cold_translation},
       enable_guarded_control_flow_{options.enable_guarded_control_flow},
       enable_pointer_authentication_{
           options.enable_pointer_authentication},

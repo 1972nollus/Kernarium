@@ -284,12 +284,12 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
 
 enum class AliasStore : unsigned { plain, release, limited_release };
 
-void same_backing_alias_case(bool overlaps, bool defer_cold = false,
+void same_backing_alias_case(bool overlaps, bool semantic_store = false,
                              AliasStore store = AliasStore::plain) {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   const auto generation =
       static_cast<unsigned long>((overlaps ? 10'100U : 10'101U) +
-                                 (defer_cold ? 20U : 0U) +
+                                 (semantic_store ? 20U : 0U) +
                                  40U * static_cast<unsigned>(store));
   const auto base =
       std::uint64_t{0x110'0000} + (overlaps ? 0U : 8U * page);
@@ -314,9 +314,7 @@ void same_backing_alias_case(bool overlaps, bool defer_cold = false,
               page, PROT_READ | PROT_WRITE, 0, 1) == 0);
 
   uml::cpu::arm64::JitExecutor first;
-  uml::cpu::arm64::JitExecutor second{
-      uml::cpu::arm64::JitExecutorOptions{
-          .defer_cold_translation = defer_cold}};
+  uml::cpu::arm64::JitExecutor second;
   uml::memory::StaticGuestMemory shared_memory;
   uml::cpu::arm64::CpuState first_cpu{};
   uml::cpu::arm64::CpuState second_cpu{};
@@ -333,6 +331,11 @@ void same_backing_alias_case(bool overlaps, bool defer_cold = false,
   second_cpu.pc = base + 8U;
   second_cpu.registers[2] = observed;
   second_cpu.registers[6] = alias + store_offset;
+  /*
+   * Top-byte-ignore keeps tag checks off but sends the alias store through
+   * the JIT's semantic slow path instead of its tracked native store.
+   */
+  second_cpu.tbi_enabled = semantic_store;
 
   require(first.begin_execution(generation, first_cpu.pc));
   std::size_t executed = 0;
@@ -344,9 +347,19 @@ void same_backing_alias_case(bool overlaps, bool defer_cold = false,
 
   if (store == AliasStore::plain) {
     require(second.begin_execution(generation, second_cpu.pc));
-    require(second.run_block(second_cpu, shared_memory, generation, executed) ==
-            ::uml::cpu::EngineEvent::system_call);
-    require(executed == 2);
+    auto event = ::uml::cpu::EngineEvent::continued;
+    std::size_t retired = 0;
+    unsigned blocks = 0;
+    for (; blocks < 4U && event == ::uml::cpu::EngineEvent::continued;
+         ++blocks) {
+      event = second.run_block(second_cpu, shared_memory, generation,
+                               executed);
+      retired += executed;
+    }
+    require(event == ::uml::cpu::EngineEvent::system_call);
+    require(retired == 2);
+    // The native store and system call share one translated block.
+    require(semantic_store || blocks == 1);
     second.end_execution();
   } else {
     // Exercise the helper explicitly so native lowering cannot hide a stale
