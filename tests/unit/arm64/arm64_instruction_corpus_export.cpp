@@ -1061,6 +1061,10 @@ void add_word(Candidates &candidates, std::uint32_t word, Minimization level) {
     if (vectors)
       for (unsigned offset = 0; offset < 4U; ++offset)
         candidates.vector[(field + offset) & 31U] = true;
+    /* By-element forms with 16-bit elements name Vm in bits 19:16 and use
+     * bit 20 as an index bit. */
+    if (vectors && shift == 16U)
+      candidates.vector[field & 15U] = true;
   }
   /* LD64B, ST64B, ST64BV, and ST64BV0 transfer eight consecutive registers. */
   if (broad && (word & 0xffe0'8000U) == 0xf820'8000U)
