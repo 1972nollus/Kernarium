@@ -85,6 +85,11 @@ used to cost a link follow, and the taken edge keeps its link. A build with no
 link resolver -- the budget-limited replay of a cached block -- keeps the
 terminal form instead and leaves the translated tail unreachable.
 
+The retirement counter carries the dispatch's instruction budget as a negative
+bias, so an edge that follows a link tests the sign of one addition instead of
+loading the limit and comparing against it. `uml_x86_64_gadget_leave` takes
+the bias back out before it reports what the dispatch retired.
+
 ## Software TLB
 
 `Executor::prepare` enters an address-space generation, and it must not leave

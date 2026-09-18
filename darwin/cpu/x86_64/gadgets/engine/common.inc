@@ -311,10 +311,8 @@ NAME(uml_x86_64_gadget_\name):
 	b uml_x86_64_gadget_leave
 .Lx86_link_code_ready\@:
 	ldp _stream, x11, [x19]
-	add x12, _executed, x11
-	ldr x13, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
-	cmp x12, x13
-	b.ls .Lx86_link_follow\@
+	adds x12, _executed, x11
+	b.le .Lx86_link_follow\@
 	ldr x9, [x19, #16]
 	str x9, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -383,14 +381,19 @@ NAME(uml_x86_64_gadget_enter):
 	mov _stream, x0
 	mov _cpu, x1
 	mov _context, x2
-	mov _executed, xzr
+	/* The retirement counter carries this run's budget as a bias, so every
+	 * linked edge tests the sign of one addition rather than loading the
+	 * limit and comparing against it. `leave` takes the bias back out. */
+	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
+	neg _executed, x9
 	x86_memory_order_boundary
 	next_gadget
 
 .p2align 4
 uml_x86_64_gadget_leave:
 	x86_memory_order_boundary
-	mov x1, _executed
+	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
+	add x1, _executed, x9
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
 	ldp x26, x27, [sp, #0x40]
