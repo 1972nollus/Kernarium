@@ -176,8 +176,8 @@ NAME(uml_x86_64_gadget_\name):
 	.endif
 	and x9, x7, #0xfffffffffffff000
 	lsr x10, x7, #12
-	eor x10, x10, x10, lsr #13
-	and w10, w10, #0x1fff
+	eor x10, x10, x10, lsr #15
+	and w10, w10, #0x7fff
 	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
 	add x11, x11, x10, lsl #5
 	ldp x12, x13, [x11, #\entry_offset]

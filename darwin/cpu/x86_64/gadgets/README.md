@@ -104,7 +104,10 @@ describes the mapping ranges a reader has not yet seen, so a reader only a few
 changes behind replays exactly those ranges and retires just the entries they
 cover. The whole table is cleared only when the address space cannot describe
 the span, when the span covers more than a quarter of the entries, or when the
-memory or the generation changed.
+memory or the generation changed. The table is direct-mapped with 32768
+entries, 1 MiB, indexed by the page number folded once at that width;
+`native_tlb_entry_count` is the one constant, and the four assembly copies of
+the index must change with it.
 
 ## Floating-point environment
 
