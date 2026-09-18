@@ -61,7 +61,8 @@ elseif(UML_EMULATOR_XCFRAMEWORK)
     add_library(uml_emulator_external INTERFACE)
     target_link_libraries(uml_emulator_external INTERFACE
         "${UML_EMULATOR_XCFRAMEWORK}"
-        "$<$<LINK_LANGUAGE:C,OBJC>:c++>")
+        "$<$<LINK_LANGUAGE:C,OBJC>:c++>"
+        "-framework Foundation")
     set(_uml_emulator_consumer_target uml_emulator_external)
 else()
     if(NOT IS_ABSOLUTE "${UML_EMULATOR_LIBRARY}" OR
@@ -79,7 +80,8 @@ else()
     set_target_properties(uml_emulator_external PROPERTIES
         IMPORTED_LOCATION "${UML_EMULATOR_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${UML_EMULATOR_HEADERS}"
-        INTERFACE_LINK_LIBRARIES "$<$<LINK_LANGUAGE:C,OBJC>:c++>")
+        INTERFACE_LINK_LIBRARIES
+            "$<$<LINK_LANGUAGE:C,OBJC>:c++>;-framework Foundation")
     set(_uml_emulator_consumer_target uml_emulator_external)
 endif()
 

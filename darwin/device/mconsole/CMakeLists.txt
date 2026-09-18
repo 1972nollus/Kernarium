@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-add_library(uml_device_guest_console STATIC guest_console.cpp)
+add_library(uml_device_guest_console OBJECT guest_console.cpp)
 add_library(UML::DeviceGuestConsole ALIAS uml_device_guest_console)
 uml_declare_architecture_target(uml_device_guest_console device)
 target_link_libraries(uml_device_guest_console PUBLIC UML::DeviceSocketPaths)

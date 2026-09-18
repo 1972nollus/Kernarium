@@ -17,6 +17,13 @@ device -> memory / platform
 targets and source manifest. The neutral CPU factory selects the gadget or JIT
 adapter; engines do not depend on one another.
 
+An emulator archive is a self-contained final product. CMake merges object
+libraries and interface-carried objects into it but never a linked static
+archive, so every module the emulator reaches delivers objects, including one
+that also keeps a static archive for single-copy process state.
+`scripts/build-xcframework.sh` rejects a release archive that leaves a
+first-party symbol undefined.
+
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
 Test-only hooks belong in test/support targets, not production libraries.
