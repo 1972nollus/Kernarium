@@ -6,6 +6,7 @@
 #include "native_hardware_oracle.hpp"
 #include "native_hardware_oracle_evidence.hpp"
 #include "native_hardware_oracle_selection.hpp"
+#include "reference_engine.hpp"
 
 #include "cpu/engine.hpp"
 #include "cpu/arm64/engine_execution.hpp"
@@ -44,7 +45,26 @@ constexpr std::uint64_t code_base = engine_test_code_base;
 constexpr std::size_t execution_limit = 64;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
-using Engine = ::uml::cpu::EngineKind;
+/* Conformance lanes, not product engine selections. The `interpreter` lane is
+ * the test-only reference oracle over the arm64 instruction Dispatcher; the
+ * other two name the production translated engines. */
+enum class Engine {
+  interpreter,
+  gadgets,
+  jit,
+};
+
+[[nodiscard]] bool engine_available(Engine engine) noexcept {
+  switch (engine) {
+  case Engine::interpreter:
+    return true;
+  case Engine::gadgets:
+    return ::uml::cpu::cpu_engine_available(::uml::cpu::EngineKind::gadgets);
+  case Engine::jit:
+    return ::uml::cpu::cpu_engine_available(::uml::cpu::EngineKind::jit);
+  }
+  return false;
+}
 
 struct Outcome final {
   ExpectedEvent event{ExpectedEvent::fatal};
@@ -571,10 +591,14 @@ void install_program(
   installed_page = page;
 }
 
+/* The reference oracle and the production engines expose the same request and
+ * result shape without sharing a base class, because only the latter are
+ * selectable products. One template keeps the lane loop identical for both. */
+template <typename EngineType>
 [[nodiscard]] Outcome run_engine(
     Engine selected, const arm64::CpuState &initial,
     StaticGuestMemory &memory, unsigned long generation,
-    ::uml::cpu::CpuEngine &engine) {
+    EngineType &engine) {
   Outcome outcome{};
   outcome.cpu = initial;
   const auto sequences = darwin_uml_static_vm_sequences(generation);
@@ -1100,8 +1124,7 @@ public:
             options.enable_pointer_authentication,
         .host_capabilities = ::uml::platform::apple::probed_host_capabilities(),
     };
-    interpreter_engine_ = ::uml::cpu::make_cpu_engine(
-        ::uml::cpu::EngineKind::interpreter, configuration);
+    reference_engine_ = std::make_unique<ReferenceEngine>(configuration);
     const bool forced_gadget_path = options.force_software_checksum ||
         options.force_software_flags || options.force_software_sha3 ||
         options.force_software_fixed_transforms ||
@@ -1403,7 +1426,7 @@ public:
 
     for (const auto engine :
          {Engine::interpreter, Engine::gadgets, Engine::jit}) {
-      if (!::uml::cpu::cpu_engine_available(engine)) {
+      if (!engine_available(engine)) {
         if (engine != Engine::jit)
           fail(test_case.name, "setup", diagnostic_instruction,
                "required CPU engine is unavailable");
@@ -1441,6 +1464,12 @@ public:
       if (engine == Engine::gadgets && forced_gadget_executor_ != nullptr) {
         outcome = run_forced_gadget_executor(
             initial, memory, generation_, *forced_gadget_executor_);
+      } else if (engine == Engine::interpreter) {
+        if (reference_engine_ == nullptr)
+          fail(test_case.name, "setup", diagnostic_instruction,
+               "reference oracle engine was not constructed");
+        outcome = run_engine(engine, initial, memory, generation_,
+                             *reference_engine_);
       } else {
         auto *selected_engine = engine_instance(engine);
         if (selected_engine == nullptr)
@@ -1649,7 +1678,7 @@ private:
   engine_instance(Engine engine) noexcept {
     switch (engine) {
     case Engine::interpreter:
-      return interpreter_engine_.get();
+      return nullptr;
     case Engine::gadgets:
       return gadget_engine_.get();
     case Engine::jit:
@@ -1663,7 +1692,7 @@ private:
   Backing backing_;
   Mapping mapping_;
   std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> installed_page_{};
-  std::unique_ptr<::uml::cpu::CpuEngine> interpreter_engine_;
+  std::unique_ptr<ReferenceEngine> reference_engine_;
   std::unique_ptr<::uml::cpu::CpuEngine> gadget_engine_;
   std::unique_ptr<::uml::cpu::CpuEngine> jit_engine_;
   std::unique_ptr<::uml::cpu::arm64::gadgets::GadgetExecutor>
