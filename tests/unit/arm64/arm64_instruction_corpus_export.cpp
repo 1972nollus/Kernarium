@@ -1188,6 +1188,17 @@ void add_word(Candidates &candidates, std::uint32_t word, Minimization level) {
     if (vectors && shift == 16U)
       candidates.vector[field & 15U] = true;
   }
+  /* CASP, CASPT, RCWCASP, and RCWSCASP name the second register of their Rs
+   * and Rt pairs implicitly; SYSP, MSRR, and MRRS do so for Rt. */
+  const bool compare_swap_pair = (word & 0xbfa0'7c00U) == 0x0820'7c00U ||
+                                 (word & 0xffa0'7c00U) == 0x4980'7c00U ||
+                                 (word & 0xbf20'fc00U) == 0x1920'0c00U;
+  const bool system_pair = (word & 0xfff8'0000U) == 0xd548'0000U ||
+                           (word & 0xffd0'0000U) == 0xd550'0000U;
+  if (compare_swap_pair && ((word >> 16U) & 31U) < 30U)
+    candidates.general[((word >> 16U) & 31U) + 1U] = true;
+  if ((compare_swap_pair || system_pair) && (word & 31U) < 30U)
+    candidates.general[(word & 31U) + 1U] = true;
   /* LD64B, ST64B, ST64BV, and ST64BV0 transfer eight consecutive registers. */
   if (broad && (word & 0xffe0'8000U) == 0xf820'8000U)
     for (unsigned offset = 0; offset < 8U; ++offset)
