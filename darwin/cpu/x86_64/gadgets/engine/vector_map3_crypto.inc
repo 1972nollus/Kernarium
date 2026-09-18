@@ -227,22 +227,27 @@ gadget vector_map3_sha1rnds4_rm
 .purgem vector_map3_sha1_round
 .purgem vector_map3_sha1_function
 
+/* Each source word is replicated across the state, so ShiftRows moves
+ * nothing and AESE with a zero key is SubWord in every lane. RotWord is a
+ * shift and a shift-insert per lane, the round constant is broadcast, and
+ * three zips interleave the four result words; nothing crosses to the
+ * general registers, whose round trips serialized the old sequence. */
 .macro vector_map3_aeskeygen_body
 	dup v4.4s, v1.s[1]
 	dup v5.4s, v1.s[3]
 	movi v6.16b, #0
 	aese v4.16b, v6.16b
 	aese v5.16b, v6.16b
-	mov w10, v4.s[0]
-	mov w12, v5.s[0]
-	ror w11, w10, #8
-	ror w14, w12, #8
-	eor w11, w11, w13
-	eor w14, w14, w13
-	mov v4.s[0], w10
-	mov v4.s[1], w11
-	mov v4.s[2], w12
-	mov v4.s[3], w14
+	dup v6.4s, w13
+	ushr v7.4s, v4.4s, #8
+	sli v7.4s, v4.4s, #24
+	eor v7.16b, v7.16b, v6.16b
+	zip1 v4.4s, v4.4s, v7.4s
+	ushr v7.4s, v5.4s, #8
+	sli v7.4s, v5.4s, #24
+	eor v7.16b, v7.16b, v6.16b
+	zip1 v5.4s, v5.4s, v7.4s
+	zip1 v4.2d, v4.2d, v5.2d
 .endm
 
 gadget vector_map3_aeskeygen_rr
