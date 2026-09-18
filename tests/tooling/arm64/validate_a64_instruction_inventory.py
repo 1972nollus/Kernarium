@@ -20,10 +20,10 @@ COLUMNS = [
     "current_suite",
     "current_variant_model",
     "native_feature_requirements",
-    "three_engine_status",
+    "engine_status",
 ]
 SECTION_COUNTS = {"Base": 516, "FP&SIMD": 467}
-THREE_ENGINE_STATUSES = {"pending", "verified"}
+ENGINE_STATUSES = {"pending", "verified"}
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
         "condition+target-form+register-alias+architectural-state+reserved",
@@ -223,11 +223,11 @@ def main() -> int:
     counts = Counter(row["section"] for row in rows)
     if counts != Counter(SECTION_COUNTS):
         fail(f"section counts are {dict(counts)!r}, expected {SECTION_COUNTS!r}")
-    status_counts = Counter(row["three_engine_status"] for row in rows)
+    status_counts = Counter(row["engine_status"] for row in rows)
     verified_sections = Counter(
         row["section"]
         for row in rows
-        if row["three_engine_status"] == "verified"
+        if row["engine_status"] == "verified"
     )
 
     ids = [row["stable_id"] for row in rows]
@@ -256,10 +256,10 @@ def main() -> int:
                 f"{row['stable_id']}: variant model {model!r} is not "
                 f"valid for suite {suite!r}"
             )
-        if row["three_engine_status"] not in THREE_ENGINE_STATUSES:
+        if row["engine_status"] not in ENGINE_STATUSES:
             fail(
-                f"{row['stable_id']}: unknown three-engine status "
-                f"{row['three_engine_status']!r}"
+                f"{row['stable_id']}: unknown engine status "
+                f"{row['engine_status']!r}"
             )
         validate_requirement(
             row["native_feature_requirements"], row["stable_id"]

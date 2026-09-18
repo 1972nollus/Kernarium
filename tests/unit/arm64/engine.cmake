@@ -207,19 +207,8 @@
 		COMMAND uml_arm64_pc_alignment_contract_tests
 		LABELS tsan)
 
-    add_executable(uml_arm64_dispatcher_internal_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_dispatcher_internal_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>)
-    target_include_directories(uml_arm64_dispatcher_internal_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_arm64_dispatcher_internal_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-dispatcher-internal
-        COMMAND uml_arm64_dispatcher_internal_tests)
-
     add_executable(uml_arm64_floating_exception_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>)
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp)
     target_include_directories(uml_arm64_floating_exception_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_options(uml_arm64_floating_exception_tests PRIVATE
@@ -230,7 +219,6 @@
     foreach(floating_trap_suite IN ITEMS control)
         add_executable(uml_arm64_floating_trap_${floating_trap_suite}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_${floating_trap_suite}_tests.cpp
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -252,7 +240,6 @@
     add_executable(uml_arm64_floating_trap_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -268,7 +255,6 @@
 
     add_executable(uml_arm64_gadget_terminal_count_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_terminal_count_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -284,7 +270,6 @@
 
     add_executable(uml_arm64_gadget_successor_hoist_structure_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -306,7 +291,6 @@
 
     add_executable(uml_arm64_static_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_runtime_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -323,7 +307,6 @@
 
     add_executable(uml_arm64_static_boundary_state_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_boundary_state_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -338,7 +321,6 @@
 
     add_executable(uml_arm64_static_translation_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_translation_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -386,7 +368,6 @@
     add_executable(uml_arm64_jit_executor_pool_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -408,7 +389,6 @@
     add_executable(uml_arm64_jit_executor_pool_multislot_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -445,7 +425,6 @@
         add_executable(uml_arm64_jit_${JIT_TEST}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_${JIT_TEST}_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -471,7 +450,6 @@
     add_executable(uml_arm64_jit_lazy_flags_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_lazy_flags_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -489,7 +467,6 @@
     add_executable(uml_arm64_jit_lazy_flags_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_lazy_flags_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -514,7 +491,6 @@
             uml_arm64_jit_indirect_link_${JIT_INDIRECT_LINK_TEST}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_indirect_link_${JIT_INDIRECT_LINK_TEST}_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -549,7 +525,6 @@
             uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -581,7 +556,6 @@
             uml_arm64_jit_exact_retirement_${JIT_EXACT_RETIREMENT_TEST}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_exact_retirement_${JIT_EXACT_RETIREMENT_TEST}_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -604,7 +578,6 @@
     add_executable(uml_arm64_jit_fp_link_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_fp_link_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -623,7 +596,6 @@
     add_executable(uml_arm64_counter_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_counter_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -639,7 +611,6 @@
     add_executable(uml_arm64_jit_counter_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_counter_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -656,7 +627,6 @@
     add_executable(uml_arm64_jit_register_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -676,7 +646,6 @@
             uml_arm64_jit_one_to_one_${JIT_ONE_TO_ONE_TEST}_codegen_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_one_to_one_${JIT_ONE_TO_ONE_TEST}_codegen_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -713,7 +682,6 @@
     add_executable(uml_arm64_jit_sp_memory_run_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_sp_memory_run_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -742,7 +710,6 @@
     add_executable(uml_arm64_jit_gpr_memory_run_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_memory_run_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -771,7 +738,6 @@
     add_executable(uml_arm64_jit_simd_memory_run_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_memory_run_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -800,7 +766,6 @@
     add_executable(uml_arm64_jit_scalar_atomic_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_scalar_atomic_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -818,7 +783,6 @@
     add_executable(uml_arm64_jit_simd_structure_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_structure_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -837,7 +801,6 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_codegen_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_pressure_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -855,7 +818,6 @@
     add_executable(uml_arm64_jit_table_list_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_table_list_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -873,7 +835,6 @@
     add_executable(uml_arm64_jit_gpr_residency_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -891,7 +852,6 @@
     add_executable(uml_arm64_jit_pair_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_pair_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -909,7 +869,6 @@
     add_executable(uml_arm64_jit_control_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_control_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -928,7 +887,6 @@
         add_executable(uml_arm64_jit_gpr_link_profile_codegen_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -947,7 +905,6 @@
         add_executable(uml_arm64_jit_gpr_link_profile_runtime_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -971,7 +928,6 @@
         add_executable(uml_arm64_jit_gpr_pressure_profile_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp
             $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
@@ -990,7 +946,6 @@
 
     add_executable(uml_arm64_gadget_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_runtime_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1004,7 +959,6 @@
 
     add_executable(uml_arm64_gadget_cache_validation_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
@@ -1028,7 +982,6 @@
     if(UML_GADGET_SHARED_BUDGET_MIB GREATER 0)
         add_executable(uml_arm64_gadget_shared_translation_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp
-            $<TARGET_OBJECTS:uml_arm64_dispatch>
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
@@ -1050,7 +1003,6 @@
 
     add_executable(uml_arm64_gadget_inline_fallthrough_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
@@ -1072,7 +1024,6 @@
 
     add_executable(uml_arm64_gadget_hot_path_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_hot_path_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1089,7 +1040,6 @@
 
     add_executable(uml_arm64_gadget_nzcv_residency_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_nzcv_residency_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1103,7 +1053,6 @@
 
     add_executable(uml_arm64_gadget_fp_environment_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_fp_environment_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1117,9 +1066,9 @@
 
     add_executable(uml_arm64_gadget_dependency_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_reference.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_memory_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_vector_dependency_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1136,7 +1085,6 @@
 
     add_executable(uml_arm64_gadget_link_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_link_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -1149,7 +1097,6 @@
 
     add_executable(uml_arm64_gadget_indirect_link_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_indirect_link_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)

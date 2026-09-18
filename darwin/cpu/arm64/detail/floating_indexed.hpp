@@ -233,7 +233,7 @@ template<typename Floating, typename Integer>
 /*
  * Execute one lane whose AFP controls need software handling.  Hosts which
  * implement the feature use the native instruction directly; this path keeps
- * interpreter and checked gadgets exact on older hosts.
+ * the checked gadgets exact on older hosts.
  */
 template<typename Floating>
 [[nodiscard]] inline IndexedFloatingResult<

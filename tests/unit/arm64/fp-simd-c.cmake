@@ -4,7 +4,6 @@
 	foreach(simd_dot_suite IN ITEMS gadget)
 		add_executable(uml_arm64_simd_dot_${simd_dot_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_dot_${simd_dot_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -25,7 +24,6 @@
 	foreach(simd_matrix_suite IN ITEMS gadget)
 		add_executable(uml_arm64_simd_matrix_${simd_matrix_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_matrix_${simd_matrix_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -47,7 +45,6 @@
 		add_executable(
 			uml_arm64_simd_fcvt_precision_${simd_fcvt_precision_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_fcvt_precision_${simd_fcvt_precision_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -69,7 +66,6 @@
 	foreach(simd_sha_suite IN ITEMS fixed_transform_gadget)
 		add_executable(uml_arm64_simd_${simd_sha_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_${simd_sha_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -91,7 +87,6 @@
 		add_executable(
 			uml_arm64_fp8_multiply_matrix_${fp8_multiply_matrix_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_fp8_multiply_matrix_${fp8_multiply_matrix_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -118,7 +113,6 @@
 	foreach(fp8_dot_suite IN ITEMS gadget)
 		add_executable(uml_arm64_fp8_dot_${fp8_dot_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_fp8_dot_${fp8_dot_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -140,7 +134,6 @@
 		add_executable(
 			uml_arm64_fp8_convert_up_${fp8_convert_up_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_fp8_convert_up_${fp8_convert_up_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -163,7 +156,6 @@
 		add_executable(
 			uml_arm64_fp8_convert_down_${fp8_convert_down_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_fp8_convert_down_${fp8_convert_down_suite}_tests.cpp
-			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
 			$<TARGET_OBJECTS:uml_arm64_gadgets>
 			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)

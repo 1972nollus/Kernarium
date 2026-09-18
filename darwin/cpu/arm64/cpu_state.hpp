@@ -94,7 +94,7 @@ struct CpuState final {
 	std::uint64_t gadget_host_fpsr{};
 	bool gadget_fp_active{};
 	/* Private execution-engine scratch. An indirect control-flow cache miss
-	 * records its data-only cache cell here so the outer dispatcher can train
+	 * records its data-only cache cell here so the gadget executor can train
 	 * that exact site. This is never guest-visible architectural state. */
 	void *gadget_indirect_miss{};
 	/* JIT blocks using the optional native mode register retain the host value

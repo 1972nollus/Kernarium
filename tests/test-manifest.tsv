@@ -63,7 +63,6 @@ x86-64-instruction-corpus	tests/unit/x86_64/fex_asm_runner.cpp	unit	conditional
 emulator-native-16k-ownership	tests/unit/arm64	unit	conditional
 emulator-native-entry-api	tests/unit/arm64	unit	retained
 emulator-c-api-boundary	tests/unit/emulator_c_api_boundary_tests.cpp	unit	retained
-arm64-dispatcher-internal	tests/unit/arm64	unit	retained
 arm64-floating-exception	tests/unit/arm64	unit	retained
 arm64-floating-trap-control	tests/unit/arm64	unit	retained
 arm64-floating-trap-runtime	tests/unit/arm64	unit	retained

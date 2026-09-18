@@ -11,8 +11,8 @@
 #include <optional>
 #include <span>
 
-/* Engine-neutral instruction field, immediate, and flag helpers. Translated
- * engines include this header; it must not depend on the interpreter. */
+/* Engine-neutral instruction field, immediate, and lane helpers shared by the
+ * gadget engine, the JIT, and their tests. */
 
 namespace uml::cpu::arm64::detail {
 
@@ -26,49 +26,6 @@ constexpr std::int64_t sign_extend(std::uint64_t value, unsigned bits)
 {
 	const auto sign = std::uint64_t{1} << (bits - 1);
 	return static_cast<std::int64_t>((value ^ sign) - sign);
-}
-
-constexpr bool condition_holds(std::uint32_t nzcv, unsigned condition)
-{
-	const bool negative = (nzcv & 0x8000'0000U) != 0;
-	const bool zero = (nzcv & 0x4000'0000U) != 0;
-	const bool carry = (nzcv & 0x2000'0000U) != 0;
-	const bool overflow = (nzcv & 0x1000'0000U) != 0;
-	bool result = false;
-
-	switch (condition >> 1) {
-	case 0: result = zero; break;
-	case 1: result = carry; break;
-	case 2: result = negative; break;
-	case 3: result = overflow; break;
-	case 4: result = carry && !zero; break;
-	case 5: result = negative == overflow; break;
-	case 6: result = !zero && negative == overflow; break;
-	case 7: result = true; break;
-	default: break;
-	}
-	if ((condition & 1U) != 0 && condition < 14)
-		result = !result;
-	return result;
-}
-
-inline void set_add_sub_flags(CpuState &cpu, std::uint64_t left,
-			      std::uint64_t right, std::uint64_t result,
-			      bool is_64_bit, bool subtract)
-{
-	const auto mask = width_mask(is_64_bit);
-	const auto sign = std::uint64_t{1} << (is_64_bit ? 63 : 31);
-	left &= mask;
-	right &= mask;
-	result &= mask;
-	const bool carry = subtract ? left >= right : result < left;
-	const bool overflow = subtract ?
-		(((left ^ right) & (left ^ result) & sign) != 0) :
-		(((~(left ^ right)) & (left ^ result) & sign) != 0);
-	cpu.nzcv = ((result & sign) != 0 ? 0x8000'0000U : 0) |
-		(result == 0 ? 0x4000'0000U : 0) |
-		(carry ? 0x2000'0000U : 0) |
-		(overflow ? 0x1000'0000U : 0);
 }
 
 inline std::uint64_t decode_little_endian(std::span<const std::byte> bytes)

@@ -3,12 +3,12 @@
 
 #include <cstdint>
 
-namespace uml::cpu::arm64::detail {
+namespace uml::emulator::tests {
 
 /*
- * Apple Arm64 exposes the architectural virtual counter to EL0.  Reading the
- * matching frequency and count registers keeps the guest pair coherent while
- * avoiding a host-library clock conversion in the interpreter.
+ * Apple Arm64 exposes the architectural virtual counter to EL0. Both engines
+ * return the host's own frequency and count registers to the guest, so tests
+ * read the same registers to bound those results.
  */
 [[nodiscard]] inline std::uint64_t read_host_counter_frequency() noexcept
 {
@@ -24,4 +24,4 @@ namespace uml::cpu::arm64::detail {
 	return value;
 }
 
-} // namespace uml::cpu::arm64::detail
+} // namespace uml::emulator::tests

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_dependency_reference.hpp"
 #include "cpu/arm64/gadgets/dependency_coverage.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
-#include "cpu/arm64/dispatcher.hpp"
 
 #include <array>
 #include <cstdint>
@@ -16,6 +16,7 @@
 
 namespace g = uml::cpu::arm64::gadgets;
 namespace a = uml::cpu::arm64;
+namespace reference = arm64_gadget_dependency_reference;
 extern "C" void uml_arm64_gadget_interrupt();
 void run_gadget_dependency_memory_tests();
 void run_gadget_vector_dependency_tests();
@@ -40,11 +41,14 @@ std::uintptr_t address(void (*f)())
 	return reinterpret_cast<std::uintptr_t>(f);
 }
 
-class NoMemory final : public a::GuestMemory {
-public:
-	bool read(std::uint64_t, std::span<std::byte>) override { return false; }
-	bool write(std::uint64_t, std::span<const std::byte>) override { return false; }
-};
+/* Runs a program that ends in SVC through the test-local reference. */
+void run_reference(a::CpuState &cpu, std::span<const std::uint32_t> code,
+	const std::source_location where = std::source_location::current())
+{
+	for (auto word : code)
+		require(reference::execute(cpu, word) == (word == 0xd400'0001U ?
+			reference::Step::system_call : reference::Step::continued), where);
+}
 
 std::uint64_t random_word(std::uint64_t &seed)
 {
@@ -71,7 +75,6 @@ void scalar_matrix()
 			(is_immediate(base) ?
 			 (immediate << 10) : (right << 16));
 	};
-	NoMemory memory;
 	auto tlb = std::make_unique<uml::memory::Tlb>();
 	std::uint64_t seed = 0xced2'8875'abe1'4147ULL;
 	std::size_t comparisons = 0;
@@ -109,11 +112,7 @@ void scalar_matrix()
 					expected.sp = random_word(seed) & ~std::uint64_t{15};
 					expected.nzcv = static_cast<std::uint32_t>(random_word(seed)) & 0xf000'0000U;
 					a::CpuState on = expected, off = expected;
-					for (auto word : instructions) {
-						const auto step = a::Dispatcher{}.execute(expected, memory, word);
-						require(step.reason == (word == 0xd400'0001U ?
-							a::StopReason::system_call : a::StopReason::continued));
-					}
+					run_reference(expected, instructions);
 					std::size_t on_count{}, off_count{};
 					require(g::execute(enabled.program, on, *tlb, on_count) == uml::cpu::EngineEvent::system_call);
 					require(g::execute(disabled.program, off, *tlb, off_count) == uml::cpu::EngineEvent::system_call);
@@ -125,7 +124,7 @@ void scalar_matrix()
 					++comparisons;
 				}
 			}
-	std::printf("scalar matrix: %zu interpreter/on/off comparisons\n", comparisons);
+	std::printf("scalar matrix: %zu reference/on/off comparisons\n", comparisons);
 }
 
 void constant_boundary()
@@ -152,10 +151,7 @@ void undeclared_boundary()
 	expected.registers[1] = 0xffff'abcd;
 	expected.registers[2] = 0x8765'4321;
 	auto actual = expected;
-	NoMemory memory;
-	for (auto word : instructions)
-		require(a::Dispatcher{}.execute(expected, memory, word).reason ==
-			(word == 0xd400'0001U ? a::StopReason::system_call : a::StopReason::continued));
+	run_reference(expected, instructions);
 	const auto built = g::Builder{}.build(0x6000, instructions);
 	auto tlb = std::make_unique<uml::memory::Tlb>();
 	require(g::execute(built.program, actual, *tlb) == uml::cpu::EngineEvent::system_call);
@@ -207,7 +203,6 @@ void catalog()
 
 void broad_matrix()
 {
-	NoMemory memory;
 	auto tlb = std::make_unique<uml::memory::Tlb>();
 	std::uint64_t seed = 0x6540'cdfe'8302'ab93ULL;
 	std::size_t comparisons{};
@@ -283,7 +278,8 @@ void broad_matrix()
 			}
 			families.insert(access.contract->family);
 			// Change each source through a real producer, then consume this
-			// instruction's own result as well. The interpreter is the oracle.
+			// instruction's own result as well. The test-local reference is
+			// the oracle.
 			std::set<std::uint16_t> sources{0};
 			for (auto source : access.sources)
 				if (source < 31 * 8 || source == offsetof(a::CpuState, sp)) sources.insert(source);
@@ -307,9 +303,7 @@ void broad_matrix()
 					expected.nzcv = ((trial + pattern) & 15U) << 28;
 					expected.pc = 0x4000;
 					auto actual_on = expected, actual_off = expected;
-					for (auto instruction : code)
-						require(a::Dispatcher{}.execute(expected, memory, instruction).reason ==
-							(instruction == 0xd400'0001U ? a::StopReason::system_call : a::StopReason::continued));
+					run_reference(expected, code);
 					for (const auto &[program, actual] : {
 						std::pair{&on.program, &actual_on}, std::pair{&off.program, &actual_off}}) {
 						std::size_t count{};
@@ -327,7 +321,7 @@ void broad_matrix()
 		}
 	}
 	require(families.size() >= 16);
-	std::printf("broad scalar matrix: %zu interpreter/on/off comparisons across %zu families\n",
+	std::printf("broad scalar matrix: %zu reference/on/off comparisons across %zu families\n",
 		comparisons, families.size());
 }
 #endif
@@ -435,10 +429,7 @@ void mixed_domain_counts()
 		for (unsigned byte = 0; byte < 16; ++byte)
 			expected.vectors[reg].bytes[byte] = std::byte(reg + byte);
 	const auto initial = expected;
-	NoMemory memory;
-	for (auto word : code)
-		require(a::Dispatcher{}.execute(expected, memory, word).reason ==
-			(word == code.back() ? a::StopReason::system_call : a::StopReason::continued));
+	run_reference(expected, code);
 	auto tlb = std::make_unique<uml::memory::Tlb>();
 	for (bool forwarding : {false, true}) {
 		const auto built = g::Builder{}.build(pc, code, {},

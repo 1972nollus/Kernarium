@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_dependency_reference.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
-#include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 #include "platform/apple/host_features.hpp"
 
@@ -20,6 +20,7 @@ extern "C" void uml_arm64_gadget_interrupt();
 namespace {
 namespace a = uml::cpu::arm64;
 namespace g = a::gadgets;
+namespace reference = arm64_gadget_dependency_reference;
 constexpr std::uint64_t pc = 0x4000;
 constexpr std::uint32_t svc = 0xd400'0001U;
 
@@ -31,11 +32,6 @@ void require(bool condition,
 		std::abort();
 	}
 }
-class NoMemory final : public a::GuestMemory {
-public:
-	bool read(std::uint64_t, std::span<std::byte>) override { return false; }
-	bool write(std::uint64_t, std::span<const std::byte>) override { return false; }
-};
 
 std::uint32_t move(unsigned destination, unsigned source)
 {
@@ -79,20 +75,24 @@ bool equal(const a::CpuState &left, const a::CpuState &right)
 	return true;
 }
 
+/*
+ * Runs the program with vector forwarding off and on. A modelled program must
+ * match the test-local reference; any other program must reproduce the
+ * forwarding-off result exactly.
+ */
 void compare(std::span<const std::uint32_t> code, unsigned seed, std::uint32_t fpcr,
-	uml::memory::Tlb &tlb, bool interpreter = true)
+	uml::memory::Tlb &tlb, bool modelled = true)
 {
 	const auto disabled = g::Builder{}.build(pc, code, {},
 		std::pmr::get_default_resource(), {}, {.vector_forwarding = false});
 	const auto enabled = g::Builder{}.build(pc, code);
 	require(disabled.complete && enabled.complete);
 	auto expected = initial(seed, fpcr), off = expected, on = expected;
-	NoMemory memory;
-	if (interpreter) for (auto word : code) {
-		const auto result = a::Dispatcher{}.execute(expected, memory, word);
-		if (result.reason != (word == svc ? a::StopReason::system_call : a::StopReason::continued)) {
-			std::fprintf(stderr, "vector oracle rejected word=%08x fpcr=%08x reason=%u\n",
-				word, fpcr, static_cast<unsigned>(result.reason));
+	if (modelled) for (auto word : code) {
+		if (reference::execute(expected, word) !=
+			(word == svc ? reference::Step::system_call : reference::Step::continued)) {
+			std::fprintf(stderr, "vector reference rejected word=%08x fpcr=%08x\n",
+				word, fpcr);
 			std::abort();
 		}
 	}
@@ -100,9 +100,7 @@ void compare(std::span<const std::uint32_t> code, unsigned seed, std::uint32_t f
 		std::pair{&disabled.program, &off}, std::pair{&enabled.program, &on}}) {
 		std::size_t count{};
 		require(g::execute(*program, *state, tlb, count) == uml::cpu::EngineEvent::system_call);
-		// Exceptional payloads additionally check exact preservation of the
-		// existing gadget semantics, independent of non-finite oracle agreement.
-		if (!interpreter && state == &off) expected = off;
+		if (!modelled && state == &off) expected = off;
 		if (count != code.size() || !equal(*state, expected)) {
 			std::fprintf(stderr, "vector mismatch word=%08x fpcr=%08x forwarding=%d "
 				"fpsr=%08x expected=%08x count=%zu\n",
@@ -167,12 +165,12 @@ void catalog()
 #if UML_GADGET_VECTOR_FORWARDING
 void broad_matrix(uml::memory::Tlb &tlb)
 {
-	// Enumerate encoding controls, then retain only entries selected by the
-	// production builder and accepted by the reference decoder on this host.
-	// Not every synthesized encoding has a reference-supported allocation.
+	// Enumerate encoding controls and retain one representative of each entry
+	// the production builder selects. The matrix spans the whole vector
+	// catalog, beyond the test-local reference, so forwarding must reproduce
+	// the forwarding-off result; arm64-instruction-corpus owns each entry's
+	// architectural result.
 	std::map<std::uintptr_t, std::uint32_t> representatives;
-	NoMemory memory;
-	std::size_t rejected{};
 	for (unsigned prefix : {0x0eU, 0x2eU, 0x4eU, 0x6eU, 0x5eU, 0x7eU,
 		0x0fU, 0x2fU, 0x4fU, 0x6fU, 0x5fU, 0x7fU, 0x1eU})
 	for (unsigned control = 0; control < 16; ++control)
@@ -180,13 +178,8 @@ void broad_matrix(uml::memory::Tlb &tlb)
 		const auto word = (prefix << 24) | (control << 20) | (2U << 16) |
 			(opcode << 10) | (1U << 5) | 3U;
 		const auto selected = access(word);
-		if (!selected.contract) continue;
-		auto state = initial(0, 0);
-		if (a::Dispatcher{}.execute(state, memory, word).reason != a::StopReason::continued) {
-			++rejected;
-			continue;
-		}
-		representatives.emplace(selected.contract->entries[0], word);
+		if (selected.contract)
+			representatives.emplace(selected.contract->entries[0], word);
 	}
 	std::size_t comparisons{}, edges{};
 	unsigned observed_masks{};
@@ -220,7 +213,7 @@ void broad_matrix(uml::memory::Tlb &tlb)
 		require(on.program.words()[position + 1U + selected.contract->operand_words + prefix] ==
 			consumer.contract->entries[consumer_mask]);
 		for (auto fpcr : {0U, 4U, 3U, 7U, 0x0340'0000U}) {
-			compare(code, static_cast<unsigned>(comparisons * 4), fpcr, tlb);
+			compare(code, static_cast<unsigned>(comparisons * 4), fpcr, tlb, false);
 			for (unsigned payload = 1; payload < 4; ++payload)
 				compare(code, payload, fpcr, tlb, false);
 			++comparisons;
@@ -228,9 +221,9 @@ void broad_matrix(uml::memory::Tlb &tlb)
 	}
 	require(representatives.size() >= 500 && edges >= 500 && observed_masks == 255);
 	std::printf("vector matrix: %zu selected entries, %zu dependent cases, "
-		"%zu interpreter/off/on and %zu exceptional-payload off/on comparisons, "
-		"all source masks; %zu reference-unsupported encodings excluded\n",
-		representatives.size(), edges, comparisons, comparisons * 3, rejected);
+		"%zu finite and %zu exceptional-payload off/on comparisons, "
+		"all source masks\n",
+		representatives.size(), edges, comparisons, comparisons * 3);
 }
 #endif
 
@@ -268,10 +261,9 @@ void linked_boundaries(uml::memory::Tlb &tlb)
 	const std::array code{0x4e21'8400U, move(2, 0), 0xf100'0463U, 0x54ff'ffa1U};
 	auto expected = initial(0, 0);
 	expected.registers[3] = iterations;
-	NoMemory memory;
 	for (unsigned i = 0; i < iterations; ++i)
 		for (auto word : code)
-			require(a::Dispatcher{}.execute(expected, memory, word).reason == a::StopReason::continued);
+			require(reference::execute(expected, word) == reference::Step::continued);
 	for (bool forwarding : {false, true}) {
 		std::array<std::uintptr_t, 2> terminal{
 			reinterpret_cast<std::uintptr_t>(uml_arm64_gadget_interrupt), pc + 16};

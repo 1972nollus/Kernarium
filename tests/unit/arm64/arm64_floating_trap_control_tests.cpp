@@ -13,6 +13,7 @@ namespace {
 
 inline constexpr std::uint32_t fdiv_s0_s1_s2 = 0x1e22'1820U;
 inline constexpr std::uint32_t fdiv_s3_s4_s5 = 0x1e25'1883U;
+inline constexpr std::uint32_t fmul_s0_s1_s2 = 0x1e22'0820U;
 
 struct NativeFpEnvironment final {
 	std::uint64_t fpcr{};
@@ -145,6 +146,27 @@ void unrelated_enable_commits_result(test::engine::EngineHarness &harness)
 		.initial = initial,
 		.expected = expected,
 		.native = test::scalar_native(),
+	});
+}
+
+void trap_commits_only_new_unenabled_flags(
+	test::engine::EngineHarness &harness)
+{
+	auto initial = test::state(208U);
+	initial.fpcr = test::enable_for(test::fpsr_overflow);
+	initial.fpsr |= test::fpsr_input_denormal;
+	test::write_lane(initial, 1U, 0U, 4U, 0x7f7f'ffffU);
+	test::write_lane(initial, 2U, 0U, 4U, 0x4000'0000U);
+	auto expected = initial;
+	expected.fpsr |= test::fpsr_inexact;
+	harness.check({
+		.name = "trap commits only newly raised unenabled flags",
+		.instruction = fmul_s0_s1_s2,
+		.initial = initial,
+		.expected = expected,
+		.event = test::engine::ExpectedEvent::floating_point_trap,
+		.native = test::scalar_native(),
+		.syndrome = test::syndrome_for(test::fpsr_overflow),
 	});
 }
 
@@ -316,6 +338,7 @@ int main()
 	test::engine::EngineHarness harness;
 	preexisting_flag_does_not_retrap(harness);
 	unrelated_enable_commits_result(harness);
+	trap_commits_only_new_unenabled_flags(harness);
 	unenabled_flags_survive_a_later_trap(harness);
 	fpcr_write_takes_effect_at_next_instruction(harness);
 	nonfloating_and_reserved_instructions(harness);

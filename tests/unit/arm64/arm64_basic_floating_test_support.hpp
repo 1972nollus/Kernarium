@@ -4,7 +4,7 @@
 #include "arm64_engine_test_support.hpp"
 #include "arm64_simd_test_support.hpp"
 #include "cpu/arm64/detail/floating_arithmetic.hpp"
-#include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 
 #include <array>
 #include <bit>

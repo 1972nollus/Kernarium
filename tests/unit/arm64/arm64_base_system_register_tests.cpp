@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_host_counter_test_support.hpp"
 #include "arm64_system_test_support.hpp"
-#include "cpu/arm64/detail/host_counter.hpp"
 
 #include <array>
 #include <cstdint>
@@ -30,14 +30,14 @@ void sample_counter_before(void *context, std::string_view,
 	unsigned long)
 {
 	auto &bounds = *static_cast<CounterBounds *>(context);
-	bounds.before = arm64::detail::read_host_virtual_counter();
+	bounds.before = engine_tests::read_host_virtual_counter();
 }
 
 void sample_counter_after(void *context, std::string_view,
 	unsigned long)
 {
 	auto &bounds = *static_cast<CounterBounds *>(context);
-	bounds.after = arm64::detail::read_host_virtual_counter();
+	bounds.after = engine_tests::read_host_virtual_counter();
 }
 
 void validate_host_counter(
@@ -243,7 +243,7 @@ void fixed_read_only_registers(test::Harness &harness)
 		0x8444'8004U,
 		engine_tests::NativeRequirements::baseline());
 	check_read(harness, "base-read-counter-frequency", 0xd53b'e000U,
-		arm64::detail::read_host_counter_frequency(),
+		engine_tests::read_host_counter_frequency(),
 		engine_tests::NativeRequirements::baseline());
 }
 

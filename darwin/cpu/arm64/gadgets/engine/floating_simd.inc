@@ -4775,7 +4775,7 @@ simd_table_lookup_shape simd_tbx_4_16b, tbx, 4, 1, 1
  * segment immediate and table width into a single host LUTI instruction, so
  * a valid execution has no operation/shape branches. The software gadget is
  * the production fallback for older hosts and still uses a data-only stream
- * operand rather than entering the debug interpreter. */
+ * operand. */
 .macro simd_lut_native name, instruction, two_tables
 gadget simd_lut_native_\name
 	ldr x8, [_stream], #8

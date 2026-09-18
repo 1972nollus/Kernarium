@@ -102,7 +102,7 @@ cache_zero z, 1
 /*
  * The guest instruction-cache synchronization point is deliberately a cold
  * execution boundary.  The helper publishes a translated-code sequence
- * change, then the dispatcher resumes at the following guest instruction so
+ * change, then the executor resumes at the following guest instruction so
  * no stale suffix from the current data-only program can execute.
  * Stream: [register byte offset, when present][fallthrough guest PC].
  */

@@ -121,11 +121,10 @@ The product has two selectable engines. The gadget engine executes arrays of
 precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines and with the independently
-derived expectations of the A64 instruction corpus. The arm64 instruction
-Dispatcher is not an engine; only unit tests that call it directly exercise
-it. Instruction classes that the JIT's native lowering leaves to a helper
-run in the JIT's own semantic slow path, never in another engine; a helper
-treats any word outside its routed classes as a fatal internal error.
+derived expectations of the A64 instruction corpus. Instruction classes that
+the JIT's native lowering leaves to a helper run in the JIT's own semantic
+slow path, never in another engine; a helper treats any word outside its
+routed classes as a fatal internal error.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

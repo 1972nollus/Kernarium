@@ -3,7 +3,6 @@
 if(UML_TARGET_MACOS AND NOT UML_GADGET_DEPENDENCY_COVERAGE)
     add_executable(uml_scalar_ceiling_bench EXCLUDE_FROM_ALL
         bench.cpp workloads.S
-        $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_static_mmu>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)

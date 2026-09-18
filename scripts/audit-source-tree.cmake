@@ -394,13 +394,6 @@ foreach(PATH IN LISTS LAYER_SOURCES)
             list(APPEND VIOLATIONS
                 "${PATH}: JIT includes another engine implementation")
         endif()
-        # The JIT owns its semantic slow path and never executes a guest
-        # instruction through the arm64 interpreter.
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/(dispatcher\\.hpp|instructions/|detail/instruction_helpers\\.hpp)")
-            list(APPEND VIOLATIONS
-                "${PATH}: JIT includes the arm64 interpreter")
-        endif()
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and

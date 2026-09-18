@@ -8,7 +8,7 @@
 namespace {
 
 /* Keep synchronized with linux/arch/arm64/um/asm/elf.h and the
- * dispatcher/gadget instruction profile.  In particular, do not forward the
+ * gadget/JIT instruction profile.  In particular, do not forward the
  * host's complete feature set: doing so would let libc generate instructions
  * that no guest engine has promised to implement.
  */
@@ -113,7 +113,7 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	if (host.has(::uml::platform::ArmFeature::lrcpc2))
 		result |= hwcap_ilrcpc;
 	/* CFINV, RMIF, SETF8 and SETF16, implemented in the gadget bank's
-	 * core_integer.inc and executed correctly by all three engines. */
+	 * core_integer.inc and executed correctly by both engines. */
 	if (host.has(::uml::platform::ArmFeature::flag_m))
 		result |= hwcap_flagm;
 	/* FEAT_LSE2, advertised as USCAT: the guarantee that an LSE atomic on an

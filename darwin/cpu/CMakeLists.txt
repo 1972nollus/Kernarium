@@ -66,41 +66,6 @@ if(UML_BUILD_X86_64_GUEST)
         ${_uml_x86_64_baked_dir})
 endif()
 
-add_library(uml_arm64_dispatch OBJECT
-    arm64/dispatcher.cpp
-    arm64/instructions/control_flow.cpp
-    arm64/instructions/crc32.cpp
-    arm64/instructions/floating_point.cpp
-    arm64/instructions/gcs.cpp
-    arm64/instructions/integer.cpp
-    arm64/instructions/integer/arithmetic.cpp
-    arm64/instructions/integer/cpa.cpp
-    arm64/instructions/integer/mte.cpp
-    arm64/instructions/load_store.cpp
-    arm64/instructions/load_store_atomic.cpp
-    arm64/instructions/load_store_memory.cpp
-    arm64/instructions/simd.cpp
-    arm64/instructions/simd/complete.cpp
-    arm64/instructions/simd/complete_helpers.cpp
-    arm64/instructions/simd/indexed_element.cpp
-    arm64/instructions/simd/conversion.cpp
-    arm64/instructions/simd/crypto.cpp
-    arm64/instructions/simd/floating_compare.cpp
-    arm64/instructions/simd/floating_extended.cpp
-    arm64/instructions/simd/floating_point.cpp
-    arm64/instructions/simd/fp8.cpp
-    arm64/instructions/simd/narrowing.cpp
-    arm64/instructions/simd/rearrange.cpp
-    arm64/instructions/simd/shift.cpp)
-uml_declare_architecture_target(uml_arm64_dispatch cpu shared)
-target_link_libraries(uml_arm64_dispatch PRIVATE UML::CpuContract)
-target_include_directories(uml_arm64_dispatch PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_dispatch PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_dispatch PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_arm64_dispatch PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
 add_library(uml_arm64_execution_helpers OBJECT
     arm64/code_synchronization.cpp
     arm64/fp_environment.cpp
@@ -318,6 +283,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/shared_programs.cpp
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
+    arm64/gadgets/software_crypto_helpers.cpp
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S)
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
@@ -480,7 +446,6 @@ endif()
 # of widening code generation for every C++ target in an iOS package build.
 if(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION)
     set(_uml_inline_asm_targets
-        uml_arm64_dispatch
         uml_arm64_gadgets
         uml_arm64_jit
         uml_arm64_jit_executor)
@@ -600,8 +565,7 @@ target_sources(uml_cpu_gadget_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_gadget_engine>
     $<TARGET_OBJECTS:uml_arm64_gadget_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
-    $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>)
+    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)
     target_link_libraries(uml_cpu_gadget_component INTERFACE
         UML::ThirdPartyCephes128)
@@ -631,7 +595,6 @@ target_link_libraries(uml_cpu_engine_objects INTERFACE
     UML::CpuContract)
 target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_cpu_engine_factory>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>
     $<TARGET_OBJECTS:uml_arm64_gadget_engine>
     $<TARGET_OBJECTS:uml_arm64_gadget_executor>
     $<TARGET_OBJECTS:uml_arm64_jit_engine>

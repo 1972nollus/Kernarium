@@ -48,8 +48,8 @@ inline void require(bool condition, const char *message)
 
 /*
  * Independent specification oracle. This follows the architectural
- * pseudocode literally rather than repeating the interpreter's reflected
- * byte recurrence:
+ * pseudocode literally rather than repeating the usual reflected byte
+ * recurrence:
  *
  *   reverse32(acc)::zeros(size) XOR reverse_size(value)::zeros(32)
  *

@@ -30,7 +30,7 @@
 #include "../detail/half_dot.hpp"
 #include "../detail/half_fused_long.hpp"
 #include "../detail/half_matrix.hpp"
-#include "../detail/instruction_helpers.hpp"
+#include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
 #include "../detail/pointer_auth.hpp"
 #include "cpu/host_capabilities.hpp"

@@ -458,7 +458,7 @@ int main()
 	}
 
 	/* A self-linked hot loop is forced out at the 4K chain boundary so the
-	 * outer dispatcher can observe interrupts and enforce its 64K budget. */
+	 * executor can observe interrupts and enforce its 64K budget. */
 	{
 		LinkTarget self{0x4000};
 		self.link.instruction_count = 1;
