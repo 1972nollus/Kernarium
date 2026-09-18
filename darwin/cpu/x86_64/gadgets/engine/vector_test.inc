@@ -27,8 +27,7 @@
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
@@ -122,8 +121,7 @@ gadget vector_test_\width\()_\stride\()_rm
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10

@@ -187,8 +187,8 @@ def page_cross(o, size, label):
     o.emit(f'\tpage_cross_check {size}, {label}')
 
 
-def record(o, flagop, width):
-    o.emit(f'\trecord_deferred {flagop}, {width}')
+def record(o, flagop, width, pending=False):
+    o.emit(f'\trecord_deferred{"_pending" if pending else ""} {flagop}, {width}')
 
 
 def normalize(o, width, reg):
@@ -373,7 +373,7 @@ def extend_register(o):
         o.table(f'{name}_rr', entries)
 
 
-def unary_body(o, name, width, d, ld, st, hr, sr, flagop):
+def unary_body(o, name, width, d, ld, st, hr, sr, flagop, pending=False):
     o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
     # At 32 and 64 bits the flag-setting host form leaves N, Z and V
     # describing the guest operation; only C differs (INC and DEC preserve it,
@@ -392,16 +392,17 @@ def unary_body(o, name, width, d, ld, st, hr, sr, flagop):
         o.emit('\tmov x11, xzr')
     normalize(o, width, f'{hr}13')
     o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
-    record(o, flagop, width)
+    record(o, flagop, width, pending)
     o.emit('\tretire_and_next')
 
 
 # INC and DEC preserve the carry flag, so the flag the previous producer
-# defined has to reach RFLAGS before this one records its own. Calling the
-# materializer is the general answer; when the builder knows what the producer
-# left, the carry is one condition away and the call goes.
+# defined has to reach RFLAGS before this one records its own -- or, when
+# the builder cannot see that producer, the lazy prologue parks its record in
+# the carry slot and the INC or DEC record inherits the pending bit. When the
+# builder knows what the producer left, the carry is one condition away.
 CARRY_PROLOGUE = {
-    'settled': [],                  # a previous INC or DEC already settled it
+    'settled': [],                  # a previous INC or DEC owns the carry: inherit its pending bit
     'borrow': ['\tcset w16, cc'],   # a subtraction: CF is the inverted borrow
     'carry': ['\tcset w16, cs'],    # an addition: CF is the carry out
     'clear': [],                    # a logical operation defined CF as zero
@@ -435,7 +436,8 @@ def unary_register(o):
                         entry = f'{name}_{kind}_{width}_r_{d}'
                         o.gadget(entry)
                         carry_prologue(o, kind)
-                        unary_body(o, name, width, d, ld, st, hr, sr, flagop)
+                        unary_body(o, name, width, d, ld, st, hr, sr, flagop,
+                                   pending=kind == 'settled')
                         entries.append(entry)
                     o.table(f'{name}_{kind}_{width}_r', entries)
             entries = []
@@ -443,8 +445,9 @@ def unary_register(o):
                 entry = f'{name}_{width}_r_{d}'
                 o.gadget(entry)
                 if materialize:
-                    o.emit('\tbl uml_x86_64_gadget_materialize_carry')
-                unary_body(o, name, width, d, ld, st, hr, sr, flagop)
+                    o.emit('\tlazy_carry_prologue')
+                unary_body(o, name, width, d, ld, st, hr, sr, flagop,
+                           pending=materialize)
                 entries.append(entry)
             o.table(f'{name}_{width}_r', entries)
         entries = []

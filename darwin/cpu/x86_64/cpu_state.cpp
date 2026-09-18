@@ -19,16 +19,12 @@ namespace {
 	return ((0x9669U >> value) & 1U) != 0;
 }
 
-} // namespace
-
-void materialize_flags(CpuState &cpu) noexcept
+/* The flags one record defines on top of `flags`. An INC or DEC record with
+ * a pending carry takes that one flag from the slot record, which is
+ * evaluated the same way and never has a pending carry of its own. */
+[[nodiscard]] std::uint64_t apply_record(const DeferredFlags &deferred,
+	std::uint64_t flags, const DeferredFlags *slot) noexcept
 {
-	const auto &deferred = cpu.deferred_flags;
-	if (deferred.operation == DeferredFlagOperation::none &&
-		deferred.override_mask == 0)
-		return;
-
-	auto flags = cpu.rflags;
 	const bool shift = deferred.operation == DeferredFlagOperation::shift_left ||
 		deferred.operation == DeferredFlagOperation::shift_right ||
 		deferred.operation == DeferredFlagOperation::shift_arithmetic_right;
@@ -133,12 +129,29 @@ void materialize_flags(CpuState &cpu) noexcept
 		}
 	}
 
+	if (slot != nullptr && deferred.carry_pending != 0 &&
+		(deferred.operation == DeferredFlagOperation::increment ||
+		 deferred.operation == DeferredFlagOperation::decrement))
+		flags = (flags & ~rflags_carry) |
+			(apply_record(*slot, flags, nullptr) & rflags_carry);
 	const auto override_mask = static_cast<std::uint64_t>(
 		deferred.override_mask);
 	flags = (flags & ~override_mask) |
 		(static_cast<std::uint64_t>(deferred.override_value) & override_mask);
-	cpu.rflags = flags | rflags_reserved;
+	return flags | rflags_reserved;
+}
+
+} // namespace
+
+void materialize_flags(CpuState &cpu) noexcept
+{
+	const auto &deferred = cpu.deferred_flags;
+	if (deferred.operation == DeferredFlagOperation::none &&
+		deferred.override_mask == 0)
+		return;
+	cpu.rflags = apply_record(deferred, cpu.rflags, &cpu.carry_slot);
 	cpu.deferred_flags.operation = DeferredFlagOperation::none;
+	cpu.deferred_flags.carry_pending = 0;
 	cpu.deferred_flags.override_mask = 0;
 	cpu.deferred_flags.override_value = 0;
 }

@@ -225,8 +225,7 @@ bit_family btc
 	 * gadget records lie inside the same set. Discard it rather than
 	 * materializing a value this macro immediately clears.
 	 */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \operation,bsf
 	bic x8, x8, #0x40

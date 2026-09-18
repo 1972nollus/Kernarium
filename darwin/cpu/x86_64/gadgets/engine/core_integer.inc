@@ -162,7 +162,7 @@ scalar_exchange 64, ldr, str, x, x
 .macro scalar_unary name, instruction, flag_operation, materialize, width, load, store, host_register, store_register
 gadget \name\()_\width\()_r
 	.if \materialize
-	bl uml_x86_64_gadget_materialize_carry
+	lazy_carry_prologue
 	.endif
 	ldr x8, [_stream], #8
 	\load \host_register\()11, [_cpu, x8]
@@ -197,7 +197,11 @@ gadget \name\()_\width\()_r
 	.endif
 	normalize_result \width, \host_register\()13
 	\store \store_register\()13, [_cpu, x8]
+	.if \materialize
+	record_deferred_pending \flag_operation, \width
+	.else
 	record_deferred \flag_operation, \width
+	.endif
 	retire_and_next
 .endm
 
@@ -535,13 +539,13 @@ gadget \operation\()_\width\()_m_locked
 	.else
 gadget \operation\()_\width\()_m
 	.endif
+	.if \materialize
+	lazy_carry_prologue
+	.endif
 	effective_address
 	mov x25, x7
 	.if \locked
 	locked_aligned \width, .Lx86_unary_split\@
-	.if \materialize
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
 	mov x7, x25
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
@@ -570,7 +574,11 @@ gadget \operation\()_\width\()_m
 	mov x12, #1
 	.endif
 	mov x13, x27
+	.if \materialize
+	record_deferred_pending \flag_operation, \width
+	.else
 	record_deferred \flag_operation, \width
+	.endif
 	.endif
 	finish_store (\width / 8)
 .Lx86_unary_split\@:
@@ -587,9 +595,6 @@ gadget \operation\()_\width\()_m
 	cbz x1, .Lx86_memory_fault
 	mov x24, x0
 .Lx86_unary_loaded\@:
-	.if \materialize
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
 	.ifc \instruction,add
 	add \host_register\()27, \host_register\()24, #1
 	.endif
@@ -625,7 +630,11 @@ gadget \operation\()_\width\()_m
 	mov x12, #1
 	.endif
 	mov x13, x27
+	.if \materialize
+	record_deferred_pending \flag_operation, \width
+	.else
 	record_deferred \flag_operation, \width
+	.endif
 	.endif
 	finish_store (\width / 8)
 .endm

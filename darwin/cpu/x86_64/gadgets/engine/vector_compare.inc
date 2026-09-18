@@ -31,8 +31,7 @@ gadget vector_compare_\width\()_rr
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
@@ -48,8 +47,7 @@ gadget vector_compare_\width\()_rm
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	effective_address
 	mov x25, x7
 	page_cross_check (\width / 8), .Lx86_vector_compare_cross\@

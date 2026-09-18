@@ -7,8 +7,7 @@
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x9, #0x8c1
 	bic x8, x8, x9

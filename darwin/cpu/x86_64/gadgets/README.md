@@ -24,10 +24,10 @@ Two banks implement the scalar integer instructions.
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
   INC and DEC are enumerated a second time by the carry their producer left,
-  because they preserve the carry flag and so have to settle the pending one
-  before recording their own: a settled, borrow, carry or cleared source
-  reaches RFLAGS with at most one condition instead of a call to the carry
-  materializer.
+  because they preserve the carry flag: a borrow, carry or cleared source
+  reaches RFLAGS with at most one condition, a settled one inherits the
+  pending bit, and an unknown one takes the lazy prologue described under
+  deferred flags instead of a call to the carry materializer.
   `native_baked.hpp` declares the tables. Their enumeration order (registers
   in offset order, the four high-byte registers after the sixteen low ones,
   the sixteen bases followed by "none") is shared with the generator and must
@@ -75,6 +75,17 @@ shifted-out carry from them, defines overflow only for a count of one and
 leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
 whatever producer is pending instead of materializing it. Rotates keep the
 eager overlay.
+
+INC and DEC preserve the carry flag. When the builder cannot see the producer
+that defined it, the gadget copies that producer's record into the carry slot
+(`CpuState::carry_slot`) and records its own with the pending bit set, rather
+than settling the carry through the materializer; a second INC or DEC inherits
+the bit, and a carry override riding on such a record settles it the old way.
+Only a reader of the carry through an INC or DEC record pays for the slot: the
+materializers compute that one flag from the slot record through the same
+operation-and-width table, and the C++ materializer does the same. Every
+record write clears the bit, so a producer that follows leaves nothing
+pending.
 
 An operation that defines every arithmetic flag it does not leave undefined --
 COMISS and UCOMISS, PTEST, the packed string compares, the bit scans and
