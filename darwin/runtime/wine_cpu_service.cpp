@@ -269,6 +269,9 @@ WineCpuHostcallResult handle_wine_cpu_hostcall(arm64::CpuState &arm64_cpu,
 				break;
 			}
 			load_context(runtime.x86_cpu, request.context);
+			/* arm64 translations of the same process live in caches this
+			 * executor's registry does not see. */
+			runtime.x86_executor.publish_every_executable_store(true);
 			EcBitmap bitmap{request.ec_bitmap};
 			const bool bitmap_valid =
 				(request.flags & UML_WINE_CPU_FLAG_EC_BITMAP_VALID) != 0;

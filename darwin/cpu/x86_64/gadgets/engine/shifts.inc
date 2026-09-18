@@ -36,46 +36,20 @@
 
 /* Compute the result in x27 and the last shifted-out bit in w19. */
 .macro shift_compute operation, width, host_register
+	/* SHL, SHR and SAR defer their flags: the record keeps the original
+	 * value, the count and the result, and the materializer derives the
+	 * shifted-out bit from them (shift_flags_body). */
 	.ifc \operation,shl
-	cmp w26, #\width
-	b.hi .Lx86_shift_carry_zero\@
-	mov \host_register\()8, #\width
-	sub \host_register\()8, \host_register\()8, \host_register\()26
-	lsrv \host_register\()19, \host_register\()24, \host_register\()8
-	and w19, w19, #1
-	b .Lx86_shift_carry_ready\@
-.Lx86_shift_carry_zero\@:
-	mov w19, wzr
-.Lx86_shift_carry_ready\@:
 	lslv \host_register\()27, \host_register\()24, \host_register\()26
 	normalize_result \width, \host_register\()27
 	.endif
 
 	.ifc \operation,shr
-	cmp w26, #\width
-	b.hi .Lx86_shift_carry_zero\@
-	sub \host_register\()8, \host_register\()26, #1
-	lsrv \host_register\()19, \host_register\()24, \host_register\()8
-	and w19, w19, #1
-	b .Lx86_shift_carry_ready\@
-.Lx86_shift_carry_zero\@:
-	mov w19, wzr
-.Lx86_shift_carry_ready\@:
 	lsrv \host_register\()27, \host_register\()24, \host_register\()26
 	normalize_result \width, \host_register\()27
 	.endif
 
 	.ifc \operation,sar
-	cmp w26, #\width
-	b.ls .Lx86_shift_carry_in_range\@
-	lsr \host_register\()19, \host_register\()24, #(\width - 1)
-	and w19, w19, #1
-	b .Lx86_shift_carry_ready\@
-.Lx86_shift_carry_in_range\@:
-	sub \host_register\()8, \host_register\()26, #1
-	lsrv \host_register\()19, \host_register\()24, \host_register\()8
-	and w19, w19, #1
-.Lx86_shift_carry_ready\@:
 	.if \width == 8
 	sxtb w27, w24
 	.elseif \width == 16
@@ -242,6 +216,18 @@
  * discard both without materializing either one.
  */
 .macro shift_record_flags operation, width, host_register
+	.ifc \operation,shl
+	record_deferred_from 8, \width, x24, x26, x27
+	.exitm
+	.endif
+	.ifc \operation,shr
+	record_deferred_from 9, \width, x24, x26, x27
+	.exitm
+	.endif
+	.ifc \operation,sar
+	record_deferred_from 10, \width, x24, x26, x27
+	.exitm
+	.endif
 	.ifc \operation,rol
 	mov w8, #1
 	and w9, w19, #1

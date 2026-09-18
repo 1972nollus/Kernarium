@@ -3,6 +3,7 @@
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
+#include "cpu/x86_64/gadgets/native_baked.hpp"
 #include "cpu/x86_64/gadgets/native_entry.hpp"
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
@@ -109,7 +110,8 @@ public:
 	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
 	{
 		executable_queries_.fetch_add(1, std::memory_order_relaxed);
-		return (address & ~std::uint64_t{4095}) == executable_page_;
+		return every_page_executable_ ||
+			(address & ~std::uint64_t{4095}) == executable_page_;
 	}
 
 	[[nodiscard]] bool code_page_stamp(std::uint64_t address, void *,
@@ -134,6 +136,12 @@ public:
 	void set_executable_page(std::uint64_t address) noexcept
 	{
 		executable_page_ = address & ~std::uint64_t{4095};
+	}
+	/* What READ_IMPLIES_EXEC makes of a process: data pages that qualify as
+	 * code too. */
+	void set_every_page_executable(bool value) noexcept
+	{
+		every_page_executable_ = value;
 	}
 
 	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
@@ -221,6 +229,7 @@ private:
 	std::vector<std::uint64_t> code_stamp_versions_;
 	bool code_stamps_available_{};
 	std::uint64_t executable_page_{~std::uint64_t{}};
+	bool every_page_executable_{};
 	std::uint64_t *code_changes_{};
 };
 
@@ -965,25 +974,86 @@ read_test_sequences(void *context) noexcept
 	 */
 	memory.load(0, {0xc6, 0x00, 0x7f, 0xc6, 0x40, 0x01, 0x6e, 0x0f, 0x05});
 	memory.set_executable_page(0);
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"executable-store block did not build"))
-		return false;
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x800;
 	gadgets::Executor executor;
 	executor.prepare(memory, 1, 1, 1);
+	/* Cached, so the page is on the shared code-page list and its stores
+	 * have a translation to protect. */
+	const auto selected = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(selected.program != nullptr,
+		"executable-store block did not build"))
+		return false;
 	const auto result = gadgets::execute(
-		built.program, cpu, memory, executor, 64);
+		*selected.program, cpu, memory, executor, 64);
 	return expect(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3 && cpu.rip == 9,
 		"non-overlapping executable stores did not stay in one native block") &&
-		expect(memory.executable_queries() == 1,
-			"write-TLB executable tag was redundantly revalidated") &&
 		expect(memory.invalidations() == 1,
 			"batched executable stores did not publish one code change") &&
 		expect(memory.byte(0x800) == 0x7f && memory.byte(0x801) == 0x6e,
 			"batched executable stores did not update guest memory");
+}
+
+/* A store publishes a code change to protect cached translations, and only
+ * the executors know where those are. With every page executable, a store to
+ * a page no executor has translated publishes nothing; once another executor
+ * caches code on that page, this executor's next store to it publishes even
+ * though its own write translation was filled before the page gained code.
+ */
+[[nodiscard]] bool store_publishes_only_where_some_executor_caches_code()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* Page 0: MOV byte ptr [RAX], 0x7f; SYSCALL. Page 1: SYSCALL. */
+	memory.load(0, {0xc6, 0x00, 0x7f, 0x0f, 0x05});
+	memory.load(0x1000, {0x0f, 0x05});
+	memory.set_every_page_executable(true);
+	gadgets::Executor writer;
+	writer.prepare(memory, 7, 1, 1);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(block.program != nullptr, "code-page registry block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x1800;
+	auto result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1800) == 0x7f,
+		"store to an untranslated executable page did not run") ||
+		!expect(memory.invalidations() == 0,
+			"store to a page holding no cached code published a change"))
+		return false;
+
+	gadgets::Executor reader;
+	reader.prepare(memory, 7, 1, 1);
+	const auto target = reader.select_program(
+		memory, 0x1000, ExecutionMode::long64);
+	if (!expect(target.program != nullptr, "code-page registry target did not build"))
+		return false;
+	cpu = {};
+	cpu.rip = 0;
+	cpu.gpr(Register::rax) = 0x1801;
+	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1801) == 0x7f,
+		"store to a newly translated page did not run") ||
+		!expect(memory.invalidations() == 1,
+			"store to a page another executor translated did not publish"))
+		return false;
+
+	/* Retiring the reader's translations takes the page off the list again. */
+	reader = gadgets::Executor{};
+	cpu = {};
+	cpu.rip = 0;
+	cpu.gpr(Register::rax) = 0x1802;
+	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		memory.byte(0x1802) == 0x7f,
+		"store after the other executor retired did not run") &&
+		expect(memory.invalidations() == 1,
+			"store to a page that lost its cached code still published");
 }
 
 [[nodiscard]] bool overlapping_executable_store_stops_immediately()
@@ -1698,13 +1768,145 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rbx) = 1;
 	const auto branch_result = gadgets::execute(
 		branch.program, cpu, branch_memory, 3);
+	/* SHL, SHR and SAR record their operands instead of overlaying: the
+	 * zero branch reads the recorded result and leaves the record pending. */
 	return expect(branch_result.event == uml::cpu::EngineEvent::continued &&
 			branch_result.retired_instructions == 3 && cpu.rip == 12,
-		"JE did not consume the deferred shift zero override") &&
-		expect(cpu.deferred_flags.operation == DeferredFlagOperation::add &&
-			(cpu.deferred_flags.override_mask & rflags_zero) != 0 &&
-			(cpu.deferred_flags.override_value & rflags_zero) != 0,
-			"zero-branch fast path eagerly materialized the shift overlay");
+		"JE did not consume the deferred shift result") &&
+		expect(cpu.deferred_flags.operation ==
+				DeferredFlagOperation::shift_right &&
+			cpu.deferred_flags.result == 0 &&
+			cpu.deferred_flags.override_mask == 0,
+			"zero-branch fast path materialized the deferred shift");
+}
+
+/* The deferred shift record is materialized by the engine (through the full
+ * and the carry-only routines) and by the C++ materializer; check all three
+ * against the architectural definition for every width, a spread of counts
+ * including ones at and beyond the width, and both shift directions. The
+ * auxiliary flag is undefined and overflow is only defined for a count of
+ * one, so those are not compared elsewhere.
+ */
+[[nodiscard]] bool lazy_shift_flags_match_the_definition()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<std::uint64_t, 9> values{
+		0U, 1U, 2U, 0x81U, 0x7fffU, 0x8001U, 0x4000'0001ULL,
+		0x8000'0000'0000'0001ULL, 0xc5a3'ffff'0000'a5c3ULL};
+	for (unsigned kind = 0; kind < 3U; ++kind) {
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
+			const unsigned bits = width;
+			const auto mask = bits == 64U ? ~std::uint64_t{} :
+				(std::uint64_t{1} << bits) - 1U;
+			const auto sign = std::uint64_t{1} << (bits - 1U);
+			for (const unsigned count : {1U, 3U, bits - 1U, bits, bits + 3U,
+					bits == 64U ? 63U : 31U}) {
+				if (count > (bits == 64U ? 63U : 31U))
+					continue;
+				for (const auto value : values) {
+					for (const bool then_inc : {false, true}) {
+						std::vector<std::byte> code;
+						const auto push = [&code](unsigned byte) {
+							code.push_back(static_cast<std::byte>(byte));
+						};
+						if (width == 16U)
+							push(0x66);
+						if (width == 64U)
+							push(0x48);
+						push(width == 8U ? 0xc0 : 0xc1);
+						push(kind == 0 ? 0xe0 : kind == 1 ? 0xe8 : 0xf8);
+						push(count);
+						if (then_inc) {
+							push(0xff); // inc ebx
+							push(0xc3);
+						}
+						push(0x0f);
+						push(0x05);
+						TestMemory memory;
+						memory.fill(0, code);
+						const auto built = gadgets::build(memory, 0);
+						if (!expect(built.status == gadgets::BuildStatus::built,
+							"shift flag program did not build"))
+							return false;
+						CpuState cpu{};
+						cpu.gpr(Register::rax) = value;
+						const auto result = gadgets::execute(
+							built.program, cpu, memory, 8);
+						if (!expect(result.event ==
+							uml::cpu::EngineEvent::system_call,
+							"shift flag program did not reach SYSCALL"))
+							return false;
+						materialize_flags(cpu);
+						const auto v = value & mask;
+						std::uint64_t expected_result;
+						bool carry;
+						if (kind == 0) {
+							expected_result = (v << count) & mask;
+							carry = count <= bits &&
+								((v >> (bits - count)) & 1U) != 0;
+						} else if (kind == 1) {
+							expected_result = v >> count;
+							carry = count <= bits &&
+								((v >> (count - 1U)) & 1U) != 0;
+						} else {
+							const auto extended = (v & sign) != 0 ?
+								v | ~mask : v;
+							expected_result = static_cast<std::uint64_t>(
+								static_cast<std::int64_t>(extended) >>
+									count) & mask;
+							carry = ((v >> (count <= bits ? count - 1U :
+								bits - 1U)) & 1U) != 0;
+						}
+						std::uint64_t expected = 0;
+						if (carry)
+							expected |= rflags_carry;
+						if (expected_result == 0)
+							expected |= rflags_zero;
+						if ((expected_result & sign) != 0)
+							expected |= rflags_sign;
+						unsigned ones = 0;
+						for (unsigned bit = 0; bit < 8U; ++bit)
+							ones += (expected_result >> bit) & 1U;
+						if (ones % 2U == 0)
+							expected |= rflags_parity;
+						auto compared = rflags_carry | rflags_zero |
+							rflags_sign | rflags_parity;
+						if (count == 1U && !then_inc) {
+							compared |= rflags_overflow;
+							if (kind == 0 && ((((expected_result & sign) != 0)
+									? 1U : 0U) ^ (carry ? 1U : 0U)) != 0)
+								expected |= rflags_overflow;
+							if (kind == 1 && (v & sign) != 0)
+								expected |= rflags_overflow;
+						}
+						/* INC keeps only the shift's carry; its own record
+						 * defines the rest. */
+						if (then_inc)
+							compared = rflags_carry;
+						const auto observed = cpu.rflags & compared;
+						if (observed != (expected & compared) ||
+							(cpu.gpr(Register::rax) & mask) != expected_result) {
+							char message[200];
+							std::snprintf(message, sizeof(message),
+								"lazy %s width %u count %u value %#llx%s: "
+								"flags %#llx expected %#llx, result %#llx",
+								kind == 0 ? "SHL" : kind == 1 ? "SHR" : "SAR",
+								width, count,
+								static_cast<unsigned long long>(value),
+								then_inc ? " then INC" : "",
+								static_cast<unsigned long long>(observed),
+								static_cast<unsigned long long>(
+									expected & compared),
+								static_cast<unsigned long long>(
+									cpu.gpr(Register::rax) & mask));
+							return expect(false, message);
+						}
+					}
+				}
+			}
+		}
+	}
+	return true;
 }
 
 [[nodiscard]] bool execute_segment_memory()
@@ -2397,14 +2599,16 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rax) = 0x5a;
 	cpu.gpr(Register::rcx) = 256;
 	cpu.gpr(Register::rdi) = 0x800;
-	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"executable-destination REP STOSB did not build"))
-		return false;
 	gadgets::Executor executor;
 	executor.prepare(memory, 1, 1, 1);
+	/* Cached, so the destination page is on the shared code-page list. */
+	const auto built = executor.select_program(
+		memory, 0, ExecutionMode::long64, 1);
+	if (!expect(built.program != nullptr,
+		"executable-destination REP STOSB did not build"))
+		return false;
 	const auto result = gadgets::execute(
-		built.program, cpu, memory, executor, 64);
+		*built.program, cpu, memory, executor, 64);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 2 &&
 		cpu.gpr(Register::rcx) == 0 && cpu.gpr(Register::rdi) == 0x900,
@@ -2646,26 +2850,42 @@ read_test_sequences(void *context) noexcept
 [[nodiscard]] bool fused_conditions_match_the_deferred_evaluation()
 {
 	using namespace uml::cpu::x86_64;
-	static constexpr std::array<unsigned, 4> producers{
-		0x39, 0x29, 0x85, 0x21};
+	/* CMP, SUB, TEST, AND and ADD register forms, then INC, DEC and NEG. */
+	static constexpr std::array<unsigned, 5> producers{
+		0x39, 0x29, 0x85, 0x21, 0x01};
+	static constexpr std::array<std::array<unsigned, 2>, 3> unary{{
+		{0xff, 0xc0}, {0xff, 0xc8}, {0xf7, 0xd8}}};
 	static constexpr std::array<std::uint64_t, 12> values{
 		0U, 1U, 2U, 0xffU, 0x7fff'ffffULL, 0x8000'0000ULL,
 		0xffff'ffffULL, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
 	};
-	for (const auto &producer : producers) {
-		for (const unsigned width : {32U, 64U}) {
+	for (std::size_t index = 0; index < producers.size() + unary.size();
+		++index) {
+		const bool binary = index < producers.size();
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				for (const auto left : values) {
 					for (const auto right : values) {
+						if (!binary && right != values.front())
+							break;
 						std::vector<std::byte> code;
 						const auto push = [&code](unsigned byte) {
 							code.push_back(static_cast<std::byte>(byte));
 						};
+						if (width == 16U)
+							push(0x66);
 						if (width == 64U)
 							push(0x48);
-						push(producer);
-						push(0xd8);
+						if (binary) {
+							const auto producer = producers[index];
+							push(width == 8U ? producer - 1U : producer);
+							push(0xd8);
+						} else {
+							const auto &form = unary[index - producers.size()];
+							push(width == 8U ? form[0] - 1U : form[0]);
+							push(form[1]);
+						}
 						/* SYSCALL writes its return address to RCX and
 						 * the flags to R11, so the two results live in RDX
 						 * and RBX. */
@@ -2699,10 +2919,20 @@ read_test_sequences(void *context) noexcept
 							cpu.gpr(Register::rdx) & 0xffU;
 						const auto deferred =
 							cpu.gpr(Register::rbx) & 0xffU;
-						if (!expect(fused == deferred,
-							"a fused condition disagreed with the deferred "
-							"evaluation of the same flags"))
-							return false;
+						if (fused != deferred) {
+							char message[160];
+							std::snprintf(message, sizeof(message),
+								"a fused condition disagreed with the "
+								"deferred evaluation of the same flags "
+								"(producer %zu width %u condition %u left "
+								"%#llx right %#llx: fused %u deferred %u)",
+								index, width, condition,
+								static_cast<unsigned long long>(left),
+								static_cast<unsigned long long>(right),
+								static_cast<unsigned>(fused),
+								static_cast<unsigned>(deferred));
+							return expect(false, message);
+						}
 					}
 				}
 			}
@@ -2721,18 +2951,34 @@ read_test_sequences(void *context) noexcept
 [[nodiscard]] bool fused_conditions_cover_exactly_the_legal_pairs()
 {
 	using namespace uml::cpu::x86_64;
-	static constexpr std::array<unsigned, 4> opcodes{0x39, 0x29, 0x85, 0x21};
+	static constexpr std::array<unsigned, 5> opcodes{
+		0x39, 0x29, 0x85, 0x21, 0x01};
+	/* The producer's stream length depends on which bank the builder chose,
+	 * so find the consumer where the two streams part: the plain stream holds
+	 * the NOP entry there, the fused one the consumer's entry. */
+	const auto consumer_index = [](std::span<const std::uintptr_t> fused,
+		std::span<const std::uintptr_t> plain) {
+		std::size_t index = 0;
+		while (index < fused.size() && index < plain.size() &&
+			fused[index] == plain[index])
+			++index;
+		return index;
+	};
 	for (std::size_t index = 0; index < opcodes.size(); ++index) {
-		const bool logical = index >= 2;
+		const bool logical = index == 2 || index == 3;
 		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				const bool carry_condition = condition >= 2U && condition <= 3U;
 				const bool ordered_carry =
 					condition >= 6U && condition <= 7U;
 				const bool parity = condition >= 10U && condition <= 11U;
-				const bool wide = width >= 32U;
-				const bool expected_fusion = wide && !parity &&
-					!(logical && (carry_condition || ordered_carry));
+				/* The register-baked bank leaves host flags at every width;
+				 * its narrow entries compare the operands shifted to the top
+				 * of a 32-bit register. */
+				const bool add = index == 4;
+				const bool expected_fusion = !parity &&
+					!(logical && (carry_condition || ordered_carry)) &&
+					!(add && ordered_carry);
 				std::vector<std::byte> fused;
 				std::vector<std::byte> plain;
 				const auto emit = [&](std::vector<std::byte> &code,
@@ -2772,7 +3018,12 @@ read_test_sequences(void *context) noexcept
 					fused_stream.size() > 3U,
 					"condition pairing changed the stream layout"))
 					return false;
-				const bool differs = fused_stream[2] != plain_stream[3];
+				const auto consumer = consumer_index(fused_stream, plain_stream);
+				if (!expect(consumer + 1U < fused_stream.size(),
+					"condition pairing streams do not part at the consumer"))
+					return false;
+				const bool differs =
+					fused_stream[consumer] != plain_stream[consumer + 1U];
 				if (!expect(differs == expected_fusion,
 					"the builder fused a condition it should not have, or "
 					"declined one it should have fused"))
@@ -2824,8 +3075,12 @@ read_test_sequences(void *context) noexcept
 					jump_fused.size() > 4U,
 					"jump pairing changed the stream layout"))
 					return false;
-				if (!expect((jump_fused[2] != jump_plain[3]) ==
-					expected_fusion,
+				const auto jump_consumer = consumer_index(jump_fused, jump_plain);
+				if (!expect(jump_consumer + 1U < jump_fused.size(),
+					"jump pairing streams do not part at the consumer"))
+					return false;
+				if (!expect((jump_fused[jump_consumer] !=
+					jump_plain[jump_consumer + 1U]) == expected_fusion,
 					"the builder fused a conditional jump it should not have, "
 					"or declined one it should have fused"))
 					return false;
@@ -3273,12 +3528,15 @@ read_test_sequences(void *context) noexcept
 		expect(first_native_entry({0x87, 0x08, 0x0f, 0x05}) ==
 			gadget_entry(native::uml_x86_64_gadget_exchange_32_mr),
 			"XCHG did not select the memory gadget") &&
-		/* An unprefixed update keeps the cheaper non-exclusive gadget. */
+		/* An unprefixed update keeps a cheaper non-exclusive gadget: the
+		 * ordinary one, or the register-baked bank's ECX-into-[RAX] entry. */
 		expect(first_native_entry({0xff, 0x00, 0x0f, 0x05}) ==
 			gadget_entry(native::uml_x86_64_gadget_increment_32_m),
 			"unlocked INC lost its plain gadget") &&
 		expect(first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_add_32_mr),
+				gadget_entry(native::uml_x86_64_gadget_add_32_mr) ||
+			first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
+				baked::uml_x86_64_baked_add_32_mr[1U * baked::base_slots],
 			"unlocked ADD lost its plain gadget");
 }
 
@@ -3556,6 +3814,7 @@ int main()
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		executable_store_publishes_code_change() &&
+		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&
 		distant_code_write_cools_its_linked_block() &&
@@ -3569,6 +3828,7 @@ int main()
 		execute_compat32_test_greater_after_syscall() &&
 		execute_compat32_futex_result_validator() &&
 		shifts_overlay_lazy_arithmetic_flags() &&
+		lazy_shift_flags_match_the_definition() &&
 		execute_segment_memory() &&
 		execute_addressing_shapes() &&
 		execute_byte_sign_masks() &&

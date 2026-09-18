@@ -122,10 +122,18 @@ execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
 width. The host routes userspace instruction execution through immutable,
 data-only streams of pointers to precompiled handwritten arm64 assembly
-gadgets. There is no semantic C++ execution fallback. Exact x87 formats and
-transcendentals use bounded software-math primitives called by those native
-gadgets. The userspace ISA
-boundary includes scalar x86 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
+gadgets. There is no semantic C++ execution fallback. Two gadget banks serve
+scalar integer instructions: an ordinary bank that decodes its operands from
+the stream, and a register-baked bank generated at build time in which every
+register offset is an immediate. A store publishes a code change only when a
+per-address-space registry says some executor holds a translation of that
+page, which keeps publication precise where READ_IMPLIES_EXEC makes every
+readable page executable. The banks, the host-flag fusion rules and the
+registry contract are in
+[`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
+Exact x87 formats and transcendentals use bounded software-math primitives
+called by those native gadgets. The userspace ISA boundary includes scalar x86
+and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
 long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
 are the external instruction acceptance gate. AVX-512 and later encodings,

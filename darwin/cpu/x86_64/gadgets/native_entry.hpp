@@ -13,6 +13,7 @@ namespace uml::cpu::x86_64::gadgets {
 
 struct IndirectLink;
 struct TargetLinkEntry;
+class CodePageRegistry;
 
 struct alignas(32) NativeTlbEntry final {
 	std::uint64_t read_page{1};
@@ -49,6 +50,9 @@ struct NativeExecutionContext final {
 	std::uint64_t (*code_change_reader)(void *) noexcept{};
 	std::uint64_t code_changes{};
 	std::uint64_t code_publications{};
+	/* Pages holding a cached translation in any executor of this address
+	 * space; null publishes on every executable-page store. */
+	CodePageRegistry *code_pages{};
 };
 
 static_assert(sizeof(NativeTlbEntry) == 32);

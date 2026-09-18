@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_entry.hpp"
+#include "code_page_registry.hpp"
 #include "executor.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -51,7 +53,11 @@ void publish_code_write(NativeExecutionContext &context,
 		const auto in_page = static_cast<std::size_t>(current & ~page_mask);
 		const auto count = std::min(size - completed,
 			static_cast<std::size_t>(4096) - in_page);
-		if (context.memory->is_executable(current)) {
+		/* The slow paths protect the same cached translations the fast
+		 * path does, so they publish on the same list. */
+		if (context.memory->is_executable(current) &&
+		    (context.code_pages == nullptr ||
+			    context.code_pages->holds(current))) {
 			invalidate_cached_code(context, address, size);
 			if (context.write_code != write_code_published) {
 				context.memory->invalidate_code(
@@ -85,30 +91,49 @@ extern "C" std::byte *uml_x86_64_gadget_tlb_miss(
 		return nullptr;
 	}
 	auto &entry = context->tlb_entries[native_tlb_index(address)];
-	const bool writes_code = access != 0 &&
-		context->memory->is_executable(address);
-	if (writes_code &&
-		context->write_code != UML_X86_64_WRITE_CODE_PUBLISHED)
-		context->write_code = UML_X86_64_WRITE_CODE_PENDING;
-	/* Publication only has work to do when this executor holds a translation
-	 * covering the page. Recording that here lets an ordinary store skip the
-	 * call entirely; the executor retires this entry when the page later gains
-	 * cached code.
-	 */
-	const bool caches_code = writes_code &&
-		context->sequence_context != nullptr &&
-		static_cast<Executor *>(context->sequence_context)
-			->page_holds_cached_code(address);
 	const auto page = address & page_mask;
 	const auto delta = reinterpret_cast<std::uintptr_t>(pointer) - address;
 	if (access == 0) {
 		entry.read_data_minus_address = delta;
 		entry.read_page = page;
-	} else {
-		entry.write_data_minus_address = delta;
-		entry.write_page = page | (writes_code ? write_code_tag : 0) |
-			(caches_code ? write_cached_code_tag : 0);
+		return pointer;
 	}
+	/* A store publishes only where a publication has something to protect:
+	 * a page holding a cached translation in some executor. The registry is
+	 * shared with the other vCPU threads, one of which may be adding this
+	 * very page, so the tag is settled like a sequence lock -- fill, then
+	 * re-read the change count and start over if it moved. The adder retires
+	 * this entry after its own count bump, so either it sees the fill or the
+	 * fill sees the bump.
+	 *
+	 * Publication only has work to do when this executor holds a translation
+	 * covering the page. Recording that here lets an ordinary store skip the
+	 * call entirely; the executor retires this entry when the page later gains
+	 * cached code.
+	 */
+	const bool executable = context->memory->is_executable(address);
+	auto *registry = context->code_pages;
+	auto *executor = static_cast<Executor *>(context->sequence_context);
+	bool writes_code = executable;
+	for (;;) {
+		const auto changes = registry == nullptr ? 0 : registry->changes();
+		writes_code = executable &&
+			(registry == nullptr || registry->holds(address));
+		const bool caches_code = writes_code && executor != nullptr &&
+			executor->page_holds_cached_code(address);
+		std::atomic_ref<std::uintptr_t>{entry.write_data_minus_address}
+			.store(delta, std::memory_order_relaxed);
+		std::atomic_ref<std::uint64_t>{entry.write_page}.store(
+			page | (writes_code ? write_code_tag : 0) |
+				(caches_code ? write_cached_code_tag : 0),
+			std::memory_order_relaxed);
+		std::atomic_thread_fence(std::memory_order_seq_cst);
+		if (registry == nullptr || registry->changes() == changes)
+			break;
+	}
+	if (writes_code &&
+		context->write_code != UML_X86_64_WRITE_CODE_PUBLISHED)
+		context->write_code = UML_X86_64_WRITE_CODE_PENDING;
 	return pointer;
 }
 

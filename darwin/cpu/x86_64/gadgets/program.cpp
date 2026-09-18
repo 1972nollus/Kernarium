@@ -175,9 +175,12 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		},
 		.code_changes = executor.prepared_code_changes(),
 		.code_publications = 0,
+		.code_pages = executor.code_page_registry(),
 	};
+	executor.enter_engine();
 	const auto result = uml_x86_64_gadget_enter(
 		native_stream.data(), &cpu, &context);
+	executor.leave_engine();
 	/* A block that published a code write and then left the stream never
 	 * reached the link-following test that settles its own publication, so
 	 * the sequence it leaves behind reads as somebody else's change and cools

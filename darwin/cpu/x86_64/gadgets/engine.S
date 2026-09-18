@@ -48,3 +48,5 @@
 #include "engine/x87_arithmetic.inc"
 #include "engine/x87_transcendental.inc"
 #include "engine/system.inc"
+/* Generated at build time by engine/generate_baked.py. */
+#include "baked_scalar.inc"

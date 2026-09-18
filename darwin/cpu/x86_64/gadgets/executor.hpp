@@ -10,6 +10,7 @@
 namespace uml::cpu::x86_64::gadgets {
 
 struct NativeTlbEntry;
+class CodePageRegistry;
 
 struct ProgramSelection final {
 	BuildStatus status{BuildStatus::illegal_instruction};
@@ -70,6 +71,16 @@ public:
 	 * page. A store to a page without one cannot invalidate any cached block.
 	 */
 	[[nodiscard]] bool page_holds_cached_code(std::uint64_t address) noexcept;
+	/* The pages holding cached code in any executor of the prepared address
+	 * space, or null before the first prepare. */
+	[[nodiscard]] CodePageRegistry *code_page_registry() const noexcept;
+	/* Bracket every native run so a translating executor can wait for the
+	 * stores this one has already translated. */
+	void enter_engine() noexcept;
+	void leave_engine() noexcept;
+	/* Treat every executable page as holding code, for a process whose other
+	 * translations this executor's registry cannot see. */
+	void publish_every_executable_store(bool value) noexcept;
 	[[nodiscard]] void *execution_context() const noexcept;
 	[[nodiscard]] std::uint64_t prepared_code_changes() const noexcept;
 	[[nodiscard]] std::uint64_t current_code_changes() const noexcept;
