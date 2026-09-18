@@ -889,7 +889,16 @@ private:
         std::vector<std::uint8_t> response;
     };
 
-    static constexpr auto maximumFenceWait = std::chrono::seconds(60);
+    /* One window of the two-stage escape below. A renderer fence covers a
+     * single Virgl submission, which takes milliseconds; a host that kills a
+     * GPU workload for running too long kills it in well under a second. So
+     * this bounds a fence that is stuck, not one that is slow, and the only
+     * thing a longer window buys is a longer stall. It costs two windows to
+     * clear each stuck fence, and a Vulkan CTS group whose shaders exceed the
+     * device's command-buffer limit produced fourteen of them in twelve
+     * cases. Fifteen seconds still leaves three orders of magnitude over a
+     * real submission. */
+    static constexpr auto maximumFenceWait = std::chrono::seconds(15);
     static constexpr std::uintptr_t fenceTimerIdentifier = 1;
     static constexpr std::intptr_t fencePollMicroseconds = 100;
 
