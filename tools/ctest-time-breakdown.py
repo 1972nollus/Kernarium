@@ -27,6 +27,9 @@ import xml.etree.ElementTree as ElementTree
 
 UNREGISTERED = "(unregistered)"
 
+# name, seconds, status, and the JUnit file the case came from.
+Case = tuple[str, float, str, str]
+
 
 def read_manifest(path: pathlib.Path) -> dict[str, str]:
     """Map every registered test name to its owner path."""
@@ -65,9 +68,9 @@ def name_family(name: str, depth: int) -> str:
     return "-".join(parts[:depth])
 
 
-def read_junit(path: pathlib.Path) -> list[tuple[str, float, str]]:
-    """Return (name, seconds, status) for every case in a JUnit file."""
-    cases: list[tuple[str, float, str]] = []
+def read_junit(path: pathlib.Path, origin: str) -> list[Case]:
+    """Return (name, seconds, status, origin) for every case in a JUnit file."""
+    cases: list[Case] = []
     for case in ElementTree.parse(path).getroot().iter("testcase"):
         name = case.get("name") or ""
         try:
@@ -79,7 +82,7 @@ def read_junit(path: pathlib.Path) -> list[tuple[str, float, str]]:
             status = status or "fail"
         elif case.find("skipped") is not None:
             status = status or "skipped"
-        cases.append((name, seconds, status or "run"))
+        cases.append((name, seconds, status or "run", origin))
     return cases
 
 
@@ -104,15 +107,15 @@ def emit_table(title: str, groups: dict[str, list[float]], total: float) -> None
 
 def report(
     label: str,
-    cases: list[tuple[str, float, str]],
+    cases: list[Case],
     owners: dict[str, str],
     arguments: argparse.Namespace,
 ) -> None:
-    total = sum(seconds for _, seconds, _ in cases)
+    total = sum(case[1] for case in cases)
     print(f"\n{'=' * 72}\n{label}: {len(cases)} tests, {total:.2f} s of test time")
 
     by_owner: dict[str, list[float]] = {}
-    for name, seconds, _ in cases:
+    for name, seconds, _, _ in cases:
         by_owner.setdefault(
             owner_group(owners.get(name), arguments.manifest_root), []
         ).append(seconds)
@@ -122,7 +125,7 @@ def report(
     if dominant is not None:
         members = [
             (name, seconds)
-            for name, seconds, _ in cases
+            for name, seconds, _, _ in cases
             if owner_group(owners.get(name), arguments.manifest_root) == dominant
         ]
         by_family: dict[str, list[float]] = {}
@@ -152,20 +155,25 @@ def report(
                 sum(sum(times) for times in by_sub.values()),
             )
 
+    def line(case: Case) -> str:
+        name, seconds, status, origin = case
+        where = "" if origin == label else f" ({origin})"
+        return f"{seconds:>9.2f}  {name}{where}  [{status}]"
+
     ranked = sorted(cases, key=lambda case: case[1], reverse=True)
     print(f"\n{label} slowest {arguments.top} tests")
-    for name, seconds, status in ranked[: arguments.top]:
-        print(f"{seconds:>9.2f}  {name}  [{status}]")
+    for case in ranked[: arguments.top]:
+        print(line(case))
 
     over = [case for case in ranked if case[1] > arguments.over]
     print(f"\n{label} tests over {arguments.over:g} s: {len(over)}")
-    for name, seconds, status in over:
-        print(f"{seconds:>9.2f}  {name}  [{status}]")
+    for case in over:
+        print(line(case))
 
     failures = [case for case in cases if case[2] not in ("run", "passed", "skipped")]
     print(f"\n{label} non-passing cases: {len(failures)}")
-    for name, seconds, status in failures:
-        print(f"{seconds:>9.2f}  {name}  [{status}]")
+    for case in failures:
+        print(line(case))
 
 
 def main(argv: list[str]) -> int:
@@ -214,12 +222,12 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
 
     owners = read_manifest(arguments.manifest)
-    everything: list[tuple[str, float, str]] = []
+    everything: list[Case] = []
     for entry in arguments.junit:
         label, separator, path = entry.partition("=")
         if not separator:
             label, path = pathlib.Path(entry).stem, entry
-        cases = read_junit(pathlib.Path(path))
+        cases = read_junit(pathlib.Path(path), label)
         report(label, cases, owners, arguments)
         everything.extend(cases)
 
