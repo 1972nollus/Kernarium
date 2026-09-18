@@ -1,4 +1,4 @@
-From 2101e475af90cfbb01c5f7804ac944885cbeabeb Mon Sep 17 00:00:00 2001
+From f67da8efeaa2391da3880d6c64fe44278faf2a12 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 20:17:12 +0900
 Subject: [PATCH 91/96] vulkan/runtime: name a pipeline binary by its own bytes

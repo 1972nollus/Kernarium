@@ -1,4 +1,4 @@
-From 1c17298399c406300721452095c61cfaff23cd3f Mon Sep 17 00:00:00 2001
+From a3d6c5936425d614ab31b28aa9518716cb7b4aab Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 02:12:09 +0900
 Subject: [PATCH 70/96] spirv: take vtn_bindgen2 from the system with the

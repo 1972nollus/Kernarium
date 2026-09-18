@@ -1,4 +1,4 @@
-From af787a5978c59044241b2cd5e52132d1458124da Mon Sep 17 00:00:00 2001
+From f47bccacf99f72df5d0f99bcd3a306258423e6a5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 02:18:00 +0900
 Subject: [PATCH 43/96] kosmickrisp: derive alpha to coverage without a colour

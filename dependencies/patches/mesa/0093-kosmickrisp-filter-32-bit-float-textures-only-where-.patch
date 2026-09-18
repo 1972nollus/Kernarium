@@ -1,4 +1,4 @@
-From 8161a73683cdbf26b79537a34b9e4844b3deba53 Mon Sep 17 00:00:00 2001
+From 2336f0f89f4dc883625d5e9713895c7a90494795 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 12:21:15 +0900
 Subject: [PATCH 93/96] kosmickrisp: filter 32-bit float textures only where

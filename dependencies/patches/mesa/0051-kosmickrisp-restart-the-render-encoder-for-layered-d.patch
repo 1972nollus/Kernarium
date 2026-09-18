@@ -1,4 +1,4 @@
-From 9964c3331d285a2e729bd30358bc6864cc73b7d3 Mon Sep 17 00:00:00 2001
+From 4e67e05e91fc2ddb6892a98f186befabd297a471 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 04:52:53 +0900
 Subject: [PATCH 51/96] kosmickrisp: restart the render encoder for layered

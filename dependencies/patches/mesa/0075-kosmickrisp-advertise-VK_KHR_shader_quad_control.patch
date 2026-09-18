@@ -1,4 +1,4 @@
-From f1be8cd84c9aa105cfd29f5fbb6624157437373a Mon Sep 17 00:00:00 2001
+From 566f7838f49c68e28460811f88213e7c36df38e6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:33:54 +0900
 Subject: [PATCH 75/96] kosmickrisp: advertise VK_KHR_shader_quad_control

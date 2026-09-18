@@ -1,4 +1,4 @@
-From 0e41b1b5cea07e4b4a5fed1c35ab425e5155efc8 Mon Sep 17 00:00:00 2001
+From 5cf2958b443d18dc44ae96ef1178e6f24b35872e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 09:52:56 +0900
 Subject: [PATCH 89/96] kosmickrisp: read a vertex attribute the pipeline does

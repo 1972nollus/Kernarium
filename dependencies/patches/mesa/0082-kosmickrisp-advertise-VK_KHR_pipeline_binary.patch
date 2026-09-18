@@ -1,4 +1,4 @@
-From 034235c9bf57e3327ca3288190027d0540bc6098 Mon Sep 17 00:00:00 2001
+From 30e50dc1a471069242ab1d9ccde5694f566c7d39 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:18:29 +0900
 Subject: [PATCH 82/96] kosmickrisp: advertise VK_KHR_pipeline_binary

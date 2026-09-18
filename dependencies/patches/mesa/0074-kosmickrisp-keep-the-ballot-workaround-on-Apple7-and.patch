@@ -1,4 +1,4 @@
-From 0e56c47c768b6115c30732b65d77ad6403769b23 Mon Sep 17 00:00:00 2001
+From 97485e0e64ab9b1ea02bba047b0d08a32fac9742 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:05:49 +0900
 Subject: [PATCH 74/96] kosmickrisp: keep the ballot workaround on Apple7 and

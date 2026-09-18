@@ -1,4 +1,4 @@
-From 650e4ed579b0eff4a32b3c88ea43ac19f076d1dd Mon Sep 17 00:00:00 2001
+From 63d00465c8e87a77871d669a07b7621bc0b90166 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:19:59 +0900
 Subject: [PATCH 58/96] kosmickrisp: blend with Metal's own state where Metal

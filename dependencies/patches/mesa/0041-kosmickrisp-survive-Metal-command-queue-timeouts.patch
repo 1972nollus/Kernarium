@@ -1,4 +1,4 @@
-From 76729da02ee84e9623b9a13ee93709f18fe6cc70 Mon Sep 17 00:00:00 2001
+From 234224aa8db49aec74cfcdd8168b1d171eb4c26d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 41/96] kosmickrisp: survive Metal command queue timeouts
@@ -28,13 +28,25 @@ every result that would have followed it; a shard carrying six such reports
 resolved all 3906 of its cases. What the report puts in doubt is that one
 submission's contents, which this driver cannot repair and Vulkan cannot
 express short of device loss, so the report says exactly that instead of
-claiming the results are good. Every other error, and a timeout for a
-submission the GPU never started or never finished, is the queue itself
-stopping: that is the hang, and it still loses the device, carrying the
-error name, the execution interval and the raw host GPU clock so it stays
-visible and two processes that fail at once line up against each other. One
-classifier decides both the disposition and the wording, and Metal's own
-text goes last, so a long message cannot truncate away what happened.
+claiming the results are good.
+
+What separates a live queue from a stopped one is whether Metal admitted
+the submission, not whether it measured execution for it. A Vulkan CTS
+fraction on an A15 reported three timeouts in a row: the first two carried
+an execution interval and were survived without disturbing the run, and the
+third reported an equal start and end. That third report is the queue
+killing work it had already taken, which is what it does to whatever is
+queued behind a submission that has just timed out. Reading it as a hang
+lost a queue that was running, wedged the guest and ended the fraction
+97,646 cases early. So a timeout for a submission carrying a start
+timestamp is survived, and only one the queue never admitted, or started
+and abandoned without ever timestamping an end, still loses the device.
+
+Every other error stays device loss too, carrying the error name, the
+execution interval and the raw host GPU clock so it stays visible and two
+processes that fail at once line up against each other. One classifier
+decides both the disposition and the wording, and Metal's own text goes
+last, so a long message cannot truncate away what happened.
 
 Refuse an image extent Metal cannot represent before it reaches Metal.
 Vulkan already requires every texture descriptor size field to be at least
@@ -56,16 +68,16 @@ land as their own topic rather than perturbing an unrelated topic's patch.
  src/kosmickrisp/vulkan/kk_buffer_view.c       |  21 ++
  src/kosmickrisp/vulkan/kk_image.c             |  39 ++-
  src/kosmickrisp/vulkan/kk_image_extent.c      |  15 +
- src/kosmickrisp/vulkan/kk_image_extent.h      |  34 +++
+ src/kosmickrisp/vulkan/kk_image_extent.h      |  34 ++
  src/kosmickrisp/vulkan/kk_image_layout.c      |  21 +-
  src/kosmickrisp/vulkan/kk_image_layout.h      |  12 +-
  src/kosmickrisp/vulkan/kk_queue.c             |  24 +-
- src/kosmickrisp/vulkan/kk_queue_error.c       | 102 +++++++
- src/kosmickrisp/vulkan/kk_queue_error.h       |  57 ++++
+ src/kosmickrisp/vulkan/kk_queue_error.c       | 117 +++++++
+ src/kosmickrisp/vulkan/kk_queue_error.h       |  67 ++++
  src/kosmickrisp/vulkan/meson.build            |  30 ++
- .../vulkan/tests/test_image_extent.c          | 112 +++++++
- .../vulkan/tests/test_queue_error.c           | 278 ++++++++++++++++++
- 12 files changed, 722 insertions(+), 23 deletions(-)
+ .../vulkan/tests/test_image_extent.c          | 112 ++++++
+ .../vulkan/tests/test_queue_error.c           | 319 ++++++++++++++++++
+ 12 files changed, 788 insertions(+), 23 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.c
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.h
  create mode 100644 src/kosmickrisp/vulkan/kk_queue_error.c
@@ -356,10 +368,10 @@ index c9d180dc..52f85b40 100644
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 00000000..b9fb4fd1
+index 00000000..31f065cd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,117 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -404,18 +416,30 @@ index 00000000..b9fb4fd1
 +}
 +
 +bool
++kk_queue_error_admitted_submission(const struct mtl_feedback_data *data)
++{
++   return isfinite(data->gpu_start) && isfinite(data->gpu_end) &&
++          data->gpu_start > 0.0 && data->gpu_end >= data->gpu_start;
++}
++
++bool
 +kk_queue_error_is_device_lost(const struct mtl_feedback_data *data)
 +{
 +   if (data->error == MTL_COMMAND_QUEUE_ERROR_NONE)
 +      return false;
 +
-+   /* A timeout is the one failure that leaves a live queue behind, and only
-+    * when Metal accounted for the submission from start to finish. Anything
++   /* A timeout is the one failure that leaves a live queue behind. Anything
 +    * else stopped the queue. */
 +   if (data->error != MTL_COMMAND_QUEUE_ERROR_TIMEOUT)
 +      return true;
 +
-+   return !kk_queue_error_has_execution_interval(data);
++   /* A start timestamp means Metal admitted the submission. Admitting it and
++    * reporting no execution for it is the queue killing work it had already
++    * taken, which is what it does to whatever is queued behind a submission
++    * that has just timed out; the queue is running, not stopped. Only a
++    * submission the queue never admitted, or one it started and abandoned
++    * without ever timestamping an end, says the queue itself stopped. */
++   return !kk_queue_error_admitted_submission(data);
 +}
 +
 +void
@@ -434,6 +458,9 @@ index 00000000..b9fb4fd1
 +   } else if (data->gpu_start == 0.0 && data->gpu_end == 0.0) {
 +      snprintf(execution, sizeof(execution),
 +               "the GPU never started this submission");
++   } else if (kk_queue_error_admitted_submission(data)) {
++      snprintf(execution, sizeof(execution),
++               "the GPU started this submission and ran none of it");
 +   } else {
 +      snprintf(execution, sizeof(execution),
 +               "the GPU reported no execution interval for this submission");
@@ -464,10 +491,10 @@ index 00000000..b9fb4fd1
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 00000000..f8e2b9c1
+index 00000000..caeb916c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,67 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -502,16 +529,26 @@ index 00000000..f8e2b9c1
 + * GPU ran does not predict it: a submission executing for a fraction of a
 + * second is reported while a longer one on the same GPU succeeds. Losing the
 + * device would throw away a live queue and every result that would follow it,
-+ * so a timeout Metal accounted for from start to finish is reported and
-+ * survived. What such a report puts in doubt is that one submission's
-+ * contents, which the driver cannot repair and Vulkan cannot express short of
-+ * device loss; the work itself is where that shows.
++ * so a timeout for a submission Metal admitted is reported and survived. What
++ * such a report puts in doubt is that one submission's contents, which the
++ * driver cannot repair and Vulkan cannot express short of device loss; the
++ * work itself is where that shows.
 + *
-+ * Every other error, and a timeout for a submission the GPU never started or
-+ * never finished, means the queue stopped making progress. That is the hang,
-+ * and it stays device loss.
++ * Every other error, and a timeout for a submission the queue never admitted
++ * or started and abandoned without an end timestamp, means the queue stopped
++ * making progress. That is the hang, and it stays device loss.
 + */
 +bool kk_queue_error_is_device_lost(const struct mtl_feedback_data *data);
++
++/* Whether Metal took this submission on: it timestamped a start, and any end
++ * it reported is not before that start.
++ *
++ * A submission admitted and then reported with no execution is work the queue
++ * killed on entry, which is what it does to whatever is queued behind a
++ * submission that has just timed out. It says nothing about the queue's
++ * health, so it must not be read as one.
++ */
++bool kk_queue_error_admitted_submission(const struct mtl_feedback_data *data);
 +
 +/* Describe one failed Metal commit into buffer without allocating.
 + *
@@ -700,10 +737,10 @@ index 00000000..b34363d6
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_queue_error.c b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 new file mode 100644
-index 00000000..1e333fd2
+index 00000000..e678bb79
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_queue_error.c
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,319 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -819,10 +856,10 @@ index 00000000..1e333fd2
 +   assert(strstr(report, "the device is lost") == NULL);
 +}
 +
-+/* A timeout the GPU never started or never finished is the queue itself
++/* A timeout for a submission the queue never admitted is the queue itself
 + * stopping, and that must still lose the device. */
 +static void
-+check_unfinished_timeout_loses_the_device(void)
++check_unadmitted_timeout_loses_the_device(void)
 +{
 +   /* Never scheduled. */
 +   struct mtl_feedback_data never =
@@ -830,16 +867,38 @@ index 00000000..1e333fd2
 +   /* Started and abandoned, so Metal has no completion timestamp. */
 +   struct mtl_feedback_data abandoned =
 +      feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT, "timed out", 582690.5, 0.0);
-+   /* Accounted for without measurable execution. */
-+   struct mtl_feedback_data instant = feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
-+                                               "timed out", 582690.5, 582690.5);
 +
 +   assert(!kk_queue_error_has_execution_interval(&never));
 +   assert(!kk_queue_error_has_execution_interval(&abandoned));
-+   assert(!kk_queue_error_has_execution_interval(&instant));
++   assert(!kk_queue_error_admitted_submission(&never));
++   assert(!kk_queue_error_admitted_submission(&abandoned));
 +   assert(kk_queue_error_is_device_lost(&never));
 +   assert(kk_queue_error_is_device_lost(&abandoned));
-+   assert(kk_queue_error_is_device_lost(&instant));
++}
++
++/* A submission Metal admitted and then reported with no execution is work the
++ * queue killed on entry, which is what it does to whatever sits behind a
++ * submission that has just timed out. A Vulkan CTS fraction measured three
++ * timeouts in a row on an A15: two carried an execution interval and were
++ * survived without disturbing the run, and the third reported an equal start
++ * and end. Losing the device on that third report wedged the guest and ended
++ * the run 97,646 cases early. */
++static void
++check_instant_timeout_keeps_the_device(void)
++{
++   struct mtl_feedback_data instant = feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
++                                               "timed out", 582690.5, 582690.5);
++   char report[KK_QUEUE_ERROR_REPORT_SIZE];
++
++   assert(!kk_queue_error_has_execution_interval(&instant));
++   assert(kk_queue_error_admitted_submission(&instant));
++   assert(!kk_queue_error_is_device_lost(&instant));
++
++   memset(report, 0x7f, sizeof(report));
++   kk_queue_error_describe(report, sizeof(report), &instant);
++   assert(strstr(report, "ran none of it") != NULL);
++   assert(strstr(report, "the device survives") != NULL);
++   assert(strstr(report, "the device is lost") == NULL);
 +}
 +
 +/* Only a timeout can be survivable. Every other failure loses work, so a
@@ -900,8 +959,10 @@ index 00000000..1e333fd2
 +   assert(kk_queue_error_is_device_lost(&data));
 +}
 +
-+/* Metal reports start == end for a submission it accounted for but did not
-+ * run long enough to measure; that is neither of the two cases above. */
++/* Metal reports start == end for a submission it admitted and ran none of;
++ * that is neither of the two cases above, and the report says so without
++ * claiming execution the GPU never performed. The disposition is the error's,
++ * not the interval's: this one is fatal because it is not a timeout. */
 +static void
 +check_degenerate_interval_is_not_claimed_as_execution(void)
 +{
@@ -910,9 +971,24 @@ index 00000000..1e333fd2
 +   describe(report, sizeof(report), MTL_COMMAND_QUEUE_ERROR_INTERNAL, "oops",
 +            582313.5, 582313.5);
 +
-+   assert(strstr(report, "no execution interval") != NULL);
++   assert(strstr(report, "ran none of it") != NULL);
 +   assert(strstr(report, "never started") == NULL);
 +   assert(strstr(report, "accounted for") == NULL);
++   assert(strstr(report, "the device is lost") != NULL);
++}
++
++/* A submission Metal started and abandoned reports an end before its start,
++ * which is not an admission and keeps the older wording. */
++static void
++check_abandoned_submission_reports_no_interval(void)
++{
++   char report[KK_QUEUE_ERROR_REPORT_SIZE];
++
++   describe(report, sizeof(report), MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
++            "timed out", 582313.5, 0.0);
++
++   assert(strstr(report, "no execution interval") != NULL);
++   assert(strstr(report, "the device is lost") != NULL);
 +}
 +
 +/* Metal supplies no localized description for some failures. */
@@ -973,11 +1049,13 @@ index 00000000..1e333fd2
 +   check_every_error_is_named();
 +   check_unexecuted_timeout_is_distinguished();
 +   check_accounted_timeout_keeps_the_device();
-+   check_unfinished_timeout_loses_the_device();
++   check_unadmitted_timeout_loses_the_device();
++   check_instant_timeout_keeps_the_device();
 +   check_only_timeouts_can_be_survived();
 +   check_executed_timeout_reports_its_interval();
 +   check_unscheduled_submission_has_no_interval();
 +   check_degenerate_interval_is_not_claimed_as_execution();
++   check_abandoned_submission_reports_no_interval();
 +   check_missing_message_is_named();
 +   check_report_is_bounded();
 +   return 0;

@@ -1,4 +1,4 @@
-From bee27945288c5be730cfca59ade29f7ac8dc363e Mon Sep 17 00:00:00 2001
+From 65ba4abe50b14dc2e3d598f32abb0f15e34049cf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 14:11:49 +0900
 Subject: [PATCH 90/96] kosmickrisp: offer BC, RGTC and BPTC only where Metal
