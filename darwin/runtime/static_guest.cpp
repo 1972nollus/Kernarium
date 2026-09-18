@@ -315,52 +315,6 @@ void save_cpu(arm64::CpuState &cpu,
 	}
 }
 
-class StaticExecutionScope final {
-public:
-	StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
-		: generation_{generation},
-		  context_{
-			darwin_uml_static_vm_execution_context_create(generation)}
-	{
-		entered_ = context_ != nullptr &&
-			darwin_uml_static_vm_execution_context_begin(
-				context_, guest_pc) == 0;
-	}
-
-	~StaticExecutionScope()
-	{
-		if (entered_)
-			(void)darwin_uml_static_vm_execution_context_end(context_);
-		darwin_uml_static_vm_execution_context_destroy(context_);
-	}
-
-	StaticExecutionScope(const StaticExecutionScope &) = delete;
-	StaticExecutionScope &operator=(const StaticExecutionScope &) = delete;
-
-	[[nodiscard]] bool entered() const noexcept { return entered_; }
-	[[nodiscard]] void *context() const noexcept { return context_; }
-	[[nodiscard]] darwin_uml_static_sequences sequences() const noexcept
-	{
-		return darwin_uml_static_vm_execution_context_sequences(context_);
-	}
-	[[nodiscard]] unsigned long generation() const noexcept
-	{
-		return generation_;
-	}
-
-private:
-	unsigned long generation_;
-	void *context_{};
-	bool entered_{};
-};
-
-bool execution_interrupt_boundary(void *context) noexcept
-{
-	const auto *execution = static_cast<const StaticExecutionScope *>(context);
-	return execution != nullptr &&
-		execution->sequences().execution_interrupt != 0;
-}
-
 #if DARWIN_UML_X86_64_GUEST
 [[nodiscard]] bool x86_compat_syscall_trace_enabled() noexcept
 {
@@ -798,19 +752,7 @@ int run_common_guest(
 			.interrupt = dispatch_interrupt,
 			.boundary = signal_return_boundary,
 		};
-		if constexpr (Kind == uml::cpu::EngineKind::interpreter) {
-			StaticExecutionScope execution{generation, cpu.pc};
-			if (!execution.entered())
-				return DARWIN_UML_EVENT_FATAL;
-			const auto sequences = execution.sequences();
-			memory.prepare(generation, sequences.mapping_changes);
-			request.boundary_context = &execution;
-			request.interrupt.poll = execution_interrupt_boundary;
-			request.interrupt.poll_context = &execution;
-			result = engine->run(request);
-		} else {
-			result = engine->run(request);
-		}
+		result = engine->run(request);
 		retired_instructions += result.retired_instructions;
 		if (result.reason != uml::cpu::ExitReason::breakpoint)
 			break;
@@ -917,19 +859,6 @@ extern "C" int darwin_uml_static_guest_interrupt_sequence(
 		 * guest after this failure, and an explicit retry replaces any prior
 		 * token before execution can resume. */
 		return -1;
-	}
-}
-
-extern "C" int darwin_uml_interpreter_enter_guest(
-	void *register_pointer, void *fp_pointer, unsigned long fp_size,
-	unsigned long generation, unsigned long *tls)
-{
-	try {
-		return uml::emulator::run_common_guest<
-			uml::cpu::EngineKind::interpreter>(register_pointer, fp_pointer,
-			fp_size, generation, tls);
-	} catch (...) {
-		return DARWIN_UML_EVENT_FATAL;
 	}
 }
 

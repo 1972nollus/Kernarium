@@ -7,12 +7,13 @@
 namespace uml::runtime {
 
 /* Host-side policy only. Linux selects no execution engine through the fixed
- * C bridge; public handles and internal tests select it through Context. */
+ * C bridge; public handles and internal tests select it through Context.
+ * These values are reported unchanged as uml_emulator_execution_model, so a
+ * retired selection keeps its number rather than renumbering the others. */
 enum class ExecutionEngine : std::uint8_t {
 	automatic = 0,
 	gadgets = 1,
 	jit = 2,
-	interpreter = 3,
 };
 
 /* The maintained kernel clamps ncpus= to CONFIG_NR_CPUS=64. Keep the host's

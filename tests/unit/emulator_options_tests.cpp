@@ -44,13 +44,12 @@ bool starts_with_any(const uml::emulator::EmulatorOptions &options,
 
 void test_defaults_and_engine_selection()
 {
-	const char *arguments[]{"uml-test", "--execution-engine=interpreter",
+	const char *arguments[]{"uml-test", "--execution-engine=jit",
 		"--guest-top-byte-ignore", "console=ttyS0"};
 	const auto options = uml::emulator::prepare_emulator_options(
 		4, arguments, "/tmp/rootfs.erofs", true);
 	require(options.valid, "valid emulator options were rejected");
-	require(options.engine ==
-			uml::runtime::ExecutionEngine::interpreter,
+	require(options.engine == uml::runtime::ExecutionEngine::jit,
 		"execution engine was not parsed");
 	require(options.top_byte_ignore,
 		"guest top-byte-ignore mode was not parsed");
@@ -74,7 +73,7 @@ void test_defaults_and_engine_selection()
 	require(options.jit_executor_cache_budget == 256U * 1024U * 1024U,
 		"default private JIT cache cap is not 256 MiB");
 	require(contains(options, "ip=dhcp"), "network default was not added");
-	require(!contains(options, "--execution-engine=interpreter"),
+	require(!contains(options, "--execution-engine=jit"),
 		"host execution option leaked into the kernel command line");
 
 	const char *default_arguments[]{"uml-test"};

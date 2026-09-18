@@ -82,8 +82,6 @@ constexpr auto platform_default = ExecutionEngine::gadgets;
 	switch (engine) {
 	case ExecutionEngine::jit:
 		return darwin_uml_jit_enter_guest;
-	case ExecutionEngine::interpreter:
-		return darwin_uml_interpreter_enter_guest;
 	case ExecutionEngine::gadgets:
 	case ExecutionEngine::automatic:
 		return darwin_uml_static_enter_guest;
@@ -95,8 +93,6 @@ constexpr auto platform_default = ExecutionEngine::gadgets;
 	ExecutionEngine engine) noexcept
 {
 	switch (engine) {
-	case ExecutionEngine::interpreter:
-		return ::uml::cpu::EngineKind::interpreter;
 	case ExecutionEngine::jit:
 		return ::uml::cpu::EngineKind::jit;
 	case ExecutionEngine::automatic:
@@ -375,8 +371,7 @@ int Context::set_execution_engine(ExecutionEngine engine) noexcept
 	if (engine == ExecutionEngine::automatic)
 		engine = resolve_automatic();
 	if (engine != ExecutionEngine::gadgets &&
-	    engine != ExecutionEngine::jit &&
-	    engine != ExecutionEngine::interpreter)
+	    engine != ExecutionEngine::jit)
 		return -1;
 	if (!execution_engine_available(engine))
 		return -1;

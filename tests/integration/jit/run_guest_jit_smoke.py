@@ -162,7 +162,7 @@ def main() -> int:
     )
     parser.add_argument("--memory", default="8G")
     parser.add_argument(
-        "--engine", choices=("jit", "gadgets", "interpreter"), default="jit"
+        "--engine", choices=("jit", "gadgets"), default="jit"
     )
     arguments = parser.parse_args()
 
@@ -220,18 +220,6 @@ def main() -> int:
                 f"expected {sorted(expected_cpuinfo)}, "
                 f"got {sorted(actual_cpuinfo)}"
             )
-
-        # The interpreter is a correctness fallback, not a practical carrier
-        # for heavyweight optimizing runtimes. Keep its ordinary smoke path to
-        # kernel, shell, and architectural-state coverage. Node/V8 and Wasm
-        # remain useful translated-engine checks below.
-        if arguments.engine == "interpreter":
-            command(guest, "test \"$((6 * 7))\" -eq 42")
-            print(
-                f"PASS engine={arguments.engine} workload=shell "
-                f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x}"
-            )
-            return 0
 
         node = "/opt/node/bin/node"
         node_path = command(guest, f"test -x {shlex.quote(node)} && echo present")

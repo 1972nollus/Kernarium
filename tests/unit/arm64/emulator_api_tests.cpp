@@ -496,7 +496,7 @@ int concurrent_kernel_a(int, char *const[], char *const[])
 int concurrent_kernel_b(int, char *const[], char *const[])
 {
 	const auto status = concurrent_kernel(
-		uml::runtime::ExecutionEngine::interpreter, 1402, false);
+		uml::runtime::ExecutionEngine::jit, 1402, false);
 	concurrent_b_valid = status == 0;
 	return status;
 }
@@ -718,7 +718,7 @@ void test_handle_lifetime_isolation()
 	int status_a = -1;
 	int status_b = -1;
 	const char *arguments_a[]{"uml-test", "--execution-engine=gadgets"};
-	const char *arguments_b[]{"uml-test", "--execution-engine=interpreter"};
+	const char *arguments_b[]{"uml-test", "--execution-engine=jit"};
 	std::thread thread_a{[&] {
 		status_a = uml_emulator_run(handle_a.get(), 2, arguments_a, nullptr);
 	}};
@@ -747,7 +747,7 @@ void test_handle_lifetime_isolation()
 		live_capabilities_a.userspace_execution ==
 			UML_EMULATOR_STATIC_GADGETS &&
 		live_capabilities_b.userspace_execution ==
-			UML_EMULATOR_INTERPRETER;
+			UML_EMULATOR_NATIVE_JIT;
 	if (both_entered)
 		uml_emulator_request_stop(handle_a.get());
 	{
@@ -781,7 +781,7 @@ void test_handle_lifetime_isolation()
 		uml_emulator_get_capabilities(handle_b.get(), &capabilities_b) ==
 		UML_EMULATOR_OK &&
 		capabilities_a.userspace_execution == UML_EMULATOR_STATIC_GADGETS &&
-		capabilities_b.userspace_execution == UML_EMULATOR_INTERPRETER,
+		capabilities_b.userspace_execution == UML_EMULATOR_NATIVE_JIT,
 		"two handles did not retain independent engine selection");
 }
 
@@ -929,7 +929,7 @@ void test_active_registries_are_allocation_free_and_transactional()
 	uml::runtime::Context context_a;
 	uml::runtime::Context context_b;
 	require(context_a.set_execution_engine(
-			uml::runtime::ExecutionEngine::interpreter) == 0,
+			uml::runtime::ExecutionEngine::gadgets) == 0,
 		"could not select registry test engine");
 	uml::runtime::RunScope run_a{context_a};
 	require(run_a.entered(), "registry test run was not admitted");
@@ -941,7 +941,7 @@ void test_active_registries_are_allocation_free_and_transactional()
 			unsigned char mac[6]{};
 			unsigned int mtu{};
 			valid = current_execution_engine() ==
-					uml::runtime::ExecutionEngine::interpreter &&
+					uml::runtime::ExecutionEngine::gadgets &&
 				darwin_uml_net_open(mac, &mtu) == 0 && mtu == 1701;
 		}};
 		sample.join();

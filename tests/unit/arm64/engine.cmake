@@ -9,7 +9,6 @@
         $<TARGET_OBJECTS:uml_run_routing>
         $<TARGET_OBJECTS:uml_static_runtime>
         $<TARGET_OBJECTS:uml_cpu_engine_factory>
-        $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
         $<TARGET_OBJECTS:uml_arm64_gadget_engine>
         $<TARGET_OBJECTS:uml_arm64_jit_engine>
         $<TARGET_OBJECTS:uml_arm64_gadget_executor>

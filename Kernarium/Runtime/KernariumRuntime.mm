@@ -1237,7 +1237,7 @@ const char* selectedExecutionEngine()
     const char* requested = std::getenv("KERNARIUM_EXECUTION_ENGINE");
     if (requested == nullptr)
         return "auto";
-    for (const char* allowed : {"auto", "jit", "gadgets", "interpreter"}) {
+    for (const char* allowed : {"auto", "jit", "gadgets"}) {
         if (std::strcmp(requested, allowed) == 0)
             return allowed;
     }

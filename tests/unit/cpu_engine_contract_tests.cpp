@@ -59,38 +59,6 @@ void operator delete[](void *memory, std::size_t) noexcept
 
 namespace {
 
-class TestMemory final : public uml::cpu::GuestAddressSpace {
-public:
-	explicit TestMemory(std::uint32_t instruction = 0xd400'0001U)
-	{
-		std::memcpy(bytes_.data(), &instruction, sizeof(instruction));
-	}
-
-	[[nodiscard]] bool read(
-		std::uint64_t address, std::span<std::byte> destination) override
-	{
-		if (address > bytes_.size() ||
-			destination.size() > bytes_.size() - address)
-			return false;
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool write(
-		std::uint64_t address,
-		std::span<const std::byte> source) override
-	{
-		if (address > bytes_.size() || source.size() > bytes_.size() - address)
-			return false;
-		std::memcpy(bytes_.data() + address, source.data(), source.size());
-		return true;
-	}
-
-private:
-	std::array<std::byte, 4096> bytes_{};
-};
-
 class TranslatedBoundaryExecutor final {
 public:
 	[[nodiscard]] bool begin_execution(unsigned long, std::uint64_t)
@@ -186,21 +154,6 @@ public:
 	std::size_t block_calls{};
 };
 
-class ThrowingMemory final : public uml::cpu::GuestAddressSpace {
-public:
-	[[nodiscard]] bool read(
-		std::uint64_t, std::span<std::byte>) override
-	{
-		throw std::runtime_error{"injected interpreter memory failure"};
-	}
-
-	[[nodiscard]] bool write(
-		std::uint64_t, std::span<const std::byte>) override
-	{
-		throw std::runtime_error{"injected interpreter memory failure"};
-	}
-};
-
 struct InterruptPollState final {
 	std::size_t calls{};
 	std::size_t pending_on_call{};
@@ -280,8 +233,8 @@ struct AllocationBoundary final {
 
 void test_factory_contract()
 {
-	for (const auto kind : {uml::cpu::EngineKind::interpreter,
-		uml::cpu::EngineKind::gadgets, uml::cpu::EngineKind::jit}) {
+	for (const auto kind : {uml::cpu::EngineKind::gadgets,
+		uml::cpu::EngineKind::jit}) {
 		auto engine = uml::cpu::make_cpu_engine(kind);
 		require(engine != nullptr, "engine factory returned null");
 		require(engine->kind() == kind, "engine kind did not survive factory");
@@ -296,81 +249,6 @@ void test_factory_contract()
 		"invalid engine kind fell back to a production engine");
 }
 
-void test_interpreter_result_mapping()
-{
-	auto engine = uml::cpu::make_cpu_engine(uml::cpu::EngineKind::interpreter);
-	TestMemory memory;
-	uml::cpu::arm64::CpuState cpu;
-	cpu.pc = 0;
-	uml::cpu::ExecutionRequest request{
-		.cpu = cpu,
-		.memory = memory,
-		.generation = 1,
-		.instruction_budget = 16,
-	};
-	const auto result = engine->run(request);
-	require(result.reason == uml::cpu::ExitReason::system_call,
-		"interpreter exit reason was not normalized");
-	require(result.retired_instructions == 1,
-		"interpreter retired count was not preserved");
-	require(!uml::testing::process_has_writable_executable_region(),
-		"interpreter execution created W+X memory");
-}
-
-void test_interpreter_scopes_unsupported_instruction_to_guest()
-{
-	/* PTRUE P0.B is architecturally allocated SVE, which is intentionally
-	 * outside the current engine profile. It exercises a real implementation
-	 * gap rather than an unallocated encoding.
-	 */
-	constexpr std::uint32_t unsupported_instruction = 0x2518'e3e0U;
-	auto engine = uml::cpu::make_cpu_engine(uml::cpu::EngineKind::interpreter);
-	uml::cpu::arm64::CpuState illegal_cpu;
-	TestMemory illegal_memory{0x0000'0000U}; // UDF #0
-	uml::cpu::ExecutionRequest illegal_request{
-		.cpu = illegal_cpu,
-		.memory = illegal_memory,
-		.generation = 1,
-		.instruction_budget = 1,
-	};
-	const auto illegal = engine->run(illegal_request);
-	require(illegal.reason == uml::cpu::ExitReason::illegal_instruction,
-		"architecturally undefined encoding was not guest-illegal");
-	require(illegal.retired_instructions == 0,
-		"undefined encoding unexpectedly retired");
-
-	uml::cpu::arm64::CpuState unsupported_cpu;
-	TestMemory unsupported_memory{unsupported_instruction};
-	uml::cpu::ExecutionRequest unsupported_request{
-		.cpu = unsupported_cpu,
-		.memory = unsupported_memory,
-		.generation = 1,
-		.instruction_budget = 1,
-	};
-	const auto unsupported = engine->run(unsupported_request);
-	require(unsupported.reason == uml::cpu::ExitReason::illegal_instruction,
-		"valid unimplemented encoding stopped the emulator");
-	require(unsupported.retired_instructions == 0,
-		"unimplemented encoding unexpectedly retired");
-	require(unsupported_cpu.pc == 0,
-		"unimplemented encoding changed the faulting PC");
-
-	/* Reuse the same engine object for known-good work. An implementation gap
-	 * is a guest-program exit, not an engine-lifetime failure. */
-	uml::cpu::arm64::CpuState recovery_cpu;
-	TestMemory recovery_memory;
-	uml::cpu::ExecutionRequest recovery_request{
-		.cpu = recovery_cpu,
-		.memory = recovery_memory,
-		.generation = 2,
-		.instruction_budget = 1,
-	};
-	const auto recovery = engine->run(recovery_request);
-	require(recovery.reason == uml::cpu::ExitReason::system_call &&
-		recovery.retired_instructions == 1,
-		"interpreter was unusable after an unsupported instruction");
-}
-
 void test_all_engines_scope_unsupported_instruction_to_guest()
 {
 	using uml::emulator::tests::JitBacking;
@@ -382,8 +260,8 @@ void test_all_engines_scope_unsupported_instruction_to_guest()
 	 */
 	constexpr std::uint32_t unsupported_instruction = 0x2518'e3e0U;
 	unsigned long generation = 0x7200;
-	for (const auto kind : {uml::cpu::EngineKind::interpreter,
-		uml::cpu::EngineKind::gadgets, uml::cpu::EngineKind::jit}) {
+	for (const auto kind : {uml::cpu::EngineKind::gadgets,
+		uml::cpu::EngineKind::jit}) {
 		if (!uml::cpu::cpu_engine_available(kind))
 			continue;
 		auto engine = uml::cpu::make_cpu_engine(kind);
@@ -481,8 +359,8 @@ void test_all_engines_preserve_fault_direction_and_retry()
 	constexpr std::uint64_t base = 0x180'0000;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
 	unsigned long generation = 0x7600;
-	for (const auto kind : {uml::cpu::EngineKind::interpreter,
-		uml::cpu::EngineKind::gadgets, uml::cpu::EngineKind::jit}) {
+	for (const auto kind : {uml::cpu::EngineKind::gadgets,
+		uml::cpu::EngineKind::jit}) {
 		if (!uml::cpu::cpu_engine_available(kind))
 			continue;
 		auto engine = uml::cpu::make_cpu_engine(kind);
@@ -619,8 +497,6 @@ void test_c_bridge_preserves_fault_direction_and_retry()
 		EntryPoint enter;
 	};
 	constexpr std::array engines{
-		Engine{uml::cpu::EngineKind::interpreter,
-			&darwin_uml_interpreter_enter_guest},
 		Engine{uml::cpu::EngineKind::gadgets,
 			&darwin_uml_static_enter_guest},
 		Engine{uml::cpu::EngineKind::jit,
@@ -847,24 +723,6 @@ void test_gadget_post_execution_failure_preserves_prefix_and_reuse()
 		"gadget retry did not retain balanced execution state");
 }
 
-void test_interpreter_contains_memory_exceptions()
-{
-	auto engine = uml::cpu::make_cpu_engine(uml::cpu::EngineKind::interpreter);
-	ThrowingMemory memory;
-	uml::cpu::arm64::CpuState cpu;
-	uml::cpu::ExecutionRequest request{
-		.cpu = cpu,
-		.memory = memory,
-		.generation = 1,
-		.instruction_budget = 1,
-	};
-	const auto result = engine->run(request);
-	require(result.reason == uml::cpu::ExitReason::fatal,
-		"interpreter exception escaped the noexcept CPU boundary");
-	require(result.retired_instructions == 0,
-		"failed interpreter memory access unexpectedly retired");
-}
-
 void test_translated_internal_interrupt_obeys_fairness_budget()
 {
 	TranslatedBoundaryExecutor executor;
@@ -965,8 +823,6 @@ int main()
 {
 	try {
 		test_factory_contract();
-		test_interpreter_result_mapping();
-		test_interpreter_scopes_unsupported_instruction_to_guest();
 		test_all_engines_scope_unsupported_instruction_to_guest();
 		test_all_engines_preserve_fault_direction_and_retry();
 		test_production_translated_exception_contract();
@@ -975,7 +831,6 @@ int main()
 		 * standalone JIT admission above before that process-lifetime cache
 		 * intentionally occupies the configured executor slot. */
 		test_c_bridge_preserves_fault_direction_and_retry();
-		test_interpreter_contains_memory_exceptions();
 		test_translated_internal_interrupt_obeys_fairness_budget();
 		test_translated_internal_interrupt_delivers_pending_interrupt();
 		test_translated_cleanup_is_exception_safe();

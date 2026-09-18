@@ -34,7 +34,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument(
         "--engine",
-        choices=("jit", "gadgets", "interpreter"),
+        choices=("jit", "gadgets"),
         default="gadgets",
     )
     parser.add_argument(

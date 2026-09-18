@@ -19,7 +19,6 @@ namespace uml::cpu {
 using GuestAddressSpace = ::uml::memory::GuestAddressSpace;
 
 enum class EngineKind {
-	interpreter,
 	gadgets,
 	jit,
 };
@@ -30,9 +29,8 @@ struct ExecutionRequest final {
 	arm64::CpuState &cpu;
 	GuestAddressSpace &memory;
 	/* The runtime supplies this typed view whenever memory is backed by the
-	 * static MMU. Translated engines require it for their fast path, while the
-	 * interpreter uses its precise compound-access fault metadata. Keeping the
-	 * view explicit removes RTTI from every guest entry. */
+	 * static MMU. Translated engines require it for their fast path. Keeping
+	 * the view explicit removes RTTI from every guest entry. */
 	::uml::memory::StaticGuestMemory *translated_memory{};
 	unsigned long generation{};
 	std::size_t instruction_budget{};
