@@ -22,7 +22,7 @@ struct alignas(32) NativeTlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
-inline constexpr std::size_t native_tlb_entry_count = 1U << 13U;
+inline constexpr std::size_t native_tlb_entry_count = 1U << 15U;
 
 /* The executor retires a write translation when a page gains cached code, so
  * it needs the same index the miss handler fills.
@@ -32,7 +32,7 @@ inline constexpr std::size_t native_tlb_entry_count = 1U << 13U;
 {
 	const auto page = address >> 12U;
 	return static_cast<std::size_t>(
-		(page ^ (page >> 13U)) & (native_tlb_entry_count - 1U));
+		(page ^ (page >> 15U)) & (native_tlb_entry_count - 1U));
 }
 
 struct NativeExecutionContext final {
@@ -53,6 +53,10 @@ struct NativeExecutionContext final {
 	/* Pages holding a cached translation in any executor of this address
 	 * space; null publishes on every executable-page store. */
 	CodePageRegistry *code_pages{};
+	/* The TLB entry the last stack access translated through. A stack access
+	 * re-checks this entry's tag before hashing its address, and a plain-page
+	 * tag lets it skip the store epilogue; it is never null. */
+	NativeTlbEntry *stack_entry{};
 };
 
 static_assert(sizeof(NativeTlbEntry) == 32);
@@ -82,6 +86,8 @@ static_assert(offsetof(NativeExecutionContext, indirect_miss) ==
 	UML_X86_64_CONTEXT_INDIRECT_MISS);
 static_assert(offsetof(NativeExecutionContext, target_links) ==
 	UML_X86_64_CONTEXT_TARGET_LINKS);
+static_assert(offsetof(NativeExecutionContext, stack_entry) ==
+	UML_X86_64_CONTEXT_STACK_ENTRY);
 
 struct NativeEngineResult final {
 	std::int32_t event;

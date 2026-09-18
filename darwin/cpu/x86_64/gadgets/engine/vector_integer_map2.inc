@@ -105,14 +105,18 @@
 	orr v\output\().16b, v\output\().16b, v8.16b
 .endm
 
+/* SQRDMULH rounds exactly as PMULHRSW does in every lane but one: 0x8000
+ * times 0x8000 saturates to 0x7fff on the host where x86 wraps to 0x8000.
+ * Both inputs equal 0x8000 in that lane and in no other, and inverting the
+ * saturated value gives the wrapped one. The mask comes first so an output
+ * that aliases an input is still compared before it is written. */
 .macro vector_map2_mulhrs output, left, right
-	smull v6.4s, v\left\().4h, v\right\().4h
-	smull2 v7.4s, v\left\().8h, v\right\().8h
-	movi v8.4s, #0x40, lsl #8
-	add v6.4s, v6.4s, v8.4s
-	add v7.4s, v7.4s, v8.4s
-	shrn v\output\().4h, v6.4s, #15
-	shrn2 v\output\().8h, v7.4s, #15
+	movi v6.8h, #0x80, lsl #8
+	cmeq v7.8h, v\left\().8h, v6.8h
+	cmeq v6.8h, v\right\().8h, v6.8h
+	and v6.16b, v6.16b, v7.16b
+	sqrdmulh v\output\().8h, v\left\().8h, v\right\().8h
+	eor v\output\().16b, v\output\().16b, v6.16b
 .endm
 
 .macro vector_map2_extend opcode, width

@@ -118,24 +118,29 @@ def base_address(o, base):
         o.emit('\tadd x7, x14, x10')
 
 
-def translate(o, write, size):
+def translate(o, write, size, record_stack=False):
     """The ordinary translation with its miss tail shared; x19 carries the continuation."""
     hit, done = o.label('hit'), o.label('done')
     if write:
         o.emit('\tand x23, x23, #~(1 << 60)')
     o.emit('\tand x9, x7, #0xfffffffffffff000')
     o.emit('\tlsr x10, x7, #12')
-    o.emit('\teor x10, x10, x10, lsr #13')
-    o.emit('\tand w10, w10, #0x1fff')
+    o.emit('\teor x10, x10, x10, lsr #15')
+    o.emit('\tand w10, w10, #0x7fff')
     o.emit('\tldr x11, [_context, #UML_X86_64_CONTEXT_TLB]')
     o.emit('\tadd x11, x11, x10, lsl #5')
+    if record_stack:
+        o.emit('\tstr x11, [_context, #UML_X86_64_CONTEXT_STACK_ENTRY]')
     o.emit(f'\tldp x12, x13, [x11, #{16 if write else 0}]')
+    # An exclusive-or and a compare-with-zero branch keep NZCV as the gadget
+    # found it, so a fused condition survives a transfer between its producer
+    # and its consumer; the miss tails save and restore it around their calls.
     if write:
         o.emit('\tbic x14, x12, #(UML_X86_64_TLB_WRITE_CODE | UML_X86_64_TLB_WRITE_CACHED_CODE)')
-        o.emit('\tcmp x9, x14')
+        o.emit('\teor x14, x9, x14')
     else:
-        o.emit('\tcmp x9, x12')
-    o.emit(f'\tb.eq {hit}')
+        o.emit('\teor x14, x9, x12')
+    o.emit(f'\tcbz x14, {hit}')
     o.emit(f'\tadr x19, {done}')
     o.emit(f'\tb .Lx86_baked_miss_{1 if write else 0}_{size}')
     o.emit(f'{hit}:')
@@ -143,40 +148,46 @@ def translate(o, write, size):
         ready, publishes = o.label('wcready'), o.label('publishes')
         o.emit(f'\ttbz x12, #1, {ready}')
         o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit('\tcmp w14, #UML_X86_64_WRITE_CODE_PUBLISHED')
-        o.emit(f'\tb.eq {ready}')
+        o.emit('\tsub w14, w14, #UML_X86_64_WRITE_CODE_PUBLISHED')
+        o.emit(f'\tcbz w14, {ready}')
         o.emit('\tmov w14, #UML_X86_64_WRITE_CODE_PENDING')
         o.emit('\tstrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
         o.emit(f'{ready}:')
         o.emit(f'\ttbnz x12, #2, {publishes}')
         o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit('\tcmp w14, #UML_X86_64_WRITE_CODE_PENDING')
-        o.emit(f'\tb.eq {publishes}')
+        o.emit('\tsub w14, w14, #UML_X86_64_WRITE_CODE_PENDING')
+        o.emit(f'\tcbz w14, {publishes}')
         o.emit('\torr x23, x23, #(1 << 60)')
         o.emit(f'{publishes}:')
     o.emit('\tadd x7, x13, x7')
     o.emit(f'{done}:')
 
 
-def finish_store(o, size):
+def finish_store(o, size, check=None):
     """The ordinary store epilogue with its publication and overlap tails shared.
-    x25 is the guest address, x23 the length word, x22 the RIP."""
-    check, done, overlap = o.label('check'), o.label('sdone'), o.label('soverlap')
+    x25 is the guest address, x23 the length word, x22 the RIP. `check` names
+    the overlap test for a caller that has already settled publication.
+    """
+    done, overlap = o.label('sdone'), o.label('soverlap')
+    if check is None:
+        check = o.label('check')
     o.emit(f'\ttbnz x23, #60, {check}')
     o.emit('\tldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
     o.emit(f'\tcbz w8, {check}')
     o.emit(f'\tadr x19, {check}')
     o.emit(f'\tb .Lx86_baked_publish_{size}')
     o.emit(f'{check}:')
+    # Guest addresses and block bounds lie below 2^63, so the sign of a
+    # difference is their unsigned order and NZCV stays untouched.
     o.emit('\tldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]')
-    o.emit('\tcmp x25, x8')
-    o.emit(f'\tb.hs {done}')
+    o.emit('\tsub x8, x25, x8')
+    o.emit(f'\ttbz x8, #63, {done}')
     o.emit(f'\tadd x9, x25, #{size}')
     o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
-    o.emit('\tcmp x9, x10')
+    o.emit('\tsub x9, x10, x9')
     # A conditional branch reaches 1 MiB and the bank is larger, so the cold
     # exit goes through a local unconditional branch.
-    o.emit(f'\tb.hi {overlap}')
+    o.emit(f'\ttbnz x9, #63, {overlap}')
     o.emit(f'{done}:')
     o.emit('\tretire_and_next')
     o.emit(f'{overlap}:')
@@ -187,8 +198,8 @@ def page_cross(o, size, label):
     o.emit(f'\tpage_cross_check {size}, {label}')
 
 
-def record(o, flagop, width):
-    o.emit(f'\trecord_deferred {flagop}, {width}')
+def record(o, flagop, width, pending=False):
+    o.emit(f'\trecord_deferred{"_pending" if pending else ""} {flagop}, {width}')
 
 
 def normalize(o, width, reg):
@@ -214,11 +225,15 @@ def shared_tails(o):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
             o.emit(f'.Lx86_baked_miss_{write}_{size}:')
+            o.emit('\tmrs x9, nzcv')
+            o.emit('\tstr x9, [sp, #-16]!')
             o.emit('\tmov x0, _context')
             o.emit('\tmov x1, x7')
             o.emit(f'\tmov w2, #{write}')
             o.emit(f'\tmov w3, #{size}')
             o.emit('\tbl NAME(uml_x86_64_gadget_tlb_miss)')
+            o.emit('\tldr x9, [sp], #16')
+            o.emit('\tmsr nzcv, x9')
             o.emit('\tcbz x0, .Lx86_memory_fault')
             o.emit('\tmov x7, x0')
             o.emit('\tbr x19')
@@ -230,10 +245,14 @@ def shared_tails(o):
                                ('sxtw_x', 4, 'sxtw x11, w11')):
         o.emit('\t.p2align 2')
         o.emit(f'.Lx86_baked_cross_load_{name}:')
+        o.emit('\tmrs x9, nzcv')
+        o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
         o.emit('\tmov x1, x25')
         o.emit(f'\tmov w2, #{size}')
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_load)')
+        o.emit('\tldr x9, [sp], #16')
+        o.emit('\tmsr nzcv, x9')
         o.emit('\tcbz x1, .Lx86_memory_fault')
         o.emit('\tmov x11, x0')
         if extend:
@@ -242,19 +261,27 @@ def shared_tails(o):
     for size in (1, 2, 4, 8):
         o.emit('\t.p2align 2')
         o.emit(f'.Lx86_baked_cross_store_{size}:')
+        o.emit('\tmrs x9, nzcv')
+        o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
         o.emit('\tmov x1, x25')
         o.emit('\tmov x2, x24')
         o.emit(f'\tmov w3, #{size}')
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_store)')
+        o.emit('\tldr x9, [sp], #16')
+        o.emit('\tmsr nzcv, x9')
         o.emit('\tcbz w0, .Lx86_memory_fault')
         o.emit('\tbr x19')
         o.emit('\t.p2align 2')
         o.emit(f'.Lx86_baked_publish_{size}:')
+        o.emit('\tmrs x9, nzcv')
+        o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
         o.emit('\tmov x1, x25')
         o.emit(f'\tmov w2, #{size}')
         o.emit('\tbl NAME(uml_x86_64_gadget_publish_code_write)')
+        o.emit('\tldr x9, [sp], #16')
+        o.emit('\tmsr nzcv, x9')
         o.emit('\tbr x19')
         # The store landed inside the running block: leave through the store's
         # own exit as the ordinary epilogue does.
@@ -373,7 +400,7 @@ def extend_register(o):
         o.table(f'{name}_rr', entries)
 
 
-def unary_body(o, name, width, d, ld, st, hr, sr, flagop):
+def unary_body(o, name, width, d, ld, st, hr, sr, flagop, pending=False):
     o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
     # At 32 and 64 bits the flag-setting host form leaves N, Z and V
     # describing the guest operation; only C differs (INC and DEC preserve it,
@@ -392,16 +419,17 @@ def unary_body(o, name, width, d, ld, st, hr, sr, flagop):
         o.emit('\tmov x11, xzr')
     normalize(o, width, f'{hr}13')
     o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
-    record(o, flagop, width)
+    record(o, flagop, width, pending)
     o.emit('\tretire_and_next')
 
 
 # INC and DEC preserve the carry flag, so the flag the previous producer
-# defined has to reach RFLAGS before this one records its own. Calling the
-# materializer is the general answer; when the builder knows what the producer
-# left, the carry is one condition away and the call goes.
+# defined has to reach RFLAGS before this one records its own -- or, when
+# the builder cannot see that producer, the lazy prologue parks its record in
+# the carry slot and the INC or DEC record inherits the pending bit. When the
+# builder knows what the producer left, the carry is one condition away.
 CARRY_PROLOGUE = {
-    'settled': [],                  # a previous INC or DEC already settled it
+    'settled': [],                  # a previous INC or DEC owns the carry: inherit its pending bit
     'borrow': ['\tcset w16, cc'],   # a subtraction: CF is the inverted borrow
     'carry': ['\tcset w16, cs'],    # an addition: CF is the carry out
     'clear': [],                    # a logical operation defined CF as zero
@@ -435,7 +463,8 @@ def unary_register(o):
                         entry = f'{name}_{kind}_{width}_r_{d}'
                         o.gadget(entry)
                         carry_prologue(o, kind)
-                        unary_body(o, name, width, d, ld, st, hr, sr, flagop)
+                        unary_body(o, name, width, d, ld, st, hr, sr, flagop,
+                                   pending=kind == 'settled')
                         entries.append(entry)
                     o.table(f'{name}_{kind}_{width}_r', entries)
             entries = []
@@ -443,8 +472,9 @@ def unary_register(o):
                 entry = f'{name}_{width}_r_{d}'
                 o.gadget(entry)
                 if materialize:
-                    o.emit('\tbl uml_x86_64_gadget_materialize_carry')
-                unary_body(o, name, width, d, ld, st, hr, sr, flagop)
+                    o.emit('\tlazy_carry_prologue')
+                unary_body(o, name, width, d, ld, st, hr, sr, flagop,
+                           pending=materialize)
                 entries.append(entry)
             o.table(f'{name}_{width}_r', entries)
         entries = []
@@ -754,12 +784,21 @@ def push_pop(o):
         o.emit('\tsub x25, x25, #8')
         o.emit('\tmov x7, x25')
         crossed, done = o.label('pushcross'), o.label('pushdone')
+        slow, check = o.label('pushslow'), o.label('pushcheck')
         page_cross(o, 8, crossed)
-        translate(o, True, 8)
+        # The stack page's own entry first. A plain page owes no publication;
+        # the write may still land in the block that is running, so the fast
+        # path joins the epilogue at its overlap test.
+        o.emit(f'\tstack_fast 1, {slow}')
+        o.emit('\tstr x24, [x7]')
+        o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit(f'\tb {check}')
+        o.emit(f'{slow}:')
+        translate(o, True, 8, record_stack=True)
         o.emit('\tstr x24, [x7]')
         o.emit(f'{done}:')
         o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
-        finish_store(o, 8)
+        finish_store(o, 8, check)
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')
         o.emit('\tb .Lx86_baked_cross_store_8')
@@ -772,9 +811,13 @@ def push_pop(o):
         o.emit('\tldp x23, x22, [_stream], #16')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tmov x7, x25')
-        crossed, done = o.label('popcross'), o.label('popdone')
+        crossed, done, slow = o.label('popcross'), o.label('popdone'), o.label('popslow')
         page_cross(o, 8, crossed)
-        translate(o, False, 8)
+        o.emit(f'\tstack_fast 0, {slow}')
+        o.emit('\tldr x11, [x7]')
+        o.emit(f'\tb {done}')
+        o.emit(f'{slow}:')
+        translate(o, False, 8, record_stack=True)
         o.emit('\tldr x11, [x7]')
         o.emit(f'{done}:')
         o.emit('\tadd x9, x25, #8')

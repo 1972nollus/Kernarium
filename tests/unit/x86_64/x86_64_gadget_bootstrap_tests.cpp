@@ -2941,6 +2941,159 @@ read_test_sequences(void *context) noexcept
 	return true;
 }
 
+/* INC and DEC preserve the carry flag. When the builder cannot see the
+ * producer that defined it -- a store or a block boundary sits between -- the
+ * gadget no longer settles it: it parks the producer's record in the carry
+ * slot and leaves the carry to whoever reads it through the INC or DEC record.
+ * Every reader must see the producer's carry: the carry materializer (ADC),
+ * the full one (LAHF), the C++ one (an exit), a second INC or DEC that
+ * inherits the pending bit, an override riding on the record (BT), and the
+ * memory form. The other five flags come from the INC or DEC itself.
+ */
+[[nodiscard]] bool lazy_carry_reaches_every_reader()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<std::uint64_t, 6> values{
+		0U, 1U, 0x7fU, 0x80U, 0xffU, ~std::uint64_t{}};
+	enum class Reader { adc, lahf, exit, twice_adc, bt_adc, memory_adc };
+	static constexpr std::array<Reader, 6> readers{Reader::adc, Reader::lahf,
+		Reader::exit, Reader::twice_adc, Reader::bt_adc, Reader::memory_adc};
+	for (const unsigned width : {8U, 16U, 32U, 64U}) {
+		const auto mask = width == 64U ? ~std::uint64_t{} :
+			(std::uint64_t{1} << width) - 1U;
+		for (const bool subtract : {false, true})
+		for (const bool decrement : {false, true})
+		for (const bool jump : {false, true})
+		for (const auto reader : readers)
+		for (const auto left : values)
+		for (const auto right : values) {
+			std::vector<std::byte> code;
+			const auto push = [&code](std::initializer_list<unsigned> bytes) {
+				for (const auto byte : bytes)
+					code.push_back(static_cast<std::byte>(byte));
+			};
+			const auto prefix = [&]() {
+				if (width == 16U)
+					push({0x66});
+				if (width == 64U)
+					push({0x48});
+			};
+			/* ADD or SUB rax, rbx at the width defines the carry. */
+			prefix();
+			push({width == 8U ? (subtract ? 0x28U : 0x00U) :
+				(subtract ? 0x29U : 0x01U), 0xd8});
+			/* A store, or a block boundary, hides it from the builder. */
+			if (jump)
+				push({0xeb, 0x00});
+			else
+				push({0x48, 0x89, 0x0f});
+			/* INC or DEC of rcx, or of [rdi]. */
+			const unsigned unary = width == 8U ? 0xfeU : 0xffU;
+			const unsigned modrm = reader == Reader::memory_adc ?
+				(decrement ? 0x0fU : 0x07U) : (decrement ? 0xc9U : 0xc1U);
+			prefix();
+			push({unary, modrm});
+			switch (reader) {
+			case Reader::twice_adc:
+				prefix();
+				push({unary, modrm});
+				[[fallthrough]];
+			case Reader::adc:
+			case Reader::memory_adc:
+				push({0x48, 0x83, 0xd2, 0x00}); /* adc rdx, 0 */
+				break;
+			case Reader::bt_adc:
+				/* bt rcx, 1: a carry override on the INC or DEC record. */
+				push({0x48, 0x0f, 0xba, 0xe1, 0x01, 0x48, 0x83, 0xd2, 0x00});
+				break;
+			case Reader::lahf:
+				push({0x9f});
+				break;
+			case Reader::exit:
+				break;
+			}
+			push({0x0f, 0x05});
+			TestMemory memory;
+			memory.fill(0, code);
+			CpuState cpu{};
+			cpu.gpr(Register::rax) = left;
+			cpu.gpr(Register::rbx) = right;
+			cpu.gpr(Register::rdi) = 0x2000;
+			gadgets::Executor executor;
+			executor.prepare(memory, 1, 1, 1);
+			bool reached = false;
+			for (unsigned step = 0; step < 8U; ++step) {
+				const auto selected = executor.select_program(
+					memory, cpu.rip, ExecutionMode::long64);
+				if (!expect(selected.status == gadgets::BuildStatus::built &&
+					selected.program != nullptr,
+					"lazy carry program did not build"))
+					return false;
+				const auto result = gadgets::execute(
+					*selected.program, cpu, memory, executor, 64);
+				if (result.event == uml::cpu::EngineEvent::system_call) {
+					reached = true;
+					break;
+				}
+				if (!expect(result.event == uml::cpu::EngineEvent::continued,
+					"lazy carry program left unexpectedly"))
+					return false;
+			}
+			if (!expect(reached, "lazy carry program did not reach SYSCALL"))
+				return false;
+			const auto l = left & mask;
+			const auto r = right & mask;
+			const std::uint64_t carry = subtract ? (l < r ? 1U : 0U) :
+				(((l + r) & mask) < l ? 1U : 0U);
+			std::uint64_t expected = carry;
+			std::uint64_t observed = 0;
+			switch (reader) {
+			case Reader::adc:
+			case Reader::twice_adc:
+			case Reader::memory_adc:
+				observed = cpu.gpr(Register::rdx);
+				break;
+			case Reader::bt_adc:
+				/* Bit 1 of rcx: clear after INC from zero, set after DEC. */
+				expected = decrement ? 1U : 0U;
+				observed = cpu.gpr(Register::rdx);
+				break;
+			case Reader::lahf:
+				/* SF ZF 0 AF 0 PF 1 CF of the INC or DEC from zero. */
+				expected = (decrement ? 0x96U : 0x02U) | carry;
+				observed = (cpu.gpr(Register::rax) >> 8U) & 0xffU;
+				break;
+			case Reader::exit:
+				materialize_flags(cpu);
+				observed = cpu.rflags & 1U;
+				break;
+			}
+			if (reader == Reader::memory_adc) {
+				const auto stored = memory.byte(0x2000);
+				if (!expect(stored == (decrement ? 0xffU : 0x01U),
+					"the memory INC or DEC did not write its result"))
+					return false;
+			}
+			if (observed != expected) {
+				char message[200];
+				std::snprintf(message, sizeof(message),
+					"a lazily preserved carry reached a reader wrong "
+					"(width %u %s %s %s reader %d left %#llx right %#llx: "
+					"expected %#llx observed %#llx)",
+					width, subtract ? "sub" : "add",
+					jump ? "jump" : "store", decrement ? "dec" : "inc",
+					static_cast<int>(reader),
+					static_cast<unsigned long long>(left),
+					static_cast<unsigned long long>(right),
+					static_cast<unsigned long long>(expected),
+					static_cast<unsigned long long>(observed));
+				return expect(false, message);
+			}
+		}
+	}
+	return true;
+}
+
 /* The equality above holds whether or not the builder actually fuses, so pin
  * which pairs it fuses. A NOP between the producer and the consumer resets the
  * host flags the builder tracks, so the same consumer keeps the deferred
@@ -3848,6 +4001,7 @@ int main()
 		repeated_move_faults_on_a_run_boundary() &&
 		fused_conditions_match_the_deferred_evaluation() &&
 		fused_conditions_cover_exactly_the_legal_pairs() &&
+		lazy_carry_reaches_every_reader() &&
 		fused_conditional_jumps_take_the_same_edge() &&
 		cpuid_table_matches_the_gadget() &&
 		preserve_precise_memory_fault() &&

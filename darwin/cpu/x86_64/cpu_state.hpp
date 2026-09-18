@@ -67,6 +67,9 @@ struct DeferredFlags final {
 	DeferredFlagOperation operation{DeferredFlagOperation::none};
 	std::uint8_t width{};
 	std::uint8_t carry{};
+	/* Set on an INC or DEC record whose preserved carry has not been settled:
+	 * it is whatever the record in CpuState::carry_slot defines. */
+	std::uint8_t carry_pending{};
 	std::uint16_t override_mask{};
 	std::uint16_t override_value{};
 };
@@ -105,6 +108,9 @@ struct CpuState final {
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};
 	DeferredFlags deferred_flags{};
+	/* The record an INC or DEC displaced without settling its carry. Only a
+	 * pending INC or DEC record reads it, and only for the carry flag. */
+	DeferredFlags carry_slot{};
 
 	[[nodiscard]] std::uint64_t &gpr(Register reg) noexcept
 	{

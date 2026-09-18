@@ -51,6 +51,11 @@ static_assert(offsetof(CpuState, deferred_flags) +
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, carry) == UML_X86_64_CPU_DEFERRED_CARRY);
 static_assert(offsetof(CpuState, deferred_flags) +
+	offsetof(DeferredFlags, carry_pending) ==
+	UML_X86_64_CPU_DEFERRED_PENDING);
+static_assert(offsetof(CpuState, carry_slot) == UML_X86_64_CPU_CARRY_SLOT);
+static_assert(sizeof(DeferredFlags) == 32);
+static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, override_mask) ==
 	UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK);
 static_assert(offsetof(CpuState, deferred_flags) +

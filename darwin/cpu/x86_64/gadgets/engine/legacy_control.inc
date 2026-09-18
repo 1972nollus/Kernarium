@@ -267,8 +267,7 @@ gadget interrupt_return_\width
 	cbz w15, .Lx86_iret_keep_stack_segment\@
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 4)]
 .Lx86_iret_keep_stack_segment\@:
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED

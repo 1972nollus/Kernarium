@@ -24,10 +24,10 @@ Two banks implement the scalar integer instructions.
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
   INC and DEC are enumerated a second time by the carry their producer left,
-  because they preserve the carry flag and so have to settle the pending one
-  before recording their own: a settled, borrow, carry or cleared source
-  reaches RFLAGS with at most one condition instead of a call to the carry
-  materializer.
+  because they preserve the carry flag: a borrow, carry or cleared source
+  reaches RFLAGS with at most one condition, a settled one inherits the
+  pending bit, and an unknown one takes the lazy prologue described under
+  deferred flags instead of a call to the carry materializer.
   `native_baked.hpp` declares the tables. Their enumeration order (registers
   in offset order, the four high-byte registers after the sixteen low ones,
   the sixteen bases followed by "none") is shared with the generator and must
@@ -60,10 +60,26 @@ the top of a 32-bit register, which sets NZCV exactly as the guest-width
 operation would. The ordinary bank does not do this, so its narrow producers
 keep the deferred path.
 
-A transfer that defines no flags does not end a fusion. MOV, MOVZX and MOVSX
-between registers, and LEA, pass the producer's host flags through to the next
-consumer, which is what lets a compare reach a CMOVcc or a Jcc that a register
-copy sits between. A memory destination still ends it.
+A transfer that defines no flags does not end a fusion. MOV, MOVZX and MOVSX,
+LEA, PUSH and POP in the baked bank pass the producer's host flags through to
+the next consumer, which is what lets a compare reach a CMOVcc or a Jcc that a
+register copy, a load or a store sits between. The bank's translation tests
+the TLB tag without touching NZCV, its store epilogue orders addresses by the
+sign of a difference, and its miss tails save NZCV around the calls they make.
+The ordinary bank's transfers still end a fusion.
+
+## Vector result forwarding
+
+A vector integer register form writes its result to the state and leaves it in
+v4, and in v5 with it at 256 bits. When the gadget immediately after it reads
+exactly that register at exactly that width as its left operand, the builder
+sets bit 62 of the descriptor and the gadget takes the operand from those
+registers instead of reading the slot back, which would wait on the store.
+Only register forms qualify on either side: v4 and v5 are call-clobbered, so a
+memory form's miss or page-crossing path would destroy them. The builder
+starts each block with nothing available, so a consumer is never the first
+gadget of a block and a budget-limited replay cannot inherit a stale register.
+The map2 and floating-point families keep the load; see X50.
 
 ## Deferred flags
 
@@ -75,6 +91,23 @@ shifted-out carry from them, defines overflow only for a count of one and
 leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
 whatever producer is pending instead of materializing it. Rotates keep the
 eager overlay.
+
+INC and DEC preserve the carry flag. When the builder cannot see the producer
+that defined it, the gadget copies that producer's record into the carry slot
+(`CpuState::carry_slot`) and records its own with the pending bit set, rather
+than settling the carry through the materializer; a second INC or DEC inherits
+the bit, and a carry override riding on such a record settles it the old way.
+Only a reader of the carry through an INC or DEC record pays for the slot: the
+materializers compute that one flag from the slot record through the same
+operation-and-width table, and the C++ materializer does the same. Every
+record write clears the bit, so a producer that follows leaves nothing
+pending.
+
+An operation that defines every arithmetic flag it does not leave undefined --
+COMISS and UCOMISS, PTEST, the packed string compares, the bit scans and
+counts, and the BMI flag writers -- discards the pending record instead of
+materializing it, because nothing of it survives. BT and its siblings leave
+ZF alone, so they keep the record and write their carry into its override.
 
 ## Blocks and branches
 
@@ -98,7 +131,18 @@ describes the mapping ranges a reader has not yet seen, so a reader only a few
 changes behind replays exactly those ranges and retires just the entries they
 cover. The whole table is cleared only when the address space cannot describe
 the span, when the span covers more than a quarter of the entries, or when the
-memory or the generation changed.
+memory or the generation changed. The table is direct-mapped with 32768
+entries, 1 MiB, indexed by the page number folded once at that width;
+`native_tlb_entry_count` is the one constant, and the four assembly copies of
+the index must change with it.
+
+PUSH, POP, CALL and RET re-check the entry the last stack access translated
+through, which the execution context carries, before hashing an address of
+their own. A tag equal to the page, with no code bit and, for a write, no
+publication left pending by an earlier store, hands back the host address; a
+store still joins its epilogue at the overlap test, because the write can land
+in the block that is running. Anything else takes the ordinary translation,
+which records the new entry for the next access.
 
 ## Floating-point environment
 

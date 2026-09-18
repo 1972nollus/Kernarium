@@ -3,7 +3,18 @@
 
 
 .macro bit_update_carry
-	bl uml_x86_64_gadget_materialize_flags
+	/* BT defines only CF and leaves ZF unaffected, so the pending record
+	 * stays and CF rides on it as an override, exactly as a multiply's carry
+	 * does: the next materialization applies it after that producer's
+	 * flags. RFLAGS takes the bit as well for the case where nothing is
+	 * pending. */
+	ldrh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	orr w8, w8, #1
+	bic w9, w9, #1
+	orr w9, w9, w19
+	strh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	bic x8, x8, #1
 	orr x8, x8, x19
@@ -208,23 +219,13 @@ bit_family btc
 .endm
 
 .macro bit_count_flags operation, host_register
-	.ifc \operation,bsf
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	.ifc \operation,bsr
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	.ifnc \operation,bsf
-	.ifnc \operation,bsr
-	/* TZCNT, LZCNT and POPCNT define every arithmetic flag below, and the
-	 * only overrides any gadget records lie inside that same set, so a
-	 * pending record has nothing left to contribute. Discard it rather than
+	/* TZCNT, LZCNT and POPCNT define every arithmetic flag below, and BSF
+	 * and BSR define ZF and leave the rest undefined, so a pending record
+	 * has nothing left to contribute in either case: the only overrides any
+	 * gadget records lie inside the same set. Discard it rather than
 	 * materializing a value this macro immediately clears.
 	 */
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	.endif
-	.endif
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \operation,bsf
 	bic x8, x8, #0x40

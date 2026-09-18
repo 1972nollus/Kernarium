@@ -186,6 +186,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		.code_changes = executor.prepared_code_changes(),
 		.code_publications = 0,
 		.code_pages = executor.code_page_registry(),
+		.stack_entry = executor.tlb_entries(),
 	};
 	executor.enter_engine();
 	const auto result = uml_x86_64_gadget_enter(

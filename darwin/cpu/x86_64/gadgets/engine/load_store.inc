@@ -467,9 +467,11 @@ pop_memory 64, ldr, x, str, x
  *
  * `w23` reports that decision to `call_push_and_exit`.
  */
-.macro invalidate_stack_write size
+.macro invalidate_stack_write size, publish=1
 	mov w23, #0
+	.if \publish
 	publish_pending_code x25, \size
+	.endif
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
 	b.hs .Lx86_stack_write_ready\@
@@ -495,11 +497,20 @@ pop_memory 64, ldr, x, str, x
 	.endif
 	mov x7, x25
 	page_cross_check (\width / 8), .Lx86_call_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	stack_fast 1, .Lx86_call_slow\@
+	\store \host_register\()24, [x7]
+	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	/* A plain page owes no publication; the write may still land in the
+	 * block that is running, which is what the rest of the test decides. */
+	invalidate_stack_write (\width / 8), 0
+	b .Lx86_call_settled\@
+.Lx86_call_slow\@:
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8), 1
 	\store \host_register\()24, [x7]
 .Lx86_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	invalidate_stack_write (\width / 8)
+.Lx86_call_settled\@:
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	.if \indirect
@@ -610,7 +621,11 @@ gadget \name
 	.endif
 	mov x7, x25
 	page_cross_check (\width / 8), .Lx86_return_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	stack_fast 0, .Lx86_return_slow\@
+	\load \host_register\()24, [x7]
+	b .Lx86_return_done\@
+.Lx86_return_slow\@:
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8), 1
 	\load \host_register\()24, [x7]
 .Lx86_return_done\@:
 	add x9, x25, #(\width / 8)

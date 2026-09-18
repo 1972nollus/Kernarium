@@ -23,7 +23,11 @@
 	cset w24, eq
 	cmp w12, #0
 	cset w25, eq
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
@@ -113,7 +117,11 @@ gadget vector_test_\width\()_\stride\()_rm
 	cbz w27, .Lx86_vector_test_memory_stack_ready\@
 	add sp, sp, #32
 .Lx86_vector_test_memory_stack_ready\@:
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10

@@ -286,8 +286,7 @@
 	orr x9, x9, x11, lsl #11
 	orr x9, x9, #2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	strb wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str wzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	.if (\opcode & 1) == 0
 	add x9, _cpu, #UML_X86_64_CPU_VECTORS
 	movi v4.16b, #0
@@ -339,7 +338,11 @@
 
 .macro vector_map3_string_execute opcode, descriptor
 	mov x19, x\descriptor
-	bl uml_x86_64_gadget_materialize_flags
+	/* Every arithmetic flag is defined below, and the only overrides a gadget
+	 * records lie inside that same set, so a pending record has nothing left
+	 * to contribute: discard it instead of materializing a value this
+	 * gadget immediately overwrites. */
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	and w13, w27, #0xff
 	mov w12, #(\opcode <= 0x61)
 	ubfx w11, w27, #8, #1
