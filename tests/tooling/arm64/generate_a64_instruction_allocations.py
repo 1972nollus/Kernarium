@@ -59,7 +59,6 @@ CONTRACT_COLUMNS = [
     "expected_memory_digest",
     "expected_fault",
     "expected_syndrome",
-    "interpreter_result",
     "gadgets_result",
     "jit_result",
     "entry_complete",
