@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
 #include "native_window_test_support.hpp"
+#include "scratch_directory.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
@@ -35,10 +36,11 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::uint8_t value)
 	{
-		char path[] = "/tmp/uml-native-admission-XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-native-admission-XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "could not create native admission backing");
-		require(unlink(path) == 0,
+		require(unlink(path.c_str()) == 0,
 			"could not unlink native admission backing");
 		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
 			"could not size native admission backing");

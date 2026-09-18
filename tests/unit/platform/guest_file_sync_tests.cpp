@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "guest_files.hpp"
+#include "scratch_directory.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -23,7 +24,7 @@ void require(bool condition)
 std::filesystem::path scratchDirectory()
 {
 	static const auto directory = [] {
-		auto candidate = std::filesystem::temp_directory_path() /
+		auto candidate = uml::testing::scratch_directory() /
 			("uml-guest-file-sync-" + std::to_string(::getpid()));
 		std::filesystem::create_directories(candidate);
 		return candidate;

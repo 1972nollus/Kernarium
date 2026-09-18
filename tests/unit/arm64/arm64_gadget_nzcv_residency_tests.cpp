@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
+#include "scratch_directory.hpp"
 
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
@@ -34,10 +35,11 @@ class Mapping final {
 public:
 	Mapping()
 	{
-		char path[] = "/private/tmp/uml-nzcv-residency.XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-nzcv-residency.XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0);
-		require(unlink(path) == 0);
+		require(unlink(path.c_str()) == 0);
 		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 		constexpr std::uint64_t value = 0x0123'4567'89ab'cdefULL;
 		require(pwrite(fd_, &value, sizeof(value), 0) ==

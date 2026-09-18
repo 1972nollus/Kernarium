@@ -4,6 +4,7 @@
 #include "connected_socket_channel.hpp"
 #include "in_process_service.hpp"
 #include "protocol.hpp"
+#include "scratch_directory.hpp"
 #include "unique_descriptor.hpp"
 #include "unix_socket_channel.hpp"
 #include "virtio_console_device.hpp"
@@ -121,9 +122,8 @@ class TemporaryDirectory final {
 public:
     TemporaryDirectory()
     {
-        std::array<char, 64> pattern {};
-        constexpr std::string_view prefix{"/tmp/uml-console-test.XXXXXX"};
-        std::copy(prefix.begin(), prefix.end(), pattern.begin());
+        auto pattern = uml::testing::socket_scratch_template(
+            "uml-console-test.XXXXXX");
         char* created = ::mkdtemp(pattern.data());
         require(created != nullptr);
         path_ = created;

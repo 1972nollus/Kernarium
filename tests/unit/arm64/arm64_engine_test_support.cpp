@@ -7,6 +7,7 @@
 #include "native_hardware_oracle_evidence.hpp"
 #include "native_hardware_oracle_selection.hpp"
 #include "reference_engine.hpp"
+#include "scratch_directory.hpp"
 
 #include "cpu/engine.hpp"
 #include "cpu/arm64/engine_execution.hpp"
@@ -298,11 +299,11 @@ event_for(::uml::cpu::ExitReason reason) noexcept {
 class Backing final {
 public:
   explicit Backing(std::size_t size) {
-    char path[] = "/private/tmp/uml-engine-test.XXXXXX";
-    descriptor_ = mkstemp(path);
+    auto path = ::uml::testing::scratch_template("uml-engine-test.XXXXXX");
+    descriptor_ = mkstemp(path.data());
     if (descriptor_ < 0)
       fail("fixture", "setup", 0, std::strerror(errno));
-    if (unlink(path) != 0 ||
+    if (unlink(path.c_str()) != 0 ||
         ftruncate(descriptor_, static_cast<off_t>(size)) != 0)
       fail("fixture", "setup", 0, std::strerror(errno));
   }

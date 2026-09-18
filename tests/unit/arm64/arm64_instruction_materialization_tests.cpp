@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_instruction_materialization.hpp"
 #include "instruction_evidence_digest.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <cerrno>
@@ -357,8 +358,9 @@ int main() {
           "b00361a396177a9cb410ff61f20015ad")
     fail("test-only SHA-256 known vectors differ");
 
-  char directory_template[] = "/tmp/uml-materialization-test.XXXXXX";
-  const auto *directory = mkdtemp(directory_template);
+  auto directory_template =
+      uml::testing::scratch_template("uml-materialization-test.XXXXXX");
+  const auto *directory = mkdtemp(directory_template.data());
   if (directory == nullptr)
     fail("mkdtemp failed");
   const std::string base = std::string{directory} + "/evidence.tsv";

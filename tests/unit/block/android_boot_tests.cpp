@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "android_boot.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <cerrno>
@@ -128,7 +129,7 @@ void writeBootImage(int descriptor, std::uint64_t offset,
 
 std::filesystem::path scratchDirectory()
 {
-	const auto path = std::filesystem::temp_directory_path() /
+	const auto path = uml::testing::scratch_directory() /
 		("uml-android-boot-tests-" + std::to_string(getpid()));
 	std::filesystem::remove_all(path);
 	std::filesystem::create_directories(path);

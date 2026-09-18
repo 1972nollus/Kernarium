@@ -4,6 +4,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_host.h"
 #include "uml_darwin_static_mmu.h"
+#include "scratch_directory.hpp"
 #if DARWIN_UML_WINE_CPU_SERVICE
 #include "runtime/wine_cpu_protocol.h"
 #endif
@@ -43,10 +44,11 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::size_t size)
 	{
-		char path[] = "/private/tmp/uml-static-mmu.XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-static-mmu.XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0);
-		require(unlink(path) == 0);
+		require(unlink(path.c_str()) == 0);
 		require(ftruncate(fd_, static_cast<off_t>(size)) == 0);
 	}
 
@@ -636,10 +638,11 @@ static void uml_static_descriptor_reuse_invalidation()
 	constexpr std::uint64_t base = 0x4'0000;
 	constexpr std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	constexpr std::uint64_t second_value = 0xaaaa'bbbb'cccc'ddddULL;
-	char first_path[] = "/tmp/uml-static-fd-first-XXXXXX";
-	int descriptor = mkstemp(first_path);
+	auto first_path =
+		uml::testing::scratch_template("uml-static-fd-first-XXXXXX");
+	int descriptor = mkstemp(first_path.data());
 	require(descriptor >= 0);
-	unlink(first_path);
+	unlink(first_path.c_str());
 	require(ftruncate(descriptor, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 	require(pwrite(descriptor, &first_value, sizeof(first_value), 0) ==
 		static_cast<ssize_t>(sizeof(first_value)));
@@ -650,10 +653,11 @@ static void uml_static_descriptor_reuse_invalidation()
 	const int reused_descriptor = descriptor;
 	require(darwin_uml_close(descriptor) == 0);
 
-	char second_path[] = "/tmp/uml-static-fd-second-XXXXXX";
-	descriptor = mkstemp(second_path);
+	auto second_path =
+		uml::testing::scratch_template("uml-static-fd-second-XXXXXX");
+	descriptor = mkstemp(second_path.data());
 	require(descriptor >= 0);
-	unlink(second_path);
+	unlink(second_path.c_str());
 	if (descriptor != reused_descriptor) {
 		require(dup2(descriptor, reused_descriptor) == reused_descriptor);
 		require(darwin_uml_close(descriptor) == 0);

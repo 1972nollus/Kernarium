@@ -4,6 +4,7 @@
 #include "native_hardware_oracle_selection.hpp"
 #include "instruction_evidence_digest.hpp"
 #include "platform/apple/host_features.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <string>
 #include <vector>
 
 #include <signal.h>
@@ -27,7 +29,6 @@ namespace {
 
 constexpr std::uint64_t guest_pc = 0x4f00'0000ULL;
 constexpr std::uint64_t guest_data = 0x5100'0000ULL;
-constexpr const char *oracle_test_source_file = __FILE__;
 
 volatile sig_atomic_t parent_signal_count;
 
@@ -169,14 +170,10 @@ void ordinary_lookup_does_not_load_catalogs() {
           "ordinary lookup loaded native evidence catalogs");
 }
 
-[[noreturn]] void run_materialization_lookup_child() {
-  const auto bindings =
-      (std::filesystem::path{oracle_test_source_file}.parent_path() /
-       "a64_instruction_evidence_bindings.tsv")
-          .string();
+[[noreturn]] void run_materialization_lookup_child(
+    const std::string &bindings, const std::string &evidence) {
   if (setenv("UML_NATIVE_HARDWARE_EVIDENCE", "1", 1) != 0 ||
-      setenv("UML_INSTRUCTION_EVIDENCE",
-             "/private/tmp/uml-native-oracle-contract.tsv", 1) != 0 ||
+      setenv("UML_INSTRUCTION_EVIDENCE", evidence.c_str(), 1) != 0 ||
       setenv("UML_INSTRUCTION_EVIDENCE_TEST",
              "arm64-base-add-sub-immediate", 1) != 0 ||
       setenv("UML_INSTRUCTION_EVIDENCE_BINDINGS", bindings.c_str(), 1) != 0)
@@ -303,10 +300,20 @@ void ordinary_lookup_does_not_load_catalogs() {
 }
 
 void materialization_lookup_contract() {
+  /* uml_add_unit_test() names the reviewed catalogs. The child's evidence
+   * base stays in this test's scratch directory and is never written. */
+  const auto *configured_bindings =
+      std::getenv("UML_INSTRUCTION_EVIDENCE_BINDINGS");
+  require(configured_bindings != nullptr && configured_bindings[0] != '\0',
+          "UML_INSTRUCTION_EVIDENCE_BINDINGS is unset");
+  const std::string bindings{configured_bindings};
+  const auto evidence =
+      (::uml::testing::scratch_directory() / "native-oracle-contract.tsv")
+          .string();
   const auto child = fork();
   require(child >= 0, "cannot fork materialization lookup contract");
   if (child == 0)
-    run_materialization_lookup_child();
+    run_materialization_lookup_child(bindings, evidence);
   int status{};
   require(waitpid(child, &status, 0) == child,
           "cannot wait for materialization lookup contract");

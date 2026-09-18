@@ -22,6 +22,13 @@ Every first-party CTest has exactly one primary suite:
 `tests/test-manifest.tsv` records every registration and semantic owner.
 Performance and long external campaigns are not CTest correctness suites.
 
+Unit tests create scratch files through `tests/unit/scratch/`, never at a
+host-global path unless that path is the production contract under test, as
+for the mconsole socket. Each registration owns `test-scratch/<test>` in the
+build tree; a binary run outside CTest uses `$TMPDIR`. Unix-domain socket paths
+use `$TMPDIR` because a build-tree path may not fit `sun_path`. Tests remove
+what they create, so a leftover file names the test that leaked it.
+
 For one test, use an anchored expression:
 
 ```sh

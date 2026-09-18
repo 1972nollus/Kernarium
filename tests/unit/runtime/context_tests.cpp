@@ -4,6 +4,7 @@
 #include "memory/domain_contract.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
+#include "scratch_directory.hpp"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
@@ -101,10 +102,11 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::uint8_t value)
 	{
-		char path[] = "/tmp/uml-runtime-context-XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-runtime-context-XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "temporary backing could not be created");
-		require(unlink(path) == 0,
+		require(unlink(path.c_str()) == 0,
 			"temporary backing path could not be removed");
 		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
 			"temporary backing could not be sized");
