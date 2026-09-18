@@ -5,6 +5,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
 #include "runtime/execution_engine.hpp"
+#include "scratch_directory.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,10 +39,11 @@ class JitBacking final {
 public:
 	explicit JitBacking(std::size_t pages)
 	{
-		char path[] = "/private/tmp/uml-jit-test.XXXXXX";
-		descriptor_ = mkstemp(path);
+		auto path = ::uml::testing::scratch_template(
+			"uml-jit-test.XXXXXX");
+		descriptor_ = mkstemp(path.data());
 		require(descriptor_ >= 0);
-		require(unlink(path) == 0);
+		require(unlink(path.c_str()) == 0);
 		require(ftruncate(descriptor_,
 			static_cast<off_t>(
 				pages * DARWIN_UML_GUEST_PAGE_SIZE)) == 0);

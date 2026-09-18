@@ -4,6 +4,7 @@
 #include "mach_vm_protection_test_support.hpp"
 #include "allocation_fault.hpp"
 #include "native_window_test_support.hpp"
+#include "scratch_directory.hpp"
 #include "memory/shared_backing.hpp"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -39,7 +40,8 @@ class TemporaryBacking final {
 public:
 	TemporaryBacking()
 	{
-		auto path = std::to_array("/private/tmp/uml-native-mmu.XXXXXX");
+		auto path = uml::testing::scratch_template(
+			"uml-native-mmu.XXXXXX");
 		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "mkstemp failed");
 		(void)unlink(path.data());

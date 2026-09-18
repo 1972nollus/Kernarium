@@ -142,9 +142,12 @@ function(uml_add_unit_test)
         FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
         FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
         FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
-    # Harness producers name their corpus exports after the registered test.
+    # Scratch files stay in a per-test build-tree directory; see
+    # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives each
+    # test its registered name; harness producers name corpus exports with it.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
-        "UML_UNIT_TEST_NAME=${TEST_NAME}")
+        "UML_UNIT_TEST_NAME=${TEST_NAME}"
+        "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
     uml_record_registered_test("${TEST_NAME}" unit ${TEST_COMMAND})
 endfunction()
 

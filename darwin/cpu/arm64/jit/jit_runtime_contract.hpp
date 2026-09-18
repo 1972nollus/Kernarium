@@ -19,7 +19,7 @@ inline constexpr std::size_t maximum_block_instructions = 64;
  * jit_cache_geometry.hpp.
  */
 inline constexpr std::size_t cache_ways = 4;
-inline constexpr std::size_t floating_transaction_arena_size = 16U * 1024U;
+inline constexpr std::size_t single_instruction_arena_size = 16U * 1024U;
 inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::uint32_t native_fpsr_mutable_mask = 0x0800'009fU;
@@ -179,11 +179,12 @@ struct JitChainState final {
   std::uint8_t link_selector{};
   /*
    * A helper-sensitive cold path cannot run while the outer direct-store
-   * publication is alive. Generated code sets this byte and returns without
-   * retiring the instruction; run_block performs the semantic instruction
-   * after the publication scope has ended.
+   * publication is alive. Generated code records the translated exclusive
+   * instruction here and returns without retiring it; run_block executes that
+   * exact word after the publication scope has ended. Zero (UDF #0) is never
+   * deferred and means that no instruction is pending.
    */
-  std::uint8_t deferred_semantic_instruction{};
+  std::uint32_t deferred_exclusive_instruction{};
   std::uint64_t indirect_source_pc{};
 };
 
@@ -191,6 +192,7 @@ static_assert(offsetof(JitChainState, remaining_instructions) == 0);
 static_assert(offsetof(JitChainState, stores) == 8);
 static_assert(offsetof(JitChainState, indirect_miss) == 16);
 static_assert(offsetof(JitChainState, link_selector) == 24);
+static_assert(offsetof(JitChainState, deferred_exclusive_instruction) == 28);
 static_assert(offsetof(JitChainState, indirect_source_pc) == 32);
 static_assert(sizeof(JitChainState) == 40);
 static_assert(sizeof(JitStoreRange) == 16);

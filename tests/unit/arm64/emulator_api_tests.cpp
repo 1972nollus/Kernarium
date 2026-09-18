@@ -5,6 +5,7 @@
 #include "native_window_test_support.hpp"
 #include "platform/run_routing.hpp"
 #include "runtime/context.hpp"
+#include "scratch_directory.hpp"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_network.h"
 #include "uml_darwin_memory.h"
@@ -197,10 +198,12 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::uint8_t value)
 	{
-		char path[] = "/tmp/uml-emulator-mmu-domain-XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-emulator-mmu-domain-XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "could not create MMU backing");
-		require(unlink(path) == 0, "could not unlink MMU backing");
+		require(unlink(path.c_str()) == 0,
+			"could not unlink MMU backing");
 		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
 			"could not size MMU backing");
 		require(pwrite(fd_, &value, sizeof(value), 0) ==

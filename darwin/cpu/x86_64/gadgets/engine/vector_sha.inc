@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Intel SHA-extension state and message operations. */
+/* Intel SHA-extension state and message operations.
+ *
+ * The two SHA-256 message schedules are the host's own SHA256SU0 and
+ * SHA256SU1. The round instruction is not: x86's SHA256RNDS2 performs two
+ * rounds and the host's SHA256H pair performs four, so it keeps the scalar
+ * sequence. The SHA-1 operations keep theirs because x86 numbers their words
+ * from the high lane down, which no host operand order matches.
+ */
+.arch_extension crypto
 
 .macro vector_sha_sigma0 output, input
 	ror w\output, w\input, #7
@@ -119,42 +127,22 @@
 	mov v4.s[1], w4
 	mov v4.s[0], w5
 	.elseif \opcode == 0xcc
-	mov w10, v1.s[0]
-	vector_sha_sigma0 11, 10
-	mov w12, v0.s[3]
-	add w11, w11, w12
-	mov v4.s[3], w11
-	vector_sha_sigma0 11, 12
-	mov w13, v0.s[2]
-	add w11, w11, w13
-	mov v4.s[2], w11
-	vector_sha_sigma0 11, 13
-	mov w14, v0.s[1]
-	add w11, w11, w14
-	mov v4.s[1], w11
-	vector_sha_sigma0 11, 14
-	mov w13, v0.s[0]
-	add w11, w11, w13
-	mov v4.s[0], w11
+	/* SHA256MSG1 is the host's SHA256SU0 exactly: each lane takes the guest
+	 * destination's own word plus sigma0 of the next one, and the top lane
+	 * takes sigma0 of the source's low word. */
+	mov v4.16b, v0.16b
+	sha256su0 v4.4s, v1.4s
 	.else
-	mov w10, v1.s[2]
-	vector_sha_sigma1 11, 10
-	mov w12, v0.s[0]
-	add w12, w12, w11
-	mov v4.s[0], w12
-	mov w10, v1.s[3]
-	vector_sha_sigma1 11, 10
-	mov w13, v0.s[1]
-	add w13, w13, w11
-	mov v4.s[1], w13
-	vector_sha_sigma1 11, 12
-	mov w14, v0.s[2]
-	add w14, w14, w11
-	mov v4.s[2], w14
-	vector_sha_sigma1 11, 13
-	mov w14, v0.s[3]
-	add w14, w14, w11
-	mov v4.s[3], w14
+	/* SHA256MSG2 is the host's SHA256SU1 with its third addend suppressed.
+	 * SU1 adds {Vn[1], Vn[2], Vn[3], Vm[0]} on top of the destination, which
+	 * x86 does not, so the second source is zero and the copy of the guest
+	 * source clears the low word the host would otherwise add. The sigma1
+	 * inputs and the two lanes that feed the upper two are identical. */
+	movi v5.4s, #0
+	mov v6.16b, v1.16b
+	ins v6.s[0], wzr
+	mov v4.16b, v0.16b
+	sha256su1 v4.4s, v5.4s, v6.4s
 	.endif
 .endm
 

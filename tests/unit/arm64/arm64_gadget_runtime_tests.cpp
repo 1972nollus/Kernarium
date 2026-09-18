@@ -5,6 +5,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 #include "mach_vm_protection_test_support.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <cstddef>
@@ -151,10 +152,11 @@ void emulated_identification_registers_read_sanitized_values()
 
 void code_synchronization_is_a_precise_execution_boundary()
 {
-	char path[] = "/private/tmp/uml-gadget-code-sync-test.XXXXXX";
-	const int fd = mkstemp(path);
+	auto path = uml::testing::scratch_template(
+		"uml-gadget-code-sync-test.XXXXXX");
+	const int fd = mkstemp(path.data());
 	require(fd >= 0);
-	require(unlink(path) == 0);
+	require(unlink(path.c_str()) == 0);
 	require(ftruncate(fd, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 
 	constexpr unsigned long generation = 18;
@@ -196,10 +198,11 @@ void code_synchronization_is_a_precise_execution_boundary()
 
 void mapped_memory_runtime_boundaries()
 {
-	char path[] = "/private/tmp/uml-gadget-runtime-test.XXXXXX";
-	const int fd = mkstemp(path);
+	auto path = uml::testing::scratch_template(
+		"uml-gadget-runtime-test.XXXXXX");
+	const int fd = mkstemp(path.data());
 	require(fd >= 0);
-	require(unlink(path) == 0);
+	require(unlink(path.c_str()) == 0);
 	require(ftruncate(fd, 2 * DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 
 	constexpr std::uint64_t guest_page = 0x1'0000;

@@ -95,7 +95,9 @@ endif()
 
 # Keep complete memory-object composition in the owning module. Consumers
 # receive target-owned objects rather than copying a source manifest across
-# directory scopes.
+# directory scopes. The shared backing also stays an archive so separate
+# in-tree final links load one anonymous-backing registry; carrying its object
+# here keeps an archive composed from this component complete.
 add_library(uml_memory_component INTERFACE)
 add_library(UML::MemoryComponent ALIAS uml_memory_component)
 uml_declare_architecture_target(uml_memory_component memory)
@@ -103,6 +105,7 @@ target_link_libraries(uml_memory_component INTERFACE
     UML::MemoryContract
     UML::MemorySharedBacking)
 target_sources(uml_memory_component INTERFACE
+    $<TARGET_OBJECTS:uml_memory_shared_backing>
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_static_guest_memory>
     $<TARGET_OBJECTS:uml_memory_vm_bridge>)
@@ -160,6 +163,7 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_definitions(uml_memory_test_component INTERFACE
         UML_MEMORY_ALLOCATION_TESTING=1)
     target_sources(uml_memory_test_component INTERFACE
+        $<TARGET_OBJECTS:uml_memory_shared_backing>
         $<TARGET_OBJECTS:uml_static_mmu_test_variant>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_memory_vm_bridge>)

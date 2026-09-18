@@ -2,9 +2,8 @@
 
 #include "jit_cache.hpp"
 #include "jit_publication.hpp"
+#include "jit_semantic_reservation.hpp"
 #include "jit_test_api.hpp"
-
-#include "cpu/arm64/instructions/load_store_memory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -454,7 +453,7 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
     CpuState reservation_cpu{};
     CpuState store_cpu{};
     alignas(16) std::array<std::byte, 16> backing{};
-    std::array<std::uint64_t, 2> ranges{};
+    JitStoreRange range{};
     std::binary_semaphore store_published{0};
     std::binary_semaphore begin_invalidation{0};
     std::binary_semaphore invalidation_finished{0};
@@ -462,9 +461,9 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
     std::atomic<bool> tracked{};
   };
   auto shared = std::make_shared<Shared>();
-  shared->ranges = {
-      reinterpret_cast<std::uint64_t>(shared->backing.data()),
-      shared->backing.size(),
+  shared->range = {
+      .address = reinterpret_cast<std::uint64_t>(shared->backing.data()),
+      .size = shared->backing.size(),
   };
   register_jit_store_participant(shared->participant);
   if (!begin_jit_reservation(shared->reservation_cpu)) {
@@ -479,7 +478,7 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
                             std::memory_order_seq_cst);
       shared->store_published.release();
       shared->begin_invalidation.acquire();
-      uml_arm64_jit_invalidate_store_ranges(shared->ranges.data(), 1);
+      semantic::invalidate_store_ranges({&shared->range, 1U});
     }
     shared->invalidation_finished.release();
   }};

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_compiler_families.hpp"
 
-#include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/host_capabilities.hpp"
 
 namespace uml::cpu::arm64::jit {

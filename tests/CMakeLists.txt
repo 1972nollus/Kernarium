@@ -47,11 +47,21 @@ if(UML_BUILD_UNIT_TESTS)
         cxx_std_20)
     target_compile_options(uml_host_capabilities_test_support PRIVATE
         -Wall -Wextra -Werror)
+    # Unit tests keep scratch files in the per-test build-tree directory that
+    # uml_add_unit_test() names, instead of a host-global path.
+    add_library(uml_test_scratch_directory OBJECT
+        unit/scratch/scratch_directory.cpp)
+    target_include_directories(uml_test_scratch_directory PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/scratch)
+    target_compile_features(uml_test_scratch_directory PUBLIC cxx_std_20)
+    target_compile_options(uml_test_scratch_directory PRIVATE
+        -Wall -Wextra -Werror)
     # Unit binaries are independent consumers of the same scoped build
     # configuration as production targets; no directory-global definitions
     # are needed.
     link_libraries(
         uml_host_capabilities_test_support
+        uml_test_scratch_directory
         UML::GuestPageConfiguration
         UML::JitProfileConfiguration)
     add_subdirectory(unit)

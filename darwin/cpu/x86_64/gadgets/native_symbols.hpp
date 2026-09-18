@@ -1178,14 +1178,16 @@ UML_X86_DECLARE_VECTOR_BITWISE(xor)
 	void uml_x86_64_gadget_cmov_##condition##_32_rm(); \
 	void uml_x86_64_gadget_cmov_##condition##_64_rm(); \
 	void uml_x86_64_gadget_jump_##condition(); \
-	void uml_x86_64_gadget_jump_##condition##_linked();
+	void uml_x86_64_gadget_jump_##condition##_linked(); \
+	void uml_x86_64_gadget_jump_##condition##_inline();
 #define UML_X86_DECLARE_FUSED_CONDITION(condition) \
 	void uml_x86_64_gadget_set_##condition##_nzcv(); \
 	void uml_x86_64_gadget_cmov_##condition##_16_rr_nzcv(); \
 	void uml_x86_64_gadget_cmov_##condition##_32_rr_nzcv(); \
 	void uml_x86_64_gadget_cmov_##condition##_64_rr_nzcv(); \
 	void uml_x86_64_gadget_jump_##condition##_nzcv(); \
-	void uml_x86_64_gadget_jump_##condition##_linked_nzcv();
+	void uml_x86_64_gadget_jump_##condition##_linked_nzcv(); \
+	void uml_x86_64_gadget_jump_##condition##_inline_nzcv();
 UML_X86_DECLARE_CONDITION(o)
 UML_X86_DECLARE_CONDITION(no)
 UML_X86_DECLARE_CONDITION(b)

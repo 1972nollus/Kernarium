@@ -266,7 +266,7 @@ function(uml_audit_protected_engine_source_contracts ROOT OUT_VIOLATIONS)
     set(JIT_BRIDGE_INCLUDES
         cpu/arm64/code_synchronization.hpp
         cpu/arm64/memory_transfer.hpp
-        cpu/arm64/instructions/load_store_memory.hpp)
+        jit_semantic_reservation.hpp)
     foreach(INDEX RANGE 0 2)
         list(GET JIT_BRIDGE_SOURCES ${INDEX} JIT_BRIDGE_SOURCE)
         list(GET JIT_BRIDGE_INCLUDES ${INDEX} JIT_BRIDGE_INCLUDE)
@@ -393,6 +393,13 @@ foreach(PATH IN LISTS LAYER_SOURCES)
            "(^|\n)(darwin/)?cpu/arm64/gadgets/")
             list(APPEND VIOLATIONS
                 "${PATH}: JIT includes another engine implementation")
+        endif()
+        # The JIT owns its semantic slow path and never executes a guest
+        # instruction through the arm64 interpreter.
+        if(NORMALIZED_INCLUDE_TEXT MATCHES
+           "(^|\n)(darwin/)?cpu/arm64/(dispatcher\\.hpp|instructions/|detail/instruction_helpers\\.hpp)")
+            list(APPEND VIOLATIONS
+                "${PATH}: JIT includes the arm64 interpreter")
         endif()
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a

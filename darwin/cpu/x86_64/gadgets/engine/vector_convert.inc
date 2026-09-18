@@ -9,41 +9,12 @@
 	frintz v\output\().2d, v\input\().2d
 	.endif
 	.else
-	ldr w13, [_cpu, #UML_X86_64_CPU_MXCSR]
-	ubfx w13, w13, #13, #2
-	cmp w13, #1
-	b.eq .Lx86_vector_convert_round_down\@
-	cmp w13, #2
-	b.eq .Lx86_vector_convert_round_up\@
-	cmp w13, #3
-	b.eq .Lx86_vector_convert_round_zero\@
+	/* The dispatch already holds the guest's rounding mode. */
 	.if \element == 32
-	frintn v\output\().4s, v\input\().4s
+	frinti v\output\().4s, v\input\().4s
 	.else
-	frintn v\output\().2d, v\input\().2d
+	frinti v\output\().2d, v\input\().2d
 	.endif
-	b .Lx86_vector_convert_round_done\@
-.Lx86_vector_convert_round_down\@:
-	.if \element == 32
-	frintm v\output\().4s, v\input\().4s
-	.else
-	frintm v\output\().2d, v\input\().2d
-	.endif
-	b .Lx86_vector_convert_round_done\@
-.Lx86_vector_convert_round_up\@:
-	.if \element == 32
-	frintp v\output\().4s, v\input\().4s
-	.else
-	frintp v\output\().2d, v\input\().2d
-	.endif
-	b .Lx86_vector_convert_round_done\@
-.Lx86_vector_convert_round_zero\@:
-	.if \element == 32
-	frintz v\output\().4s, v\input\().4s
-	.else
-	frintz v\output\().2d, v\input\().2d
-	.endif
-.Lx86_vector_convert_round_done\@:
 	.endif
 .endm
 

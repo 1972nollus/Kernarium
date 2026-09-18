@@ -2,8 +2,8 @@
 
 #include "jit_semantic_memory.hpp"
 #include "jit_publication.hpp"
+#include "jit_semantic_instructions.hpp"
 
-#include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/memory_transfer.hpp"
@@ -53,7 +53,7 @@ void materialize_semantic_cpu_state(CpuState &cpu) noexcept {
   /*
    * A terminal generated-code helper runs outside the native register
    * environment. Commit any retained guest status and restore the host
-   * environment before the reference semantics can inspect CpuState.
+   * environment before the semantic slow path can inspect CpuState.
    */
   arm64::restore_native_fp_environment(cpu);
   cpu.access_fp_state();
@@ -191,7 +191,7 @@ public:
   }
 
   /*
-   * Returning no direct pointer deliberately selects the interpreter's
+   * Returning no direct pointer deliberately selects the semantic path's
    * ordinary-load/store atomic fallback. Host exclusive instructions cannot
    * be restarted safely after a Darwin shadow-map protection fault.
    *
@@ -270,10 +270,29 @@ private:
 };
 
 void record_semantic_fault(Tlb &tlb, const JitSemanticMemory &memory,
-                           const arm64::RunResult &result) noexcept {
+                           const jit::semantic::RunResult &result) noexcept {
   tlb.fault_address =
       memory.has_fault() ? memory.last_fault().address : result.address;
   tlb.fault_access = result.write ? Access::write : Access::read;
+}
+
+[[nodiscard]] std::uint64_t
+semantic_result(Tlb &tlb, const JitSemanticMemory &memory,
+                const jit::semantic::RunResult &result) noexcept {
+  using jit::semantic::StopReason;
+  switch (result.reason) {
+  case StopReason::continued:
+    return pack_jit_result(Event::continued, result.instructions);
+  case StopReason::memory_fault:
+    record_semantic_fault(tlb, memory, result);
+    return pack_jit_result(Event::memory_fault, result.instructions);
+  case StopReason::gcs_fault:
+    return pack_jit_result(Event::gcs_fault, result.instructions);
+  case StopReason::illegal_instruction:
+  case StopReason::unsupported_instruction:
+    return pack_jit_result(Event::illegal_instruction, result.instructions);
+  }
+  return pack_jit_result(Event::fatal, 0);
 }
 
 extern "C" std::uint64_t
@@ -282,6 +301,11 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
   materialize_semantic_cpu_state(*cpu);
+  /* Generated code routes only the selected classes here. Any other word is
+   * an internal error and is never interpreted. */
+  const auto handler = jit::semantic::exclusive_handler(instruction);
+  if (handler == nullptr)
+    return pack_jit_result(Event::fatal, 0);
   const bool establishes_reservation =
       (instruction & 0x00c0'0000U) == 0x0040'0000U;
   const bool uses_software_reservation =
@@ -290,8 +314,7 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
     const bool registered =
         establishes_reservation && begin_jit_reservation(*cpu);
     JitSemanticMemory memory{*tlb};
-    const auto result =
-        arm64::Dispatcher{}.execute(*cpu, memory, instruction);
+    const auto result = handler(*cpu, memory, instruction);
     if (establishes_reservation && cpu->exclusive_size != 0U &&
         current_jit_store_participant != nullptr)
       current_jit_store_participant->reservation_cpu.store(
@@ -304,31 +327,7 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
             nullptr, std::memory_order_seq_cst);
       end_jit_reservation(*cpu);
     }
-    switch (result.reason) {
-    case arm64::StopReason::continued:
-    case arm64::StopReason::budget_exhausted:
-      return pack_jit_result(Event::continued, result.instructions);
-    case arm64::StopReason::memory_fault:
-      record_semantic_fault(*tlb, memory, result);
-      return pack_jit_result(Event::memory_fault, result.instructions);
-    case arm64::StopReason::gcs_fault:
-      return pack_jit_result(Event::gcs_fault, result.instructions);
-    case arm64::StopReason::illegal_instruction:
-    case arm64::StopReason::unavailable_feature:
-      return pack_jit_result(Event::illegal_instruction,
-                             result.instructions);
-    case arm64::StopReason::breakpoint:
-      return pack_jit_result(Event::breakpoint, result.instructions);
-    case arm64::StopReason::system_call:
-      return pack_jit_result(Event::system_call, result.instructions);
-    case arm64::StopReason::floating_point_trap:
-      return pack_jit_result(Event::floating_point_trap,
-                             result.instructions);
-    case arm64::StopReason::unsupported_instruction:
-      return pack_jit_result(Event::illegal_instruction,
-                             result.instructions);
-    }
-    return pack_jit_result(Event::fatal, 0);
+    return semantic_result(*tlb, memory, result);
   };
   /*
    * Native compare/exchange and atomic instructions already provide their
@@ -342,55 +341,28 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
   return execute();
 }
 
-[[nodiscard]] std::uint64_t execute_semantic_instruction(
-    CpuState &cpu, Tlb &tlb, std::uint32_t instruction,
-    std::uint32_t *syndrome, bool scalar_ordered_atomics) noexcept {
+[[nodiscard]] std::uint64_t
+execute_semantic_instruction(CpuState &cpu, Tlb &tlb,
+                             std::uint32_t instruction,
+                             jit::semantic::Handler handler,
+                             bool scalar_ordered_atomics) noexcept {
   materialize_semantic_cpu_state(cpu);
-  JitSemanticMemory memory{tlb, scalar_ordered_atomics};
-  const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
-  if (syndrome != nullptr)
-    *syndrome = result.syndrome;
-  switch (result.reason) {
-  case arm64::StopReason::continued:
-  case arm64::StopReason::budget_exhausted:
-    return pack_jit_result(Event::continued, result.instructions);
-  case arm64::StopReason::memory_fault:
-    record_semantic_fault(tlb, memory, result);
-    return pack_jit_result(Event::memory_fault, result.instructions);
-  case arm64::StopReason::gcs_fault:
-    return pack_jit_result(Event::gcs_fault, result.instructions);
-  case arm64::StopReason::illegal_instruction:
-  case arm64::StopReason::unavailable_feature:
-    return pack_jit_result(Event::illegal_instruction, result.instructions);
-  case arm64::StopReason::breakpoint:
-    return pack_jit_result(Event::breakpoint, result.instructions);
-  case arm64::StopReason::system_call:
-    return pack_jit_result(Event::system_call, result.instructions);
-  case arm64::StopReason::floating_point_trap:
-    return pack_jit_result(Event::floating_point_trap, result.instructions);
-  case arm64::StopReason::unsupported_instruction:
-    return pack_jit_result(Event::illegal_instruction, result.instructions);
-  }
-  return pack_jit_result(Event::fatal, 0);
-}
-
-extern "C" std::uint64_t
-uml_arm64_jit_execute_memory_with_syndrome(
-    CpuState *cpu, Tlb *tlb, std::uint32_t instruction,
-    std::uint32_t *syndrome) noexcept {
-  if (syndrome != nullptr)
-    *syndrome = 0;
-  if (cpu == nullptr || tlb == nullptr)
+  /* Generated code routes only the selected classes here. Any other word is
+   * an internal error and is never interpreted. */
+  if (handler == nullptr)
     return pack_jit_result(Event::fatal, 0);
-  return execute_semantic_instruction(*cpu, *tlb, instruction, syndrome,
-                                      false);
+  JitSemanticMemory memory{tlb, scalar_ordered_atomics};
+  return semantic_result(tlb, memory, handler(cpu, memory, instruction));
 }
 
 extern "C" std::uint64_t
 uml_arm64_jit_execute_memory(CpuState *cpu, Tlb *tlb,
                              std::uint32_t instruction) noexcept {
-  return uml_arm64_jit_execute_memory_with_syndrome(
-      cpu, tlb, instruction, nullptr);
+  if (cpu == nullptr || tlb == nullptr)
+    return pack_jit_result(Event::fatal, 0);
+  return execute_semantic_instruction(
+      *cpu, *tlb, instruction, jit::semantic::memory_handler(instruction),
+      false);
 }
 
 extern "C" std::uint64_t
@@ -398,31 +370,9 @@ uml_arm64_jit_execute_gcs(CpuState *cpu, Tlb *tlb,
                           std::uint32_t instruction) noexcept {
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
-  materialize_semantic_cpu_state(*cpu);
-  JitSemanticMemory memory{*tlb};
-  const auto result = arm64::Dispatcher{}.execute(*cpu, memory, instruction);
-  switch (result.reason) {
-  case arm64::StopReason::continued:
-  case arm64::StopReason::budget_exhausted:
-    return pack_jit_result(Event::continued, result.instructions);
-  case arm64::StopReason::memory_fault:
-    record_semantic_fault(*tlb, memory, result);
-    return pack_jit_result(Event::memory_fault, result.instructions);
-  case arm64::StopReason::gcs_fault:
-    return pack_jit_result(Event::gcs_fault, result.instructions);
-  case arm64::StopReason::illegal_instruction:
-  case arm64::StopReason::unavailable_feature:
-    return pack_jit_result(Event::illegal_instruction, result.instructions);
-  case arm64::StopReason::breakpoint:
-    return pack_jit_result(Event::breakpoint, result.instructions);
-  case arm64::StopReason::system_call:
-    return pack_jit_result(Event::system_call, result.instructions);
-  case arm64::StopReason::floating_point_trap:
-    return pack_jit_result(Event::floating_point_trap, result.instructions);
-  case arm64::StopReason::unsupported_instruction:
-    return pack_jit_result(Event::illegal_instruction, result.instructions);
-  }
-  return pack_jit_result(Event::fatal, 0);
+  return execute_semantic_instruction(
+      *cpu, *tlb, instruction, jit::semantic::gcs_handler(instruction),
+      false);
 }
 
 extern "C" std::uint64_t
@@ -570,14 +520,15 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const bool load = (instruction & 0x0040'0000U) != 0;
   /*
    * Ordered stores must invalidate software reservations even when an alias
-   * writes the same bits, and must revalidate write access. The reference
-   * semantics own both rules, so route the store there; asking for direct
+   * writes the same bits, and must revalidate write access. The semantic
+   * slow path owns both rules, so route the store there; asking for direct
    * scalar atomics makes that path store the value with one host release
    * store instead of copying it a byte at a time.
    */
   if (!load)
-    return execute_semantic_instruction(*cpu, *tlb, instruction, nullptr,
-                                        true);
+    return execute_semantic_instruction(
+        *cpu, *tlb, instruction,
+        jit::semantic::ordered_store_handler(instruction), true);
   materialize_semantic_cpu_state(*cpu);
   const unsigned size_shift = instruction >> 30;
   const std::size_t size = std::size_t{1} << size_shift;

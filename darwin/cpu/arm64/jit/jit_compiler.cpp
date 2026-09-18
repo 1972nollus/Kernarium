@@ -5,7 +5,7 @@
 #include "cpu/arm64/code_synchronization.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
-#include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -329,12 +329,13 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
          * own publication still active.
          */
         if (direct_memory_write_mask_ != 0U)
-          emit_deferred_exclusive_slow(cold.pc, cold.count);
+          emit_deferred_exclusive_slow(cold.instruction, cold.pc,
+                                       cold.count);
         else
           emit_exclusive_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action ==
                  ColdPath::Action::deferred_exclusive_slow) {
-        emit_deferred_exclusive_slow(cold.pc, cold.count);
+        emit_deferred_exclusive_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::memory_slow) {
         emit_memory_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
@@ -802,12 +803,13 @@ void JitCompiler::emit_exclusive_slow(std::uint32_t instruction, std::uint64_t p
     emitter_.return_dynamic(count);
   }
 
-void JitCompiler::emit_deferred_exclusive_slow(std::uint64_t pc,
+void JitCompiler::emit_deferred_exclusive_slow(std::uint32_t instruction,
+                                    std::uint64_t pc,
                                     std::size_t count) {
     store_pc(pc);
-    emitter_.load_constant(0, 1U);
-    emitter_.store_b(
-        0, 19, offsetof(JitChainState, deferred_semantic_instruction));
+    emitter_.load_constant(0, instruction);
+    emitter_.store_w(
+        0, 19, offsetof(JitChainState, deferred_exclusive_instruction));
     /*
      * The instruction at pc has not executed. return_constant() flushes the
      * live guest prefix before unwinding the one outer generated frame.

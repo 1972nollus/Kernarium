@@ -631,6 +631,7 @@ virtio-battery-protocol	tests/unit/battery/virtio_battery_tests.cpp	unit	conditi
 platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained
 android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained
 device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained
+unit-test-scratch-directory	tests/unit/scratch/scratch_directory_tests.cpp	unit	retained
 guest-console-suspend-timeout	tests/unit/mconsole/guest_console_tests.cpp	unit	retained
 virtio-console-protocol	tests/unit/console/virtio_console_tests.cpp	unit	conditional
 json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained

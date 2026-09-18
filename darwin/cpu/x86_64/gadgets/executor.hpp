@@ -43,6 +43,16 @@ struct ProgramCodeChange final {
 	std::uint64_t length{};
 };
 
+/* The guest ranges whose mapping changed after `sequence`, or a negative
+ * result when the caller has to retire every software-TLB entry. */
+struct ProgramMappingChange final {
+	std::uint64_t address{};
+	std::uint64_t length{};
+};
+using MappingChangeReader = int (*)(void *context, std::uint64_t generation,
+	std::uint64_t sequence, ProgramMappingChange *changes,
+	std::size_t capacity, std::uint64_t *current_sequence) noexcept;
+
 /* The guest ranges whose code changed after `sequence`, or a negative result
  * when the caller has to retire every cached link. */
 using ProgramCacheCodeChangeReader = int (*)(void *context,
@@ -65,7 +75,8 @@ public:
 		std::uint64_t code_changes = 0,
 		void *execution_context = nullptr,
 		ProgramCacheSequenceReader sequence_reader = nullptr,
-		ProgramCacheCodeChangeReader code_change_reader = nullptr) noexcept;
+		ProgramCacheCodeChangeReader code_change_reader = nullptr,
+		MappingChangeReader mapping_change_reader = nullptr) noexcept;
 	[[nodiscard]] NativeTlbEntry *tlb_entries() noexcept;
 	/* True when this executor holds a translation whose source covers the
 	 * page. A store to a page without one cannot invalidate any cached block.

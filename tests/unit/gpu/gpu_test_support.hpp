@@ -2,6 +2,7 @@
 #pragma once
 
 #include "protocol.hpp"
+#include "scratch_directory.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 
@@ -80,10 +81,10 @@ struct SocketPair {
 [[nodiscard]] inline UniqueDescriptor openMemoryDescriptor(
     std::size_t size = 4096)
 {
-    char path[] = "/tmp/uml-gpu-memory.XXXXXX";
-    const int descriptor = ::mkstemp(path);
+    auto path = ::uml::testing::scratch_template("uml-gpu-memory.XXXXXX");
+    const int descriptor = ::mkstemp(path.data());
     require(descriptor >= 0);
-    require(::unlink(path) == 0);
+    require(::unlink(path.c_str()) == 0);
     require(::ftruncate(descriptor, static_cast<off_t>(size)) == 0);
     return UniqueDescriptor {descriptor};
 }

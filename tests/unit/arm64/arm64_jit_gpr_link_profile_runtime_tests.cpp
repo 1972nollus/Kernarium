@@ -4,6 +4,7 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <cstddef>
@@ -538,18 +539,18 @@ void explicit_shutdown_hook_writes_one_global_snapshot() {
   require(uml::cpu::arm64::global_gpr_link_profile_diagnostics()
               .successful_links == before.successful_links);
 
-  char path[] = "/private/tmp/uml-jit-gpr-profile.XXXXXX";
-  const int descriptor = mkstemp(path);
+  auto path = uml::testing::scratch_template("uml-jit-gpr-profile.XXXXXX");
+  const int descriptor = mkstemp(path.data());
   require(descriptor >= 0);
   require(close(descriptor) == 0);
-  require(setenv("UML_JIT_GPR_LINK_PROFILE_PATH", path, 1) == 0);
+  require(setenv("UML_JIT_GPR_LINK_PROFILE_PATH", path.c_str(), 1) == 0);
   uml::cpu::arm64::report_global_gpr_link_profile();
   uml::cpu::arm64::report_global_gpr_link_profile();
   const auto after =
       uml::cpu::arm64::global_gpr_link_profile_diagnostics();
   require(after.successful_links - before.successful_links == 1);
 
-  auto *input = std::fopen(path, "r");
+  auto *input = std::fopen(path.c_str(), "r");
   require(input != nullptr);
   std::size_t summaries{};
   std::size_t edges{};
@@ -573,7 +574,7 @@ void explicit_shutdown_hook_writes_one_global_snapshot() {
   require(registers == 32);
   require(stack_pointers == 1);
   require(unsetenv("UML_JIT_GPR_LINK_PROFILE_PATH") == 0);
-  require(unlink(path) == 0);
+  require(unlink(path.c_str()) == 0);
 }
 
 } // namespace

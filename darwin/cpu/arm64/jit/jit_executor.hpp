@@ -24,9 +24,6 @@ namespace uml::cpu::arm64 {
 class JitExecutorPool;
 
 struct JitExecutorOptions final {
-	/* Explicitly opt into first-use semantic execution of ordinary blocks.
-	 * Runtime engines and direct clients compile eagerly by default. */
-	bool defer_cold_translation{};
 	bool enable_guarded_control_flow{};
 	bool enable_pointer_authentication{true};
 	::uml::cpu::HostCapabilities host_capabilities{
@@ -53,7 +50,6 @@ struct JitExecutorDiagnosticsOptions final {
 };
 
 struct JitCacheValidationDiagnostics final {
-	std::uint64_t cold_blocks{};
 	std::uint64_t translations{};
 	std::uint64_t validation_attempts{};
 	std::uint64_t validation_hits{};

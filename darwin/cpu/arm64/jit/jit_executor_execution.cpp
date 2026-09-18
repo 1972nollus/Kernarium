@@ -2,8 +2,9 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "jit_semantic_reservation.hpp"
+
 #include "cpu/arm64/detail/floating_exception.hpp"
-#include "cpu/arm64/instructions/load_store_memory.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <array>
@@ -115,11 +116,6 @@ namespace uml::cpu::arm64 {
     if (shared != nullptr) {
       block = shared;
     } else {
-      // Reusable translations are already hot in this process. Admission
-      // defers only blocks for which no executor has reusable native code.
-      if (const auto cold = try_run_cold_block(
-              cpu, generation, fetched, executed))
-        return *cold;
       JitCompiler compiler{
           enable_guarded_control_flow_, this,
           &Implementation::resolve_block_link, false,
@@ -184,7 +180,7 @@ namespace uml::cpu::arm64 {
           );
         };
         if (!valid_compilation(compiled))
-          return run_semantic_instruction(cpu, memory, executed);
+          return run_single_instruction(cpu, instructions[0], executed);
         auto stored = arena_.store_block(
             cpu.pc, compiled.words, compiled.relocations, {}, links_,
             empty_link_, generation);
@@ -229,12 +225,12 @@ namespace uml::cpu::arm64 {
               retry_compiled.indirect_link_refusals;
 #endif
           if (!valid_compilation(retry_compiled))
-            return run_semantic_instruction(cpu, memory, executed);
+            return run_single_instruction(cpu, instructions[0], executed);
           stored = arena_.store_block(
               cpu.pc, retry_compiled.words, retry_compiled.relocations, {},
               links_, empty_link_, generation);
           if (!stored)
-            return run_semantic_instruction(cpu, memory, executed);
+            return run_single_instruction(cpu, instructions[0], executed);
           auto shared =
               publish_shared_translation(cpu.pc, fetched, retry_compiled);
           block = install_compilation(retry_compiled, stored, shared);
@@ -252,7 +248,7 @@ namespace uml::cpu::arm64 {
   }
   if (pending_source)
     train_indirect(*pending_source, *block);
-  bool deferred_semantic_instruction = false;
+  std::uint32_t deferred_exclusive = 0;
   const auto execute_native = [&](JitFunction function,
                                   bool tracked_stores) -> Event {
     if (tracked_stores)
@@ -288,16 +284,14 @@ namespace uml::cpu::arm64 {
     if (block->native_fpmr)
       arm64::restore_native_fpmr_environment(cpu);
     if (tracked_stores)
-      uml_arm64_jit_invalidate_store_ranges(
-          reinterpret_cast<const std::uint64_t *>(
-              tracked_store_ranges_.data()),
-          block->instruction_count);
+      jit::semantic::invalidate_store_ranges(
+          std::span<const JitStoreRange>{tracked_store_ranges_}.first(
+              block->instruction_count));
     const auto current_executed =
         static_cast<std::size_t>(result >> 32);
     const auto event =
         static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
-    deferred_semantic_instruction =
-        chain.deferred_semantic_instruction != 0U;
+    deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
                    static_cast<std::size_t>(chain.remaining_instructions) +
                current_executed;
@@ -307,7 +301,7 @@ namespace uml::cpu::arm64 {
       record_pending_indirect(chain.indirect_miss,
                               chain.indirect_source_pc, cpu, generation,
                               sequences.code_changes);
-    if (!deferred_semantic_instruction)
+    if (deferred_exclusive == 0U)
       reconcile_reservation(cpu);
     return event;
   };
@@ -315,7 +309,7 @@ namespace uml::cpu::arm64 {
   if (block->direct_memory_write_mask == 0)
     return execute_native(block->function, false);
   Event event{};
-  bool compile_fallback = false;
+  bool tracked_unavailable = false;
   {
     JitBlockPublication publication{store_participant_, cpu};
     if (!publication.needs_tracking()) {
@@ -323,90 +317,30 @@ namespace uml::cpu::arm64 {
     } else {
       const auto tracked = tracked_store_function(*block, memory);
       if (tracked == nullptr)
-        compile_fallback = true;
+        tracked_unavailable = true;
       else
         event = execute_native(tracked, true);
     }
   }
-  if (deferred_semantic_instruction || compile_fallback) {
+  if (tracked_unavailable) {
+    /*
+     * The block's tracked variant could not be rebuilt or stored. Nothing has
+     * executed yet, so make progress with the block's first instruction as
+     * its own one-instruction translation, which republishes and tracks its
+     * stores exactly as a tracked block does.
+     */
+    std::uint32_t instruction{};
+    if (!fetch_instruction(memory, cpu.pc, instruction))
+      return Event::memory_fault;
+    return run_single_instruction(cpu, instruction, executed);
+  }
+  if (deferred_exclusive != 0U) {
     const auto retired_prefix = executed;
-    std::size_t semantic_executed = 0;
-    if (deferred_semantic_instruction)
-      event = run_deferred_exclusive_instruction(
-          cpu, memory, semantic_executed);
-    else
-      event = run_semantic_instruction(cpu, memory, semantic_executed);
-    executed = retired_prefix + semantic_executed;
+    std::size_t exclusive_executed = 0;
+    event = run_deferred_exclusive_instruction(cpu, deferred_exclusive,
+                                               exclusive_executed);
+    executed = retired_prefix + exclusive_executed;
   }
-  reconcile_reservation(cpu);
-  return event;
-}
-
-[[nodiscard]] std::optional<Event>
-JitExecutor::Implementation::try_run_cold_block(
-    CpuState &cpu, unsigned long generation,
-    std::span<const std::uint32_t> instructions, std::size_t &executed) {
-  if (!defer_cold_translation_ || cpu.exclusive_size != 0 ||
-      enable_guarded_control_flow_ ||
-      cpu.gcs_push_enabled || cpu.gcs_store_enabled ||
-      cpu.tagged_addresses_enabled())
-    return std::nullopt;
-  const auto key = ((cpu.pc >> 2U) ^
-      (generation * 0x9e3779b97f4a7c15ULL)) | 1U;
-  auto &tag = cold_tags_[
-      (key ^ (key >> 32U)) & (cold_tags_.size() - 1U)];
-  const bool first_visit = tag != key;
-  tag = key;
-  if (!first_visit)
-    return std::nullopt;
-  for (const auto instruction : instructions) {
-    // Disabling PAuth must not disable admission for ordinary code, but
-    // unavailable PAuth instructions must still reach
-    // the compiler's feature checks instead of the generic semantic helper.
-    if (!enable_pointer_authentication_ &&
-        ((instruction & 0xffff'0000U) == 0xdac1'0000U ||
-         (instruction & 0xffe0'fc00U) == 0x9ac0'3000U ||
-         (instruction & 0xff20'0400U) == 0xf820'0400U ||
-         (instruction & 0xfedf'f800U) == 0xd61f'0800U ||
-         (instruction & 0xffff'fbffU) == 0xd65f'0bffU))
-      return std::nullopt;
-    // Exclusives, atomics, and ordered-memory extensions retain their native
-    // admission and reservation protocol. System instructions can publish
-    // code or change architectural execution state and also stay native.
-    if ((instruction & 0x3e00'0000U) == 0x0800'0000U ||
-        (instruction & 0x3f00'0000U) == 0x1900'0000U ||
-        (instruction & 0x3b20'0c00U) == 0x3820'0000U ||
-        (instruction & 0xff00'0000U) == 0xd500'0000U)
-      return std::nullopt;
-  }
-  std::optional<Event> event;
-  {
-    // Software reservation creation waits for this publication to drain.
-    // If a reservation already exists, use the normal tracked native path.
-    JitBlockPublication publication{store_participant_, cpu};
-    if (publication.needs_tracking())
-      return std::nullopt;
-    event = Event::continued;
-    const auto pc = cpu.pc;
-    for (std::size_t index = 0; index < instructions.size() &&
-         cpu.pc == pc + index * sizeof(std::uint32_t); ++index) {
-      std::uint32_t syndrome = 0;
-      const auto result = uml_arm64_jit_execute_memory_with_syndrome(
-          &cpu, &tlb_, instructions[index], &syndrome);
-      executed += static_cast<std::size_t>(result >> 32U);
-      event = static_cast<Event>(
-          static_cast<std::int32_t>(result & 0xffff'ffffU));
-      if (*event == Event::floating_point_trap)
-        floating_point_syndrome_ = syndrome;
-      if (*event != Event::continued)
-        break;
-    }
-  }
-#if UML_JIT_RUNTIME_DIAGNOSTICS
-  ++cache_validation_diagnostics_.cold_blocks;
-#endif
-  if (*event == Event::memory_fault)
-    tlb_.discard(tlb_.fault_address);
   reconcile_reservation(cpu);
   return event;
 }
@@ -457,128 +391,183 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
 
 [[nodiscard]] Event JitExecutor::Implementation::run_floating_exception_mode(
     CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed) {
+  executed = 0;
   std::uint32_t instruction{};
-  if (!memory.fetch(
-          cpu.pc,
-          std::as_writable_bytes(std::span{&instruction, std::size_t{1}}))) {
-    const auto fault = memory.last_fault();
-    tlb_.fault_address = fault.address;
-    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  if (!fetch_instruction(memory, cpu.pc, instruction))
     return Event::memory_fault;
-  }
 
   const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
-  const bool transactional =
-      arm64::detail::needs_floating_exception_transaction(guest_fpcr,
-                                                          instruction);
-  if (transactional) {
-    /*
-     * A previous native block may have retained the guest environment in
-     * host registers.  Materialize it before taking the isolated snapshot.
-     */
-    arm64::restore_native_fp_environment(cpu);
-    cpu.access_fp_state();
-  }
+  if (!arm64::detail::needs_floating_exception_transaction(guest_fpcr,
+                                                           instruction))
+    return run_single_instruction(cpu, instruction, executed);
 
-  JitCompiler compiler{enable_guarded_control_flow_};
+  /*
+   * A previous native block may have retained the guest environment in
+   * host registers.  Materialize it before taking the isolated snapshot.
+   */
+  arm64::restore_native_fp_environment(cpu);
+  cpu.access_fp_state();
+  const auto translation =
+      translate_single_instruction(cpu.pc, instruction, false);
+  /*
+   * The transactional class is register-only FP/SIMD data processing. A
+   * translation that could not be built, or that would write memory the
+   * snapshot cannot roll back, is an internal failure.
+   */
+  if (!translation || translation->memory_write_mask != 0)
+    return Event::fatal;
+  const auto original_fpsr = cpu.fpsr;
+  auto isolated = cpu;
+  isolated.fpsr &= ~arm64::detail::fpsr_exception_cumulative_mask;
+  isolated.gadget_host_fpcr = 0;
+  isolated.gadget_host_fpsr = 0;
+  isolated.gadget_fp_active = false;
+  isolated.gadget_indirect_miss = nullptr;
+  isolated.gadget_host_fpmr = 0;
+  isolated.gadget_fpmr_active = false;
+  std::uint32_t deferred_exclusive = 0;
+  const auto event = invoke_single_instruction(
+      *translation, isolated, false, true, executed, deferred_exclusive);
+  if (event != Event::continued)
+    return event;
+  const auto decision = arm64::detail::decide_floating_exception(
+      cpu.fpcr, original_fpsr, isolated.fpsr);
+  if (decision.traps()) {
+    cpu.fpsr = decision.committed_fpsr;
+    floating_point_syndrome_ = decision.syndrome;
+    executed = 0;
+    return Event::floating_point_trap;
+  }
+  isolated.fpsr =
+      (isolated.fpsr & ~arm64::detail::fpsr_exception_cumulative_mask) |
+      (decision.committed_fpsr &
+       arm64::detail::fpsr_exception_cumulative_mask);
+  cpu = isolated;
+  reconcile_reservation(cpu);
+  return event;
+}
+
+[[nodiscard]] bool JitExecutor::Implementation::fetch_instruction(
+    StaticGuestMemory &memory, std::uint64_t pc, std::uint32_t &instruction) {
+  if (memory.fetch(pc, std::as_writable_bytes(
+                           std::span{&instruction, std::size_t{1}})))
+    return true;
+  const auto fault = memory.last_fault();
+  tlb_.fault_address = fault.address;
+  tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  return false;
+}
+
+[[nodiscard]] std::optional<
+    JitExecutor::Implementation::SingleInstructionTranslation>
+JitExecutor::Implementation::translate_single_instruction(
+    std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
+  JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr,
+                       track_direct_stores};
   compiler.set_gpr_residency_planning_enabled(false);
   compiler.set_pointer_authentication_enabled(
       enable_pointer_authentication_);
   const auto compiled =
-      compiler.compile(cpu.pc, std::span{&instruction, std::size_t{1}});
-  if (compiled.words.empty() || compiled.guest_instructions != 1 ||
+      compiler.compile(pc, std::span{&instruction, std::size_t{1}});
+  if (compiled.words.empty() || compiled.guest_instructions != 1U ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
-                                 compiled.native_fp,
-                                 compiled.native_fpmr))
-    return run_semantic_instruction(cpu, memory, executed);
-  floating_transaction_arena_.reset();
-  auto *code = floating_transaction_arena_.store(compiled.words);
+                                 compiled.native_fp, compiled.native_fpmr))
+    return std::nullopt;
+  /* The arena holds only the translation about to run, so a reset cannot
+   * discard code that is still executing. */
+  single_instruction_arena_.reset();
+  auto *code = single_instruction_arena_.store(compiled.words);
   if (code == nullptr)
-    return run_semantic_instruction(cpu, memory, executed);
-  const auto function = sign_jit_function<JitFunction>(code);
+    return std::nullopt;
+  return SingleInstructionTranslation{
+      .function = sign_jit_function<JitFunction>(code),
+      .memory_write_mask = compiled.memory_write_mask,
+      .direct_memory_write_mask = compiled.direct_memory_write_mask,
+      .accesses_fp_state = compiled.accesses_fp_state,
+      .native_fp = compiled.native_fp,
+      .native_fpmr = compiled.native_fpmr,
+  };
+}
 
-  const auto invoke = [&](CpuState &target,
-                          bool restore_environment) -> Event {
-    if (compiled.accesses_fp_state) {
-      target.access_fp_state();
-      if (compiled.native_fp)
-        activate_native_fp_environment(target);
-    }
-    if (compiled.native_fpmr) {
-      activate_native_fpmr_environment(target);
-    }
-    std::uint8_t link_capabilities =
-        compiled.direct_memory_write_mask != 0
-            ? link_capability(JitLinkCapability::store_publication)
-            : std::uint8_t{0};
-    JitChainState chain{};
-    if (compiled.accesses_fp_state)
-      link_capabilities |=
-          link_capability(JitLinkCapability::fp_state_materialized);
-    if (compiled.native_fp)
+[[nodiscard]] Event JitExecutor::Implementation::invoke_single_instruction(
+    const SingleInstructionTranslation &translation, CpuState &target,
+    bool tracked_stores, bool restore_environment, std::size_t &executed,
+    std::uint32_t &deferred_exclusive) {
+  if (tracked_stores)
+    tracked_store_ranges_.fill({});
+  std::uint8_t link_capabilities =
+      translation.direct_memory_write_mask != 0
+          ? link_capability(JitLinkCapability::store_publication)
+          : std::uint8_t{0};
+  JitChainState chain{
+      .stores = tracked_stores ? tracked_store_ranges_.data() : nullptr,
+  };
+  if (translation.accesses_fp_state) {
+    target.access_fp_state();
+    link_capabilities |=
+        link_capability(JitLinkCapability::fp_state_materialized);
+    if (translation.native_fp) {
+      activate_native_fp_environment(target);
       link_capabilities |=
           link_capability(JitLinkCapability::native_fp_environment);
-    if (compiled.native_fpmr)
-      link_capabilities |=
-          link_capability(JitLinkCapability::native_fpmr_environment);
-    chain.link_selector = checked_link_selector(link_capabilities);
-    const auto result = function(&target, &tlb_, &chain);
-    if (compiled.native_fpmr)
-      arm64::restore_native_fpmr_environment(target);
-    if (restore_environment)
-      arm64::restore_native_fp_environment(target);
-    executed = static_cast<std::size_t>(result >> 32);
-    const auto event =
-        static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
-    if (event == Event::memory_fault)
-      tlb_.discard(tlb_.fault_address);
-    return event;
-  };
-
-  if (transactional) {
-    if (compiled.memory_write_mask != 0)
-      return run_semantic_instruction(cpu, memory, executed);
-    const auto original_fpsr = cpu.fpsr;
-    auto isolated = cpu;
-    isolated.fpsr &=
-        ~arm64::detail::fpsr_exception_cumulative_mask;
-    isolated.gadget_host_fpcr = 0;
-    isolated.gadget_host_fpsr = 0;
-    isolated.gadget_fp_active = false;
-    isolated.gadget_indirect_miss = nullptr;
-    isolated.gadget_host_fpmr = 0;
-    isolated.gadget_fpmr_active = false;
-    const auto event = invoke(isolated, true);
-    if (event != Event::continued)
-      return event;
-    const auto decision = arm64::detail::decide_floating_exception(
-        cpu.fpcr, original_fpsr, isolated.fpsr);
-    if (decision.traps()) {
-      cpu.fpsr = decision.committed_fpsr;
-      floating_point_syndrome_ = decision.syndrome;
-      executed = 0;
-      return Event::floating_point_trap;
     }
-    isolated.fpsr =
-        (isolated.fpsr &
-         ~arm64::detail::fpsr_exception_cumulative_mask) |
-        (decision.committed_fpsr &
-         arm64::detail::fpsr_exception_cumulative_mask);
-    cpu = isolated;
-    reconcile_reservation(cpu);
-    return event;
   }
+  if (translation.native_fpmr) {
+    activate_native_fpmr_environment(target);
+    link_capabilities |=
+        link_capability(JitLinkCapability::native_fpmr_environment);
+  }
+  chain.link_selector = checked_link_selector(link_capabilities);
+  const auto result = translation.function(&target, &tlb_, &chain);
+  if (translation.native_fpmr)
+    arm64::restore_native_fpmr_environment(target);
+  if (restore_environment)
+    arm64::restore_native_fp_environment(target);
+  if (tracked_stores)
+    jit::semantic::invalidate_store_ranges(
+        std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
+  executed = static_cast<std::size_t>(result >> 32U);
+  deferred_exclusive = chain.deferred_exclusive_instruction;
+  const auto event =
+      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+  if (event == Event::memory_fault)
+    tlb_.discard(tlb_.fault_address);
+  return event;
+}
 
-  const auto execute_native = [&] { return invoke(cpu, false); };
+[[nodiscard]] Event JitExecutor::Implementation::run_single_instruction(
+    CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
+  executed = 0;
+  const auto translation =
+      translate_single_instruction(cpu.pc, instruction, false);
+  if (!translation)
+    return Event::fatal;
+  std::uint32_t deferred_exclusive = 0;
   Event event{};
-  if (compiled.direct_memory_write_mask == 0) {
-    event = execute_native();
+  if (translation->direct_memory_write_mask == 0) {
+    event = invoke_single_instruction(*translation, cpu, false, false,
+                                      executed, deferred_exclusive);
   } else {
     JitBlockPublication publication{store_participant_, cpu};
-    if (publication.needs_tracking())
-      event = run_semantic_instruction(cpu, memory, executed);
-    else
-      event = execute_native();
+    if (!publication.needs_tracking()) {
+      event = invoke_single_instruction(*translation, cpu, false, false,
+                                        executed, deferred_exclusive);
+    } else {
+      const auto tracked =
+          translate_single_instruction(cpu.pc, instruction, true);
+      if (!tracked || tracked->direct_memory_write_mask !=
+                          translation->direct_memory_write_mask)
+        return Event::fatal;
+      event = invoke_single_instruction(*tracked, cpu, true, false,
+                                        executed, deferred_exclusive);
+    }
+  }
+  if (deferred_exclusive != 0U) {
+    const auto retired_prefix = executed;
+    std::size_t exclusive_executed = 0;
+    event = run_deferred_exclusive_instruction(cpu, deferred_exclusive,
+                                               exclusive_executed);
+    executed = retired_prefix + exclusive_executed;
   }
   reconcile_reservation(cpu);
   return event;
@@ -618,42 +607,9 @@ void JitExecutor::Implementation::reconcile_reservation(CpuState &cpu) noexcept 
   end_jit_reservation(cpu);
 }
 
-[[nodiscard]] Event JitExecutor::Implementation::run_semantic_instruction(
-    CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed) {
-  std::uint32_t instruction{};
-  if (!memory.fetch(
-          cpu.pc,
-          std::as_writable_bytes(std::span{&instruction, std::size_t{1}}))) {
-    const auto fault = memory.last_fault();
-    tlb_.fault_address = fault.address;
-    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-    return Event::memory_fault;
-  }
-  std::uint32_t syndrome = 0;
-  const auto result = uml_arm64_jit_execute_memory_with_syndrome(
-      &cpu, &tlb_, instruction, &syndrome);
-  executed = static_cast<std::size_t>(result >> 32U);
-  const auto event =
-      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
-  if (event == Event::floating_point_trap)
-    floating_point_syndrome_ = syndrome;
-  if (event == Event::memory_fault)
-    tlb_.discard(tlb_.fault_address);
-  return event;
-}
-
-[[nodiscard]] Event JitExecutor::Implementation::run_deferred_exclusive_instruction(
-    CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed) {
-  std::uint32_t instruction{};
-  if (!memory.fetch(
-          cpu.pc,
-          std::as_writable_bytes(std::span{&instruction, std::size_t{1}}))) {
-    const auto fault = memory.last_fault();
-    tlb_.fault_address = fault.address;
-    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-    executed = 0;
-    return Event::memory_fault;
-  }
+[[nodiscard]] Event
+JitExecutor::Implementation::run_deferred_exclusive_instruction(
+    CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
   const auto result =
       uml_arm64_jit_execute_exclusive(&cpu, &tlb_, instruction);
   executed = static_cast<std::size_t>(result >> 32U);

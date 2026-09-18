@@ -601,8 +601,8 @@ void test_production_translated_exception_contract()
 		JitBacking second{1};
 		first.put32(0, 0x1e22'2820U); // fadd s0, s1, s2
 		first.put32(4, branch);        // b target
-		// A system-state block retains native admission even when ordinary
-		// first-use blocks execute without allocating a translation.
+		// The second block needs a fresh translation, so the injected
+		// allocation failure reaches it.
 		second.put32(0, 0xd503'3fdfU); // isb
 		second.put32(4, 0xd400'0001U); // svc #0
 		StaticGeneration state{generation};
