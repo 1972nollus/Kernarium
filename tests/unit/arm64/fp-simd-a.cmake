@@ -193,6 +193,25 @@
 			COMMAND uml_arm64_simd_two_register_${simd_two_register_suite}_tests)
 	endforeach()
 
+	add_executable(uml_arm64_simd_unallocated_class_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_unallocated_class_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+	target_include_directories(
+		uml_arm64_simd_unallocated_class_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin
+		${PROJECT_SOURCE_DIR}/darwin/include)
+	target_compile_options(
+		uml_arm64_simd_unallocated_class_tests PRIVATE
+		-Wall -Wextra -Werror)
+	target_link_libraries(
+		uml_arm64_simd_unallocated_class_tests PRIVATE
+		uml_arm64_engine_test_support)
+	uml_add_unit_test(NAME arm64-simd-unallocated-class
+		COMMAND uml_arm64_simd_unallocated_class_tests)
+
 	foreach(simd_reduce_suite IN ITEMS allocation behavior)
 		add_executable(uml_arm64_simd_reduce_${simd_reduce_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_reduce_${simd_reduce_suite}_tests.cpp

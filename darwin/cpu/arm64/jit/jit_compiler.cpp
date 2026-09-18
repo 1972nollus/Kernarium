@@ -888,8 +888,8 @@ void JitCompiler::emit_simd_duplicate_general(std::uint32_t instruction) {
 [[nodiscard]] bool JitCompiler::emit_simd_duplicate_element(std::uint32_t instruction) {
     if (!host_capabilities().advanced_simd)
       return false;
-    const bool vector = (instruction & 0xbf20'fc00U) == 0x0e00'0400U;
-    const bool scalar = (instruction & 0xff20'fc00U) == 0x5e00'0400U;
+    const bool vector = (instruction & 0xbfe0'fc00U) == 0x0e00'0400U;
+    const bool scalar = (instruction & 0xffe0'fc00U) == 0x5e00'0400U;
     if (!vector && !scalar)
       return false;
     const auto lane =
@@ -922,7 +922,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
 [[nodiscard]] bool JitCompiler::emit_simd_bit_unary(std::uint32_t instruction) {
     if (!host_capabilities().advanced_simd)
       return false;
-    const auto operation = instruction & 0x9f20'fc00U;
+    const auto operation = instruction & 0x9f3f'fc00U;
     if (operation != 0x0e20'5800U && operation != 0x0e20'0800U &&
         operation != 0x0e20'1800U)
       return false;
@@ -942,7 +942,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
 
 [[nodiscard]] bool JitCompiler::emit_simd_integer_reduce(std::uint32_t instruction) {
     if (!host_capabilities().advanced_simd ||
-        (instruction & 0x9f30'0c00U) != 0x0e30'0800U)
+        (instruction & 0x9f3e'0c00U) != 0x0e30'0800U)
       return false;
     const unsigned operation = (instruction >> 12) & 31U;
     const bool unsigned_group = (instruction & 0x2000'0000U) != 0;

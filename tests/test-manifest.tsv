@@ -412,6 +412,7 @@ arm64-simd-two-register-bit	tests/unit/arm64	unit	retained
 arm64-simd-two-register-compare_zero	tests/unit/arm64	unit	retained
 arm64-simd-two-register-narrow	tests/unit/arm64	unit	retained
 arm64-simd-two-register-gadget	tests/unit/arm64	unit	retained
+arm64-simd-unallocated-class	tests/unit/arm64	unit	retained
 arm64-simd-reduce-allocation	tests/unit/arm64	unit	retained
 arm64-simd-reduce-behavior	tests/unit/arm64	unit	retained
 arm64-simd-estimate-allocation	tests/unit/arm64	unit	retained

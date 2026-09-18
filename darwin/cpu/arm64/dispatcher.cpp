@@ -22,6 +22,7 @@
 #include "detail/floating_scale.hpp"
 #include "detail/fp8.hpp"
 #include "detail/instruction_helpers.hpp"
+#include "detail/simd_floating_classes.hpp"
 
 #include <array>
 #include <cstddef>
@@ -170,6 +171,11 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 	 * boundary.
 	 */
 	if ((instruction & 0xffff'0000U) == 0)
+		return {StopReason::illegal_instruction, cpu.pc, instruction, 0,
+			false};
+	/* The FP/SIMD class decoders below match only the bits that separate
+	 * their own allocations. */
+	if (detail::unallocated_simd_floating_class(instruction))
 		return {StopReason::illegal_instruction, cpu.pc, instruction, 0,
 			false};
 	if (detail::decode_fp8(instruction).recognized)
@@ -529,9 +535,9 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_insert_element},
 		DecodeEntry{0xbfe0'fc00U, 0x0e00'0c00U,
 			&Dispatcher::simd_duplicate_general},
-		DecodeEntry{0xbf20'fc00U, 0x0e00'0400U,
+		DecodeEntry{0xbfe0'fc00U, 0x0e00'0400U,
 			&Dispatcher::simd_duplicate_element},
-		DecodeEntry{0xff20'fc00U, 0x5e00'0400U,
+		DecodeEntry{0xffe0'fc00U, 0x5e00'0400U,
 			&Dispatcher::simd_duplicate_element}, // scalar mov from vector lane
 		/* Cryptographic extension families.  Keep these
 		 * entries ahead of the broad Advanced SIMD classes below.
@@ -542,7 +548,7 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_crypto}, // pmull/pmull2
 		DecodeEntry{0xffe0'8c00U, 0x5e00'0000U,
 			&Dispatcher::simd_crypto}, // SHA three-register forms
-		DecodeEntry{0xffff'8c00U, 0x5e28'0800U,
+		DecodeEntry{0xffff'cc00U, 0x5e28'0800U,
 			&Dispatcher::simd_crypto}, // SHA two-register forms
 		DecodeEntry{0xffe0'fc00U, 0xce60'8000U,
 			&Dispatcher::simd_crypto}, // sha512h
@@ -598,13 +604,13 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_dot_product}, // reserved scalar mixed slot
 		DecodeEntry{0x9f20'f400U, 0x0e00'a400U,
 			&Dispatcher::simd_matrix_multiply},
-		DecodeEntry{0xbf60'fc00U, 0x0e40'1c00U,
+		DecodeEntry{0xbfe0'fc00U, 0x0e40'1c00U,
 			&Dispatcher::simd_floating_multiply_extended},
-		DecodeEntry{0xff60'fc00U, 0x5e40'1c00U,
+		DecodeEntry{0xffe0'fc00U, 0x5e40'1c00U,
 			&Dispatcher::simd_floating_multiply_extended},
-		DecodeEntry{0xbf20'fc00U, 0x0e20'dc00U,
+		DecodeEntry{0xbfa0'fc00U, 0x0e20'dc00U,
 			&Dispatcher::simd_floating_multiply_extended},
-		DecodeEntry{0xff20'fc00U, 0x5e20'dc00U,
+		DecodeEntry{0xffa0'fc00U, 0x5e20'dc00U,
 			&Dispatcher::simd_floating_multiply_extended},
 		DecodeEntry{0xbf20'f400U, 0x2e00'8400U,
 			&Dispatcher::simd_saturating_rounding_multiply_accumulate},
@@ -625,11 +631,11 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_compare_zero},
 		DecodeEntry{0x9f3f'fc00U, 0x0e20'a800U,
 			&Dispatcher::simd_compare_zero},
-		DecodeEntry{0x9f3f'fc00U, 0x1e20'8800U,
+		DecodeEntry{0xdf3f'fc00U, 0x5e20'8800U,
 			&Dispatcher::simd_compare_zero},
-		DecodeEntry{0x9f3f'fc00U, 0x1e20'9800U,
+		DecodeEntry{0xdf3f'fc00U, 0x5e20'9800U,
 			&Dispatcher::simd_compare_zero},
-		DecodeEntry{0x9f3f'fc00U, 0x1e20'a800U,
+		DecodeEntry{0xdf3f'fc00U, 0x5e20'a800U,
 			&Dispatcher::simd_compare_zero},
 		DecodeEntry{0x9f20'fc00U, 0x0e20'3400U,
 			&Dispatcher::simd_compare_register},
@@ -647,11 +653,11 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_min_max},
 		DecodeEntry{0x9f20'fc00U, 0x0e20'ac00U,
 			&Dispatcher::simd_min_max},
-		DecodeEntry{0x9f20'fc00U, 0x0e20'5800U,
+		DecodeEntry{0x9f3f'fc00U, 0x0e20'5800U,
 			&Dispatcher::simd_bit_unary},
-		DecodeEntry{0x9f20'fc00U, 0x0e20'0800U,
+		DecodeEntry{0x9f3f'fc00U, 0x0e20'0800U,
 			&Dispatcher::simd_bit_unary},
-		DecodeEntry{0x9f20'fc00U, 0x0e20'1800U,
+		DecodeEntry{0x9f3f'fc00U, 0x0e20'1800U,
 			&Dispatcher::simd_bit_unary},
 		DecodeEntry{0x9f3f'fc00U, 0x0e31'b800U,
 			&Dispatcher::simd_reduce_integer},
@@ -677,7 +683,7 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_permute}, // zip2
 		DecodeEntry{0x9f20'fc00U, 0x0e20'8400U,
 			&Dispatcher::simd_arithmetic_register},
-		DecodeEntry{0x9f20'fc00U, 0x1e20'8400U,
+		DecodeEntry{0xdf20'fc00U, 0x5e20'8400U,
 			&Dispatcher::simd_arithmetic_register}, // scalar add/sub Dd
 		DecodeEntry{0xffff'fc00U, 0x5ef1'b800U,
 			&Dispatcher::simd_arithmetic_register}, // scalar addp Dd, Vn.2D
@@ -695,13 +701,17 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_arithmetic_wide},
 		DecodeEntry{0xbf3f'fc00U, 0x0e21'2800U,
 			&Dispatcher::simd_narrow_move},
-		DecodeEntry{0xafbb'fc00U, 0x0e21'd800U,
+		DecodeEntry{0xbfbf'fc00U, 0x0e21'd800U,
 			&Dispatcher::simd_integer_float_convert},
-		DecodeEntry{0xafbb'fc00U, 0x2e21'd800U,
+		DecodeEntry{0xbfbf'fc00U, 0x2e21'd800U,
 			&Dispatcher::simd_integer_float_convert},
-		DecodeEntry{0xafbb'fc00U, 0x0ea1'b800U,
+		DecodeEntry{0xbfbf'fc00U, 0x0ea1'b800U,
 			&Dispatcher::simd_integer_float_convert},
-		DecodeEntry{0xafbb'fc00U, 0x2ea1'b800U,
+		DecodeEntry{0xbfbf'fc00U, 0x2ea1'b800U,
+			&Dispatcher::simd_integer_float_convert},
+		DecodeEntry{0xdfbf'fc00U, 0x5e21'd800U,
+			&Dispatcher::simd_integer_float_convert},
+		DecodeEntry{0xdfbf'fc00U, 0x5ea1'b800U,
 			&Dispatcher::simd_integer_float_convert},
 		DecodeEntry{0xbf3f'fc00U, 0x0e20'f800U,
 			&Dispatcher::simd_floating_unary}, // fabs
@@ -713,13 +723,13 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_floating_unary}, // fabs (FP16)
 		DecodeEntry{0xbfff'fc00U, 0x2ef8'f800U,
 			&Dispatcher::simd_floating_unary}, // fneg (FP16)
-		DecodeEntry{0x9f30'0c00U, 0x0e20'0800U,
+		DecodeEntry{0x9f3e'0c00U, 0x0e20'0800U,
 			&Dispatcher::simd_two_register_misc},
-		DecodeEntry{0xdf30'0c00U, 0x5e20'0800U,
+		DecodeEntry{0xdf3e'0c00U, 0x5e20'0800U,
 			&Dispatcher::simd_two_register_misc},
-		DecodeEntry{0x9f30'0c00U, 0x0e30'0800U,
+		DecodeEntry{0x9f3e'0c00U, 0x0e30'0800U,
 			&Dispatcher::simd_across_lanes},
-		DecodeEntry{0xdf30'0c00U, 0x5e30'0800U,
+		DecodeEntry{0xdf3e'0c00U, 0x5e30'0800U,
 			&Dispatcher::simd_scalar_pairwise},
 		/* FEAT_LUT LUTI2/LUTI4. op2=0 remains the pre-existing Q-form
 		 * TBL/TBX allocation, so select the three LUT op2 values exactly. */
