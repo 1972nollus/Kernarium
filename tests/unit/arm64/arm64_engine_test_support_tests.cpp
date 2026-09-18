@@ -17,12 +17,12 @@ namespace {
 
 constexpr std::size_t transfer_offset = 64;
 constexpr std::uint64_t transfer_value = 0xf1e2'd3c4'b5a6'9788ULL;
-std::array<std::string_view, 3> validator_order{};
+std::array<std::string_view, 2> validator_order{};
 std::size_t validator_calls{};
 
 struct HookTrace final {
-  std::array<std::string_view, 6> engines{};
-  std::array<bool, 6> before{};
+  std::array<std::string_view, 4> engines{};
+  std::array<bool, 4> before{};
   std::size_t calls{};
   bool active{};
   std::string_view active_engine{};
@@ -389,8 +389,7 @@ void invalid_encoding_bypasses_native_feature_gate(
           {::uml::cpu::ArmFeature::advanced_simd,
            ::uml::cpu::ArmFeature::rme_gpc3}));
   const auto &after = harness.counts();
-  if (after.interpreter != before.interpreter + 1 ||
-      after.gadgets != before.gadgets + 1 ||
+  if (after.gadgets != before.gadgets + 1 ||
       after.jit != before.jit + 1 ||
       after.jit_skipped != before.jit_skipped ||
       after.jit_skipped_host_feature != before.jit_skipped_host_feature ||
@@ -415,28 +414,23 @@ void validators_follow_engine_order_and_feature_skips(
       .expected = deliberately_non_oracle,
       .native = engine_tests::NativeRequirements::baseline(),
       .validator = &validate_increment,
-      .validator_relation_id = "exact-increment/v1",
       .execution_context = &hooks,
       .before_engine = &before_engine,
-      .before_engine_effect_id = "record-engine-order-before/v1",
       .after_engine = &after_engine,
-      .after_engine_effect_id = "record-engine-order-after/v1",
   });
   const auto after_baseline = harness.counts();
   const bool jit_available =
       after_baseline.jit == before_baseline.jit + 1;
-  if (after_baseline.interpreter != before_baseline.interpreter + 1 ||
-      after_baseline.gadgets != before_baseline.gadgets + 1 ||
-      validator_calls != (jit_available ? 3U : 2U) ||
-      validator_order[0] != "interpreter" ||
-      validator_order[1] != "gadgets" ||
-      (jit_available && validator_order[2] != "jit"))
+  if (after_baseline.gadgets != before_baseline.gadgets + 1 ||
+      validator_calls != (jit_available ? 2U : 1U) ||
+      validator_order[0] != "gadgets" ||
+      (jit_available && validator_order[1] != "jit"))
     std::abort();
-  constexpr std::array<std::string_view, 3> baseline_engines{
-      "interpreter", "gadgets", "jit"};
+  constexpr std::array<std::string_view, 2> baseline_engines{"gadgets",
+                                                             "jit"};
   require_hook_order(hooks,
                      std::span<const std::string_view>{baseline_engines}.first(
-                         jit_available ? 3U : 2U));
+                         jit_available ? 2U : 1U));
 
   const auto unavailable = engine_tests::NativeRequirements::features(
       ::uml::cpu::ArmFeature::mte);
@@ -452,26 +446,20 @@ void validators_follow_engine_order_and_feature_skips(
       .expected = deliberately_non_oracle,
       .native = unavailable,
       .validator = &validate_disabled_random_tag,
-      .validator_relation_id = "disabled-tag-generator-choice/v1",
       .execution_context = &hooks,
       .before_engine = &before_engine,
-      .before_engine_effect_id = "record-engine-order-before/v1",
       .after_engine = &after_engine,
-      .after_engine_effect_id = "record-engine-order-after/v1",
   });
   const auto after_skip = harness.counts();
-  if (after_skip.interpreter != before_skip.interpreter + 1 ||
-      after_skip.gadgets != before_skip.gadgets + 1 ||
-      after_skip.jit != before_skip.jit || validator_calls != 2 ||
-      validator_order[0] != "interpreter" ||
-      validator_order[1] != "gadgets" ||
+  if (after_skip.gadgets != before_skip.gadgets + 1 ||
+      after_skip.jit != before_skip.jit || validator_calls != 1 ||
+      validator_order[0] != "gadgets" ||
       (jit_available
            ? after_skip.jit_skipped_host_feature !=
                  before_skip.jit_skipped_host_feature + 1
            : after_skip.jit_unavailable != before_skip.jit_unavailable + 1))
     std::abort();
-  constexpr std::array<std::string_view, 2> skipped_engines{
-      "interpreter", "gadgets"};
+  constexpr std::array<std::string_view, 1> skipped_engines{"gadgets"};
   require_hook_order(hooks, skipped_engines);
 }
 
@@ -498,8 +486,7 @@ int main() {
           ::uml::cpu::ArmFeature::mte))
           ? 14
           : 15;
-  if (counts.interpreter != expected_cases ||
-      counts.gadgets != expected_cases ||
+  if (counts.gadgets != expected_cases ||
       counts.jit + counts.jit_skipped != expected_cases)
     std::abort();
   harness.print_summary("arm64-engine-harness");

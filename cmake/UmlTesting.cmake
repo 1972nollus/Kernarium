@@ -7,11 +7,6 @@ function(uml_record_registered_test NAME SUITE)
     get_property(_registered GLOBAL PROPERTY UML_REGISTERED_TESTS)
     list(APPEND _registered "${NAME}\t${SUITE}\t${_encoded_command}")
     set_property(GLOBAL PROPERTY UML_REGISTERED_TESTS "${_registered}")
-    if(SUITE STREQUAL "unit")
-        get_property(_unit_tests GLOBAL PROPERTY UML_UNIT_TESTS)
-        list(APPEND _unit_tests "${NAME}")
-        set_property(GLOBAL PROPERTY UML_UNIT_TESTS "${_unit_tests}")
-    endif()
 
     string(TOUPPER "${SUITE}" _suite_upper)
     set(_target_property "UML_${_suite_upper}_COMMAND_TARGETS")
@@ -113,7 +108,7 @@ function(uml_apply_test_properties NAME)
 endfunction()
 
 function(uml_add_unit_test)
-    cmake_parse_arguments(TEST "NO_EVIDENCE_DEPENDENCY" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
+    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
         "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
@@ -132,41 +127,7 @@ function(uml_add_unit_test)
         endif()
     endforeach()
 
-    if(TEST_NO_EVIDENCE_DEPENDENCY)
-        set(_unit_test_command ${TEST_COMMAND})
-    else()
-        if(NOT TARGET uml_instruction_evidence_test_runner)
-            message(FATAL_ERROR
-                "${TEST_NAME}: instruction-evidence runner target is missing")
-        endif()
-        set(_unit_test_command ${TEST_COMMAND})
-        list(GET _unit_test_command 0 _unit_test_executable)
-        if(TARGET "${_unit_test_executable}")
-            set_property(GLOBAL APPEND PROPERTY
-                UML_UNIT_TEST_BINARY_TARGETS "${_unit_test_executable}")
-            # The registered command always starts with the evidence wrapper.
-            # Keep an individually requested unit executable runnable through
-            # CTest, not only when the suite aggregate happened to build the
-            # wrapper first.
-            get_property(_unit_test_executable_alias TARGET
-                "${_unit_test_executable}" PROPERTY ALIASED_TARGET)
-            if(_unit_test_executable_alias)
-                set(_unit_test_dependency_target
-                    "${_unit_test_executable_alias}")
-            else()
-                set(_unit_test_dependency_target
-                    "${_unit_test_executable}")
-            endif()
-            add_dependencies("${_unit_test_dependency_target}"
-                uml_instruction_evidence_test_runner)
-            list(REMOVE_AT _unit_test_command 0)
-            list(PREPEND _unit_test_command
-                "$<TARGET_FILE:${_unit_test_executable}>")
-        endif()
-        list(PREPEND _unit_test_command
-            "$<TARGET_FILE:uml_instruction_evidence_test_runner>")
-    endif()
-    add_test(NAME "${TEST_NAME}" COMMAND ${_unit_test_command})
+    add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
     set(_labels "unit")
     if(TEST_LABELS)
         list(APPEND _labels ${TEST_LABELS})
@@ -182,39 +143,12 @@ function(uml_add_unit_test)
         FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
         FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
     # Scratch files stay in a per-test build-tree directory; see
-    # tests/unit/scratch/scratch_directory.hpp.
+    # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives each
+    # test its registered name.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
-        "UML_INSTRUCTION_EVIDENCE=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv"
-        "UML_INSTRUCTION_EVIDENCE_TEST=${TEST_NAME}"
-        "UML_INSTRUCTION_EVIDENCE_BINDINGS=${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_evidence_bindings.tsv"
+        "UML_UNIT_TEST_NAME=${TEST_NAME}"
         "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
-    if(UML_BUILD_TOOLING_TESTS AND UML_INSTRUCTION_INPUT_MATERIALIZATION)
-        # The input join consumes one independently compressed stream per
-        # producer.  Keeping the path test-specific makes parallel unit runs
-        # race-free; the join's dependency list keeps it behind all selected
-        # producers in a complete unit+tooling invocation.
-        #
-        # These sidecars are the dominant build-tree cost: a complete 16 KiB
-        # profile writes roughly 6.6 GiB across 449 producers, and only the
-        # join reads them. They are therefore opt-in, and the join is
-        # registered only under the same option so it can never run without
-        # its inputs.
-        set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
-            "UML_INSTRUCTION_INPUT_MATERIALIZATION=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv.inputs.jsonl.gz")
-    endif()
-    if(UML_BUILD_TOOLING_TESTS AND NOT TEST_NO_EVIDENCE_DEPENDENCY)
-        # CMake test properties are directory-scoped. Attach the ordering in
-        # the unit test's owning directory. The reset is itself unit-labelled
-        # in combined unit/tooling graphs, so strict unit selection includes
-        # and orders it without introducing a tooling-labelled dependency.
-        set_property(TEST "${TEST_NAME}" APPEND PROPERTY
-            DEPENDS arm64-instruction-evidence-reset)
-    endif()
-    uml_record_registered_test("${TEST_NAME}" unit ${_unit_test_command})
-    unset(_unit_test_command)
-    unset(_unit_test_executable)
-    unset(_unit_test_executable_alias)
-    unset(_unit_test_dependency_target)
+    uml_record_registered_test("${TEST_NAME}" unit ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_tooling_test)

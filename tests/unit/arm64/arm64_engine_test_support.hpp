@@ -92,7 +92,7 @@ using ArchitectureValidator = void (*)(
 /*
  * Optional test-only hooks bracket one engine invocation after memory has
  * been restored. They let concurrency cases observe the exact mapped backing
- * without duplicating the interpreter/gadget/native selection logic.
+ * without duplicating the gadget/JIT selection logic.
  */
 using EngineExecutionHook = void (*)(void *context, std::string_view engine,
                                      unsigned long generation);
@@ -134,14 +134,9 @@ struct InstructionCase final {
    * compared with expected.
   */
   ArchitectureValidator validator{};
-  /* Stable reviewed relation used by raw specification evidence whenever
-   * validator is non-null. The recorder rejects an undescribed callback. */
-  std::string_view validator_relation_id;
   void *execution_context{};
   EngineExecutionHook before_engine{};
-  std::string_view before_engine_effect_id;
   EngineExecutionHook after_engine{};
-  std::string_view after_engine_effect_id;
   /*
    * InstructionCase normally derives this exactly: a successful instruction
    * plus the harness terminal SVC retires two instructions, while a
@@ -149,10 +144,6 @@ struct InstructionCase final {
    * whose own terminal behavior makes that default inapplicable.
    */
   std::optional<std::size_t> expected_instructions{};
-  /* Non-empty only for an independently identified architecture specimen.
-   * The subprocess hardware observation is recorded separately and never
-   * becomes the expected result for any emulator engine. */
-  std::string_view native_oracle_case_id{};
 };
 
 struct ProgramWord final {
@@ -189,24 +180,20 @@ struct ProgramCase final {
   bool invalid_encoding{};
   std::span<const MemoryRegion> memory;
   ArchitectureValidator validator{};
-  std::string_view validator_relation_id;
   void *execution_context{};
   EngineExecutionHook before_engine{};
-  std::string_view before_engine_effect_id;
   EngineExecutionHook after_engine{};
-  std::string_view after_engine_effect_id;
   /*
    * When supplied, every engine is checked against this specification value.
-   * Otherwise translated engines must still match the interpreter's count,
-   * except for instruction-budget terminals whose engine-specific block-link
-   * fairness accounting deliberately uses different boundary quanta.
-  */
+   * Otherwise the JIT must retire the gadget engine's count, except for
+   * instruction-budget terminals whose engine-specific block-link fairness
+   * accounting deliberately uses different boundary quanta.
+   */
   std::optional<std::size_t> expected_instructions{};
   std::optional<InstructionCountPattern> expected_instruction_pattern{};
 };
 
 struct EngineTestCounts final {
-  std::size_t interpreter{};
   std::size_t gadgets{};
   std::size_t jit{};
   std::size_t jit_skipped{};
@@ -216,19 +203,18 @@ struct EngineTestCounts final {
 
 struct EngineHarnessOptions final {
   /*
-   * The complete software implementation remains the default for
-   * instruction conformance. Feature-profile tests disable it in all three
-   * engines and verify HINT/undefined behavior with the same case definition.
+   * The complete software implementation remains the default. Feature-profile
+   * tests disable it in both engines and verify HINT/undefined behavior with
+   * the same case definition.
    */
   bool enable_pointer_authentication{true};
   /* This switch selects dedicated guarded-control-flow translations in both
-   * production engines. The interpreter always follows CpuState so it remains
-   * the strict semantic oracle.
+   * production engines.
    */
   bool enable_guarded_control_flow{};
-  /* These switches alter only the gadget translation choice. Interpreter and
-   * JIT still run in sequence, so portable gadget paths use the same oracle
-   * and case definition as the normal three-engine conformance run.
+  /* These switches alter only the gadget translation choice. The JIT still
+   * runs in sequence, so portable gadget paths use the same case definition
+   * as the ordinary two-engine run.
    */
   bool force_software_checksum{};
   bool force_software_flags{};
@@ -248,6 +234,15 @@ void require_architecture_equal(
     std::uint32_t instruction,
     const std::source_location location = std::source_location::current());
 
+/*
+ * Runs each case through the production gadget engine and, when the host
+ * implements the case's native features or the case is an invalid encoding,
+ * the JIT. Every result must match the case's expected architectural state,
+ * terminal event, memory, and retired count. The instruction corpus
+ * (tests/unit/arm64/corpus/README.md) owns ordinary A64 behavior; this harness
+ * serves focused tests that need engine hooks, host-private entry state, or
+ * engine options.
+ */
 class EngineHarness final {
 public:
   explicit EngineHarness(EngineHarnessOptions options = {});

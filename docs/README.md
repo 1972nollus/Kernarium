@@ -10,6 +10,7 @@ investigation date.
 | Apple graphics support and limits | [`graphics.md`](graphics.md) |
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |
+| A64 instruction corpus | [`../tests/unit/arm64/corpus/README.md`](../tests/unit/arm64/corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
 | x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |
 | External dependencies | [`../dependencies/README.md`](../dependencies/README.md) |

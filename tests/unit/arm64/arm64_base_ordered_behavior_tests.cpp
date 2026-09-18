@@ -209,8 +209,6 @@ void stores_invalidate_reservations(engine::EngineHarness &harness)
 			.native = ordered::native(variant),
 			.memory = std::span<const engine::MemoryRegion>{regions},
 			.validator = &ordered::validate_failed_exclusive,
-			.validator_relation_id =
-				"permitted-exclusive-store-failure/v1",
 		});
 	}
 }
@@ -272,9 +270,7 @@ void stores_are_single_copy_atomic(engine::EngineHarness &harness)
 		.memory = std::span<const engine::MemoryRegion>{regions},
 		.execution_context = &reader,
 		.before_engine = start_scalar_reader,
-		.before_engine_effect_id = "start-concurrent-scalar-reader/v1",
 		.after_engine = stop_scalar_reader,
-		.after_engine_effect_id = "stop-concurrent-scalar-reader/v1",
 	});
 }
 

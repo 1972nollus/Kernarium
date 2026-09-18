@@ -846,30 +846,6 @@
       "execution": {
         "jobs": 1
       }
-    },
-    {
-      "name": "instruction-evidence",
-      "configurePreset": "macos-unit-16k",
-      "environment": {
-        "UML_INSTRUCTION_RAW_EVIDENCE": "1"
-      },
-      "output": {
-        "outputOnFailure": true
-      },
-      "filter": {
-        "include": {
-          "label": "^(unit|instruction-evidence-validation)$"
-        }
-      },
-      "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
-      }
-    },
-    {
-      "name": "instruction-evidence-4k",
-      "inherits": "instruction-evidence",
-      "configurePreset": "macos-unit-4k"
     }
   ],
   "workflowPresets": [
@@ -995,22 +971,6 @@
         {"type": "build", "name": "macos-all"},
         {"type": "test", "name": "all"},
         {"type": "test", "name": "tooling-all"}
-      ]
-    },
-    {
-      "name": "check-instruction-evidence",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-16k"},
-        {"type": "build", "name": "unit-test-binaries"},
-        {"type": "test", "name": "instruction-evidence"}
-      ]
-    },
-    {
-      "name": "check-instruction-evidence-4k",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-4k"},
-        {"type": "build", "name": "unit-test-binaries-4k"},
-        {"type": "test", "name": "instruction-evidence-4k"}
       ]
     },
     {

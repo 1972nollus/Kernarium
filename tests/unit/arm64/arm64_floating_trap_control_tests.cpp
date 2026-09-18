@@ -41,9 +41,9 @@ void set_native_fp_environment(const NativeFpEnvironment &environment)
 }
 
 struct HostEnvironmentTrace final {
-	std::array<std::string_view, 3> engines{};
-	std::array<NativeFpEnvironment, 3> installed{};
-	std::array<NativeFpEnvironment, 3> observed{};
+	std::array<std::string_view, 2> engines{};
+	std::array<NativeFpEnvironment, 2> installed{};
+	std::array<NativeFpEnvironment, 2> observed{};
 	NativeFpEnvironment saved{};
 	std::size_t calls{};
 	bool active{};
@@ -82,11 +82,10 @@ void observe_host_environment(void *opaque, std::string_view engine,
 void require_host_environment_restored(const HostEnvironmentTrace &trace)
 {
 	constexpr std::array expected_engines{
-		std::string_view{"interpreter"},
 		std::string_view{"gadgets"},
 		std::string_view{"jit"},
 	};
-	if (trace.active || (trace.calls != 2U && trace.calls != 3U))
+	if (trace.active || (trace.calls != 1U && trace.calls != 2U))
 		std::abort();
 	for (std::size_t index = 0; index < trace.calls; ++index) {
 		if (trace.engines[index] == expected_engines[index] &&
@@ -305,9 +304,7 @@ void host_environment_is_restored_after_trap(
 			test::syndrome_for(test::fpsr_divide_by_zero),
 		.execution_context = &trace,
 		.before_engine = &install_host_environment,
-		.before_engine_effect_id = "install-host-floating-environment/v1",
 		.after_engine = &observe_host_environment,
-		.after_engine_effect_id = "observe-host-floating-environment/v1",
 	});
 	require_host_environment_restored(trace);
 }

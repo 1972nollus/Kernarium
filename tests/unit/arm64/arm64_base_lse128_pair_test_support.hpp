@@ -145,8 +145,6 @@ inline void require_counts(
 	const engine::EngineHarness &harness, const ExpectedCounts &expected)
 {
 	const auto &actual = harness.counts();
-	require(actual.interpreter == expected.cases,
-		"unexpected interpreter case count");
 	require(actual.gadgets == expected.cases,
 		"unexpected gadget case count");
 	require(actual.jit == expected.jit, "unexpected JIT case count");
@@ -186,16 +184,6 @@ inline void check(
 		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
 	});
 	counts.add(native);
-}
-
-inline void check_illegal(
-	engine::EngineHarness &harness, ExpectedCounts &counts,
-	std::string_view name, std::uint32_t value,
-	const arm64::CpuState &initial)
-{
-	const auto native = atomic::lse128();
-	harness.check_illegal(name, value, initial, native);
-	counts.add(native, true);
 }
 
 } // namespace arm64_base_lse128_pair_test

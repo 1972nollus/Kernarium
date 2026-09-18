@@ -1,0 +1,96 @@
+{
+  "cases": 171142,
+  "cases_by_event": {
+    "breakpoint": 75,
+    "floating-point-trap": 21,
+    "gcs-fault": 14,
+    "illegal-instruction": 24306,
+    "instruction-budget": 863,
+    "memory-fault": 17462,
+    "system-call": 128401
+  },
+  "cases_by_profile": {
+    "16k": 37311,
+    "16k+4k": 96508,
+    "4k": 37323
+  },
+  "coverage": {
+    "entries": 983,
+    "entries_with_cases": 937,
+    "entries_with_illegal_cases": 822,
+    "unattributed_cases": 0,
+    "unattributed_illegal_cases": 1153
+  },
+  "exports": {
+    "16k": {
+      "classes": 24164,
+      "covering_cases": 16752,
+      "declared_cases": 18217694,
+      "excluded_cases": {
+        "deferred-fp-entry": {
+          "arm64-deferred-fp-state": 6
+        },
+        "engine-hook": {
+          "arm64-base-lse128-pair-behavior": 2,
+          "arm64-base-ordered-behavior": 1,
+          "arm64-base-system-registers": 1,
+          "arm64-engine-harness": 2,
+          "arm64-floating-trap-control": 1
+        }
+      },
+      "exported_cases": 133819,
+      "forced_cases": 4198,
+      "producers": 451
+    },
+    "4k": {
+      "classes": 24163,
+      "covering_cases": 16765,
+      "declared_cases": 18217693,
+      "excluded_cases": {
+        "deferred-fp-entry": {
+          "arm64-deferred-fp-state": 6
+        },
+        "engine-hook": {
+          "arm64-base-lse128-pair-behavior": 2,
+          "arm64-base-ordered-behavior": 1,
+          "arm64-base-system-registers": 1,
+          "arm64-engine-harness": 2,
+          "arm64-floating-trap-control": 1
+        }
+      },
+      "exported_cases": 133831,
+      "forced_cases": 4198,
+      "producers": 451
+    }
+  },
+  "force_include": {
+    "file": "tests/unit/arm64/corpus/forced-cases.tsv",
+    "sha256": "88603b6a571ddde585b4e22826e2d52c3297ab5ed146c221127df674af0c9597"
+  },
+  "memory_blobs": 3338,
+  "pack_bytes": 14842676,
+  "pack_sha256": "747c9176603c6246dd5aa10c78534a82bf1c39b438e4ff2e5dc24a79579adf80",
+  "producer_commit": "12694a6d22c70ae5dd8edd2d14a21b6a955a6cd4",
+  "programs": 146778,
+  "records": 1333,
+  "sample_limit": 8,
+  "schema": 1,
+  "seed": "0xa64c0b055eed2026",
+  "state_minimization": {
+    "broad": 63,
+    "full": 1176,
+    "narrow": 169903
+  },
+  "validator_cases": {
+    "guarded-control-call-fault-atomicity/v1": 8,
+    "guarded-control-return-fault/v1": 8,
+    "guarded-control-zero-target-fault/v1": 8,
+    "ignore-host-counter-register/v1": 1,
+    "permitted-exclusive-store-failure/v1": 358,
+    "permitted-tag-generator-choice/v1": 64,
+    "permitted-transformed-branch-failure/v1": 42,
+    "permitted-transformed-code/v1": 260,
+    "permitted-transformed-generic/v1": 66,
+    "transformed-address-fault-state/v1": 4
+  }
+}

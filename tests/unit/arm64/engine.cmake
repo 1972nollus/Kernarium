@@ -31,51 +31,36 @@
         ${UML_STATIC_RUNTIME_TEST_BASE_OBJECTS}
         $<TARGET_OBJECTS:uml_arm64_jit_diagnostics_executor>)
 
-    add_library(uml_instruction_evidence_digest STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_evidence_digest.cpp)
-    target_include_directories(uml_instruction_evidence_digest PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_instruction_evidence_digest PUBLIC cxx_std_20)
-    target_compile_options(uml_instruction_evidence_digest PRIVATE
-        -Wall -Wextra -Werror)
-
-    # Raw semantic evidence is a test-only opt-in path. Reuse the checked
-    # private zlib when desktop dependencies are enabled; otherwise import
-    # only the same pinned archive without broadening production linkage.
+    # The instruction corpus is zlib-compressed. Reuse the checked private
+    # zlib when desktop dependencies are enabled; otherwise import only the
+    # same pinned archive without broadening production linkage.
     if(TARGET UML::ThirdPartyZlib)
-        set(_uml_instruction_evidence_zlib UML::ThirdPartyZlib)
+        set(_uml_arm64_corpus_zlib UML::ThirdPartyZlib)
     else()
-        set(_uml_instruction_evidence_zlib_archive
+        set(_uml_arm64_corpus_zlib_archive
             "${UML_DEPENDENCY_PREFIX}/lib/libz.a")
-        set(_uml_instruction_evidence_zlib_include
+        set(_uml_arm64_corpus_zlib_include
             "${UML_DEPENDENCY_PREFIX}/include")
-        if(NOT EXISTS "${_uml_instruction_evidence_zlib_archive}" OR
-           NOT EXISTS "${_uml_instruction_evidence_zlib_include}/zlib.h")
+        if(NOT EXISTS "${_uml_arm64_corpus_zlib_archive}" OR
+           NOT EXISTS "${_uml_arm64_corpus_zlib_include}/zlib.h")
             message(FATAL_ERROR
-                "raw instruction evidence requires the pinned private zlib")
+                "the A64 instruction corpus requires the pinned private zlib")
         endif()
-        add_library(uml_instruction_evidence_zlib STATIC IMPORTED)
-        set_target_properties(uml_instruction_evidence_zlib PROPERTIES
-            IMPORTED_LOCATION "${_uml_instruction_evidence_zlib_archive}"
+        add_library(uml_arm64_corpus_zlib STATIC IMPORTED)
+        set_target_properties(uml_arm64_corpus_zlib PROPERTIES
+            IMPORTED_LOCATION "${_uml_arm64_corpus_zlib_archive}"
             INTERFACE_INCLUDE_DIRECTORIES
-                "${_uml_instruction_evidence_zlib_include}")
-        set(_uml_instruction_evidence_zlib uml_instruction_evidence_zlib)
+                "${_uml_arm64_corpus_zlib_include}")
+        set(_uml_arm64_corpus_zlib uml_arm64_corpus_zlib)
     endif()
 
-    # The reference oracle lane is a test-only adapter over the production
-    # instruction Dispatcher. It belongs to this support target and must not
-    # be reachable from a production engine factory or target.
+    # Focused tests that need engine hooks, host-private entry state, or
+    # engine options run their cases through the production gadget and JIT
+    # engines with this harness.
     add_library(uml_arm64_engine_test_support STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_evidence.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reference_engine.cpp)
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp)
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
-        UML::Emulator
-        ${_uml_instruction_evidence_zlib}
-        uml_instruction_evidence_digest
-        uml_native_hardware_oracle)
+        UML::Emulator)
     target_include_directories(uml_arm64_engine_test_support PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64
@@ -84,27 +69,24 @@
     target_compile_options(uml_arm64_engine_test_support PRIVATE
         -Wall -Wextra -Werror)
 
-    add_library(uml_native_hardware_oracle STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_evidence.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_selection.cpp)
-    target_include_directories(uml_native_hardware_oracle PUBLIC
+    # The checked-in A64 instruction corpus runs through the production gadget
+    # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
+    # the pack format and its regeneration.
+    add_executable(uml_arm64_instruction_corpus_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_corpus_runner.cpp)
+    target_link_libraries(uml_arm64_instruction_corpus_tests PRIVATE
+        UML::Emulator
+        ${_uml_arm64_corpus_zlib})
+    target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_hardware_oracle PUBLIC cxx_std_20)
-    target_link_libraries(uml_native_hardware_oracle PRIVATE
-        uml_instruction_evidence_digest)
-    target_compile_options(uml_native_hardware_oracle PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_features(uml_arm64_instruction_corpus_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_arm64_instruction_corpus_tests PRIVATE
         -Wall -Wextra -Werror)
-
-    add_executable(uml_native_hardware_oracle_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_tests.cpp)
-    target_link_libraries(uml_native_hardware_oracle_tests PRIVATE
-        uml_native_hardware_oracle)
-    target_compile_options(uml_native_hardware_oracle_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-native-hardware-oracle
-        COMMAND uml_native_hardware_oracle_tests)
+    uml_add_unit_test(NAME arm64-instruction-corpus
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
 
     add_executable(uml_arm64_engine_test_support_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support_tests.cpp)
@@ -114,15 +96,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-engine-harness
         COMMAND uml_arm64_engine_test_support_tests)
-
-    add_executable(uml_arm64_instruction_materialization_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization_tests.cpp)
-    target_link_libraries(uml_arm64_instruction_materialization_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(uml_arm64_instruction_materialization_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-instruction-materialization
-        COMMAND uml_arm64_instruction_materialization_tests)
 
     add_executable(uml_arm64_deferred_fp_state_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_deferred_fp_state_tests.cpp)
@@ -254,7 +227,7 @@
     uml_add_unit_test(NAME arm64-floating-exception
         COMMAND uml_arm64_floating_exception_tests)
 
-    foreach(floating_trap_suite IN ITEMS scalar vector control)
+    foreach(floating_trap_suite IN ITEMS control)
         add_executable(uml_arm64_floating_trap_${floating_trap_suite}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_${floating_trap_suite}_tests.cpp
             $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -724,18 +697,6 @@
                 uml_arm64_jit_one_to_one_${JIT_ONE_TO_ONE_TEST}_codegen_tests)
     endforeach()
 
-    add_executable(uml_arm64_jit_register_remap_behavior_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_behavior_tests.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_simd_behavior_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_register_remap_behavior_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_register_remap_behavior_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-register-remap-behavior
-        COMMAND uml_arm64_jit_register_remap_behavior_tests)
-
     add_executable(uml_arm64_jit_tlb_miss_preservation_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_tlb_miss_preservation_tests.cpp
         ${UML_STATIC_RUNTIME_TEST_OBJECTS}
@@ -872,17 +833,6 @@
     uml_add_unit_test(NAME arm64-jit-simd-structure-remap-codegen
         COMMAND uml_arm64_jit_simd_structure_remap_codegen_tests)
 
-    add_executable(uml_arm64_jit_simd_structure_remap_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_structure_remap_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_simd_structure_remap_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_simd_structure_remap_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-simd-structure-remap-runtime
-        COMMAND uml_arm64_jit_simd_structure_remap_runtime_tests)
-
     add_executable(uml_arm64_jit_vector_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_codegen_tests.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_pressure_tests.cpp
@@ -920,17 +870,6 @@
     uml_add_unit_test(NAME arm64-jit-table-list-remap-codegen
         COMMAND uml_arm64_jit_table_list_remap_codegen_tests)
 
-    add_executable(uml_arm64_jit_table_list_remap_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_table_list_remap_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_table_list_remap_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_table_list_remap_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-table-list-remap-runtime
-        COMMAND uml_arm64_jit_table_list_remap_runtime_tests)
-
     add_executable(uml_arm64_jit_gpr_residency_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
@@ -948,17 +887,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-gpr-residency-codegen
         COMMAND uml_arm64_jit_gpr_residency_codegen_tests)
-
-    add_executable(uml_arm64_jit_gpr_residency_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_gpr_residency_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_gpr_residency_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-gpr-residency-runtime
-        COMMAND uml_arm64_jit_gpr_residency_runtime_tests)
 
     add_executable(uml_arm64_jit_pair_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_pair_remap_codegen_tests.cpp
@@ -995,17 +923,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-control-remap-codegen
         COMMAND uml_arm64_jit_control_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_control_remap_behavior_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_control_remap_behavior_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_control_remap_behavior_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_control_remap_behavior_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-control-remap-behavior
-        COMMAND uml_arm64_jit_control_remap_behavior_tests)
 
     if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
         add_executable(uml_arm64_jit_gpr_link_profile_codegen_tests

@@ -22,8 +22,6 @@ inline constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr std::uint64_t page_base = engine::engine_test_data_base;
 inline constexpr std::uint64_t address =
 	page_base + page_size / 2U;
-inline constexpr std::uint64_t unmapped_address =
-	page_base + 32U * page_size;
 inline constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
 [[nodiscard]] constexpr std::uint32_t scalar_exclusive(
@@ -398,29 +396,12 @@ inline void store_integer(std::span<std::byte> bytes, std::size_t offset,
 	return result_32 ? raw & 0xffff'ffffU : raw;
 }
 
-[[nodiscard]] constexpr std::uint64_t effective_scalar_address(
-	const ScalarVariant &variant, std::uint64_t base, int offset)
-{
-	if (variant.instruction_class == ScalarClass::rcpc_unscaled)
-		return base + static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(offset));
-	if (variant.instruction_class == ScalarClass::writeback && !variant.load)
-		return base - (std::uint64_t{1} << variant.size_code);
-	return base;
-}
-
 inline void set_base(arm64::CpuState &cpu, unsigned rn, std::uint64_t value)
 {
 	if (rn == 31U)
 		cpu.sp = value;
 	else
 		cpu.registers[rn] = value;
-}
-
-[[nodiscard]] inline std::uint64_t read_base(
-	const arm64::CpuState &cpu, unsigned rn)
-{
-	return rn == 31U ? cpu.sp : cpu.registers[rn];
 }
 
 inline void write_base(arm64::CpuState &cpu, unsigned rn, std::uint64_t value)
@@ -453,14 +434,6 @@ inline void write_gpr(arm64::CpuState &cpu, unsigned rt,
 	if (variant.instruction_class == ScalarClass::writeback && !variant.load)
 		return target + (std::uint64_t{1} << variant.size_code);
 	return target;
-}
-
-inline void describe(char *output, std::size_t size, std::string_view name,
-	std::string_view suffix, unsigned rn, unsigned rt)
-{
-	std::snprintf(output, size, "%.*s %.*s rn=%u rt=%u",
-		static_cast<int>(name.size()), name.data(),
-		static_cast<int>(suffix.size()), suffix.data(), rn, rt);
 }
 
 inline void validate_failed_exclusive(

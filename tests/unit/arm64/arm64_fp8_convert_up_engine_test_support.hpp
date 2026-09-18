@@ -82,13 +82,6 @@ inline constexpr std::array register_edges{
 		(registers.destination & 31U);
 }
 
-[[nodiscard]] inline engine_tests::NativeRequirements
-native_requirements() noexcept
-{
-	return engine_tests::NativeRequirements::features(
-		::uml::cpu::ArmFeature::fp8);
-}
-
 /*
  * Independent transcription of the architectural source-format unpacking.
  * The test oracle deliberately does not include the production decoder or
@@ -255,14 +248,6 @@ native_requirements() noexcept
 	return {static_cast<std::uint16_t>(sign | rounded.bits), flags};
 }
 
-[[nodiscard]] inline std::uint16_t read_lane(
-	const std::array<std::byte, 16> &bytes, unsigned lane) noexcept
-{
-	return static_cast<std::uint16_t>(
-		std::to_integer<unsigned>(bytes[lane * 2U]) |
-		(std::to_integer<unsigned>(bytes[lane * 2U + 1U]) << 8));
-}
-
 inline void write_lane(
 	std::array<std::byte, 16> &bytes, unsigned lane,
 	std::uint16_t value) noexcept
@@ -278,29 +263,6 @@ inline void fill_source(
 	for (unsigned lane = 0U; lane < 16U; ++lane)
 		cpu.vectors[registers.source].bytes[lane] =
 			static_cast<std::byte>(values[lane % values.size()]);
-}
-
-[[nodiscard]] inline arm64::CpuState state(unsigned seed = 0U)
-{
-	arm64::CpuState cpu{};
-	for (unsigned reg = 0U; reg < cpu.vectors.size(); ++reg)
-		for (unsigned byte = 0U;
-		     byte < cpu.vectors[reg].bytes.size(); ++byte)
-			cpu.vectors[reg].bytes[byte] =
-				static_cast<std::byte>(seed * 61U + reg * 43U +
-					byte * 29U + 7U);
-	for (unsigned reg = 0U; reg < cpu.registers.size(); ++reg)
-		cpu.registers[reg] = 0xfedc'ba98'7654'3210ULL ^
-			(static_cast<std::uint64_t>(reg + seed) *
-				0x0101'0101'0101'0101ULL);
-	cpu.sp = 0xface'feed'cafe'bee0ULL;
-	cpu.nzcv = 0x6000'0000U;
-	cpu.fpsr = (seed & 1U) != 0U ? 1U << 27 : 0U;
-	cpu.tls = 0x1020'3040'5060'7080ULL;
-	cpu.set_mte_configuration(true, 0xa55aU);
-	cpu.set_mte_generator(true, 0x1357U, 9U,
-		0x3141'5926'5358'9793ULL);
-	return cpu;
 }
 
 [[nodiscard]] constexpr std::uint64_t fpmr(
@@ -333,21 +295,5 @@ inline void fill_source(
 	expected.fpsr |= flags;
 	return expected;
 }
-
-inline void check(
-	engine_tests::EngineHarness &harness,
-	std::string_view name, const Form &form,
-	Registers registers, const arm64::CpuState &initial)
-{
-	harness.check_one(name, instruction(form, registers), initial,
-		expected_state(initial, form, registers), native_requirements());
-}
-
-inline constexpr std::array<std::uint8_t, 20> representative_inputs{
-	0x00U, 0x80U, 0x01U, 0x81U, 0x03U,
-	0x04U, 0x3cU, 0xbcU, 0x38U, 0x40U,
-	0x7bU, 0xfbU, 0x7cU, 0xfcU, 0x7dU,
-	0x7eU, 0x7fU, 0xffU, 0x08U, 0x78U,
-};
 
 } // namespace arm64_fp8_convert_up_engine_test

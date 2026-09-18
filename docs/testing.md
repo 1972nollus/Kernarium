@@ -287,23 +287,22 @@ operations. See the runner's current options with:
 python3 tests/integration/ltp/run_guest_ltp.py --help
 ```
 
-## A64 instruction evidence
+## A64 instruction corpus
 
-The ordinary instruction suites exercise all inventory entries with
-representative semantic contracts. They are not exhaustive variant proof. The
-machine-readable source of truth and current completeness boundary are
-documented in [`a64-instruction-coverage.md`](a64-instruction-coverage.md).
+`arm64-instruction-corpus` runs the checked-in corpus in
+[`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
+the gadget and JIT engines of each page profile in one process, and the
+`arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
+against its pack. The corpus README owns the format, sampling policy, runner
+options, and regeneration, which requires a producer commit. Cases that need
+engine hooks or a deferred floating-point entry state stay in focused tests
+that run the production gadget and JIT engines through
+`tests/unit/arm64/arm64_engine_test_support.hpp`.
 
-Instruction evidence workflows are:
-
-```sh
-cmake --workflow --preset check-instruction-evidence
-cmake --workflow --preset check-instruction-evidence-4k
-```
-
-Full input materialization is off by default and consumes several GiB per
-profile. Enable it only for an explicit official-semantics campaign. Such a
-campaign can run for days and is not ordinary acceptance.
+The corpus covers every A64 inventory entry with representative cases; it is
+not exhaustive variant proof.
+[`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
+inventory tables and that completeness boundary.
 
 ## x86 instruction conformance
 

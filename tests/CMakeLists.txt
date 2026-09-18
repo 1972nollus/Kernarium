@@ -35,19 +35,6 @@ endif()
 # all correctness-suite aggregates and registrations.
 add_subdirectory(perf EXCLUDE_FROM_ALL)
 
-# Both suites execute this native wrapper: unit registrations use it to write
-# instruction evidence, while a tooling-only graph uses it as a fixture for
-# the raw-evidence compression tests.  Own it at the shared tests boundary so
-# either suite can be configured independently.
-if(UML_BUILD_UNIT_TESTS OR UML_BUILD_TOOLING_TESTS)
-    add_executable(uml_instruction_evidence_test_runner
-        unit/arm64/instruction_evidence_test_runner.cpp)
-    target_compile_features(uml_instruction_evidence_test_runner PRIVATE
-        cxx_std_20)
-    target_compile_options(uml_instruction_evidence_test_runner PRIVATE
-        -Wall -Wextra -Werror)
-endif()
-
 if(UML_BUILD_UNIT_TESTS)
     add_library(uml_host_capabilities_test_support OBJECT
         unit/host_capabilities_test_support.cpp)
@@ -173,15 +160,6 @@ endif()
 if(UML_BUILD_UNIT_TESTS AND UML_GADGET_SHARED_BUDGET_MIB GREATER 0)
     list(APPEND _uml_required_conditional_tests
         arm64-gadget-shared-translation)
-endif()
-if(UML_BUILD_UNIT_TESTS AND UML_BUILD_TOOLING_TESTS)
-    list(APPEND _uml_required_conditional_tests
-        arm64-instruction-evidence-reset
-        arm64-instruction-evidence)
-    if(UML_INSTRUCTION_INPUT_MATERIALIZATION)
-        list(APPEND _uml_required_conditional_tests
-            arm64-input-materialization-join)
-    endif()
 endif()
 if(UML_BUILD_UNIT_TESTS)
     if(DARWIN_UML_JIT_GPR_LINK_PROFILE)

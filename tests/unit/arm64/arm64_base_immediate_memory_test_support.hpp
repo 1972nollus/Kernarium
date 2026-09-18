@@ -68,18 +68,6 @@ inline constexpr std::array all_forms{
 	Form::unsigned_offset,
 };
 
-[[nodiscard]] inline constexpr std::string_view form_name(Form form)
-{
-	switch (form) {
-	case Form::unscaled: return "unscaled";
-	case Form::post_index: return "post-index";
-	case Form::unprivileged: return "unprivileged";
-	case Form::pre_index: return "pre-index";
-	case Form::unsigned_offset: return "unsigned-offset";
-	}
-	return "unknown";
-}
-
 [[nodiscard]] inline constexpr bool writes_back(Form form)
 {
 	return form == Form::post_index || form == Form::pre_index;
@@ -236,16 +224,6 @@ inline void encode_little_endian(
 	return variant.operation == 3U ? value & 0xffff'ffffU : value;
 }
 
-[[nodiscard]] inline constexpr std::size_t round_to_pages(std::size_t size)
-{
-	return (size + page_size - 1U) & ~(page_size - 1U);
-}
-
-[[nodiscard]] inline constexpr std::size_t unsigned_region_size()
-{
-	return round_to_pages(64U + 4095U * 8U + 8U);
-}
-
 inline void require(bool condition, std::string_view message)
 {
 	if (condition)
@@ -253,24 +231,6 @@ inline void require(bool condition, std::string_view message)
 	std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()),
 		message.data());
 	std::abort();
-}
-
-inline void require_engine_counts(
-	const EngineHarness &harness, std::size_t expected)
-{
-	const auto &counts = harness.counts();
-	require(counts.interpreter == expected,
-		"interpreter did not run the exact expected case count");
-	require(counts.gadgets == expected,
-		"gadgets did not run the exact expected case count");
-	require(counts.jit == expected,
-		"JIT did not run the exact expected baseline case count");
-	require(counts.jit_skipped == 0U,
-		"baseline immediate-memory case was unexpectedly skipped by JIT");
-	require(counts.jit_skipped_host_feature == 0U,
-		"baseline immediate-memory case was feature-skipped by JIT");
-	require(counts.jit_unavailable == 0U,
-		"JIT engine is unavailable in this build");
 }
 
 inline void check_program(
@@ -303,30 +263,6 @@ inline void check_program(
 	harness.check_program({
 		.name = name,
 		.code = std::span<const ProgramWord>{code},
-		.initial = initial,
-		.expected = expected,
-		.native = NativeRequirements::baseline(),
-		.memory = std::span<const MemoryRegion>{regions},
-	});
-}
-
-inline void check_memory(
-	EngineHarness &harness, std::string_view name,
-	std::uint32_t instruction, const arm64::CpuState &initial,
-	const arm64::CpuState &expected, std::uint64_t region_address,
-	std::span<const std::byte> initial_memory,
-	std::span<const std::byte> expected_memory)
-{
-	const std::array regions{
-		MemoryRegion{
-			.address = region_address,
-			.initial = initial_memory,
-			.expected = expected_memory,
-		},
-	};
-	harness.check({
-		.name = name,
-		.instruction = instruction,
 		.initial = initial,
 		.expected = expected,
 		.native = NativeRequirements::baseline(),

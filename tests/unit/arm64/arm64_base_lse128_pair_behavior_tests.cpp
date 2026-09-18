@@ -255,12 +255,9 @@ void single_copy_atomicity(
 		.native = native,
 		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
 		.validator = validate_complete_return,
-		.validator_relation_id = "concurrent-complete-pair-return/v1",
 		.execution_context = &writer,
 		.before_engine = start_writer,
-		.before_engine_effect_id = "start-concurrent-pair-writer/v1",
 		.after_engine = stop_writer,
-		.after_engine_effect_id = "stop-concurrent-pair-writer/v1",
 	});
 	counts.add(native);
 
@@ -292,9 +289,7 @@ void single_copy_atomicity(
 		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
 		.execution_context = &reader,
 		.before_engine = start_reader,
-		.before_engine_effect_id = "start-concurrent-pair-reader/v1",
 		.after_engine = stop_reader,
-		.after_engine_effect_id = "stop-concurrent-pair-reader/v1",
 	});
 	counts.add(native);
 }

@@ -110,31 +110,4 @@ private:
 		((crm & 15U) << 8) | ((op2 & 7U) << 5) | (rt & 31U);
 }
 
-[[nodiscard]] constexpr bool gcs_system_instruction(
-	std::uint32_t instruction)
-{
-	switch (instruction & 0xffff'ffe0U) {
-	case 0xd508'77a0U:
-	case 0xd52b'7720U:
-	case 0xd508'77c0U:
-	case 0xd50b'7700U:
-	case 0xd508'7780U:
-	case 0xd50b'7740U:
-	case 0xd52b'7760U:
-		return true;
-	default:
-		return false;
-	}
-}
-
-[[nodiscard]] constexpr std::uint32_t system_register(bool read,
-	unsigned o0, unsigned op1, unsigned crn, unsigned crm, unsigned op2,
-	unsigned rt)
-{
-	return 0xd510'0000U | (static_cast<unsigned>(read) << 21) |
-		((o0 & 1U) << 19) | ((op1 & 7U) << 16) |
-		((crn & 15U) << 12) | ((crm & 15U) << 8) |
-		((op2 & 7U) << 5) | (rt & 31U);
-}
-
 } // namespace arm64_system_test

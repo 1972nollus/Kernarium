@@ -41,7 +41,7 @@ int main()
 		"the unit registration names no scratch directory");
 	const std::filesystem::path perTest{configured};
 	require(perTest.is_absolute(), "the scratch directory is relative");
-	const auto *test = std::getenv("UML_INSTRUCTION_EVIDENCE_TEST");
+	const auto *test = std::getenv("UML_UNIT_TEST_NAME");
 	require(test != nullptr && perTest.filename() == test,
 		"the scratch directory is not private to this test");
 

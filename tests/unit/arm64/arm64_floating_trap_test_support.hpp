@@ -20,7 +20,6 @@ inline constexpr std::uint32_t fpsr_underflow = 1U << 3U;
 inline constexpr std::uint32_t fpsr_inexact = 1U << 4U;
 inline constexpr std::uint32_t fpsr_input_denormal = 1U << 7U;
 inline constexpr std::uint32_t fpsr_exception_mask = 0x9fU;
-inline constexpr std::uint32_t fpcr_flush_to_zero = 1U << 24U;
 inline constexpr std::uint32_t syndrome_base =
 	(0x2cU << 26U) | (1U << 25U) | (1U << 23U);
 
@@ -63,35 +62,9 @@ inline void write_lane(arm64::CpuState &cpu, unsigned reg,
 			static_cast<std::byte>(bits >> (byte * 8U));
 }
 
-inline void fill_lanes(arm64::CpuState &cpu, unsigned reg,
-	unsigned lane_bytes, unsigned lanes, std::uint64_t bits)
-{
-	for (unsigned lane = 0; lane < lanes; ++lane)
-		write_lane(cpu, reg, lane, lane_bytes, bits);
-}
-
 inline void clear_vector(arm64::CpuState &cpu, unsigned reg)
 {
 	cpu.vectors[reg].bytes.fill(std::byte{});
-}
-
-inline void check_trap(engine::EngineHarness &harness,
-	std::string_view name, std::uint32_t instruction,
-	const arm64::CpuState &initial, std::uint32_t raised_enabled,
-	std::uint32_t newly_raised_unenabled,
-	engine::NativeRequirements native)
-{
-	auto expected = initial;
-	expected.fpsr |= newly_raised_unenabled & fpsr_exception_mask;
-	harness.check({
-		.name = name,
-		.instruction = instruction,
-		.initial = initial,
-		.expected = expected,
-		.event = engine::ExpectedEvent::floating_point_trap,
-		.native = native,
-		.syndrome = syndrome_for(raised_enabled),
-	});
 }
 
 inline void check_illegal_with_enables(engine::EngineHarness &harness,
@@ -120,22 +93,6 @@ inline void check_illegal_with_enables(engine::EngineHarness &harness,
 {
 	return engine::NativeRequirements::features(
 		::uml::cpu::ArmFeature::advanced_simd);
-}
-
-[[nodiscard]] inline engine::NativeRequirements scalar_half_native() noexcept
-{
-	return engine::NativeRequirements::features({
-		::uml::cpu::ArmFeature::floating_point,
-		::uml::cpu::ArmFeature::fp16,
-	});
-}
-
-[[nodiscard]] inline engine::NativeRequirements vector_half_native() noexcept
-{
-	return engine::NativeRequirements::features({
-		::uml::cpu::ArmFeature::advanced_simd,
-		::uml::cpu::ArmFeature::fp16,
-	});
 }
 
 static_assert(enable_for(fpsr_exception_mask) == 0x9f00U);

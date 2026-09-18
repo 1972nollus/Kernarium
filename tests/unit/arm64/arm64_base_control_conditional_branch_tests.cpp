@@ -12,85 +12,6 @@ namespace {
 
 namespace gadgets = arm64::gadgets;
 
-constexpr std::array<std::int64_t, 9> displacements{
-	-1'048'576, -4096, -4, 0, 4, 8, 4096, 524'288, 1'048'572,
-};
-
-void semantics(Harness &harness)
-{
-	for (const bool consistent : {false, true})
-		for (unsigned condition = 0; condition < 16; ++condition)
-			for (unsigned flags = 0; flags < 16; ++flags)
-				for (unsigned index = 0;
-				     index < displacements.size(); ++index) {
-					const auto displacement =
-						displacements[index];
-					const auto instruction =
-						encode_conditional_branch(
-							consistent, condition,
-							displacement);
-					auto initial = seeded_state(
-						0x1300'0000'0000'0000ULL ^
-						(static_cast<std::uint64_t>(
-							instruction) << 11) ^
-						flags);
-					initial.nzcv = flags << 28;
-					const bool take = condition_holds(
-						initial.nzcv, condition);
-					const auto next_pc = take ?
-						static_cast<std::uint64_t>(
-							static_cast<std::int64_t>(
-								branch_pc) +
-							displacement) :
-						branch_pc + 4;
-					char name[160];
-					std::snprintf(name, sizeof(name),
-						"%s %s condition=%u nzcv=%x "
-						"displacement=%lld",
-						consistent ? "BASE-0036" : "BASE-0035",
-						consistent ? "BC.cond" :
-							"B.cond",
-						condition, flags,
-						static_cast<long long>(
-							displacement));
-					harness.check_branch(
-						name, instruction, initial,
-						initial, next_pc,
-						consistent ?
-							NativeRequirements::features(
-								ArmFeature::hbc) :
-							NativeRequirements::baseline());
-				}
-}
-
-void immediate_basis(Harness &harness)
-{
-	for (const bool consistent : {false, true})
-		for (unsigned bit = 0; bit < 19; ++bit) {
-			const auto displacement = bit == 18U ?
-				-(std::int64_t{1} << 20) :
-				std::int64_t{4} << bit;
-			const auto instruction = encode_conditional_branch(
-				consistent, 14, displacement);
-			auto initial = seeded_state(
-				0x1310'0000'0000'0000ULL ^
-				(static_cast<std::uint64_t>(instruction) << 5));
-			const auto target = static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(branch_pc) +
-				displacement);
-			char name[128];
-			std::snprintf(name, sizeof(name),
-				"%s %s immediate encoding bit=%u",
-				consistent ? "BASE-0036" : "BASE-0035",
-				consistent ? "BC.cond" : "B.cond", bit);
-			harness.check_branch(
-				name, instruction, initial, initial, target,
-				consistent ?
-					NativeRequirements::features(ArmFeature::hbc) :
-					NativeRequirements::baseline());
-		}
-}
-
 void production_specialization()
 {
 	constexpr auto base = engine_test_code_base;
@@ -131,10 +52,6 @@ void production_specialization()
 
 int main()
 {
-	uml::emulator::tests::base_control::Harness harness;
-	uml::emulator::tests::base_control::semantics(harness);
-	uml::emulator::tests::base_control::immediate_basis(harness);
 	uml::emulator::tests::base_control::production_specialization();
-	harness.print_summary("arm64-base-control-conditional-branch");
 	return 0;
 }

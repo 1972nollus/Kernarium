@@ -1,19 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-if(UML_BUILD_TOOLING_TESTS)
-    # The CMake-only reset belongs to the unit suite and is registered only
-    # when the tooling validators consume the evidence produced by unit tests.
-    # A strict unit selection in that combined graph therefore clears stale
-    # evidence before running any producer.
-    uml_add_unit_test(
-        NO_EVIDENCE_DEPENDENCY
-        NAME arm64-instruction-evidence-reset
-        COMMAND ${CMAKE_COMMAND}
-            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
-            -P ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reset_instruction_evidence.cmake
-        LABELS cpu;audit)
-endif()
-
 add_library(uml_test_allocation_failure STATIC allocation_failure.cpp)
 target_include_directories(uml_test_allocation_failure PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
@@ -64,12 +50,3 @@ if(TARGET uml_console_device)
     add_subdirectory(console)
 endif()
 add_subdirectory(gpu)
-
-get_property(_uml_registered_unit_binary_targets GLOBAL PROPERTY
-    UML_UNIT_TEST_BINARY_TARGETS)
-if(_uml_registered_unit_binary_targets)
-    list(REMOVE_DUPLICATES _uml_registered_unit_binary_targets)
-    add_dependencies(unit-test-binaries
-        uml_instruction_evidence_test_runner
-        ${_uml_registered_unit_binary_targets})
-endif()

@@ -2,9 +2,8 @@
 #pragma once
 
 /*
- * SIMD&FP ordered memory shares the same specification oracle and
- * interpreter -> gadgets -> JIT harness as the scalar and pair families.
- * Keep this compatibility name for the split SIMD suites.
+ * SIMD&FP ordered memory shares the same specification oracle as the scalar
+ * and pair families. Keep this compatibility name for the split SIMD suites.
  */
 #include "arm64_ordered_memory_test_support.hpp"
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # This family manifest is included by the ARM64 unit-test directory.
-    foreach(base_ls64_suite IN ITEMS allocation behavior fault gadget)
+    foreach(base_ls64_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_ls64_${base_ls64_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ls64_${base_ls64_suite}_tests.cpp
 	    $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -23,8 +23,7 @@
 	    COMMAND uml_arm64_base_ls64_${base_ls64_suite}_tests)
     endforeach()
 
-    foreach(base_mops_suite IN ITEMS
-	    allocation copy_forward copy set set_tag set_tag_fault gadget)
+    foreach(base_mops_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_mops_${base_mops_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mops_${base_mops_suite}_tests.cpp
 	    $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -99,7 +98,7 @@
 	    COMMAND uml_arm64_base_mte_${base_mte_data_suite}_tests)
     endforeach()
 
-    foreach(base_mte_multiple_suite IN ITEMS load store gadget)
+    foreach(base_mte_multiple_suite IN ITEMS gadget)
 	add_executable(
 	    uml_arm64_base_mte_multiple_${base_mte_multiple_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_multiple_${base_mte_multiple_suite}_tests.cpp
@@ -122,28 +121,7 @@
 	    uml_arm64_base_mte_multiple_${base_mte_multiple_suite}_tests)
     endforeach()
 
-    foreach(literal_load_suite allocation behavior fault)
-	add_executable(uml_arm64_literal_load_${literal_load_suite}_tests
-	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_literal_load_${literal_load_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
-	    $<TARGET_OBJECTS:uml_static_mmu>
-	    $<TARGET_OBJECTS:uml_arm64_gadgets>
-	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-	target_include_directories(
-	    uml_arm64_literal_load_${literal_load_suite}_tests PRIVATE
-	    ${PROJECT_SOURCE_DIR}/darwin
-	    ${PROJECT_SOURCE_DIR}/darwin/include)
-	target_compile_options(
-	    uml_arm64_literal_load_${literal_load_suite}_tests PRIVATE
-	    -Wall -Wextra -Werror)
-	target_link_libraries(
-	    uml_arm64_literal_load_${literal_load_suite}_tests PRIVATE
-	    uml_arm64_engine_test_support)
-	uml_add_unit_test(NAME arm64-literal-load-${literal_load_suite}
-	    COMMAND uml_arm64_literal_load_${literal_load_suite}_tests)
-    endforeach()
-
-    foreach(immediate_memory_suite allocation offset behavior fault structure)
+    foreach(immediate_memory_suite structure)
 	add_executable(uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_immediate_memory_${immediate_memory_suite}_tests.cpp
 	    $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -167,42 +145,7 @@
 	    COMMAND uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests)
     endforeach()
 
-    add_executable(uml_arm64_base_load_store_register_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_load_store_register_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_load_store_register_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_load_store_register_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_load_store_register_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-load-store-register
-		COMMAND uml_arm64_base_load_store_register_tests)
-
-    add_executable(uml_arm64_base_load_store_register_allocation_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_load_store_register_allocation_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(
-        uml_arm64_base_load_store_register_allocation_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_base_load_store_register_allocation_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(
-        uml_arm64_base_load_store_register_allocation_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-load-store-register-allocation
-		COMMAND uml_arm64_base_load_store_register_allocation_tests)
-
-    foreach(load_store_register_suite fault prefetch structure)
+    foreach(load_store_register_suite structure)
 	add_executable(
 	    uml_arm64_base_load_store_register_${load_store_register_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_load_store_register_${load_store_register_suite}_tests.cpp
@@ -226,44 +169,7 @@
 	    uml_arm64_base_load_store_register_${load_store_register_suite}_tests)
     endforeach()
 
-    add_executable(uml_arm64_base_load_store_pair_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_load_store_pair_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_load_store_pair_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_load_store_pair_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_load_store_pair_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-load-store-pair
-		COMMAND uml_arm64_base_load_store_pair_tests)
-
-    foreach(lsui_pair_suite IN ITEMS allocation behavior fault gadget)
-	add_executable(uml_arm64_base_lsui_pair_${lsui_pair_suite}_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_lsui_pair_${lsui_pair_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-	target_include_directories(
-		uml_arm64_base_lsui_pair_${lsui_pair_suite}_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-	target_compile_options(
-		uml_arm64_base_lsui_pair_${lsui_pair_suite}_tests PRIVATE
-		-Wall -Wextra -Werror)
-	target_link_libraries(
-		uml_arm64_base_lsui_pair_${lsui_pair_suite}_tests PRIVATE
-		uml_arm64_engine_test_support)
-	uml_add_unit_test(NAME arm64-base-lsui-pair-${lsui_pair_suite}
-		COMMAND uml_arm64_base_lsui_pair_${lsui_pair_suite}_tests)
-    endforeach()
-
-    foreach(ordered_suite IN ITEMS allocation behavior fault gadget)
+    foreach(ordered_suite IN ITEMS behavior gadget)
 	add_executable(uml_arm64_base_ordered_${ordered_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ordered_${ordered_suite}_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -284,118 +190,7 @@
 		COMMAND uml_arm64_base_ordered_${ordered_suite}_tests)
     endforeach()
 
-    add_executable(uml_arm64_base_exclusive_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_exclusive_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_exclusive_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_exclusive_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_exclusive_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-exclusive COMMAND uml_arm64_base_exclusive_tests)
-
-    add_executable(uml_arm64_base_exclusive_pair_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_exclusive_pair_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_exclusive_pair_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_exclusive_pair_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_exclusive_pair_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-exclusive-pair
-		COMMAND uml_arm64_base_exclusive_pair_tests)
-
-    add_executable(uml_arm64_base_compare_swap_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_compare_swap_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_compare_swap_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_compare_swap_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_compare_swap_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-compare-swap
-		COMMAND uml_arm64_base_compare_swap_tests)
-
-    add_executable(uml_arm64_base_compare_swap_pair_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_compare_swap_pair_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_compare_swap_pair_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_compare_swap_pair_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_compare_swap_pair_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-compare-swap-pair
-		COMMAND uml_arm64_base_compare_swap_pair_tests)
-
-    add_executable(uml_arm64_base_atomic_bit_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_atomic_bit_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_atomic_bit_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_atomic_bit_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_atomic_bit_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-atomic-bit
-		COMMAND uml_arm64_base_atomic_bit_tests)
-
-    add_executable(uml_arm64_base_atomic_minmax_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_atomic_minmax_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_atomic_minmax_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_atomic_minmax_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_atomic_minmax_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-atomic-minmax
-		COMMAND uml_arm64_base_atomic_minmax_tests)
-
-    add_executable(uml_arm64_base_atomic_swap_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_atomic_swap_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_atomic_swap_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_atomic_swap_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_atomic_swap_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-atomic-swap
-		COMMAND uml_arm64_base_atomic_swap_tests)
-
-    foreach(lse128_pair_suite IN ITEMS allocation behavior fault gadget)
+    foreach(lse128_pair_suite IN ITEMS behavior)
 	add_executable(uml_arm64_base_lse128_pair_${lse128_pair_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_lse128_pair_${lse128_pair_suite}_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -416,8 +211,7 @@
 		COMMAND uml_arm64_base_lse128_pair_${lse128_pair_suite}_tests)
     endforeach()
 
-    foreach(atomic_floating_suite IN ITEMS allocation bfloat precision
-			ordering_alias fault gadget)
+    foreach(atomic_floating_suite IN ITEMS gadget)
 	add_executable(uml_arm64_atomic_floating_${atomic_floating_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_atomic_floating_${atomic_floating_suite}_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -438,7 +232,7 @@
 		COMMAND uml_arm64_atomic_floating_${atomic_floating_suite}_tests)
     endforeach()
 
-    foreach(rcw_suite scalar pair allocation fault gadget)
+    foreach(rcw_suite gadget)
 	add_executable(uml_arm64_base_rcw_${rcw_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_rcw_${rcw_suite}_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -459,23 +253,7 @@
 		COMMAND uml_arm64_base_rcw_${rcw_suite}_tests)
     endforeach()
 
-    add_executable(uml_arm64_base_clear_exclusive_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_clear_exclusive_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_base_clear_exclusive_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_base_clear_exclusive_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_base_clear_exclusive_tests PRIVATE
-		uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-base-clear-exclusive
-		COMMAND uml_arm64_base_clear_exclusive_tests)
-
-    foreach(ordered_pair_suite IN ITEMS allocation behavior fault gadget)
+    foreach(ordered_pair_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_ordered_pair_${ordered_pair_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ordered_pair_${ordered_pair_suite}_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -496,8 +274,7 @@
 		COMMAND uml_arm64_base_ordered_pair_${ordered_pair_suite}_tests)
     endforeach()
 
-    foreach(simd_ordinary_memory_suite IN ITEMS
-		allocation immediate register pair fault tag gadget)
+    foreach(simd_ordinary_memory_suite IN ITEMS gadget)
 	add_executable(
 		uml_arm64_simd_ordinary_memory_${simd_ordinary_memory_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_ordinary_memory_${simd_ordinary_memory_suite}_tests.cpp
@@ -523,20 +300,4 @@
 		COMMAND
 			uml_arm64_simd_ordinary_memory_${simd_ordinary_memory_suite}_tests)
     endforeach()
-
-    add_executable(uml_arm64_simd_load_store_pair_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_load_store_pair_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_simd_load_store_pair_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_simd_load_store_pair_tests PRIVATE
-		-Wall -Wextra -Werror)
-    target_link_libraries(uml_arm64_simd_load_store_pair_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-simd-load-store-pair
-		COMMAND uml_arm64_simd_load_store_pair_tests)
 

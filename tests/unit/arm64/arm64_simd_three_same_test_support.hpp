@@ -31,36 +31,6 @@ struct Registers final {
 		(registers.destination & 31U);
 }
 
-[[nodiscard]] constexpr bool valid(bool scalar, bool q,
-	bool unsigned_group, unsigned size, unsigned opcode)
-{
-	if (opcode >= 24U || opcode == 3U)
-		return false;
-	if (scalar) {
-		if (opcode == 1U || opcode == 5U || opcode == 9U ||
-		    opcode == 11U)
-			return true;
-		if (opcode == 6U || opcode == 7U || opcode == 8U ||
-		    opcode == 10U || opcode == 16U || opcode == 17U)
-			return size == 3U;
-		return opcode == 22U && (size == 1U || size == 2U);
-	}
-	if (!q && size == 3U)
-		return false;
-	if (size == 3U)
-		return opcode == 1U || opcode == 5U || opcode == 6U ||
-			opcode == 7U || opcode == 8U || opcode == 9U ||
-			opcode == 10U || opcode == 11U || opcode == 16U ||
-			opcode == 17U || (opcode == 23U && !unsigned_group);
-	if (opcode == 19U && unsigned_group)
-		return size == 0U;
-	if (opcode == 22U)
-		return size == 1U || size == 2U;
-	if (opcode == 23U)
-		return !unsigned_group;
-	return true;
-}
-
 [[nodiscard]] inline arm64::CpuState state(unsigned seed = 0)
 {
 	arm64::CpuState cpu{};
@@ -105,15 +75,6 @@ inline void write_lane(std::array<std::byte, 16> &bytes,
 	for (std::size_t byte = 0; byte < size; ++byte)
 		bytes[offset + byte] =
 			static_cast<std::byte>(value >> (byte * 8U));
-}
-
-inline void fill_lanes(arm64::VectorRegister &vector,
-	std::uint64_t value, unsigned size)
-{
-	const std::size_t lane_size = std::size_t{1} << size;
-	for (std::size_t offset = 0; offset < vector.bytes.size();
-	     offset += lane_size)
-		write_lane(vector.bytes, offset, lane_size, value);
 }
 
 [[nodiscard]] constexpr __int128 signed_value(

@@ -186,7 +186,7 @@ int main() {
   deferred_state_survives_integer_block(harness);
   harness.print_summary("arm64-deferred-fp-state");
   const auto &counts = harness.counts();
-  if (counts.interpreter != 6 || counts.gadgets != 6 ||
+  if (counts.gadgets != 6 ||
       counts.jit + counts.jit_skipped != 6)
     return 1;
   return 0;

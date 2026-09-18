@@ -27,22 +27,4 @@ inline constexpr std::array variants{
 		::uml::cpu::ArmFeature::cmh},
 };
 
-[[nodiscard]] inline engine::NativeRequirements native(
-	const Variant &variant)
-{
-	return engine::NativeRequirements::features(variant.feature);
-}
-
-inline void check(arm64_hint_test::Harness &harness,
-	arm64_hint_test::ExpectedCounts &expected, std::string_view name,
-	const Variant &variant, std::uint64_t seed)
-{
-	const auto requirements = native(variant);
-	const auto initial = arm64_hint_test::seeded_state(seed);
-	harness.check(name,
-		arm64_hint_test::primary_instruction(variant.immediate),
-		initial, initial, requirements);
-	expected.add(requirements);
-}
-
 } // namespace arm64_base_store_hint_test

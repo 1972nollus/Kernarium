@@ -22,25 +22,6 @@ inline constexpr std::array operations{
 	Operation{"IVAU", 3, 5, 1, true},
 };
 
-[[nodiscard]] constexpr bool named_operation(
-	unsigned op1, unsigned crm, unsigned op2) noexcept
-{
-	for (const auto &operation : operations)
-		if (operation.op1 == op1 && operation.crm == crm &&
-		    operation.op2 == op2)
-			return true;
-	return false;
-}
-
-[[nodiscard]] constexpr bool named_instruction(
-	std::uint32_t instruction) noexcept
-{
-	if ((instruction & 0xfff8'0000U) != 0xd508'0000U)
-		return false;
-	return named_operation((instruction >> 16) & 7U,
-		(instruction >> 8) & 15U, (instruction >> 5) & 7U);
-}
-
 [[nodiscard]] constexpr std::uint32_t instruction(
 	const Operation &operation, unsigned transfer) noexcept
 {
