@@ -4,7 +4,6 @@
     foreach(base_ls64_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_ls64_${base_ls64_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ls64_${base_ls64_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -26,7 +25,6 @@
     foreach(base_mops_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_mops_${base_mops_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mops_${base_mops_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -47,7 +45,6 @@
 
     add_executable(uml_arm64_base_mte_tag_load_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_tag_load_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -63,7 +60,6 @@
 
     add_executable(uml_arm64_base_mte_tag_store_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_tag_store_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -80,7 +76,6 @@
     foreach(base_mte_data_suite IN ITEMS zero_store stgp)
 	add_executable(uml_arm64_base_mte_${base_mte_data_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_${base_mte_data_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -102,7 +97,6 @@
 	add_executable(
 	    uml_arm64_base_mte_multiple_${base_mte_multiple_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_multiple_${base_mte_multiple_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -124,7 +118,6 @@
     foreach(immediate_memory_suite structure)
 	add_executable(uml_arm64_base_immediate_memory_${immediate_memory_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_immediate_memory_${immediate_memory_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -149,7 +142,6 @@
 	add_executable(
 	    uml_arm64_base_load_store_register_${load_store_register_suite}_tests
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_load_store_register_${load_store_register_suite}_tests.cpp
-	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
 	    $<TARGET_OBJECTS:uml_arm64_gadgets>
 	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -172,7 +164,6 @@
     foreach(ordered_suite IN ITEMS behavior gadget)
 	add_executable(uml_arm64_base_ordered_${ordered_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ordered_${ordered_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -193,7 +184,6 @@
     foreach(lse128_pair_suite IN ITEMS behavior)
 	add_executable(uml_arm64_base_lse128_pair_${lse128_pair_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_lse128_pair_${lse128_pair_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -214,7 +204,6 @@
     foreach(atomic_floating_suite IN ITEMS gadget)
 	add_executable(uml_arm64_atomic_floating_${atomic_floating_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_atomic_floating_${atomic_floating_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -235,7 +224,6 @@
     foreach(rcw_suite gadget)
 	add_executable(uml_arm64_base_rcw_${rcw_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_rcw_${rcw_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -256,7 +244,6 @@
     foreach(ordered_pair_suite IN ITEMS gadget)
 	add_executable(uml_arm64_base_ordered_pair_${ordered_pair_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_ordered_pair_${ordered_pair_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -278,7 +265,6 @@
 	add_executable(
 		uml_arm64_simd_ordinary_memory_${simd_ordinary_memory_suite}_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_ordinary_memory_${simd_ordinary_memory_suite}_tests.cpp
-		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
 		$<TARGET_OBJECTS:uml_arm64_gadgets>
 		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
