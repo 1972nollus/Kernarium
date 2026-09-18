@@ -159,11 +159,13 @@ void profile_dispatch(DispatchClock::time_point started,
 		statistics.maximum_nanoseconds, elapsed);
 	++statistics.exits[static_cast<std::size_t>(reason)];
 	// Keep full-guest profiling sparse enough that forwarding the diagnostic
-	// through an iOS console cannot become part of the workload being measured.
-	constexpr std::uint64_t report_interval = 4096;
-	static_assert((report_interval & (report_interval - 1)) == 0);
-	if ((statistics.calls & (report_interval - 1)) != 0)
+	// through an iOS console cannot become part of the workload being measured:
+	// report about once per second of dispatch time, so the cadence does not
+	// depend on how often a guest leaves the engine.
+	static thread_local std::uint64_t last_report{};
+	if (statistics.nanoseconds - last_report < 1'000'000'000ULL)
 		return;
+	last_report = statistics.nanoseconds;
 	const auto current_cpu = thread_cpu_reading();
 	const auto carrier_cpu_nanoseconds = cpu_origin.valid && current_cpu.valid &&
 		current_cpu.nanoseconds >= cpu_origin.nanoseconds
@@ -550,6 +552,9 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	::uml::runtime::ThreadExecutionState &runtime) noexcept
 {
 	(void)Kind;
+#if UML_RUNTIME_PROFILING
+	const auto started = DispatchClock::now();
+#endif
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
 	const auto &registered_interrupt = runtime.interrupt;
@@ -604,6 +609,13 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	case uml::cpu::ExitReason::fatal:
 		break;
 	}
+#if UML_RUNTIME_PROFILING
+	profile_dispatch(started, result.retired_instructions,
+		result.reason == uml::cpu::ExitReason::system_call ? DispatchExit::system_call :
+		result.reason == uml::cpu::ExitReason::memory_fault ? DispatchExit::memory_fault :
+		result.reason == uml::cpu::ExitReason::interrupt ? DispatchExit::interrupt :
+		DispatchExit::budget);
+#endif
 	return event;
 }
 #endif
