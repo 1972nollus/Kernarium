@@ -134,14 +134,12 @@ struct InstructionCase final {
    * compared with expected.
   */
   ArchitectureValidator validator{};
-  /* Stable reviewed relation used by raw specification evidence whenever
-   * validator is non-null. The recorder rejects an undescribed callback. */
+  /* Names the permitted-result relation that the instruction corpus runner
+   * implements for this validator; see tests/unit/arm64/corpus/README.md. */
   std::string_view validator_relation_id;
   void *execution_context{};
   EngineExecutionHook before_engine{};
-  std::string_view before_engine_effect_id;
   EngineExecutionHook after_engine{};
-  std::string_view after_engine_effect_id;
   /*
    * InstructionCase normally derives this exactly: a successful instruction
    * plus the harness terminal SVC retires two instructions, while a
@@ -149,10 +147,6 @@ struct InstructionCase final {
    * whose own terminal behavior makes that default inapplicable.
    */
   std::optional<std::size_t> expected_instructions{};
-  /* Non-empty only for an independently identified architecture specimen.
-   * The subprocess hardware observation is recorded separately and never
-   * becomes the expected result for any emulator engine. */
-  std::string_view native_oracle_case_id{};
 };
 
 struct ProgramWord final {
@@ -192,9 +186,7 @@ struct ProgramCase final {
   std::string_view validator_relation_id;
   void *execution_context{};
   EngineExecutionHook before_engine{};
-  std::string_view before_engine_effect_id;
   EngineExecutionHook after_engine{};
-  std::string_view after_engine_effect_id;
   /*
    * When supplied, every engine is checked against this specification value.
    * Otherwise translated engines must still match the interpreter's count,

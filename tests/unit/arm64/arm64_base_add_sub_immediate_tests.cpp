@@ -62,7 +62,7 @@ void independent_native_specimen(EngineHarness &harness)
 		"ADD immediate native specimen width=64 sh=0 imm=5 rn=5 rd=0",
 		Form::immediate,
 		encode_immediate(true, false, false, false, 5, 5, 0),
-		initial, "BASE-0005/ADD_64_addsub_imm");
+		initial);
 }
 
 void arithmetic_boundaries(EngineHarness &harness)

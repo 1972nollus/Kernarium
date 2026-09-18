@@ -114,8 +114,9 @@ The product has two selectable engines. The gadget engine executes arrays of
 precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines and with the arm64 instruction
-Dispatcher, which remains the reference oracle of the A64 conformance evidence
-and is exercised only from the unit-test support target.
+Dispatcher, which remains the reference lane of the A64 engine harness and of
+instruction-corpus export and is exercised only from the unit-test support
+target.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

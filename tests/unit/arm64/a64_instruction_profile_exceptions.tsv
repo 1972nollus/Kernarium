@@ -1,2 +1,0 @@
-ctest	case	source_file	source_line	encoding	guest_page_size	stable_id	architecture_encoding	reason
-arm64-jit-tlb-miss-preservation	jit-tlb-way1-rejoins-hot-memory-continuation	tests/unit/arm64/arm64_jit_tlb_miss_preservation_tests.cpp	334	f9400002	16384	BASE-0221	LDR_64_ldst_pos	16K TLB has a second-way probe; 4K has no corresponding execution geometry

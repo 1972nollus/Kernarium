@@ -418,9 +418,7 @@ void validators_follow_engine_order_and_feature_skips(
       .validator_relation_id = "exact-increment/v1",
       .execution_context = &hooks,
       .before_engine = &before_engine,
-      .before_engine_effect_id = "record-engine-order-before/v1",
       .after_engine = &after_engine,
-      .after_engine_effect_id = "record-engine-order-after/v1",
   });
   const auto after_baseline = harness.counts();
   const bool jit_available =
@@ -455,9 +453,7 @@ void validators_follow_engine_order_and_feature_skips(
       .validator_relation_id = "disabled-tag-generator-choice/v1",
       .execution_context = &hooks,
       .before_engine = &before_engine,
-      .before_engine_effect_id = "record-engine-order-before/v1",
       .after_engine = &after_engine,
-      .after_engine_effect_id = "record-engine-order-after/v1",
   });
   const auto after_skip = harness.counts();
   if (after_skip.interpreter != before_skip.interpreter + 1 ||

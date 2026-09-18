@@ -18,9 +18,10 @@ namespace uml::emulator::tests::corpus_export {
  * Instruction-corpus export mode.
  *
  * UML_ARM64_CORPUS_EXPORT=<directory> turns every harness producer into a
- * two-pass exporter. The producer name is the CTest name that the unit-test
- * wrapper supplies; tools/arm64-tests/export-unit-corpus.py drives both passes
- * over every producer of a build tree.
+ * two-pass exporter. The producer name is the CTest name that
+ * uml_add_unit_test supplies in UML_UNIT_TEST_NAME;
+ * tools/arm64-tests/export-unit-corpus.py drives both passes over every
+ * producer of a build tree.
  *
  * UML_ARM64_CORPUS_EXPORT_PASS=count classifies each case without running an
  * engine and records the size of every equivalence class.

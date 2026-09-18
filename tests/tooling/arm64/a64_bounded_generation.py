@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from a64_raw_evidence_files import (
+from a64_publication_paths import (
     canonical_existing_directory,
     path_is_ancestor,
     paths_alias,

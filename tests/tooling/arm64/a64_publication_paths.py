@@ -1,39 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Canonical plain/compressed A64 raw-evidence file handling."""
+"""Symlink-safe path checks and atomic publication for A64 table generators."""
 
 from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import gzip
-import hashlib
-import csv
 import os
 import stat
 import tempfile
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Sequence, TextIO
-
-
-PLAIN_SUFFIX = ".tsv.raw"
-COMPRESSED_SUFFIX = ".tsv.raw.gz"
-FULL_PRODUCER_COUNT = 449
-FULL_PRODUCER_SET_SHA256 = (
-    "568fd8781de3ae3c865d14d75b6db6aef2656970e202ba4e0aae3bc622330ed1"
-)
-RAW_COLUMNS = [
-    "ctest", "case", "source", "line", "encoding", "invalid",
-    "guest_page_size", "expected_event", "expected_retirement",
-    "expected_state_oracle", "initial_state_digest", "initial_memory_digest",
-    "expected_state_digest", "expected_memory_digest", "expected_fault",
-    "expected_syndrome", "native_required_features",
-    "native_requirement_scope", "native_observed_features",
-    "native_missing_features", "interpreter_result", "gadgets_result",
-    "jit_result", "occurrences",
-]
+from typing import Callable, Sequence
 
 
 def lexical_absolute_path(path: Path) -> Path:
@@ -199,13 +176,6 @@ def validate_publication_topology(
     return files, directories, reads
 
 
-@dataclass(frozen=True)
-class RawEvidenceFile:
-    producer: str
-    path: Path
-    compressed: bool
-
-
 def atomic_publish_bytes(
     outputs: Sequence[tuple[Path, bytes]],
     *,
@@ -239,123 +209,3 @@ def atomic_publish_bytes(
         for _path, temporary in staged:
             if temporary.exists():
                 temporary.unlink()
-
-
-def producer_set_sha256(producers: set[str]) -> str:
-    payload = "".join(f"{producer}\n" for producer in sorted(producers))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def validate_producer_authority(producers: set[str], page: str) -> None:
-    digest = producer_set_sha256(producers)
-    if (
-        len(producers) != FULL_PRODUCER_COUNT
-        or digest != FULL_PRODUCER_SET_SHA256
-    ):
-        raise ValueError(
-            f"full {page} producer authority differs: "
-            f"count={len(producers)}, sha256={digest}"
-        )
-
-
-def require_regular_raw_file(path: Path) -> None:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(
-            f"raw evidence entry is not a nonsymlink regular file: {path}"
-        )
-
-
-def raw_evidence_files(directory: Path) -> list[RawEvidenceFile]:
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError(f"raw evidence path is not a regular directory: {directory}")
-    by_producer: dict[str, RawEvidenceFile] = {}
-    for suffix, compressed in (
-        (PLAIN_SUFFIX, False),
-        (COMPRESSED_SUFFIX, True),
-    ):
-        for path in sorted(directory.glob(f"*{suffix}")):
-            require_regular_raw_file(path)
-            producer = path.name[: -len(suffix)]
-            if not producer:
-                raise ValueError(f"raw evidence has an empty producer: {path}")
-            if producer in by_producer:
-                raise ValueError(
-                    f"raw evidence has duplicate plain/compressed producer: "
-                    f"{producer}"
-                )
-            by_producer[producer] = RawEvidenceFile(
-                producer=producer, path=path, compressed=compressed
-            )
-    return [by_producer[name] for name in sorted(by_producer)]
-
-
-def raw_evidence_file(directory: Path, producer: str) -> RawEvidenceFile:
-    """Resolve one producer through the same exact plain/gzip authority."""
-    matches = [
-        entry
-        for entry in raw_evidence_files(directory)
-        if entry.producer == producer
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            f"raw evidence producer {producer!r} has {len(matches)} files"
-        )
-    return matches[0]
-
-
-@contextmanager
-def open_raw_text(entry: RawEvidenceFile) -> Iterator[TextIO]:
-    if entry.compressed:
-        with gzip.open(entry.path, "rt", encoding="utf-8", newline="") as source:
-            yield source
-    else:
-        with entry.path.open(encoding="utf-8", newline="") as source:
-            yield source
-
-
-def uncompressed_identity(entry: RawEvidenceFile) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
-    opener = gzip.open if entry.compressed else open
-    try:
-        with opener(entry.path, "rb") as source:
-            while chunk := source.read(1024 * 1024):
-                size += len(chunk)
-                digest.update(chunk)
-    except (EOFError, gzip.BadGzipFile, OSError) as error:
-        raise ValueError(f"cannot verify raw evidence stream {entry.path}") from error
-    return size, digest.hexdigest()
-
-
-def validate_raw_profile(entry: RawEvidenceFile, page: str) -> int:
-    rows = 0
-    try:
-        with open_raw_text(entry) as source:
-            reader = csv.DictReader(source, delimiter="\t")
-            if reader.fieldnames != RAW_COLUMNS:
-                raise ValueError(
-                    f"{entry.path}: unexpected raw evidence columns"
-                )
-            for row in reader:
-                rows += 1
-                if (
-                    set(row) != set(RAW_COLUMNS)
-                    or None in row
-                    or any(row[column] is None for column in RAW_COLUMNS)
-                ):
-                    raise ValueError(
-                        f"{entry.path}: raw evidence row shape differs"
-                    )
-                if row["ctest"] != entry.producer:
-                    raise ValueError(
-                        f"{entry.path}: raw producer field differs from filename"
-                    )
-                if row["guest_page_size"] != page:
-                    raise ValueError(
-                        f"{entry.path}: raw row differs from page profile {page}"
-                    )
-    except (EOFError, gzip.BadGzipFile, OSError) as error:
-        raise ValueError(f"cannot validate raw evidence stream {entry.path}") from error
-    if rows == 0:
-        raise ValueError(f"{entry.path}: raw evidence stream is empty")
-    return rows

@@ -31,36 +31,27 @@
         ${UML_STATIC_RUNTIME_TEST_BASE_OBJECTS}
         $<TARGET_OBJECTS:uml_arm64_jit_diagnostics_executor>)
 
-    add_library(uml_instruction_evidence_digest STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_evidence_digest.cpp)
-    target_include_directories(uml_instruction_evidence_digest PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_instruction_evidence_digest PUBLIC cxx_std_20)
-    target_compile_options(uml_instruction_evidence_digest PRIVATE
-        -Wall -Wextra -Werror)
-
-    # Raw semantic evidence is a test-only opt-in path. Reuse the checked
-    # private zlib when desktop dependencies are enabled; otherwise import
-    # only the same pinned archive without broadening production linkage.
+    # The instruction corpus is zlib-compressed. Reuse the checked private
+    # zlib when desktop dependencies are enabled; otherwise import only the
+    # same pinned archive without broadening production linkage.
     if(TARGET UML::ThirdPartyZlib)
-        set(_uml_instruction_evidence_zlib UML::ThirdPartyZlib)
+        set(_uml_arm64_corpus_zlib UML::ThirdPartyZlib)
     else()
-        set(_uml_instruction_evidence_zlib_archive
+        set(_uml_arm64_corpus_zlib_archive
             "${UML_DEPENDENCY_PREFIX}/lib/libz.a")
-        set(_uml_instruction_evidence_zlib_include
+        set(_uml_arm64_corpus_zlib_include
             "${UML_DEPENDENCY_PREFIX}/include")
-        if(NOT EXISTS "${_uml_instruction_evidence_zlib_archive}" OR
-           NOT EXISTS "${_uml_instruction_evidence_zlib_include}/zlib.h")
+        if(NOT EXISTS "${_uml_arm64_corpus_zlib_archive}" OR
+           NOT EXISTS "${_uml_arm64_corpus_zlib_include}/zlib.h")
             message(FATAL_ERROR
-                "raw instruction evidence requires the pinned private zlib")
+                "the A64 instruction corpus requires the pinned private zlib")
         endif()
-        add_library(uml_instruction_evidence_zlib STATIC IMPORTED)
-        set_target_properties(uml_instruction_evidence_zlib PROPERTIES
-            IMPORTED_LOCATION "${_uml_instruction_evidence_zlib_archive}"
+        add_library(uml_arm64_corpus_zlib STATIC IMPORTED)
+        set_target_properties(uml_arm64_corpus_zlib PROPERTIES
+            IMPORTED_LOCATION "${_uml_arm64_corpus_zlib_archive}"
             INTERFACE_INCLUDE_DIRECTORIES
-                "${_uml_instruction_evidence_zlib_include}")
-        set(_uml_instruction_evidence_zlib uml_instruction_evidence_zlib)
+                "${_uml_arm64_corpus_zlib_include}")
+        set(_uml_arm64_corpus_zlib uml_arm64_corpus_zlib)
     endif()
 
     # The reference oracle lane is a test-only adapter over the production
@@ -69,8 +60,6 @@
     add_library(uml_arm64_engine_test_support STATIC
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_corpus_export.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_evidence.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reference_engine.cpp)
     # Corpus export classifies words with the checked official decode
     # partitions and allocations; ordinary runs never read either file.
@@ -80,9 +69,7 @@
             "UML_ARM64_DECODE_PARTITIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_decode_partitions.tsv\";UML_ARM64_ALLOCATIONS=\"${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_allocations.tsv\"")
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
         UML::Emulator
-        ${_uml_instruction_evidence_zlib}
-        uml_instruction_evidence_digest
-        uml_native_hardware_oracle)
+        ${_uml_arm64_corpus_zlib})
     target_include_directories(uml_arm64_engine_test_support PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64
@@ -98,7 +85,7 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/instruction_corpus_runner.cpp)
     target_link_libraries(uml_arm64_instruction_corpus_tests PRIVATE
         UML::Emulator
-        ${_uml_instruction_evidence_zlib})
+        ${_uml_arm64_corpus_zlib})
     target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include)
@@ -110,28 +97,6 @@
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
 
-    add_library(uml_native_hardware_oracle STATIC
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_evidence.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_selection.cpp)
-    target_include_directories(uml_native_hardware_oracle PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_hardware_oracle PUBLIC cxx_std_20)
-    target_link_libraries(uml_native_hardware_oracle PRIVATE
-        uml_instruction_evidence_digest)
-    target_compile_options(uml_native_hardware_oracle PRIVATE
-        -Wall -Wextra -Werror)
-
-    add_executable(uml_native_hardware_oracle_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_hardware_oracle_tests.cpp)
-    target_link_libraries(uml_native_hardware_oracle_tests PRIVATE
-        uml_native_hardware_oracle)
-    target_compile_options(uml_native_hardware_oracle_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-native-hardware-oracle
-        COMMAND uml_native_hardware_oracle_tests)
-
     add_executable(uml_arm64_engine_test_support_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support_tests.cpp)
     target_link_libraries(uml_arm64_engine_test_support_tests PRIVATE
@@ -140,15 +105,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-engine-harness
         COMMAND uml_arm64_engine_test_support_tests)
-
-    add_executable(uml_arm64_instruction_materialization_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization_tests.cpp)
-    target_link_libraries(uml_arm64_instruction_materialization_tests PRIVATE
-        uml_arm64_engine_test_support)
-    target_compile_options(uml_arm64_instruction_materialization_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-instruction-materialization
-        COMMAND uml_arm64_instruction_materialization_tests)
 
     add_executable(uml_arm64_deferred_fp_state_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_deferred_fp_state_tests.cpp)

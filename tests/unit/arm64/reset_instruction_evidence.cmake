@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-if(NOT DEFINED BUILD_ROOT OR BUILD_ROOT STREQUAL "")
-    message(FATAL_ERROR "BUILD_ROOT is required")
-endif()
-set(EVIDENCE_DIRECTORY "${BUILD_ROOT}/instruction-evidence")
-file(REMOVE_RECURSE "${EVIDENCE_DIRECTORY}")
-file(MAKE_DIRECTORY "${EVIDENCE_DIRECTORY}")

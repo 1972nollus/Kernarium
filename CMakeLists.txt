@@ -62,16 +62,6 @@ option(UML_BUILD_TOOLING_TESTS
     ${_uml_build_tooling_tests_default})
 set(UML_INTEGRATION_ROOTFS "" CACHE FILEPATH
     "Unified EROFS rootfs image used by integration tests")
-set(UML_INSTRUCTION_MATERIALIZATION_WORK_ROOT "" CACHE PATH
-    "Optional external root for large instruction-materialization join state")
-# Every unit test emits one compressed input-materialization sidecar when this
-# is on, and only the instruction-materialization join consumes them. A
-# complete 16 KiB profile costs roughly 6.6 GiB of compressed sidecars against
-# 3.4 MiB of ordinary evidence, so ordinary unit and tooling runs leave it off
-# and the evidence campaign turns it on explicitly.
-option(UML_INSTRUCTION_INPUT_MATERIALIZATION
-    "Record per-test instruction input materializations and register their join"
-    OFF)
 option(UML_ENABLE_EXTERNAL_NETWORK_TESTS
     "Register guest tests that intentionally access the public network" OFF)
 set(UML_EXTERNAL_NETWORK_TEST_HOST "example.com" CACHE STRING

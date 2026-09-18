@@ -263,9 +263,7 @@ void virtual_counter(test::Harness &harness)
 			.validator_relation_id = "bounded-host-counter-read/v1",
 			.execution_context = &counter_bounds,
 			.before_engine = sample_counter_before,
-			.before_engine_effect_id = "sample-host-counter-before/v1",
 			.after_engine = sample_counter_after,
-			.after_engine_effect_id = "sample-host-counter-after/v1",
 		});
 	}
 

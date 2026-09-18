@@ -514,7 +514,7 @@ public:
       sampling_ = true;
     else
       export_failure("UML_ARM64_CORPUS_EXPORT_PASS must be count or sample");
-    const auto *producer = std::getenv("UML_INSTRUCTION_EVIDENCE_TEST");
+    const auto *producer = std::getenv("UML_UNIT_TEST_NAME");
     if (producer == nullptr || producer[0] == '\0')
       export_failure("the CTest producer name is unavailable");
     producer_ = producer;

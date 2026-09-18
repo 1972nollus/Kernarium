@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from a64_raw_evidence_files import atomic_publish_bytes, validate_publication_topology
+from a64_publication_paths import atomic_publish_bytes, validate_publication_topology
 
 
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024

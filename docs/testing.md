@@ -289,23 +289,10 @@ the gadget and JIT engines of each page profile in one process, and the
 against its pack. The corpus README owns the format, sampling policy, runner
 options, and regeneration from the harness producers.
 
-## A64 instruction evidence
-
-The ordinary instruction suites exercise all inventory entries with
-representative semantic contracts. They are not exhaustive variant proof. The
-machine-readable source of truth and current completeness boundary are
-documented in [`a64-instruction-coverage.md`](a64-instruction-coverage.md).
-
-Instruction evidence workflows are:
-
-```sh
-cmake --workflow --preset check-instruction-evidence
-cmake --workflow --preset check-instruction-evidence-4k
-```
-
-Full input materialization is off by default and consumes several GiB per
-profile. Enable it only for an explicit official-semantics campaign. Such a
-campaign can run for days and is not ordinary acceptance.
+The corpus covers every A64 inventory entry with representative cases; it is
+not exhaustive variant proof.
+[`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
+inventory tables and that completeness boundary.
 
 ## x86 instruction conformance
 

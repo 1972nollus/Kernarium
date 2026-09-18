@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
 #include "arm64_instruction_corpus_export.hpp"
-#include "arm64_instruction_evidence.hpp"
-#include "arm64_instruction_materialization.hpp"
-#include "instruction_evidence_digest.hpp"
-#include "native_hardware_oracle.hpp"
-#include "native_hardware_oracle_evidence.hpp"
-#include "native_hardware_oracle_selection.hpp"
 #include "reference_engine.hpp"
 
 #include "cpu/engine.hpp"
@@ -224,132 +218,6 @@ instruction_count_expectation(const InstructionCase &test_case) noexcept {
   if (test_case.event == ExpectedEvent::instruction_budget)
     return std::nullopt;
   return default_instruction_count(test_case);
-}
-
-using ::uml::emulator::tests::instruction_evidence::Digest;
-
-[[nodiscard]] std::uint8_t expected_tag_at(
-    const MemoryRegion &region, std::size_t offset) noexcept {
-  std::uint8_t result{};
-  for (const auto tag : region.initial_tags)
-    if (tag.offset == offset)
-      result = tag.value;
-  for (const auto tag : region.expected_tags)
-    if (tag.offset == offset)
-      result = tag.value;
-  return result;
-}
-
-[[nodiscard]] std::uint8_t initial_tag_at(
-    const MemoryRegion &region, std::size_t offset) noexcept {
-  std::uint8_t result{};
-  for (const auto tag : region.initial_tags)
-    if (tag.offset == offset)
-      result = tag.value;
-  return result;
-}
-
-[[nodiscard]] std::uint64_t
-memory_initial_digest(std::span<const MemoryRegion> regions) noexcept {
-  if (regions.empty())
-    return instruction_evidence::empty_memory_digest();
-  Digest digest;
-  digest.scalar(regions.size());
-  for (const auto &region : regions) {
-    digest.scalar(region.address);
-    digest.scalar(region.initial.size());
-    digest.boolean(region.readable);
-    digest.boolean(region.writable);
-    digest.boolean(region.executable);
-    digest.boolean(region.guest_code);
-    digest.boolean(region.guest_writable);
-    digest.bytes(region.initial.data(), region.initial.size());
-    for (std::size_t offset = 0; offset < region.initial.size(); offset += 16U)
-      digest.scalar(initial_tag_at(region, offset));
-  }
-  return digest.value();
-}
-
-[[nodiscard]] std::uint64_t
-memory_expectation_digest(std::span<const MemoryRegion> regions) noexcept {
-  if (regions.empty())
-    return instruction_evidence::empty_memory_digest();
-  Digest digest;
-  digest.scalar(regions.size());
-  for (const auto &region : regions) {
-    digest.scalar(region.address);
-    digest.scalar(region.initial.size());
-    digest.boolean(region.readable);
-    digest.boolean(region.writable);
-    digest.boolean(region.executable);
-    digest.boolean(region.guest_code);
-    digest.boolean(region.guest_writable);
-    const auto expected =
-        region.expected.empty() ? region.initial : region.expected;
-    digest.bytes(expected.data(), expected.size());
-    for (std::size_t offset = 0; offset < region.initial.size(); offset += 16U)
-      digest.scalar(expected_tag_at(region, offset));
-  }
-  return digest.value();
-}
-
-[[nodiscard]] std::string retirement_expectation(
-    const ProgramCase &test_case) {
-  if (test_case.expected_instructions.has_value())
-    return "exact:" + std::to_string(*test_case.expected_instructions);
-  if (test_case.expected_instruction_pattern.has_value()) {
-    const auto &pattern = *test_case.expected_instruction_pattern;
-    return "pattern:" + std::to_string(pattern.minimum) + ":" +
-           std::to_string(pattern.step) + ":" +
-           (pattern.maximum.has_value() ? std::to_string(*pattern.maximum)
-                                        : "unbounded");
-  }
-  return test_case.event == ExpectedEvent::instruction_budget
-             ? "engine-dependent"
-             : "interpreter-equal";
-}
-
-[[nodiscard]] std::string fault_expectation(
-    const ProgramCase &test_case) {
-  if (!test_case.compare_fault)
-    return "none";
-  const char *access{};
-  switch (test_case.fault.access) {
-  case arm64::MemoryAccess::read:
-    access = "read";
-    break;
-  case arm64::MemoryAccess::write:
-    access = "write";
-    break;
-  case arm64::MemoryAccess::execute:
-    access = "execute";
-    break;
-  }
-  char result[40]{};
-  std::snprintf(result, sizeof(result), "%s:%016llx", access,
-                static_cast<unsigned long long>(test_case.fault.address));
-  return result;
-}
-
-[[nodiscard]] std::string state_oracle_identity(
-    const ProgramCase &test_case,
-    const std::source_location &location) {
-  if (test_case.validator == nullptr)
-    return "exact";
-  const std::string_view path{location.file_name()};
-  const auto marker = std::string_view{"tests/"};
-  std::string source;
-  if (path.starts_with(marker)) {
-    source = path;
-  } else if (const auto found = path.rfind(std::string{"/"} +
-                                           std::string{marker});
-             found != std::string_view::npos) {
-    source = path.substr(found + 1U);
-  } else {
-    source = std::filesystem::path{path}.filename().string();
-  }
-  return "custom-validator@" +
-         source + ":" + std::to_string(location.line());
 }
 
 [[nodiscard]] constexpr ExpectedEvent
@@ -885,314 +753,6 @@ void require_architecture_equal(const arm64::CpuState &expected,
       instruction);
 }
 
-namespace {
-
-[[nodiscard]] bool has_feature(const ArmFeatureSet &features,
-                               const ArmFeature feature) noexcept {
-  return features.test(static_cast<std::size_t>(feature));
-}
-
-[[nodiscard]] bool native_requires_unavailable_feature_state(
-    const ArmFeatureSet &features) noexcept {
-  for (const auto feature : {
-           ArmFeature::cpa,
-           ArmFeature::d128,
-           ArmFeature::dit,
-           ArmFeature::f8f16mm,
-           ArmFeature::f8f32mm,
-           ArmFeature::fp8,
-           ArmFeature::fp8dot2,
-           ArmFeature::fp8dot4,
-           ArmFeature::fp8fma,
-           ArmFeature::gcie,
-           ArmFeature::gcs,
-           ArmFeature::ls64_accdata,
-           ArmFeature::mte,
-           ArmFeature::mte2,
-           ArmFeature::mtetc,
-           ArmFeature::nmi,
-           ArmFeature::pauth,
-           ArmFeature::pauth_lr,
-           ArmFeature::sme,
-           ArmFeature::ssbs,
-           ArmFeature::sysinstr128,
-           ArmFeature::sysreg128,
-           ArmFeature::uao,
-       })
-    if (has_feature(features, feature))
-      return true;
-  return false;
-}
-
-[[nodiscard]] bool native_unrepresented_state_changes(
-    const arm64::CpuState &initial,
-    const arm64::CpuState &expected) noexcept {
-  return initial.fpmr != expected.fpmr || initial.tls != expected.tls ||
-      initial.mte_enabled != expected.mte_enabled ||
-      initial.tbi_enabled != expected.tbi_enabled ||
-      initial.mte_exclude != expected.mte_exclude ||
-      initial.mte_tag_choices != expected.mte_tag_choices ||
-      initial.mte_random_tags != expected.mte_random_tags ||
-      initial.mte_seed != expected.mte_seed ||
-      initial.mte_tag != expected.mte_tag ||
-      initial.mte_random_state != expected.mte_random_state ||
-      initial.cpa_enabled != expected.cpa_enabled ||
-      initial.cpa_multiply_enabled != expected.cpa_multiply_enabled ||
-      initial.accdata != expected.accdata ||
-      initial.pstate_ssbs != expected.pstate_ssbs ||
-      initial.pstate_dit != expected.pstate_dit ||
-      initial.pstate_tco != expected.pstate_tco ||
-      initial.pstate_sm != expected.pstate_sm ||
-      initial.pstate_za != expected.pstate_za ||
-      initial.pstate_daif_access != expected.pstate_daif_access ||
-      initial.pstate_daif != expected.pstate_daif ||
-      initial.exclusive_address != expected.exclusive_address ||
-      initial.exclusive_key != expected.exclusive_key ||
-      initial.exclusive_value != expected.exclusive_value ||
-      initial.exclusive_value2 != expected.exclusive_value2 ||
-      initial.exclusive_version != expected.exclusive_version ||
-      initial.exclusive_size != expected.exclusive_size ||
-      initial.gcs_pointer != expected.gcs_pointer ||
-      initial.gcs_implemented != expected.gcs_implemented ||
-      initial.gcs_push_enabled != expected.gcs_push_enabled ||
-      initial.gcs_store_enabled != expected.gcs_store_enabled ||
-      initial.pointer_auth_keys != expected.pointer_auth_keys ||
-      initial.pointer_authentication_enabled !=
-          expected.pointer_authentication_enabled;
-}
-
-[[nodiscard]] bool native_fp_state_is_round_trippable(
-    const arm64::CpuState &initial, const arm64::CpuState &expected,
-    const ::uml::cpu::HostCapabilities &host) noexcept {
-  constexpr std::uint32_t nzcv_mask = 0xf000'0000U;
-  constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
-  constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
-  constexpr std::uint32_t afp_control_mask = 0x0000'0007U;
-  if (((initial.nzcv | expected.nzcv) & ~nzcv_mask) != 0U ||
-      ((initial.fpcr | expected.fpcr) & ~fpcr_mask) != 0U ||
-      ((initial.fpsr | expected.fpsr) & ~fpsr_mask) != 0U)
-    return false;
-  return host.has(ArmFeature::afp) ||
-      ((initial.fpcr | expected.fpcr) & afp_control_mask) == 0U;
-}
-
-[[nodiscard]] constexpr bool native_literal_access(
-    const std::uint32_t instruction) noexcept {
-  return (instruction & 0x1f00'0000U) == 0x1800'0000U;
-}
-
-[[nodiscard]] constexpr bool native_pc_relative_address(
-    const std::uint32_t instruction) noexcept {
-  return (instruction & 0x1f00'0000U) == 0x1000'0000U;
-}
-
-[[nodiscard]] constexpr bool native_may_reference_platform_register(
-    const std::uint32_t instruction) noexcept {
-  return (instruction & 31U) == 18U ||
-      ((instruction >> 5U) & 31U) == 18U ||
-      ((instruction >> 10U) & 31U) == 18U ||
-      ((instruction >> 16U) & 31U) == 18U;
-}
-
-[[nodiscard]] constexpr bool native_event_is_representable(
-    const ExpectedEvent event) noexcept {
-  switch (event) {
-  case ExpectedEvent::system_call:
-  case ExpectedEvent::memory_fault:
-  case ExpectedEvent::illegal_instruction:
-  case ExpectedEvent::breakpoint:
-    return true;
-  case ExpectedEvent::gcs_fault:
-  case ExpectedEvent::floating_point_trap:
-  case ExpectedEvent::pc_alignment:
-  case ExpectedEvent::instruction_budget:
-  case ExpectedEvent::fatal:
-    return false;
-  }
-  return false;
-}
-
-[[nodiscard]] constexpr native_oracle::Event native_expected_event(
-    const ExpectedEvent event) noexcept {
-  switch (event) {
-  case ExpectedEvent::system_call:
-    return native_oracle::Event::completed;
-  case ExpectedEvent::memory_fault:
-    return native_oracle::Event::memory_fault;
-  case ExpectedEvent::illegal_instruction:
-    return native_oracle::Event::illegal_instruction;
-  case ExpectedEvent::breakpoint:
-    return native_oracle::Event::breakpoint;
-  case ExpectedEvent::gcs_fault:
-  case ExpectedEvent::floating_point_trap:
-  case ExpectedEvent::pc_alignment:
-  case ExpectedEvent::instruction_budget:
-  case ExpectedEvent::fatal:
-    return native_oracle::Event::none;
-  }
-  return native_oracle::Event::none;
-}
-
-[[nodiscard]] constexpr std::size_t native_expected_retirement(
-    const ExpectedEvent event) noexcept {
-  return event == ExpectedEvent::system_call ||
-                 event == ExpectedEvent::breakpoint
-             ? 1U
-             : 0U;
-}
-
-struct NativeAddressOperands final {
-  std::uint32_t input_register_mask{};
-  std::uint32_t output_register_mask{};
-  std::uint32_t output_pc_relative_register_mask{};
-  bool input_stack_pointer{};
-  bool output_stack_pointer{};
-  bool unsupported{};
-  bool unavailable_geometry{};
-};
-
-[[nodiscard]] bool native_declared_pointer(
-    const std::uint64_t value,
-    const std::span<const MemoryRegion> memory) noexcept {
-  constexpr std::uint64_t low_address_mask = 0x00ff'ffff'ffff'ffffULL;
-  const auto low = value & low_address_mask;
-  if (low >= code_base &&
-      low <= code_base + DARWIN_UML_GUEST_PAGE_SIZE)
-    return true;
-  for (const auto &region : memory) {
-    if (region.initial.size() >
-        std::numeric_limits<std::uint64_t>::max() - region.address)
-      continue;
-    const auto end = region.address + region.initial.size();
-    if (low >= region.address && low <= end)
-      return true;
-  }
-  return false;
-}
-
-[[nodiscard]] NativeAddressOperands native_address_operands(
-    const InstructionCase &test_case) noexcept {
-  NativeAddressOperands result;
-  if (native_pc_relative_address(test_case.instruction)) {
-    const auto destination = test_case.instruction & 31U;
-    if (destination < 31U)
-      result.output_pc_relative_register_mask |=
-          std::uint32_t{1} << destination;
-  }
-  if ((test_case.instruction & 0xfc00'0000U) == 0x9400'0000U)
-    result.output_pc_relative_register_mask |= std::uint32_t{1} << 30U;
-
-  const bool accesses_memory = !test_case.memory.empty() ||
-      test_case.event == ExpectedEvent::memory_fault;
-  if (!accesses_memory)
-    return result;
-  if (native_literal_access(test_case.instruction) ||
-      has_feature(test_case.native.features(), ArmFeature::mops)) {
-    result.unsupported = true;
-    return result;
-  }
-
-  /* Every non-literal A64 load/store allocation uses Rn at bits [9:5].
-   * Register-offset operands and transfer data remain guest scalar values;
-   * relocating those address-looking values would corrupt valid data. */
-  const auto base = (test_case.instruction >> 5U) & 31U;
-  if (base == 31U) {
-    result.input_stack_pointer = true;
-    result.output_stack_pointer = true;
-    result.unavailable_geometry =
-        !native_declared_pointer(test_case.initial.sp, test_case.memory);
-  } else {
-    result.input_register_mask |= std::uint32_t{1} << base;
-    result.output_register_mask |= std::uint32_t{1} << base;
-    result.unavailable_geometry = !native_declared_pointer(
-        test_case.initial.registers[base], test_case.memory);
-  }
-  if (test_case.compare_fault)
-    result.unavailable_geometry = result.unavailable_geometry ||
-        !native_declared_pointer(test_case.fault.address, test_case.memory);
-  return result;
-}
-
-[[nodiscard]] constexpr bool native_exclusive_access(
-    const std::uint32_t instruction) noexcept {
-  return (instruction & 0x3f00'0000U) == 0x0800'0000U;
-}
-
-[[nodiscard]] bool native_exact_fault_event_is_unrepresentable(
-    const InstructionCase &test_case) noexcept {
-  /* Darwin does not provide the accessed address in siginfo for every
-   * alignment fault raised by an exclusive access. An in-range expected fault
-   * is therefore not an exact native fault observation even though the signal
-   * itself is safely contained in the child. */
-  return test_case.event == ExpectedEvent::memory_fault &&
-      test_case.compare_fault &&
-      native_exclusive_access(test_case.instruction) &&
-      native_declared_pointer(test_case.fault.address, test_case.memory);
-}
-
-class NativeMemoryImage final {
-public:
-  explicit NativeMemoryImage(const std::span<const MemoryRegion> source) {
-    tags_.reserve(source.size());
-    regions_.reserve(source.size());
-    for (const auto &region : source) {
-      auto &tags = tags_.emplace_back();
-      tags.reserve(region.initial_tags.size());
-      for (const auto tag : region.initial_tags)
-        tags.push_back({.offset = tag.offset, .value = tag.value});
-      regions_.push_back({
-          .address = region.address,
-          .initial = region.initial,
-          .initial_tags = tags,
-          .readable = region.readable,
-          .writable = region.writable,
-          .executable = region.executable,
-          .capture_after_execution = true,
-          .guest_code = region.guest_code,
-          .guest_writable = region.guest_writable,
-      });
-    }
-  }
-
-  [[nodiscard]] std::span<const native_oracle::MemoryRegion>
-  regions() const noexcept {
-    return regions_;
-  }
-
-private:
-  std::vector<std::vector<native_oracle::AllocationTag>> tags_;
-  std::vector<native_oracle::MemoryRegion> regions_;
-};
-
-[[nodiscard]] bool native_memory_has_tags(
-    const std::span<const MemoryRegion> memory) noexcept {
-  return std::ranges::any_of(memory, [](const MemoryRegion &region) {
-    return !region.initial_tags.empty() || !region.expected_tags.empty();
-  });
-}
-
-void require_native_memory(
-    const InstructionCase &test_case,
-    const native_oracle::Observation &observation) {
-  if (observation.memory.size() != test_case.memory.size())
-    fail(test_case.name, "native-hardware", test_case.instruction,
-         "memory observation count");
-  for (std::size_t index = 0; index < test_case.memory.size(); ++index) {
-    const auto &expected_region = test_case.memory[index];
-    const auto &actual_region = observation.memory[index];
-    const auto expected = expected_region.expected.empty()
-        ? expected_region.initial
-        : expected_region.expected;
-    if (!actual_region.captured ||
-        actual_region.address != expected_region.address ||
-        !std::ranges::equal(actual_region.bytes, expected))
-      fail(test_case.name, "native-hardware", test_case.instruction,
-           "memory result");
-  }
-}
-
-} // namespace
-
 class EngineHarness::Implementation final {
 public:
   explicit Implementation(EngineHarnessOptions options)
@@ -1261,7 +821,6 @@ public:
             ? code_base + (direct_system_call ? 1U : 2U) *
                               sizeof(std::uint32_t)
             : code_base;
-    const std::array evidence_words{test_case.instruction};
     check_program({
         .name = test_case.name,
         .code = std::span<const ProgramWord>{code},
@@ -1278,181 +837,12 @@ public:
         .validator_relation_id = test_case.validator_relation_id,
         .execution_context = test_case.execution_context,
         .before_engine = test_case.before_engine,
-        .before_engine_effect_id = test_case.before_engine_effect_id,
         .after_engine = test_case.after_engine,
-        .after_engine_effect_id = test_case.after_engine_effect_id,
         .expected_instructions = instruction_count_expectation(test_case),
-    }, evidence_words, InstructionNativeScope::instruction, location);
-
-    /* Corpus export replaces every per-case side channel, including the
-     * native hardware oracle, with its own sampled three-lane verification. */
-    if (corpus_export::Exporter::active() != nullptr)
-      return;
-
-    auto selected = native_oracle::select_native_allocations(
-        test_case.instruction, native_oracle::SelectionScope::instruction,
-        location);
-    std::vector<std::string_view> oracle_case_ids{
-        selected.allocation_status_ids.begin(),
-        selected.allocation_status_ids.end()};
-    if (!test_case.native_oracle_case_id.empty() &&
-        std::ranges::find(oracle_case_ids,
-                          test_case.native_oracle_case_id) ==
-            oracle_case_ids.end())
-      oracle_case_ids.push_back(test_case.native_oracle_case_id);
-    if (!oracle_case_ids.empty())
-      check_native_instruction(test_case, oracle_case_ids, location);
-  }
-
-  void check_native_instruction(
-      const InstructionCase &test_case,
-      const std::span<const std::string_view> oracle_case_ids,
-      const std::source_location &location) {
-    auto native_initial = test_case.initial;
-    native_initial.pc = code_base;
-    native_initial.access_fp_state();
-    auto instruction_expected = test_case.expected;
-    instruction_expected.pc =
-        test_case.event == ExpectedEvent::system_call
-            ? code_base + sizeof(std::uint32_t)
-            : code_base;
-    instruction_expected.access_fp_state();
-
-    NativeMemoryImage native_memory{test_case.memory};
-    const auto address_operands = native_address_operands(test_case);
-    const auto &host =
-        ::uml::platform::apple::probed_host_capabilities();
-    const bool unavailable_state =
-        native_requires_unavailable_feature_state(
-            test_case.native.features()) ||
-        native_unrepresented_state_changes(native_initial,
-                                             instruction_expected) ||
-        !native_fp_state_is_round_trippable(
-            native_initial, instruction_expected, host) ||
-        native_memory_has_tags(test_case.memory) ||
-        address_operands.unsupported;
-    native_oracle::Request request{
-        .oracle_case_id = oracle_case_ids.front(),
-        .instruction = test_case.instruction,
-        .guest_pc = code_base,
-        .initial = native_initial,
-        .required_features = test_case.native.features(),
-        .memory = native_memory.regions(),
-        .invalid_encoding = test_case.invalid_encoding,
-        .uses_platform_register =
-            native_may_reference_platform_register(test_case.instruction),
-        .requires_unavailable_system_state = unavailable_state,
-        .requires_unsupported_event =
-            !native_event_is_representable(test_case.event) ||
-            native_exact_fault_event_is_unrepresentable(test_case),
-        .requires_unavailable_memory_geometry =
-            address_operands.unavailable_geometry ||
-            native_literal_access(test_case.instruction),
-        .requires_exact_memory_boundaries =
-            test_case.event == ExpectedEvent::memory_fault &&
-            test_case.compare_fault && !test_case.memory.empty(),
-        .input_address_register_mask =
-            address_operands.input_register_mask,
-        .output_address_register_mask =
-            address_operands.output_register_mask,
-        .output_pc_relative_register_mask =
-            address_operands.output_pc_relative_register_mask,
-        .input_stack_pointer_is_address =
-            address_operands.input_stack_pointer,
-        .output_stack_pointer_is_address =
-            address_operands.output_stack_pointer,
-    };
-    const auto observation = native_oracle::execute(request, host);
-
-    if (observation.eligibility == native_oracle::Eligibility::eligible) {
-      if (observation.status != native_oracle::ExecutionStatus::executed)
-        fail(test_case.name, "native-hardware", test_case.instruction,
-             "native evidence infrastructure failure");
-      if (observation.event != native_expected_event(test_case.event)) {
-        std::fprintf(stderr,
-                     "expected native event %.*s, actual event %.*s\n",
-                     static_cast<int>(native_oracle::name(
-                         native_expected_event(test_case.event)).size()),
-                     native_oracle::name(
-                         native_expected_event(test_case.event)).data(),
-                     static_cast<int>(native_oracle::name(
-                         observation.event).size()),
-                     native_oracle::name(observation.event).data());
-        fail(test_case.name, "native-hardware", test_case.instruction,
-             "unexpected instruction-boundary event");
-      }
-      if (observation.retired_instructions !=
-          native_expected_retirement(test_case.event))
-        fail(test_case.name, "native-hardware", test_case.instruction,
-             "instruction-boundary retirement");
-
-      auto compared_observed = observation.state;
-      compared_observed.access_fp_state();
-      if (test_case.validator != nullptr)
-        test_case.validator(native_initial, instruction_expected,
-                            compared_observed, test_case.name,
-                            "native-hardware", test_case.instruction);
-      else
-        require_architecture_equal(
-            instruction_expected, compared_observed, test_case.name,
-            "native-hardware/instruction-boundary",
-            test_case.instruction);
-      if (test_case.compare_fault &&
-          observation.fault_address != test_case.fault.address)
-        fail(test_case.name, "native-hardware", test_case.instruction,
-             "fault address");
-      require_native_memory(test_case, observation);
-    }
-
-    for (const auto oracle_case_id : oracle_case_ids)
-      native_oracle::record_observation(
-          oracle_case_id, test_case.name, test_case.instruction,
-          test_case.native.features(), host, request, observation, 1,
-          location);
-  }
-
-  void record_native_program_scope(
-      const ProgramCase &test_case,
-      const std::span<const std::uint32_t> evidence_words,
-      const std::source_location &location) {
-    auto native_initial = test_case.initial;
-    native_initial.pc = code_base + test_case.entry_offset;
-    native_initial.access_fp_state();
-    NativeMemoryImage native_memory{test_case.memory};
-    const auto &host =
-        ::uml::platform::apple::probed_host_capabilities();
-    for (const auto instruction : evidence_words) {
-      auto selected = native_oracle::select_native_allocations(
-          instruction, native_oracle::SelectionScope::program, location);
-      if (selected.allocation_status_ids.empty())
-        continue;
-      native_oracle::Request request{
-          .oracle_case_id = selected.allocation_status_ids.front(),
-          .instruction = instruction,
-          .guest_pc = native_initial.pc,
-          .initial = native_initial,
-          .required_features = test_case.native.features(),
-          .memory = native_memory.regions(),
-          .invalid_encoding = test_case.invalid_encoding,
-          .program_scope = true,
-      };
-      const auto observation = native_oracle::execute(request, host);
-      if (observation.eligibility !=
-              native_oracle::Eligibility::program_scope ||
-          observation.status != native_oracle::ExecutionStatus::skipped)
-        fail(test_case.name, "native-hardware", instruction,
-             "program scope was not skipped deterministically");
-      for (const auto &oracle_case_id : selected.allocation_status_ids)
-        native_oracle::record_observation(
-            oracle_case_id, test_case.name, instruction,
-            test_case.native.features(), host, request, observation, 1,
-            location);
-    }
+    }, location);
   }
 
   void check_program(const ProgramCase &test_case,
-                     std::span<const std::uint32_t> evidence_words,
-                     InstructionNativeScope native_scope,
                      const std::source_location &location) {
     if (test_case.expected_instructions.has_value() &&
         test_case.expected_instruction_pattern.has_value())
@@ -1506,26 +896,8 @@ public:
 
     auto initial = test_case.initial;
     initial.pc = code_base + test_case.entry_offset;
-    auto digest_initial = initial;
-    digest_initial.access_fp_state();
-    const auto initial_state_digest =
-        instruction_evidence::architecture_state_digest(digest_initial);
-    const auto initial_memory_digest =
-        memory_initial_digest(test_case.memory);
-
-    auto expected = test_case.expected;
-    auto digest_expected = expected;
-    digest_expected.access_fp_state();
-    const auto expected_state_digest =
-        instruction_evidence::architecture_state_digest(digest_expected);
-    const auto expected_memory_digest =
-        memory_expectation_digest(test_case.memory);
-    const auto expected_retirement = retirement_expectation(test_case);
-    const auto expected_fault = fault_expectation(test_case);
-    const auto expected_state_oracle =
-        state_oracle_identity(test_case, location);
+    const auto &expected = test_case.expected;
     std::optional<std::size_t> interpreter_instructions;
-    InstructionEngineEvidence engine_evidence;
 
     for (const auto engine :
          {Engine::interpreter, Engine::gadgets, Engine::jit}) {
@@ -1535,15 +907,12 @@ public:
                "required CPU engine is unavailable");
         ++counts_.jit_skipped;
         ++counts_.jit_unavailable;
-        engine_evidence.jit = InstructionEngineResult::unavailable;
         continue;
       }
       if (engine == Engine::jit && !test_case.invalid_encoding &&
           !host_supports(test_case.native)) {
         ++counts_.jit_skipped;
         ++counts_.jit_skipped_host_feature;
-        engine_evidence.jit =
-            InstructionEngineResult::skipped_host_feature;
         continue;
       }
 
@@ -1581,21 +950,15 @@ public:
         outcome = run_engine(engine, initial, memory, generation_,
                              *selected_engine);
       }
-      const auto evidence_result = outcome.instructions == 0
-          ? InstructionEngineResult::executed_not_retired
-          : InstructionEngineResult::executed_retired;
       switch (engine) {
       case Engine::interpreter:
         ++counts_.interpreter;
-        engine_evidence.interpreter = evidence_result;
         break;
       case Engine::gadgets:
         ++counts_.gadgets;
-        engine_evidence.gadgets = evidence_result;
         break;
       case Engine::jit:
         ++counts_.jit;
-        engine_evidence.jit = evidence_result;
         break;
       }
       if (test_case.after_engine != nullptr)
@@ -1716,60 +1079,6 @@ public:
         region->require_expected(test_case.name, current_engine,
                                  diagnostic_instruction);
     }
-    record_instruction_input_materialization(
-        {.case_name = test_case.name,
-         .code = test_case.code,
-         .entry_offset = test_case.entry_offset,
-         .evidence_words = evidence_words,
-         .installed_code_page = installed_page_,
-         .initial = digest_initial,
-         .expected = digest_expected,
-         .memory = test_case.memory,
-         .expected_event = event_name(test_case.event),
-         .expected_retirement = expected_retirement,
-         .instruction_budget = execution_limit,
-         .expected_state_oracle = expected_state_oracle,
-         .expected_fault = expected_fault,
-         .expected_syndrome = test_case.syndrome,
-         .native = test_case.native,
-         .native_scope = native_scope,
-         .invalid_encoding = test_case.invalid_encoding,
-         .has_custom_validator = test_case.validator != nullptr,
-         .has_before_engine_hook = test_case.before_engine != nullptr,
-         .has_after_engine_hook = test_case.after_engine != nullptr,
-         .validator_relation_id = test_case.validator_relation_id,
-         .before_engine_effect_id = test_case.before_engine_effect_id,
-         .after_engine_effect_id = test_case.after_engine_effect_id,
-         .initial_state_digest = initial_state_digest,
-         .initial_memory_digest = initial_memory_digest,
-         .expected_state_digest = expected_state_digest,
-         .expected_memory_digest = expected_memory_digest,
-         .engines = engine_evidence,
-         .native_observation = {
-             .required = test_case.native.features(),
-             .observed = ::uml::platform::apple::probed_host_capabilities()
-                             .supported}},
-        location);
-    for (const auto instruction : evidence_words)
-      record_instruction_evidence(test_case.name, instruction,
-                                  test_case.invalid_encoding, engine_evidence,
-                                  {.required = test_case.native.features(),
-                                   .observed = ::uml::platform::apple::
-                                       probed_host_capabilities().supported},
-                                  native_scope,
-                                  {.event = event_name(test_case.event),
-                                   .retirement = expected_retirement,
-                                   .state_oracle = expected_state_oracle,
-                                   .initial_state_digest = initial_state_digest,
-                                   .initial_memory_digest =
-                                       initial_memory_digest,
-                                   .state_digest = expected_state_digest,
-                                   .memory_digest = expected_memory_digest,
-                                   .fault = expected_fault,
-                                   .syndrome = test_case.syndrome},
-                                  location);
-    if (native_scope == InstructionNativeScope::program)
-      record_native_program_scope(test_case, evidence_words, location);
   }
 
   [[nodiscard]] const EngineTestCounts &counts() const noexcept {
@@ -1864,7 +1173,7 @@ private:
   }
 
   /* Runs one case through every lane with the ordinary checks, but without
-   * counts, evidence, or native-oracle side effects. */
+   * updating the harness counts. */
   [[nodiscard]] corpus_export::ExportResult
   verify_lanes(const ProgramCase &test_case,
                std::uint32_t diagnostic_instruction) {
@@ -2038,22 +1347,7 @@ void EngineHarness::check(const InstructionCase &test_case,
 void EngineHarness::check_program(const ProgramCase &test_case,
                                   const std::source_location location) {
   const CheckScope scope{test_case.name};
-  /* The declared entry word is necessarily attempted by every engine. A
-   * terminal result and aggregate retirement count do not prove that any
-   * other word in a branching program was reached, so only the entry may
-   * contribute inventory evidence without an explicit instruction trace. */
-  const auto entry = std::find_if(
-      test_case.code.begin(), test_case.code.end(), [&](const ProgramWord word) {
-        return word.offset == test_case.entry_offset;
-      });
-  if (entry == test_case.code.end()) {
-    implementation_->check_program(
-        test_case, {}, InstructionNativeScope::program, location);
-    return;
-  }
-  const std::array evidence_words{entry->instruction};
-  implementation_->check_program(
-      test_case, evidence_words, InstructionNativeScope::program, location);
+  implementation_->check_program(test_case, location);
 }
 
 void EngineHarness::check_one(std::string_view name, std::uint32_t instruction,

@@ -195,35 +195,3 @@ if(NOT CONFIGURE_COMBINED MATCHES
     message(FATAL_ERROR
         "Raw configure fixture failed for the wrong reason:\n${CONFIGURE_COMBINED}")
 endif()
-
-# A target-backed unit command is wrapped by the instruction-evidence runner.
-# Building that unit target directly must therefore build the wrapper too;
-# suite aggregates are not a prerequisite for running one registered test.
-set(UNIT_DEPENDENCY_FIXTURE "${TEST_ROOT}/unit-dependency-source")
-file(MAKE_DIRECTORY "${UNIT_DEPENDENCY_FIXTURE}")
-file(WRITE "${UNIT_DEPENDENCY_FIXTURE}/runner.c" "int main(void) { return 0; }\n")
-file(WRITE "${UNIT_DEPENDENCY_FIXTURE}/sample.c" "int main(void) { return 0; }\n")
-file(WRITE "${UNIT_DEPENDENCY_FIXTURE}/CMakeLists.txt"
-    "cmake_minimum_required(VERSION 3.27)\n"
-    "project(unit_dependency_fixture LANGUAGES C)\n"
-    "enable_testing()\n"
-    "include(\"${UML_TESTING_MODULE}\")\n"
-    "add_executable(uml_instruction_evidence_test_runner runner.c)\n"
-    "add_executable(sample_unit sample.c)\n"
-    "uml_add_unit_test(NAME sample-unit COMMAND sample_unit)\n"
-    "get_property(dependencies TARGET sample_unit "
-        "PROPERTY MANUALLY_ADDED_DEPENDENCIES)\n"
-    "if(NOT uml_instruction_evidence_test_runner IN_LIST dependencies)\n"
-    "  message(FATAL_ERROR \"unit target lacks evidence-runner dependency\")\n"
-    "endif()\n")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" -S "${UNIT_DEPENDENCY_FIXTURE}"
-        -B "${TEST_ROOT}/unit-dependency-build"
-    RESULT_VARIABLE UNIT_DEPENDENCY_RESULT
-    OUTPUT_VARIABLE UNIT_DEPENDENCY_OUTPUT
-    ERROR_VARIABLE UNIT_DEPENDENCY_ERROR)
-if(NOT UNIT_DEPENDENCY_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "Unit target dependency fixture failed:\n"
-        "${UNIT_DEPENDENCY_OUTPUT}\n${UNIT_DEPENDENCY_ERROR}")
-endif()
