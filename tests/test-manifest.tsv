@@ -715,7 +715,6 @@ dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tool
 dependency-apple-gpu-vulkan-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh	tooling	retained
 dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained
 guest-overlay-systemd-smoke	tests/integration	integration	retained
-guest-interpreter-smoke	tests/integration/jit	integration	retained
 guest-gadgets-smoke	tests/integration/jit	integration	retained
 guest-jit-smoke	tests/integration/jit	integration	retained
 guest-slirp-network	tests/integration/network	integration	retained

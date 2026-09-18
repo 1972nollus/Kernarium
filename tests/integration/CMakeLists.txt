@@ -147,10 +147,7 @@ done'"
     RESOURCE_GROUPS cpus:2)
 
 function(uml_add_guest_engine_smoke ENGINE)
-    set(_labels guest cpu ${ENGINE} smoke)
-    if(NOT ENGINE STREQUAL "interpreter")
-        list(APPEND _labels dynamic-code)
-    endif()
+    set(_labels guest cpu ${ENGINE} dynamic-code smoke)
     uml_add_guest_integration_test(
         NAME guest-${ENGINE}-smoke
         COMMAND ${Python3_EXECUTABLE}
@@ -164,7 +161,6 @@ function(uml_add_guest_engine_smoke ENGINE)
         RESOURCE_GROUPS cpus:2)
 endfunction()
 
-uml_add_guest_engine_smoke(interpreter)
 uml_add_guest_engine_smoke(gadgets)
 uml_add_guest_engine_smoke(jit)
 

@@ -11,8 +11,6 @@ std::unique_ptr<CpuEngine> make_cpu_engine(
 	EngineKind kind, EngineConfiguration configuration)
 {
 	switch (kind) {
-	case EngineKind::interpreter:
-		return arm64::detail::make_interpreter_engine(configuration);
 	case EngineKind::gadgets:
 		return arm64::detail::make_gadget_engine(configuration);
 	case EngineKind::jit:
@@ -24,7 +22,6 @@ std::unique_ptr<CpuEngine> make_cpu_engine(
 bool cpu_engine_available(EngineKind kind) noexcept
 {
 	switch (kind) {
-	case EngineKind::interpreter:
 	case EngineKind::gadgets:
 		return true;
 	case EngineKind::jit:

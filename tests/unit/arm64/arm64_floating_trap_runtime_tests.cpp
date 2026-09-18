@@ -31,7 +31,6 @@ void public_boundary_reports_precise_metadata_for_every_engine()
 	JitMapping mapping{generation, base, backing, 1};
 
 	const std::array engines{
-		uml::runtime::ExecutionEngine::interpreter,
 		uml::runtime::ExecutionEngine::gadgets,
 		uml::runtime::ExecutionEngine::jit,
 	};

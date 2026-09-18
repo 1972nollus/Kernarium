@@ -1123,7 +1123,7 @@ def main() -> int:
     parser.add_argument("--dpi", type=int, default=160)
     parser.add_argument(
         "--engine",
-        choices=("jit", "gadgets", "interpreter"),
+        choices=("jit", "gadgets"),
         default="jit",
     )
     parser.add_argument(

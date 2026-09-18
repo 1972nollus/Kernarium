@@ -129,7 +129,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument(
         "--engine",
-        choices=("gadgets", "jit", "interpreter"),
+        choices=("gadgets", "jit"),
         default="gadgets",
     )
     boot_mode = parser.add_mutually_exclusive_group()

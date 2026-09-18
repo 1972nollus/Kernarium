@@ -9,7 +9,6 @@
         $<TARGET_OBJECTS:uml_run_routing>
         $<TARGET_OBJECTS:uml_static_runtime>
         $<TARGET_OBJECTS:uml_cpu_engine_factory>
-        $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
         $<TARGET_OBJECTS:uml_arm64_gadget_engine>
         $<TARGET_OBJECTS:uml_arm64_jit_engine>
         $<TARGET_OBJECTS:uml_arm64_gadget_executor>
@@ -64,10 +63,14 @@
         set(_uml_instruction_evidence_zlib uml_instruction_evidence_zlib)
     endif()
 
+    # The reference oracle lane is a test-only adapter over the production
+    # instruction Dispatcher. It belongs to this support target and must not
+    # be reachable from a production engine factory or target.
     add_library(uml_arm64_engine_test_support STATIC
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_evidence.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization.cpp)
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_instruction_materialization.cpp
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/reference_engine.cpp)
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
         UML::Emulator
         ${_uml_instruction_evidence_zlib}

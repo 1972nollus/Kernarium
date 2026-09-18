@@ -6,7 +6,7 @@
 api/       installed C API and ABI identity
 platform/  Apple capabilities, VM, files, signals, and sockets
 memory/    guest address spaces, software MMU, and TLBs
-cpu/       interpreter, gadgets, JIT, and neutral engine selection
+cpu/       gadgets, JIT, shared decode, and neutral engine selection
 runtime/   guest-entry composition
 device/    block, console, GPU, input, audio, and network providers
 emulator/  options and product composition
@@ -92,9 +92,11 @@ file-backed.
 
 ## CPU engines
 
-Engine selection is explicit. The interpreter is the reference oracle,
-gadgets execute non-executable data streams of precompiled entries, and the JIT
-publishes native code only through `cpu/arm64/jit/jit_arena.cpp`.
+Engine selection is explicit. Gadgets execute non-executable data streams of
+precompiled entries, and the JIT publishes native code only through
+`cpu/arm64/jit/jit_arena.cpp`. The shared arm64 `Dispatcher` decodes and
+executes single instructions for the JIT's semantic memory path and for the
+A64 conformance reference lane; it is not a selectable engine.
 
 The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
 while UML kernel-mode execution remains arm64. The kernel slice cannot load

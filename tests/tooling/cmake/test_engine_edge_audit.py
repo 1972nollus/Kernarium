@@ -18,12 +18,10 @@ from pathlib import Path
 REPRESENTATIVES = {
     "native": ("uml_arm64_jit_executor", "jit"),
     "gadget": ("uml_arm64_gadgets", "gadgets"),
-    "interpreter": ("uml_arm64_interpreter_engine", "interpreter"),
 }
 INTERFACE_REPRESENTATIVES = {
     "native": "uml_cpu_jit_component",
     "gadget": "uml_cpu_gadget_component",
-    "interpreter": "uml_cpu_interpreter_component",
 }
 ALL_KIND_REPRESENTATIVES = {
     **INTERFACE_REPRESENTATIVES,

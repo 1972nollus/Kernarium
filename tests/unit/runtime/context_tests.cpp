@@ -42,7 +42,7 @@ void require(bool condition, const char *message)
 class DestructionCounterEngine final : public uml::cpu::CpuEngine {
 public:
 	explicit DestructionCounterEngine(std::atomic_size_t &counter,
-		EngineKind kind = EngineKind::interpreter) noexcept
+		EngineKind kind = EngineKind::gadgets) noexcept
 		: counter_{counter}, kind_{kind}
 	{
 	}
@@ -84,7 +84,7 @@ public:
 
 	[[nodiscard]] uml::cpu::EngineKind kind() const noexcept override
 	{
-		return uml::cpu::EngineKind::interpreter;
+		return uml::cpu::EngineKind::gadgets;
 	}
 
 	[[nodiscard]] uml::cpu::ExecutionResult run(
@@ -184,7 +184,7 @@ public:
 
 	[[nodiscard]] uml::cpu::EngineKind kind() const noexcept override
 	{
-		return uml::cpu::EngineKind::interpreter;
+		return uml::cpu::EngineKind::gadgets;
 	}
 
 	[[nodiscard]] uml::cpu::ExecutionResult run(
@@ -313,7 +313,7 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 			*main_state, generation, pre_run_sequences.mapping_changes,
 			guest_address, pre_run_value);
 		main_state->cpu.registers[0] = main_marker;
-		main_state->engines.slot<EngineKind::interpreter>() =
+		main_state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(destroyed);
 	}
 
@@ -342,7 +342,7 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 						pre_run_sequences.mapping_changes,
 						guest_address, pre_run_value);
 				state->cpu.registers[0] = marker;
-				state->engines.slot<EngineKind::interpreter>() =
+				state->engines.slot<EngineKind::gadgets>() =
 					std::make_unique<DestructionCounterEngine>(destroyed);
 			}
 			{
@@ -454,7 +454,7 @@ void test_rejected_begin_preserves_active_execution_state()
 		auto state = context.thread_execution_state();
 		state_address = state.operator->();
 		state->cpu.registers[0] = 0x1234;
-		state->engines.slot<EngineKind::interpreter>() =
+		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(destroyed);
 	}
 	context.request_stop();
@@ -466,7 +466,7 @@ void test_rejected_begin_preserves_active_execution_state()
 			"rejected admission changed active run control state");
 		require(preserved.operator->() == state_address &&
 			preserved->cpu.registers[0] == 0x1234 &&
-			preserved->engines.slot<EngineKind::interpreter>() != nullptr &&
+			preserved->engines.slot<EngineKind::gadgets>() != nullptr &&
 			destroyed.load(std::memory_order_acquire) == 0,
 			"rejected admission changed active execution state");
 	}
@@ -492,7 +492,7 @@ void test_context_destruction_retires_state_before_domain()
 	{
 		uml::runtime::Context context;
 		auto state = context.thread_execution_state();
-		state->engines.slot<EngineKind::interpreter>() =
+		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DomainRetirementObserverEngine>(
 				observed_retirement);
 	}
@@ -534,18 +534,13 @@ void test_named_engine_slots_share_execution_state_lifetime()
 	require(context.begin_run(), "engine-slot run was not admitted");
 	{
 		auto state = context.thread_execution_state();
-		state->engines.slot<EngineKind::interpreter>() =
-			std::make_unique<DestructionCounterEngine>(
-				destroyed, EngineKind::interpreter);
 		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(
 				destroyed, EngineKind::gadgets);
 		state->engines.slot<EngineKind::jit>() =
 			std::make_unique<DestructionCounterEngine>(
 				destroyed, EngineKind::jit);
-		require(state->engines.active_count() == 3 &&
-			state->engines.slot<EngineKind::interpreter>()->kind() ==
-				EngineKind::interpreter &&
+		require(state->engines.active_count() == 2 &&
 			state->engines.slot<EngineKind::gadgets>()->kind() ==
 				EngineKind::gadgets &&
 			state->engines.slot<EngineKind::jit>()->kind() ==
@@ -553,7 +548,7 @@ void test_named_engine_slots_share_execution_state_lifetime()
 			"engine kinds were not stored in their named runtime slots");
 	}
 	context.end_run();
-	require(destroyed.load(std::memory_order_acquire) == 3,
+	require(destroyed.load(std::memory_order_acquire) == 2,
 		"run retirement did not destroy all named engine slots");
 
 	require(context.begin_run(), "engine-slot retry was not admitted");
@@ -583,7 +578,7 @@ void test_run_retirement_waits_for_execution_state_access()
 	std::thread holder{[&] {
 		auto state = context.thread_execution_state();
 		state->cpu.registers[0] = 0x9876;
-		state->engines.slot<EngineKind::interpreter>() =
+		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(destroyed);
 		{
 			std::lock_guard lock{mutex};
@@ -594,7 +589,7 @@ void test_run_retirement_waits_for_execution_state_access()
 			std::unique_lock lock{mutex};
 			(void)changed.wait_for(lock, 5s, [&] { return release_access; });
 			state_remained_live = state->cpu.registers[0] == 0x9876 &&
-				state->engines.slot<EngineKind::interpreter>() != nullptr;
+				state->engines.slot<EngineKind::gadgets>() != nullptr;
 		}
 	}};
 	{
@@ -661,7 +656,7 @@ void test_run_admission_waits_for_pre_run_execution_state_access()
 	{
 		auto state = context.thread_execution_state();
 		state->cpu.registers[0] = 0x2468;
-		state->engines.slot<EngineKind::interpreter>() =
+		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(destroyed);
 		beginner = std::thread{[&] {
 			{
@@ -686,7 +681,7 @@ void test_run_admission_waits_for_pre_run_execution_state_access()
 				lock, 100ms, [&] { return admission_finished; });
 		}
 		state_remained_live = state->cpu.registers[0] == 0x2468 &&
-			state->engines.slot<EngineKind::interpreter>() != nullptr &&
+			state->engines.slot<EngineKind::gadgets>() != nullptr &&
 			destroyed.load(std::memory_order_acquire) == 0;
 		domain_changed_while_accessed =
 			context.memory_domain() != pre_run_domain ||
@@ -723,7 +718,7 @@ void test_context_destruction_waits_for_execution_state_access()
 	std::thread holder{[&] {
 		auto state = context_pointer->thread_execution_state();
 		state->cpu.registers[0] = 0x5678;
-		state->engines.slot<EngineKind::interpreter>() =
+		state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<DestructionCounterEngine>(destroyed);
 		{
 			std::lock_guard lock{mutex};
@@ -734,7 +729,7 @@ void test_context_destruction_waits_for_execution_state_access()
 			std::unique_lock lock{mutex};
 			(void)changed.wait_for(lock, 5s, [&] { return release_access; });
 			state_remained_live = state->cpu.registers[0] == 0x5678 &&
-				state->engines.slot<EngineKind::interpreter>() != nullptr;
+				state->engines.slot<EngineKind::gadgets>() != nullptr;
 		}
 	}};
 	{
@@ -876,7 +871,7 @@ void test_next_run_cannot_enter_during_state_retirement()
 	{
 		auto first_state = context.thread_execution_state();
 		first_state->cpu.registers[0] = 0xfeed;
-		first_state->engines.slot<EngineKind::interpreter>() =
+		first_state->engines.slot<EngineKind::gadgets>() =
 			std::make_unique<BlockingRetirementEngine>(interleave);
 	}
 
@@ -951,6 +946,13 @@ void test_next_run_cannot_enter_during_state_retirement()
 		"next run inherited CPU or translated state from the prior run");
 }
 
+/* The gadget engine is always available; the JIT is a host capability. */
+[[nodiscard]] std::size_t expected_engine_slots() noexcept
+{
+	return uml::runtime::execution_engine_available(
+		uml::runtime::ExecutionEngine::jit) ? 2U : 1U;
+}
+
 std::size_t enter_available_engines(uml::runtime::Context &context)
 {
 	darwin_uml_guest_registers registers{};
@@ -958,9 +960,6 @@ std::size_t enter_available_engines(uml::runtime::Context &context)
 	registers.pc = 0x1000;
 	unsigned long tls = 0;
 	(void)darwin_uml_static_enter_guest(
-		&registers, &fp, sizeof(fp), 1, &tls);
-	registers.pc = 0x1000;
-	(void)darwin_uml_interpreter_enter_guest(
 		&registers, &fp, sizeof(fp), 1, &tls);
 	if (uml::runtime::execution_engine_available(
 			uml::runtime::ExecutionEngine::jit)) {
@@ -985,12 +984,12 @@ void test_thread_churn_retires_engine_state()
 		std::thread worker{[&] {
 			engines = enter_available_engines(context);
 			auto state = context.thread_execution_state();
-			state->engines.slot<EngineKind::interpreter>() =
+			state->engines.slot<EngineKind::gadgets>() =
 				std::make_unique<DestructionCounterEngine>(destroyed);
 		}};
 		worker.join();
-		require(engines >= 2,
-			"thread did not enter the gadget and interpreter engines");
+		require(engines == expected_engine_slots(),
+			"thread did not enter every available engine");
 		require(destroyed.load(std::memory_order_acquire) == index + 1,
 			"exited host thread retained CPU, memory, or engine state");
 	}
@@ -1004,7 +1003,7 @@ void test_reused_thread_starts_fresh()
 		uml::runtime::RunScope run{context};
 		require(run.entered(), "first reuse run was not admitted");
 		uml::runtime::ActiveContextScope active{context};
-		require(enter_available_engines(context) >= 2,
+		require(enter_available_engines(context) == expected_engine_slots(),
 			"first reuse run did not create translated engines");
 		auto state = context.thread_execution_state();
 		state->cpu.registers[0] = stale_value;

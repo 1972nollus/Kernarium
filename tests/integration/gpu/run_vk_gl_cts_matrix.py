@@ -449,7 +449,6 @@ def validate_driver_command(
                 f"matrix shard command changed required argument {argument}"
             )
     forbidden = {
-        "--execution-engine=interpreter",
         "--execution-engine=gadgets",
         "--gpu-display=native",
     }

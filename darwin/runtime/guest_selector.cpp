@@ -66,13 +66,12 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 		result |= hwcap_sha3;
 	if (host.sha512)
 		result |= hwcap_sha512;
-	/* SDOT/UDOT/USDOT. All three engines execute this family: the gadget bank
+	/* SDOT/UDOT/USDOT. Both engines execute this family: the gadget bank
 	 * selects native dot gadgets behind `ArmFeature::dotprod`
-	 * (gadget_memory_selection.cpp), the JIT emits it natively behind the same
-	 * predicate (JitCompilerFamilies::emit_simd_dot), and the interpreter
-	 * implements it in software through Dispatcher::simd_dot_product. Gating
-	 * the advertisement on the identical host predicate the two native paths
-	 * use keeps the promise exact: guest libc and guest JITs may select these
+	 * (gadget_memory_selection.cpp) and the JIT emits it natively behind the
+	 * same predicate (JitCompilerFamilies::emit_simd_dot). Gating the
+	 * advertisement on the identical host predicate those native paths use
+	 * keeps the promise exact: guest libc and guest JITs may select these
 	 * opcodes only where an engine has committed to executing them.
 	 */
 	if (host.has(::uml::platform::ArmFeature::dotprod))
@@ -164,8 +163,8 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 */
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
 	unsigned long result = 0;
-	/* SMMLA/UMMLA/USMMLA, reaching Dispatcher::simd_matrix_multiply in the
-	 * interpreter and the native matrix emitters in the other two engines. */
+	/* SMMLA/UMMLA/USMMLA, reaching the native matrix emitters in both
+	 * engines. */
 	if (host.has(::uml::platform::ArmFeature::i8mm))
 		result |= hwcap2_i8mm;
 	/* FRINT32Z/FRINT64Z and friends. */

@@ -4,3 +4,4 @@ version	fingerprint	declaration_sha256	rationale
 4	0xd9a69804d3303044	d9a69804d33030448b780d58c3f553c0e12e4f1e19ab37f89d2719b8b93115f1	Keep conditional JIT profiling diagnostics outside the installed public API
 5	0x9f0c59ba27d03993	9f0c59ba27d039934e630fc94dea959cd0dc2a416e9da72695ba2ce2e565bc0e	Add uml_emulator_sync so an embedding host can flush guest block writes at a lifecycle boundary
 6	0x2aad16d5938772b1	2aad16d5938772b147f221dccdfd0ca30413e44443c80f15ba2f2d61b8758928	Add uml_emulator_quiesce and uml_emulator_resume so an embedding host can leave a guest safely abandonable
+7	0x03a31773555faf7d	03a31773555faf7d0dd633ba5e4f734f09fccebc012eb3ae5f4626aeb29aa89b	Remove UML_EMULATOR_INTERPRETER with the interpreter execution engine; retired numbers are not reused
