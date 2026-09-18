@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "instruction_helpers.hpp"
+#include "instruction_primitives.hpp"
 
 #include <algorithm>
 #include <bit>

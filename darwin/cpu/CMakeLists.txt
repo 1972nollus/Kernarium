@@ -412,7 +412,12 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_executor_linking.cpp
     arm64/jit/jit_linking.cpp
     arm64/jit/jit_publication_state.cpp
+    arm64/jit/jit_semantic_atomic.cpp
+    arm64/jit/jit_semantic_classes.cpp
+    arm64/jit/jit_semantic_control.cpp
+    arm64/jit/jit_semantic_load_store.cpp
     arm64/jit/jit_semantic_memory.cpp
+    arm64/jit/jit_semantic_reservation.cpp
     arm64/jit/jit_shared_translations.cpp)
 if(UML_ENABLE_JIT_PROFILE)
     list(APPEND _uml_cpu_jit_executor_sources
@@ -613,8 +618,7 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
-    $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>)
+    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
 # The CPU-owned implementation carrier deliberately excludes memory objects.
 # Production and test runtime compositions can pair these exact engine objects

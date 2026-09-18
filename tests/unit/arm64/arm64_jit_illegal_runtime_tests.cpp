@@ -2,6 +2,7 @@
 #include "jit_test_support.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
@@ -129,6 +130,43 @@ void supported_prefix_stops_before_illegal_word() {
   executor.end_execution();
 }
 
+void unrouted_semantic_word_is_fatal() {
+  // Each semantic helper executes only the classes generated code routes to
+  // it. Any other word is an internal failure that retires nothing and leaves
+  // guest state untouched; it is never interpreted.
+  namespace arm64 = uml::cpu::arm64;
+  using Helper = std::uint64_t (*)(arm64::CpuState *, uml::memory::Tlb *,
+                                   std::uint32_t) noexcept;
+  constexpr std::uint32_t add_x0_x1_x2 = 0x8b02'0020U;
+  constexpr std::uint32_t store_x0_x1 = 0xf900'0020U;
+  struct Case final {
+    Helper helper;
+    std::uint32_t instruction;
+  };
+  const std::array cases{
+      Case{&arm64::uml_arm64_jit_execute_memory, add_x0_x1_x2},
+      Case{&arm64::uml_arm64_jit_execute_exclusive, store_x0_x1},
+      Case{&arm64::uml_arm64_jit_execute_ordered, store_x0_x1},
+      Case{&arm64::uml_arm64_jit_execute_gcs, add_x0_x1_x2},
+  };
+  for (const auto &test_case : cases) {
+    arm64::CpuState cpu{};
+    cpu.pc = 0x4fe0'0000U;
+    cpu.registers[0] = 0x1122'3344'5566'7788ULL;
+    cpu.registers[1] = 0x4fe0'1000U;
+    cpu.registers[2] = 3;
+    const auto initial = cpu;
+    uml::memory::Tlb tlb;
+    const auto result =
+        test_case.helper(&cpu, &tlb, test_case.instruction);
+    require(static_cast<std::uint32_t>(result) ==
+            static_cast<std::uint32_t>(EngineEvent::fatal));
+    require((result >> 32U) == 0U);
+    require(cpu.pc == initial.pc);
+    require(cpu.registers == initial.registers);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -137,5 +175,6 @@ int main() {
   valid_contract_unavailable_is_guest_illegal();
   unknown_word_is_guest_illegal();
   supported_prefix_stops_before_illegal_word();
+  unrouted_semantic_word_is_fatal();
   return 0;
 }

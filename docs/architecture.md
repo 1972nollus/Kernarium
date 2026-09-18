@@ -122,7 +122,10 @@ precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines and with the arm64 instruction
 Dispatcher, which remains the reference oracle of the A64 conformance evidence
-and is exercised only from the unit-test support target.
+and is exercised only from the unit-test support target. Instruction classes
+that the JIT's native lowering leaves to a helper run in the JIT's own semantic
+slow path, never in another engine; a helper treats any word outside its routed
+classes as a fatal internal error.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

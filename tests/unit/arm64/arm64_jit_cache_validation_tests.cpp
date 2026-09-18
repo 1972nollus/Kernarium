@@ -1463,8 +1463,7 @@ void defensive_install_rejects_mutated_canonical_metadata()
 	require(diagnostics.shared_validation_word_installs == 1);
 }
 
-void cold_admission_refetches_code_and_preserves_fault_prefixes(
-	bool pointer_authentication)
+void native_translation_preserves_fault_prefixes(bool pointer_authentication)
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
 	const unsigned long generation = pointer_authentication ? 19'701U : 19'704U;
@@ -1480,7 +1479,6 @@ void cold_admission_refetches_code_and_preserves_fault_prefixes(
 	backing.put32(page - 4U, move_immediate(0, 31));
 	JitMapping mapping{generation, base, backing, 1};
 	JitExecutor executor{JitExecutorOptions{
-		.defer_cold_translation = true,
 		.enable_pointer_authentication = pointer_authentication}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
@@ -1488,25 +1486,13 @@ void cold_admission_refetches_code_and_preserves_fault_prefixes(
 	auto run = run_once(executor, memory, generation, cpu);
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
 	require(run.executed == 2 && cpu.registers[0] == 19);
-	require(executor.cache_validation_diagnostics().translations == 0);
-	require(executor.cache_validation_diagnostics().cold_blocks == 1);
-
-	// Admission remembers no guest bytes. The first native translation must
-	// use current memory even when the same PC has already been observed.
-	write_mapped32(generation, base, move_immediate(0, 37));
-	cpu.pc = base;
-	run = run_once(executor, memory, generation, cpu);
-	require(run.event == ::uml::cpu::EngineEvent::system_call);
-	require(run.executed == 2 && cpu.registers[0] == 37);
 	require(executor.cache_validation_diagnostics().translations == 1);
-	const auto admitted = executor.cache_validation_diagnostics();
+	const auto translated = executor.cache_validation_diagnostics();
 	cpu.pc = base;
 	run = run_once(executor, memory, generation, cpu);
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
 	require(executor.cache_validation_diagnostics().translations ==
-		admitted.translations);
-	require(executor.cache_validation_diagnostics().cold_blocks ==
-		admitted.cold_blocks);
+		translated.translations);
 
 	cpu.pc = base + 64U;
 	cpu.registers[1] = base + page;
@@ -1537,7 +1523,7 @@ void cold_admission_refetches_code_and_preserves_fault_prefixes(
 	require(executor.fault_access() == uml::memory::Access::execute);
 }
 
-void cold_admission_reuses_current_peer_translations()
+void peer_translation_reuse_requires_current_code()
 {
 	if constexpr (!arm64::share_translations_between_executors)
 		return;
@@ -1563,27 +1549,22 @@ void cold_admission_reuses_current_peer_translations()
 		require(executor.fault_access() == uml::memory::Access::write);
 	};
 	{
-		JitExecutor consumer{
-			JitExecutorOptions{.defer_cold_translation = true}};
+		JitExecutor consumer;
 		run_fault(producer, 47);
 		run_fault(consumer, 47);
 		const auto diagnostics = consumer.cache_validation_diagnostics();
-		require(diagnostics.cold_blocks == 0);
 		require(diagnostics.translations == 1);
 		require(diagnostics.shared_validation_word_installs == 1);
 	}
 
-	// A peer's earlier admission never substitutes for exact current bytes.
+	// A peer's translation never substitutes for exact current bytes.
 	write_mapped32(generation, base, move_immediate(0, 53));
-	JitExecutor changed_consumer{
-		JitExecutorOptions{.defer_cold_translation = true}};
+	JitExecutor changed_consumer;
 	run_fault(changed_consumer, 53);
-	const auto diagnostics = changed_consumer.cache_validation_diagnostics();
-	require(diagnostics.cold_blocks == 1);
-	require(diagnostics.translations == 0);
+	require(changed_consumer.cache_validation_diagnostics().translations == 1);
 }
 
-void cold_admission_preserves_disabled_pointer_authentication()
+void disabled_pointer_authentication_rejects_authentication_instructions()
 {
 	constexpr unsigned long generation = 19'705U;
 	constexpr std::uint64_t base = 0x450'0000U;
@@ -1612,7 +1593,6 @@ void cold_admission_preserves_disabled_pointer_authentication()
 	backing.put32(hint_offset + 4U, system_call);
 	JitMapping mapping{generation, base, backing, 1};
 	JitExecutor executor{JitExecutorOptions{
-		.defer_cold_translation = true,
 		.enable_pointer_authentication = false}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
@@ -1631,10 +1611,9 @@ void cold_admission_preserves_disabled_pointer_authentication()
 	const auto run = run_once(executor, memory, generation, cpu);
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
 	require(run.executed == 2 && cpu.registers[30] == base);
-	require(executor.cache_validation_diagnostics().cold_blocks == 0);
 }
 
-void cold_admission_keeps_atomic_and_system_blocks_native()
+void exclusive_and_system_blocks_are_translated()
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr unsigned long generation = 19'702U;
@@ -1646,7 +1625,7 @@ void cold_admission_keeps_atomic_and_system_blocks_native()
 	backing.put32(68, system_call);
 	backing.put64(page, 41);
 	JitMapping mapping{generation, base, backing, 2};
-	JitExecutor executor{JitExecutorOptions{.defer_cold_translation = true}};
+	JitExecutor executor;
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 	cpu.pc = base;
@@ -1654,11 +1633,9 @@ void cold_admission_keeps_atomic_and_system_blocks_native()
 	auto run = run_once(executor, memory, generation, cpu);
 	require(run.executed == 1 && cpu.registers[3] == 41);
 	require(executor.cache_validation_diagnostics().translations != 0);
-	require(executor.cache_validation_diagnostics().cold_blocks == 0);
 	cpu.pc = base + 64U;
 	run = run_once(executor, memory, generation, cpu);
 	require(run.executed >= 1);
-	require(executor.cache_validation_diagnostics().cold_blocks == 0);
 }
 
 } // namespace
@@ -1667,11 +1644,11 @@ int main()
 {
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
-	cold_admission_refetches_code_and_preserves_fault_prefixes(true);
-	cold_admission_refetches_code_and_preserves_fault_prefixes(false);
-	cold_admission_keeps_atomic_and_system_blocks_native();
-	cold_admission_preserves_disabled_pointer_authentication();
-	cold_admission_reuses_current_peer_translations();
+	native_translation_preserves_fault_prefixes(true);
+	native_translation_preserves_fault_prefixes(false);
+	exclusive_and_system_blocks_are_translated();
+	disabled_pointer_authentication_rejects_authentication_instructions();
+	peer_translation_reuse_requires_current_code();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();
 	an_arena_capacity_match_is_not_counted_as_reuse();
