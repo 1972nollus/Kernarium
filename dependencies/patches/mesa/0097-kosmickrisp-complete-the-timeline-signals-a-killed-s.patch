@@ -1,4 +1,4 @@
-From 274ca5f54e0eb9eea71e3795f28f1dd2b3be8f9e Mon Sep 17 00:00:00 2001
+From 5e0b122e8196be2f9e33d4b0fe5b92d1bba315c9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 06:08:19 +0900
 Subject: [PATCH 97/97] kosmickrisp: complete the timeline signals a killed
@@ -71,18 +71,34 @@ been submitted is answered from what the queue has enqueued and never reaches
 the wait, and a caller that arrives wanting a different value starts its own
 clock rather than inheriting one an earlier waiter left behind, so the elapsed
 time always belongs to the value being recovered.
+
+Waiting out that bound is the last resort and not the common case, because
+Metal reports every submission it is given exactly once. When the number of
+reports reaches the number of submissions the queue was handed, the queue is
+holding nothing it has not answered for, and any signal still short of its
+value has no submission left to deliver it, so it is completed there and then
+rather than ten seconds later. Both the report and the submission check for
+this, because a signal is enqueued after the submissions it follows and Metal
+can report one of those before the commit call returns: the report that
+empties the queue may run before the record it would have resolved exists, so
+whichever of the two happens second does the work.
+
+It matters at scale. A Vulkan CTS fraction on an A15 reported 776 timeouts in
+its first hour, and the bound alone left 155 of them to be waited out, which
+is 1550 of the 1877 seconds that hour spent past its first failure. A fraction
+paying that is not going to finish.
 ---
- src/kosmickrisp/vulkan/kk_queue.c | 200 +++++++++++++++++++++++++++++-
- src/kosmickrisp/vulkan/kk_queue.h |  35 ++++++
- src/kosmickrisp/vulkan/kk_sync.c  |  70 +++++++++++
+ src/kosmickrisp/vulkan/kk_queue.c | 236 +++++++++++++++++++++++++++++-
+ src/kosmickrisp/vulkan/kk_queue.h |  39 +++++
+ src/kosmickrisp/vulkan/kk_sync.c  |  70 +++++++++
  src/kosmickrisp/vulkan/kk_sync.h  |   6 +
- 4 files changed, 307 insertions(+), 4 deletions(-)
+ 4 files changed, 347 insertions(+), 4 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index f7f30265..9b5cd3c8 100644
+index f7f30265..e073e6bf 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -21,33 +21,205 @@
+@@ -21,35 +21,238 @@
  
  #include <stdio.h>
  
@@ -229,6 +245,29 @@ index f7f30265..9b5cd3c8 100644
 +   simple_mtx_unlock(&feedback->signal_mutex);
 +}
 +
++/* Once every submission has reported there is nothing left to deliver a
++ * signal, whichever submission was carrying it, so anything still short of
++ * its value was discarded. This is what resolves the casualties a failure
++ * does not name, and it resolves them as the failure is reported rather than
++ * leaving a waiter to time them out: a queue that has gone quiet reports
++ * nothing further to act on.
++ *
++ * A signal is enqueued after the submissions it follows, and Metal can report
++ * one of those before the commit call even returns, so the report that empties
++ * the queue may run before the record it would have resolved exists. Both
++ * sides therefore check, and whichever happens second does the work. */
++static void
++kk_queue_resolve_if_drained(struct kk_queue_feedback *feedback)
++{
++   simple_mtx_lock(&feedback->signal_mutex);
++   bool drained = feedback->failures > 0u &&
++                  feedback->reported == feedback->last_serial;
++   simple_mtx_unlock(&feedback->signal_mutex);
++
++   if (drained)
++      kk_queue_signals_make_good(feedback, UINT64_MAX);
++}
++
 +static struct kk_queue_submission *
 +kk_queue_submission_new(struct kk_queue_feedback *feedback, uint64_t serial)
 +{
@@ -247,6 +286,12 @@ index f7f30265..9b5cd3c8 100644
 -   struct kk_queue_feedback *feedback = data->user_data;
 +   struct kk_queue_submission *submission = data->user_data;
 +   struct kk_queue_feedback *feedback = submission->feedback;
++
++   /* A serial is reserved immediately before its commit, so a submission the
++    * queue is still holding always keeps this below last_serial. */
++   simple_mtx_lock(&feedback->signal_mutex);
++   ++feedback->reported;
++   simple_mtx_unlock(&feedback->signal_mutex);
 +
     if (data->error != MTL_COMMAND_QUEUE_ERROR_NONE) {
        char report[KK_QUEUE_ERROR_REPORT_SIZE];
@@ -289,8 +334,12 @@ index f7f30265..9b5cd3c8 100644
 +      kk_queue_signals_retire(feedback);
     }
  
++   kk_queue_resolve_if_drained(feedback);
++
     if (feedback->submit_timing) {
-@@ -58,6 +230,7 @@ commit_callback(struct mtl_feedback_data *data)
+       /* These host-second timestamps cover the entire committed Metal batch.
+        * The immutable identifier remains usable after Vulkan device teardown. */
+@@ -58,6 +261,7 @@ commit_callback(struct mtl_feedback_data *data)
                (void *)feedback->device_id, data->gpu_start, data->gpu_end,
                (unsigned)data->error);
     }
@@ -298,7 +347,7 @@ index f7f30265..9b5cd3c8 100644
     kk_queue_feedback_unref(feedback);
  }
  
-@@ -190,12 +363,26 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -190,12 +394,26 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
              return vk_queue_set_lost(&queue->vk,
                                       "Failed to allocate Metal commit options");
  
@@ -325,7 +374,7 @@ index f7f30265..9b5cd3c8 100644
                 return vk_queue_set_lost(&queue->vk,
                                          "Failed to allocate Metal completion storage");
              }
-@@ -203,8 +390,7 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -203,8 +421,7 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
                 options, kk_completed_recording_callback, recording);
           }
           mtl_commit_options_add_feedback_handler(
@@ -335,7 +384,7 @@ index f7f30265..9b5cd3c8 100644
           mtl_command_queue_commit(queue->mtl_handle, cmds, count, options);
           mtl_release(options);
           if (recording)
-@@ -225,6 +411,10 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -225,11 +442,20 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
           container_of(signal->sync, struct kk_sync_timeline, base);
        mtl_signal_event(queue->mtl_handle, sync->mtl_handle,
                         signal->signal_value);
@@ -346,7 +395,17 @@ index f7f30265..9b5cd3c8 100644
        /* The signal is now ordered on the native timeline, so later waits on
         * this value are pending and need no CPU gating. */
        kk_timeline_mark_pending(signal->sync, signal->signal_value);
-@@ -273,6 +463,8 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+    }
+ 
++   /* The records for this submit exist only now, so a report that emptied the
++    * queue while it was being built could not have resolved them. */
++   if (submit->signal_count)
++      kk_queue_resolve_if_drained(queue->feedback);
++
+    return VK_SUCCESS;
+ }
+ 
+@@ -273,6 +499,8 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
     }
     queue->feedback->refcount = 1;
     simple_mtx_init(&queue->feedback->mutex, mtx_plain);
@@ -356,7 +415,7 @@ index f7f30265..9b5cd3c8 100644
     queue->feedback->device_id = (uintptr_t)dev;
     queue->feedback->submit_timing = KK_DEBUG(SUBMIT_TIMING);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index f35020cb..4a3094b2 100644
+index f35020cb..da5cfbc1 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
 @@ -14,6 +14,16 @@
@@ -376,7 +435,7 @@ index f35020cb..4a3094b2 100644
  
  /* Feedback can run after Vulkan device teardown. Only access device while
   * holding mutex; device_id is an immutable identifier for independent logs. */
-@@ -24,6 +34,24 @@ struct kk_queue_feedback {
+@@ -24,6 +34,28 @@ struct kk_queue_feedback {
     mtl_command_queue *queue;
     uintptr_t device_id;
     bool submit_timing;
@@ -385,6 +444,10 @@ index f35020cb..4a3094b2 100644
 +    * across mutex. */
 +   simple_mtx_t signal_mutex;
 +   uint64_t last_serial;
++   /* How many submissions have reported. Metal reports every submission it is
++    * given exactly once, so reaching last_serial means the queue holds
++    * nothing it has not answered for. */
++   uint64_t reported;
 +   struct util_dynarray signals;
 +   /* How many failures Metal has reported against this queue. A queue that
 +    * has never failed owes nothing it has not delivered, so the recovery
@@ -401,7 +464,7 @@ index f35020cb..4a3094b2 100644
  };
  
  static inline struct kk_queue_feedback *
-@@ -46,6 +74,13 @@ kk_queue_device(struct kk_queue *queue)
+@@ -46,6 +78,13 @@ kk_queue_device(struct kk_queue *queue)
     return (struct kk_device *)queue->vk.base.device;
  }
  
