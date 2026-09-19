@@ -312,6 +312,15 @@ that a binary loaded back into a pipeline names its entry in the driver's
 internal shader cache by those bytes, so a pipeline created later from the
 same state without binaries compiles again instead of finding it.
 
+`vkGetPipelineBinaryDataKHR` answers a buffer too small for the binary with
+`VK_ERROR_NOT_ENOUGH_SPACE_KHR`, the size the caller needs, and no data, which
+makes it the one command in the protocol whose in-out data size can come back
+larger than it went in. A reply's blob is measured by the size the driver
+reports, while the room for it was reserved from the size the guest offered,
+so the renderer drops the blob from such a reply: the guest learns the size it
+needs and reads nothing into a buffer that could not have held it. Every other
+blob a reply carries takes its size by value or can only shrink it.
+
 `vkGetPipelineKeyKHR` names the pipeline it should key through
 `VkPipelineCreateInfoKHR::pNext`, and `vk.xml` gives that chain no member,
 because each structure a caller chains there is a pipeline create info in its
