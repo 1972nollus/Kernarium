@@ -33,6 +33,7 @@ memory-execution-gate-profile	tests/unit/memory	unit	retained
 memory-shared-backing-view	tests/unit/memory/shared_backing_view_tests.cpp	unit	retained
 gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional
 gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional
+gpu-transport-descriptor-ceiling	tests/unit/gpu/vhost_user_descriptor_ceiling_tests.cpp	unit	conditional
 gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
 gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
 gpu-host-pointer-image	tests/unit/gpu/host_gl_host_pointer_image_tests.cpp	unit	conditional

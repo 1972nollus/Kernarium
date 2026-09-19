@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
+#include <mutex>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -2271,6 +2272,22 @@ void VhostUserServer::serveConnection(
     const std::atomic_bool& stopRequested)
 {
     UniqueDescriptor ownedConnection {connection};
+    /* Every arriving descriptor is installed in this process's file table, and
+     * a backend that publishes a shared-memory region hands the guest one more
+     * for every host-visible blob it maps. Take the ceiling the host is willing
+     * to give before the first connection serves a request; the platform
+     * default is an application's, not a machine's.
+     */
+    static std::once_flag descriptorCeilingOnce;
+    std::call_once(descriptorCeilingOnce, [] {
+        (void)raiseDescriptorCeiling();
+        // A plain flush: this note must never be able to fail a connection.
+        std::fprintf(
+            stdout,
+            "vhost-user transport: %s\n",
+            describeDescriptorCeiling().c_str());
+        (void)std::fflush(stdout);
+    });
     struct StopRegistration final {
         const std::atomic_bool*& slot;
         uml::virtio::VhostUserDevice& device;
@@ -2378,9 +2395,15 @@ void VhostUserServer::serveConnection(
         // Normal cooperative shutdown while a peer is not draining output.
     } catch (const std::exception& error) {
         std::fprintf(
-            stderr, "vhost-user connection failed: %s\n", error.what());
+            stderr,
+            "%s vhost-user connection failed: %s\n",
+            device_->name(),
+            error.what());
     } catch (...) {
-        std::fputs("vhost-user connection failed: unknown host error\n", stderr);
+        std::fprintf(
+            stderr,
+            "%s vhost-user connection failed: unknown host error\n",
+            device_->name());
     }
     ownedConnection.reset();
     resetConnection();

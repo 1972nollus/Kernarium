@@ -52,6 +52,12 @@ GUEST_OOM_KILL = re.compile(
 # What the guest's own exit trap needs to transport its last QPA segment and
 # its summary, when it still can.
 OOM_GRACE_SECONDS = 180
+# A backend that abandons its connection says so and never serves that device
+# again. The guest driver discovers it one warning per interrupt instead, which
+# has produced a 139 MB console and a run that had to be ended by hand, so stop
+# reading shortly after the line appears rather than at the stall guard.
+LOST_VHOST_USER = re.compile(r"^.*vhost-user connection failed: .*$", re.M)
+LOST_TRANSPORT_GRACE_SECONDS = 60
 
 
 def fail(message: str) -> None:
@@ -130,16 +136,22 @@ def stop_console(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
-def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | None]:
+def run_campaign(
+    options: argparse.Namespace, log: Path
+) -> tuple[str, str | None, str | None]:
     """Hold the console until the campaign's last frame or the deadline.
 
-    The wait is bounded three times: an overall deadline, a stall deadline that
-    only the console growing resets, and a short grace once the guest kernel
-    reports an out-of-memory kill. A device that wedges with the screen on would
-    otherwise hold this lane for as long as the battery lasts, and a guest whose
-    CTS process the reaper took would hold it for the whole stall guard.
+    The wait is bounded four times: an overall deadline, a stall deadline that
+    only the console growing resets, and a short grace after either of the two
+    events that end a fraction's useful output — the guest kernel reporting an
+    out-of-memory kill, or a vhost-user backend abandoning its connection. A
+    device that wedges with the screen on would otherwise hold this lane for as
+    long as the battery lasts; a guest whose CTS process the reaper took would
+    hold it for the whole stall guard; and a guest whose GPU transport died
+    keeps the console growing with one driver warning per interrupt, so the
+    stall guard never fires at all.
 
-    Returns the transcript and, when one was seen, the reaper's own line.
+    Returns the transcript, the reaper's own line, and the backend's own line.
     """
     command = device_command(
         "device", "process", "launch", "--device", options.device,
@@ -149,8 +161,9 @@ def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | Non
     stall_deadline = time.monotonic() + options.stall_timeout
     next_update = time.monotonic() + PROGRESS_INTERVAL
     observed = 0
-    oom_deadline: float | None = None
+    grace_deadline: float | None = None
     oom_report: str | None = None
+    transport_report: str | None = None
     with log.open("wb") as output:
         process = subprocess.Popen(
             command,
@@ -164,7 +177,7 @@ def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | Non
                     encoding="utf-8", errors="replace"
                 )
                 if cts.FINAL_ARTIFACT_FRAME in transcript:
-                    return transcript, oom_report
+                    return transcript, oom_report, transport_report
                 exited = process.poll() is not None
                 now = time.monotonic()
                 size = log.stat().st_size
@@ -172,16 +185,27 @@ def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | Non
                     observed = size
                     stall_deadline = now + options.stall_timeout
                 if exited:
-                    return transcript, oom_report
-                if oom_deadline is None:
+                    return transcript, oom_report, transport_report
+                if grace_deadline is None:
                     found = GUEST_OOM_KILL.search(transcript)
                     if found is not None:
                         oom_report = found.group(0)
-                        oom_deadline = now + OOM_GRACE_SECONDS
+                        grace_deadline = now + OOM_GRACE_SECONDS
                         print(
                             f"the guest kernel killed {found.group(1)} out of "
                             f"memory; giving it {OOM_GRACE_SECONDS}s to "
                             "transport what it has",
+                            flush=True,
+                        )
+                if grace_deadline is None:
+                    found = LOST_VHOST_USER.search(transcript)
+                    if found is not None:
+                        transport_report = found.group(0).strip()
+                        grace_deadline = now + LOST_TRANSPORT_GRACE_SECONDS
+                        print(
+                            "a vhost-user backend abandoned its connection; "
+                            f"giving the guest {LOST_TRANSPORT_GRACE_SECONDS}s "
+                            f"to transport what it has: {transport_report}",
                             flush=True,
                         )
                 if now >= deadline:
@@ -189,10 +213,10 @@ def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | Non
                         f"the campaign exceeded {options.timeout} seconds; "
                         f"see {log}"
                     )
-                if oom_deadline is not None and now >= oom_deadline:
+                if grace_deadline is not None and now >= grace_deadline:
                     # Not a failure of this lane: the executed prefix is in the
                     # transcript and the caller decodes and reports it.
-                    return transcript, oom_report
+                    return transcript, oom_report, transport_report
                 if now >= stall_deadline:
                     fail(
                         "the console stopped growing for "
@@ -215,6 +239,7 @@ def report(
     transcript: str,
     oom_report: str | None = None,
     rejected: Sequence[str] = (),
+    transport_report: str | None = None,
 ) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
@@ -275,11 +300,19 @@ def report(
             print(f"{status}={count}")
     if oom_report is not None:
         print(f"guest_out_of_memory={oom_report}")
+    if transport_report is not None:
+        # The guest lost a device from this line onwards, so every case after
+        # it is unjudged rather than passing.
+        print(f"lost_vhost_user_transport={transport_report}")
     if rejected:
         # A frame group the host could not accept: results the guest framed and
         # this run does not hold. Named so the loss is not read as a short run.
         print("undecodable_artifacts=" + ",".join(sorted(rejected)))
-    failed = payload is None or summary.get("cts_rc") != "0"
+    failed = (
+        payload is None
+        or summary.get("cts_rc") != "0"
+        or transport_report is not None
+    )
     print("vulkan_campaign_failed=" + ("true" if failed else "false"))
     print("--------------------------")
     return 1 if failed else 0
@@ -344,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
 
     log = options.artifact_root / "console.log"
     started = time.monotonic()
-    transcript, oom_report = run_campaign(options, log)
+    transcript, oom_report, transport_report = run_campaign(options, log)
     print(f"console closed after {time.monotonic() - started:.0f}s: {log}")
     rejected: list[str] = []
     artifacts = cts.decode_artifacts(
@@ -352,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
     print(f"artifacts: {options.artifact_root / 'artifacts'}")
-    return report(artifacts, transcript, oom_report, rejected)
+    return report(artifacts, transcript, oom_report, rejected, transport_report)
 
 
 if __name__ == "__main__":
