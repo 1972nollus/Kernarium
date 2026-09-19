@@ -1,7 +1,7 @@
 From 7ad976b042e87d7fda4a3b7a41bd37f4f8f141ec Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 14:59:17 +0900
-Subject: [PATCH 101/101] kosmickrisp: bounds-check an image atomic
+Subject: [PATCH 101/102] kosmickrisp: bounds-check an image atomic
 
 Metal bounds-checks a texture read and discards an out of range texture
 write, so a KosmicKrisp storage image gets robustImageAccess2 semantics

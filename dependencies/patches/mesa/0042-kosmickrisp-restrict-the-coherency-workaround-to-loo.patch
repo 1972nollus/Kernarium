@@ -1,7 +1,7 @@
 From 30b0eafaaf000e7d4df457deab995c4466cf91de Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
-Subject: [PATCH 042/101] kosmickrisp: restrict the coherency workaround to
+Subject: [PATCH 042/102] kosmickrisp: restrict the coherency workaround to
  loops
 
 Large compute kernels miscompile on macOS 26 when a global access is marked

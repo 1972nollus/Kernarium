@@ -1,7 +1,7 @@
 From aa2f3a469be38b4f4b971fc40cc2c41230886687 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:45:53 +0900
-Subject: [PATCH 032/101] kosmickrisp: lower clip/cull outputs after software
+Subject: [PATCH 032/102] kosmickrisp: lower clip/cull outputs after software
  stages
 
 Keep compact clip/cull varyings intact while materializing software vertex and tessellation stages. Raster-only clip-distance intrinsics otherwise become invalid compute outputs, while separated cull varyings no longer match the raw transform-feedback interface.

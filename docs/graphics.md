@@ -186,6 +186,13 @@ than where the shared-memory resource holding it ends, so an oversized reply
 marks the context fatal instead of running on through whatever else the guest
 keeps in that resource.
 
+In the driver, a transform feedback store is bounded by the buffer range bound
+for it. A capture store's address is derived from the bound buffer's capacity,
+the byte counter the application supplies through a counter buffer, and the
+output layout, and the counter survives across draws, so every term of that
+derivation is application state. Each store recomputes its own extent and drops
+a write that would leave the bound range.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route. Its GLES stack

@@ -1,7 +1,7 @@
 From 7bda9ae2c7af91895a34dc2f92bd5a2a5ba78e64 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:35:16 +0900
-Subject: [PATCH 068/101] kosmickrisp: recycle command storage between
+Subject: [PATCH 068/102] kosmickrisp: recycle command storage between
  submissions
 
 A Metal command allocator owns the storage its encoders record into. Creating

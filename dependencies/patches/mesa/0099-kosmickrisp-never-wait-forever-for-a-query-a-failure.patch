@@ -1,7 +1,7 @@
 From 774c6d0c8f6a7851e7892e544e7380085783e966 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 11:42:25 +0900
-Subject: [PATCH 099/101] kosmickrisp: never wait forever for a query a failure
+Subject: [PATCH 099/102] kosmickrisp: never wait forever for a query a failure
  destroyed
 
 A query becomes available through a GPU write inside a submitted command
