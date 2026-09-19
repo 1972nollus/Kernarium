@@ -1,4 +1,4 @@
-From 234224aa8db49aec74cfcdd8168b1d171eb4c26d Mon Sep 17 00:00:00 2001
+From 9f9820a2c82aa8469b79ed1db58e7d4c9f060d70 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 41/97] kosmickrisp: survive Metal command queue timeouts
@@ -64,20 +64,32 @@ unmodeled value without a name on the error path.
 The diagnostics topic that owns the message predates the KosmicKrisp test
 scaffolding by fourteen topics, so this contract and its regression tests
 land as their own topic rather than perturbing an unrelated topic's patch.
+
+An end timestamp is only a measurement while it is credible. Metal puts a
+fixed placeholder in the end timestamp of a submission it has no end for at
+all: every genuine hang an A15 has reported carries
+gpu_end_s=6148826548.220315, and the report claimed the GPU had accounted
+for six billion seconds of execution. That placeholder is the one thing in
+a report that separates a submission whose own work never finished from one
+the queue killed on entry, so an interval longer than a minute -- already
+far past anything a stopped workload can have measured -- is not an
+interval, and such a report says the GPU started the submission and never
+reported it finishing. The disposition does not change: Metal admitted the
+submission, so the timeout is still survived.
 ---
- src/kosmickrisp/vulkan/kk_buffer_view.c       |  21 ++
- src/kosmickrisp/vulkan/kk_image.c             |  39 ++-
+ src/kosmickrisp/vulkan/kk_buffer_view.c       |  21 +
+ src/kosmickrisp/vulkan/kk_image.c             |  39 +-
  src/kosmickrisp/vulkan/kk_image_extent.c      |  15 +
  src/kosmickrisp/vulkan/kk_image_extent.h      |  34 ++
  src/kosmickrisp/vulkan/kk_image_layout.c      |  21 +-
  src/kosmickrisp/vulkan/kk_image_layout.h      |  12 +-
  src/kosmickrisp/vulkan/kk_queue.c             |  24 +-
- src/kosmickrisp/vulkan/kk_queue_error.c       | 117 +++++++
- src/kosmickrisp/vulkan/kk_queue_error.h       |  67 ++++
+ src/kosmickrisp/vulkan/kk_queue_error.c       | 137 +++++++
+ src/kosmickrisp/vulkan/kk_queue_error.h       |  68 ++++
  src/kosmickrisp/vulkan/meson.build            |  30 ++
  .../vulkan/tests/test_image_extent.c          | 112 ++++++
- .../vulkan/tests/test_queue_error.c           | 319 ++++++++++++++++++
- 12 files changed, 788 insertions(+), 23 deletions(-)
+ .../vulkan/tests/test_queue_error.c           | 363 ++++++++++++++++++
+ 12 files changed, 853 insertions(+), 23 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.c
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.h
  create mode 100644 src/kosmickrisp/vulkan/kk_queue_error.c
@@ -368,10 +380,10 @@ index c9d180dc..52f85b40 100644
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 00000000..31f065cd
+index 00000000..e10beac6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,137 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -408,11 +420,22 @@ index 00000000..31f065cd
 +   return "MTL_COMMAND_QUEUE_ERROR_UNKNOWN";
 +}
 +
++/* Longest interval that can be a measurement. A system that reports a timeout
++ * has already stopped the workload, in tens of milliseconds on the tightest
++ * device this driver targets and in seconds anywhere, so a minute of reported
++ * execution is not a duration. Metal puts a fixed placeholder in the end
++ * timestamp of a submission it has no end for -- 6148826548.220315 on every
++ * report an A15 has produced, nine orders of magnitude past this bound -- and
++ * reading that as execution turned a hung submission into a claim that the GPU
++ * ran it for 195 years. */
++static const double kk_longest_credible_execution_s = 60.0;
++
 +bool
 +kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data)
 +{
 +   return isfinite(data->gpu_start) && isfinite(data->gpu_end) &&
-+          data->gpu_start > 0.0 && data->gpu_end > data->gpu_start;
++          data->gpu_start > 0.0 && data->gpu_end > data->gpu_start &&
++          data->gpu_end - data->gpu_start < kk_longest_credible_execution_s;
 +}
 +
 +bool
@@ -458,6 +481,15 @@ index 00000000..31f065cd
 +   } else if (data->gpu_start == 0.0 && data->gpu_end == 0.0) {
 +      snprintf(execution, sizeof(execution),
 +               "the GPU never started this submission");
++   } else if (kk_queue_error_admitted_submission(data) &&
++              data->gpu_end > data->gpu_start) {
++      /* Admitted, and the end is the placeholder rather than a time, so the
++       * submission was still running when the queue gave up on it. This is the
++       * hang: the report that names a submission whose own work never
++       * finished, as opposed to one the queue killed on entry. */
++      snprintf(execution, sizeof(execution),
++               "the GPU started this submission and never reported it "
++               "finishing");
 +   } else if (kk_queue_error_admitted_submission(data)) {
 +      snprintf(execution, sizeof(execution),
 +               "the GPU started this submission and ran none of it");
@@ -491,10 +523,10 @@ index 00000000..31f065cd
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 00000000..caeb916c
+index 00000000..a6fb7ee1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -514,10 +546,11 @@ index 00000000..caeb916c
 + * does not model. Never returns NULL. */
 +const char *kk_queue_error_name(enum mtl_command_queue_error error);
 +
-+/* Whether Metal accounted for this submission from a start to a later end.
-+ * Metal leaves both timestamps at zero for a submission the GPU never
-+ * scheduled, and reports a start without a later end for one it never
-+ * finished; either way the queue stopped making progress on it. */
++/* Whether Metal accounted for this submission from a start to a credible later
++ * end. Metal leaves both timestamps at zero for a submission the GPU never
++ * scheduled, reports a start without a later end for one it abandoned, and puts
++ * a fixed placeholder in the end timestamp of one it has no end for at all,
++ * which is the hang. None of those is a measurement. */
 +bool
 +kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data);
 +
@@ -737,10 +770,10 @@ index 00000000..b34363d6
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_queue_error.c b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 new file mode 100644
-index 00000000..e678bb79
+index 00000000..144e9a5c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_queue_error.c
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,363 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -991,6 +1024,49 @@ index 00000000..e678bb79
 +   assert(strstr(report, "the device is lost") != NULL);
 +}
 +
++/* Metal puts a fixed placeholder in the end timestamp of a submission it has
++ * no end for. Every genuine hang an A15 has reported carries
++ * gpu_end_s=6148826548.220315, and reading it as a duration claimed the GPU had
++ * run one command buffer for six billion seconds. A submission whose own work
++ * never finished is still one Metal admitted, so it stays survivable; what it
++ * must not do is masquerade as a measured execution, because the placeholder is
++ * the only thing in the report that tells a hang apart from a submission the
++ * queue killed on entry. */
++static void
++check_placeholder_end_is_not_an_execution_interval(void)
++{
++   struct mtl_feedback_data hung =
++      feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
++               "The operation couldn't be completed. "
++               "(MTL4CommandQueueErrorDomain error 1.)",
++               255318.84401850001, 6148826548.220315);
++   char report[KK_QUEUE_ERROR_REPORT_SIZE];
++
++   assert(!kk_queue_error_has_execution_interval(&hung));
++   assert(kk_queue_error_admitted_submission(&hung));
++   assert(!kk_queue_error_is_device_lost(&hung));
++
++   memset(report, 0x7f, sizeof(report));
++   kk_queue_error_describe(report, sizeof(report), &hung);
++   assert(strstr(report, "never reported it finishing") != NULL);
++   assert(strstr(report, "accounted for") == NULL);
++   assert(strstr(report, "ran none of it") == NULL);
++   assert(strstr(report, "the device survives") != NULL);
++
++   /* The raw timestamps still reach the reader, because the placeholder is
++    * itself the evidence. */
++   assert(strstr(report, "gpu_end_s=6148826548.220315") != NULL);
++
++   /* A minute of execution is already past anything a stopped workload can
++    * have measured, and a submission that really ran is unaffected. */
++   struct mtl_feedback_data minute = feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
++                                              "timed out", 100.0, 160.0);
++   struct mtl_feedback_data brief = feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT,
++                                             "timed out", 100.0, 159.0);
++   assert(!kk_queue_error_has_execution_interval(&minute));
++   assert(kk_queue_error_has_execution_interval(&brief));
++}
++
 +/* Metal supplies no localized description for some failures. */
 +static void
 +check_missing_message_is_named(void)
@@ -1056,6 +1132,7 @@ index 00000000..e678bb79
 +   check_unscheduled_submission_has_no_interval();
 +   check_degenerate_interval_is_not_claimed_as_execution();
 +   check_abandoned_submission_reports_no_interval();
++   check_placeholder_end_is_not_an_execution_interval();
 +   check_missing_message_is_named();
 +   check_report_is_bounded();
 +   return 0;

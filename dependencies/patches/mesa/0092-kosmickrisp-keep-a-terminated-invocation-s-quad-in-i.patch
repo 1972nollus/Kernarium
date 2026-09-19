@@ -1,4 +1,4 @@
-From cb99fdcb7751e28a5ffc652147dfc40f8a981bbd Mon Sep 17 00:00:00 2001
+From 9a06a838f6baaf8ad8e3d39330d48d8a49545d38 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 22:09:54 +0900
 Subject: [PATCH 92/97] kosmickrisp: keep a terminated invocation's quad in its

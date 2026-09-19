@@ -1,4 +1,4 @@
-From 0ae40a6a199f210a7e0dc0d653b1ceee75c74770 Mon Sep 17 00:00:00 2001
+From e03c4c0e70acf06e93c0d061e38241e29bc5cebd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 19:01:17 +0900
 Subject: [PATCH 57/97] kosmickrisp: carry an authored primitive ID as a user

@@ -1,4 +1,4 @@
-From 38dd3af6e5b2384569f39ab0615589bc9f3d4dda Mon Sep 17 00:00:00 2001
+From df0b09de877d154e4dca41cea7016116efa6782f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:11:01 +0900
 Subject: [PATCH 61/97] zink: build against a packaged Apple Vulkan driver
