@@ -507,7 +507,15 @@ reaching poweroff.
 A shard is one or more guest sessions. The guest transports its growing QPA as
 ordered checkpoint segments, so a killed guest still leaves the prefix it
 produced, and the host reassembles the single `results.qpa` every consumer
-reads. The progress watchdog is CPU-aware: a case that produces no QPA output
+reads. A segment counts as delivered only once its compressed stream has been
+measured back against the range it was meant to hold and the host has
+acknowledged it; a segment that could not be produced keeps its bytes pending
+for the next attempt, and the guest's `summary.txt` is transported last whatever
+happened before it. A receipt-backed summary states `qpa_transfer`, with
+`qpa_missing_bytes` when that is not `complete`, and only `complete` is
+accepted: a run that lost results says so rather than reporting a short one.
+Zero-length artifacts are refused, so a guest that runs out of room cannot frame
+one. The progress watchdog is CPU-aware: a case that produces no QPA output
 for `--console-stall-timeout` seconds while its `glcts` processes also burn no
 CPU is abandoned, while a case that is silent but computing survives until
 `--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
