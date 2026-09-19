@@ -200,6 +200,30 @@ endif()
 if(TARGET uml_gpu_host_gl_provider_tests)
     list(APPEND _uml_required_conditional_tests gpu-host-gl-provider-lifetime)
 endif()
+if(TARGET uml_gpu_host_pointer_image_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-host-pointer-image)
+endif()
+if(TARGET uml_gpu_cross_context_readback_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-cross-context-readback)
+endif()
+if(TARGET uml_gpu_depth_format_advertisement_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-depth-format-advertisement)
+endif()
+if(TARGET uml_gpu_line_loop_statistics_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-line-loop-statistics)
+endif()
+if(TARGET uml_gpu_virgl_fence_table_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-virgl-fence-table-ownership)
+endif()
+if(TARGET uml_gpu_kosmickrisp_command_storage_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-command-storage)
+endif()
 if(TARGET uml_gpu_kosmickrisp_external_image_alias_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-kosmickrisp-external-image-alias)
@@ -231,6 +255,10 @@ endif()
 if(TARGET uml_gpu_kosmickrisp_geometry_invocations_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-kosmickrisp-geometry-invocations)
+endif()
+if(TARGET uml_gpu_kosmickrisp_partial_position_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-kosmickrisp-partial-position)
 endif()
 if(TARGET uml_gpu_kosmickrisp_pipeline_statistics_tests)
     list(APPEND _uml_required_conditional_tests
