@@ -59,7 +59,14 @@ int darwin_uml_open(const char *path, int flags, int mode)
 	 * them; the token itself is never mapped or written as guest RAM. */
 	if (path != nullptr && strcmp(path, anonymous_physical_memory_path) == 0)
 		return open_anonymous_backing_token();
-	const int descriptor = open(path, flags, mode);
+	/* Darwin returns EINTR from an open of a regular file when a carrier
+	 * signal lands during it. os_open_file() hands that to its caller as a
+	 * failure, which the ubd size probe turns into a missing root device, so
+	 * an interrupted open is retried here as UML's CATCH_EINTR does. */
+	int descriptor;
+	do {
+		descriptor = open(path, flags, mode);
+	} while (descriptor < 0 && errno == EINTR);
 	::uml::platform::record_guest_file(descriptor, flags);
 	return descriptor;
 }
