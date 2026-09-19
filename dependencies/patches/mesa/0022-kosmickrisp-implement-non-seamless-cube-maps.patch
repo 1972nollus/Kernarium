@@ -1,7 +1,7 @@
 From e79684e5c5567e4de2c43b777a8802c5b9812db2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 01:28:14 +0900
-Subject: [PATCH 022/102] kosmickrisp: implement non-seamless cube maps
+Subject: [PATCH 022/103] kosmickrisp: implement non-seamless cube maps
 
 ---
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |   3 +

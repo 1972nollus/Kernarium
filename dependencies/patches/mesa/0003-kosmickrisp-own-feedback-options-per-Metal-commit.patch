@@ -1,7 +1,7 @@
 From dae7d498e86116504e74d9671ac926ab9e170f25 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:12:40 +0900
-Subject: [PATCH 003/102] kosmickrisp: own feedback options per Metal commit
+Subject: [PATCH 003/103] kosmickrisp: own feedback options per Metal commit
 
 ---
  src/kosmickrisp/vulkan/kk_queue.c | 20 ++++++++++++++------

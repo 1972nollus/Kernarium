@@ -1,7 +1,7 @@
 From 31c28520e3f52920be6fbbcaf78ec23ec63812f7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 20:44:48 +0900
-Subject: [PATCH 096/102] kosmickrisp: use wide buffer accesses where NIR
+Subject: [PATCH 096/103] kosmickrisp: use wide buffer accesses where NIR
  proves the alignment
 
 Every global load and store is emitted through MSL's packed vector types.
