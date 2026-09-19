@@ -466,6 +466,46 @@ covering every layered and flat storage-image atomic in the group goes from seve
 or eight kills a run to none, and `dEQP-VK.image.atomic_operations`, which
 validates the in-bounds result of an atomic on every view type, is unchanged.
 
+#### Render-stage 3D texture sampling faults the GPU
+
+A draw whose vertex or fragment shader samples a 3D floating-point texture often
+enough faults, the way fragment-stage store work does above. Every access
+involved is ordinary and in range, so this is a work limit and not a robustness
+problem.
+
+Two `dEQP-VK.robustness.image_robustness` cases stand on it,
+`push.notemplate.r32f.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.3d.frag`
+and its `vert` sibling. Their shader samples a 5x11x6 `R32_SFLOAT` `sampler3D`
+nine times on each of the 2,101 trips of a loop it is told not to unroll, about
+19,000 samples per invocation. The `comp` sibling issues the identical Metal
+shader from a dispatch and never faults.
+
+What it is not. Holding every one of those sample coordinates inside [0,1] in
+the driver leaves the fault exactly where it was, and so do bounds-checking the
+shader's deliberately out-of-range `texelFetch`, replacing its explicit gradient
+with an explicit level, forcing every sampler to point sampling, and forcing
+clamp to edge in place of the test's clamp-to-border sampler. Discarding the
+samples removes the fault; discarding the fetches does not. Nothing out of
+bounds is involved, and the driver has no coordinate to reject.
+
+What it tracks is how much 3D sampling the render stage does. Keeping only the
+first N samples of each trip and discarding the rest moves it: nine and eight
+kill two submissions a run, six is marginal (two, none and one kill over three
+runs), five and below never kill. The same shader over 21 trips is clean, as is
+a `texture3d<int>` or `texture3d<uint>` at nine samples a trip and a
+`texture2d<float>` at six. Serialising the samples into a dependency chain makes
+it much worse -- ten kills a run, and then every 3D-sampling draw in the rig
+faults -- so it is not a limit on requests in flight.
+
+Nothing in the driver removes it. The neighbouring
+`dEQP-VK.robustness.robustness2` case uses the same image and the same sampler
+with a strictly larger shader -- three extra out-of-range-LOD `texelFetch`es per
+trip around the same nine samples -- and stays under the threshold in every run;
+that spacing is the margin a driver would have to buy back, and there is no
+per-sample work left in the generated MSL to remove. Both cases pass on an
+Apple9 host, where the whole `image_robustness` and `robustness2` family is
+clean.
+
 #### Memory budget
 
 iOS ends the app at a physical footprint of about 3007 MB on this device. With
