@@ -1,7 +1,7 @@
 From 435dcd9d77a73a781fd8335984ec1a615f1703c0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 20:41:56 +0900
-Subject: [PATCH 26/29] uml: name the virtual CPU from the host emulator
+Subject: [PATCH 26/30] uml: name the virtual CPU from the host emulator
 
 /proc/cpuinfo reported "UML" as the model name on every configuration.  That
 names the kernel port rather than the machine, and it is the same name whether

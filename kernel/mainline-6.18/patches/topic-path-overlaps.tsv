@@ -10,6 +10,7 @@ arch/um/drivers/ubd_kern.c	0010,0024	The device topic adapts UBD host I/O, while
 arch/um/drivers/virtio_uml.c	0010,0014,0027	Darwin vhost-user transport support remains in topic 0010, the generic 64-bit DMA-mask correction stays independently droppable as topic 0014, and topic 0027 adds the negotiated standard shared-region transport used by host-visible Virtio-GPU blobs.
 arch/um/drivers/vnc_input.c	0010,0020	The device topic owns Darwin input while topic 0020 exposes the display-mapped pointer as a direct touchscreen.
 arch/um/include/asm/processor-generic.h	0001,0015	The shared task-layout contract remains in topic 0001 while topic 0015 selects the scalable Darwin guest unmapped base.
+arch/um/include/asm/tlbflush.h	0001,0030	The shared contract owns the TLB flush interface while topic 0030 routes the kernel range through a sync whose result cannot be discarded.
 arch/um/include/shared/kern_util.h	0001,0019,0023	The shared contract owns kernel-side host helpers, topic 0019 adds cooperative progress checkpoints, and topic 0023 adds the suspend-entry acknowledgement hook.
 arch/um/include/shared/os.h	0001,0018,0022,0026	The shared host contract remains in topic 0001, topic 0018 adds local IPI raise, topic 0022 adds physical-range reclamation, and topic 0026 adds the virtual CPU's model name.
 arch/um/kernel/physmem.c	0022,0027	The reclamation topic owns Darwin physical-range reporting while topic 0027 adds the guarded shared-memory aperture and its constant-time physical lookup.
@@ -18,7 +19,7 @@ arch/um/kernel/skas/process.c	0002,0016	The MMU bootstrap owns CPU0 setup while 
 arch/um/kernel/skas/uaccess.c	0002,0019,0029	The MMU topic owns synchronized user access, topic 0019 adds safe cooperative progress boundaries, and topic 0029 answers mmap-lock contention in a pagefault-disabled walk with an RCU page-table walk instead of a fault.
 arch/um/kernel/smp.c	0003,0018	The SMP core owns IPI dispatch while topic 0018 adds the irq-work vector and local raise.
 arch/um/kernel/time.c	0003,0019	The timer core owns Darwin delivery while topic 0019 exposes safe cooperative progress checkpoints.
-arch/um/kernel/tlb.c	0002,0019	The MMU topic owns Darwin invalidation while topic 0019 adds a quiescent progress boundary after it completes.
+arch/um/kernel/tlb.c	0002,0019,0030	The MMU topic owns Darwin invalidation, topic 0019 adds a quiescent progress boundary after it completes, and topic 0030 makes a kernel-range sync complete or stop the kernel instead of returning a discarded error.
 arch/um/kernel/trap.c	0002,0015	The MMU core owns guest fault dispatch while topic 0015 rejects faults that intersect the shared sparse native hole.
 arch/um/kernel/um_arch.c	0004,0015,0023,0026,0027	The execution core owns task-size setup, topic 0015 selects and sizes the common Apple address window, topic 0023 acknowledges host-controlled suspend at the platform entry boundary, topic 0026 reports the emulator's CPU model name, and topic 0027 reserves the bounded guarded shared-memory GPA aperture inside that native layout.
 arch/um/os-Darwin/internal.h	0007,0016,0028	The Darwin host topic owns private services, topic 0016 replaces per-task scheduler hooks and adds carrier stop handling, and topic 0028 declares the virtual-CPU ownership query a synchronous host fault is qualified against.

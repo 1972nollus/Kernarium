@@ -70,6 +70,21 @@ own console rather than behind a trace variable. Without both, an exhausted host
 reaches the guest as page tables describing memory that is not there, with
 nothing in the run saying why.
 
+A kernel-range flush completes or the kernel stops. `flush_cache_vmap()` and
+`flush_cache_vunmap()` are both `flush_tlb_kernel_range()` on this port, so
+every vmalloc map and unmap is one such call and its result is never discarded:
+a transient host failure is retried a bounded number of times, and a persistent
+one panics. A flush requested from inside the walker that already owns the
+kernel turnstile is recorded and drained by that walker before it releases
+ownership, so it is deferred but never dropped. A guest returning from
+`flush_tlb_kernel_range()` may therefore assume the host agrees with `init_mm`'s
+page tables over that range. The unmap side needs this most:
+`__purge_vmap_area_lazy()` releases those addresses for reuse immediately
+afterwards, and nothing ever faults on a mapping that should not exist, so a
+dropped unmap leaves the host serving a freed page with no fault to repair it.
+A failed kernel map unmaps its own address for the same reason, degrading to
+"not mapped", which the fault path does repair.
+
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
 publish RW pages as RX, control JIT write protection, or publish the instruction
