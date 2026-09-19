@@ -231,6 +231,16 @@ The vhost-user transport owns connection, queue framing, and deferred used-ring
 publication. GPU, input, sound, console, battery, and network providers own
 their protocol behavior independently.
 
+The transport also owns this process's open-descriptor ceiling, and raises it
+to whatever the host permits before the first connection serves a request. A
+backend that publishes a shared-memory region hands the guest one descriptor
+for every host-visible blob it maps, the guest holds each one for as long as
+that mapping lives, and the transport is an in-process socketpair, so guest and
+backend draw on a single file table bounded only by the region's mapping count.
+Darwin refuses to install an arriving `SCM_RIGHTS` once that table is full and
+reports the refusal as `EMSGSIZE` on the read, which the transport reports as
+the descriptor exhaustion it is rather than as an over-long message.
+
 The Apple graphics path is:
 
 ```text
