@@ -362,15 +362,6 @@ static NTSTATUS allocate_x86_return(void)
     return STATUS_SUCCESS;
 }
 
-static void free_x86_return(void)
-{
-    void *address = uml_arm64ec_x86_return;
-    SIZE_T size = 0;
-    if (!address) return;
-    uml_arm64ec_x86_return = NULL;
-    NtFreeVirtualMemory( NtCurrentProcess(), &address, &size, MEM_RELEASE );
-}
-
 static void invalidate_code( const void *address, SIZE_T size )
 {
     struct uml_wine_cpu_request request;
@@ -401,29 +392,37 @@ NTSTATUS WINAPI ProcessInit(void)
 
 void WINAPI ProcessTerm( HANDLE process, BOOL after, NTSTATUS status )
 {
-    struct uml_wine_cpu_request request;
+    /* NtTerminateProcess(NULL) leaves the calling thread alive to run DLL
+     * shutdown callbacks. Keep the bridge and return thunk usable until the
+     * process address space is destroyed. */
     (void)process;
     (void)after;
     (void)status;
-    if (!service_capabilities) return;
-    initialise_request( &request );
-    request.operation = UML_WINE_CPU_OPERATION_RESET;
-    uml_arm64ec_hostcall( &request );
-    free_x86_return();
-    service_capabilities = 0;
 }
 
 NTSTATUS WINAPI ThreadInit(void)
 {
     CHPE_V2_CPU_AREA_INFO *area = cpu_area();
     struct uml_arm64ec_thread_state *state;
-    uintptr_t limit;
+    uintptr_t limit, area_end, context_end;
 
     if (!area || !area->ContextAmd64 || !service_capabilities)
         return STATUS_INVALID_PARAMETER;
     if (area->EmulatorData[0]) return STATUS_SUCCESS;
-    limit = (area->EmulatorStackLimit + 15U) & ~(uintptr_t)15U;
-    if (limit + UML_ARM64EC_STATE_PAGE_SIZE > area->EmulatorStackBase)
+    limit = area->EmulatorStackLimit;
+    /* Wine may place the CPU area and its inline context at StackLimit.
+     * Reserve bridge state after either structure that lies in this stack. */
+    area_end = (uintptr_t)area + sizeof(*area);
+    context_end = (uintptr_t)area->ContextAmd64 + sizeof(*area->ContextAmd64) +
+                  sizeof(CONTEXT_EX);
+    if ((uintptr_t)area < area->EmulatorStackBase && area_end > limit)
+        limit = area_end;
+    if ((uintptr_t)area->ContextAmd64 < area->EmulatorStackBase &&
+        context_end > limit)
+        limit = context_end;
+    limit = (limit + 15U) & ~(uintptr_t)15U;
+    if (limit > area->EmulatorStackBase ||
+        UML_ARM64EC_STATE_PAGE_SIZE > area->EmulatorStackBase - limit)
         return STATUS_NO_MEMORY;
     state = (struct uml_arm64ec_thread_state *)limit;
     zero_bytes( state, sizeof(*state) );
@@ -590,6 +589,24 @@ void uml_arm64ec_raise_stop( struct uml_arm64ec_thread_state *state )
     struct uml_wine_cpu_request *request = &state->request;
     uintptr_t guest_stack = request->context.gpr[4] & ~(uintptr_t)63U;
     ULONG_PTR access;
+
+    /* Windows syscall thunks may select INT 2e instead of SYSCALL. The
+     * Linux-oriented CPU service leaves this software interrupt to us;
+     * dispatch it through Wine with the following instruction as the return
+     * address, preserving RCX and R11 as INT does. */
+    if (request->stop_reason == UML_WINE_CPU_STOP_ILLEGAL_INSTRUCTION)
+    {
+        unsigned char opcode[2];
+        SIZE_T read = 0;
+        if (!NtReadVirtualMemory( NtCurrentProcess(),
+                                  (void *)(uintptr_t)request->context.rip,
+                                  opcode, sizeof(opcode), &read ) &&
+            read == sizeof(opcode) && opcode[0] == 0xcd && opcode[1] == 0x2e)
+        {
+            request->context.rip += sizeof(opcode);
+            request->stop_reason = UML_WINE_CPU_STOP_SYSTEM_CALL;
+        }
+    }
 
     stack = (struct uml_arm64ec_exception_stack *)guest_stack - 1;
     zero_bytes( stack, sizeof(*stack) );

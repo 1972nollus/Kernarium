@@ -112,6 +112,12 @@ the latency-oriented Wine profile uses 250 Hz. Both use `NO_HZ_IDLE`. Darwin
 signals wake carriers but do not execute Linux IPIs asynchronously; IRQ-enabled
 spin checkpoints service pending IPIs.
 
+Darwin descriptor IRQs preserve Linux UML's edge-triggered epoll contract.
+Separate kqueues retain dispatch edges and wake idle carriers without consuming
+those edges. Reentrant dispatch cannot repeat a readable level while an outer
+handler owns it; modifying a registration rearms an already-ready descriptor.
+This contract is shared by mainline and Android kernels.
+
 Early UML calibration uses process-directed `SIGALRM`. Application and launcher
 threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
 deadlines take over. Kernarium runs the guest on its named `uml-launcher`
@@ -125,6 +131,11 @@ derived expectations of the A64 instruction corpus. Instruction classes that
 the JIT's native lowering leaves to a helper run in the JIT's own semantic
 slow path, never in another engine; a helper treats any word outside its
 routed classes as a fatal internal error.
+
+Data-alignment faults retain the effective data address and the faulting PC.
+The host exports a distinct bridge event, and both kernel lines deliver
+`SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
+do not enter page-fault repair or retire the faulting instruction.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
@@ -170,6 +181,18 @@ present. The dedicated
 `uml_wine_arm64ec_emulator` archive, `uml-darwin-wine-arm64ec` macOS executable,
 and `KRuntime_Wine_6_18_4K` iOS framework keep it distinct from ordinary 4 KiB
 products.
+
+The [Steam rootfs](../tools/rootfs/steam-arm64ec/README.md) reuses this 4 KiB
+runtime with native ARM64 Steam and source-built Proton, without a desktop
+environment. Bundled x86 Linux Steam assets remain inert compatibility files;
+the appliance provides no x86 Linux execution engine. Its experimental Vulkan
+variant consumes the receipt-verified Mesa/Venus guest runtime and the paired
+KosmicKrisp host product. The producer owns CPU and gaming-session validation
+and documents any remaining GPU startup boundary. Its image-owned init mounts
+EROFS read-only and binds home and system state from a separate persistent
+GPT/ext4 disk. Replacing the rootfs never resets that disk or reseeds an
+existing Steam client. Boot and client-update progress use a Kernarium splash
+before handing the display to Big Picture.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
@@ -234,8 +257,14 @@ Runtime frameworks receive only the resulting ordinary disk image.
 ## Devices and graphics
 
 The vhost-user transport owns connection, queue framing, and deferred used-ring
-publication. GPU, input, sound, console, battery, and network providers own
+publication. GPU, video, input, sound, console, battery, and network providers own
 their protocol behavior independently.
+
+The [Virtio video device](../darwin/device/video/README.md) bridges the shared
+mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
+own vhost-user connection and requires no GPU context. The
+[private wire header](../kernel/common/video/README.md) is separate from both
+the public API and the host/kernel bridge ABI.
 
 The Apple graphics path is:
 

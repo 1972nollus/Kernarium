@@ -37,6 +37,12 @@ consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend. With no connected VNC client,
 scanout flushes retire without a synchronous GPU-to-CPU readback; the first
 frame after a zero-client interval refreshes the complete active scanout.
+The experimental Vulkan product compiles native Metal readback into the VNC
+display target and enables it with the same explicit runtime opt-in as Venus.
+Images shared through native Metal heaps retain tiled storage but disable
+usage-dependent lossless compression. A compositor can therefore import a
+render target for sampling without reinterpreting its compression metadata as
+pixels. Ordinary Vulkan images keep their eligible texture optimizations.
 
 Fenced Virgl submissions and host transfers from ordinary guest contexts may
 remain in flight together. Their descriptor chains retire only after the
@@ -75,6 +81,20 @@ storage of a default framebuffer the guest cannot name. vrend therefore offers
 a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
+
+Applications that use stateful V4L2 decoding can instead use the independent
+[Virtio video service](../darwin/device/video/README.md). It exposes the same
+host codec profile set through the shared Linux and Android driver and copies
+decoded planes into guest memory. Its protocol and buffer ownership do not
+depend on Virgl or VA-API.
+
+H.264 High10 is advertised only on Apple targets where a profile-specific
+VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
+10-bit bi-planar output. A session-only probe on macOS is insufficient: native
+decoding rejects a representative High10 frame, so macOS does not advertise
+the profile. Upstream Chromium maps HEVC Main and Main10 to its VA-API decoder
+but does not map H.264 High10; the latter remains available on qualifying hosts
+to upstream VA-API clients such as FFmpeg.
 
 The same rule binds the compressed formats on an iOS device. Metal defines the
 BC/S3TC, RGTC and BPTC pixel formats everywhere, but only a device that reports

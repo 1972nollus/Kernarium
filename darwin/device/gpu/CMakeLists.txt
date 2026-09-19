@@ -152,6 +152,7 @@ target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_HAS_VNC=$<BOOL:${UML_TARGET_MACOS}>
+    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)

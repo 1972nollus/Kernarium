@@ -1,7 +1,7 @@
-From 94d2750a91609ede84b99af826274dffb315f2a4 Mon Sep 17 00:00:00 2001
+From f8459ae4b98955ebf0db9d5929b7730fd40109d3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 06:05:22 +0000
-Subject: [PATCH 25/41] UML-DARWIN-LOCAL: add quiescent boundaries to kernel
+Subject: [PATCH 25/43] UML-DARWIN-LOCAL: add quiescent boundaries to kernel
  loops
 
 Change-Id: I01687563d5b0258fc18c4317c11cbb7c84f1a328
@@ -11,7 +11,7 @@ Change-Id: I01687563d5b0258fc18c4317c11cbb7c84f1a328
  2 files changed, 36 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index ff1ebe3c16d1ac223407b65674803aabbad67ebf..5a3dde0ca8e4c207f46ade584aba16a6b60e0c9c 100644
+index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..a15af2959752599ecb5f211af2ca212c17cf3fee 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -176,6 +176,24 @@ static struct page *maybe_map(unsigned long virt, int is_write)

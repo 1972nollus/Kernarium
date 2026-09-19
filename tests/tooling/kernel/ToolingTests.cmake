@@ -168,3 +168,9 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/toolchain/darwin.env
     LABELS kernel;audit
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME kernel-darwin-irq-edge
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_irq_edge.py
+    LABELS kernel
+    TIMEOUT 120)

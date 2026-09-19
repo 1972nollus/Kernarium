@@ -9,6 +9,9 @@ prefix verification. Kernel provenance is separate under
 upstream Git commit, the products that consume it, the required source paths,
 and any ordered local patch series.
 
+The guest-only [Steam inventory](steam-arm64ec/README.md) separately pins
+Proton and its Wine topics. It does not participate in Apple library receipts.
+
 [`toolchains.tsv`](toolchains.tsv) pins binary build-host toolchains by release
 archive and SHA-256. Toolchains are inputs to dependency production only and
 are not shipped in an emulator product.
@@ -43,6 +46,8 @@ The dependency products are:
   service;
 - `wine-arm64ec-rootfs`: the pinned Wine 10 source used to build the ARM64X
   userspace and its ARM64EC emulation-module interface for the appliance;
+- `steam-arm64ec-rootfs`: the Proton, SDK, native Steam, and Debian gaming
+  inputs owned by the [Steam producer](../tools/rootfs/steam-arm64ec/README.md);
 - `x86-conformance`: the test-only FEX and K x86-64 semantics instruction
   corpora plus their pinned producer inputs, used to generate the checked-in
   self-contained x86 unit corpus and qualify x86 gadget
@@ -173,6 +178,10 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `-Db_ndebug=false` and selected with
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
+
+Programmable primitive IDs cross the Metal vertex/fragment interface as flat
+user varyings. Layer and viewport indices use unsigned native Metal attributes
+without interpolation qualifiers.
 
 KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
 submission, using the common Vulkan runtime's on-demand submit worker. This

@@ -11,6 +11,16 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+option(UML_TEST_APPLE_AUDIO "Qualify the real Apple audio output with a short stereo tone" OFF)
+if(UML_TEST_APPLE_AUDIO)
+    add_subdirectory(audio)
+endif()
+
+option(UML_TEST_STEAM_ARM64EC "Qualify the Steam gaming rootfs instead of the Wine XFCE rootfs" OFF)
+if(UML_TEST_STEAM_ARM64EC AND NOT UML_BUILD_WINE_ARM64EC)
+    message(FATAL_ERROR "Steam rootfs qualification requires the ARM64EC Wine emulator")
+endif()
+
 if(UML_BUILD_WINE_ARM64EC)
     set(_uml_integration_emulator uml-darwin-wine-arm64ec)
 else()
@@ -19,6 +29,50 @@ endif()
 if(NOT TARGET "${_uml_integration_emulator}")
     message(FATAL_ERROR
         "Integration emulator target is unavailable: ${_uml_integration_emulator}")
+endif()
+
+set(UML_V4L2_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest V4L2 regression executable built from tests/integration/video/v4l2_decode_probe.cpp")
+if(UML_V4L2_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_PROBE_BINARY}" OR NOT TARGET uml_video_device)
+        message(FATAL_ERROR "V4L2 qualification requires its guest probe and video provider")
+    endif()
+    if(UML_GUEST_16K_PAGES)
+        set(_uml_video_page_size 16384)
+    else()
+        set(_uml_video_page_size 4096)
+    endif()
+    uml_add_integration_test(NAME guest-v4l2-decode
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/video/run_v4l2_decode.py"
+            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --rootfs "${UML_INTEGRATION_ROOTFS}"
+            --probe "${UML_V4L2_PROBE_BINARY}"
+            --page-size "${_uml_video_page_size}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
+        LABELS video TIMEOUT 600)
+endif()
+
+set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest executable built from tests/integration/futex/futex_atomic_probe.cpp")
+if(UML_FUTEX_PROBE_BINARY)
+    if(NOT EXISTS "${UML_FUTEX_PROBE_BINARY}")
+        message(FATAL_ERROR "Futex qualification requires its compiled guest probe")
+    endif()
+    if(UML_GUEST_16K_PAGES)
+        set(_uml_futex_page_size 16384)
+    else()
+        set(_uml_futex_page_size 4096)
+    endif()
+    uml_add_integration_test(NAME guest-futex-atomic
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/futex/run_futex_atomic.py"
+            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --rootfs "${UML_INTEGRATION_ROOTFS}"
+            --probe "${UML_FUTEX_PROBE_BINARY}"
+            --page-size "${_uml_futex_page_size}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/futex-guest.log"
+        LABELS futex TIMEOUT 320)
 endif()
 
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
@@ -277,7 +331,24 @@ done'"
         RESOURCE_GROUPS cpus:10,gpus:1)
 endif()
 
-if(UML_BUILD_WINE_ARM64EC)
+if(UML_BUILD_WINE_ARM64EC AND UML_TEST_STEAM_ARM64EC)
+    set(_uml_steam_graphics_arguments)
+    if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+        list(APPEND _uml_steam_graphics_arguments --experimental-venus)
+    endif()
+    uml_add_guest_integration_test(
+        NAME guest-steam-arm64ec-smoke
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/integration/steam_arm64ec/run_guest_steam_smoke.py
+            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --log ${CMAKE_BINARY_DIR}/reports/steam-arm64ec-guest.log
+            ${_uml_steam_graphics_arguments}
+        LABELS guest;steam;wine;arm64ec;gpu;smoke
+        TIMEOUT 1800
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4,gpus:1)
+elseif(UML_BUILD_WINE_ARM64EC)
     uml_add_guest_integration_test(
         NAME guest-wine-arm64ec-smoke
         COMMAND ${Python3_EXECUTABLE}

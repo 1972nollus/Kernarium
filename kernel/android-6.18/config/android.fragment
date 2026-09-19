@@ -625,3 +625,10 @@ CONFIG_SND_VIRTIO=y
 # the only thing that ever turned it on.
 # CONFIG_RCU_TRACE is not set
 # CONFIG_DEBUG_INFO is not set
+
+# Stateful Virtio video decoding is shared by every product profile.
+CONFIG_MEDIA_SUPPORT=y
+CONFIG_MEDIA_SUPPORT_FILTER=y
+CONFIG_MEDIA_PLATFORM_SUPPORT=y
+CONFIG_VIDEO_DEV=y
+CONFIG_VIRTIO_VIDEO=y

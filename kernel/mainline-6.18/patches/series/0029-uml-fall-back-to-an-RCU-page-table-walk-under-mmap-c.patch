@@ -1,7 +1,7 @@
-From 14d6f7bebc0a51e1dd2649951ef6b2cb1641abde Mon Sep 17 00:00:00 2001
+From 68aee6a1b3e4dddcb8202abcd41a113146f9526a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 15:22:03 +0900
-Subject: [PATCH 29/29] uml: fall back to an RCU page-table walk under mmap
+Subject: [PATCH 29/31] uml: fall back to an RCU page-table walk under mmap
  contention
 
 pin_user_mapping() answered a contended mmap_read_trylock() with a fault
@@ -25,7 +25,7 @@ unchanged.
  1 file changed, 21 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index ec0850650..038516878 100644
+index be1a236d3..7ff74a903 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -7,6 +7,7 @@

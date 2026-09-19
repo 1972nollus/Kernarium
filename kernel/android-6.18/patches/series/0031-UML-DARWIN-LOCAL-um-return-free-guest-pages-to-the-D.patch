@@ -1,7 +1,7 @@
-From 3b6048f3ed199472480a68a31a9578ccfcfa8e7f Mon Sep 17 00:00:00 2001
+From 558d2b72ce70fc77ca76be59a8bfd3826752fbc3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 09:00:48 +0000
-Subject: [PATCH 31/41] UML-DARWIN-LOCAL: um: return free guest pages to the
+Subject: [PATCH 31/43] UML-DARWIN-LOCAL: um: return free guest pages to the
  Darwin host
 
 mem= is a ceiling, not a reservation. setup_physmem() backs physical memory

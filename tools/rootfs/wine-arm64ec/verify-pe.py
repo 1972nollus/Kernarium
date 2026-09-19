@@ -33,7 +33,8 @@ DATA_DIRECTORY_OFFSET = 112
 LOAD_CONFIG_DIRECTORY_INDEX = 10
 LOAD_CONFIG_CHPE_POINTER_OFFSET = 0xC8
 LOAD_CONFIG_CHPE_POINTER_END = 0xD0
-ARM64EC_METADATA_VERSION = 2
+# LLVM emits version 1; Wine's winebuild emits version 2.
+ARM64EC_METADATA_VERSIONS = {1, 2}
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -158,7 +159,7 @@ def arm64ec_machine(
     metadata_version = read_at(stream, file_size, metadata_offset, 4)
     if metadata_version is None:
         return None
-    if int.from_bytes(metadata_version, "little") != ARM64EC_METADATA_VERSION:
+    if int.from_bytes(metadata_version, "little") not in ARM64EC_METADATA_VERSIONS:
         return None
     return ARM64EC_MACHINE
 

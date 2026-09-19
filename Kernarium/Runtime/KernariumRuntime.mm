@@ -5,6 +5,8 @@
 #include "KernariumCtsCampaigns.hpp"
 
 #include "audio/in_process_service.hpp"
+#include "video/in_process_service.hpp"
+#include "video/virtio_video_device.hpp"
 #include "audio/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
@@ -1451,6 +1453,9 @@ int runtimeRun(
         uml::input::virtio::InProcessInputService keyboard(
             uml::input::virtio::DeviceKind::keyboard, width, height);
         uml::audio::InProcessAudioService audioService;
+        std::unique_ptr<uml::video::InProcessVideoService> videoService;
+        if (!uml::platform::videoDecodeCapabilities().empty())
+            videoService = std::make_unique<uml::video::InProcessVideoService>();
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         uml::battery::InProcessBatteryService batteryService;
 #endif
@@ -1619,6 +1624,11 @@ int runtimeRun(
         arguments.emplace_back(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
             std::to_string(uml::audio::protocol::deviceId));
+        if (videoService) {
+            arguments.emplace_back(
+                "virtio_uml.device=" + videoService->takeConnectionName() + ":" +
+                std::to_string(uml::video::deviceId));
+        }
         if (ctsArtifactBridge) {
             arguments.emplace_back(
                 "virtio_uml.device=" +

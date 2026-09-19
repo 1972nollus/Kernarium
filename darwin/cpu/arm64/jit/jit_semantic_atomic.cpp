@@ -39,7 +39,7 @@ RunResult load_store_simd_ordered(CpuState &cpu,
 		const auto address = cpu.untag_data_address(
 			tagged_address, base_register == 31U);
 		if ((address & 7U) != 0U)
-			return {StopReason::memory_fault, address, instruction, 0, !load};
+			return alignment_fault(address, instruction, !load);
 		const std::size_t lane = instruction >> 30;
 		if (load) {
 			std::uint64_t value = 0;
@@ -77,7 +77,7 @@ RunResult load_store_simd_ordered(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((address & (size - 1U)) != 0U)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 
 	if (load) {
 		std::array<std::byte, 16> result{};
@@ -157,8 +157,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 		const auto total_size = element_size * 2;
 		if ((base_register == 31U && (address & 15U) != 0) ||
 		    (address & (total_size - 1U)) != 0)
-			return {StopReason::memory_fault, address, instruction, 0,
-				!load};
+			return alignment_fault(address, instruction, !load);
 		if (load) {
 			std::scoped_lock lock{exclusive_memory_mutex};
 			std::uint64_t first = 0;
@@ -239,7 +238,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 	const std::size_t size = std::size_t{1} << size_code;
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 	if (load) {
 		if (exclusive) {
 			std::scoped_lock lock{exclusive_memory_mutex};
@@ -349,7 +348,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 	const auto compare = cpu.read_register(compare_register, false);
 	const auto replacement = cpu.read_register(replacement_register, false);
 	const bool acquire = (instruction & 0x0040'0000U) != 0 &&
@@ -391,7 +390,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (total_size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 	const auto compare_first = cpu.read_register(compare_register, false);
 	const auto compare_second = cpu.read_register(compare_register + 1, false);
 	const auto replacement_first = cpu.read_register(
@@ -449,7 +448,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 	const auto operand = cpu.read_register(source, false);
 	const bool acquire = (instruction & 0x0080'0000U) != 0 &&
 		destination != 31U;
@@ -479,14 +478,12 @@ RunResult load_store_atomic_floating(CpuState &cpu,
 	/* CheckSPAlignment precedes element alignment, address translation, tag
 	 * checking, FP-state materialization, and memory observation. */
 	if (base_register == 31U && (tagged_address & 15U) != 0U)
-		return {StopReason::memory_fault, tagged_address, instruction, 0,
-			true};
+		return alignment_fault(tagged_address, instruction, true);
 	const auto untagged_address =
 		base_register != 31U && cpu.tagged_addresses_enabled() ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((untagged_address & (size - 1U)) != 0U)
-		return {StopReason::memory_fault, untagged_address, instruction, 0,
-			true};
+		return alignment_fault(untagged_address, instruction, true);
 	std::uint64_t address{};
 	std::uint64_t tag_fault{};
 	if (!simd_structure_address(cpu, memory, tagged_address,
@@ -538,7 +535,7 @@ RunResult load_store_atomic_pair_128(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((address & 15U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 	/* Capture both operands before either result can overwrite an overlapping
 	 * base or transfer register. */
 	const auto operand_first = cpu.read_register(first, false);
@@ -580,7 +577,7 @@ RunResult load_store_rcw(CpuState &cpu, GuestMemory &memory,
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & 7U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 	const unsigned first = (instruction >> 16) & 31U;
 	const unsigned second = instruction & 31U;
 	const unsigned result_register = compare_swap ? first : second;
@@ -631,7 +628,7 @@ RunResult load_store_rcw_pair(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((address & 15U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return alignment_fault(address, instruction, true);
 
 	std::uint64_t compare_first = 0;
 	std::uint64_t compare_second = 0;
@@ -700,7 +697,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((address & (size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 
 	if (load) {
 		std::uint64_t value = 0;
@@ -786,7 +783,7 @@ RunResult load_store_ordered_pair(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((address & (element_size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 
 	std::scoped_lock lock{exclusive_memory_mutex};
 	std::uintptr_t key = 0;
@@ -844,7 +841,7 @@ RunResult load_store_ordered_writeback(
 		tagged_address, base_register == 31U);
 	const auto adjusted = load ? base + size : base - size;
 	if ((address & (size - 1U)) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 
 	if (load) {
 		std::uint64_t value = 0;

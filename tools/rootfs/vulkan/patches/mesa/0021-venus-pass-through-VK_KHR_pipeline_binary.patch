@@ -1,7 +1,7 @@
 From 3f2f578132673c2f95ab824933258167bdbb1b68 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:39:23 +0900
-Subject: [PATCH 21/23] venus: pass through VK_KHR_pipeline_binary
+Subject: [PATCH 21/24] venus: pass through VK_KHR_pipeline_binary
 
 The local venus-protocol series gives the extension's five commands their
 command ids and codecs, and the renderer now tracks VkPipelineBinaryKHR as an

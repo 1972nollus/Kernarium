@@ -1,7 +1,7 @@
 From b2fca218c52a0a892c9fbb87192e447a15085552 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:37:27 +0900
-Subject: [PATCH 20/23] venus: pass through image compression control and the
+Subject: [PATCH 20/24] venus: pass through image compression control and the
  address binding report
 
 VK_EXT_image_compression_control, its swapchain companion and

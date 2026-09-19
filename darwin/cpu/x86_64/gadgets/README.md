@@ -57,8 +57,13 @@ stays correct.
 
 The narrow widths qualify through a compare of the two operands shifted to
 the top of a 32-bit register, which sets NZCV exactly as the guest-width
-operation would. The ordinary bank does not do this, so its narrow producers
-keep the deferred path.
+operation would. The ordinary bank, which carries all compat32 code, computes
+on zero-extended operands instead, so its narrow producers transfer only what
+survives that: CMP and SUB leave the zero and the four unsigned-order
+conditions, TEST and AND leave zero alone, and ADD, whose carry lands in bit 8
+or 16 of the host result, and the narrow INC, DEC and NEG keep the deferred
+path. Register CMOVE and CMOVNE read the deferred zero result directly when no
+producer is fused, without materializing the other flags.
 
 A transfer that defines no flags does not end a fusion. MOV, MOVZX and MOVSX,
 LEA, PUSH and POP in the baked bank pass the producer's host flags through to

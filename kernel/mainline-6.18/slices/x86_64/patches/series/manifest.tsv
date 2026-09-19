@@ -2,6 +2,6 @@
 # Ordered final-state topic identity manifest. Fields are order, file, stable
 # patch-id, SHA-256 of the git-generated patch, and commit subject.
 order	filename	stable_patch_id	sha256	subject
-1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	4fe9908050cd0a660a2bce96c04f5b6aef616e2e	44f400934211e254190dd7d0aae3f2ca640de3d9c770140f18e6298a395bb0f9	arm64: add a dedicated x86-64 userspace UML slice
-2	0002-arm64-add-i386-userspace-task-support.patch	f39e5c9a48c36ccdd7d44b4fcfd17ae81adb5790	71c7d93cc9d6a08d7df5fccc6542221519f1e4ec061334a3f3aaee95477c194f	arm64: add i386 userspace task support
-3	0003-arm64-describe-the-emulated-x86-CPU-in-proc-cpuinfo.patch	0cbf95dc4419b0a451c4366305c26536a5ab856f	583cc816055143fad8dfc7f2f2efa5863b9fb3ee84c7a96049a9dc7c931ca14a	arm64: describe the emulated x86 CPU in /proc/cpuinfo
+1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	4fe9908050cd0a660a2bce96c04f5b6aef616e2e	6951e42b8a8891fe313661afff876e354564dff5473e531c212d4e8de18f17bb	arm64: add a dedicated x86-64 userspace UML slice
+2	0002-arm64-add-i386-userspace-task-support.patch	f39e5c9a48c36ccdd7d44b4fcfd17ae81adb5790	fb8f67d3c293e3d8e1e06e67b5d9b9ed3a76938d7b12796e1a8db7af59198d69	arm64: add i386 userspace task support
+3	0003-arm64-describe-the-emulated-x86-CPU-in-proc-cpuinfo.patch	0cbf95dc4419b0a451c4366305c26536a5ab856f	95bdf1acf53e90816a8cf2e69f27001768af73c6c933ac8d0562c20807fc12f8	arm64: describe the emulated x86 CPU in /proc/cpuinfo

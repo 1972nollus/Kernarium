@@ -11,6 +11,7 @@ symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	toolin
 kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained
 kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained
 arm64-instruction-corpus	tests/unit/arm64/instruction_corpus_runner.cpp	unit	retained
+kernel-darwin-irq-edge	tests/tooling/kernel/test_darwin_irq_edge.py	tooling	retained
 arm64-engine-harness	tests/unit/arm64	unit	retained
 arm64-deferred-fp-state	tests/unit/arm64	unit	retained
 arm64-host-instruction-probe	tests/unit/arm64	unit	retained
@@ -45,6 +46,7 @@ gpu-kosmickrisp-pipeline-statistics	tests/unit/gpu/kosmickrisp_pipeline_statisti
 gpu-kosmickrisp-command-storage	tests/unit/gpu/kosmickrisp_command_storage_tests.cpp	unit	conditional
 gpu-kosmickrisp-raster-polygon	tests/unit/gpu/kosmickrisp_raster_polygon_tests.cpp	unit	conditional
 gpu-kosmickrisp-timestamp-availability	tests/unit/gpu/kosmickrisp_timestamp_availability_tests.cpp	unit	conditional
+gpu-kosmickrisp-external-image-alias	tests/unit/gpu/kosmickrisp_external_image_alias_tests.cpp	unit	conditional
 gpu-kosmickrisp-point-clipping	tests/unit/gpu/kosmickrisp_point_clipping_tests.cpp	unit	conditional
 gpu-kosmickrisp-tessellation-feedback	tests/unit/gpu/kosmickrisp_tessellation_feedback_tests.cpp	unit	conditional
 gpu-kosmickrisp-raster-line	tests/unit/gpu/kosmickrisp_raster_line_tests.cpp	unit	conditional
@@ -224,6 +226,7 @@ virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	condit
 virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional
 virtio-battery-protocol	tests/unit/battery/virtio_battery_tests.cpp	unit	conditional
 platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained
+platform-video-decoder	tests/unit/platform/video_decoder_tests.cpp	unit	retained
 android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained
 device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained
 unit-test-scratch-directory	tests/unit/scratch/scratch_directory_tests.cpp	unit	retained
@@ -233,6 +236,7 @@ json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	to
 ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained
 rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained
 rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained
+rootfs-steam-arm64ec-image-audit	tests/tooling/rootfs/test_steam_arm64ec_image.py	tooling	retained
 rootfs-starter-image-contract	tests/tooling/rootfs/test_starter_images.py	tooling	retained
 rootfs-wine-arm64ec-pe-audit	tests/tooling/rootfs/test_wine_arm64ec_pe.py	tooling	retained
 gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
@@ -299,8 +303,13 @@ guest-slirp-network	tests/integration/network	integration	retained
 guest-wine-arm64ec-smoke	tests/integration/wine_arm64ec	integration	conditional
 apple-ios-mac-vk-gl-cts	tests/integration/gpu	integration	conditional
 apple-ios-device-vk-cts	tests/integration/gpu	integration	conditional
+guest-steam-arm64ec-smoke	tests/integration/steam_arm64ec	integration	conditional
 guest-mmu-stress	tests/integration/smp	integration	retained
 guest-docker-hello-world	tests/integration	integration	conditional
 guest-external-network	tests/integration/network	integration	conditional
 guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional
 guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional
+virtio-video-protocol	tests/unit/video	unit	conditional
+guest-v4l2-decode	tests/integration/video	integration	conditional
+guest-futex-atomic	tests/integration/futex	integration	conditional
+apple-audio-playback	tests/integration/audio	integration	conditional

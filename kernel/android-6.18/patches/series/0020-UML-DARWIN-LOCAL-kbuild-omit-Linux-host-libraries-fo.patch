@@ -1,7 +1,7 @@
-From dce443413400d6393b64f4dde52a14435718b175 Mon Sep 17 00:00:00 2001
+From 6a5439bbdef14b60d0c1fac06df30914d1ebb6b8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 14:51:46 +0000
-Subject: [PATCH 20/41] UML-DARWIN-LOCAL: kbuild: omit Linux host libraries for
+Subject: [PATCH 20/43] UML-DARWIN-LOCAL: kbuild: omit Linux host libraries for
  Darwin ELF
 
 Change-Id: Ia765233c82169001c3e5fbe3d1e835341e31d265

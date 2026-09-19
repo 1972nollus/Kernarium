@@ -48,6 +48,7 @@ public:
   [[nodiscard]] bool preempted() const noexcept;
   [[nodiscard]] std::uint64_t fault_address() const noexcept;
   [[nodiscard]] Access fault_access() const noexcept;
+  [[nodiscard]] bool fault_alignment() const noexcept;
   [[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
   [[nodiscard]] bool budget_admitted() const noexcept;
 #if UML_JIT_RUNTIME_DIAGNOSTICS

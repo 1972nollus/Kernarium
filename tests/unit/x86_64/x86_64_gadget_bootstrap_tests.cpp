@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <malloc/malloc.h>
 #include <span>
 #include <string_view>
 #include <thread>
@@ -965,6 +966,26 @@ read_test_sequences(void *context) noexcept
 			"overlapping-stack CALL lost its architectural stack write");
 }
 
+[[nodiscard]] bool short_blocks_retain_only_their_translated_storage()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 1,
+		"short allocation-regression block did not build"))
+		return false;
+	/* Allow allocator rounding, but not a maximum-size decoder reservation.
+	 * Inspect the actual allocation rather than an implementation counter. */
+	return expect(malloc_size(built.program.stream().data()) <=
+		2 * sizeof(gadgets::Gadget),
+		"short cached block retained the decoder's spare capacity") &&
+		expect(malloc_size(built.program.native_stream().data()) <=
+			2 * built.program.native_stream().size_bytes(),
+			"short cached block retained excess native stream capacity");
+}
+
 [[nodiscard]] bool executable_store_publishes_code_change()
 {
 	using namespace uml::cpu::x86_64;
@@ -1453,6 +1474,71 @@ read_test_sequences(void *context) noexcept
 		run_branch(not_equal.program, cpu, 23,
 			DeferredFlagOperation::none,
 			"JNE ignored a clear architectural zero flag");
+}
+
+[[nodiscard]] bool zero_conditional_moves_preserve_pending_flags()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
+		for (const unsigned width : {16U, 32U, 64U}) {
+			if (mode == ExecutionMode::compat32 && width == 64)
+				continue;
+			for (const bool not_equal : {false, true}) {
+				const auto opcode = static_cast<std::uint8_t>(not_equal ? 0x45 : 0x44);
+				if (width == 16)
+					memory.load(0, {0x66, 0x0f, opcode, 0xc3});
+				else if (width == 64)
+					memory.load(0, {0x48, 0x0f, opcode, 0xc3});
+				else
+					memory.load(0, {0x0f, opcode, 0xc3});
+				const auto block = gadgets::build(memory, 0, mode, 1);
+				if (!expect(block.status == gadgets::BuildStatus::built,
+					"zero conditional move did not build"))
+					return false;
+				for (unsigned state = 0; state != 6; ++state) {
+					CpuState cpu{};
+					cpu.execution_mode = mode;
+					cpu.gpr(Register::rax) = 0x76543210;
+					cpu.gpr(Register::rbx) = 0xfedcba987654abcdULL;
+					cpu.rflags |= rflags_carry | rflags_overflow;
+					if (state & 1U)
+						cpu.rflags |= rflags_zero;
+					if (state >= 2) {
+						cpu.deferred_flags = {0, (state & 1U),
+							(state & 1U) ? 0xffffU : 0U,
+							DeferredFlagOperation::subtract, 2};
+					}
+					if (state >= 4) {
+						cpu.deferred_flags.override_mask = rflags_zero;
+						cpu.deferred_flags.override_value =
+							(state & 1U) ? rflags_zero : 0;
+					}
+					auto reference = cpu;
+					materialize_flags(reference);
+					const bool take = ((reference.rflags & rflags_zero) != 0) != not_equal;
+					const auto mask = width == 64 ? ~std::uint64_t{} :
+						(std::uint64_t{1} << width) - 1;
+					const auto expected = take ?
+						(cpu.gpr(Register::rax) & ~mask) |
+						(cpu.gpr(Register::rbx) & mask) : cpu.gpr(Register::rax);
+					const auto pending = cpu.deferred_flags;
+					const auto result = gadgets::execute(block.program, cpu, memory, 1);
+					if (!expect(result.retired_instructions == 1 &&
+						cpu.gpr(Register::rax) == expected &&
+						cpu.deferred_flags.operation == pending.operation &&
+						cpu.deferred_flags.override_mask == pending.override_mask,
+						"conditional move changed pending flags or selected the wrong operand"))
+						return false;
+					materialize_flags(cpu);
+					if (!expect(cpu.rflags == reference.rflags,
+						"conditional move lost flags needed by a later consumer"))
+						return false;
+				}
+			}
+		}
+	}
+	return true;
 }
 
 /* glibc's i386 futex wait rejects a positive syscall result with this exact
@@ -2839,9 +2925,9 @@ read_test_sequences(void *context) noexcept
 	}
 	return true;
 }
-/* A 32- or 64-bit CMP, SUB, TEST or AND leaves host flags that describe the
- * x86 flags it defined, and the builder lets the very next condition read them
- * directly. The slot after that reads the same flags through the deferred
+/* CMP, SUB, TEST and AND leave compatible host flags for the next condition:
+ * zero and unsigned subtraction ordering at narrow widths, and the supported
+ * NZCV conditions at 32/64 bits. The slot after that reads through the deferred
  * record instead, so the two bytes a pair of identical SETcc write must agree
  * for every producer, width, operand pair and condition. That equality is the
  * whole correctness claim of the fused path, and it needs no reference model:
@@ -2855,8 +2941,9 @@ read_test_sequences(void *context) noexcept
 		0x39, 0x29, 0x85, 0x21, 0x01};
 	static constexpr std::array<std::array<unsigned, 2>, 3> unary{{
 		{0xff, 0xc0}, {0xff, 0xc8}, {0xf7, 0xd8}}};
-	static constexpr std::array<std::uint64_t, 12> values{
-		0U, 1U, 2U, 0xffU, 0x7fff'ffffULL, 0x8000'0000ULL,
+	static constexpr std::array<std::uint64_t, 17> values{
+		0U, 1U, 2U, 0x7fU, 0x80U, 0xffU, 0x7fffU, 0x8000U, 0xffffU,
+		0x7fff'ffffULL, 0x8000'0000ULL,
 		0xffff'ffffULL, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL, 0xaaaa'aaaa'aaaa'aaaaULL,
 	};
@@ -2926,6 +3013,99 @@ read_test_sequences(void *context) noexcept
 								"deferred evaluation of the same flags "
 								"(producer %zu width %u condition %u left "
 								"%#llx right %#llx: fused %u deferred %u)",
+								index, width, condition,
+								static_cast<unsigned long long>(left),
+								static_cast<unsigned long long>(right),
+								static_cast<unsigned>(fused),
+								static_cast<unsigned>(deferred));
+							return expect(false, message);
+						}
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* Compat32 code runs on the ordinary bank, where a byte or word operand is
+ * zero-extended into a 32-bit host operation. Subtraction keeps the zero and
+ * unsigned-order conditions there and a logical operation keeps zero alone; an
+ * addition keeps nothing, because its carry lands in bit 8 or 16 of the host
+ * result, and the narrow unary forms set no host flags at all. The same two
+ * SETcc as above hold every producer, width and condition to the deferred
+ * evaluation.
+ */
+[[nodiscard]] bool ordinary_bank_conditions_match_the_deferred_evaluation()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<unsigned, 5> producers{
+		0x39, 0x29, 0x85, 0x21, 0x01};
+	static constexpr std::array<std::array<unsigned, 2>, 3> unary{{
+		{0xff, 0xc0}, {0xff, 0xc8}, {0xf7, 0xd8}}};
+	static constexpr std::array<std::uint64_t, 12> values{
+		0U, 1U, 2U, 0x7fU, 0x80U, 0xffU, 0x100U, 0x7fffU, 0x8000U, 0xffffU,
+		0x7fff'ffffULL, 0xffff'ffffULL,
+	};
+	for (std::size_t index = 0; index < producers.size() + unary.size();
+		++index) {
+		const bool binary = index < producers.size();
+		for (const unsigned width : {8U, 16U, 32U}) {
+			for (unsigned condition = 0; condition < 16U; ++condition) {
+				std::vector<std::byte> code;
+				const auto push = [&code](unsigned byte) {
+					code.push_back(static_cast<std::byte>(byte));
+				};
+				if (width == 16U)
+					push(0x66);
+				if (binary) {
+					push(width == 8U ? producers[index] - 1U :
+						producers[index]);
+					push(0xd8);
+				} else {
+					const auto &form = unary[index - producers.size()];
+					push(width == 8U ? form[0] - 1U : form[0]);
+					push(form[1]);
+				}
+				push(0x0f);
+				push(0x90U + condition);
+				push(0xc2);
+				push(0x0f);
+				push(0x90U + condition);
+				push(0xc3);
+				TestMemory memory;
+				memory.fill(0, code);
+				const auto built = gadgets::build(
+					memory, 0, ExecutionMode::compat32, 3);
+				if (!expect(built.status == gadgets::BuildStatus::built &&
+					built.program.instruction_count() == 3,
+					"ordinary-bank condition program did not build"))
+					return false;
+				for (const auto left : values) {
+					for (const auto right : values) {
+						if (!binary && right != values.front())
+							break;
+						CpuState cpu{};
+						cpu.execution_mode = ExecutionMode::compat32;
+						cpu.gpr(Register::rax) = left;
+						cpu.gpr(Register::rbx) = right;
+						const auto result = gadgets::execute(
+							built.program, cpu, memory, 3);
+						if (!expect(result.retired_instructions == 3,
+							"ordinary-bank condition program did not "
+							"retire its three instructions"))
+							return false;
+						const auto fused = cpu.gpr(Register::rdx) & 0xffU;
+						const auto deferred =
+							cpu.gpr(Register::rbx) & 0xffU;
+						if (fused != deferred) {
+							char message[192];
+							std::snprintf(message, sizeof(message),
+								"an ordinary-bank condition disagreed "
+								"with the deferred evaluation of the same "
+								"flags (producer %zu width %u condition "
+								"%u left %#llx right %#llx: fused %u "
+								"deferred %u)",
 								index, width, condition,
 								static_cast<unsigned long long>(left),
 								static_cast<unsigned long long>(right),
@@ -3254,11 +3434,11 @@ read_test_sequences(void *context) noexcept
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 4> producers{0x39, 0x29, 0x85, 0x21};
-	static constexpr std::array<std::uint64_t, 6> values{
-		0U, 1U, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
+	static constexpr std::array<std::uint64_t, 12> values{
+		0U, 1U, 0x7fU, 0x80U, 0xffU, 0x7fffU, 0x8000U, 0xffffU, 0x7fff'ffff'ffff'ffffULL, 0x8000'0000'0000'0000ULL,
 		~std::uint64_t{}, 0x5555'5555'5555'5555ULL};
 	for (const auto producer : producers) {
-		for (const unsigned width : {32U, 64U}) {
+		for (const unsigned width : {8U, 16U, 32U, 64U}) {
 			for (unsigned condition = 0; condition < 16U; ++condition) {
 				for (const auto left : values) {
 					for (const auto right : values) {
@@ -3269,9 +3449,11 @@ read_test_sequences(void *context) noexcept
 								code.push_back(
 									static_cast<std::byte>(byte));
 							};
+							if (width == 16U)
+								push(0x66);
 							if (width == 64U)
 								push(0x48);
-							push(producer);
+							push(width == 8U ? producer - 1U : producer);
 							push(0xd8);
 							if (barrier != 0U)
 								push(0x90);
@@ -3966,6 +4148,7 @@ int main()
 		an_unrelated_code_change_leaves_a_link_armed() &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
+		short_blocks_retain_only_their_translated_storage() &&
 		executable_store_publishes_code_change() &&
 		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&
@@ -3978,6 +4161,7 @@ int main()
 		carry_branches_match_the_reference() &&
 		execute_absolute_memory_test_branch() &&
 		execute_lazy_zero_branches() &&
+		zero_conditional_moves_preserve_pending_flags() &&
 		execute_compat32_test_greater_after_syscall() &&
 		execute_compat32_futex_result_validator() &&
 		shifts_overlay_lazy_arithmetic_flags() &&
@@ -4000,6 +4184,7 @@ int main()
 		repeated_store_into_executable_page_publishes_its_run() &&
 		repeated_move_faults_on_a_run_boundary() &&
 		fused_conditions_match_the_deferred_evaluation() &&
+		ordinary_bank_conditions_match_the_deferred_evaluation() &&
 		fused_conditions_cover_exactly_the_legal_pairs() &&
 		lazy_carry_reaches_every_reader() &&
 		fused_conditional_jumps_take_the_same_edge() &&

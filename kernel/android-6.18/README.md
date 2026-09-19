@@ -9,6 +9,11 @@ It is independent of both mainline page profiles. Mainline patch bytes are not
 this line's source of truth, even when a topic implements the same Darwin
 contract.
 
+The shared stateful Virtio video decoder is built in for every product in this
+line. Its [wire contract](../common/video/README.md) is synchronized from the
+canonical header and its implementation is maintained as a local media topic.
+The host exposes hardware decoding through V4L2 independently of the GPU.
+
 ## Product contract
 
 The line has one 16 KiB ARM64 configuration in
@@ -73,6 +78,12 @@ are process-wide, so the emulator's device and renderer threads share UML's
 now leaves the guest path, is reported with its real host thread and literal
 addresses, and terminates under the default host disposition. This too is the
 same source change the mainline line carries.
+
+A guest data-alignment exception is not a translation fault and cannot be
+repaired by mapping a page. It crosses the versioned bridge as its own event
+and reaches the faulting task as `SIGBUS` with `BUS_ADRALN` at the effective
+data address, so a guest handler can repair or emulate the access before
+`sigreturn`. This is again the same source change the mainline line carries.
 
 The standardized vhost-user shared-memory-region transport the mainline line
 adds for host-visible Virtio-GPU blobs is carried here as well. The Android

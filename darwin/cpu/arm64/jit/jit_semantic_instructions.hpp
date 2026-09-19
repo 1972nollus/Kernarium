@@ -37,7 +37,16 @@ struct RunResult final {
   std::uint32_t instruction{};
   std::size_t instructions{};
   bool write{};
+  bool alignment{};
 };
+
+/* Alignment faults precede translation and must never be repaired as missing
+ * pages. Preserve the effective address without retiring the instruction. */
+[[nodiscard]] constexpr RunResult alignment_fault(std::uint64_t address,
+                                                  std::uint32_t instruction,
+                                                  bool write) noexcept {
+  return {StopReason::memory_fault, address, instruction, 0, write, true};
+}
 
 [[nodiscard]] constexpr RunResult continue_after(std::uint64_t address,
                                                  std::uint32_t instruction) {

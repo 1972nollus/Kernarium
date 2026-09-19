@@ -1,7 +1,7 @@
 From 72a28f39b3c478fde5722122379e4290e1ac169f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:00:37 +0900
-Subject: [PATCH 27/93] kosmickrisp: implement provoking vertex and line
+Subject: [PATCH 27/95] kosmickrisp: implement provoking vertex and line
  rasterization
 
 Development checkpoint: materialize final TES/GS/XFB raster outputs with compact source-position records, guarded restart handling, checked line allocations, and a linear stipple prefix pass. The generated line raster stage is the sole Metal raster entrypoint, and smooth-line coverage modulates primary RT0 alpha before blend lowering.

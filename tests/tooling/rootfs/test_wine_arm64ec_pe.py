@@ -189,6 +189,10 @@ def main() -> int:
 
         write_arm64ec_pe(hybrid, metadata_version=1)
         result = run_verifier(arguments.verifier, root, output)
+        require(result.returncode == 0, "LLVM ARM64EC metadata was rejected")
+
+        write_arm64ec_pe(hybrid, metadata_version=3)
+        result = run_verifier(arguments.verifier, root, output)
         require(result.returncode == 1, "invalid CHPE metadata was accepted")
         require(
             "unexpected AMD64 PE payload" in result.stderr,

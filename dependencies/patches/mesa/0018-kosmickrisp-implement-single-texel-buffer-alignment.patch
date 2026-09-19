@@ -1,7 +1,7 @@
 From e8c24536524e0959b35ab876865ec1e6b40dc7bf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:10:24 +0900
-Subject: [PATCH 18/93] kosmickrisp: implement single-texel buffer alignment
+Subject: [PATCH 18/95] kosmickrisp: implement single-texel buffer alignment
 
 ---
  src/kosmickrisp/bridge/mtl_device.h           |  2 +

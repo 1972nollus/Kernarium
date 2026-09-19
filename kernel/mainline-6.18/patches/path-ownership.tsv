@@ -14,3 +14,5 @@ scripts/*	darwin-host-build	carry-locally	Kbuild host tools run before the outer
 mm/filemap.c	base-correctness	drop-locally-if-contained	Independent cachestat zero-length correctness fix; remove locally when the selected base contains it.
 mm/mmu_gather.c	uml-generic	carry-locally	Architecture hook for preserving precise nested mmu-gather ranges when a synchronous range flush already serializes all executors.
 security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	Independent connected-stream sendmsg correctness fix; remove locally when the selected base contains it.
+drivers/media/*	uml-devices	carry-locally	Stateful V4L2 decoding through the shared Virtio device.
+include/uapi/linux/virtio_video.h	uml-devices	carry-locally	Paired host and kernel video queue contract.

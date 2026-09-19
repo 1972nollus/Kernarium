@@ -1,7 +1,7 @@
 From 4d69c0c2599578c442c26bbc7da9b23f6ef9cfb1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:18:29 +0900
-Subject: [PATCH 82/93] kosmickrisp: advertise VK_KHR_pipeline_binary
+Subject: [PATCH 82/95] kosmickrisp: advertise VK_KHR_pipeline_binary
 
 VP_ANDROID_17_requirements makes this extension mandatory. It lets an
 application take the compiled form of a pipeline out of the implementation,

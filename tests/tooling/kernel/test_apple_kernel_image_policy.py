@@ -1049,7 +1049,7 @@ def main() -> int:
     for contract in (
         'android_default_guest_memory{"mem=4G"}',
         'android_default_guest_cpus{"ncpus=10"}',
-        ".touchscreen_input = true",
+        ".input_mode = uml::app::DisplayInput::touchscreen",
         'release_option{"--android-release="}',
         'disk_option{"--android-disk="}',
         'boot_mode_option{"--android-boot-mode="}',

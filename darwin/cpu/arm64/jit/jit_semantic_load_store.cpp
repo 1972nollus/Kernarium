@@ -49,7 +49,7 @@ RunResult load_store_64b(CpuState &cpu, GuestMemory &memory,
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & 63U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, !load};
+		return alignment_fault(address, instruction, !load);
 	if (tagchecked) {
 		const auto logical_tag =
 			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
@@ -318,7 +318,7 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 	 * transfer register or GuestMemory.
 	 */
 	if (base_register == 31U && (base & 15U) != 0)
-		return {StopReason::memory_fault, base, instruction, 0, !load};
+		return alignment_fault(base, instruction, !load);
 	const auto tagged_address = base +
 		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
 	std::uint64_t address{};
@@ -439,7 +439,7 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 	 * effective-address generation and any transfer-register or memory effect.
 	 */
 	if (base_register == 31U && (base & 15U) != 0)
-		return {StopReason::memory_fault, base, instruction, 0, !load};
+		return alignment_fault(base, instruction, !load);
 	std::uint64_t address = base;
 	bool writeback = false;
 	std::uint64_t adjusted = base;
@@ -541,7 +541,7 @@ RunResult load_pointer_authenticated(CpuState &cpu,
 	const auto displacement = sign_extend(encoded_offset, 10) * 8;
 	auto address = cpu.read_register(base_register, true);
 	if (base_register == 31U && (address & 15U) != 0)
-		return {StopReason::memory_fault, address, instruction, 0, false};
+		return alignment_fault(address, instruction, false);
 	address = arm64::detail::execute_pointer_auth(
 		cpu, address, 0,
 		(instruction & 0x0080'0000U) != 0 ?

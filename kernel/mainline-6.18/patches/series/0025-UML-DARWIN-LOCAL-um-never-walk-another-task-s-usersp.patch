@@ -1,7 +1,7 @@
-From b41183b45543b921a2a6de80d846cbb702498ed1 Mon Sep 17 00:00:00 2001
+From dd896e7236b02c956c0012114e6cd213a5892ad2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 31 Aug 2026 03:46:09 +0900
-Subject: [PATCH 25/29] UML-DARWIN-LOCAL: um: never walk another task's
+Subject: [PATCH 25/31] UML-DARWIN-LOCAL: um: never walk another task's
  userspace stack
 
 get_stack_pointer() and get_frame_pointer() hand a blocked task's

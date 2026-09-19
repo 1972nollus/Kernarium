@@ -1,7 +1,7 @@
 From a0157cfb463645261a986702d4a2a2b2b64da1ca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:01:21 +0900
-Subject: [PATCH 63/93] kosmickrisp: declare Metal's built-in outputs at their
+Subject: [PATCH 63/95] kosmickrisp: declare Metal's built-in outputs at their
  fixed shape
 
 The MSL translator sizes each output struct member from the components

@@ -1,7 +1,7 @@
 From a1b98abdd1c9abf1b13aa8a5307e86e944189b66 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:21:53 +0900
-Subject: [PATCH 37/93] kosmickrisp: correct 2D array aliasing of 3D images
+Subject: [PATCH 37/95] kosmickrisp: correct 2D array aliasing of 3D images
 
 Metal cannot view a 3D texture as a 2D array, so a 3D image created with
 VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT also allocates an auxiliary 2D array

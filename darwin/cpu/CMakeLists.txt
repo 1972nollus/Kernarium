@@ -10,15 +10,15 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::JitProfileConfiguration)
 target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
+set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
+    "Slots in each ISA's private gadget cache; power of two, at least 1024")
+set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
+    "Address spaces that may hold translations in each private gadget cache")
+
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
 # The fixed x86 Linux slice and the ARM64EC Wine service both use a 4 KiB guest
 # profile; Apple-platform-specific imports provide their exact math archives.
 if(UML_BUILD_X86_64_GUEST)
-    set(UML_X86_64_GADGET_CACHE_SLOTS "65536" CACHE STRING
-        "Slots in the x86-64 gadget program cache; power of two")
-    set(UML_X86_64_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
-        "x86-64 address spaces that may retain gadget programs")
-
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
         x86_64/decoder.cpp
@@ -39,8 +39,8 @@ if(UML_BUILD_X86_64_GUEST)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
-        UML_X86_64_GADGET_CACHE_SLOTS=${UML_X86_64_GADGET_CACHE_SLOTS}
-        UML_X86_64_GADGET_RESIDENT_GENERATIONS=${UML_X86_64_GADGET_RESIDENT_GENERATIONS}
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
         UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
     set_target_properties(uml_x86_64_gadgets PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
@@ -190,10 +190,6 @@ option(UML_GADGET_EXACT_CACHE_VALIDATION
 # switch, and cuts retranslation from 1.46M to 255K a second. Sixteen resident
 # was measured and is worse on every axis -- more address spaces dilute one
 # pool the same way partitioning it did.
-set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
-    "Slots in the gadget cache; power of two, at least 1024")
-set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
-    "Address spaces that may hold translations at once")
 # A block otherwise ends at its first branch, which on a browser guest is a mean
 # of 4.93 instructions -- too short for anything per-block to amortize against.
 # Conditional branches end 52.8% of blocks and are the only large category whose

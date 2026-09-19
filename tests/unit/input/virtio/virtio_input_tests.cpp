@@ -65,7 +65,13 @@ void touchscreenConfigurationIsDirectAndPixelExact()
     require(bit(properties, protocol::propertyDirect));
 
     select(device, protocol::configEventBits, protocol::eventKey);
-    require(bit(configuration(device), protocol::buttonTouch));
+    const auto keys = configuration(device);
+    require(bit(keys, protocol::buttonTouch));
+    require(!bit(keys, 0x110)); // BTN_LEFT
+    require(!bit(keys, 0x111)); // BTN_RIGHT
+    require(!bit(keys, 0x112)); // BTN_MIDDLE
+    select(device, protocol::configEventBits, 0x02); // EV_REL
+    require(configuration(device).size == 0);
     select(device, protocol::configEventBits, protocol::eventAbsolute);
     const auto absoluteBits = configuration(device);
     require(bit(absoluteBits, protocol::absoluteX));

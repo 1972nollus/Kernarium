@@ -5,6 +5,17 @@ add_library(UML::PlatformContract ALIAS uml_platform_contract)
 uml_declare_architecture_target(uml_platform_contract platform)
 target_compile_features(uml_platform_contract INTERFACE cxx_std_20)
 
+add_library(uml_video_decoder STATIC apple/video_decoder.mm)
+add_library(UML::VideoDecoder ALIAS uml_video_decoder)
+uml_declare_architecture_target(uml_video_decoder platform)
+target_include_directories(uml_video_decoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_video_decoder PUBLIC cxx_std_20)
+set_target_properties(uml_video_decoder PROPERTIES OBJCXX_STANDARD 20)
+target_compile_options(uml_video_decoder PRIVATE -Wall -Wextra -Werror -fobjc-arc)
+target_link_libraries(uml_video_decoder PRIVATE UML::PlatformContract
+    "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
+    "-framework VideoToolbox")
+
 add_library(uml_host_battery STATIC apple/host_battery.mm)
 add_library(UML::HostBattery ALIAS uml_host_battery)
 uml_declare_architecture_target(uml_host_battery platform)

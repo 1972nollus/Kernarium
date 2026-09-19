@@ -1,0 +1,236 @@
+From 252f9806dc1975f903cc614ff0244376a2ac19b7 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 14:58:02 +0900
+Subject: [PATCH 95/95] kosmickrisp: declare the primitive ID varying unsigned
+ at both ends
+
+An authored primitive ID crosses the Metal vertex/fragment interface as a user
+varying, and the type each end declares for it came from whatever its shader
+stored or read. Those shaders are not written by the same party: the generated
+point, line and polygon raster stages republish the application's primitive ID
+as an unsigned value, a geometry shader stores gl_PrimitiveID signed, and the
+fragment shader reads it signed. A generated raster stage in front of a
+fragment shader that reads gl_PrimitiveID therefore declared "uint" on one side
+of the interface and "int" on the other, and the pipeline built only because
+Metal happens to link integer varyings whose signedness differs.
+
+Pin the slot with the other shapes the translator does not take from the
+shader: both ends declare the unsigned scalar of the Metal value the varying
+stands in for. The stores and loads are plain scalar assignments, so the bits
+are unchanged.
+
+The slots Metal owns are declared with Metal's attribute alone. An
+interpolation qualifier samples a user varying; the layer and viewport indices
+are values of the primitive, and a fragment input struct no longer adds
+"[[flat]]" behind "[[render_target_array_index]]" or
+"[[viewport_array_index]]". A user varying without a qualifier loses the
+stray space in front of its semicolon.
+
+The MSL translator test now builds a vertex shader that stores the position,
+primitive ID, layer and viewport and a fragment shader that reads the last
+three, all as signed integers, and checks the declarations of both structs.
+It fails on the primitive ID before this change.
+---
+ src/kosmickrisp/compiler/msl_iomap.c          | 62 ++++++++----
+ .../vulkan/tests/test_msl_temporaries.c       | 97 +++++++++++++++++++
+ 2 files changed, 140 insertions(+), 19 deletions(-)
+
+diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
+index 0a7295b6..861f1fb3 100644
+--- a/src/kosmickrisp/compiler/msl_iomap.c
++++ b/src/kosmickrisp/compiler/msl_iomap.c
+@@ -244,31 +244,41 @@ fs_input_no_interpolant(struct nir_to_msl_ctx *ctx, uint64_t location)
+       scalarized ? "" : vector_suffixes[info.num_components];
+    unsigned components = scalarized ? info.num_components : 1;
+    const char *interp = "";
+-   switch (info.interpolation) {
+-   case INTERP_MODE_NOPERSPECTIVE:
+-      if (info.centroid)
+-         interp = "[[centroid_no_perspective]]";
+-      else if (info.sample)
+-         interp = "[[sample_no_perspective]]";
+-      else
+-         interp = "[[center_no_perspective]]";
+-      break;
+-   case INTERP_MODE_FLAT:
+-      interp = "[[flat]]";
+-      break;
+-   default:
+-      if (info.centroid)
+-         interp = "[[centroid_perspective]]";
+-      else if (info.sample)
+-         interp = "[[sample_perspective]]";
+-      break;
++   /* Only a user varying is sampled by an interpolation qualifier.  The layer
++    * and viewport indices are values of the primitive that Metal hands over
++    * under its own attribute, and they are declared with that attribute
++    * alone. */
++   if (VARYING_SLOT_INFO[location].user) {
++      switch (info.interpolation) {
++      case INTERP_MODE_NOPERSPECTIVE:
++         if (info.centroid)
++            interp = "[[centroid_no_perspective]]";
++         else if (info.sample)
++            interp = "[[sample_no_perspective]]";
++         else
++            interp = "[[center_no_perspective]]";
++         break;
++      case INTERP_MODE_FLAT:
++         interp = "[[flat]]";
++         break;
++      default:
++         if (info.centroid)
++            interp = "[[centroid_perspective]]";
++         else if (info.sample)
++            interp = "[[sample_perspective]]";
++         break;
++      }
+    }
+    for (int c = 0; c < components; c++) {
+       P_IND(ctx, "%s%s ", type, vector_suffix);
+       varying_slot_name(ctx, location, c);
+       P(ctx, " ");
+       varying_slot_semantic(ctx, location, c);
+-      P(ctx, " %s;\n", interp);
++      if (*interp) {
++         P(ctx, " %s;\n", interp);
++      } else {
++         P(ctx, ";\n");
++      }
+    }
+ }
+ 
+@@ -515,6 +525,20 @@ pin_metal_builtin_slot_shapes(struct io_slot_info *slots)
+       if (slot->num_components)
+          slot->type = nir_type_float32;
+    }
++
++   /* An authored primitive ID travels as a user varying, so Metal does not fix
++    * its type, but the two ends of it are not written by the same party: the
++    * generated raster stages store it unsigned, a geometry shader stores
++    * gl_PrimitiveID signed, and the fragment shader reads it signed. Declare
++    * both ends as the unsigned scalar of the Metal value it stands in for, so
++    * that the interface never depends on how Metal links integer varyings
++    * whose signedness differs.
++    */
++   struct io_slot_info *primitive_id = &slots[VARYING_SLOT_PRIMITIVE_ID];
++   if (primitive_id->num_components) {
++      primitive_id->type = nir_type_uint32;
++      primitive_id->num_components = 1u;
++   }
+ }
+ 
+ void
+diff --git a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
+index 0f65860e..f8d557ed 100644
+--- a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
++++ b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
+@@ -175,11 +175,108 @@ scan_msl(const char *msl, struct scan *scan)
+    }
+ }
+ 
++/* The slots Metal owns have a type Metal fixes, whatever type the shader
++ * stored: the layer and viewport indices are unsigned and carry no
++ * interpolation qualifier.  An authored primitive ID is not a vertex output
++ * Metal knows, so it crosses the interface as a flat user varying, and both
++ * ends declare it unsigned although the shaders here store and read it signed.
++ */
++static void
++check_builtin_varyings(void)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, &kk_nir_options, "msl builtin varyings");
++   nir_shader *nir = b.shader;
++   nir->info.io_lowered = true;
++
++   nir_def *pos = nir_imm_vec4(&b, 0.0f, 0.0f, 0.0f, 1.0f);
++   nir_store_output(&b, pos, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_float32,
++                    .io_semantics.location = VARYING_SLOT_POS,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_POS);
++
++   nir_def *prim = nir_imm_int(&b, 42);
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_PRIMITIVE_ID,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_PRIMITIVE_ID);
++
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_LAYER,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_LAYER);
++
++   nir_store_output(&b, prim, nir_imm_int(&b, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_int32,
++                    .io_semantics.location = VARYING_SLOT_VIEWPORT,
++                    .io_semantics.num_slots = 1);
++   nir->info.outputs_written |= BITFIELD64_BIT(VARYING_SLOT_VIEWPORT);
++
++   nir_validate_shader(nir, "msl builtin varyings");
++
++   struct nir_to_msl_options options = {.rts_component_count = {4}};
++   char *msl = nir_to_msl(nir, &options);
++   CHECK(msl != NULL);
++
++   CHECK(strstr(msl, "uint primitive_id [[user(primitive_id)]];") != NULL);
++   CHECK(strstr(msl, "uint render_target_array_index [[render_target_array_index]];") != NULL);
++   CHECK(strstr(msl, "uint viewport_array_index [[viewport_array_index]];") != NULL);
++
++   ralloc_free(msl);
++   ralloc_free(nir);
++
++   nir_builder fb = nir_builder_init_simple_shader(
++      MESA_SHADER_FRAGMENT, &kk_nir_options, "msl builtin fs inputs");
++   nir_shader *fnir = fb.shader;
++   fnir->info.io_lowered = true;
++   nir_def *in_prim = nir_load_input(&fb, 1, 32, nir_imm_int(&fb, 0),
++                                     .base = 0, .range = 1,
++                                     .dest_type = nir_type_int32,
++                                     .io_semantics.location = VARYING_SLOT_PRIMITIVE_ID,
++                                     .io_semantics.num_slots = 1);
++   fnir->info.inputs_read |= BITFIELD64_BIT(VARYING_SLOT_PRIMITIVE_ID);
++   nir_def *in_layer = nir_load_input(&fb, 1, 32, nir_imm_int(&fb, 0),
++                                      .base = 1, .range = 1,
++                                      .dest_type = nir_type_int32,
++                                      .io_semantics.location = VARYING_SLOT_LAYER,
++                                      .io_semantics.num_slots = 1);
++   fnir->info.inputs_read |= BITFIELD64_BIT(VARYING_SLOT_LAYER);
++   nir_def *in_viewport = nir_load_input(&fb, 1, 32, nir_imm_int(&fb, 0),
++                                         .base = 2, .range = 1,
++                                         .dest_type = nir_type_int32,
++                                         .io_semantics.location = VARYING_SLOT_VIEWPORT,
++                                         .io_semantics.num_slots = 1);
++   fnir->info.inputs_read |= BITFIELD64_BIT(VARYING_SLOT_VIEWPORT);
++   nir_def *color = nir_vec4(&fb, nir_i2f32(&fb, in_prim), nir_i2f32(&fb, in_layer),
++                             nir_i2f32(&fb, in_viewport), nir_imm_float(&fb, 1.0f));
++   nir_store_output(&fb, color, nir_imm_int(&fb, 0), .base = 0, .range = 1,
++                    .component = 0, .src_type = nir_type_float32,
++                    .io_semantics.location = FRAG_RESULT_DATA0,
++                    .io_semantics.num_slots = 1);
++   fnir->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DATA0);
++   nir_validate_shader(fnir, "msl builtin fs inputs");
++
++   char *fmsl = nir_to_msl(fnir, &options);
++   CHECK(fmsl != NULL);
++   CHECK(strstr(fmsl, "uint primitive_id [[user(primitive_id)]] [[flat]];") != NULL);
++   CHECK(strstr(fmsl, "uint render_target_array_index [[render_target_array_index]];") != NULL);
++   CHECK(strstr(fmsl, "uint viewport_array_index [[viewport_array_index]];") != NULL);
++   CHECK(strstr(fmsl, "float4 color_0 [[color(0)]];") != NULL);
++
++   ralloc_free(fmsl);
++   ralloc_free(fnir);
++}
++
+ int
+ main(void)
+ {
+    glsl_type_singleton_init_or_ref();
+ 
++   check_builtin_varyings();
++
+    nir_shader *nir = build_accumulating_fs();
+    msl_optimize_nir(nir);
+    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));

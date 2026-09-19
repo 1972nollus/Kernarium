@@ -1,7 +1,7 @@
 From 3f9b8d86aee1569280d01032c3acfb55bd809d9e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:59:32 +0900
-Subject: [PATCH 54/93] kosmickrisp: keep the helper tracking variable on
+Subject: [PATCH 54/95] kosmickrisp: keep the helper tracking variable on
  Apple7 and Apple8
 
 KK_WORKAROUND_4 replaces simd_is_helper_thread() with a variable the shader

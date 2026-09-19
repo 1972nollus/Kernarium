@@ -1,6 +1,7 @@
 # Mail patches contain required unified-diff markers which resemble whitespace errors.
 kernel/*/patches/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 kernel/*/slices/*/patches/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+dependencies/steam-arm64ec/patches/*/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 android/*/patches/projects/*/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 android/*/third_party/*/patches/projects/*/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 dependencies/patches/*/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

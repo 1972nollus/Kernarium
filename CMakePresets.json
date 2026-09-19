@@ -209,6 +209,16 @@
       }
     },
     {
+      "name": "steam-arm64ec-macos-stack",
+      "displayName": "Steam ARM64EC macOS boot and graphics limitation validation",
+      "inherits": "wine-arm64ec-macos-stack",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_TEST_STEAM_ARM64EC": true,
+        "UML_INTEGRATION_ROOTFS": "${sourceDir}/.build/rootfs/steam-arm64ec-gaming.erofs"
+      }
+    },
+    {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
       "inherits": "macos-unit-16k",
@@ -405,27 +415,27 @@
     {
       "name": "gpu-unit-test-binaries",
       "configurePreset": "macos-unit-gpu",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "uml_video_decoder_tests", "uml_virtio_video_tests", "architecture-audit"]
     },
     {
       "name": "gpu-unit-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-asan-ubsan",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "uml_video_decoder_tests", "uml_virtio_video_tests", "architecture-audit"]
     },
     {
       "name": "gpu-venus-test-binaries",
       "configurePreset": "macos-unit-gpu-venus",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_external_image_alias_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "uml_video_decoder_tests", "uml_virtio_video_tests", "architecture-audit"]
     },
     {
       "name": "gpu-venus-test-binaries-4k",
       "configurePreset": "macos-unit-gpu-venus-4k",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_external_image_alias_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "uml_video_decoder_tests", "uml_virtio_video_tests", "architecture-audit"]
     },
     {
       "name": "gpu-venus-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-venus-asan-ubsan",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "uml_gpu_kosmickrisp_device_address_commands_capability_tests", "uml_gpu_kosmickrisp_external_image_alias_tests", "uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests", "uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests", "uml_gpu_kosmickrisp_incremental_present_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests", "uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests", "uml_gpu_kosmickrisp_non_seamless_cube_capability_tests", "uml_gpu_kosmickrisp_rgb32_texel_capability_tests", "uml_gpu_kosmickrisp_unused_attachments_capability_tests", "uml_gpu_device_atomicity_tests", "uml_gpu_display_resize_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_console_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "uml_video_decoder_tests", "uml_virtio_video_tests", "architecture-audit"]
     },
     {
       "name": "macos-integration",
@@ -465,6 +475,11 @@
     {
       "name": "wine-arm64ec-macos-stack",
       "configurePreset": "wine-arm64ec-macos-stack",
+      "targets": ["integration-test-binaries", "tooling-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "steam-arm64ec-macos-stack",
+      "configurePreset": "steam-arm64ec-macos-stack",
       "targets": ["integration-test-binaries", "tooling-test-binaries", "architecture-audit"]
     },
     {
@@ -584,7 +599,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-kosmickrisp-device-address-commands-capabilities|gpu-kosmickrisp-dynamic-logic-op-capabilities|gpu-kosmickrisp-graphics-pipeline-library-capabilities|gpu-kosmickrisp-incremental-present-capabilities|gpu-kosmickrisp-legacy-vertex-attribute-capabilities|gpu-kosmickrisp-legacy-vertex-input-draws|gpu-kosmickrisp-non-seamless-cube-capabilities|gpu-kosmickrisp-rgb32-texel-capabilities|gpu-kosmickrisp-unused-attachments-capabilities|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-console-protocol|virtio-sound-protocol)$"
+          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-kosmickrisp-device-address-commands-capabilities|gpu-kosmickrisp-dynamic-logic-op-capabilities|gpu-kosmickrisp-external-image-alias|gpu-kosmickrisp-graphics-pipeline-library-capabilities|gpu-kosmickrisp-incremental-present-capabilities|gpu-kosmickrisp-legacy-vertex-attribute-capabilities|gpu-kosmickrisp-legacy-vertex-input-draws|gpu-kosmickrisp-non-seamless-cube-capabilities|gpu-kosmickrisp-rgb32-texel-capabilities|gpu-kosmickrisp-unused-attachments-capabilities|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-console-protocol|virtio-sound-protocol|virtio-video-protocol|platform-video-decoder)$"
         }
       },
       "execution": {
@@ -716,6 +731,20 @@
       "execution": {
         "jobs": 1,
         "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "steam-arm64ec-macos-stack",
+      "inherits": "wine-arm64ec-macos-stack",
+      "configurePreset": "steam-arm64ec-macos-stack",
+      "output": {
+        "verbosity": "verbose",
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^guest-steam-arm64ec-smoke$"
+        }
       }
     },
     {
@@ -954,6 +983,14 @@
         {"type": "build", "name": "macos-integration-venus-4k"},
         {"type": "test", "name": "tooling-integration-venus-4k"},
         {"type": "test", "name": "integration-fast-venus-4k"}
+      ]
+    },
+    {
+      "name": "check-steam-arm64ec-macos",
+      "steps": [
+        {"type": "configure", "name": "steam-arm64ec-macos-stack"},
+        {"type": "build", "name": "steam-arm64ec-macos-stack"},
+        {"type": "test", "name": "steam-arm64ec-macos-stack"}
       ]
     },
     {

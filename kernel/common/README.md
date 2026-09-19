@@ -21,3 +21,10 @@ must not discard pending interactive commands or bootstrap payload bytes.
 The standalone Darwin kernel build verifies this with the actual console
 implementation and a native PTY assertion. This producer check takes explicit
 source/build paths; Apple product configuration still consumes only bundles.
+
+Both maintained kernel lines perform futex updates atomically against native
+userspace running on other vCPUs. Compare-and-exchange reports the value
+observed by that operation, and wake-operation arithmetic retries competing
+updates instead of overwriting them. The optional `guest-futex-atomic` test
+checks concurrent kernel/userspace updates and robust priority-inheritance
+mutexes on both Linux page profiles.

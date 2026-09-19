@@ -1,0 +1,36 @@
+From 9a787014440eb46291ded7f52bec4ab280f9feba Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 17:20:30 +0900
+Subject: [PATCH 2/2] Keep offline Proton builds pinned to prepared inputs
+
+---
+ Makefile.in         | 2 +-
+ make/rules-cargo.mk | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile.in b/Makefile.in
+index 4b06622..c0e5d23 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -1384,7 +1384,7 @@ $(DIST_COPY_TARGETS): | $(DST_DIR)
+ all-dist: $(DIST_COPY_TARGETS)
+ 
+ all-dist:
+-	echo `date '+%s'` `GIT_DIR=$(abspath $(SRCDIR)/.git) git describe --tags` > $(DIST_VERSION)
++	echo `date '+%s'` `GIT_DIR=$(abspath $(SRCDIR)/.git) git describe --tags --always --dirty` > $(DIST_VERSION)
+ 
+ 
+ ##
+diff --git a/make/rules-cargo.mk b/make/rules-cargo.mk
+index 056a306..24f8162 100644
+--- a/make/rules-cargo.mk
++++ b/make/rules-cargo.mk
+@@ -15,7 +15,7 @@ $$(OBJ)/.$(1)-$(3)-configure:
+ $$(OBJ)/.$(1)-$(3)-build:
+ 	@echo ":: building $(1)-$(3)..." >&2
+ 	cd $$($(2)_SRC) && env $$($(2)_$(3)_ENV) \
+-	cargo build $(--quiet?) --release \
++	cargo build $(--quiet?) --locked --offline --release \
+ 	      $$(filter -j%,$$(MAKEFLAGS)) \
+ 	      --target-dir $$($(2)_$(3)_OBJ) \
+ 	      $$($(3)-$(4)_CARGO_ARGS) \

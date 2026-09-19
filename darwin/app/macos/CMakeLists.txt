@@ -51,8 +51,10 @@ function(uml_add_macos_embedded_kernel_app
         "${EMULATOR_TARGET}"
         UML::AudioDevice
         UML::BatteryDevice
+        UML::VideoDevice
         UML::ConsoleDevice
         UML::GpuDevice
+        UML::VirtioInput
         UML::JitProfileConfiguration)
     if(TARGET uml_network_provider)
         target_link_libraries("${TARGET_NAME}" PRIVATE UML::NetworkProvider)
@@ -102,6 +104,8 @@ if(UML_BUILD_CLI)
             uml-darwin-wine-arm64ec linux_main.cpp
             "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
             UML::WineArm64ECEmulator uml_wine_arm64ec_emulator)
+        target_compile_definitions(uml-darwin-wine-arm64ec PRIVATE
+            UML_APP_TOUCHSCREEN_INPUT=1)
     else()
         uml_add_macos_embedded_kernel_app(
             uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"

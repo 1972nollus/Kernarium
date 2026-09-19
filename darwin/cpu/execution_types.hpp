@@ -42,6 +42,7 @@ using InterruptPoll = bool (*)(void *) noexcept;
 struct FaultInfo final {
 	std::uint64_t address{};
 	::uml::memory::MemoryAccess access{::uml::memory::MemoryAccess::read};
+	bool alignment{};
 };
 
 struct InterruptToken final {

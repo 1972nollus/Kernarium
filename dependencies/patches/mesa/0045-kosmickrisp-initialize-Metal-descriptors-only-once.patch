@@ -1,7 +1,7 @@
 From fe948bab400a485efb7e29d30f1b5ef2c5a84185 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 00:55:03 +0900
-Subject: [PATCH 45/93] kosmickrisp: initialize Metal descriptors only once
+Subject: [PATCH 45/95] kosmickrisp: initialize Metal descriptors only once
 
 ---
  src/kosmickrisp/bridge/meson.build            | 17 ++++++

@@ -25,6 +25,7 @@ namespace uml::cpu::arm64 {
       host_capabilities_};
   executed = 0;
   floating_point_syndrome_ = 0;
+  tlb_.fault_alignment = 0;
   select_cpu(cpu);
   const auto sequences =
       darwin_uml_static_vm_execution_context_sequences(execution_context_);

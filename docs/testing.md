@@ -113,6 +113,28 @@ sixteen `vulkan-mustpass-NNof16-v1` fractions of the released list; see its
 console for an error marker, because the application echoes the generated guest
 launcher and that script carries its own marker strings.
 
+The optional `guest-v4l2-decode` test qualifies the
+[Virtio video decoder](../darwin/device/video/README.md). Build
+`tests/integration/video/v4l2_decode_probe.cpp` as a static C++20 executable for
+the guest architecture and configure an integration preset with
+`UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`, `tar`,
+`sha256sum`, `timeout`, and either `curl` or `wget`. The test boots a disposable
+overlay, transfers generated fixtures over the local SLiRP endpoint, checks
+every advertised profile's pixels, raw layouts, timestamps, source-change and
+EOS events, and rejects kernel faults or failed shutdown. Run it on both Linux
+page profiles; Android uses its own 16 KiB guest and deployment workflow.
+
+The optional `guest-futex-atomic` regression uses a static C++20 build of
+`tests/integration/futex/futex_atomic_probe.cpp`, selected through
+`UML_FUTEX_PROBE_BINARY`. It boots a disposable guest and checks concurrent
+userspace/kernel futex updates and robust priority-inheritance mutexes. Run
+it on both Linux page profiles and the maintained Android kernel. The guest
+needs the same shell and local-transfer tools as the video probe above.
+
+`UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
+low-volume stereo tone through the real macOS output and verifies completion
+and restart. It requires access to macOS audio services.
+
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh
@@ -160,8 +182,8 @@ directly; authentication happens only when provisioning a replacement. Shared
 runs map it with `ubd0c=` and boot `root=/dev/ubda rootfstype=erofs`. Never use
 the root device as writable scratch space.
 
-Writable guest state belongs in a disposable OverlayFS
-layer. Rootfs updates replace the complete authenticated image through
+Ordinary test guest state belongs in a disposable OverlayFS
+layer; the Steam appliance instead owns a separate persistent GPT data disk. Rootfs updates replace the complete authenticated image through
 `tools/rootfs/provision.py`; there is no in-place maintenance workflow.
 
 The image owns accounts, credentials, login policy, gettys, desktop packages,
@@ -204,6 +226,18 @@ The fast full-stack gate is
 Wine to return exit code 42 from the AMD64 PE probe and 43 from the i386 WoW64
 probe. iOS packaging and launch validation follows only after this macOS gate
 passes.
+
+The separate gaming-only Steam image uses
+`cmake --workflow --preset check-steam-arm64ec-macos`. It qualifies systemd
+boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
+Gamescope Vulkan startup boundary. Stock Mesa and experimental Venus are
+separate image/renderer selections. The Venus gate requires framebuffer
+registration and the native Steam bootstrap, not a working login screen.
+Its test-only GPT/ext4 data disk is reused across two boots to check persistence
+and immutable-root write rejection, then removed after the guest exits.
+Interactive Steam launches retain that disk across boots and rootfs replacements.
+The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
+binary audit, startup contract, and continuing graphics limitation.
 
 ## Apple builds and Kernarium
 
