@@ -254,6 +254,14 @@ void* HostGlProvider::createContext(
         }
         if (display() == nullptr)
             return nullptr;
+        // The client API is a property of the calling thread and defaults to
+        // OpenGL ES. display() binds it only on the thread that initializes
+        // the display, and a desktop profile mask is a bad attribute under
+        // the ES binding, so bind it wherever a context is created.
+        if (eglBindAPI(kClientApi) != EGL_TRUE) {
+            reportEglFailure("API binding");
+            return nullptr;
+        }
         std::lock_guard lock(mutex_);
         const auto eglDisplay = static_cast<EGLDisplay>(
             display_.load(std::memory_order_acquire));
