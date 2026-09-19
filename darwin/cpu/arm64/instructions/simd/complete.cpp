@@ -178,13 +178,17 @@ RunResult Dispatcher::simd_three_same(CpuState &cpu, GuestMemory &memory,
 		return simd_floating_compare(cpu, memory, instruction);
 	const auto address = cpu.pc;
 	const unsigned opcode = (instruction >> 11) & 0x1fU;
+	const bool scalar = (instruction & 0x1000'0000U) != 0;
 	if (opcode >= 24)
 		return simd_floating_arithmetic(cpu, memory, instruction);
+	/* The bitwise operations have no scalar encoding. */
+	if (opcode == 3 && scalar)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	if (opcode == 3)
 		return simd_bitwise_register(cpu, memory, instruction);
 
 	const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
-	const bool scalar = (instruction & 0x1000'0000U) != 0;
 	const unsigned size = (instruction >> 22) & 0x3U;
 	const std::size_t lane_size = std::size_t{1} << size;
 	const unsigned lane_bits = static_cast<unsigned>(lane_size * 8);
@@ -413,6 +417,13 @@ RunResult Dispatcher::simd_two_register_misc(CpuState &cpu, GuestMemory &memory,
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	if (opcode == 28U && alternate && (scalar || size != 2U))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	/* FCMLT (zero) has no unsigned form. The FRINT opcodes are vector-only,
+	 * and U=1 opcode 11000 is FRINTA only with a=0. */
+	if ((opcode == 14U && unsigned_group) ||
+	    ((opcode == 24U || opcode == 25U) && scalar) ||
+	    (opcode == 24U && unsigned_group && alternate))
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t lane_size = std::size_t{1} << size;

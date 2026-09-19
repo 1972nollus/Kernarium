@@ -466,6 +466,11 @@ RunResult Dispatcher::floating_integer_convert(CpuState &cpu, GuestMemory &,
 	if (type > 1)
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
+	/* The fixed-point class allocates only SCVTF/UCVTF (opcode 01x) and
+	 * FCVTZS/FCVTZU (opcode 00x). */
+	if (fixed_point && opcode > 3)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	if (fixed_point && ((!wide && fractional_bits > 32) ||
 		((opcode <= 1 && rounding_mode != 3) ||
 		 (opcode >= 2 && rounding_mode != 0))))
