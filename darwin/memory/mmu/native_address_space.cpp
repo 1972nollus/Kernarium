@@ -499,7 +499,7 @@ public:
 			if (!owners_.contains(page))
 				inserted.push_back(page);
 		if (!inserted.empty())
-			owners_.reserve(owners_.size() + inserted.size());
+			reserve_additional(owners_, inserted.size());
 		try {
 			for (const auto page : inserted) {
 				UML_MEMORY_ALLOCATION_CHECKPOINT(
@@ -881,7 +881,7 @@ public:
 
 private:
 	mutable std::mutex mutex_;
-	std::unordered_map<std::uintptr_t, Ownership> owners_;
+	PageAddressMap<Ownership> owners_;
 };
 
 std::atomic<HostOwnershipRegistry *> published_host_ownership_registry{};
@@ -980,7 +980,7 @@ int NativeAddressSpace::map_direct(
 	const auto page_count = static_cast<std::size_t>(
 		(end - first) / host_page_size());
 	direct_snapshots.reserve(page_count);
-	direct_mappings_.reserve(direct_mappings_.size() + new_page_count);
+	reserve_additional(direct_mappings_, new_page_count);
 	for (auto page = first; page < end; page += host_page_size()) {
 		std::optional<DirectMapping> previous;
 		if (const auto found = direct_mappings_.find(page);
@@ -1339,11 +1339,11 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 		materialized_slots_.erase(slot);
 	};
 	try {
-		mappings_.reserve(mappings_.size() + pages.size());
-		materialized_slots_.reserve(materialized_slots_.size() + 1);
-		slot_protections_.reserve(slot_protections_.size() + 1);
+		reserve_additional(mappings_, pages.size());
+		reserve_additional(materialized_slots_, 1);
+		reserve_additional(slot_protections_, 1);
 		if (backing_index_ready_)
-			backing_index_.reserve(backing_index_.size() + pages.size());
+			reserve_additional(backing_index_, pages.size());
 		for (std::size_t index = 0; index < pages.size(); ++index) {
 			UML_MEMORY_ALLOCATION_CHECKPOINT(
 				testing::AllocationSite::native_mapping);
@@ -1427,8 +1427,11 @@ std::size_t NativeAddressSpace::BackingPageKeyHash::operator()(
 		return seed ^ (hashed + 0x9e3779b97f4a7c15ULL +
 			(seed << 6U) + (seed >> 2U));
 	};
-	return mix(mix(std::hash<std::uint64_t>{}(key.identity.device),
-		key.identity.inode), key.offset);
+	/* Pages of one file differ only in a page-aligned offset, which leaves
+	 * the low bits of the combination constant. */
+	return static_cast<std::size_t>(fold_page_key(
+		mix(mix(std::hash<std::uint64_t>{}(key.identity.device),
+			key.identity.inode), key.offset)));
 }
 
 int NativeAddressSpace::identify_backing(
@@ -2166,7 +2169,7 @@ int NativeAddressSpace::map(
 		UML_MEMORY_ALLOCATION_CHECKPOINT(
 			testing::AllocationSite::native_backing_index);
 		inserted_index_entries.reserve(changed_pages);
-		backing_index_.reserve(backing_index_.size() + changed_pages);
+		reserve_additional(backing_index_, changed_pages);
 		try {
 			for (std::size_t index = 0; index < pages.size(); ++index) {
 				const auto &previous = pages[index].mapping;

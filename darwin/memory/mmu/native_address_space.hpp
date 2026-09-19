@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "page_index.hpp"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -16,6 +18,12 @@
 #endif
 
 namespace uml::memory {
+
+/* Every native index is keyed by a host page or slot address. */
+using PageAddressSet = std::unordered_set<std::uintptr_t, PageAddressHash>;
+template <typename Value>
+using PageAddressMap =
+	std::unordered_map<std::uintptr_t, Value, PageAddressHash>;
 
 class NativeAddressSpace final {
 public:
@@ -98,9 +106,8 @@ private:
 	};
 	struct DirectTransition final {
 		std::uintptr_t slot{};
-		std::unordered_set<std::uintptr_t>::node_type direct_slot;
-		std::unordered_map<std::uintptr_t, DirectMapping>::node_type
-			direct_mapping;
+		PageAddressSet::node_type direct_slot;
+		PageAddressMap<DirectMapping>::node_type direct_mapping;
 		bool converted{};
 	};
 	struct DirectTransitionGuard final {
@@ -147,17 +154,16 @@ private:
 #endif
 	mutable std::mutex mutex_;
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	std::unordered_map<std::uintptr_t, Mapping> mappings_;
+	PageAddressMap<Mapping> mappings_;
 	std::unordered_multimap<BackingPageKey, std::uintptr_t,
 		BackingPageKeyHash> backing_index_;
-	std::unordered_map<std::uintptr_t, int> slot_protections_;
-	std::unordered_set<std::uintptr_t> materialized_slots_;
-	std::unordered_map<std::uintptr_t, DirectMapping> direct_mappings_;
-	std::unordered_map<std::uintptr_t, ActiveKernelStack>
-		active_kernel_stacks_;
+	PageAddressMap<int> slot_protections_;
+	PageAddressSet materialized_slots_;
+	PageAddressMap<DirectMapping> direct_mappings_;
+	PageAddressMap<ActiveKernelStack> active_kernel_stacks_;
 	bool backing_index_ready_{};
 #endif
-	std::unordered_set<std::uintptr_t> direct_slots_;
+	PageAddressSet direct_slots_;
 	std::uint64_t ownership_id_{};
 	std::atomic_bool retired_{};
 };

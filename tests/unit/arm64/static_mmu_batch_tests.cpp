@@ -6,6 +6,7 @@
 #include "allocation_fault.hpp"
 #include "scratch_directory.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -732,6 +733,67 @@ void test_page_index_hash_spreads_page_aligned_addresses()
 	require(longest <= 16);
 }
 
+/* The native ownership index holds one entry per 16 KiB host page of guest
+ * physical memory, about half a million for an 8 GiB guest, and the kernel
+ * then maps and unmaps single pages.  Asking reserve() for size() + n rehashed
+ * that index on most of those calls, and a request for exactly a power of two
+ * selected a masked bucket count under which page addresses shared a few
+ * buckets, so that scanning one empty 32 MiB span took a fifth of a second and
+ * a guest shutdown stopped for seconds.
+ */
+void test_page_index_reservation_never_shrinks_or_rehashes_needlessly()
+{
+	constexpr std::size_t pages = 64 * 1024 - 8;
+	constexpr std::uint64_t host_page = 16 * 1024;
+	constexpr std::uint64_t base = 0x6000'0280'0000ULL;
+	std::unordered_map<std::uint64_t, int, uml::memory::PageAddressHash>
+		index;
+
+	uml::memory::reserve_additional(index, pages);
+	for (std::size_t page = 0; page < pages; ++page)
+		index.emplace(base + page * host_page, 1);
+	const auto settled = index.bucket_count();
+
+	/* Single-page churn below the settled capacity leaves the buckets alone,
+	 * including the step on which size() + 1 is exactly a power of two. */
+	for (std::size_t page = pages; page < 64 * 1024; ++page) {
+		uml::memory::reserve_additional(index, 1);
+		require(index.bucket_count() == settled);
+		index.emplace(base + page * host_page, 1);
+		require(index.bucket_count() == settled);
+	}
+	for (std::size_t page = 0; page < 1024; ++page)
+		index.erase(base + page * host_page);
+	uml::memory::reserve_additional(index, 1);
+	require(index.bucket_count() == settled);
+
+	/* Growth is geometric and the insertions it covers do not rehash. */
+	uml::memory::reserve_additional(index, 4 * pages);
+	const auto grown = index.bucket_count();
+	require(grown >= 2 * settled);
+	for (std::size_t page = 0; page < 4 * pages; ++page)
+		index.emplace(base + (64 * 1024 + page) * host_page, 1);
+	require(index.bucket_count() == grown);
+}
+
+void test_page_index_hash_spreads_host_pages_under_a_masked_bucket_count()
+{
+	constexpr std::size_t entries = 64 * 1024;
+	constexpr std::uint64_t host_page = 16 * 1024;
+	constexpr std::uint64_t base = 0x6000'0280'0000ULL;
+	std::unordered_map<std::uint64_t, int, uml::memory::PageAddressHash>
+		index;
+
+	index.reserve(entries);
+	require((index.bucket_count() & (index.bucket_count() - 1)) == 0);
+	for (std::size_t page = 0; page < entries; ++page)
+		index.emplace(base + page * host_page, 1);
+	std::size_t longest = 0;
+	for (std::size_t bucket = 0; bucket < index.bucket_count(); ++bucket)
+		longest = std::max(longest, index.bucket_size(bucket));
+	require(longest <= 16);
+}
+
 void test_retired_batch_cannot_commit_into_replacement_generation()
 {
 	constexpr unsigned long generation = 308;
@@ -822,6 +884,8 @@ int main()
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
 	test_page_index_hash_spreads_page_aligned_addresses();
+	test_page_index_reservation_never_shrinks_or_rehashes_needlessly();
+	test_page_index_hash_spreads_host_pages_under_a_masked_bucket_count();
 	test_retired_batch_cannot_commit_into_replacement_generation();
 	test_waiting_execution_context_cannot_enter_retired_generation();
 	std::puts("Static MMU batch tests passed");
