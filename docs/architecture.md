@@ -57,7 +57,18 @@ Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
 Physical iOS wires all guest-allocatable pages before publishing them, while
-macOS and Simulator retain demand allocation.
+macOS and Simulator retain demand allocation. Wiring is a compression-avoidance
+property, not a mapping one: a refused wiring keeps the mapping it was asked to
+pin, because a caller told the mapping failed drops its record of a mapping the
+host still serves, and a host mapping no page table names outlives everything
+that could have removed it.
+
+A host mapping call that fails says so. The kernel distinguishes an exhausted
+host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
+codes both arrive as that, and the first such failures are reported on the run's
+own console rather than behind a trace variable. Without both, an exhausted host
+reaches the guest as page tables describing memory that is not there, with
+nothing in the run saying why.
 
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
