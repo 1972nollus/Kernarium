@@ -10,8 +10,22 @@
 
 namespace uml::testing {
 
-/* Match the product placement: macOS avoids crowded low host VM bands. */
-#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define UML_NATIVE_TEST_WINDOW_UNDER_TSAN 1
+#endif
+#endif
+
+/* Match the product placement: macOS avoids crowded low host VM bands.
+ * ThreadSanitizer reserves everything from 0x20000000000 up for itself, the
+ * product band included, so a sanitized test takes a window the sanitizer
+ * leaves free instead. */
+#if defined(UML_NATIVE_TEST_WINDOW_UNDER_TSAN)
+inline constexpr std::uint64_t native_test_window_start = 0x8000000000ULL;
+inline constexpr std::uint64_t native_test_window_end =
+	native_test_window_start +
+	(DARWIN_UML_NATIVE_ADDRESS_END - DARWIN_UML_NATIVE_ADDRESS_START);
+#elif DARWIN_UML_NATIVE_HIGH_PLACEMENT
 inline constexpr std::uint64_t native_test_window_start =
 	DARWIN_UML_MACOS_NATIVE_ADDRESS;
 inline constexpr std::uint64_t native_test_window_end =
