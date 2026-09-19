@@ -692,8 +692,21 @@ class VulkanCtsToolingTests(unittest.TestCase):
         )
         # The growing QPA lives in the guest's own tmpfs, and a fraction that
         # runs it out of room loses results no host evidence can recover, so
-        # the room left there is reported alongside the memory.
+        # the room left there is reported alongside the memory -- and the CTS
+        # process's own output, which no lane transports, gives way first.
         self.assertIn('df -kP "$output"', launcher)
+        self.assertIn('[ "$output_free_kb" -lt 65536 ]', launcher)
+        relaxed = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            page_size=16384,
+            timeout=900,
+            progress_timeout=600,
+            relax_diagnostics=True,
+        )
+        # The watch reads that output by offset, so the two never coexist.
+        self.assertNotIn('[ "$output_free_kb" -lt 65536 ]', relaxed)
+        self.assertIn("relax_offset", relaxed)
         # The guest reaper leaves no other record of how close a fraction was,
         # so the progress line carries the CTS process's resident and peak size.
         self.assertIn("cts_process_field VmRSS", launcher)

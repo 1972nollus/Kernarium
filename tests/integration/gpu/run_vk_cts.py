@@ -1198,6 +1198,17 @@ def build_receipt_guest_launcher(
     fi
 """ if relax_diagnostics else ""
     relax_state = "relax_offset=0\n" if relax_diagnostics else ""
+    # Measured on the device: a mustpass fraction's results reach ~217 MB and
+    # the CTS process's own output another ~90 MB, in a tmpfs that starts the
+    # run with ~257 MB free. That output is the only thing here nobody reads --
+    # no lane transports it -- so it is what gives way, rather than the results.
+    # The watch above is its one reader, and reads it by offset, so the two are
+    # not generated together.
+    spare_cts_output = "" if relax_diagnostics else """    if [ "$output_free_kb" -lt 65536 ]; then
+        : > "$cts_output"
+        echo 'UML_VK_CTS_NOTE: released the CTS output to keep room for results'
+    fi
+"""
     output = "/run/uml-vk-cts"
     icd_path = "/usr/share/vulkan/icd.d/virtio_icd.json"
     library_path = "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
@@ -1628,7 +1639,7 @@ while kill -0 "$cts_pid" 2>/dev/null; do
     printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|output_free_kb=%s|case=%s\n' \
         "$current_qpa_size" "$stalled_seconds" "$cts_rss_kb" \
         "$cts_peak_kb" "$mem_available_kb" "$output_free_kb" "$current_case"
-{relax_watch}    # A checkpoint that fails before it frames anything keeps its bytes
+{relax_watch}{spare_cts_output}    # A checkpoint that fails before it frames anything keeps its bytes
     # pending, so the loop stays up and the next one carries them. One that
     # fails with frames already sent is done for: the host cannot be given
     # that name twice, so nothing further is attempted for it.
