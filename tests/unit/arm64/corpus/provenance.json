@@ -1,17 +1,17 @@
 {
-  "cases": 171142,
+  "cases": 171452,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
     "gcs-fault": 14,
-    "illegal-instruction": 24306,
+    "illegal-instruction": 24616,
     "instruction-budget": 863,
     "memory-fault": 17462,
     "system-call": 128401
   },
   "cases_by_profile": {
     "16k": 37311,
-    "16k+4k": 96508,
+    "16k+4k": 96818,
     "4k": 37323
   },
   "coverage": {
@@ -19,13 +19,13 @@
     "entries_with_cases": 937,
     "entries_with_illegal_cases": 822,
     "unattributed_cases": 0,
-    "unattributed_illegal_cases": 1153
+    "unattributed_illegal_cases": 1289
   },
   "exports": {
     "16k": {
-      "classes": 24164,
-      "covering_cases": 16752,
-      "declared_cases": 18217694,
+      "classes": 24288,
+      "covering_cases": 16753,
+      "declared_cases": 18218026,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -38,14 +38,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 133819,
+      "exported_cases": 134129,
       "forced_cases": 4198,
-      "producers": 451
+      "producers": 452
     },
     "4k": {
-      "classes": 24163,
-      "covering_cases": 16765,
-      "declared_cases": 18217693,
+      "classes": 24287,
+      "covering_cases": 16766,
+      "declared_cases": 18218025,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -58,9 +58,9 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 133831,
+      "exported_cases": 134141,
       "forced_cases": 4198,
-      "producers": 451
+      "producers": 452
     }
   },
   "force_include": {
@@ -68,18 +68,18 @@
     "sha256": "88603b6a571ddde585b4e22826e2d52c3297ab5ed146c221127df674af0c9597"
   },
   "memory_blobs": 3338,
-  "pack_bytes": 14842676,
-  "pack_sha256": "747c9176603c6246dd5aa10c78534a82bf1c39b438e4ff2e5dc24a79579adf80",
-  "producer_commit": "12694a6d22c70ae5dd8edd2d14a21b6a955a6cd4",
-  "programs": 146778,
-  "records": 1333,
+  "pack_bytes": 14860421,
+  "pack_sha256": "0796298178cfb6289cde559cd52a49c287f547b9e0f451cbb721b9565544847d",
+  "producer_commit": "384dd292aea95043d6bdf3a2743a000c1e44b907",
+  "programs": 147088,
+  "records": 1334,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 63,
     "full": 1176,
-    "narrow": 169903
+    "narrow": 170213
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,
