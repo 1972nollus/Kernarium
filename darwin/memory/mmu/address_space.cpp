@@ -802,7 +802,12 @@ public:
 	{
 		if (current_sequence == nullptr || (capacity != 0 && output == nullptr))
 			return -1;
-		auto state = state_for(generation);
+		/* A vCPU asks after every mapping change it notices, so this runs
+		 * as often as the misses do: resolve the state the way translate()
+		 * does, through the thread's active generation, not through the
+		 * address space's state table and its lock. */
+		auto reference = reference_for(generation);
+		auto *state = reference.state;
 		std::shared_lock lock{state->mappings_mutex};
 		const auto current = state->mapping_changes.load(
 			std::memory_order_acquire);
@@ -837,7 +842,8 @@ public:
 			return -1;
 		static_assert(sizeof(darwin_uml_static_code_change) ==
 			sizeof(CodeChangeRange));
-		return code_changes_since(*state_for(generation), sequence,
+		auto reference = reference_for(generation);
+		return code_changes_since(*reference.state, sequence,
 			reinterpret_cast<CodeChangeRange *>(output), capacity,
 			current_sequence);
 	}

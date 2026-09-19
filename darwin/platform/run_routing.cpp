@@ -8,16 +8,28 @@
 #include <condition_variable>
 #endif
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
+#include <thread>
 
 namespace uml::routing {
 namespace {
 
+/* Writers hold `mutex`. What an unbound thread resolves is published as a
+ * sequence-stamped copy beside it, because every vCPU carrier is such a thread
+ * and resolves its route on every software-TLB miss: a process-wide mutex
+ * there is contended in proportion to the vCPU count. A reader copies values
+ * and never follows `sole_fallback`, so a scope may end while it reads. */
 struct RouteRegistry final {
 	std::mutex mutex;
 	std::size_t active_count{};
 	ActiveRouteScope *sole_fallback{};
+	std::atomic<std::uint64_t> sequence{};
+	std::atomic<void *> published_runtime{};
+	std::atomic<void *> published_network{};
+	std::atomic<bool> published_active{};
 };
 
 /* Public routes can outlive ordinary static destruction during process exit.
@@ -63,6 +75,38 @@ void announce_resolver() noexcept
 }
 #endif
 
+/* One registry change, from the first field it touches to the last, including
+ * the testing pause: a reader waits the odd sequence out and then sees the
+ * change whole. The caller holds the registry mutex. */
+class RoutePublication final {
+public:
+	RoutePublication() noexcept
+	{
+		route_registry->sequence.fetch_add(1, std::memory_order_seq_cst);
+	}
+
+	~RoutePublication()
+	{
+		route_registry->sequence.fetch_add(1, std::memory_order_seq_cst);
+	}
+
+	RoutePublication(const RoutePublication &) = delete;
+	RoutePublication &operator=(const RoutePublication &) = delete;
+
+	static void publish(const Route &fallback, bool has_fallback) noexcept
+	{
+		route_registry->published_runtime.store(
+			has_fallback ? fallback.runtime : nullptr,
+			std::memory_order_relaxed);
+		route_registry->published_network.store(
+			has_fallback ? fallback.network : nullptr,
+			std::memory_order_relaxed);
+		route_registry->published_active.store(
+			route_registry->active_count != 0,
+			std::memory_order_relaxed);
+	}
+};
+
 } // namespace
 
 ActiveRouteScope::ActiveRouteScope(void *runtime, void *network) noexcept
@@ -82,10 +126,13 @@ void ActiveRouteScope::commit() noexcept
 	if (committed_)
 		return;
 	std::lock_guard lock{route_registry->mutex};
+	RoutePublication publication;
 	previous_thread_ = thread_route;
 	route_registry->sole_fallback =
 		route_registry->active_count == 0 ? this : nullptr;
 	++route_registry->active_count;
+	RoutePublication::publish(
+		route_, route_registry->sole_fallback != nullptr);
 	committed_ = true;
 	thread_route = this;
 #if UML_RUN_ROUTING_TESTING
@@ -97,9 +144,12 @@ ActiveRouteScope::~ActiveRouteScope()
 {
 	if (committed_) {
 		std::lock_guard lock{route_registry->mutex};
+		RoutePublication publication;
 		if (route_registry->sole_fallback == this)
 			route_registry->sole_fallback = nullptr;
 		--route_registry->active_count;
+		RoutePublication::publish({},
+			route_registry->sole_fallback != nullptr);
 #if UML_RUN_ROUTING_TESTING
 		pause_transaction(testing::TransactionBoundary::retirement);
 #endif
@@ -115,10 +165,25 @@ Route current_route() noexcept
 #if UML_RUN_ROUTING_TESTING
 	announce_resolver();
 #endif
-	std::lock_guard lock{route_registry->mutex};
-	if (route_registry->sole_fallback != nullptr)
-		return route_registry->sole_fallback->route_;
-	return {.public_run_active = route_registry->active_count != 0};
+	for (unsigned attempt = 0;; ++attempt) {
+		const auto before = route_registry->sequence.load(
+			std::memory_order_acquire);
+		if ((before & 1U) == 0) {
+			const Route route{
+				route_registry->published_runtime.load(
+					std::memory_order_relaxed),
+				route_registry->published_network.load(
+					std::memory_order_relaxed),
+				route_registry->published_active.load(
+					std::memory_order_relaxed),
+			};
+			if (route_registry->sequence.load(
+				    std::memory_order_acquire) == before)
+				return route;
+		}
+		if (attempt >= 64)
+			std::this_thread::yield();
+	}
 }
 
 #if UML_RUN_ROUTING_TESTING

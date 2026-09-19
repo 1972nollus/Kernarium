@@ -2,6 +2,7 @@
 #pragma once
 
 #include "mapped_backing.hpp"
+#include "mappings_mutex.hpp"
 #include "page_index.hpp"
 
 #include <atomic>
@@ -35,7 +36,7 @@ struct AddressSpaceLifetime final {
 
 struct GenerationState final {
 	std::mutex walker_mutex;
-	mutable std::shared_mutex mappings_mutex;
+	mutable MappingsMutex mappings_mutex;
 	std::unordered_map<std::uint64_t, Mapping> mappings;
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};

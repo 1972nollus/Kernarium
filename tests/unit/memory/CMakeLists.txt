@@ -53,3 +53,13 @@ target_compile_options(uml_shared_backing_view_tests PRIVATE
 uml_add_unit_test(NAME memory-shared-backing-view
     COMMAND uml_shared_backing_view_tests)
 add_dependencies(unit-test-binaries uml_shared_backing_view_tests)
+
+add_executable(uml_mappings_mutex_tests mappings_mutex_tests.cpp)
+target_include_directories(uml_mappings_mutex_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_features(uml_mappings_mutex_tests PRIVATE cxx_std_20)
+target_compile_options(uml_mappings_mutex_tests PRIVATE
+    -Wall -Wextra -Werror)
+uml_add_unit_test(NAME memory-mappings-mutex
+    COMMAND uml_mappings_mutex_tests LABELS tsan)
+add_dependencies(unit-test-binaries uml_mappings_mutex_tests)
