@@ -325,6 +325,45 @@ renderer still refuses a request that arrives with an empty chain, which the
 specification gives a caller no way to make and which the host driver would
 read without checking.
 
+### A15 fragment-store GPU fault
+
+An Apple8 GPU (A15) under iOS 27 faults on a render pass whose fragment shader
+performs enough `device` store work, and Metal reports the fault as a timeout.
+The report carries `MTLCommandBufferErrorTimeout` (or
+`MTL4CommandQueueErrorTimeout` on the queue the driver uses) with Metal's
+placeholder end timestamp, while the per-encoder execution status that only the
+classic `MTLCommandBuffer` error options expose names the render encoder
+`MTLCommandEncoderErrorStateFaulted`. A "timeout" on this device is therefore a
+label, not a diagnosis, and an apparent timeout must not be read as evidence
+that a shader ran too long.
+
+It is not a command-buffer duration limit. A native Metal program in the same
+process renders 8200 loop iterations per fragment over 256x256 in 84 ms, and
+178 ms when each invocation stores to a distinct address, with no error; the
+submissions that do fault are reported 13-18 ms after the commit call, far
+short of the work they were given. Removing the store alone takes the same
+shader from 84 ms to 1 ms and it never faults, and spreading the stores over
+distinct addresses moves the fault threshold from 12288 to 16384 iterations, so
+what the fault tracks is the fragment stage's store work rather than elapsed
+time. The same program runs 32768 iterations on an Apple9 host without faulting.
+
+A fault also ends the command queue: every later submission on it is reported
+failed within a fraction of a millisecond, with an access-revoked code on a
+classic queue, until a replacement queue is created. The driver already retires
+a queue a failure has killed, which is what keeps one fault from taking down a
+whole campaign.
+
+Nothing in the driver removes the fault. The stores belong to the application,
+the fragment invocation count is the render area, and the render pass tile size
+(`tileWidth`/`tileHeight`, whose default for a single 8-bit colour attachment is
+32x32) changes nothing on the device. Fifteen of the 552
+`dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
+`clamp_frag` and fourteen of the sixteen
+`bit_field_insert_offset{8,16,32,64}_count{8,16,32,64}_frag` - because dEQP has
+every one of 65,536 fragment invocations write every element of the output
+buffer. Their `vert`, `tessc`, `tesse`, `geom` and `comp` variants run the same
+loop a handful of times and pass.
+
 ### Experimental host memory
 
 Native graphics allocations are separate from the configured guest RAM limit.
