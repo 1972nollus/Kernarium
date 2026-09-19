@@ -1,18 +1,28 @@
-From cfe10df4d6247b8f229f8125057d41bd2e648e4d Mon Sep 17 00:00:00 2001
+From a64030290b66f6896a44f21685eeb182f7108476 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:28 +0900
 Subject: [PATCH 19/31] UML-DARWIN-LOCAL: service cooperative progress at
  kernel quiescent points
 
 Keep timer checkpoints, safe loop boundaries, quiescent timer service, and the pre-cond_resched poll together as one cooperative-progress topic.
+
+schedule() is such a boundary when its caller stays runnable.  The IPI signal
+handler is only a wake edge, so a task that yields in a retry loop stops its
+CPU when nothing else is runnable there: neither the timer it waits for nor a
+wakeup queued to that CPU is ever serviced.  tty_open() does this while the
+last close of a terminal is still in progress, because tty_reopen() answers
+-EAGAIN and the opener calls schedule() and retries.  A shutdown that restarts
+a console getty then stops for minutes with one carrier looping through
+tty_open() and every other carrier asleep.  A task that is about to block
+needs no poll: it leaves the CPU to the idle loop or to another task.
 ---
  arch/um/include/shared/kern_util.h |  3 +++
  arch/um/kernel/skas/uaccess.c      | 36 +++++++++++++++++++++++++++++-
  arch/um/kernel/time.c              | 15 +++++++++++++
  arch/um/kernel/tlb.c               | 10 +++++++++
  arch/um/os-Darwin/smp.c            | 23 ++++++++++++++-----
- kernel/sched/core.c                | 15 +++++++++++++
- 6 files changed, 96 insertions(+), 6 deletions(-)
+ kernel/sched/core.c                | 27 ++++++++++++++++++++++
+ 6 files changed, 108 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
 index 3daaa5c4b..960950e40 100644
@@ -148,7 +158,7 @@ index ad0d6ab60..aefa0b506 100644
  	}
  }
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 5a47d6e54..b2977982b 100644
+index 6d15c566a..614f086a7 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
 @@ -33,6 +33,7 @@ static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
@@ -196,7 +206,7 @@ index 5a47d6e54..b2977982b 100644
  
  int darwin_ipi_idle_fd(void)
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index b5b5897b5..4abab9a6b 100644
+index b5b5897b5..0891d8afd 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -82,6 +82,10 @@
@@ -210,7 +220,26 @@ index b5b5897b5..4abab9a6b 100644
  #define CREATE_TRACE_POINTS
  #include <linux/sched/rseq_api.h>
  #include <trace/events/sched.h>
-@@ -7455,6 +7459,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
+@@ -7034,6 +7038,18 @@ asmlinkage __visible void __sched schedule(void)
+ 
+ 	if (!task_is_running(tsk))
+ 		sched_submit_work(tsk);
++#ifdef UML_HOST_DARWIN
++	/*
++	 * Darwin's timer deadlines and IPI vectors are cooperative: a CPU
++	 * services them only at a polling boundary.  A caller which yields while
++	 * it stays runnable, such as the retry loops in tty_open(), reaches none
++	 * when nothing else is runnable on its CPU, so the timer or the queued
++	 * wakeup it is waiting for never arrives.  A task which is about to block
++	 * leaves the CPU to the idle loop or to another task, and both poll.
++	 */
++	else if (!irqs_disabled())
++		darwin_timer_kernel_checkpoint();
++#endif
+ 	__schedule_loop(SM_NONE);
+ 	sched_update_worker(tsk);
+ }
+@@ -7455,6 +7471,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
  #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
  int __sched __cond_resched(void)
  {

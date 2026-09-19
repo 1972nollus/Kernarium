@@ -1,4 +1,4 @@
-From 35d4df38d6cb150c39d65fa426e88ddb4b109301 Mon Sep 17 00:00:00 2001
+From c75833a027d806bffa708d596d14491947cd114a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 11:52:15 +0000
 Subject: [PATCH 38/43] UML-DARWIN-LOCAL: uml: name the virtual CPU from the

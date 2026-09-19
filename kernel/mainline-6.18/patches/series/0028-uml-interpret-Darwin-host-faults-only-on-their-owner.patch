@@ -1,4 +1,4 @@
-From 29edcf75cc314bd5c42c1b5ec806759eb4ee4e79 Mon Sep 17 00:00:00 2001
+From 3b4a0409a02f328a9ef30f2c5115c312b0a29d95 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 19:38:15 +0900
 Subject: [PATCH 28/31] uml: interpret Darwin host faults only on their owner
@@ -30,7 +30,7 @@ exist to show.
  4 files changed, 113 insertions(+), 8 deletions(-)
 
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index ec61427d7..2f15cacac 100644
+index 7ad362329..7448cfbee 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -17,6 +17,9 @@ void darwin_host_stop_checkpoint(void);
@@ -43,7 +43,7 @@ index ec61427d7..2f15cacac 100644
  void darwin_set_current_cpu(int cpu);
  void darwin_publish_cpu_thread(int cpu, pthread_t thread);
  void darwin_retire_cpu_thread(pthread_t thread);
-@@ -32,6 +35,9 @@ void darwin_ipi_guest_begin(void);
+@@ -33,6 +36,9 @@ void darwin_ipi_guest_begin(void);
  void darwin_ipi_guest_end(void);
  void darwin_wake_cpu_threads_for_shutdown(void);
  #else
@@ -169,7 +169,7 @@ index 948a794aa..6d2353ca5 100644
  	if (signal == SIGALRM) {
  		if (!previous || state->alarm_active) {
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index b2977982b..6ae9d9a08 100644
+index 614f086a7..c16721b61 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
 @@ -78,6 +78,39 @@ int uml_curr_cpu(void)
@@ -212,7 +212,7 @@ index b2977982b..6ae9d9a08 100644
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
  	if (cpu < 0 || cpu >= CONFIG_NR_CPUS)
-@@ -528,7 +561,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+@@ -546,7 +579,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
  
  int darwin_start_primary_cpu_carrier(void *stack, jmp_buf *switch_buffer)
  {

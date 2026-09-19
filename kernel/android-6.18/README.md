@@ -85,6 +85,15 @@ and reaches the faulting task as `SIGBUS` with `BUS_ADRALN` at the effective
 data address, so a guest handler can repair or emulate the access before
 `sigreturn`. This is again the same source change the mainline line carries.
 
+An idle virtual CPU never blocks while one of its IPI vectors is pending: the
+idle wait reads the pending mask after publishing the idle state and polls
+instead of blocking, because a bit that is already set has no wake edge behind
+it and a CPU that blocked on one would absorb every later remote vector.
+`schedule()` is a cooperative polling boundary when its caller stays runnable,
+so a task that yields in a retry loop, as `tty_open()` does during the last
+close of a terminal, no longer stops the timer and the queued wakeups of its
+CPU. Both are the same source changes the mainline line carries.
+
 The standardized vhost-user shared-memory-region transport the mainline line
 adds for host-visible Virtio-GPU blobs is carried here as well. The Android
 product's Vulkan HAL is Mesa's Venus driver, which refuses to initialize

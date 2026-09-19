@@ -1,15 +1,25 @@
-From 43e105c32ac4099243fef343839d0619b0d9268e Mon Sep 17 00:00:00 2001
+From c49ba8f2150ddf914240709e311ec7fbce44c967 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 08:09:54 +0000
 Subject: [PATCH 27/43] UML-DARWIN-LOCAL: poll timers before cond_resched
 
 Change-Id: Ic8baf21a1447ae757ca86fbe050d865eb27d4418
+
+schedule() is such a boundary when its caller stays runnable.  The IPI signal
+handler is only a wake edge, so a task that yields in a retry loop stops its
+CPU when nothing else is runnable there: neither the timer it waits for nor a
+wakeup queued to that CPU is ever serviced.  tty_open() does this while the
+last close of a terminal is still in progress, because tty_reopen() answers
+-EAGAIN and the opener calls schedule() and retries.  A shutdown that restarts
+a console getty then stops for minutes with one carrier looping through
+tty_open() and every other carrier asleep.  A task that is about to block
+needs no poll: it leaves the CPU to the idle loop or to another task.
 ---
- kernel/sched/core.c | 15 +++++++++++++++
- 1 file changed, 15 insertions(+)
+ kernel/sched/core.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
 
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index 7ac4a268ab731982389c16fae1efe6c55a72922d..af1667f0f93ae27c3f60eadfa67ae1e190e7b0ff 100644
+index 7ac4a268ab731982389c16fae1efe6c55a72922d..1d8180db5c4a0fbc3d796dfa22c9f33fc4ae80c1 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -82,6 +82,10 @@
@@ -23,7 +33,26 @@ index 7ac4a268ab731982389c16fae1efe6c55a72922d..af1667f0f93ae27c3f60eadfa67ae1e1
  #define CREATE_TRACE_POINTS
  #include <linux/sched/rseq_api.h>
  #include <trace/events/sched.h>
-@@ -8441,6 +8445,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
+@@ -8006,6 +8010,18 @@ asmlinkage __visible void __sched schedule(void)
+ 
+ 	if (!task_is_running(tsk))
+ 		sched_submit_work(tsk);
++#ifdef UML_HOST_DARWIN
++	/*
++	 * Darwin's timer deadlines and IPI vectors are cooperative: a CPU
++	 * services them only at a polling boundary.  A caller which yields while
++	 * it stays runnable, such as the retry loops in tty_open(), reaches none
++	 * when nothing else is runnable on its CPU, so the timer or the queued
++	 * wakeup it is waiting for never arrives.  A task which is about to block
++	 * leaves the CPU to the idle loop or to another task, and both poll.
++	 */
++	else if (!irqs_disabled())
++		darwin_timer_kernel_checkpoint();
++#endif
+ 	__schedule_loop(SM_NONE);
+ 	sched_update_worker(tsk);
+ }
+@@ -8441,6 +8457,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
  #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
  int __sched __cond_resched(void)
  {

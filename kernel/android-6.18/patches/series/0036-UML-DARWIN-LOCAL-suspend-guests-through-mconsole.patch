@@ -1,4 +1,4 @@
-From dce3dc617f663d0c3bcaf8752db2a33cdb3e29c7 Mon Sep 17 00:00:00 2001
+From 89bcc032cd5ef553560000a75fe6702ed6c589bc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 04:33:57 +0000
 Subject: [PATCH 36/43] UML-DARWIN-LOCAL: suspend guests through mconsole

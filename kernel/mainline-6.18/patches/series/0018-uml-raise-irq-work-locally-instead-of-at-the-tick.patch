@@ -1,4 +1,4 @@
-From 55d408cfc3f59bbbf99e450cebd074ccfe0847b2 Mon Sep 17 00:00:00 2001
+From c26289f019b2a6a3556984beae5cf1768f83d79a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
 Subject: [PATCH 18/31] uml: raise irq work locally instead of at the tick
@@ -27,12 +27,23 @@ guest block.
 arch_irq_work_has_interrupt() stays false so the timer tick keeps its existing
 backstop drain of the raised list; this change only makes the raise arrive much
 sooner.
+
+A local vector has no wake edge, so the idle wait must not block on one.
+os_send_ipi() writes the idle wake pipe only when it takes the target's
+pending mask from zero to non-zero and sends no signal to a target it finds
+marked idle.  The tick's irq_work_tick() backstop can run work which an
+earlier callback of the same timer interrupt raised, leaving the local bit set
+with nothing queued, so NO_HZ may stop the tick and the CPU would block with a
+non-zero mask and absorb every later remote vector.  The idle wait reads the
+mask after publishing the idle state and polls instead of blocking.
 ---
- arch/um/include/shared/os.h |  1 +
- arch/um/kernel/smp.c        | 25 +++++++++++++++++++++++++
- arch/um/os-Darwin/smp.c     | 18 ++++++++++++++++++
- arch/um/os-Linux/smp.c      | 10 ++++++++++
- 4 files changed, 54 insertions(+)
+ arch/um/include/shared/os.h  |  1 +
+ arch/um/kernel/smp.c         | 25 +++++++++++++++++++++++++
+ arch/um/os-Darwin/internal.h |  2 ++
+ arch/um/os-Darwin/smp.c      | 36 ++++++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/time.c     |  8 ++++++++
+ arch/um/os-Linux/smp.c       | 10 ++++++++++
+ 6 files changed, 82 insertions(+)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
 index 972ac5c73..316574f49 100644
@@ -98,8 +109,28 @@ index cc0c6c58a..afbd7c272 100644
  	default:
  		pr_err("CPU#%d received unknown IPI (vector=%d)!\n", cpu, vector);
  		break;
+diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
+index ec61427d7..7ad362329 100644
+--- a/arch/um/os-Darwin/internal.h
++++ b/arch/um/os-Darwin/internal.h
+@@ -25,6 +25,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
+ void darwin_ipi_poll(void);
+ int darwin_ipi_idle_fd(void);
+ void darwin_ipi_idle_begin(void);
++int darwin_ipi_idle_pending(void);
+ void darwin_ipi_idle_end(void);
+ void darwin_ipi_idle_drain(void);
+ unsigned int darwin_ipi_guest_snapshot(const unsigned int **sequence);
+@@ -57,6 +58,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
+ static inline void darwin_ipi_poll(void) { }
+ static inline int darwin_ipi_idle_fd(void) { return -1; }
+ static inline void darwin_ipi_idle_begin(void) { }
++static inline int darwin_ipi_idle_pending(void) { return 0; }
+ static inline void darwin_ipi_idle_end(void) { }
+ static inline void darwin_ipi_idle_drain(void) { }
+ static inline unsigned int darwin_ipi_guest_snapshot(
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 00a5d2f34..5a47d6e54 100644
+index 00a5d2f34..6d15c566a 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
 @@ -193,6 +193,24 @@ static void drain_ipis(void)
@@ -127,6 +158,50 @@ index 00a5d2f34..5a47d6e54 100644
  void darwin_ipi_poll(void)
  {
  	int cpu;
+@@ -239,6 +257,24 @@ void darwin_ipi_idle_begin(void)
+ 	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 1, __ATOMIC_RELEASE);
+ }
+ 
++/*
++ * os_send_ipi() writes the wake pipe only when it makes the pending mask
++ * non-zero, and sends no signal to a CPU it finds marked idle.  A bit which is
++ * already set when the idle wait starts therefore has no pipe edge behind it:
++ * os_raise_local_ipi() never writes one.  The tick's irq_work_tick() backstop
++ * can run work raised earlier in the same timer interrupt, which leaves the
++ * local bit set with nothing queued and so lets NO_HZ stop the tick.  Blocking
++ * on top of such a bit absorbs every later remote vector without a wake: a
++ * reschedule sent to this CPU then waits for an unrelated timer while its task
++ * stays runnable.  The idle path reads the mask after publishing the idle state
++ * and polls instead of blocking when anything is pending.
++ */
++int darwin_ipi_idle_pending(void)
++{
++	return __atomic_load_n(&pending_ipis[uml_curr_cpu()],
++			       __ATOMIC_ACQUIRE) != 0;
++}
++
+ void darwin_ipi_idle_end(void)
+ {
+ 	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
+diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
+index 1f1209910..fcc40b471 100644
+--- a/arch/um/os-Darwin/time.c
++++ b/arch/um/os-Darwin/time.c
+@@ -257,6 +257,14 @@ void os_idle_sleep(void)
+ 					(sizeof(read_fds.fds_bits[0]) * 8));
+ 		wake_fd = ipi_fd > stop_fd ? ipi_fd : stop_fd;
+ 		darwin_ipi_idle_begin();
++		/* A vector pending here has no wake edge of its own; see
++		 * darwin_ipi_idle_pending().  Drain it below rather than sleep on it.
++		 */
++		if (darwin_ipi_idle_pending()) {
++			timeout.tv_sec = 0;
++			timeout.tv_nsec = 0;
++			timeout_pointer = &timeout;
++		}
+ 		(void)pselect(wake_fd >= 0 ? wake_fd + 1 : 0,
+ 			      wake_fd >= 0 ? &read_fds : NULL, NULL, NULL,
+ 			      timeout_pointer, &mask);
 diff --git a/arch/um/os-Linux/smp.c b/arch/um/os-Linux/smp.c
 index 18d3858a7..77b150e1e 100644
 --- a/arch/um/os-Linux/smp.c

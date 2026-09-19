@@ -148,8 +148,15 @@ guest-allocatable ranges before use; macOS and Simulator allocate on demand.
 Free-page reporting remains available to a file-backed provider and disables
 itself after the anonymous provider rejects range punching.
 
-Darwin's cooperative scheduler services timer deadlines at safe kernel spin,
-retry, TLB-walk, and `cond_resched()` boundaries. A pagefault-disabled uaccess
+Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
+at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
+`schedule()` when the caller stays runnable. The IPI signal is only a wake edge,
+so a task that yields in a retry loop would otherwise stop its CPU whenever
+nothing else is runnable there: `tty_open()` retries that way while the last
+close of a terminal is in progress, and a shutdown that restarted a console
+getty stopped for minutes, with `rcu_sched` stall reports, waiting for a timer
+and a queued wakeup that the looping CPU never serviced. A pagefault-disabled
+uaccess
 never reports mmap-lock contention as a fault: `mmap_read_trylock()` refuses to
 barge past a queued writer while the faulting retry of the same task still
 steals the lock, so answering the try with `-EFAULT` made `futex_wait_setup()`
@@ -157,6 +164,15 @@ alternate a failing atomic read with a succeeding faulting one and never yield
 the CPU that writer needs. The contended atomic walk runs under RCU instead,
 which `MMU_GATHER_RCU_TABLE_FREE` keeps safe, and the page-table lock still
 samples the entry.
+
+An idle virtual CPU never blocks while one of its IPI vectors is pending. A
+remote sender writes the idle wake pipe only when it takes the target's pending
+mask from zero to non-zero and sends no signal to a target marked idle, so a
+bit that is already set when the wait starts has no wake edge behind it. The
+local irq_work vector sets its bit without a pipe edge and can be left set with
+nothing queued, and a CPU that blocked on it would absorb every later remote
+vector until an unrelated descriptor or timer woke it. The idle wait reads the
+mask after publishing the idle state and polls instead of blocking.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
