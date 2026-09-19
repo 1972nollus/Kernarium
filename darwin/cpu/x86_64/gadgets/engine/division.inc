@@ -15,6 +15,8 @@ gadget \name\()_\width\()_m
 	page_cross_check (\width / 8), .Lx86_divide_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()15, [x7]
+	/* The shared tail belongs to the register form and carries no barrier. */
+	x86_memory_order_boundary
 	b \target
 .Lx86_divide_read_cross\@:
 	mov x0, _context
@@ -23,6 +25,7 @@ gadget \name\()_\width\()_m
 	bl NAME(uml_x86_64_gadget_cross_page_load)
 	cbz x1, .Lx86_memory_fault
 	mov x15, x0
+	x86_memory_order_boundary
 	b \target
 .endm
 

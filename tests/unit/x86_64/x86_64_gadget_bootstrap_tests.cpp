@@ -4133,6 +4133,146 @@ read_test_sequences(void *context) noexcept
 			"concurrent LOCK INC lost updates");
 }
 
+/* x86 shows the other CPUs one CPU's stores in the order it made them. The
+ * host does not: a store to a line this core already owns overtakes an earlier
+ * store to a line it has to fetch, and an observer on another core sees the
+ * second without the first. One vCPU stores to a line the observer owns and
+ * then to a line of its own; the observer orders its own two loads, so seeing
+ * the later store and missing the earlier one can only be the vCPU's doing.
+ */
+[[nodiscard]] bool guest_stores_reach_other_cpus_in_program_order()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr unsigned rounds = 40000;
+	/* Both stores land in one guest page, on lines far apart, so the second
+	 * finds the translation the first left and nothing but gadgets runs
+	 * between them. */
+	constexpr std::size_t lines = 1024;
+	constexpr std::size_t line_bytes = 4096;
+	constexpr std::uint64_t earlier_base = 0x10000;
+	constexpr std::uint64_t later_base = earlier_base + 2048;
+	TestMemory memory{0, earlier_base + lines * line_bytes};
+	/* mov dword [rbx], 1; mov dword [rdx], 1; syscall */
+	memory.load(0, {0xc7, 0x03, 0x01, 0x00, 0x00, 0x00,
+		0xc7, 0x02, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"ordered store block did not build"))
+		return false;
+	const auto word = [&](std::uint64_t address) {
+		return reinterpret_cast<volatile std::uint32_t *>(
+			memory.atomic_pointer(address, 8,
+				uml::memory::MemoryAccess::write));
+	};
+	std::atomic<unsigned> round{0};
+	std::atomic<unsigned> finished{0};
+	std::atomic<bool> healthy{true};
+	std::thread vcpu{[&] {
+		CpuState cpu{};
+		for (unsigned step = 1; step <= rounds; ++step) {
+			while (round.load(std::memory_order_acquire) != step) {
+			}
+			const auto line = (step % lines) * line_bytes;
+			/* Own the later store's line before the block runs. */
+			word(later_base + line)[1] = step;
+			cpu.rip = 0;
+			cpu.gpr(Register::rbx) = earlier_base + line;
+			cpu.gpr(Register::rdx) = later_base + line;
+			const auto result = gadgets::execute(
+				built.program, cpu, memory, 64);
+			if (result.event != uml::cpu::EngineEvent::system_call)
+				healthy.store(false, std::memory_order_relaxed);
+			finished.store(step, std::memory_order_release);
+		}
+	}};
+	unsigned overtaken = 0;
+	for (unsigned step = 1; step <= rounds; ++step) {
+		const auto line = (step % lines) * line_bytes;
+		auto *earlier = word(earlier_base + line);
+		auto *later = word(later_base + line);
+		earlier[0] = 0;
+		later[0] = 0;
+		/* Own the earlier store's line, so the vCPU has to fetch it. */
+		earlier[1] = step;
+		round.store(step, std::memory_order_release);
+		for (;;) {
+			const auto saw_later = later[0];
+			__asm__ volatile("dmb ish");
+			const auto saw_earlier = earlier[0];
+			if (saw_later != 0) {
+				if (saw_earlier == 0)
+					++overtaken;
+				break;
+			}
+			if (finished.load(std::memory_order_acquire) == step)
+				break;
+		}
+		while (finished.load(std::memory_order_acquire) != step) {
+		}
+	}
+	vcpu.join();
+	return expect(healthy.load(std::memory_order_relaxed),
+		"the storing vCPU left the gadget stream early") &&
+		expect(overtaken == 0,
+			"another CPU saw a later guest store before an earlier one");
+}
+
+/* Total store order is kept by a barrier on the way out of every gadget that
+ * touches guest memory, so the first way out of each of these has to carry
+ * one. The scan stops at the dispatch that ends the gadget's fast path.
+ */
+[[nodiscard]] bool guest_memory_gadgets_end_in_an_ordering_barrier()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint32_t barrier = 0xd503'3bbfU;
+	constexpr std::uint32_t dispatch = 0xd61f'0100U;
+	constexpr std::size_t longest_fast_path = 512;
+	struct Case {
+		const char *message;
+		std::initializer_list<std::uint8_t> code;
+	};
+	const Case cases[] = {
+		{"a load leaves without an ordering barrier",
+			{0x48, 0x8b, 0x03, 0x0f, 0x05}},
+		{"a store leaves without an ordering barrier",
+			{0x48, 0x89, 0x03, 0x0f, 0x05}},
+		{"a read-modify-write leaves without an ordering barrier",
+			{0x48, 0x01, 0x03, 0x0f, 0x05}},
+		{"a locked update leaves without an ordering barrier",
+			{0xf0, 0x48, 0x01, 0x03, 0x0f, 0x05}},
+		{"an exchange with memory leaves without an ordering barrier",
+			{0x48, 0x87, 0x03, 0x0f, 0x05}},
+		{"a push leaves without an ordering barrier",
+			{0x50, 0x0f, 0x05}},
+		{"a pop leaves without an ordering barrier",
+			{0x58, 0x0f, 0x05}},
+		{"a vector load leaves without an ordering barrier",
+			{0x0f, 0x10, 0x03, 0x0f, 0x05}},
+		{"a vector store leaves without an ordering barrier",
+			{0x0f, 0x11, 0x03, 0x0f, 0x05}},
+	};
+	for (const auto &item : cases) {
+		TestMemory memory;
+		memory.load(0, item.code);
+		const auto built = gadgets::build(memory, 0);
+		if (!expect(built.status == gadgets::BuildStatus::built &&
+			!built.program.native_stream().empty(), item.message))
+			return false;
+		const auto *code = reinterpret_cast<const std::uint32_t *>(
+			built.program.native_stream().front());
+		bool fenced = false;
+		for (std::size_t index = 0; index < longest_fast_path; ++index) {
+			if (code[index] == barrier)
+				fenced = true;
+			if (code[index] == dispatch)
+				break;
+		}
+		if (!expect(fenced, item.message))
+			return false;
+	}
+	return true;
+}
+
 } // namespace
 
 int main()
@@ -4201,6 +4341,8 @@ int main()
 		gobject_closure_bitfield_cmpxchg_is_exact() &&
 		xadd_survives_concurrent_vcpus() &&
 		cmpxchg_survives_concurrent_vcpus() &&
-		locked_increment_survives_concurrent_vcpus();
+		locked_increment_survives_concurrent_vcpus() &&
+		guest_stores_reach_other_cpus_in_program_order() &&
+		guest_memory_gadgets_end_in_an_ordering_barrier();
 	return passed ? 0 : 1;
 }

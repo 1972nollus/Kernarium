@@ -7,6 +7,7 @@
 .set .Lx86_extended_size, 832
 
 .macro extended_state_load size
+	x86_marks_guest_memory
 	sub sp, sp, #.Lx86_extended_size
 	mov x19, sp
 	mov x0, _context
@@ -108,6 +109,7 @@
 .endm
 
 .macro extended_state_write size
+	x86_marks_guest_memory
 	mov x0, _context
 	mov x1, x25
 	mov x2, x19

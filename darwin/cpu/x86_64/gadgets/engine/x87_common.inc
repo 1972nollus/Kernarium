@@ -214,6 +214,7 @@
 .endm
 
 .macro x87_bulk_load size, buffer, fault
+	x86_marks_guest_memory
 	mov x0, _context
 	mov x1, x25
 	mov x2, \buffer
@@ -223,6 +224,7 @@
 .endm
 
 .macro x87_bulk_store size, buffer, fault
+	x86_marks_guest_memory
 	mov x0, _context
 	mov x1, x25
 	mov x2, \buffer

@@ -18,10 +18,13 @@ _context .req x21
 _stream .req x28
 _executed .req x29
 
+	.set x86_guest_memory_gadget, 0
+
 .macro gadget name
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
 NAME(uml_x86_64_gadget_\name):
+	.set x86_guest_memory_gadget, 0
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -51,12 +54,41 @@ NAME(uml_x86_64_gadget_\name):
 	br x8
 .endm
 
+/* x86 promises total store order: the other CPUs see one CPU's stores in the
+ * order it made them, and its loads see memory move forward in that same
+ * order. Guest code written for x86 leans on that without saying so, and a
+ * LOCK-prefixed instruction or an XCHG against memory is in addition a full
+ * fence -- a work-stealing deque stores its tail, runs a locked instruction
+ * and only then loads the head. The host orders nothing: it may run two
+ * independent loads in either order, and an exclusive loop orders only its own
+ * operand. With several vCPUs that is a task taken twice, a wild pointer or a
+ * wakeup that never comes.
+ *
+ * A guest memory access is therefore followed by a barrier before the next
+ * guest instruction can touch memory. `translate`, `stack_fast` and the few
+ * private translation and bulk-helper macros mark the gadget they expand in,
+ * and every retiring way out of a marked gadget carries the barrier, so a
+ * gadget that works on registers alone pays nothing and a locked gadget is
+ * fenced like any other store. The mark is textual: a memory form that joins
+ * another gadget's tail runs the boundary before it branches. Accesses inside
+ * one instruction keep the order the gadget gives them. The Wine CPU service
+ * keeps the stronger form, a barrier after every gadget.
+ */
+.macro x86_memory_order_barrier
+	dmb ish
+.endm
+
+.macro x86_marks_guest_memory
+	.set x86_guest_memory_gadget, 1
+.endm
+
 .macro x86_memory_order_boundary
 #if UML_X86_64_STRICT_TSO
-	/* A full boundary is intentionally conservative. It is stronger than
-	 * x86 TSO and covers every ordinary, vector, string and cross-page memory
-	 * ordering path without classifying each gadget as a load or store. */
-	dmb ish
+	x86_memory_order_barrier
+#else
+	.if x86_guest_memory_gadget
+	x86_memory_order_barrier
+	.endif
 #endif
 .endm
 
@@ -222,6 +254,7 @@ NAME(uml_x86_64_gadget_\name):
  * store's caller joins its epilogue at the overlap test.
  */
 .macro stack_fast access, miss
+	x86_marks_guest_memory
 	ldr x11, [_context, #UML_X86_64_CONTEXT_STACK_ENTRY]
 	and x9, x25, #0xfffffffffffff000
 	ldp x12, x13, [x11, #((\access) * 16)]
@@ -235,6 +268,7 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 .macro translate access, entry_offset, size, record_stack=0
+	x86_marks_guest_memory
 	.if \access == 1
 	/* Only a translation that reaches the decision below may skip the store's
 	 * publication; the miss and page-crossing paths leave this clear.
@@ -491,7 +525,10 @@ NAME(uml_x86_64_gadget_enter):
 
 .p2align 4
 uml_x86_64_gadget_leave:
-	x86_memory_order_boundary
+	/* Some ways out of a gadget that has touched guest memory come straight
+	 * here -- a repeated string that runs out of budget, a fallback after a
+	 * link -- so leaving the engine always orders what came before it. */
+	x86_memory_order_barrier
 	/* Hand the caller back its own rounding mode, which is the host default:
 	 * derive it from FPCR rather than from a saved copy, because a gadget
 	 * that faults out of a stack-using sequence can reach here with a

@@ -2,6 +2,7 @@
 /* AVX2 vector-indexed gathers with architectural partial-fault updates. */
 
 .macro vector_gather_translate size, fault
+	x86_marks_guest_memory
 	and x9, x7, #0xfffffffffffff000
 	lsr x10, x7, #12
 	eor x10, x10, x10, lsr #15

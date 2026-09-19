@@ -149,6 +149,27 @@ store still joins its epilogue at the overlap test, because the write can land
 in the block that is running. Anything else takes the ordinary translation,
 which records the new entry for the next access.
 
+## Memory ordering
+
+x86 promises total store order, and a LOCK-prefixed instruction or an XCHG
+against memory is in addition a full fence. Guest code relies on both without
+saying so; the host promises neither, and an exclusive loop orders only its own
+operand. With several vCPUs an unordered engine fails multi-threaded guests
+outright: a work-stealing deque hands one task to two threads, which shows up
+as a wild pointer, a wakeup that never comes, or a spin that never ends.
+
+Every gadget that touches guest memory therefore leaves through a `dmb ish`.
+`translate`, `stack_fast` and the bulk helper macros mark the gadget they
+expand in (`x86_marks_guest_memory`), and `x86_memory_order_boundary`, which
+sits on every retiring exit, emits the barrier for a marked gadget. A gadget
+that works on registers alone pays nothing, a locked gadget is fenced like any
+other store, and the accesses inside one instruction keep the order the gadget
+gives them. The mark is textual, so a new guest memory path that bypasses those
+macros has to mark itself, and a memory form that joins another gadget's tail,
+as DIV and IDIV do, runs the boundary before it branches. Leaving the engine
+always carries the barrier. The Wine CPU service builds the stronger form, a
+barrier after every gadget (`UML_X86_64_STRICT_TSO`).
+
 ## Floating-point environment
 
 A dispatch runs in the guest's rounding mode. Entry maps MXCSR's two-bit

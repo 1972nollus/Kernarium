@@ -2,6 +2,7 @@
 /* AVX/AVX2 per-element masked loads and stores. */
 
 .macro vector_map2_mask_translate access, entry_offset, size, fault
+	x86_marks_guest_memory
 	and x9, x7, #0xfffffffffffff000
 	lsr x10, x7, #12
 	eor x10, x10, x10, lsr #15

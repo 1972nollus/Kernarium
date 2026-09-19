@@ -121,6 +121,7 @@ def base_address(o, base):
 def translate(o, write, size, record_stack=False):
     """The ordinary translation with its miss tail shared; x19 carries the continuation."""
     hit, done = o.label('hit'), o.label('done')
+    o.emit('\tx86_marks_guest_memory')
     if write:
         o.emit('\tand x23, x23, #~(1 << 60)')
     o.emit('\tand x9, x7, #0xfffffffffffff000')
@@ -221,6 +222,8 @@ def access_prologue(o):
 
 
 def shared_tails(o):
+    # Every tail belongs to a guest memory access, whichever gadget reaches it.
+    o.emit('\tx86_marks_guest_memory')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
