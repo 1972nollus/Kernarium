@@ -325,44 +325,145 @@ renderer still refuses a request that arrives with an empty chain, which the
 specification gives a caller no way to make and which the host driver would
 read without checking.
 
-### A15 fragment-store GPU fault
+### Apple8 (A15) device behaviour
 
-An Apple8 GPU (A15) under iOS 27 faults on a render pass whose fragment shader
-performs enough `device` store work, and Metal reports the fault as a timeout.
-The report carries `MTLCommandBufferErrorTimeout` (or
-`MTL4CommandQueueErrorTimeout` on the queue the driver uses) with Metal's
-placeholder end timestamp, while the per-encoder execution status that only the
-classic `MTLCommandBuffer` error options expose names the render encoder
-`MTLCommandEncoderErrorStateFaulted`. A "timeout" on this device is therefore a
-label, not a diagnosis, and an apparent timeout must not be read as evidence
-that a shader ran too long.
+The physical iOS device the Vulkan route has been exercised on is an iPad
+mini 6: an A15, Metal family Apple8, 4 GiB, under iOS 27. It differs from the
+Apple9 macOS hosts in ways that change results rather than only speed. Each
+item below either names the behaviour that answers it or stands as a
+limitation; none of them has been observed on an Apple9 host, and none has yet
+been checked on another iOS device.
 
-It is not a command-buffer duration limit. A native Metal program in the same
-process renders 8200 loop iterations per fragment over 256x256 in 84 ms, and
-178 ms when each invocation stores to a distinct address, with no error; the
-submissions that do fault are reported 13-18 ms after the commit call, far
-short of the work they were given. Removing the store alone takes the same
-shader from 84 ms to 1 ms and it never faults, and spreading the stores over
-distinct addresses moves the fault threshold from 12288 to 16384 iterations, so
-what the fault tracks is the fragment stage's store work rather than elapsed
-time. The same program runs 32768 iterations on an Apple9 host without faulting.
+#### A GPU fault is reported as a timeout
 
-A fault also ends the command queue: every later submission on it is reported
-failed within a fraction of a millisecond, with an access-revoked code on a
-classic queue, until a replacement queue is created. The driver already retires
-a queue a failure has killed, which is what keeps one fault from taking down a
-whole campaign.
+An Apple8 GPU under iOS 27 reports a GPU fault as a timeout. The report carries
+`MTLCommandBufferErrorTimeout` (or `MTL4CommandQueueErrorTimeout` on the queue
+the driver uses) with Metal's placeholder end timestamp, while the per-encoder
+execution status that only the classic `MTLCommandBuffer` error options expose
+names the encoder `MTLCommandEncoderErrorStateFaulted`. Metal 4 has no
+equivalent of that status, so the driver's own queue cannot tell the two apart.
+A "timeout" on this device is therefore a label, not a diagnosis, and must not
+be read as evidence that a shader ran too long. There is no command-buffer
+duration limit anywhere near the affected work: renders of 84 ms and 178 ms
+complete without error, while a submission that faults is reported 13-18 ms
+after its commit call, far short of the work it was given.
 
-Nothing in the driver removes the fault. The stores belong to the application,
-the fragment invocation count is the render area, and the render pass tile size
-(`tileWidth`/`tileHeight`, whose default for a single 8-bit colour attachment is
-32x32) changes nothing on the device. Fifteen of the 552
-`dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
+The timestamps on a failed commit do not measure execution either. A fault
+carries the placeholder end, which the driver prints as
+`gpu_end_s=6148826548.220315` and describes as a submission the GPU started
+and never reported finishing; a refusal by a dead queue carries an equal or
+microseconds-apart start and end. Timeouts that host contention causes on
+macOS are a different event: they carry a real interval and leave a working
+queue behind.
+
+#### A faulted command queue never works again
+
+An `MTL4CommandQueue` that has killed one submission admits every later commit
+and reports it failed within 0.1 ms, still labelled a timeout, for as long as
+the queue object exists; a classic queue answers the same way with an
+access-revoked code. Nothing in Metal resets a queue. Left alone, one fault
+turned roughly the remaining ninety percent of a mustpass fraction into
+failures, about 14,600 reports across tests that cost nothing.
+
+The driver retires a queue a failure has killed and commits to a replacement
+on the queue's own submit thread, once Metal has reported every submission the
+retired queue was given, so no submission is split across the two and
+single-queue ordering holds. A fault now costs the results of its own
+submission and nothing else: the device is not lost, and the same fraction
+carries one report per faulting case. A storm of timeout reports across cheap
+tests means a dead queue is still in use, not that the tests are expensive.
+
+#### A killed submission takes its signals and query results with it
+
+A queue that kills a submission also discards the queue-level event signal
+ordered behind it and the signals of the other work it kills, and it reports
+only the submission that faulted. The shared event stops below its value, the
+Vulkan fence or timeline semaphore never signals, and every waiter blocks
+forever, in the host process and, through Venus, in the guest. An availability
+write for a query is lost the same way.
+
+The driver records every signal against the submission serial it sits behind
+and completes what a failure destroyed: everything at or below a reported
+failure, everything before a later completion once the queue has failed,
+everything outstanding once Metal has reported as many submissions as were
+made, and, for a queue that stops reporting altogether, whatever a waiter has
+been owed for ten seconds. A query availability wait on a queue that has failed
+is bounded rather than polled forever. Behind both, the renderer bounds a stuck
+fence at fifteen seconds per stage, releasing queue ordering first and retiring
+the fence without the renderer second, so a loss no layer explains cannot
+wedge a guest for longer than that.
+
+#### Fragment-stage store work faults the GPU
+
+A render pass whose fragment shader performs enough `device` store work faults.
+A native Metal program in the driver's process renders 8200 loop iterations per
+fragment over 256x256 in 84 ms, and in 178 ms when each invocation stores to a
+distinct address, without error. Removing the store alone takes the same shader
+from 84 ms to 1 ms and it never faults, and spreading the stores over distinct
+addresses moves the fault threshold from 12288 to 16384 iterations, so what the
+fault tracks is the fragment stage's store work rather than elapsed time. The
+same program runs 32768 iterations on an Apple9 host without faulting.
+
+Nothing in the driver removes it. The stores belong to the application, the
+fragment invocation count is the render area, the render pass tile size
+(`tileWidth`/`tileHeight`, whose default for a single 8-bit colour attachment
+is 32x32, with 16x16 the only other size the device accepts) changes nothing on
+the device, and splitting the render area with a scissor helps unreliably.
+Fifteen of the 552 `dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
 `clamp_frag` and fourteen of the sixteen
 `bit_field_insert_offset{8,16,32,64}_count{8,16,32,64}_frag` - because dEQP has
 every one of 65,536 fragment invocations write every element of the output
-buffer. Their `vert`, `tessc`, `tesse`, `geom` and `comp` variants run the same
-loop a handful of times and pass.
+buffer on each of 5120 or 8200 loop trips. dEQP reports each as
+`Upper left corner mismatch`, since a killed draw leaves the clear colour, never
+as a timeout. Their `vert`, `tessc`, `tesse`, `geom` and `comp` variants run
+the same loop a handful of times and pass, and which of the cases nearest the
+threshold fault varies from run to run.
+
+Two driver changes lower the per-iteration work and so moved several sibling
+cases under the threshold; they are mitigations, not a fix. Descriptor loads
+are emitted in MSL's `constant` address space, where the compiler can hoist
+them out of a loop that also stores, and buffer accesses use MSL's unpacked
+vector types where NIR proves the alignment. The `constant` address space is a
+small uniform-access path on this GPU, not a free read-only annotation:
+streaming a 262 KiB input buffer through it made the same cases fault more
+often. The rejected levers are recorded in
+[`optimization-history.md`](optimization-history.md).
+
+#### Robustness storage-image accesses fault
+
+Four `dEQP-VK.robustness.robustness2` cases fail with the same timeout-labelled
+fault, all of them format-qualified `r32i`/`r32ui` storage-image accesses in a
+loop the shader does not unroll: `bind...nonvolatile...cube_array.frag`,
+`bind...nonvolatile...cube.frag`, `push...volatile...2d_array.frag` and
+`push...volatile...2d_array.vert`. Eight faults fall inside the group, some on
+neighbouring null-descriptor and dynamic storage-buffer cases that still pass.
+These tests access out of bounds deliberately, and the same cases pass on an
+Apple9 host. The cause is not yet established.
+
+#### Memory budget
+
+iOS ends the app at a physical footprint of about 3007 MB on this device. With
+a 1536 MiB guest the host side plateaus near 2673 MB, and the
+`render_to_image` cases with huge attachments add a transient of about 650 MB
+of `IOAccelerator` memory for a fraction of a second, so guest RAM cannot be
+raised to make room for a workload. Two consequences follow.
+
+The per-device geometry heap is 16 MiB rather than a fixed 128 MiB, because a
+Venus host pays it once per guest `VkDevice`. The heaviest command buffer in the
+CTS tessellation, geometry, draw and rasterization groups asks it for
+1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` raises it without a rebuild. An undersized
+heap produces wrong results rather than a diagnosable failure, because the
+overflow report is a shader-side `printf` and `abort()` that reaches neither
+Metal nor the host log, so a smaller size is validated only by a conformance
+run.
+
+A released mustpass fraction is one `deqp-vk` process over about 200,000 cases.
+Its anonymous memory grows past 1.1 GB, and the 1536 MiB guest's kernel kills
+it about 84 percent of the way through, in `dEQP-VK.reconvergence`; a 1024 MiB
+guest kills it earlier. A killed `deqp-vk` prints no further progress line and
+the guest sends no artifact frames, so the run goes silent rather than
+reporting a stall, and its verdicts survive only as the result frames already
+on the console. No fraction has yet run to a summary on this device.
 
 ### Experimental host memory
 
