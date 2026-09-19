@@ -3146,6 +3146,11 @@ def artifact_transport_program(
     bytes go out in the next attempt.  ``missing_source_status`` is what a
     caller wants for a source file that does not exist, which differs between
     launchers.
+
+    ``artifact_framed`` says whether the failure happened with a frame group
+    already on the wire.  Only a failure before the first frame may be
+    retried: re-sending a name the host has already opened is a duplicate
+    start, which fails its decode outright, salvage lane included.
     """
 
     return f"""artifact_discard()
@@ -3189,6 +3194,7 @@ emit_compressed()
     chunks=$(wc -l < "$encoded" | tr -d ' ')
     frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \\
         "$name" "$size" "$digest")
+    artifact_framed=1
     emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || {{
         artifact_discard "$name"
         return 1
@@ -3208,6 +3214,7 @@ emit_compressed()
         artifact_discard "$name"
         return 1
     }}
+    artifact_framed=0
     artifact_discard "$name"
 }}
 
@@ -3987,6 +3994,7 @@ clock_ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
 [ "$clock_ticks" -gt 0 ] 2>/dev/null || clock_ticks=100
 progress_busy_ticks=$((progress_interval * clock_ticks / 10))
 prerun_emitted=0
+artifact_framed=0
 qpa_offset=0
 qpa_segments=0
 checkpoint_failures=0
@@ -4090,6 +4098,7 @@ watch_cts()
                 checkpoint_failures=0
             else
                 checkpoint_failures=$((checkpoint_failures + 1))
+                [ "$artifact_framed" -eq 0 ] || checkpoint_failures=3
                 echo 'UML_CTS_ERROR: QPA checkpoint transfer failed'
             fi
         fi

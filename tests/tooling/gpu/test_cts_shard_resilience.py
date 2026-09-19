@@ -858,6 +858,7 @@ output={root}
 qpa="$output/results.qpa"
 qpa_offset=0
 qpa_segments=0
+artifact_framed=0
 emit_frame()
 {{
     printf '%s\\n' "$1" >> "$output/frames"
@@ -868,11 +869,12 @@ flush_qpa 0 || echo 'first checkpoint failed'
 FULL_FILESYSTEM=1
 export FULL_FILESYSTEM
 cat "$output/source" > "$qpa"
-flush_qpa 0 || printf 'refused %s %s\\n' "$qpa_offset" "$qpa_segments" \\
-    >> "$output/state"
+flush_qpa 0 || printf 'refused %s %s %s\\n' "$qpa_offset" "$qpa_segments" \\
+    "$artifact_framed" >> "$output/state"
 unset FULL_FILESYSTEM
 flush_qpa 1 || echo 'final checkpoint failed'
-printf 'final %s %s\\n' "$qpa_offset" "$qpa_segments" >> "$output/state"
+printf 'final %s %s %s\\n' "$qpa_offset" "$qpa_segments" "$artifact_framed" \\
+    >> "$output/state"
 """
             (root / "harness.sh").write_text(harness)
             finished = subprocess.run(
@@ -887,9 +889,11 @@ printf 'final %s %s\\n' "$qpa_offset" "$qpa_segments" >> "$output/state"
                 "artifact results.qpa.0001 could not be compressed",
                 finished.stdout,
             )
+            # The offset stays put, and nothing of that segment was framed, so
+            # its name is still free for the attempt that carries the bytes.
             self.assertEqual(
                 (root / "state").read_text().splitlines(),
-                [f"refused {half} 1", f"final {len(payload)} 2"],
+                [f"refused {half} 1 0", f"final {len(payload)} 2 0"],
             )
             transcript = (root / "frames").read_text()
             # No empty frame group exists, and what did arrive is the whole
@@ -915,14 +919,18 @@ printf 'final %s %s\\n' "$qpa_offset" "$qpa_segments" >> "$output/state"
         shell = shutil.which("sh")
         self.assertIsNotNone(shell)
         finish = self.shell_function(self.device_launcher(), "finish")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "selected.txt").write_text(
-                "".join(f"{case}\n" for case in CASES)
-            )
-            (root / "skipped.txt").write_text("guest-memory\tdEQP-VK.x\n")
-            (root / "results.qpa").write_bytes(b"x" * 4096)
-            harness = f"""set -eu
+        # A segment that failed before framing anything is retried once, after
+        # the never-transported CTS output is released; one that failed with
+        # frames already sent is not, because that name cannot be opened twice.
+        for framed, flushes in ((0, ["flush", "flush"]), (1, ["flush"])):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "selected.txt").write_text(
+                    "".join(f"{case}\n" for case in CASES)
+                )
+                (root / "skipped.txt").write_text("guest-memory\tdEQP-VK.x\n")
+                (root / "results.qpa").write_bytes(b"x" * 4096)
+                harness = f"""set -eu
 output={root}
 qpa="$output/results.qpa"
 selected="$output/selected.txt"
@@ -933,6 +941,7 @@ cts_output="$output/cts-output.txt"
 channel_ready=1
 qpa_offset=1024
 qpa_segments=1
+artifact_framed={framed}
 status=1
 prepare_channel()
 {{
@@ -955,21 +964,22 @@ emit_artifact()
 {finish}
 finish
 """
-            (root / "harness.sh").write_text(harness)
-            subprocess.run([shell, str(root / "harness.sh")], check=True)
-            # Both flush attempts, then the summary, and the summary last.
-            self.assertEqual(
-                (root / "order").read_text().split(),
-                ["prerun", "flush", "flush", "artifact", "summary.txt"],
-            )
-            summary = dict(
-                line.split("=", 1)
-                for line in (root / "sent-summary.txt").read_text().splitlines()
-            )
-            self.assertEqual(summary["qpa_transfer"], "failed")
-            self.assertEqual(summary["qpa_missing_bytes"], str(4096 - 1024))
-            self.assertEqual(summary["cts_rc"], "1")
-            self.assertEqual(summary["device_excluded_guest_memory"], "1")
+                (root / "harness.sh").write_text(harness)
+                subprocess.run([shell, str(root / "harness.sh")], check=True)
+                self.assertEqual(
+                    (root / "order").read_text().split(),
+                    ["prerun", *flushes, "artifact", "summary.txt"],
+                )
+                summary = dict(
+                    line.split("=", 1)
+                    for line in (
+                        root / "sent-summary.txt"
+                    ).read_text().splitlines()
+                )
+                self.assertEqual(summary["qpa_transfer"], "failed")
+                self.assertEqual(summary["qpa_missing_bytes"], str(4096 - 1024))
+                self.assertEqual(summary["cts_rc"], "1")
+                self.assertEqual(summary["device_excluded_guest_memory"], "1")
 
     def test_checkpoint_segments_reconstruct_the_guest_file(self) -> None:
         shell = shutil.which("sh")

@@ -1018,6 +1018,7 @@ renderer="$output/renderer.txt"
 summary="$output/summary.txt"
 channel={shlex.quote(common.VIRTIO_SERIAL_GUEST_DEVICE)}
 channel_ready=0
+artifact_framed=0
 status=1
 
 prepare_channel()
@@ -1407,6 +1408,7 @@ checkpoint_bytes={checkpoint_bytes}
 progress_timeout={progress_timeout}
 progress_interval={progress_interval}
 prerun_emitted=0
+artifact_framed=0
 {relax_state}qpa_offset=0
 qpa_segments=0
 checkpoint_failures=0
@@ -1494,9 +1496,10 @@ finish()
         emit_prerun || transfer=1
         if flush_qpa 1; then
             qpa_transfer=complete
-        else
-            # The growing QPA and the CTS process's own output share the
-            # guest's tmpfs, and that output is never transported: release it
+        elif [ "$artifact_framed" -eq 0 ]; then
+            # Nothing of that segment reached the host, so its name is still
+            # free. The growing QPA and the CTS process's own output share the
+            # guest's tmpfs and that output is never transported: release it
             # and ask for the remaining results once more.
             : > "$cts_output" 2>/dev/null
             if flush_qpa 1; then
@@ -1504,6 +1507,8 @@ finish()
             else
                 qpa_transfer=failed
             fi
+        else
+            qpa_transfer=failed
         fi
     fi
     qpa_missing=0
@@ -1623,15 +1628,17 @@ while kill -0 "$cts_pid" 2>/dev/null; do
     printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|output_free_kb=%s|case=%s\n' \
         "$current_qpa_size" "$stalled_seconds" "$cts_rss_kb" \
         "$cts_peak_kb" "$mem_available_kb" "$output_free_kb" "$current_case"
-{relax_watch}    # A checkpoint that fails keeps its bytes pending, so the loop stays up
-    # and the next one carries them. Only a channel that keeps failing is
-    # worth giving up on, and the exit trap still makes a final attempt.
+{relax_watch}    # A checkpoint that fails before it frames anything keeps its bytes
+    # pending, so the loop stays up and the next one carries them. One that
+    # fails with frames already sent is done for: the host cannot be given
+    # that name twice, so nothing further is attempted for it.
     if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ] && \
        [ "$checkpoint_failures" -lt 3 ]; then
         if flush_qpa 0; then
             checkpoint_failures=0
         else
             checkpoint_failures=$((checkpoint_failures + 1))
+            [ "$artifact_framed" -eq 0 ] || checkpoint_failures=3
             echo 'UML_VK_CTS_ERROR: QPA checkpoint transfer failed'
         fi
     fi
