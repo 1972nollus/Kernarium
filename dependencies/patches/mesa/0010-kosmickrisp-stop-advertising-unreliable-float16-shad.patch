@@ -1,7 +1,7 @@
 From 7371bfe3e567bce10cd70145e5f0d70de74a1adc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 22:30:46 +0900
-Subject: [PATCH 10/97] kosmickrisp: stop advertising unreliable float16
+Subject: [PATCH 10/98] kosmickrisp: stop advertising unreliable float16
  shaders
 
 ---
