@@ -1,7 +1,7 @@
 From 3467f0be9325f8fca6e77a387e77e1a9bf8fb0d4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:35:56 +0900
-Subject: [PATCH 21/48] vrend: type integer attachments and attributes on a
+Subject: [PATCH 21/49] vrend: type integer attachments and attributes on a
  core profile
 
 A core profile has no fixed-function conversion between a float shader

@@ -1,7 +1,7 @@
 From fed2a2b4c8f5f364155959468ecb4ed0d3f097ed Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 17:27:48 +0900
-Subject: [PATCH 48/48] vrend: view whole cubes when a cube-array layer-face
+Subject: [PATCH 48/49] vrend: view whole cubes when a cube-array layer-face
  needs one
 
 vrend_create_surface() gives a colour attachment its own texture view

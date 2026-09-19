@@ -171,6 +171,28 @@ its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
 passes.
 
+### Guest memory boundary
+
+A guest application drives this renderer, so every layer that writes through an
+address derived from guest state bounds that write itself. No guest can make
+the host write outside the memory it gave the host, whatever the GPU does.
+
+Only a resource's attached backing reaches guest RAM: a blob resource carries
+no guest pages, and the device translates a backing entry only as a whole range
+inside one negotiated memory region. A control-queue reply is clamped to the
+writable descriptors the guest supplied. A Venus reply stream ends where the
+window the guest declared through `vkSetReplyCommandStreamMESA` ends rather
+than where the shared-memory resource holding it ends, so an oversized reply
+marks the context fatal instead of running on through whatever else the guest
+keeps in that resource.
+
+In the driver, a transform feedback store is bounded by the buffer range bound
+for it. A capture store's address is derived from the bound buffer's capacity,
+the byte counter the application supplies through a counter buffer, and the
+output layout, and the counter survives across draws, so every term of that
+derivation is application state. Each store recomputes its own extent and drops
+a write that would leave the bound range.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route. Its GLES stack

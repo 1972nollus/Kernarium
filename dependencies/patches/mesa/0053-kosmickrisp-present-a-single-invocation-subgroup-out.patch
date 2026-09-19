@@ -1,7 +1,7 @@
 From a0f800d11aec34e4615991a8eb57b06dc50aad2a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 14:50:52 +0900
-Subject: [PATCH 053/101] kosmickrisp: present a single-invocation subgroup
+Subject: [PATCH 053/103] kosmickrisp: present a single-invocation subgroup
  outside the SIMD stages
 
 Metal declares the SIMD-group attributes and the SIMD- and quad-group

@@ -47,4 +47,16 @@ private:
 [[nodiscard]] void *map_shared_backing(void *address, std::size_t length,
 	int protection, int flags, int fd, std::uint64_t offset) noexcept;
 
+/* Translate a Mach failure into the errno the kernel reads. An exhausted host
+ * must arrive as ENOMEM, which is the only value that makes the kernel say the
+ * host ran out rather than retry an address it believes is merely bad. */
+[[nodiscard]] int mach_failure_errno(int result) noexcept;
+
+/* Report a host mapping call that failed. A failure leaves the kernel's page
+ * tables describing memory the host does not have, and nothing else in this
+ * process says so; the first few are reported unconditionally so the evidence
+ * reaches the run's own console. */
+void report_mapping_failure(const char *what, const void *address,
+	std::size_t length, int error) noexcept;
+
 } // namespace uml::memory

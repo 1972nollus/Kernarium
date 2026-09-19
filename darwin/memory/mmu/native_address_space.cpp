@@ -601,7 +601,10 @@ public:
 			reinterpret_cast<vm_address_t>(prepared), TRUE,
 			&current, &maximum, VM_INHERIT_NONE);
 		if (result != KERN_SUCCESS || target != slot) {
-			errno = result == KERN_NO_SPACE ? ENOMEM : EFAULT;
+			errno = mach_failure_errno(result);
+			report_mapping_failure("shadow publication",
+				reinterpret_cast<const void *>(slot),
+				host_page_size(), errno);
 			return -1;
 		}
 		found->second = shadow_ownership(owner);
@@ -686,8 +689,15 @@ public:
 				page += host_page_size();
 			} while (page < end && owners_.contains(page));
 			mmu_trace_live_stacks("unmap-direct", run, page - run);
-			if (munmap(reinterpret_cast<void *>(run), page - run) != 0)
+			if (munmap(reinterpret_cast<void *>(run), page - run) != 0) {
+				/* A mapping the kernel believes it removed but the
+				 * host still serves outlives the page table that
+				 * named it, so say so rather than only failing. */
+				report_mapping_failure("guest page unmap",
+					reinterpret_cast<const void *>(run),
+					page - run, errno);
 				return -1;
+			}
 			for (auto erased = run; erased < page;
 			     erased += host_page_size())
 				owners_.erase(erased);

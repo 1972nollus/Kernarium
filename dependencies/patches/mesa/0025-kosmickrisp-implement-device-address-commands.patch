@@ -1,7 +1,7 @@
 From 7bbfc1b4334bf99bb81e21d05699926edba5498f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 04:14:50 +0900
-Subject: [PATCH 025/101] kosmickrisp: implement device address commands
+Subject: [PATCH 025/103] kosmickrisp: implement device address commands
 
 ---
  src/gallium/drivers/zink/zink_context.c       |  18 +-

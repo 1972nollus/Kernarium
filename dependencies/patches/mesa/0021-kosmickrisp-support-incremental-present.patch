@@ -1,7 +1,7 @@
 From 6cef806300a12a689235a7d99eaffc23db5a235a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 01:03:38 +0900
-Subject: [PATCH 021/101] kosmickrisp: support incremental present
+Subject: [PATCH 021/103] kosmickrisp: support incremental present
 
 ---
  src/kosmickrisp/vulkan/kk_physical_device.c | 1 +

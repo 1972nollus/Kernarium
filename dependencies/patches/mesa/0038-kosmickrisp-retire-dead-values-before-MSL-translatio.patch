@@ -1,7 +1,7 @@
 From 1869786e9d184c7ddca7498fce18e03b470d2650 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 18:21:12 +0900
-Subject: [PATCH 038/101] kosmickrisp: retire dead values before MSL
+Subject: [PATCH 038/103] kosmickrisp: retire dead values before MSL
  translation
 
 MSL type inference reaches a value only through its uses, so a value whose

@@ -1,0 +1,79 @@
+From 7269cfc54cf99f6ef963de15ea6463d1aa183448 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 04:10:30 +0900
+Subject: [PATCH 103/103] kosmickrisp: publish a submission's report with its
+ failure
+
+The commit callback publishes a submission's report, then describes the
+error and prints it, and only then marks the queue poisoned.  Retirement
+reads both under one lock and acts when the queue is poisoned and has
+answered for everything it was given, so in the window between the two a
+failing queue looks drained and healthy: the submit thread retires nothing
+yet, but a later failing submission can find the earlier one's report
+already counted, retire the queue, clear its failure state, and let the
+first callback poison the queue that replaced it.
+
+Publish the report and the failure it carries in the same critical section,
+and describe the error before taking the lock so nothing unbounded runs
+inside it.
+---
+ src/kosmickrisp/vulkan/kk_queue.c | 39 ++++++++++++++++++++-----------
+ 1 file changed, 25 insertions(+), 14 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+index 49c89177..20ab6728 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -282,27 +282,38 @@ commit_callback(struct mtl_feedback_data *data)
+    struct kk_queue_submission *submission = data->user_data;
+    struct kk_queue_feedback *feedback = submission->feedback;
+ 
++   char report[KK_QUEUE_ERROR_REPORT_SIZE];
++   const bool failed = data->error != MTL_COMMAND_QUEUE_ERROR_NONE;
++   /* A lost queue owes every signal it still holds, because it runs nothing
++    * further. A survivable failure owes only the signals ordered behind the
++    * submission it names. */
++   const bool lost = failed && kk_queue_error_is_device_lost(data);
++
++   if (failed)
++      kk_queue_error_describe(report, sizeof(report), data);
++
+    /* A serial is reserved immediately before its commit, so a submission the
+-    * queue is still holding always keeps this below last_serial. */
++    * queue is still holding always keeps this below last_serial.
++    *
++    * Publish the report together with the failure it carries. Retirement reads
++    * both under this lock and acts once the queue is poisoned and has answered
++    * for everything it was given, so a report published ahead of its own
++    * failure lets a failing queue look drained and healthy: it is replaced,
++    * the replacement's state is cleared, and the failure then lands on the
++    * queue that replaced it.
++    */
+    simple_mtx_lock(&feedback->signal_mutex);
+    ++feedback->reported;
+-   simple_mtx_unlock(&feedback->signal_mutex);
+-
+-   if (data->error != MTL_COMMAND_QUEUE_ERROR_NONE) {
+-      char report[KK_QUEUE_ERROR_REPORT_SIZE];
+-      kk_queue_error_describe(report, sizeof(report), data);
+-      fprintf(stderr, "KosmicKrisp %s\n", report);
+-
+-      /* A lost queue owes every signal it still holds, because it runs
+-       * nothing further. A survivable failure owes only the signals ordered
+-       * behind the submission it names. */
+-      bool lost = kk_queue_error_is_device_lost(data);
+-      simple_mtx_lock(&feedback->signal_mutex);
++   if (failed) {
+       ++feedback->failures;
+       /* Survived or not, this queue runs nothing more that can be trusted. */
+       feedback->poisoned = true;
+       feedback->ever_failed = true;
+-      simple_mtx_unlock(&feedback->signal_mutex);
++   }
++   simple_mtx_unlock(&feedback->signal_mutex);
++
++   if (failed) {
++      fprintf(stderr, "KosmicKrisp %s\n", report);
+       unsigned made_good = kk_queue_signals_make_good(
+          feedback, lost ? UINT64_MAX : submission->serial);
+       if (made_good)
