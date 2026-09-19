@@ -120,7 +120,10 @@ class BootAndroidTests(unittest.TestCase):
     def test_default_disk_is_the_stable_persistent_image(self) -> None:
         disk = boot_android.disk_path(None)
         self.assertEqual(disk.name, "android-17.img")
-        self.assertEqual(disk.parent, boot_android.INSTANCES_ROOT)
+        # disk_path() resolves symbolic links, and `.build` may be one.
+        self.assertEqual(
+            disk.parent, boot_android.INSTANCES_ROOT.resolve(strict=False)
+        )
 
     def test_disk_is_resized_with_homebrew_sgdisk(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
