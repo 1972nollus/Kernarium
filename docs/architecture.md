@@ -232,6 +232,12 @@ layer keeps the newest frame and at most one command buffer in flight. A
 backpressured presentation may drop a superseded frame; only unsupported
 resource shapes use CPU readback. See [`graphics.md`](graphics.md).
 
+A guest drives the renderer, so no host write into guest memory is sized by
+the renderer alone: the device bounds a translated guest range to one
+negotiated memory region, clamps a reply to the writable descriptors the guest
+supplied, and the renderer ends a Venus reply stream at the window the guest
+declared rather than at the resource holding it.
+
 The separately configured macOS Vulkan experiment adds an independent route:
 
 ```text
