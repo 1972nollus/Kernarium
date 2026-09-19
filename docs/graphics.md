@@ -457,13 +457,33 @@ overflow report is a shader-side `printf` and `abort()` that reaches neither
 Metal nor the host log, so a smaller size is validated only by a conformance
 run.
 
-A released mustpass fraction is one `deqp-vk` process over about 200,000 cases.
-Its anonymous memory grows past 1.1 GB, and the 1536 MiB guest's kernel kills
-it about 84 percent of the way through, in `dEQP-VK.reconvergence`; a 1024 MiB
-guest kills it earlier. A killed `deqp-vk` prints no further progress line and
-the guest sends no artifact frames, so the run goes silent rather than
-reporting a stall, and its verdicts survive only as the result frames already
-on the console. No fraction has yet run to a summary on this device.
+A released mustpass fraction is one `deqp-vk` process over about 200,000 cases,
+and a 1536 MiB guest cannot hold one. The cost is in two parts, both measured on
+macOS at the same guest profile. A baseline that grows: the process holds 134 MiB
+before its first case, from the released case hierarchy the enumeration builds,
+reaches about 560 MiB within the first 15,000 cases, and about 1.1 GB by 88
+percent of the fraction. And a per-group transient on top of it: fraction 00's
+380 `dEQP-VK.reconvergence` cases all pass in a fresh process, but their peak
+resident size is 665 MiB, because those tests simulate each subgroup's control
+flow on the CPU. The guest reaper takes `deqp-vk` where the two meet. Raising
+guest RAM is not available, and a 1024 MiB guest is killed earlier still.
+
+Two further consequences. The already-transported `results.qpa` stays in the
+guest's `/run` tmpfs, which is guest RAM: 271 MiB, 18 percent of the guest, by
+the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
+with it, so the guest prints no further progress line and sends no artifact
+frames: the run goes silent rather than reporting a stall, and its verdicts
+survive only as the result frames already on the console. The device lane ends a
+run within three minutes of the reaper's own line rather than waiting out its
+stall guard, and writes whatever the console carried.
+
+A baked device campaign therefore leaves the groups it cannot hold out of the
+fraction, which is why the campaign names carry a generation suffix. The guest
+drops them from the list it enumerated and transports exactly which cases and
+under which reason, so an excluded case is a case not run, never a pass and
+never a failure, and the same selection can be run on a device with more memory.
+The contract is in [`testing.md`](testing.md); the reasoned list is
+`DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 
 ### Experimental host memory
 

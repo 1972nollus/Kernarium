@@ -41,6 +41,16 @@ BUNDLE_ID = "com.imxieyi.Kernarium"
 # file name inside its own Documents directory.
 DEFAULT_ROOTFS_FILENAME = "rootfs-vulkan-venus.ext4"
 PROGRESS_INTERVAL = 60
+# The guest kernel's reaper names what it killed. A fraction whose CTS process
+# is gone will never reach its final frame, and the guest has been observed to
+# stop printing entirely at that moment, so waiting out the stall guard costs
+# half an hour and yields nothing the console did not already hold.
+GUEST_OOM_KILL = re.compile(
+    r"Out of memory: Killed process \d+ \(([^)]+)\)"
+)
+# What the guest's own exit trap needs to transport its last QPA segment and
+# its summary, when it still can.
+OOM_GRACE_SECONDS = 180
 
 
 def fail(message: str) -> None:
@@ -119,12 +129,16 @@ def stop_console(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
-def run_campaign(options: argparse.Namespace, log: Path) -> str:
+def run_campaign(options: argparse.Namespace, log: Path) -> tuple[str, str | None]:
     """Hold the console until the campaign's last frame or the deadline.
 
-    The wait is bounded twice: an overall deadline, and a stall deadline that
-    only the console growing resets. A device that wedges with the screen on
-    would otherwise hold this lane for as long as the battery lasts.
+    The wait is bounded three times: an overall deadline, a stall deadline that
+    only the console growing resets, and a short grace once the guest kernel
+    reports an out-of-memory kill. A device that wedges with the screen on would
+    otherwise hold this lane for as long as the battery lasts, and a guest whose
+    CTS process the reaper took would hold it for the whole stall guard.
+
+    Returns the transcript and, when one was seen, the reaper's own line.
     """
     command = device_command(
         "device", "process", "launch", "--device", options.device,
@@ -134,6 +148,8 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
     stall_deadline = time.monotonic() + options.stall_timeout
     next_update = time.monotonic() + PROGRESS_INTERVAL
     observed = 0
+    oom_deadline: float | None = None
+    oom_report: str | None = None
     with log.open("wb") as output:
         process = subprocess.Popen(
             command,
@@ -147,7 +163,7 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
                     encoding="utf-8", errors="replace"
                 )
                 if cts.FINAL_ARTIFACT_FRAME in transcript:
-                    return transcript
+                    return transcript, oom_report
                 exited = process.poll() is not None
                 now = time.monotonic()
                 size = log.stat().st_size
@@ -155,12 +171,27 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
                     observed = size
                     stall_deadline = now + options.stall_timeout
                 if exited:
-                    return transcript
+                    return transcript, oom_report
+                if oom_deadline is None:
+                    found = GUEST_OOM_KILL.search(transcript)
+                    if found is not None:
+                        oom_report = found.group(0)
+                        oom_deadline = now + OOM_GRACE_SECONDS
+                        print(
+                            f"the guest kernel killed {found.group(1)} out of "
+                            f"memory; giving it {OOM_GRACE_SECONDS}s to "
+                            "transport what it has",
+                            flush=True,
+                        )
                 if now >= deadline:
                     fail(
                         f"the campaign exceeded {options.timeout} seconds; "
                         f"see {log}"
                     )
+                if oom_deadline is not None and now >= oom_deadline:
+                    # Not a failure of this lane: the executed prefix is in the
+                    # transcript and the caller decodes and reports it.
+                    return transcript, oom_report
                 if now >= stall_deadline:
                     fail(
                         "the console stopped growing for "
@@ -178,30 +209,54 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
             stop_console(process)
 
 
-def report(artifacts: dict[str, bytes], transcript: str) -> int:
+def report(
+    artifacts: dict[str, bytes],
+    transcript: str,
+    oom_report: str | None = None,
+) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
     The application echoes the generated guest launcher before running it, and
     that script carries its own ``UML_VK_CTS_ERROR`` strings inside ``||``
     clauses, so searching the transcript for the marker reports a failure on
     every successful run. ``summary.txt`` is the guest's own verdict.
+
+    A run the guest's reaper ended has no summary, so the executed prefix's own
+    status counts are printed either way: they are the only verdicts it has.
     """
 
     print("---- campaign summary ----")
     print("artifacts: " + (", ".join(sorted(artifacts)) or "none"))
+    summary: dict[str, str] = {}
     payload = artifacts.get("summary.txt")
     if payload is None:
         print("the campaign delivered no summary")
-        print("--------------------------")
-        return 1
-    summary: dict[str, str] = {}
-    for line in payload.decode("utf-8", errors="replace").splitlines():
-        key, separator, value = line.partition("=")
-        if separator:
-            summary[key] = value
-    for key in ("mode", "expected_case_count", "cts_rc", "formal_conformance"):
-        if key in summary:
-            print(f"{key}={summary[key]}")
+    else:
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                summary[key] = value
+        for key in (
+            "mode",
+            "fraction",
+            "expected_case_count",
+            *sorted(key for key in summary if key.startswith("device_")),
+            "cts_rc",
+            "formal_conformance",
+        ):
+            if key in summary:
+                print(f"{key}={summary[key]}")
+    skipped = artifacts.get("skipped.txt")
+    if skipped is not None:
+        # Each row is "<reason>\t<case>": the reason the device left it out.
+        reasons = Counter(
+            line.partition("\t")[0]
+            for line in skipped.decode("utf-8", errors="replace").splitlines()
+            if line
+        )
+        print(f"skipped_for_a_device_limit={sum(reasons.values())}")
+        for reason, count in sorted(reasons.items()):
+            print(f"skipped_{reason}={count}")
     qpa = artifacts.get("results.qpa")
     if qpa is not None:
         statuses = Counter(
@@ -212,7 +267,9 @@ def report(artifacts: dict[str, bytes], transcript: str) -> int:
         )
         for status, count in sorted(statuses.items()):
             print(f"{status}={count}")
-    failed = summary.get("cts_rc") != "0"
+    if oom_report is not None:
+        print(f"guest_out_of_memory={oom_report}")
+    failed = payload is None or summary.get("cts_rc") != "0"
     print("vulkan_campaign_failed=" + ("true" if failed else "false"))
     print("--------------------------")
     return 1 if failed else 0
@@ -277,12 +334,12 @@ def main(argv: list[str] | None = None) -> int:
 
     log = options.artifact_root / "console.log"
     started = time.monotonic()
-    transcript = run_campaign(options, log)
+    transcript, oom_report = run_campaign(options, log)
     print(f"console closed after {time.monotonic() - started:.0f}s: {log}")
     artifacts = cts.decode_artifacts(transcript, partial=True)
     cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
     print(f"artifacts: {options.artifact_root / 'artifacts'}")
-    return report(artifacts, transcript)
+    return report(artifacts, transcript, oom_report)
 
 
 if __name__ == "__main__":

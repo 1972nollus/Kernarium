@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import argparse
 import base64
 import contextlib
 import gzip
@@ -16,11 +17,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_cts as cts  # noqa: E402
+import run_ios_device_vk_cts as device  # noqa: E402
 
 
 def qpa_result(case: str, status: str = "Pass", identity: str = "") -> str:
@@ -680,9 +683,15 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn('runuser -u uml -- env', launcher)
         self.assertIn('> "$cts_output" 2>&1 &', launcher)
         self.assertIn(
-            "UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|case=%s",
+            "UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s"
+            "|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|case=%s",
             launcher,
         )
+        # The guest reaper leaves no other record of how close a fraction was,
+        # so the progress line carries the CTS process's resident and peak size.
+        self.assertIn("cts_process_field VmRSS", launcher)
+        self.assertIn("cts_process_field VmHWM", launcher)
+        self.assertIn('[ "$entry_comm" = deqp-vk ]', launcher)
         self.assertIn('tail -c 1048576 "$qpa"', launcher)
         self.assertIn('[ "$stalled_seconds" -ge "$progress_timeout" ]', launcher)
         self.assertIn("progress_timeout=600", launcher)
@@ -930,6 +939,286 @@ class VulkanCtsToolingTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_device_exclusions_carry_a_cause_and_spare_the_mandatory_list(
+        self,
+    ) -> None:
+        self.assertEqual(
+            cts.validate_device_exclusions(cts.DEVICE_EXCLUSIONS),
+            cts.DEVICE_EXCLUSIONS,
+        )
+        cases = (
+            "dEQP-VK.api.smoke.create_sampler",
+            "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+            "dEQP-VK.reconvergence_other.case",
+            "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated.not_enough_space",
+        )
+        # A group prefix takes a whole subtree; an exact name takes one case.
+        exclusions = (
+            *cts.DEVICE_EXCLUSIONS,
+            cts.DeviceExclusion(
+                "aborts-deqp",
+                (
+                    "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated."
+                    "not_enough_space",
+                ),
+            ),
+        )
+        selected, skipped = cts.device_exclusion_partition(cases, exclusions)
+        self.assertEqual(
+            selected,
+            (
+                "dEQP-VK.api.smoke.create_sampler",
+                "dEQP-VK.reconvergence_other.case",
+            ),
+        )
+        self.assertEqual(
+            skipped,
+            {
+                "guest-memory": (
+                    "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+                ),
+                "aborts-deqp": (
+                    "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated."
+                    "not_enough_space",
+                ),
+            },
+        )
+        # No exclusion means no partition, so every other lane is untouched.
+        self.assertEqual(cts.device_exclusion_partition(cases, ()), (cases, {}))
+        for rejected in (
+            cts.DeviceExclusion("Guest Memory", ("dEQP-VK.reconvergence.",)),
+            cts.DeviceExclusion("guest-memory", ()),
+            cts.DeviceExclusion("guest-memory", ("reconvergence.",)),
+            cts.DeviceExclusion("guest-memory", ("dEQP-VK.",)),
+        ):
+            with self.subTest(exclusion=rejected):
+                with self.assertRaises(cts.CampaignError):
+                    cts.validate_device_exclusions((rejected,))
+        with self.assertRaisesRegex(cts.CampaignError, "repeats"):
+            cts.validate_device_exclusions(
+                (*cts.DEVICE_EXCLUSIONS, *cts.DEVICE_EXCLUSIONS)
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "mandatory case"):
+            cts.validate_device_exclusions(
+                (cts.DeviceExclusion("guest-memory", ("dEQP-VK.info.",)),)
+            )
+
+    def test_only_a_device_campaign_excludes_and_it_transports_the_skip_list(
+        self,
+    ) -> None:
+        selection = cts.resolve_receipt_selection(
+            "current-must-pass", (), None, cts.Fraction(0, 16)
+        )
+        arguments = {
+            "page_size": 16384,
+            "timeout": cts.APPLE_MUSTPASS_TIMEOUT,
+            "progress_timeout": cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+        }
+        plain = cts.build_receipt_guest_launcher(
+            self.receipt, selection, **arguments
+        )
+        excluded = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            **arguments,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+        # The macOS lanes get exactly the script they had: dEQP applies the
+        # released fraction filter to both the enumeration and the run, and
+        # nothing is skipped.
+        self.assertEqual(plain.count("--deqp-fraction=0,16"), 2)
+        self.assertNotIn("skipped", plain)
+        self.assertNotIn("device_excluded", plain)
+        self.assertNotIn("device_memory_mib", plain)
+        # The device campaign enumerates the fraction and then runs an explicit
+        # subset of it, so the filter must not run a second time over that.
+        self.assertEqual(excluded.count("--deqp-fraction=0,16"), 1)
+        self.assertEqual(
+            excluded.count("--deqp-fraction-mandatory-caselist-file"), 1
+        )
+        execution = cts.receipt_deqp_arguments(
+            self.receipt, selection, "/run/uml-vk-cts", preselected=True
+        )
+        self.assertNotIn("--deqp-fraction=0,16", execution)
+        self.assertIn(
+            "--deqp-caselist-file=/run/uml-vk-cts/selected.txt", execution
+        )
+        every = " ".join(
+            "-e '" + cts._exclusion_expression(pattern) + "'"
+            for exclusion in cts.DEVICE_EXCLUSIONS
+            for pattern in exclusion.patterns
+        )
+        self.assertIn(
+            f'grep -v {every} "$expected" > "$selected"', excluded
+        )
+        for exclusion in cts.DEVICE_EXCLUSIONS:
+            patterns = " ".join(
+                "-e '" + cts._exclusion_expression(pattern) + "'"
+                for pattern in exclusion.patterns
+            )
+            # Every skipped case carries its own cause, so the list says why.
+            self.assertIn(
+                f'grep {patterns} "$expected" | awk -v reason='
+                f"{exclusion.reason} "
+                '\'{ print reason "\\t" $0 }\' >> "$skipped"',
+                excluded,
+            )
+            self.assertIn(f"device_excluded_{exclusion.row}=%s", excluded)
+            self.assertIn(
+                f"device_exclusion_{exclusion.row}=%s\\n' "
+                + " ".join(exclusion.patterns),
+                excluded,
+            )
+        self.assertIn("renderer.txt selected.txt expected.txt skipped.txt", excluded)
+        self.assertIn("device_excluded=%s", excluded)
+        self.assertIn(
+            f"device_memory_mib=%s\\n' {cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB}",
+            excluded,
+        )
+        # The reported case count is what the guest will actually run.
+        self.assertIn('$(wc -l < "$selected" | tr -d \' \')', excluded)
+        self.assertIn("skipped.txt", cts.common.ALLOWED_ARTIFACTS)
+        for script in (plain, excluded):
+            syntax = subprocess.run(
+                ["sh", "-n"], input=script, text=True, capture_output=True,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        # A selection the exclusion cannot be reasoned about is refused rather
+        # than silently ignored.
+        family = cts.resolve_receipt_selection(
+            "exact-family", (), "dEQP-VK.info", cts.Fraction(0, 1)
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "enumerated released"):
+            cts.build_receipt_guest_launcher(
+                self.receipt,
+                family,
+                **arguments,
+                device_exclusions=cts.DEVICE_EXCLUSIONS,
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "resumed shard"):
+            cts.build_receipt_guest_launcher(
+                self.receipt,
+                selection,
+                **arguments,
+                resume_after=10,
+                device_exclusions=cts.DEVICE_EXCLUSIONS,
+            )
+
+    def test_a_guest_memory_kill_ends_the_device_wait_and_still_reports(
+        self,
+    ) -> None:
+        reaper = (
+            "[ 6741.320880] Out of memory: Killed process 1604 (deqp-vk) "
+            "total-vm:2793424kB, anon-rss:1164432kB, file-rss:384kB\n"
+        )
+        for killed, expected in ((reaper, True), ("", False)):
+            with self.subTest(killed=bool(killed)):
+                elapsed, report = self._device_wait(killed)
+                if expected:
+                    self.assertIsNotNone(report)
+                    self.assertIn("deqp-vk", report)
+                    # Promptly, not after the stall guard.
+                    self.assertLessEqual(elapsed, device.OOM_GRACE_SECONDS + 30)
+                else:
+                    self.assertIsNone(report)
+                    self.assertGreaterEqual(elapsed, 1800)
+        # A killed run has no summary, so its executed prefix's own verdicts and
+        # the reaper's line are what the report carries.
+        artifacts = {
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.api.smoke.create_sampler"),
+                qpa_result("dEQP-VK.api.smoke.create_shader", "Fail"),
+            ).encode(),
+            "skipped.txt": (
+                b"guest-memory\tdEQP-VK.reconvergence.maximal.compute"
+                b".nesting4.0.1\n"
+            ),
+        }
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(artifacts, "", reaper.strip())
+        self.assertEqual(status, 1)
+        text = printed.getvalue()
+        self.assertIn("the campaign delivered no summary", text)
+        self.assertIn("Pass=1", text)
+        self.assertIn("Fail=1", text)
+        self.assertIn("skipped_for_a_device_limit=1", text)
+        self.assertIn("skipped_guest-memory=1", text)
+        self.assertIn("guest_out_of_memory=", text)
+
+    def _device_wait(self, killed: str) -> tuple[float, str | None]:
+        """Drive the device console wait over a scripted transcript."""
+
+        clock = {"now": 0.0}
+
+        class Console:
+            def __init__(self, *_arguments, stdout=None, **_keywords) -> None:
+                self.returncode = None
+                stdout.write(b"Kernarium Vulkan CTS mustpass campaign enabled\n")
+                if killed:
+                    stdout.write(killed.encode())
+                stdout.flush()
+
+            def poll(self) -> None:
+                return None
+
+            def send_signal(self, _number: int) -> None:
+                self.returncode = 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.returncode = 0
+                return 0
+
+        options = argparse.Namespace(
+            device="fixture",
+            campaign=cts.apple_mustpass_campaign(0),
+            rootfs_filename="rootfs-vulkan-venus.ext4",
+            engine="gadgets",
+            memory_mib=cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB,
+            cpus=1,
+            timeout=28200,
+            stall_timeout=1800,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "console.log"
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(device.subprocess, "Popen", Console)
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        device.time, "monotonic", lambda: clock["now"]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        device.time,
+                        "sleep",
+                        lambda seconds: clock.__setitem__(
+                            "now", clock["now"] + seconds
+                        ),
+                    )
+                )
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                try:
+                    _, report = device.run_campaign(options, log)
+                except cts.common.CampaignError as error:
+                    self.assertIn("stopped growing", str(error))
+                    report = None
+        return clock["now"], report
+
+    def test_the_baked_campaign_generation_is_part_of_its_identity(self) -> None:
+        names = cts.apple_campaigns()
+        self.assertEqual(len(names), cts.APPLE_MUSTPASS_FRACTIONS + 2)
+        for index in range(cts.APPLE_MUSTPASS_FRACTIONS):
+            self.assertEqual(
+                cts.apple_mustpass_campaign(index),
+                f"vulkan-mustpass-{index:02d}of16-v2",
+            )
+        with self.assertRaises(cts.CampaignError):
+            cts.apple_mustpass_campaign(cts.APPLE_MUSTPASS_FRACTIONS)
 
 
 if __name__ == "__main__":

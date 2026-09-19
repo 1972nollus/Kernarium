@@ -86,6 +86,9 @@ SHARD_ARTIFACTS = frozenset(
     {"renderer.txt", "results.qpa", "selected.txt", "summary.txt"}
 )
 ENUMERATED_SHARD_ARTIFACTS = SHARD_ARTIFACTS | {"expected.txt"}
+# A campaign that cannot hold every enumerated case on its device transports
+# exactly which ones it left out, so the same cases stay selectable elsewhere.
+EXCLUDED_SHARD_ARTIFACTS = ENUMERATED_SHARD_ARTIFACTS | {"skipped.txt"}
 INVENTORY_ARTIFACTS = frozenset(
     {"inventory.txt", "renderer.txt", "results.qpa", "summary.txt"}
 )
@@ -95,6 +98,7 @@ CONFIG_INVENTORY_ARTIFACTS = frozenset(
 ALLOWED_ARTIFACTS = (
     SHARD_ARTIFACTS
     | ENUMERATED_SHARD_ARTIFACTS
+    | EXCLUDED_SHARD_ARTIFACTS
     | INVENTORY_ARTIFACTS
     | CONFIG_INVENTORY_ARTIFACTS
 )

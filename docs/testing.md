@@ -101,10 +101,19 @@ ctest --test-dir .build/presets/macos-integration-venus \
 ```
 
 Run the runner directly to install a bundle, stage an image, or take one of the
-sixteen `vulkan-mustpass-NNof16-v1` fractions of the released list; see its
+sixteen `vulkan-mustpass-NNof16-v2` fractions of the released list; see its
 `--help`. A campaign is judged by its `summary.txt`, never by searching the
 console for an error marker, because the application echoes the generated guest
 launcher and that script carries its own marker strings.
+
+A baked device campaign is the one lane whose guest memory is fixed by the
+platform, so it is the only lane that leaves cases out. `DEVICE_EXCLUSIONS` in
+`run_vk_cts.py` names them by cause, and the generation suffix (`-v2`) is part of
+the selection's identity. The guest drops them from the fraction it enumerated
+and transports `skipped.txt` as `<reason>\t<case>` rows, with `device_excluded*`
+counts in `summary.txt`, so `cut -f2 skipped.txt` is the selection to re-run on
+hardware without that limit. An excluded case is neither a pass nor a failure.
+Every macOS lane runs the released selection unchanged.
 
 The full sanitizer suites remain separate because of their runtime cost:
 
