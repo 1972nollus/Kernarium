@@ -32,6 +32,7 @@ gadget cmpxchg_\width\()_mr
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
 	locked_aligned \width, .Lx86_cmpxchg_split\@
+.Lx86_cmpxchg_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
 1:
@@ -56,6 +57,7 @@ gadget cmpxchg_\width\()_mr
 	record_deferred 2, \width
 	retire_and_next
 .Lx86_cmpxchg_split\@:
+	split_operand (\width / 8), .Lx86_cmpxchg_exclusive\@
 	page_cross_check (\width / 8), .Lx86_cmpxchg_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
@@ -84,6 +86,7 @@ gadget cmpxchg_\width\()_mr
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_cmpxchg_memory_written\@:
+	split_lock_leave
 	mov x11, x27
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
@@ -91,6 +94,7 @@ gadget cmpxchg_\width\()_mr
 	record_deferred 2, \width
 	finish_store (\width / 8)
 .Lx86_cmpxchg_memory_unequal\@:
+	split_lock_leave
 	\store \accumulator_store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	mov x11, x27
 	mov x12, x24
@@ -139,6 +143,7 @@ gadget xadd_\width\()_mr
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
 	locked_aligned \width, .Lx86_xadd_split\@
+.Lx86_xadd_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -154,6 +159,7 @@ gadget xadd_\width\()_mr
 	record_deferred 1, \width
 	finish_store (\width / 8)
 .Lx86_xadd_split\@:
+	split_operand (\width / 8), .Lx86_xadd_exclusive\@
 	page_cross_check (\width / 8), .Lx86_xadd_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
@@ -181,6 +187,7 @@ gadget xadd_\width\()_mr
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_xadd_written\@:
+	split_lock_leave
 	and x8, x23, #0xffff
 	\store \source_store_register\()24, [_cpu, x8]
 	mov x11, x24
@@ -220,6 +227,7 @@ gadget cmpxchg_pair_8
 	mov x25, x7
 	tst x7, #7
 	b.ne .Lx86_cmpxchg_pair_8_split
+.Lx86_cmpxchg_pair_8_exclusive:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
 	ldr w10, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr w11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -247,6 +255,7 @@ gadget cmpxchg_pair_8
 	compare_exchange_pair_flags
 	retire_and_next
 .Lx86_cmpxchg_pair_8_split:
+	split_operand 8, .Lx86_cmpxchg_pair_8_exclusive
 	page_cross_check 8, .Lx86_cmpxchg_pair_8_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr x24, [x7]
@@ -283,9 +292,11 @@ gadget cmpxchg_pair_8
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_cmpxchg_pair_8_written:
+	split_lock_leave
 	compare_exchange_pair_flags
 	finish_store 8
 .Lx86_cmpxchg_pair_8_unequal:
+	split_lock_leave
 	mov w19, wzr
 	mov w8, w24
 	lsr x9, x24, #32
@@ -324,6 +335,7 @@ gadget cmpxchg_pair_16
 	compare_exchange_pair_flags
 	retire_and_next
 .Lx86_cmpxchg_pair_16_split:
+	split_lock_enter
 	page_cross_check 16, .Lx86_cmpxchg_pair_16_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldp x24, x26, [x7]
@@ -370,9 +382,11 @@ gadget cmpxchg_pair_16
 .Lx86_cmpxchg_pair_16_cross_written:
 	add sp, sp, #16
 .Lx86_cmpxchg_pair_16_written:
+	split_lock_leave
 	compare_exchange_pair_flags
 	finish_store 16
 .Lx86_cmpxchg_pair_16_unequal:
+	split_lock_leave
 	mov w19, wzr
 	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]

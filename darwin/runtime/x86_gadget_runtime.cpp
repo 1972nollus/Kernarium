@@ -4,6 +4,7 @@
 #if DARWIN_UML_X86_64_GUEST
 
 #include "cpu/x86_64/gadgets/program.hpp"
+#include "platform/apple/host_features.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -151,6 +152,11 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		trace_fatal("execution-scope", cpu, generation, errno);
 		return run;
 	}
+	/* A reset executor starts without the permission, so every run restates
+	 * what the host reported. */
+	executor.permit_unaligned_exclusives(
+		::uml::platform::apple::probed_host_capabilities().has(
+			::uml::platform::ArmFeature::lse2));
 	auto guarded_interrupt = interrupt;
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;

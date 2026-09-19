@@ -183,6 +183,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		.tlb_entries = executor.tlb_entries(),
 		.program_begin = program.address(),
 		.program_end = program.address() + program.byte_count(),
+		.unaligned_exclusives = executor.unaligned_exclusives(),
 		.instruction_limit =
 			std::min<std::size_t>(instruction_budget, 4096),
 		.target_links = executor.target_links(program.execution_mode()),

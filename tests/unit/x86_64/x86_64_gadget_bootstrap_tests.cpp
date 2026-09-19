@@ -8,9 +8,11 @@
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "memory/guest_address_space.hpp"
+#include "platform/apple/host_features.hpp"
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -4133,6 +4135,231 @@ read_test_sequences(void *context) noexcept
 			"concurrent LOCK INC lost updates");
 }
 
+/* Where a locked operand can sit: naturally aligned, unaligned inside one
+ * 16-byte granule, across a granule boundary, and across a page boundary. The
+ * first keeps the exclusive path everywhere, the second keeps it on a host
+ * that reports FEAT_LSE2, and the rest take the split lock.
+ */
+constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
+	0x800, 0x801, 0x80c, 0xffc};
+
+[[nodiscard]] bool host_takes_unaligned_exclusives() noexcept
+{
+	return uml::platform::apple::probed_host_capabilities().has(
+		uml::platform::ArmFeature::lse2);
+}
+
+/* Every locked form computes the same result wherever its operand sits and
+ * whichever path the host lets it take, and writes nothing outside it.
+ */
+[[nodiscard]] bool locked_forms_agree_at_every_operand_address()
+{
+	using namespace uml::cpu::x86_64;
+	struct Form {
+		const char *name;
+		std::vector<std::uint8_t> code;
+		std::uint64_t rax;
+		std::uint64_t rcx;
+		std::uint64_t rdx;
+	};
+	constexpr std::uint64_t low = 0x8877665544332211ULL;
+	constexpr std::uint64_t high = 0x0ff0e0d0c0b0a099ULL;
+	const std::vector<Form> forms{
+		Form{"lock add [m], r64", {0xf0, 0x48, 0x01, 0x0e, 0x0f, 0x05},
+			0, 0xf123456789abcdefULL, 0},
+		Form{"lock add [m], r32", {0xf0, 0x01, 0x0e, 0x0f, 0x05},
+			0, 0xf1234567U, 0},
+		Form{"lock add [m], r16", {0x66, 0xf0, 0x01, 0x0e, 0x0f, 0x05},
+			0, 0xf123U, 0},
+		Form{"lock adc [m], r64", {0xf9, 0xf0, 0x48, 0x11, 0x0e, 0x0f, 0x05},
+			0, 0x7fffffffffffffffULL, 0},
+		Form{"lock inc qword [m]", {0xf0, 0x48, 0xff, 0x06, 0x0f, 0x05},
+			0, 0, 0},
+		Form{"lock neg qword [m]", {0xf0, 0x48, 0xf7, 0x1e, 0x0f, 0x05},
+			0, 0, 0},
+		Form{"xchg [m], r64", {0x48, 0x87, 0x0e, 0x0f, 0x05},
+			0, 0x0123456789abcdefULL, 0},
+		Form{"lock xadd [m], r64", {0xf0, 0x48, 0x0f, 0xc1, 0x0e, 0x0f, 0x05},
+			0, 0x0123456789abcdefULL, 0},
+		Form{"lock cmpxchg [m], r64, equal",
+			{0xf0, 0x48, 0x0f, 0xb1, 0x0e, 0x0f, 0x05},
+			low, 0x0123456789abcdefULL, 0},
+		Form{"lock cmpxchg [m], r64, unequal",
+			{0xf0, 0x48, 0x0f, 0xb1, 0x0e, 0x0f, 0x05},
+			low + 1, 0x0123456789abcdefULL, 0},
+		Form{"lock bts [m], r64", {0xf0, 0x48, 0x0f, 0xab, 0x0e, 0x0f, 0x05},
+			0, 5, 0},
+		Form{"lock cmpxchg8b, equal", {0xf0, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
+			low & 0xffffffffU, 0x01234567U, low >> 32U},
+		Form{"lock cmpxchg8b, unequal", {0xf0, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
+			1, 0x01234567U, low >> 32U},
+		Form{"lock cmpxchg16b, equal",
+			{0xf0, 0x48, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
+			low, 0x0123456789abcdefULL, high},
+		Form{"lock cmpxchg16b, unequal",
+			{0xf0, 0x48, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
+			low, 0x0123456789abcdefULL, high + 1},
+	};
+	struct Outcome {
+		std::array<std::uint64_t, 2> operand;
+		std::uint64_t rax;
+		std::uint64_t rcx;
+		std::uint64_t rdx;
+		std::uint64_t rflags;
+		bool operator==(const Outcome &) const = default;
+	};
+	const auto run = [&](const Form &form, std::uint64_t address,
+		bool permit, Outcome &outcome) {
+		TestMemory memory;
+		memory.fill(0, std::as_bytes(std::span{form.code}));
+		std::array<std::byte, 32> image;
+		image.fill(std::byte{0xa5});
+		std::memcpy(image.data() + 8, &low, sizeof(low));
+		std::memcpy(image.data() + 16, &high, sizeof(high));
+		memory.fill(address - 8, image);
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		executor.permit_unaligned_exclusives(permit);
+		const auto built = gadgets::build(memory, 0);
+		if (built.status != gadgets::BuildStatus::built)
+			return false;
+		CpuState cpu{};
+		cpu.gpr(Register::rax) = form.rax;
+		/* The pair forms store RCX:RBX, so the operand goes through RSI. */
+		cpu.gpr(Register::rbx) = 0x0fedcba987654321ULL;
+		cpu.gpr(Register::rsi) = address;
+		cpu.gpr(Register::rcx) = form.rcx;
+		cpu.gpr(Register::rdx) = form.rdx;
+		const auto result = gadgets::execute(
+			built.program, cpu, memory, executor, 64);
+		if (result.event != uml::cpu::EngineEvent::system_call)
+			return false;
+		materialize_flags(cpu);
+		outcome = {{memory.qword(address), memory.qword(address + 8)},
+			cpu.gpr(Register::rax), cpu.gpr(Register::rcx),
+			cpu.gpr(Register::rdx), cpu.rflags};
+		/* The bytes on both sides of the sixteen compared keep their fill. */
+		for (std::size_t index = 0; index < 8; ++index) {
+			if (memory.byte(address - 8 + index) != 0xa5 ||
+				memory.byte(address + 16 + index) != 0xa5)
+				return false;
+		}
+		return true;
+	};
+	for (const auto &form : forms) {
+		Outcome reference{};
+		if (!expect(run(form, locked_operand_addresses.front(), false,
+			reference), form.name))
+			return false;
+		for (const auto address : locked_operand_addresses) {
+			for (const bool permit : {false, true}) {
+				if (permit && !host_takes_unaligned_exclusives())
+					continue;
+				Outcome outcome{};
+				if (!expect(run(form, address, permit, outcome) &&
+					outcome == reference, form.name))
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
+/* An unaligned LOCK INC stays atomic against the other vCPUs on the exclusive
+ * path a FEAT_LSE2 host allows and on the split lock everywhere else.
+ */
+[[nodiscard]] bool unaligned_locked_increment_survives_concurrent_vcpus()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr unsigned thread_count = 4;
+	constexpr unsigned iterations = 20000;
+	for (const auto counter : locked_operand_addresses) {
+		for (const bool permit : {false, true}) {
+			if (permit && !host_takes_unaligned_exclusives())
+				continue;
+			TestMemory memory;
+			/* lock inc qword [rax]; syscall */
+			memory.load(0, {0xf0, 0x48, 0xff, 0x00, 0x0f, 0x05});
+			const auto built = gadgets::build(memory, 0);
+			if (!expect(built.status == gadgets::BuildStatus::built,
+				"unaligned locked increment block did not build"))
+				return false;
+			std::atomic<bool> healthy{true};
+			std::vector<std::thread> threads;
+			threads.reserve(thread_count);
+			for (unsigned index = 0; index < thread_count; ++index) {
+				threads.emplace_back([&] {
+					gadgets::Executor executor;
+					executor.prepare(memory);
+					executor.permit_unaligned_exclusives(permit);
+					for (unsigned step = 0; step < iterations; ++step) {
+						CpuState cpu{};
+						cpu.gpr(Register::rax) = counter;
+						const auto result = gadgets::execute(
+							built.program, cpu, memory, executor, 64);
+						if (result.event !=
+							uml::cpu::EngineEvent::system_call) {
+							healthy.store(false);
+							return;
+						}
+					}
+				});
+			}
+			for (auto &thread : threads)
+				thread.join();
+			if (!expect(healthy.load(),
+				"an unaligned locked increment left the stream early") ||
+				!expect(memory.qword(counter) == thread_count * iterations,
+					"concurrent unaligned LOCK INC lost updates"))
+				return false;
+		}
+	}
+	return true;
+}
+
+/* A locked operand that faults under the split lock gives the lock back: the
+ * next one, on another thread, still gets through.
+ */
+[[nodiscard]] bool faulting_split_operand_releases_the_lock()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xf0, 0xff, 0x00, 0x0f, 0x05});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"faulting locked increment block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 16384 - 2;
+	const auto faulted = gadgets::execute(built.program, cpu, memory, 64);
+	if (!expect(faulted.event == uml::cpu::EngineEvent::memory_fault,
+		"a locked operand past the end of memory did not fault"))
+		return false;
+	std::atomic<bool> finished{false};
+	std::atomic<bool> completed{false};
+	std::thread successor{[&] {
+		CpuState next{};
+		next.gpr(Register::rax) = 0x80e;
+		const auto result = gadgets::execute(
+			built.program, next, memory, 64);
+		completed.store(
+			result.event == uml::cpu::EngineEvent::system_call);
+		finished.store(true);
+	}};
+	const auto deadline =
+		std::chrono::steady_clock::now() + std::chrono::seconds{10};
+	while (!finished.load() && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds{1});
+	if (!finished.load()) {
+		successor.detach();
+		return expect(false,
+			"a faulting locked operand kept the split lock");
+	}
+	successor.join();
+	return expect(completed.load() && memory.dword(0x80e) == 1,
+		"the locked operand after a fault did not complete");
+}
+
 /* x86 shows the other CPUs one CPU's stores in the order it made them. The
  * host does not: a store to a line this core already owns overtakes an earlier
  * store to a line it has to fetch, and an observer on another core sees the
@@ -4342,6 +4569,9 @@ int main()
 		xadd_survives_concurrent_vcpus() &&
 		cmpxchg_survives_concurrent_vcpus() &&
 		locked_increment_survives_concurrent_vcpus() &&
+		locked_forms_agree_at_every_operand_address() &&
+		unaligned_locked_increment_survives_concurrent_vcpus() &&
+		faulting_split_operand_releases_the_lock() &&
 		guest_stores_reach_other_cpus_in_program_order() &&
 		guest_memory_gadgets_end_in_an_ordering_barrier();
 	return passed ? 0 : 1;

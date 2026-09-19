@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <span>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -19,6 +20,12 @@ constexpr std::uint64_t write_code_tag = UML_X86_64_TLB_WRITE_CODE;
 constexpr std::uint64_t write_cached_code_tag =
 	UML_X86_64_TLB_WRITE_CACHED_CODE;
 constexpr std::uint8_t write_code_published = UML_X86_64_WRITE_CODE_PUBLISHED;
+
+/* Serializes every locked operand that no exclusive access can cover: one
+ * that crosses a 16-byte granule, or any unaligned one on a host without
+ * FEAT_LSE2. Such operands are rare enough that one lock for the process does
+ * not contend. */
+std::mutex split_operand_lock;
 
 
 void record_fault(NativeExecutionContext &context, std::uint64_t address,
@@ -199,6 +206,20 @@ extern "C" void uml_x86_64_gadget_invalidate_code(
 		context->memory->is_executable(address))
 		context->memory->invalidate_code(
 			address, context->execution_context);
+}
+
+extern "C" void uml_x86_64_gadget_split_lock_enter(
+	NativeExecutionContext *context) noexcept
+{
+	split_operand_lock.lock();
+	context->split_lock = 1;
+}
+
+extern "C" void uml_x86_64_gadget_split_lock_leave(
+	NativeExecutionContext *context) noexcept
+{
+	context->split_lock = 0;
+	split_operand_lock.unlock();
 }
 
 extern "C" std::uint32_t uml_x86_64_gadget_code_link_safe(

@@ -42,6 +42,12 @@ struct NativeExecutionContext final {
 	std::uint64_t program_end{};
 	::uml::cpu::FaultInfo fault{};
 	std::uint8_t write_code{};
+	/* The host takes an exclusive access at any alignment inside one 16-byte
+	 * granule (FEAT_LSE2); without it an unaligned one is an alignment fault. */
+	std::uint8_t unaligned_exclusives{};
+	/* This run holds the lock that serializes locked operands no exclusive
+	 * access can cover; the fault tail releases it. */
+	std::uint8_t split_lock{};
 	std::size_t instruction_limit{};
 	IndirectLink *indirect_miss{};
 	const TargetLinkEntry *target_links{};
@@ -80,6 +86,10 @@ static_assert(offsetof(NativeExecutionContext, fault) ==
 	UML_X86_64_CONTEXT_FAULT_ADDRESS);
 static_assert(offsetof(NativeExecutionContext, write_code) ==
 	UML_X86_64_CONTEXT_WRITE_CODE);
+static_assert(offsetof(NativeExecutionContext, unaligned_exclusives) ==
+	UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES);
+static_assert(offsetof(NativeExecutionContext, split_lock) ==
+	UML_X86_64_CONTEXT_SPLIT_LOCK);
 static_assert(offsetof(NativeExecutionContext, instruction_limit) ==
 	UML_X86_64_CONTEXT_INSTRUCTION_LIMIT);
 static_assert(offsetof(NativeExecutionContext, indirect_miss) ==
@@ -113,6 +123,10 @@ extern "C" void uml_x86_64_gadget_publish_code_write(
 	std::uint32_t size) noexcept;
 extern "C" void uml_x86_64_gadget_invalidate_code(
 	NativeExecutionContext *context, std::uint64_t address) noexcept;
+extern "C" void uml_x86_64_gadget_split_lock_enter(
+	NativeExecutionContext *context) noexcept;
+extern "C" void uml_x86_64_gadget_split_lock_leave(
+	NativeExecutionContext *context) noexcept;
 extern "C" std::uint32_t uml_x86_64_gadget_code_link_safe(
 	NativeExecutionContext *context) noexcept;
 extern "C" std::uint32_t uml_x86_64_gadget_cross_page_vector_load(

@@ -92,6 +92,11 @@ public:
 	/* Treat every executable page as holding code, for a process whose other
 	 * translations this executor's registry cannot see. */
 	void publish_every_executable_store(bool value) noexcept;
+	/* The host takes exclusive accesses at any alignment inside a 16-byte
+	 * granule (FEAT_LSE2), so an unaligned locked operand that fits in one
+	 * keeps the exclusive path. Off until the runtime reports the feature. */
+	void permit_unaligned_exclusives(bool value) noexcept;
+	[[nodiscard]] bool unaligned_exclusives() const noexcept;
 	[[nodiscard]] void *execution_context() const noexcept;
 	[[nodiscard]] std::uint64_t prepared_code_changes() const noexcept;
 	[[nodiscard]] std::uint64_t current_code_changes() const noexcept;

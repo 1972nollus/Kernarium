@@ -98,6 +98,7 @@ gadget \operation\()_\width\()_m\form
 	mov x25, x7
 	.if \locked
 	locked_aligned \width, .Lx86_bit_split\@
+.Lx86_bit_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -107,6 +108,7 @@ gadget \operation\()_\width\()_m\form
 	bit_update_carry
 	finish_store (\width / 8)
 .Lx86_bit_split\@:
+	split_operand (\width / 8), .Lx86_bit_exclusive\@
 	.endif
 	page_cross_check (\width / 8), .Lx86_bit_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
@@ -138,6 +140,9 @@ gadget \operation\()_\width\()_m\form
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_bit_written\@:
+	.if \locked
+	split_lock_leave
+	.endif
 	bit_update_carry
 	finish_store (\width / 8)
 	.endif

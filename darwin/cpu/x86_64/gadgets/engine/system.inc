@@ -331,6 +331,10 @@ gadget cache_zero
 
 .p2align 4
 .Lx86_memory_fault:
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]
+	cbz w8, .Lx86_memory_fault_unlocked
+	split_lock_leave
+.Lx86_memory_fault_unlocked:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
 	b uml_x86_64_gadget_leave

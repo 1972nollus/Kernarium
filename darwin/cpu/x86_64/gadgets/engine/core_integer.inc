@@ -273,6 +273,7 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	.if \locked
 	locked_aligned \width, .Lx86_arithmetic_msource_split\@
+.Lx86_arithmetic_msource_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -286,6 +287,7 @@ gadget \operation\()_\width\()_m\form
 	record_deferred \flag_operation, \width
 	finish_store (\width / 8)
 .Lx86_arithmetic_msource_split\@:
+	split_operand (\width / 8), .Lx86_arithmetic_msource_exclusive\@
 	.endif
 	page_cross_check (\width / 8), .Lx86_arithmetic_msource_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
@@ -306,6 +308,9 @@ gadget \operation\()_\width\()_m\form
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
 .Lx86_arithmetic_msource_written\@:
+	.if \locked
+	split_lock_leave
+	.endif
 	mov x11, x24
 	mov x12, x26
 	mov x13, x27
@@ -406,6 +411,7 @@ gadget \name\()_\width\()_m\form
 	.endif
 	.if \locked
 	locked_aligned \width, .Lx86_carry_msource_split\@
+.Lx86_carry_msource_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -421,6 +427,7 @@ gadget \name\()_\width\()_m\form
 	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
 	finish_store (\width / 8)
 .Lx86_carry_msource_split\@:
+	split_operand (\width / 8), .Lx86_carry_msource_exclusive\@
 	.endif
 	page_cross_check (\width / 8), .Lx86_carry_msource_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
@@ -450,6 +457,9 @@ gadget \name\()_\width\()_m\form
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_carry_msource_written\@:
+	.if \locked
+	split_lock_leave
+	.endif
 	mov x11, x24
 	mov x12, x26
 	mov x13, x27
@@ -489,6 +499,7 @@ gadget exchange_\width\()_mr
 	\load \host_register\()26, [_cpu, x8]
 	/* XCHG against memory is atomic on x86 with no LOCK prefix present. */
 	locked_aligned \width, .Lx86_exchange_split\@
+.Lx86_exchange_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -498,6 +509,7 @@ gadget exchange_\width\()_mr
 	\register_store \register_store_register\()24, [_cpu, x8]
 	finish_store (\width / 8)
 .Lx86_exchange_split\@:
+	split_operand (\width / 8), .Lx86_exchange_exclusive\@
 	page_cross_check (\width / 8), .Lx86_exchange_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
@@ -523,6 +535,7 @@ gadget exchange_\width\()_mr
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_exchange_written\@:
+	split_lock_leave
 	and x8, x23, #0xffff
 	\register_store \register_store_register\()24, [_cpu, x8]
 	finish_store (\width / 8)
@@ -548,6 +561,7 @@ gadget \operation\()_\width\()_m
 	mov x25, x7
 	.if \locked
 	locked_aligned \width, .Lx86_unary_split\@
+.Lx86_unary_exclusive\@:
 	mov x7, x25
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
@@ -584,6 +598,7 @@ gadget \operation\()_\width\()_m
 	.endif
 	finish_store (\width / 8)
 .Lx86_unary_split\@:
+	split_operand (\width / 8), .Lx86_unary_exclusive\@
 	.endif
 	page_cross_check (\width / 8), .Lx86_unary_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
@@ -623,6 +638,9 @@ gadget \operation\()_\width\()_m
 	bl NAME(uml_x86_64_gadget_cross_page_store)
 	cbz w0, .Lx86_memory_fault
 .Lx86_unary_written\@:
+	.if \locked
+	split_lock_leave
+	.endif
 	.if \flag_operation
 	.ifc \instruction,neg
 	mov x11, xzr

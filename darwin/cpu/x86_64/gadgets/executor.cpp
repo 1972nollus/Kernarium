@@ -1281,6 +1281,7 @@ struct Executor::Storage final {
 	ProgramCacheDiagnostics diagnostics{};
 	bool prepared{};
 	bool cache_ready{};
+	bool unaligned_exclusives{};
 };
 
 Executor::Executor() : storage_{std::make_unique<Storage>()}
@@ -1437,6 +1438,16 @@ void Executor::publish_every_executable_store(bool value) noexcept
 	storage_->registries.conservative = value;
 	for (auto &[generation, registry] : storage_->registries.held)
 		registry->set_conservative(value);
+}
+
+void Executor::permit_unaligned_exclusives(bool value) noexcept
+{
+	storage_->unaligned_exclusives = value;
+}
+
+bool Executor::unaligned_exclusives() const noexcept
+{
+	return storage_->unaligned_exclusives;
 }
 
 void *Executor::execution_context() const noexcept

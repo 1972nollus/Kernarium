@@ -329,11 +329,19 @@ NAME(uml_x86_64_gadget_\name):
  *
  * A locked gadget must be atomic against the other vCPU threads that execute
  * guest code concurrently, so it performs its update with an ARM64 exclusive
- * loop instead of a plain load and store.  Exclusive access requires natural
- * alignment; x86 permits an unaligned locked operand, so a locked gadget
- * routes an unaligned address to its ordinary non-atomic sequence.  Natural
- * alignment also keeps the operand inside one page, which is why the exclusive
- * path needs no page-crossing check.
+ * loop instead of a plain load and store.  x86 permits a locked operand at any
+ * address.  An exclusive access needs natural alignment, which also keeps the
+ * operand inside one page, so the exclusive path needs no page-crossing check
+ * and a naturally aligned operand goes straight to it.
+ *
+ * Anything else reaches `split_operand`.  A host with FEAT_LSE2, which the
+ * context reports, takes an exclusive access at any alignment inside one
+ * 16-byte granule, so an operand that fits in one rejoins the exclusive path.
+ * The rest -- an operand across a granule or a page, and every unaligned one
+ * on a host without the feature -- takes the gadget's ordinary load and store
+ * under the process-wide split lock.  That keeps it atomic against every other
+ * operand on that path, which covers the same instruction running on the other
+ * vCPUs, but not against an exclusive loop or a plain store that overlaps it.
  *
  * Nothing may touch memory between the exclusive load and store or the monitor
  * clears and the loop cannot make progress, so operands are read into
@@ -344,6 +352,36 @@ NAME(uml_x86_64_gadget_\name):
 	tst x7, #(\width / 8 - 1)
 	b.ne \fallback
 	.endif
+.endm
+
+/* The split lock brackets the ordinary load and store of an operand that left
+ * the exclusive path.  Both ends are calls, so only callee-saved registers
+ * survive them; x7 is restored from the guest address in x25.  A fault in
+ * between reaches `.Lx86_memory_fault`, which releases the lock.
+ */
+.macro split_lock_enter
+	mov x0, _context
+	bl NAME(uml_x86_64_gadget_split_lock_enter)
+	mov x7, x25
+.endm
+
+.macro split_lock_leave
+	mov x0, _context
+	bl NAME(uml_x86_64_gadget_split_lock_leave)
+.endm
+
+/* The head of a locked gadget's fallback: x7 still holds the guest address,
+ * and \exclusive is the gadget's exclusive path.  x9 is clobbered.
+ */
+.macro split_operand size, exclusive
+	ldrb w9, [_context, #UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES]
+	cbz w9, .Lx86_split_operand_locked\@
+	add x9, x7, #((\size) - 1)
+	eor x9, x9, x7
+	tst x9, #0xfffffffffffffff0
+	b.eq \exclusive
+.Lx86_split_operand_locked\@:
+	split_lock_enter
 .endm
 
 .macro load_exclusive width, number, address
