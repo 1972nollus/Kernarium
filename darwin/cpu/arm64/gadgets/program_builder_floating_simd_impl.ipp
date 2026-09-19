@@ -2,6 +2,8 @@
 #include "program_builder_decode.hpp"
 #include "gadget_selection.hpp"
 
+#include "../detail/simd_floating_classes.hpp"
+
 namespace uml::cpu::arm64::gadgets::builder_detail {
 
 using namespace selection;
@@ -89,6 +91,15 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 	auto &words = context.words;
 	const auto &options = context.options;
 
+	/* The class decoders below match only the bits that separate their own
+	 * allocations, so a word in an unallocated region of the class table
+	 * must stop here rather than reach the nearest of them. */
+	if (detail::unallocated_simd_floating_class(instruction)) {
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	}
 	if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
 		if (!host_capabilities().has(ArmFeature::jscvt)) {
 			emit(words,
@@ -580,7 +591,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                   instruction & 31U,
                                   (instruction >> 5) & 31U,
                                   (instruction >> 16) & 31U));
-                } else if ((instruction & 0xffff'8c00U) == 0x5e28'0800U) {
+                } else if ((instruction & 0xffff'cc00U) == 0x5e28'0800U) {
                   const auto gadget = simd_sha_two_gadget(
                       (instruction >> 12) & 3U,
                       options.force_software_fixed_transforms);
@@ -671,10 +682,10 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, address);
                   ++compiled;
                   return DecodeResult::terminal;
-                } else if ((instruction & 0xbf60'fc00U) == 0x0e40'1c00U ||
-                           (instruction & 0xff60'fc00U) == 0x5e40'1c00U ||
-                           (instruction & 0xbf20'fc00U) == 0x0e20'dc00U ||
-                           (instruction & 0xff20'fc00U) == 0x5e20'dc00U) {
+                } else if ((instruction & 0xbfe0'fc00U) == 0x0e40'1c00U ||
+                           (instruction & 0xffe0'fc00U) == 0x5e40'1c00U ||
+                           (instruction & 0xbfa0'fc00U) == 0x0e20'dc00U ||
+                           (instruction & 0xffa0'fc00U) == 0x5e20'dc00U) {
                   const bool scalar = (instruction & 0x1000'0000U) != 0;
                   const bool q = (instruction & 0x4000'0000U) != 0;
                   const bool half =
@@ -1004,8 +1015,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 31U) |
                           (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
                            << 8));
-                } else if ((instruction & 0xbf20'fc00U) == 0x0e00'0400U ||
-                           (instruction & 0xff20'fc00U) == 0x5e00'0400U) {
+                } else if ((instruction & 0xbfe0'fc00U) == 0x0e00'0400U ||
+                           (instruction & 0xffe0'fc00U) == 0x5e00'0400U) {
                   const auto lane =
                       detail::decode_simd_lane_index((instruction >> 16) & 31U);
                   const auto gadget =
@@ -1313,7 +1324,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     ++compiled;
                     return DecodeResult::terminal;
                   }
-                } else if ((instruction & 0x9f30'0c00U) == 0x0e30'0800U &&
+                } else if ((instruction & 0x9f3e'0c00U) == 0x0e30'0800U &&
                            (((instruction >> 12) & 31U) == 3U ||
                             ((instruction >> 12) & 31U) == 10U ||
                             ((instruction >> 12) & 31U) == 26U ||
@@ -1349,8 +1360,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
                                                  (instruction >> 5) & 31U));
-                } else if ((((instruction & 0x9f30'0c00U) == 0x0e20'0800U) ||
-                            ((instruction & 0xdf30'0c00U) == 0x5e20'0800U)) &&
+                } else if ((((instruction & 0x9f3e'0c00U) == 0x0e20'0800U) ||
+                            ((instruction & 0xdf3e'0c00U) == 0x5e20'0800U)) &&
                            (((instruction >> 12) & 31U) == 2U ||
                             ((instruction >> 12) & 31U) == 3U ||
                             ((instruction >> 12) & 31U) == 4U ||
@@ -1375,8 +1386,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
                                                  (instruction >> 5) & 31U));
-                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'0800U ||
-                           (instruction & 0x9f20'fc00U) == 0x0e20'1800U) {
+                } else if ((instruction & 0x9f3f'fc00U) == 0x0e20'0800U ||
+                           (instruction & 0x9f3f'fc00U) == 0x0e20'1800U) {
                   const bool reverse16 = (instruction & 0x0000'1000U) != 0;
                   const bool alternate = (instruction & 0x2000'0000U) != 0;
                   const unsigned block_bits = reverse16   ? 16U
@@ -1397,7 +1408,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
                                                  (instruction >> 5) & 31U));
-                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'5800U) {
+                } else if ((instruction & 0x9f3f'fc00U) == 0x0e20'5800U) {
                   const bool alternate = (instruction & 0x2000'0000U) != 0;
                   const unsigned size = (instruction >> 22) & 3U;
                   const unsigned operation = !alternate && size == 0U  ? 0U
@@ -1498,9 +1509,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                 } else if (((instruction & 0x9f3f'fc00U) == 0x0e20'8800U ||
                             (instruction & 0x9f3f'fc00U) == 0x0e20'9800U ||
                             (instruction & 0x9f3f'fc00U) == 0x0e20'a800U ||
-                            (instruction & 0x9f3f'fc00U) == 0x1e20'8800U ||
-                            (instruction & 0x9f3f'fc00U) == 0x1e20'9800U ||
-                            (instruction & 0x9f3f'fc00U) == 0x1e20'a800U)) {
+                            (instruction & 0xdf3f'fc00U) == 0x5e20'8800U ||
+                            (instruction & 0xdf3f'fc00U) == 0x5e20'9800U ||
+                            (instruction & 0xdf3f'fc00U) == 0x5e20'a800U)) {
                   const auto gadget = simd_compare_zero_native_gadget(
                       (instruction >> 12) & 31U,
                       (instruction & 0x2000'0000U) != 0,

@@ -187,6 +187,7 @@ arm64-gadget-simd-destination-residency	tests/unit/arm64/arm64_gadget_simd_desti
 arm64-simd-widening-gadget	tests/unit/arm64	unit	retained
 arm64-simd-high-narrow-gadget	tests/unit/arm64	unit	retained
 arm64-simd-two-register-gadget	tests/unit/arm64	unit	retained
+arm64-simd-unallocated-class	tests/unit/arm64	unit	retained
 arm64-simd-bitwise-gadget	tests/unit/arm64	unit	retained
 arm64-simd-rearrange-gadget_structure	tests/unit/arm64	unit	retained
 arm64-simd-lut-gadget	tests/unit/arm64	unit	retained

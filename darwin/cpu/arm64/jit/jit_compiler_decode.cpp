@@ -22,6 +22,7 @@
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/simd_floating_classes.hpp"
 
 namespace uml::cpu::arm64 {
 
@@ -68,6 +69,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
+    /*
+     * The FP/SIMD class decoders below match only the bits that separate
+     * their own allocations, and many copy the guest word into host code.
+     * A word in an unallocated region of the class table must stop here,
+     * like any other word without a translation: reaching the nearest
+     * decoder would execute a neighbour or raise a host SIGILL inside the
+     * generated block.
+     */
+    if (arm64::detail::unallocated_simd_floating_class(instruction))
+      return Action::unsupported;
     if ((instruction & 0xffe0'001fU) == 0xd400'0001U) {
       store_pc(pc + 4);
       emitter_.return_constant(Event::system_call, resulting_count);
@@ -799,7 +810,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     const unsigned simd_integer_reduce_opcode =
         (instruction >> 12) & 31U;
     const bool simd_integer_reduce =
-        (instruction & 0x9f30'0c00U) == 0x0e30'0800U &&
+        (instruction & 0x9f3e'0c00U) == 0x0e30'0800U &&
         (simd_integer_reduce_opcode == 3U ||
          simd_integer_reduce_opcode == 10U ||
          simd_integer_reduce_opcode == 26U ||
@@ -1196,7 +1207,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     const bool simd_sha12_three =
         (instruction & 0xffe0'8c00U) == 0x5e00'0000U;
     const bool simd_sha12_two =
-        (instruction & 0xffff'8c00U) == 0x5e28'0800U;
+        (instruction & 0xffff'cc00U) == 0x5e28'0800U;
     if ((simd_sha12_three && ((instruction >> 12) & 7U) == 7U) ||
         (simd_sha12_two && ((instruction >> 12) & 3U) == 3U)) {
       store_pc(pc);
@@ -1272,9 +1283,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (emit_simd_narrow_move(instruction))
       return Action::keep_going;
     const bool simd_two_register_vector =
-        (instruction & 0x9f20'0c00U) == 0x0e20'0800U;
+        (instruction & 0x9f3e'0c00U) == 0x0e20'0800U;
     const bool simd_two_register_scalar =
-        (instruction & 0xdf20'0c00U) == 0x5e20'0800U;
+        (instruction & 0xdf3e'0c00U) == 0x5e20'0800U;
     const unsigned simd_two_register_opcode = (instruction >> 12) & 31U;
     const bool simd_two_register_integer =
         (simd_two_register_vector || simd_two_register_scalar) &&
@@ -1481,9 +1492,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     const bool simd_duplicate_element_vector =
-        (instruction & 0xbf20'fc00U) == 0x0e00'0400U;
+        (instruction & 0xbfe0'fc00U) == 0x0e00'0400U;
     const bool simd_duplicate_element_scalar =
-        (instruction & 0xff20'fc00U) == 0x5e00'0400U;
+        (instruction & 0xffe0'fc00U) == 0x5e00'0400U;
     if (simd_duplicate_element_vector || simd_duplicate_element_scalar) {
       const auto lane =
           arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U);
@@ -1500,7 +1511,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    const auto simd_bit_unary_operation = instruction & 0x9f20'fc00U;
+    const auto simd_bit_unary_operation = instruction & 0x9f3f'fc00U;
     const bool simd_bit_unary =
         simd_bit_unary_operation == 0x0e20'0800U ||
         simd_bit_unary_operation == 0x0e20'1800U ||
@@ -1561,12 +1572,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     }
     const auto simd_compare_zero_class = instruction & 0x9f3f'fc00U;
+    /* The scalar forms are op0 01x1; op0 00x1 is scalar floating point. */
+    const auto scalar_compare_zero_class = instruction & 0xdf3f'fc00U;
     if (simd_compare_zero_class == 0x0e20'8800U ||
         simd_compare_zero_class == 0x0e20'9800U ||
         simd_compare_zero_class == 0x0e20'a800U ||
-        simd_compare_zero_class == 0x1e20'8800U ||
-        simd_compare_zero_class == 0x1e20'9800U ||
-        simd_compare_zero_class == 0x1e20'a800U) {
+        scalar_compare_zero_class == 0x5e20'8800U ||
+        scalar_compare_zero_class == 0x5e20'9800U ||
+        scalar_compare_zero_class == 0x5e20'a800U) {
       const unsigned opcode = (instruction >> 12) & 31U;
       const bool alternate = (instruction & 0x2000'0000U) != 0;
       const bool scalar = (instruction & 0x1000'0000U) != 0;
