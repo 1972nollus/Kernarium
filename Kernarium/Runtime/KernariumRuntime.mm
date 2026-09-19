@@ -974,6 +974,9 @@ private:
                  "renderer.txt",
                  "selected.txt",
                  "expected.txt",
+                 /* A campaign whose device cannot hold every enumerated case
+                  * reports which ones it left out, and under which reason. */
+                 "skipped.txt",
                  "results.qpa",
                  "summary.txt"}) {
             if (name == allowed)
