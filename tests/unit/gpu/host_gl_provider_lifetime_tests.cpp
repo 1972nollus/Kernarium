@@ -76,7 +76,8 @@ void providerRejectsUnsupportedContexts()
     parameters.compat_ctx = 0;
     parameters.major_ver = 1;
     require(provider.createContext(parameters) == nullptr);
-    parameters.major_ver = 4;
+    // The provider serves desktop GL 3.x and 4.x core contexts.
+    parameters.major_ver = 5;
     require(provider.createContext(parameters) == nullptr);
     parameters.major_ver = 3;
     parameters.version = 1;

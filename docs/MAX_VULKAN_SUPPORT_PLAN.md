@@ -87,9 +87,10 @@ KosmicKrisp exposes `VK_KHR_pipeline_library` and
 `VK_EXT_graphics_pipeline_library`. Graphics libraries retain their owned
 shader and partial-state inputs until a complete pipeline link, and complete
 links are cached without changing the ordinary monolithic pipeline path.
-`graphicsPipelineLibraryFastLinking` remains false because an uncached final
-link performs native Metal compilation and does not meet the fast-link latency
-contract.
+`graphicsPipelineLibraryFastLinking` is true: a library compiles its stages
+when it is created, so a link without link-time optimization builds only the
+render pipeline state, and a fast link that Metal refuses falls back to linking
+the whole chain as a monolithic pipeline does.
 
 The guest Zink path targets the highest baseline OpenGL profile that satisfies
 that policy. On the maintained macOS provider this is OpenGL 3.1. Custom border
