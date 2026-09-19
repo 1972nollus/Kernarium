@@ -2992,8 +2992,26 @@ def assemble_qpa_segments(decoded: dict[str, bytes]) -> dict[str, bytes]:
     return assembled
 
 
-def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, bytes]:
+def decode_artifacts(
+    transcript: str,
+    *,
+    partial: bool = False,
+    rejected: list[str] | None = None,
+) -> dict[str, bytes]:
+    """Decode the acknowledged artifact frames a transcript carries.
+
+    ``partial`` is the salvage lane, for a guest that died mid-transfer: it
+    keeps every complete artifact and drops the unfinished trailer.  A frame
+    group can also be complete and still carry nothing -- a guest whose
+    filesystem filled framed a zero-byte artifact with the empty string's
+    digest -- which is never a valid ``gzip+base64`` payload.  Strict decoding
+    refuses the transcript; the salvage lane drops that artifact and names it
+    in ``rejected``, so a caller reports the loss instead of inferring it from
+    a short result set.
+    """
+
     encoded: dict[str, EncodedArtifact] = {}
+    dropped: list[str] = []
     for raw_line in transcript.replace("\r", "").splitlines():
         marker = artifact_marker(raw_line)
         if marker is None:
@@ -3003,16 +3021,23 @@ def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, byt
             name, size_text, digest = begin.groups()
             if name not in ALLOWED_ARTIFACTS and QPA_SEGMENT.fullmatch(name) is None:
                 raise CampaignError(f"unsafe or unexpected artifact name: {name}")
-            if name in encoded:
+            if name in encoded or name in dropped:
                 raise CampaignError(f"duplicate artifact start: {name}")
             size = int(size_text)
             if size < 1 or size > MAX_COMPRESSED_ARTIFACT:
-                raise CampaignError(f"artifact {name} has invalid compressed size")
+                if not partial:
+                    raise CampaignError(
+                        f"artifact {name} has invalid compressed size"
+                    )
+                dropped.append(name)
+                continue
             encoded[name] = EncodedArtifact(size, digest)
             continue
         chunk = CHUNK_ARTIFACT.fullmatch(marker)
         if chunk is not None:
             name, index_text, payload = chunk.groups()
+            if name in dropped:
+                continue
             if name not in encoded:
                 raise CampaignError(f"artifact chunk precedes start: {name}")
             index = int(index_text)
@@ -3023,6 +3048,8 @@ def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, byt
         end = END_ARTIFACT.fullmatch(marker)
         if end is not None:
             name, count_text = end.groups()
+            if name in dropped:
+                continue
             if name not in encoded:
                 raise CampaignError(f"artifact end precedes start: {name}")
             if encoded[name].expected_chunks is not None:
@@ -3031,6 +3058,8 @@ def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, byt
             continue
         raise CampaignError(f"malformed artifact marker: {marker[:120]}")
 
+    if rejected is not None:
+        rejected.extend(dropped)
     if not encoded and not partial:
         raise CampaignError("campaign emitted no artifacts")
     decoded: dict[str, bytes] = {}
@@ -3042,6 +3071,8 @@ def decode_artifacts(transcript: str, *, partial: bool = False) -> dict[str, byt
         if partial and (
             count is None or count < 1 or set(artifact.chunks) != set(range(count))
         ):
+            if rejected is not None:
+                rejected.append(name)
             continue
         if count is None or count < 1:
             raise CampaignError(f"artifact {name} is missing its trailer")
@@ -3092,6 +3123,143 @@ def install_text(path: str, content: str, mode: str = "0644") -> str:
         f"printf '%s' {shlex.quote(encoded)} | base64 -d > {shlex.quote(path)}; "
         f"chmod {mode} {shlex.quote(path)}"
     )
+
+
+def artifact_transport_program(
+    *,
+    error_prefix: str,
+    base64_line_length: int,
+    missing_source_status: int,
+) -> str:
+    """The guest side of the acknowledged artifact transport.
+
+    Every launcher shares this text, because the defect it closes lived in two
+    independent copies of it: nothing checked whether ``gzip`` or ``base64``
+    had actually produced anything.  A device guest whose tmpfs filled while a
+    QPA checkpoint was being written therefore framed a zero-byte artifact --
+    a valid-looking frame group carrying the empty string's digest -- reported
+    success, and advanced past 17 MB of results that were never transported.
+
+    So each producer's status is checked, the compressed stream is measured
+    back through the decompressor against the byte count it was meant to hold,
+    and a failure leaves nothing behind: the caller keeps its offset and the
+    bytes go out in the next attempt.  ``missing_source_status`` is what a
+    caller wants for a source file that does not exist, which differs between
+    launchers.
+    """
+
+    return f"""artifact_discard()
+{{
+    rm -f "$output/$1.gz" "$output/$1.gz.b64"
+}}
+
+compress_artifact()
+{{
+    if ! gzip -c > "$output/$1.gz"; then
+        printf '{error_prefix} artifact %s could not be compressed\\n' "$1"
+        artifact_discard "$1"
+        return 1
+    fi
+    artifact_bytes=$(gzip -dc "$output/$1.gz" | wc -c | tr -d ' ')
+    if [ "$artifact_bytes" -ne "$2" ]; then
+        printf '{error_prefix} artifact %s holds %s of %s bytes\\n' \\
+            "$1" "$artifact_bytes" "$2"
+        artifact_discard "$1"
+        return 1
+    fi
+}}
+
+emit_compressed()
+{{
+    name="$1"
+    compressed="$output/$name.gz"
+    encoded="$compressed.b64"
+    size=$(wc -c < "$compressed" | tr -d ' ')
+    if [ "$size" -lt 1 ]; then
+        printf '{error_prefix} artifact %s compressed to nothing\\n' "$name"
+        artifact_discard "$name"
+        return 1
+    fi
+    if ! base64 -w {base64_line_length} "$compressed" > "$encoded"; then
+        printf '{error_prefix} artifact %s could not be encoded\\n' "$name"
+        artifact_discard "$name"
+        return 1
+    fi
+    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
+    chunks=$(wc -l < "$encoded" | tr -d ' ')
+    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \\
+        "$name" "$size" "$digest")
+    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || {{
+        artifact_discard "$name"
+        return 1
+    }}
+    index=0
+    while IFS= read -r chunk; do
+        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \\
+            "$name" "$index" "$chunk")
+        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || {{
+            artifact_discard "$name"
+            return 1
+        }}
+        index=$((index + 1))
+    done < "$encoded"
+    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
+    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || {{
+        artifact_discard "$name"
+        return 1
+    }}
+    artifact_discard "$name"
+}}
+
+emit_artifact()
+{{
+    name="$1"
+    source="$2"
+    [ -f "$source" ] || return {missing_source_status}
+    source_bytes=$(wc -c < "$source" | tr -d ' ')
+    compress_artifact "$name" "$source_bytes" < "$source" || return 1
+    emit_compressed "$name"
+}}
+"""
+
+
+def qpa_checkpoint_program() -> str:
+    """Transport the QPA bytes a previous checkpoint did not cover.
+
+    The range is compressed straight out of the growing file.  Copying it to a
+    temporary first needs as much free space as the range itself, which is
+    what exhausted a device guest's tmpfs mid-run and cost that fraction both
+    its last results and its summary.
+
+    ``qpa_offset`` only advances once the segment is acknowledged, so a
+    checkpoint that could not be produced or sent leaves its bytes pending for
+    the next attempt instead of dropping them.
+    """
+
+    return """flush_qpa()
+{
+    force="$1"
+    [ -f "$qpa" ] || return 0
+    qpa_size=$(wc -c < "$qpa" | tr -d ' ')
+    qpa_delta=$((qpa_size - qpa_offset))
+    if [ "$qpa_delta" -le 0 ]; then
+        if [ "$force" -ne 1 ] || [ "$qpa_segments" -ne 0 ]; then
+            return 0
+        fi
+        qpa_delta=0
+    fi
+    segment=$(printf 'results.qpa.%04d' "$qpa_segments")
+    if [ "$qpa_delta" -eq 0 ]; then
+        : | compress_artifact "$segment" 0 || return 1
+    else
+        tail -c +$((qpa_offset + 1)) "$qpa" | head -c "$qpa_delta" | \\
+            compress_artifact "$segment" "$qpa_delta" || return 1
+    fi
+    emit_compressed "$segment" || return 1
+    qpa_offset=$qpa_size
+    qpa_segments=$((qpa_segments + 1))
+}
+"""
 
 
 def native_x11_setup(*, wayland: bool = False) -> str:
@@ -3790,6 +3958,12 @@ actual_waiver_sha=$(sha256sum {shlex.quote(GUEST_WAIVER_PATH)} | cut -d ' ' -f 1
 }}
 """
 
+    transport_functions = artifact_transport_program(
+        error_prefix="UML_CTS_ERROR:",
+        base64_line_length=1024,
+        missing_source_status=0,
+    )
+    checkpoint_function = qpa_checkpoint_program()
     return f"""#!/bin/sh
 set -eu
 output={shlex.quote(output)}
@@ -3815,6 +3989,7 @@ progress_busy_ticks=$((progress_interval * clock_ticks / 10))
 prerun_emitted=0
 qpa_offset=0
 qpa_segments=0
+checkpoint_failures=0
 progress_timed_out=0
 status=1
 
@@ -3849,58 +4024,8 @@ emit_frame()
     }}
 }}
 
-emit_artifact()
-{{
-    name="$1"
-    source="$2"
-    [ -f "$source" ] || return 0
-    compressed="$output/$name.gz"
-    encoded="$compressed.b64"
-    gzip -c "$source" > "$compressed"
-    base64 -w 1024 "$compressed" > "$encoded"
-    size=$(wc -c < "$compressed" | tr -d ' ')
-    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
-    chunks=$(wc -l < "$encoded" | tr -d ' ')
-    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
-        "$name" "$size" "$digest")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
-    index=0
-    while IFS= read -r chunk; do
-        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
-            "$name" "$index" "$chunk")
-        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
-        index=$((index + 1))
-    done < "$encoded"
-    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
-    rm -f "$compressed" "$encoded"
-}}
-
-flush_qpa()
-{{
-    force="$1"
-    [ -f "$qpa" ] || return 0
-    qpa_size=$(wc -c < "$qpa" | tr -d ' ')
-    qpa_delta=$((qpa_size - qpa_offset))
-    if [ "$qpa_delta" -le 0 ]; then
-        if [ "$force" -ne 1 ] || [ "$qpa_segments" -ne 0 ]; then
-            return 0
-        fi
-        qpa_delta=0
-    fi
-    segment=$(printf 'results.qpa.%04d' "$qpa_segments")
-    if [ "$qpa_delta" -eq 0 ]; then
-        : > "$output/$segment"
-    else
-        tail -c +$((qpa_offset + 1)) "$qpa" | head -c "$qpa_delta" \
-            > "$output/$segment"
-    fi
-    emit_artifact "$segment" "$output/$segment" || return 1
-    rm -f "$output/$segment"
-    qpa_offset=$qpa_size
-    qpa_segments=$((qpa_segments + 1))
-}}
-
+{transport_functions}
+{checkpoint_function}
 emit_prerun()
 {{
     [ "$prerun_emitted" -eq 0 ] || return 0
@@ -3956,11 +4081,17 @@ watch_cts()
         printf 'UML_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|idle_seconds=%s|cpu_ticks=%s|case=%s\n' \
             "$watched_current" "$stalled_seconds" "$idle_seconds" \
             "$current_ticks" "$watched_case"
-        if [ $((watched_current - qpa_offset)) -ge "$checkpoint_bytes" ]; then
-            flush_qpa 0 || {{
+        # A checkpoint that fails keeps its bytes pending, so the watch stays
+        # up and the next one carries them. Only a channel that keeps failing
+        # is worth giving up on, and the exit trap still makes a final try.
+        if [ $((watched_current - qpa_offset)) -ge "$checkpoint_bytes" ] && \
+           [ "$checkpoint_failures" -lt 3 ]; then
+            if flush_qpa 0; then
+                checkpoint_failures=0
+            else
+                checkpoint_failures=$((checkpoint_failures + 1))
                 echo 'UML_CTS_ERROR: QPA checkpoint transfer failed'
-                return 1
-            }}
+            fi
         fi
         # A case with no QPA output is cut when it also burns no CPU for the
         # stall timeout, or, while it keeps computing, at the busy bound.
@@ -3979,24 +4110,32 @@ watch_cts()
 finish()
 {{
     trap - EXIT HUP INT TERM
-    printf 'cts_rc=%s\n' "$status" > "$summary"
+    # The exit path never stops early. It is the only place the host's final
+    # frame can come from, and errexit here once turned a single failed write
+    # on a full guest filesystem into a session with no summary at all.
+    set +e
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
     transfer_status=0
     if ! prepare_artifact_transport; then
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         transfer_status=1
     fi
-    if [ "$transfer_status" -eq 0 ]; then
-        emit_prerun || transfer_status=1
-    fi
-    if [ "$transfer_status" -eq 0 ] && [ "$checkpoint_mode" -eq 1 ]; then
+    emit_prerun || transfer_status=1
+    if [ "$checkpoint_mode" -eq 1 ]; then
         flush_qpa 1 || transfer_status=1
-    elif [ "$transfer_status" -eq 0 ]; then
+    else
         emit_artifact results.qpa "$qpa" || transfer_status=1
     fi
-    if [ "$transfer_status" -eq 0 ]; then
-        emit_artifact summary.txt "$summary" || transfer_status=1
+    # The results are transported; what is left of them in the guest is only
+    # holding space the summary may need.
+    if [ "$checkpoint_mode" -eq 1 ]; then
+        : > "$qpa" 2>/dev/null
     fi
+    printf 'cts_rc=%s\n' "$status" > "$summary" || \
+        echo 'UML_CTS_ERROR: the summary could not be written'
+    # Sent last, and never withheld: a session that lost results still
+    # reports its verdict, and the host's wait ends on this frame.
+    emit_artifact summary.txt "$summary" || transfer_status=1
     if [ "$artifact_fd_ready" -eq 1 ]; then
         exec 3>&-
     fi

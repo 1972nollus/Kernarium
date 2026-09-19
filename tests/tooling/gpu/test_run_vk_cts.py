@@ -360,6 +360,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
                 "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
             ).encode(),
         }
         transcript = (
@@ -435,6 +436,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
                 "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
             ).encode(),
         }
         result = cts.validate_receipt_attempt(receipt, selection, "", artifacts)
@@ -684,9 +686,14 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn('> "$cts_output" 2>&1 &', launcher)
         self.assertIn(
             "UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s"
-            "|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|case=%s",
+            "|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s"
+            "|output_free_kb=%s|case=%s",
             launcher,
         )
+        # The growing QPA lives in the guest's own tmpfs, and a fraction that
+        # runs it out of room loses results no host evidence can recover, so
+        # the room left there is reported alongside the memory.
+        self.assertIn('df -kP "$output"', launcher)
         # The guest reaper leaves no other record of how close a fraction was,
         # so the progress line carries the CTS process's resident and peak size.
         self.assertIn("cts_process_field VmRSS", launcher)

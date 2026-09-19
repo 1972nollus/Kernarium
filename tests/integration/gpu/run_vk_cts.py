@@ -1004,6 +1004,11 @@ def build_guest_launcher(
         + ' >> "$summary"'
         for index, row in enumerate(required_transcript)
     )
+    transport_functions = common.artifact_transport_program(
+        error_prefix="UML_VK_CTS_ERROR:",
+        base64_line_length=ARTIFACT_BASE64_LINE_LENGTH,
+        missing_source_status=1,
+    )
     return f"""#!/bin/sh
 set -eu
 output=/run/uml-vk-cts
@@ -1038,36 +1043,13 @@ emit_frame()
     [ "$actual_ack" = "$expected_ack" ]
 }}
 
-emit_artifact()
-{{
-    name="$1"
-    source="$2"
-    [ -f "$source" ] || return 1
-    compressed="$output/$name.gz"
-    encoded="$compressed.b64"
-    gzip -c "$source" > "$compressed"
-    base64 -w {ARTIFACT_BASE64_LINE_LENGTH} "$compressed" > "$encoded"
-    size=$(wc -c < "$compressed" | tr -d ' ')
-    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
-    chunks=$(wc -l < "$encoded" | tr -d ' ')
-    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
-        "$name" "$size" "$digest")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
-    index=0
-    while IFS= read -r chunk; do
-        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
-            "$name" "$index" "$chunk")
-        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
-        index=$((index + 1))
-    done < "$encoded"
-    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
-    rm -f "$compressed" "$encoded"
-}}
-
+{transport_functions}
 finish()
 {{
     trap - EXIT HUP INT TERM
+    # The exit path never stops early: it is the only place the host's final
+    # frame can come from.
+    set +e
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'mode=%s\n' {shlex.quote(selection.mode)} >> "$summary"
     printf 'expected_case_count=%s\n' {len(selection.expected_cases)} >> "$summary"
@@ -1075,10 +1057,12 @@ finish()
     {required_rows}
     transfer=0
     prepare_channel || transfer=1
-    for name in renderer.txt selected.txt results.qpa summary.txt; do
-        [ "$transfer" -eq 0 ] || break
+    for name in renderer.txt selected.txt results.qpa; do
         emit_artifact "$name" "$output/$name" || transfer=1
     done
+    # Sent last, and never withheld because an earlier artifact failed:
+    # the host's wait ends on this frame.
+    emit_artifact summary.txt "$summary" || transfer=1
     if [ "$channel_ready" -eq 1 ]; then
         exec 3>&-
     fi
@@ -1402,6 +1386,12 @@ chown uml:uml \"$selected\"
         poweroff = (
             "    systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1\n"
         )
+    transport_functions = common.artifact_transport_program(
+        error_prefix="UML_VK_CTS_ERROR:",
+        base64_line_length=ARTIFACT_BASE64_LINE_LENGTH,
+        missing_source_status=1,
+    )
+    checkpoint_function = common.qpa_checkpoint_program()
     return f"""#!/bin/sh
 set -eu
 output={output}
@@ -1419,6 +1409,7 @@ progress_interval={progress_interval}
 prerun_emitted=0
 {relax_state}qpa_offset=0
 qpa_segments=0
+checkpoint_failures=0
 progress_timed_out=0
 status=1
 
@@ -1445,58 +1436,8 @@ emit_frame()
     [ "$actual_ack" = "$expected_ack" ]
 }}
 
-emit_artifact()
-{{
-    name="$1"
-    source="$2"
-    [ -f "$source" ] || return 1
-    compressed="$output/$name.gz"
-    encoded="$compressed.b64"
-    gzip -c "$source" > "$compressed"
-    base64 -w {ARTIFACT_BASE64_LINE_LENGTH} "$compressed" > "$encoded"
-    size=$(wc -c < "$compressed" | tr -d ' ')
-    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
-    chunks=$(wc -l < "$encoded" | tr -d ' ')
-    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
-        "$name" "$size" "$digest")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
-    index=0
-    while IFS= read -r chunk; do
-        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
-            "$name" "$index" "$chunk")
-        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
-        index=$((index + 1))
-    done < "$encoded"
-    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
-    rm -f "$compressed" "$encoded"
-}}
-
-flush_qpa()
-{{
-    force="$1"
-    [ -f "$qpa" ] || return 0
-    qpa_size=$(wc -c < "$qpa" | tr -d ' ')
-    qpa_delta=$((qpa_size - qpa_offset))
-    if [ "$qpa_delta" -le 0 ]; then
-        if [ "$force" -ne 1 ] || [ "$qpa_segments" -ne 0 ]; then
-            return 0
-        fi
-        qpa_delta=0
-    fi
-    segment=$(printf 'results.qpa.%04d' "$qpa_segments")
-    if [ "$qpa_delta" -eq 0 ]; then
-        : > "$output/$segment"
-    else
-        tail -c +$((qpa_offset + 1)) "$qpa" | head -c "$qpa_delta" \
-            > "$output/$segment"
-    fi
-    emit_artifact "$segment" "$output/$segment" || return 1
-    rm -f "$output/$segment"
-    qpa_offset=$qpa_size
-    qpa_segments=$((qpa_segments + 1))
-}}
-
+{transport_functions}
+{checkpoint_function}
 emit_prerun()
 {{
     [ "$prerun_emitted" -eq 0 ] || return 0
@@ -1541,24 +1482,58 @@ cts_process_field()
 finish()
 {{
     trap - EXIT HUP INT TERM
+    # Nothing below may stop the exit path early. This is the only place the
+    # host's final frame can come from, and errexit here once turned a single
+    # failed write on a full guest filesystem into a fraction that ran every
+    # case and delivered no summary at all.
+    set +e
+    transfer=0
+    qpa_transfer=unsent
+    prepare_channel || transfer=1
+    if [ "$channel_ready" -eq 1 ]; then
+        emit_prerun || transfer=1
+        if flush_qpa 1; then
+            qpa_transfer=complete
+        else
+            # The growing QPA and the CTS process's own output share the
+            # guest's tmpfs, and that output is never transported: release it
+            # and ask for the remaining results once more.
+            : > "$cts_output" 2>/dev/null
+            if flush_qpa 1; then
+                qpa_transfer=recovered
+            else
+                qpa_transfer=failed
+            fi
+        fi
+    fi
+    qpa_missing=0
+    if [ -f "$qpa" ]; then
+        qpa_missing=$(($(wc -c < "$qpa" | tr -d ' ') - qpa_offset))
+        [ "$qpa_missing" -ge 0 ] || qpa_missing=0
+    fi
+    case "$qpa_transfer" in
+    complete|recovered) ;;
+    *) transfer=1 ;;
+    esac
+    # Every transported segment is on the host and nothing in the guest reads
+    # these again: release the space the summary needs before writing it.
+    : > "$cts_output" 2>/dev/null
+    : > "$qpa" 2>/dev/null
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'mode=%s\n' {shlex.quote(selection.mode)} >> "$summary"
     printf 'expected_case_count=%s\n' {expected_count} >> "$summary"
 {fraction_summary}    printf 'forced_driver_file=%s\n' {shlex.quote(icd_path)} >> "$summary"
     printf 'receipt_sha256=%s\n' {shlex.quote(receipt_digest)} >> "$summary"
     printf 'formal_conformance=false\n' >> "$summary"
-    transfer=0
-    prepare_channel || transfer=1
-    if [ "$transfer" -eq 0 ]; then
-        emit_prerun || transfer=1
+    printf 'qpa_transfer=%s\n' "$qpa_transfer" >> "$summary"
+    if [ "$qpa_transfer" != complete ]; then
+        printf 'qpa_missing_bytes=%s\n' "$qpa_missing" >> "$summary"
     fi
-    if [ "$transfer" -eq 0 ]; then
-        flush_qpa 1 || transfer=1
-    fi
-    if [ "$transfer" -eq 0 ]; then
-        emit_artifact summary.txt "$summary" || transfer=1
-    fi
+    # Sent last, and never withheld because a segment failed: a fraction
+    # that lost results says so in its own verdict rather than ending in
+    # silence.
     if [ "$channel_ready" -eq 1 ]; then
+        emit_artifact summary.txt "$summary" || transfer=1
         exec 3>&-
     fi
     [ "$transfer" -eq 0 ] || echo 'UML_VK_CTS_ERROR: artifact transfer failed'
@@ -1640,14 +1615,25 @@ while kill -0 "$cts_pid" 2>/dev/null; do
     mem_available_kb=$(sed -n \
         's/^MemAvailable:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' /proc/meminfo)
     [ -n "$mem_available_kb" ] || mem_available_kb=0
-    printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|case=%s\n' \
+    # The whole growing QPA lives in the guest's own tmpfs, so the room left
+    # there is a run-ending limit of its own and nothing outside the guest can
+    # see it.
+    output_free_kb=$(df -kP "$output" 2>/dev/null | awk 'NR==2 {{print $4}}')
+    [ -n "$output_free_kb" ] || output_free_kb=0
+    printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|output_free_kb=%s|case=%s\n' \
         "$current_qpa_size" "$stalled_seconds" "$cts_rss_kb" \
-        "$cts_peak_kb" "$mem_available_kb" "$current_case"
-{relax_watch}    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ]; then
-        flush_qpa 0 || {{
-            echo 'UML_VK_CTS_ERROR: artifact transfer failed'
-            break
-        }}
+        "$cts_peak_kb" "$mem_available_kb" "$output_free_kb" "$current_case"
+{relax_watch}    # A checkpoint that fails keeps its bytes pending, so the loop stays up
+    # and the next one carries them. Only a channel that keeps failing is
+    # worth giving up on, and the exit trap still makes a final attempt.
+    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ] && \
+       [ "$checkpoint_failures" -lt 3 ]; then
+        if flush_qpa 0; then
+            checkpoint_failures=0
+        else
+            checkpoint_failures=$((checkpoint_failures + 1))
+            echo 'UML_VK_CTS_ERROR: QPA checkpoint transfer failed'
+        fi
     fi
     if [ "$progress_timeout" -gt 0 ] && \
        [ "$stalled_seconds" -ge "$progress_timeout" ]; then
@@ -1944,6 +1930,10 @@ def validate_receipt_attempt(
         "forced_driver_file": "/usr/share/vulkan/icd.d/virtio_icd.json",
         "receipt_sha256": receipt_digest,
         "formal_conformance": "false",
+        # The guest states whether every QPA byte it produced reached the host.
+        # Anything but a complete transfer means results were lost, which no
+        # attempt may be accepted with, however the cases themselves went.
+        "qpa_transfer": "complete",
     }
     if selection.generated_expected:
         expected_summary["fraction"] = selection.fraction.argument()

@@ -227,10 +227,38 @@ class QpaTransportTests(unittest.TestCase):
         transcript += "\n".join(truncated) + "\n"
         with self.assertRaisesRegex(gl.CampaignError, "missing its trailer"):
             gl.decode_artifacts(transcript)
+        rejected: list[str] = []
         self.assertEqual(
-            gl.decode_artifacts(transcript, partial=True),
+            gl.decode_artifacts(transcript, partial=True, rejected=rejected),
             {"results.qpa": parts[names[0]]},
         )
+        self.assertEqual(rejected, [names[1]])
+
+    def test_a_zero_length_artifact_is_never_a_payload(self) -> None:
+        """A complete frame group can still carry nothing.
+
+        A guest whose filesystem filled framed a zero-byte compressed
+        artifact, digest of the empty string and all, which no gzip stream can
+        be. Strict decoding refuses the transcript; the salvage lane drops it
+        and names it, so the loss is reported rather than inferred from a short
+        result set.
+        """
+
+        payload = qpa_session(CASES[:2], ended=False).encode()
+        empty = (
+            "UML_CTS_ARTIFACT_BEGIN|results.qpa.0001|gzip+base64|0|"
+            + hashlib.sha256(b"").hexdigest()
+            + "\nUML_CTS_ARTIFACT_END|results.qpa.0001|0\n"
+        )
+        transcript = framed("results.qpa.0000", payload) + empty
+        with self.assertRaisesRegex(gl.CampaignError, "invalid compressed size"):
+            gl.decode_artifacts(transcript)
+        rejected: list[str] = []
+        self.assertEqual(
+            gl.decode_artifacts(transcript, partial=True, rejected=rejected),
+            {"results.qpa": payload},
+        )
+        self.assertEqual(rejected, ["results.qpa.0001"])
 
 
 class QpaPrefixTests(unittest.TestCase):
@@ -738,6 +766,211 @@ class GuestCheckpointProgramTests(unittest.TestCase):
         self.assertIsNotNone(match, f"{name} is not a top-level shell function")
         return match.group(0)
 
+    def device_launcher(self) -> str:
+        """The launcher the baked device campaigns run, exclusions and all."""
+
+        receipt = vk.receipt_contract.validate_receipt(vk.RECEIPT_PATH)
+        selection = vk.resolve_receipt_selection(
+            "current-must-pass", [], None, vk.Fraction(0, 16)
+        )
+        return vk.build_receipt_guest_launcher(
+            receipt,
+            selection,
+            page_size=16384,
+            timeout=vk.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=vk.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=vk.DEVICE_EXCLUSIONS,
+        )
+
+    def guest_utilities(self, root: Path) -> dict[str, str]:
+        """Stand in for the guest's coreutils, with a gzip that can fail.
+
+        The guest runs GNU coreutils; this host does not have ``base64 -w`` or
+        ``sha256sum``. The gzip shim refuses to compress while
+        ``FULL_FILESYSTEM`` is set and writes nothing, which is what a tmpfs
+        with no room left made the real one do.
+        """
+
+        binaries = root / "bin"
+        binaries.mkdir()
+        (binaries / "base64").write_text(
+            f"#!{sys.executable}\n"
+            "import base64, sys\n"
+            "a = sys.argv[1:]\n"
+            "w = 76\n"
+            "if a and a[0] == '-w':\n"
+            "    w = int(a[1]); a = a[2:]\n"
+            "d = open(a[0], 'rb').read() if a else sys.stdin.buffer.read()\n"
+            "t = base64.b64encode(d).decode()\n"
+            "for i in range(0, len(t), w):\n"
+            "    print(t[i:i + w])\n"
+        )
+        (binaries / "sha256sum").write_text(
+            f"#!{sys.executable}\n"
+            "import hashlib, sys\n"
+            "d = open(sys.argv[1], 'rb').read()\n"
+            "print(hashlib.sha256(d).hexdigest() + '  ' + sys.argv[1])\n"
+        )
+        (binaries / "gzip").write_text(
+            "#!/bin/sh\n"
+            'if [ -n "${FULL_FILESYSTEM:-}" ] && [ "${1:-}" != "-dc" ]; then\n'
+            "    echo 'gzip: stdout: No space left on device' >&2\n"
+            "    exit 1\n"
+            "fi\n"
+            'exec /usr/bin/gzip "$@"\n'
+        )
+        for name in ("base64", "sha256sum", "gzip"):
+            (binaries / name).chmod(0o755)
+        environment = dict(os.environ)
+        environment["PATH"] = f"{binaries}:{environment['PATH']}"
+        return environment
+
+    def test_a_failed_checkpoint_keeps_its_bytes_and_frames_nothing(self) -> None:
+        """The defect: a checkpoint no one could compress looked delivered.
+
+        Neither ``gzip`` nor ``base64`` was checked, so a guest whose tmpfs
+        filled framed ``|gzip+base64|0|`` with the empty string's digest, said
+        it had succeeded, and advanced past 17 MB of results that never left
+        the guest. The bytes must instead stay pending and go out next time.
+        """
+
+        shell = shutil.which("sh")
+        self.assertIsNotNone(shell)
+        launcher = self.device_launcher()
+        program = "".join(
+            self.shell_function(launcher, name)
+            for name in (
+                "artifact_discard",
+                "compress_artifact",
+                "emit_compressed",
+                "emit_artifact",
+                "flush_qpa",
+            )
+        )
+        payload = qpa_session(CASES).encode()
+        half = len(payload) // 2
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = self.guest_utilities(root)
+            (root / "source").write_bytes(payload)
+            harness = f"""set -u
+output={root}
+qpa="$output/results.qpa"
+qpa_offset=0
+qpa_segments=0
+emit_frame()
+{{
+    printf '%s\\n' "$1" >> "$output/frames"
+}}
+{program}
+head -c {half} "$output/source" > "$qpa"
+flush_qpa 0 || echo 'first checkpoint failed'
+FULL_FILESYSTEM=1
+export FULL_FILESYSTEM
+cat "$output/source" > "$qpa"
+flush_qpa 0 || printf 'refused %s %s\\n' "$qpa_offset" "$qpa_segments" \\
+    >> "$output/state"
+unset FULL_FILESYSTEM
+flush_qpa 1 || echo 'final checkpoint failed'
+printf 'final %s %s\\n' "$qpa_offset" "$qpa_segments" >> "$output/state"
+"""
+            (root / "harness.sh").write_text(harness)
+            finished = subprocess.run(
+                [shell, str(root / "harness.sh")],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            # The refusal names itself on the console the host records.
+            self.assertIn(
+                "artifact results.qpa.0001 could not be compressed",
+                finished.stdout,
+            )
+            self.assertEqual(
+                (root / "state").read_text().splitlines(),
+                [f"refused {half} 1", f"final {len(payload)} 2"],
+            )
+            transcript = (root / "frames").read_text()
+            # No empty frame group exists, and what did arrive is the whole
+            # file: the refused range went out with the next checkpoint.
+            self.assertNotIn("|gzip+base64|0|", transcript)
+            self.assertEqual(
+                gl.decode_artifacts(transcript), {"results.qpa": payload}
+            )
+            self.assertEqual(
+                sorted(item.name for item in root.glob("*.gz*")), []
+            )
+
+    def test_the_summary_is_sent_last_even_after_a_failed_segment(self) -> None:
+        """A fraction that lost results still reports its own verdict.
+
+        Every host lane waits for the ``summary.txt`` trailer, and the exit
+        path used to skip it whenever the final QPA segment failed -- and to
+        abort outright, under errexit, if the first summary write failed on a
+        full filesystem. One iPad fraction ran all 199,818 of its cases and
+        delivered no verdict at all that way.
+        """
+
+        shell = shutil.which("sh")
+        self.assertIsNotNone(shell)
+        finish = self.shell_function(self.device_launcher(), "finish")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "selected.txt").write_text(
+                "".join(f"{case}\n" for case in CASES)
+            )
+            (root / "skipped.txt").write_text("guest-memory\tdEQP-VK.x\n")
+            (root / "results.qpa").write_bytes(b"x" * 4096)
+            harness = f"""set -eu
+output={root}
+qpa="$output/results.qpa"
+selected="$output/selected.txt"
+skipped="$output/skipped.txt"
+skipped_guest_memory=1
+summary="$output/summary.txt"
+cts_output="$output/cts-output.txt"
+channel_ready=1
+qpa_offset=1024
+qpa_segments=1
+status=1
+prepare_channel()
+{{
+    return 0
+}}
+emit_prerun()
+{{
+    printf 'prerun\\n' >> "$output/order"
+}}
+flush_qpa()
+{{
+    printf 'flush\\n' >> "$output/order"
+    return 1
+}}
+emit_artifact()
+{{
+    printf 'artifact %s\\n' "$1" >> "$output/order"
+    cp "$2" "$output/sent-$1"
+}}
+{finish}
+finish
+"""
+            (root / "harness.sh").write_text(harness)
+            subprocess.run([shell, str(root / "harness.sh")], check=True)
+            # Both flush attempts, then the summary, and the summary last.
+            self.assertEqual(
+                (root / "order").read_text().split(),
+                ["prerun", "flush", "flush", "artifact", "summary.txt"],
+            )
+            summary = dict(
+                line.split("=", 1)
+                for line in (root / "sent-summary.txt").read_text().splitlines()
+            )
+            self.assertEqual(summary["qpa_transfer"], "failed")
+            self.assertEqual(summary["qpa_missing_bytes"], str(4096 - 1024))
+            self.assertEqual(summary["cts_rc"], "1")
+            self.assertEqual(summary["device_excluded_guest_memory"], "1")
+
     def test_checkpoint_segments_reconstruct_the_guest_file(self) -> None:
         shell = shutil.which("sh")
         self.assertIsNotNone(shell)
@@ -749,6 +982,8 @@ class GuestCheckpointProgramTests(unittest.TestCase):
             receipt, selection, page_size=16384, timeout=900, progress_timeout=600
         )
         flush = self.shell_function(launcher, "flush_qpa")
+        compress = self.shell_function(launcher, "compress_artifact")
+        discard = self.shell_function(launcher, "artifact_discard")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             payload = qpa_session(CASES[:4], ended=False).encode()
@@ -757,9 +992,10 @@ output={root}
 qpa="$output/results.qpa"
 qpa_offset=0
 qpa_segments=0
-emit_artifact()
+{discard}{compress}emit_compressed()
 {{
-    cp "$2" "$output/sent-$1"
+    gzip -dc "$output/$1.gz" > "$output/sent-$1"
+    artifact_discard "$1"
     printf '%s\\n' "$1" >> "$output/order"
 }}
 {flush}
@@ -800,6 +1036,8 @@ printf '%s %s\\n' "$qpa_offset" "$qpa_segments" > "$output/state"
             receipt, selection, page_size=16384, timeout=900
         )
         flush = self.shell_function(launcher, "flush_qpa")
+        compress = self.shell_function(launcher, "compress_artifact")
+        discard = self.shell_function(launcher, "artifact_discard")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             harness = f"""set -eu
@@ -807,9 +1045,10 @@ output={root}
 qpa="$output/results.qpa"
 qpa_offset=0
 qpa_segments=0
-emit_artifact()
+{discard}{compress}emit_compressed()
 {{
-    cp "$2" "$output/sent-$1"
+    gzip -dc "$output/$1.gz" > "$output/sent-$1"
+    artifact_discard "$1"
     printf '%s\\n' "$1" >> "$output/order"
 }}
 {flush}

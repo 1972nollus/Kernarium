@@ -28,6 +28,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -213,6 +214,7 @@ def report(
     artifacts: dict[str, bytes],
     transcript: str,
     oom_report: str | None = None,
+    rejected: Sequence[str] = (),
 ) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
@@ -242,6 +244,10 @@ def report(
             "expected_case_count",
             *sorted(key for key in summary if key.startswith("device_")),
             "cts_rc",
+            # A fraction that could not transport every QPA byte it produced
+            # reports that here rather than in the size of its results.
+            "qpa_transfer",
+            "qpa_missing_bytes",
             "formal_conformance",
         ):
             if key in summary:
@@ -269,6 +275,10 @@ def report(
             print(f"{status}={count}")
     if oom_report is not None:
         print(f"guest_out_of_memory={oom_report}")
+    if rejected:
+        # A frame group the host could not accept: results the guest framed and
+        # this run does not hold. Named so the loss is not read as a short run.
+        print("undecodable_artifacts=" + ",".join(sorted(rejected)))
     failed = payload is None or summary.get("cts_rc") != "0"
     print("vulkan_campaign_failed=" + ("true" if failed else "false"))
     print("--------------------------")
@@ -336,10 +346,13 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     transcript, oom_report = run_campaign(options, log)
     print(f"console closed after {time.monotonic() - started:.0f}s: {log}")
-    artifacts = cts.decode_artifacts(transcript, partial=True)
+    rejected: list[str] = []
+    artifacts = cts.decode_artifacts(
+        transcript, partial=True, rejected=rejected
+    )
     cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
     print(f"artifacts: {options.artifact_root / 'artifacts'}")
-    return report(artifacts, transcript, oom_report)
+    return report(artifacts, transcript, oom_report, rejected)
 
 
 if __name__ == "__main__":
