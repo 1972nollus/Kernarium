@@ -181,10 +181,13 @@ function(uml_add_unit_test)
         FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
         FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
         FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+    # Scratch files stay in a per-test build-tree directory; see
+    # tests/unit/scratch/scratch_directory.hpp.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
         "UML_INSTRUCTION_EVIDENCE=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv"
         "UML_INSTRUCTION_EVIDENCE_TEST=${TEST_NAME}"
-        "UML_INSTRUCTION_EVIDENCE_BINDINGS=${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_evidence_bindings.tsv")
+        "UML_INSTRUCTION_EVIDENCE_BINDINGS=${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_evidence_bindings.tsv"
+        "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
     if(UML_BUILD_TOOLING_TESTS AND UML_INSTRUCTION_INPUT_MATERIALIZATION)
         # The input join consumes one independently compressed stream per
         # producer.  Keeping the path test-specific makes parallel unit runs

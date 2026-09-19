@@ -84,7 +84,8 @@ void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
     if ((offset % 8) != 0 || offset < -512 || offset > 504) {
       /* Invalid emitter metadata is a translation failure, never a reason to
        * terminate the host. finish() returns an empty program and the JIT
-       * executor takes its in-engine semantic path. */
+       * executor runs the instruction as its own one-instruction
+       * translation. */
       valid_ = false;
       return;
     }

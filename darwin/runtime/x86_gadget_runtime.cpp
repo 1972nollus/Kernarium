@@ -87,6 +87,20 @@ bool execution_interrupt_boundary(void *context) noexcept
 		capacity, current_sequence);
 }
 
+/* The same history for mappings: a reader that is only a few changes behind
+ * retires the software-TLB entries those ranges cover instead of every entry
+ * it holds. */
+[[nodiscard]] int cache_mapping_changes(void *, std::uint64_t generation,
+	std::uint64_t sequence, x86_64::gadgets::ProgramMappingChange *changes,
+	std::size_t capacity, std::uint64_t *current_sequence) noexcept
+{
+	static_assert(sizeof(x86_64::gadgets::ProgramMappingChange) ==
+		sizeof(darwin_uml_static_mapping_change));
+	return darwin_uml_static_vm_mapping_changes(generation, sequence,
+		reinterpret_cast<darwin_uml_static_mapping_change *>(changes),
+		capacity, current_sequence);
+}
+
 [[nodiscard]] bool fatal_trace_enabled() noexcept
 {
 	const auto *value = std::getenv("UML_X86_FATAL_TRACE");
@@ -155,7 +169,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			prepared_code_changes != sequences.code_changes) {
 			executor.prepare(memory, generation, sequences.mapping_changes,
 				sequences.code_changes, execution.context(), cache_sequences,
-				cache_code_changes);
+				cache_code_changes, cache_mapping_changes);
 			prepared_mapping_changes = sequences.mapping_changes;
 			prepared_code_changes = sequences.code_changes;
 			executor_prepared = true;

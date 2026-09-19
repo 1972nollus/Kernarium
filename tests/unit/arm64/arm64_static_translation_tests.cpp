@@ -2,6 +2,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
+#include "scratch_directory.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,10 +29,11 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::size_t pages)
 	{
-		char path[] = "/private/tmp/uml-static-translation.XXXXXX";
-		descriptor_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-static-translation.XXXXXX");
+		descriptor_ = mkstemp(path.data());
 		require(descriptor_ >= 0);
-		require(unlink(path) == 0);
+		require(unlink(path.c_str()) == 0);
 		require(ftruncate(descriptor_,
 			static_cast<off_t>(pages * DARWIN_UML_GUEST_PAGE_SIZE)) == 0);
 	}

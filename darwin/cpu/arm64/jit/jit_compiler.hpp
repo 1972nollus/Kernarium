@@ -214,8 +214,8 @@ private:
   void emit_exclusive_slow(std::uint32_t instruction, std::uint64_t pc,
                            std::size_t count);
 
-  void emit_deferred_exclusive_slow(std::uint64_t pc,
-                                    std::size_t count);
+  void emit_deferred_exclusive_slow(std::uint32_t instruction,
+                                    std::uint64_t pc, std::size_t count);
 
   void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
                         std::size_t count);

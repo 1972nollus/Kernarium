@@ -4,6 +4,7 @@
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
+#include "scratch_directory.hpp"
 
 #include <array>
 #include <atomic>
@@ -39,10 +40,11 @@ class TemporaryBacking final {
 public:
 	explicit TemporaryBacking(std::size_t size)
 	{
-		char path[] = "/tmp/uml-static-mmu-batch-XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-static-mmu-batch-XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0);
-		require(unlink(path) == 0);
+		require(unlink(path.c_str()) == 0);
 		require(ftruncate(fd_, static_cast<off_t>(size)) == 0);
 	}
 

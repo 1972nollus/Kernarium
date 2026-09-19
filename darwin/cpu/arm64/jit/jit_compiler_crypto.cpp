@@ -82,7 +82,7 @@ JitCompilerFamilies::emit_simd_pmull(std::uint32_t instruction) {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_sha1_sha2(std::uint32_t instruction) {
   const bool three = (instruction & 0xffe0'8c00U) == 0x5e00'0000U;
-  const bool two = (instruction & 0xffff'8c00U) == 0x5e28'0800U;
+  const bool two = (instruction & 0xffff'cc00U) == 0x5e28'0800U;
   if (!three && !two)
     return false;
   const unsigned operation = (instruction >> 12) & (three ? 7U : 3U);

@@ -66,6 +66,11 @@ RunResult Dispatcher::simd_scalar_pairwise(CpuState &cpu, GuestMemory &,
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
 	const bool alternate = (instruction & 0x0080'0000U) != 0;
+	/* These are the single- and double-precision forms (U=1); FADDP has no
+	 * a=1 form. */
+	if ((instruction & 0x2000'0000U) == 0 || (opcode == 13 && alternate))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const bool is_double = (instruction & 0x0040'0000U) != 0;
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU];
 	auto &destination = cpu.vectors[instruction & 0x1fU];

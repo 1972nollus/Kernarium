@@ -56,7 +56,23 @@ UML_X86_BAKED_ARITH(test)
 	extern const std::uintptr_t uml_x86_64_baked_increment_##width##_r[]; \
 	extern const std::uintptr_t uml_x86_64_baked_decrement_##width##_r[]; \
 	extern const std::uintptr_t uml_x86_64_baked_negate_##width##_r[]; \
-	extern const std::uintptr_t uml_x86_64_baked_not_##width##_r[];
+	extern const std::uintptr_t uml_x86_64_baked_not_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_increment_settled_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_increment_borrow_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_increment_carry_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_increment_clear_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_decrement_settled_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_decrement_borrow_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_decrement_carry_##width##_r[]; \
+	extern const std::uintptr_t \
+		uml_x86_64_baked_decrement_clear_##width##_r[];
 UML_X86_BAKED_MOVE(8)
 UML_X86_BAKED_MOVE(16)
 UML_X86_BAKED_MOVE(32)

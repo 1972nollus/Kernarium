@@ -2,7 +2,7 @@
 #pragma once
 
 #include "bfloat_dot.hpp"
-#include "instruction_helpers.hpp"
+#include "instruction_primitives.hpp"
 
 #include <array>
 #include <cstddef>

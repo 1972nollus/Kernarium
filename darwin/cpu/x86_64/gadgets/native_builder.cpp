@@ -4559,6 +4559,33 @@ enum class HostFlags : std::uint8_t {
 	no_carry,
 };
 
+/* Where a consumer that preserves the carry flag can take it from. INC and
+ * DEC preserve CF, so the flag the previous producer defined has to reach
+ * RFLAGS before they record their own; when the builder knows what that
+ * producer left, the carry is one condition away and the call goes. */
+enum class CarrySource : std::uint8_t {
+	unknown,   // ask the materializer
+	settled,   // RFLAGS already holds the carry and no override is pending
+	subtract,  // NZCV describes a subtraction: x86 CF is the inverted borrow
+	add,       // NZCV describes an addition: x86 CF is the carry out
+	zero,      // a logical operation defined CF as zero
+};
+
+struct FlagState final {
+	HostFlags condition{HostFlags::none};
+	CarrySource carry{CarrySource::unknown};
+};
+
+[[nodiscard]] CarrySource carry_of(HostFlags flags) noexcept
+{
+	switch (flags) {
+	case HostFlags::subtract: return CarrySource::subtract;
+	case HostFlags::add: return CarrySource::add;
+	case HostFlags::logical: return CarrySource::zero;
+	default: return CarrySource::unknown;
+	}
+}
+
 /* The host flags an ordinary-bank gadget leaves; the baked bank reports its
  * own through append_baked. */
 [[nodiscard]] HostFlags host_flags_of(const Instruction &instruction) noexcept
@@ -4586,6 +4613,18 @@ enum class HostFlags : std::uint8_t {
 	default:
 		return HostFlags::none;
 	}
+}
+
+/* The ordinary bank's INC and DEC settle the carry themselves, at every
+ * width, so a second one straight after needs no settlement of its own. */
+[[nodiscard]] CarrySource ordinary_carry_of(
+	const Instruction &instruction) noexcept
+{
+	if (instruction.destination.kind == OperandKind::reg &&
+		(instruction.operation == Operation::increment ||
+		 instruction.operation == Operation::decrement))
+		return CarrySource::settled;
+	return carry_of(host_flags_of(instruction));
 }
 
 [[nodiscard]] bool fused_condition(
@@ -4667,6 +4706,20 @@ enum class HostFlags : std::uint8_t {
 	}
 }
 
+[[nodiscard]] std::uintptr_t jump_condition_inline_fused_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_INLINE_FUSED_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address( \
+			native::uml_x86_64_gadget_jump_##name##_inline_nzcv);
+	UML_X86_FUSED_CONDITION_CASES(UML_X86_JUMP_INLINE_FUSED_CASE)
+#undef UML_X86_JUMP_INLINE_FUSED_CASE
+	default: return 0;
+	}
+}
+
 [[nodiscard]] std::uintptr_t conditional_move_fused_entry(
 	Condition condition, OperandWidth width) noexcept
 {
@@ -4729,6 +4782,20 @@ enum class HostFlags : std::uint8_t {
 			native::uml_x86_64_gadget_jump_##name);
 	UML_X86_CONDITION_CASES(UML_X86_JUMP_CASE)
 #undef UML_X86_JUMP_CASE
+	}
+	return 0;
+}
+
+[[nodiscard]] std::uintptr_t jump_condition_inline_entry(
+	Condition condition) noexcept
+{
+	switch (condition) {
+#define UML_X86_JUMP_INLINE_CASE(enumerator, name) \
+	case Condition::enumerator: \
+		return entry_address( \
+			native::uml_x86_64_gadget_jump_##name##_inline);
+	UML_X86_CONDITION_CASES(UML_X86_JUMP_INLINE_CASE)
+#undef UML_X86_JUMP_INLINE_CASE
 	}
 	return 0;
 }
@@ -5576,7 +5643,7 @@ struct BakedArithTables final {
  * [mem],imm. A locked form keeps the ordinary exclusive loop. */
 [[nodiscard]] bool append_baked_binary(std::vector<std::uintptr_t> &stream,
 	const Gadget &gadget, const BakedArithTables &tables,
-	HostFlags &produced)
+	FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.locked)
@@ -5590,7 +5657,7 @@ struct BakedArithTables final {
 	const bool writes_memory = instruction.operation != Operation::compare &&
 		instruction.operation != Operation::test;
 	if (destination.kind == OperandKind::reg) {
-		produced = kind;
+		produced = {kind, carry_of(kind)};
 		const auto d = baked_register_slot(destination);
 		if (!d)
 			return false;
@@ -5621,7 +5688,8 @@ struct BakedArithTables final {
 	const auto address = baked_address(gadget, destination);
 	if (!address)
 		return false;
-	produced = writes_memory ? HostFlags::none : kind;
+	produced = writes_memory ? FlagState{} :
+		FlagState{kind, carry_of(kind)};
 	if (source.kind == OperandKind::reg) {
 		if (source.width != width)
 			return false;
@@ -5708,8 +5776,56 @@ struct BakedExtendTables final {
 	return true;
 }
 
+/* One table per carry source and width; a source the bank does not cover
+ * falls back to the entry that calls the materializer. */
+using BakedUnaryCarryTables =
+	std::array<std::array<const std::uintptr_t *, 4U>, 4U>;
+
+#define UML_X86_BAKED_CARRY_TABLES(name) \
+constexpr BakedUnaryCarryTables baked_unary_carry_tables_##name{{ \
+	{baked::uml_x86_64_baked_##name##_settled_8_r, \
+	 baked::uml_x86_64_baked_##name##_settled_16_r, \
+	 baked::uml_x86_64_baked_##name##_settled_32_r, \
+	 baked::uml_x86_64_baked_##name##_settled_64_r}, \
+	{baked::uml_x86_64_baked_##name##_borrow_8_r, \
+	 baked::uml_x86_64_baked_##name##_borrow_16_r, \
+	 baked::uml_x86_64_baked_##name##_borrow_32_r, \
+	 baked::uml_x86_64_baked_##name##_borrow_64_r}, \
+	{baked::uml_x86_64_baked_##name##_carry_8_r, \
+	 baked::uml_x86_64_baked_##name##_carry_16_r, \
+	 baked::uml_x86_64_baked_##name##_carry_32_r, \
+	 baked::uml_x86_64_baked_##name##_carry_64_r}, \
+	{baked::uml_x86_64_baked_##name##_clear_8_r, \
+	 baked::uml_x86_64_baked_##name##_clear_16_r, \
+	 baked::uml_x86_64_baked_##name##_clear_32_r, \
+	 baked::uml_x86_64_baked_##name##_clear_64_r}}};
+UML_X86_BAKED_CARRY_TABLES(increment)
+UML_X86_BAKED_CARRY_TABLES(decrement)
+#undef UML_X86_BAKED_CARRY_TABLES
+
+[[nodiscard]] const std::uintptr_t *baked_unary_carry_table(
+	const BakedUnaryCarryTables &tables, CarrySource carry,
+	OperandWidth width) noexcept
+{
+	std::size_t row = 0;
+	switch (carry) {
+	case CarrySource::settled: row = 0; break;
+	case CarrySource::subtract: row = 1; break;
+	case CarrySource::add: row = 2; break;
+	case CarrySource::zero: row = 3; break;
+	case CarrySource::unknown: return nullptr;
+	}
+	switch (width) {
+	case OperandWidth::byte: return tables[row][0];
+	case OperandWidth::word: return tables[row][1];
+	case OperandWidth::dword: return tables[row][2];
+	case OperandWidth::qword: return tables[row][3];
+	default: return nullptr;
+	}
+}
+
 [[nodiscard]] bool append_baked_unary(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget, HostFlags &produced)
+	const Gadget &gadget, const FlagState &state, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
 	const auto d = baked_register_slot(instruction.destination);
@@ -5717,8 +5833,24 @@ struct BakedExtendTables final {
 		return false;
 	const bool wide = instruction.destination.width == OperandWidth::dword ||
 		instruction.destination.width == OperandWidth::qword;
-	produced = wide && instruction.operation != Operation::bit_not ?
-		HostFlags::no_carry : HostFlags::none;
+	const auto condition =
+		wide && instruction.operation != Operation::bit_not ?
+			HostFlags::no_carry : HostFlags::none;
+	switch (instruction.operation) {
+	case Operation::increment:
+	case Operation::decrement:
+		/* Both settle the carry, so the next one of them needs no work. */
+		produced = {condition, CarrySource::settled};
+		break;
+	case Operation::negate:
+		/* NEG is a subtraction from zero, so its host carry is a borrow. */
+		produced = {condition,
+			wide ? CarrySource::subtract : CarrySource::unknown};
+		break;
+	default:
+		produced = {condition, CarrySource::unknown};
+		break;
+	}
 	const std::uintptr_t *table{};
 #define UML_X86_BAKED_UNARY(name) \
 	switch (instruction.destination.width) { \
@@ -5729,13 +5861,20 @@ struct BakedExtendTables final {
 	default: return false; \
 	} \
 	break;
+#define UML_X86_BAKED_CARRY_UNARY(name) \
+	table = baked_unary_carry_table( \
+		baked_unary_carry_tables_##name, state.carry, \
+		instruction.destination.width); \
+	if (table == nullptr) UML_X86_BAKED_UNARY(name) \
+	break;
 	switch (instruction.operation) {
-	case Operation::increment: UML_X86_BAKED_UNARY(increment)
-	case Operation::decrement: UML_X86_BAKED_UNARY(decrement)
+	case Operation::increment: UML_X86_BAKED_CARRY_UNARY(increment)
+	case Operation::decrement: UML_X86_BAKED_CARRY_UNARY(decrement)
 	case Operation::negate: UML_X86_BAKED_UNARY(negate)
 	case Operation::bit_not: UML_X86_BAKED_UNARY(not)
 	default: return false;
 	}
+#undef UML_X86_BAKED_CARRY_UNARY
 #undef UML_X86_BAKED_UNARY
 	stream.push_back(table[*d]);
 	return true;
@@ -5797,9 +5936,10 @@ struct BakedExtendTables final {
  * entries, false to take the ordinary family. Only 64-bit mode is enumerated;
  * the stack forms in particular assume a 64-bit stack pointer. */
 [[nodiscard]] bool append_baked(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget, ExecutionMode mode, HostFlags &produced)
+	const Gadget &gadget, ExecutionMode mode, const FlagState &state,
+	FlagState &produced)
 {
-	produced = HostFlags::none;
+	produced = {};
 	if (!baked_bank_enabled() || mode != ExecutionMode::long64)
 		return false;
 	const auto &instruction = gadget.instruction;
@@ -5828,7 +5968,7 @@ struct BakedExtendTables final {
 	case Operation::decrement:
 	case Operation::negate:
 	case Operation::bit_not:
-		return append_baked_unary(stream, gadget, produced);
+		return append_baked_unary(stream, gadget, state, produced);
 	case Operation::lea:
 		return append_baked_lea(stream, gadget);
 	case Operation::push:
@@ -5839,12 +5979,14 @@ struct BakedExtendTables final {
 	}
 }
 
-/* `host_flags` is what the previous gadget left for a fused condition;
- * `produced` receives what this one leaves. */
+/* `state` is what the previous gadget left for a fused condition and for a
+ * carry-preserving consumer; `produced` receives what this one leaves.
+ * `has_following` says whether more of this block is translated behind this
+ * gadget, which is what lets a conditional branch inline its fall-through. */
 [[nodiscard]] bool append_native(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
-	ExecutionMode mode, ProgramLinkResolver links, HostFlags host_flags,
-	HostFlags &produced)
+	ExecutionMode mode, ProgramLinkResolver links, const FlagState &state,
+	bool has_following, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
 	const bool native_locked_scalar =
@@ -5895,9 +6037,22 @@ struct BakedExtendTables final {
 		instruction.operation == Operation::scalar_bmi;
 	if (instruction.locked && !native_locked_scalar && !native_locked_atomic)
 		return false;
-	if (append_baked(stream, gadget, mode, produced))
+	if (append_baked(stream, gadget, mode, state, produced)) {
+		/* Experiment: a baked entry that executes no flag-setting host
+		 * instruction leaves the producer's NZCV for a later consumer. */
+		const bool transparent =
+			(instruction.operation == Operation::move ||
+			 instruction.operation == Operation::move_zero_extend ||
+			 instruction.operation == Operation::move_sign_extend) ?
+				instruction.destination.kind != OperandKind::memory &&
+				instruction.source.kind != OperandKind::memory :
+			instruction.operation == Operation::lea;
+		if (transparent && produced.condition == HostFlags::none &&
+			produced.carry == CarrySource::unknown)
+			produced = state;
 		return true;
-	produced = host_flags_of(instruction);
+	}
+	produced = {host_flags_of(instruction), ordinary_carry_of(instruction)};
 	switch (instruction.operation) {
 	case Operation::nop:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_nop));
@@ -6230,9 +6385,9 @@ struct BakedExtendTables final {
 			return true;
 		}
 		const auto destination = register_offset(instruction.destination);
-		const auto entry = fused_condition(instruction.condition, host_flags) ?
+		const auto entry = fused_condition(instruction.condition, state.condition) ?
 			set_condition_fused_entry(fused_consumer_condition(
-				instruction.condition, host_flags)) :
+				instruction.condition, state.condition)) :
 			set_condition_entry(instruction.condition);
 		if (!destination || entry == 0)
 			return false;
@@ -6256,9 +6411,9 @@ struct BakedExtendTables final {
 			return true;
 		}
 		return append_register_pair(stream,
-			fused_condition(instruction.condition, host_flags) ?
+			fused_condition(instruction.condition, state.condition) ?
 				conditional_move_fused_entry(fused_consumer_condition(
-					instruction.condition, host_flags),
+					instruction.condition, state.condition),
 					instruction.destination.width) :
 				conditional_move_entry(
 					instruction.condition, instruction.destination.width),
@@ -6283,12 +6438,30 @@ struct BakedExtendTables final {
 		const auto next = next_instruction_pointer(gadget, mode);
 		const auto *taken = links.resolve == nullptr ? nullptr :
 			links.resolve(links.context, target, mode);
+		/* The fall-through is already translated behind this branch, so it
+		 * needs neither a link record nor an operand. A build without a link
+		 * resolver -- a budget-limited replay of a cached block -- keeps the
+		 * terminal form and simply leaves the translated tail unreachable. */
+		if (has_following && taken != nullptr) {
+			const auto inlined =
+				fused_condition(instruction.condition, state.condition) ?
+					jump_condition_inline_fused_entry(
+						fused_consumer_condition(
+							instruction.condition, state.condition)) :
+					jump_condition_inline_entry(instruction.condition);
+			if (inlined != 0) {
+				stream.push_back(inlined);
+				stream.push_back(
+					reinterpret_cast<std::uintptr_t>(taken));
+				return true;
+			}
+		}
 		const auto *fallthrough = links.resolve == nullptr ? nullptr :
 			links.resolve(links.context, next, mode);
 		const bool linked = taken != nullptr && fallthrough != nullptr;
-		const auto entry = fused_condition(instruction.condition, host_flags) ?
+		const auto entry = fused_condition(instruction.condition, state.condition) ?
 			jump_condition_fused_entry(fused_consumer_condition(
-				instruction.condition, host_flags), linked) :
+				instruction.condition, state.condition), linked) :
 			jump_condition_entry(instruction.condition, linked);
 		if (entry == 0)
 			return false;
@@ -6841,13 +7014,14 @@ std::vector<std::uintptr_t> build_native_stream(
 {
 	std::vector<std::uintptr_t> stream;
 	stream.reserve(gadgets.size() * 3U + 2U);
-	auto host_flags = HostFlags::none;
-	for (const auto &gadget : gadgets) {
-		auto produced = HostFlags::none;
-		if (!append_native(stream, gadget, mode, links, host_flags, produced))
+	FlagState state{};
+	for (std::size_t index = 0; index < gadgets.size(); ++index) {
+		FlagState produced{};
+		if (!append_native(stream, gadgets[index], mode, links, state,
+			index + 1U < gadgets.size(), produced))
 			throw std::logic_error{
 				"x86-64 operation has no native assembly gadget"};
-		host_flags = produced;
+		state = produced;
 	}
 	/* A block that ended at a branch never reaches this terminator, so only
 	 * one cut short by the fetch window can use a link -- and asking for a

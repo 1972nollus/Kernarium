@@ -18,10 +18,10 @@ namespace uml::cpu::arm64::jit {
 
 [[nodiscard]] bool JitCompilerFamilies::recognized_simd_fmulx(
     std::uint32_t instruction) noexcept {
-  return (instruction & 0xbf60'fc00U) == 0x0e40'1c00U ||
-         (instruction & 0xff60'fc00U) == 0x5e40'1c00U ||
-         (instruction & 0xbf20'fc00U) == 0x0e20'dc00U ||
-         (instruction & 0xff20'fc00U) == 0x5e20'dc00U;
+  return (instruction & 0xbfe0'fc00U) == 0x0e40'1c00U ||
+         (instruction & 0xffe0'fc00U) == 0x5e40'1c00U ||
+         (instruction & 0xbfa0'fc00U) == 0x0e20'dc00U ||
+         (instruction & 0xffa0'fc00U) == 0x5e20'dc00U;
 }
 
 [[nodiscard]] bool JitCompilerFamilies::valid_simd_fmulx(
@@ -805,8 +805,8 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
     std::uint32_t instruction) {
   if (!host_capabilities().advanced_simd)
     return false;
-  const bool vector = (instruction & 0x9f20'0c00U) == 0x0e20'0800U;
-  const bool scalar = (instruction & 0xdf20'0c00U) == 0x5e20'0800U;
+  const bool vector = (instruction & 0x9f3e'0c00U) == 0x0e20'0800U;
+  const bool scalar = (instruction & 0xdf3e'0c00U) == 0x5e20'0800U;
   if (!vector && !scalar)
     return false;
   const unsigned opcode = (instruction >> 12) & 31U;

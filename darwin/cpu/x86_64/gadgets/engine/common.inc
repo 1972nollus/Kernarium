@@ -24,6 +24,28 @@ _executed .req x29
 NAME(uml_x86_64_gadget_\name):
 .endm
 
+/* Publish the guest's rounding mode as the host's.
+ *
+ * x86 keeps it in MXCSR and the host in FPCR, and the two number the directed
+ * modes the other way round, so the two-bit field is reversed. Writing FPCR
+ * can cost a pipeline flush, so it is written only when it would change --
+ * which, for the guests that never leave round-to-nearest, is never.
+ * `scratch*` must be free at the call site.
+ */
+.macro publish_guest_rounding scratch0, scratch1, scratch2
+	ldr w\scratch0, [_cpu, #UML_X86_64_CPU_MXCSR]
+	mrs x\scratch1, fpcr
+	ubfx w\scratch0, w\scratch0, #13, #2
+	rbit w\scratch2, w\scratch0
+	lsr w\scratch2, w\scratch2, #30
+	ubfx x\scratch0, x\scratch1, #22, #2
+	cmp x\scratch0, x\scratch2
+	b.eq .Lx86_rounding_ready\@
+	bfi x\scratch1, x\scratch2, #22, #2
+	msr fpcr, x\scratch1
+.Lx86_rounding_ready\@:
+.endm
+
 .macro next_gadget
 	ldr x8, [_stream], #8
 	br x8
@@ -311,10 +333,8 @@ NAME(uml_x86_64_gadget_\name):
 	b uml_x86_64_gadget_leave
 .Lx86_link_code_ready\@:
 	ldp _stream, x11, [x19]
-	add x12, _executed, x11
-	ldr x13, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
-	cmp x12, x13
-	b.ls .Lx86_link_follow\@
+	adds x12, _executed, x11
+	b.le .Lx86_link_follow\@
 	ldr x9, [x19, #16]
 	str x9, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -383,14 +403,31 @@ NAME(uml_x86_64_gadget_enter):
 	mov _stream, x0
 	mov _cpu, x1
 	mov _context, x2
-	mov _executed, xzr
+	/* Run the dispatch in the guest's rounding mode. */
+	publish_guest_rounding 9, 10, 11
+	/* The retirement counter carries this run's budget as a bias, so every
+	 * linked edge tests the sign of one addition rather than loading the
+	 * limit and comparing against it. `leave` takes the bias back out. */
+	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
+	neg _executed, x9
 	x86_memory_order_boundary
 	next_gadget
 
 .p2align 4
 uml_x86_64_gadget_leave:
 	x86_memory_order_boundary
-	mov x1, _executed
+	/* Hand the caller back its own rounding mode, which is the host default:
+	 * derive it from FPCR rather than from a saved copy, because a gadget
+	 * that faults out of a stack-using sequence can reach here with a
+	 * different stack pointer. */
+	mrs x10, fpcr
+	ubfx x11, x10, #22, #2
+	cbz x11, .Lx86_leave_rounding_ready
+	bic x10, x10, #(3 << 22)
+	msr fpcr, x10
+.Lx86_leave_rounding_ready:
+	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
+	add x1, _executed, x9
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
 	ldp x26, x27, [sp, #0x40]

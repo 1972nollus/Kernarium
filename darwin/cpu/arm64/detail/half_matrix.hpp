@@ -3,7 +3,7 @@
 
 #include "floating_exception.hpp"
 #include "half_fused_long.hpp"
-#include "instruction_helpers.hpp"
+#include "instruction_primitives.hpp"
 
 #include <array>
 #include <bit>

@@ -316,11 +316,12 @@ void twoRegionFailureRollsBackEveryOwner()
 
 [[nodiscard]] std::filesystem::path temporarySocketPath()
 {
-    char path[] = "/tmp/uml-gpu-socket.XXXXXX";
-    UniqueDescriptor descriptor {::mkstemp(path)};
+    auto path =
+        ::uml::testing::socket_scratch_template("uml-gpu-socket.XXXXXX");
+    UniqueDescriptor descriptor {::mkstemp(path.data())};
     require(descriptor.get() >= 0);
     descriptor.reset();
-    require(::unlink(path) == 0);
+    require(::unlink(path.c_str()) == 0);
     return path;
 }
 
@@ -341,8 +342,9 @@ void standaloneRunCanBeRetriedWithoutLeaking()
 
 void standaloneRunDoesNotReplaceExistingPath()
 {
-    char rawPath[] = "/tmp/uml-gpu-owned-path.XXXXXX";
-    UniqueDescriptor sentinel {::mkstemp(rawPath)};
+    auto rawPath =
+        ::uml::testing::socket_scratch_template("uml-gpu-owned-path.XXXXXX");
+    UniqueDescriptor sentinel {::mkstemp(rawPath.data())};
     require(sentinel.get() >= 0);
     constexpr std::uint8_t marker = 0x5a;
     require(::write(sentinel.get(), &marker, sizeof(marker)) ==

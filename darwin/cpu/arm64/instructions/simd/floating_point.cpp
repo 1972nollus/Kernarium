@@ -628,6 +628,42 @@ void execute_basic_floating_arithmetic(CpuState &cpu,
 	cpu.vectors[destination].bytes = result;
 }
 
+/*
+ * The three-same floating-point allocations that execute_floating_vector()
+ * implements, by U, a (bit 23) and opcode. FMULX has its own decoder, and the
+ * scalar class holds only the compares, FABD and the reciprocal steps.
+ */
+[[nodiscard]] constexpr bool allocated_floating_three_same(
+	std::uint32_t instruction) noexcept
+{
+	const unsigned opcode = (instruction >> 11) & 0x1fU;
+	const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
+	const bool alternate = (instruction & 0x0080'0000U) != 0;
+	if ((instruction & 0x1000'0000U) != 0)
+		return unsigned_group ?
+			(opcode == 0x1a && alternate) || opcode == 0x1c ||
+				opcode == 0x1d :
+			(opcode == 0x1c && !alternate) || opcode == 0x1f;
+	switch (opcode) {
+	case 0x18: // FMAXNM/FMINNM, FMAXNMP/FMINNMP
+	case 0x1a: // FADD/FSUB, FADDP/FABD
+	case 0x1e: // FMAX/FMIN, FMAXP/FMINP
+		return true;
+	case 0x19: // FMLA/FMLS
+		return !unsigned_group;
+	case 0x1b: // FMUL
+		return unsigned_group && !alternate;
+	case 0x1c: // FCMEQ, FCMGE/FCMGT
+		return unsigned_group || !alternate;
+	case 0x1d: // FACGE/FACGT
+		return unsigned_group;
+	case 0x1f: // FRECPS/FRSQRTS, FDIV
+		return !unsigned_group || !alternate;
+	default:
+		return false;
+	}
+}
+
 template<typename Floating>
 [[nodiscard]] bool execute_floating_vector(CpuState &cpu,
 					   std::uint32_t instruction,
@@ -852,6 +888,9 @@ RunResult Dispatcher::simd_floating_arithmetic(CpuState &cpu, GuestMemory &,
 	const bool scalar = (instruction & 0x1000'0000U) != 0;
 	const std::size_t vector_size =
 		(instruction & 0x4000'0000U) != 0 ? 16 : 8;
+	if (!allocated_floating_three_same(instruction))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	if ((is_double && !scalar && vector_size != 16) ||
 	    !(is_double ? execute_floating_vector<double>(cpu, instruction,
 			scalar ? 1 : 2) : execute_floating_vector<float>(cpu,

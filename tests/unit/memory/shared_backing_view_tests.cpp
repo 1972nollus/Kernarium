@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory/shared_backing.hpp"
+#include "scratch_directory.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -28,10 +29,11 @@ class TemporaryFile final {
 public:
 	TemporaryFile()
 	{
-		char path[] = "/tmp/uml-shared-backing-XXXXXX";
-		descriptor_ = ::mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-shared-backing-XXXXXX");
+		descriptor_ = ::mkstemp(path.data());
 		require(descriptor_ >= 0);
-		require(::unlink(path) == 0);
+		require(::unlink(path.c_str()) == 0);
 	}
 
 	TemporaryFile(const TemporaryFile &) = delete;

@@ -17,6 +17,13 @@ device -> memory / platform
 targets and source manifest. The neutral CPU factory selects the gadget or JIT
 adapter; engines do not depend on one another.
 
+An emulator archive is a self-contained final product. CMake merges object
+libraries and interface-carried objects into it but never a linked static
+archive, so every module the emulator reaches delivers objects, including one
+that also keeps a static archive for single-copy process state.
+`scripts/build-xcframework.sh` rejects a release archive that leaves a
+first-party symbol undefined.
+
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
 Test-only hooks belong in test/support targets, not production libraries.
@@ -115,7 +122,10 @@ precompiled function pointers and data. The JIT emits native blocks through its
 sole executable arena. Guest-visible exceptions, fault priority, retirement,
 and feature exposure must agree across engines and with the arm64 instruction
 Dispatcher, which remains the reference oracle of the A64 conformance evidence
-and is exercised only from the unit-test support target.
+and is exercised only from the unit-test support target. Instruction classes
+that the JIT's native lowering leaves to a helper run in the JIT's own semantic
+slow path, never in another engine; a helper treats any word outside its routed
+classes as a fatal internal error.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

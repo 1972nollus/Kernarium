@@ -4,6 +4,7 @@
 #include "domain_registry_testing.hpp"
 #include "native_retry_validation_test_support.hpp"
 #include "native_window_test_support.hpp"
+#include "scratch_directory.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -50,10 +51,11 @@ public:
 		std::initializer_list<std::uint8_t> page_values)
 		: pages_{page_values.size()}
 	{
-		char path[] = "/tmp/uml-native-16k-owner-XXXXXX";
-		fd_ = mkstemp(path);
+		auto path = uml::testing::scratch_template(
+			"uml-native-16k-owner-XXXXXX");
+		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "could not create native ownership backing");
-		require(unlink(path) == 0,
+		require(unlink(path.c_str()) == 0,
 			"could not unlink native ownership backing");
 		require(ftruncate(fd_, static_cast<off_t>(pages_ * page_size)) == 0,
 			"could not size native ownership backing");

@@ -282,6 +282,7 @@ gadget mxcsr_load
 	and w24, w24, w8
 	orr w24, w24, #0x1f80
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	publish_guest_rounding 9, 10, 11
 	retire_and_next
 .Lx86_mxcsr_load_cross:
 	mov x0, _context

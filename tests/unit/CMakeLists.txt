@@ -48,6 +48,7 @@ uml_add_unit_test(
 add_subdirectory(platform)
 add_subdirectory(block)
 add_subdirectory(sockets)
+add_subdirectory(scratch)
 add_subdirectory(mconsole)
 add_subdirectory(input/vnc)
 if(TARGET uml_virtio_input)

@@ -57,12 +57,11 @@ JitExecutor::Implementation::Implementation(
       arena_{geometry_.arena_bytes},
 #endif
       tracked_store_arena_{geometry_.tracked_store_arena_bytes},
-      floating_transaction_arena_{floating_transaction_arena_size},
+      single_instruction_arena_{single_instruction_arena_size},
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       shared_publication_context_{diagnostics.shared_publication_context},
       before_shared_publication_{diagnostics.before_shared_publication},
 #endif
-      defer_cold_translation_{options.defer_cold_translation},
       enable_guarded_control_flow_{options.enable_guarded_control_flow},
       enable_pointer_authentication_{
           options.enable_pointer_authentication},
