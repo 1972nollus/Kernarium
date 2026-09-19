@@ -1,8 +1,8 @@
 From 31c28520e3f52920be6fbbcaf78ec23ec63812f7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 20:44:48 +0900
-Subject: [PATCH 96/99] kosmickrisp: use wide buffer accesses where NIR proves
- the alignment
+Subject: [PATCH 096/101] kosmickrisp: use wide buffer accesses where NIR
+ proves the alignment
 
 Every global load and store is emitted through MSL's packed vector types.
 Packed is the safe default -- it aliases a scalar array, so any alignment

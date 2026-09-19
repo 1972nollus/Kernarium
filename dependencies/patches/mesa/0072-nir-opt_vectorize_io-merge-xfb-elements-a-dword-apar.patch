@@ -1,8 +1,8 @@
 From 2fd55a8fb203ea0ee3450e2d0a489c02c2beb08c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 09:45:37 +0900
-Subject: [PATCH 72/99] nir/opt_vectorize_io: merge xfb elements a dword apart,
- in order
+Subject: [PATCH 072/101] nir/opt_vectorize_io: merge xfb elements a dword
+ apart, in order
 
 vectorize_store() merged the xfb elements of the scalar stores it replaces by
 testing out[i].offset == out[j].offset + xfb_comp_size * (j - i), with

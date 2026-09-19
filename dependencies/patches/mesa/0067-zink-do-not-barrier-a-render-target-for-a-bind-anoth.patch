@@ -1,8 +1,8 @@
 From bb7c26ad3222bff604c104159642031b2a516d80 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 20:23:59 +0900
-Subject: [PATCH 67/99] zink: do not barrier a render target for a bind another
- context made
+Subject: [PATCH 067/101] zink: do not barrier a render target for a bind
+ another context made
 
 Zink counts binds on the zink_resource, which every context of the screen
 shares, not on the context that made the bind. When a second context in the

@@ -429,16 +429,33 @@ streaming a 262 KiB input buffer through it made the same cases fault more
 often. The rejected levers are recorded in
 [`optimization-history.md`](optimization-history.md).
 
-#### Robustness storage-image accesses fault
+#### An out-of-bounds texture atomic faults the GPU
 
-Four `dEQP-VK.robustness.robustness2` cases fail with the same timeout-labelled
-fault, all of them format-qualified `r32i`/`r32ui` storage-image accesses in a
-loop the shader does not unroll: `bind...nonvolatile...cube_array.frag`,
-`bind...nonvolatile...cube.frag`, `push...volatile...2d_array.frag` and
-`push...volatile...2d_array.vert`. Eight faults fall inside the group, some on
-neighbouring null-descriptor and dynamic storage-buffer cases that still pass.
-These tests access out of bounds deliberately, and the same cases pass on an
-Apple9 host. The cause is not yet established.
+Metal carries `robustImageAccess2` semantics for a texture read and a texture
+write by itself: a read outside the texture returns zero and a write outside it
+is discarded. A texture atomic is not covered. An atomic whose coordinate, array
+index or cube face lies outside the texture reaches memory the texture does not
+own, and on this device that access never completes: the submission is killed and
+reported as a timeout, which is a label rather than a diagnosis as above. An
+out-of-range texture read or write in the same shader, in the same numbers, is
+harmless, and so is the atomic itself on an Apple9 host.
+
+`dEQP-VK.robustness.robustness2` stands on this wherever a format-qualified
+`r32i`/`r32ui` storage image takes an `imageAtomicAdd` at a deliberately out of
+range coordinate from a render stage; those cases issue thousands of them per
+fragment or vertex in a loop the shader does not unroll. A kill does not always
+land on the submission whose verdict it decides, so the group reports fewer
+failures than kills and which cases fail varies from run to run.
+
+The driver rejects the coordinate before the atomic issues. KosmicKrisp runs
+`nir_lower_robust_access` over image atomics alone, ahead of descriptor lowering,
+so the comparison is made in the Vulkan coordinate space against the size the
+image deref still names, before the cube and 1D rewrites fold a face or layer
+into Metal's coordinate. Reads, writes and buffer accesses keep the robustness
+they already had, so nothing else gains a bounds test. A twelve-case device rig
+covering every layered and flat storage-image atomic in the group goes from seven
+or eight kills a run to none, and `dEQP-VK.image.atomic_operations`, which
+validates the in-bounds result of an atomic on every view type, is unchanged.
 
 #### Memory budget
 
