@@ -1,7 +1,7 @@
 From 6e2edfe84d6f263fe9b2551c373bc67f94519c7a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 20:24:44 +0900
-Subject: [PATCH 95/98] kosmickrisp: load descriptors from the constant address
+Subject: [PATCH 95/99] kosmickrisp: load descriptors from the constant address
  space
 
 nir_to_msl emits nir_intrinsic_load_global_constant and

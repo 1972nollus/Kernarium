@@ -1,7 +1,7 @@
 From 48a2a4bf0ed502ee2e76c334061034b932c320fd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:19:59 +0900
-Subject: [PATCH 58/98] kosmickrisp: blend with Metal's own state where Metal
+Subject: [PATCH 58/99] kosmickrisp: blend with Metal's own state where Metal
  can express it
 
 KosmicKrisp lowered every blend into the fragment shader, which made the

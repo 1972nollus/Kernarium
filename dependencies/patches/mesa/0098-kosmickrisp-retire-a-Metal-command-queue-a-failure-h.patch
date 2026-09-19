@@ -1,7 +1,7 @@
 From 486d36af8f7cc73286e60966dad3c1a99e77d1f1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 11:34:29 +0900
-Subject: [PATCH 98/98] kosmickrisp: retire a Metal command queue a failure has
+Subject: [PATCH 98/99] kosmickrisp: retire a Metal command queue a failure has
  killed
 
 Metal does not revive an MTL4CommandQueue that has killed a submission.
