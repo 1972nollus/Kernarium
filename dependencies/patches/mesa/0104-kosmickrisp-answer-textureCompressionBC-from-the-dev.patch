@@ -1,4 +1,4 @@
-From ba9d2cf47205d49d679329afe2844b9a6433b2dd Mon Sep 17 00:00:00 2001
+From b3a16a4d19b147ddfae89d16474382ff3090c4f2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 06:33:45 +0900
 Subject: [PATCH 104/105] kosmickrisp: answer textureCompressionBC from the
