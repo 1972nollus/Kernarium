@@ -83,8 +83,11 @@ on iOS does not, and Metal answers such a descriptor by aborting the process
 rather than failing the call, so a driver cannot recover from having offered
 one. KosmicKrisp therefore asks the device once and reports those three layouts
 as unsupported where it says no, which removes them from the Vulkan format
-features and so from the GL formats Virgl advertises above them. Every Apple
-silicon Mac supports BC, so macOS is unaffected.
+features and so from the GL formats Virgl advertises above them. The Vulkan
+`textureCompressionBC` feature answers from that same question: a driver that
+claims the feature while denying all sixteen BC formats fails
+`dEQP-VK.api.info.format_properties.compressed_formats` on the disagreement
+alone. Every Apple silicon Mac supports BC, so macOS is unaffected.
 
 That version is the profile the guest reports, not a conformance result. Guest
 Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
@@ -360,10 +363,22 @@ read without checking.
 
 The physical iOS device the Vulkan route has been exercised on is an iPad
 mini 6: an A15, Metal family Apple8, 4 GiB, under iOS 27. It differs from the
-Apple9 macOS hosts in ways that change results rather than only speed. Each
-item below either names the behaviour that answers it or stands as a
-limitation; none of them has been observed on an Apple9 host, and none has yet
-been checked on another iOS device.
+Apple silicon Macs the same stack runs on -- the one these comparisons were
+made against reports Metal family Apple7 -- in ways that change results rather
+than only speed. Each item below either names the behaviour that answers it or
+stands as a limitation; none of them has been observed on a Mac, and none has
+yet been checked on another iOS device.
+
+Only two of the Metal capability answers differ between that Mac and this
+device, and the driver takes both from the device rather than assuming:
+`supportsBCTextureCompression` and `supports32BitFloatFiltering` are false here
+and true there. Every other capability the driver could key on -- 32-bit MSAA,
+query texture LOD, pull-model interpolation, shader barycentrics, programmable
+sample positions, raster order groups, read-write texture tier, argument buffer
+tier, the supported texture sample counts and vertex amplification counts --
+answers the same on both. The device's ceilings are of course smaller:
+`maxBufferLength` is 2 GiB against 38.9 GiB, and the recommended working set
+2.67 GiB against 51.8 GiB.
 
 #### A GPU fault is reported as a timeout
 
@@ -433,7 +448,7 @@ distinct address, without error. Removing the store alone takes the same shader
 from 84 ms to 1 ms and it never faults, and spreading the stores over distinct
 addresses moves the fault threshold from 12288 to 16384 iterations, so what the
 fault tracks is the fragment stage's store work rather than elapsed time. The
-same program runs 32768 iterations on an Apple9 host without faulting.
+same program runs 32768 iterations on that Mac without faulting.
 
 Nothing in the driver removes it. The stores belong to the application, the
 fragment invocation count is the render area, the render pass tile size
@@ -469,7 +484,7 @@ index or cube face lies outside the texture reaches memory the texture does not
 own, and on this device that access never completes: the submission is killed and
 reported as a timeout, which is a label rather than a diagnosis as above. An
 out-of-range texture read or write in the same shader, in the same numbers, is
-harmless, and so is the atomic itself on an Apple9 host.
+harmless, and so is the atomic itself on a Mac.
 
 `dEQP-VK.robustness.robustness2` stands on this wherever a format-qualified
 `r32i`/`r32ui` storage image takes an `imageAtomicAdd` at a deliberately out of
@@ -524,9 +539,44 @@ Nothing in the driver removes it. The neighbouring
 with a strictly larger shader -- three extra out-of-range-LOD `texelFetch`es per
 trip around the same nine samples -- and stays under the threshold in every run;
 that spacing is the margin a driver would have to buy back, and there is no
-per-sample work left in the generated MSL to remove. Both cases pass on an
-Apple9 host, where the whole `image_robustness` and `robustness2` family is
-clean.
+per-sample work left in the generated MSL to remove. Both cases pass on a Mac,
+where the whole `image_robustness` and `robustness2` family is clean.
+
+#### A long run of small render passes faults the GPU
+
+A process that has already pushed a few thousand small render passes through
+the device starts having single submissions killed, reported as the timeout
+above. `dEQP-VK.pipeline.*.render_to_image.core.{1d_array,2d_array}.huge.layers`
+stands on it: each of those cases renders one layer at a time into a 256-layer
+image, so it records 256 single-layer render passes of 44x23 (or 54x1), one
+draw each, into a single command buffer; the driver gives every render encoder
+its own `MTLCommandBuffer`, so one queue submit commits 257 of them. Fraction 05
+lost seven of those cases to six kills. A fourteen-case device rig covering the
+family reproduces it at nought to seven kills a run, and the kill always lands
+on the submission carrying the render passes, never on anything else.
+
+What it is not. Not the size of one Metal kick: committing the same command
+buffers in bounded batches changes nothing, and at one command buffer per
+commit a submission carrying a single 44x23 render pass is still killed. Not
+memory: the device's residency set holds ten or eleven allocations totalling
+1-5 MiB and Metal reports 22-29 MiB allocated, against a 2.8 GiB working-set
+budget. Not API misuse: with Metal API validation enabled the run reports no
+validation error and the kills continue. Not the pipeline construction type:
+`monolithic`, `pipeline_library` and `fast_linked_library` of the same case
+produce byte-identical work, 256 passes and 257 command buffers each, and which
+of them fails changes from run to run. Not fragment or tile work:
+`cube_array.huge.layers` does the most of both, 252 passes of 35x35, and has
+never failed in any run. Not the per-device geometry heap: raising it to
+256 MiB leaves the kills where they were.
+
+What it tracks is how much the process has already done. The four failing
+`2d_array` cases, run as the entire workload, pass in four consecutive runs
+with no kill at all; the same four fail whenever the five neighbouring cases
+have run before them in the same process, and the first run after the device
+has been idle is usually clean as well. Which submission the kill lands on is
+random -- the 65th and the 190th of 257 in one arm. Nothing in the driver has
+been found that removes it, and the whole family is clean on an Apple silicon
+Mac.
 
 #### Memory budget
 
