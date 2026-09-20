@@ -146,6 +146,7 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_X86_64_GUEST)
         native-4k-shadow-mmu
         emulator-native-4k-admission
         x86-64-gadget-bootstrap
+        x86-64-code-page-registry
         x86-64-instruction-corpus)
 endif()
 if(UML_BUILD_INTEGRATION_TESTS AND UML_BUILD_WINE_ARM64EC)
