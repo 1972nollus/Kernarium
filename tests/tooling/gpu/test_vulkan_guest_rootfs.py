@@ -782,7 +782,7 @@ class GuestRuntimeImporterTests(unittest.TestCase):
     def test_rejects_a_payload_that_does_not_match_its_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, receipt, target = self.fixture(Path(temporary))
-            with self.assertRaisesRegex(importer.ImportError_, "does not match"):
+            with self.assertRaisesRegex(importer.RuntimeImportError, "does not match"):
                 importer.install(source, receipt, target, "amd64")
             self.assertEqual(list(target.rglob("*")), [])
 
@@ -792,18 +792,18 @@ class GuestRuntimeImporterTests(unittest.TestCase):
             value = json.loads(receipt.read_text(encoding="utf-8"))
             value["artifact"] = "uml-vulkan-rootfs"
             receipt.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaisesRegex(importer.ImportError_, "not a guest Vulkan"):
+            with self.assertRaisesRegex(importer.RuntimeImportError, "not a guest Vulkan"):
                 importer.install(source, receipt, target, "amd64")
 
     def test_rejects_another_architecture_and_a_portability_driver(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, receipt, target = self.fixture(Path(temporary))
-            with self.assertRaisesRegex(importer.ImportError_, "describes amd64"):
+            with self.assertRaisesRegex(importer.RuntimeImportError, "describes amd64"):
                 importer.install(source, receipt, target, "arm64")
             value = json.loads(receipt.read_text(encoding="utf-8"))
             value["mesa"]["portability_driver"] = True
             receipt.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaisesRegex(importer.ImportError_, "portability driver"):
+            with self.assertRaisesRegex(importer.RuntimeImportError, "portability driver"):
                 importer.install(source, receipt, target, "amd64")
 
     def test_rejects_an_unnormalized_guest_path(self) -> None:
@@ -812,7 +812,7 @@ class GuestRuntimeImporterTests(unittest.TestCase):
             value = json.loads(receipt.read_text(encoding="utf-8"))
             value["vulkan_loader"]["runtime"]["path"] = "/usr/../etc/passwd"
             receipt.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaisesRegex(importer.ImportError_, "not a normalized"):
+            with self.assertRaisesRegex(importer.RuntimeImportError, "not a normalized"):
                 importer.install(source, receipt, target, "amd64")
 
 

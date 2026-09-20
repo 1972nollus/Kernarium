@@ -27,12 +27,12 @@ SCHEMA_VERSION = 1
 METADATA = "/usr/share/uml-vulkan/guest-runtime.json"
 
 
-class ImportError_(RuntimeError):
+class RuntimeImportError(RuntimeError):
     pass
 
 
 def fail(message: str) -> None:
-    raise ImportError_(message)
+    raise RuntimeImportError(message)
 
 
 def digest(path: Path) -> str:
@@ -134,7 +134,7 @@ def main(argv: list[str]) -> int:
                                  options.root.resolve(strict=True),
                                  options.architecture), indent=2))
     except (OSError, UnicodeError, KeyError, json.JSONDecodeError,
-            subprocess.CalledProcessError, ImportError_) as error:
+            subprocess.CalledProcessError, RuntimeImportError) as error:
         print(f"install-runtime.py: {error}", file=sys.stderr)
         return 1
     return 0

@@ -48,10 +48,12 @@ GUEST_ORACLE = "/usr/share/uml-vulkan/status-oracle.json"
 MULTIARCH_TRIPLETS = {
     "amd64": "x86_64-linux-gnu",
     "arm64": "aarch64-linux-gnu",
+    "i386": "i386-linux-gnu",
 }
 ELF_MACHINES = {
     "amd64": "Advanced Micro Devices X86-64",
     "arm64": "AArch64",
+    "i386": "Intel 80386",
 }
 DEFAULT_ARCHITECTURE = "arm64"
 EXPECTED_MESA_DRI_ALIASES = {
@@ -347,9 +349,17 @@ def output(
 
 
 def detect_virtualization(debian_architecture: str = DEFAULT_ARCHITECTURE) -> str:
-    """Name the native Debian environment the seal ran in."""
-    result = run(("systemd-detect-virt",), check=False)
-    kind = (result.stdout or b"").decode("utf-8", errors="replace").strip()
+    """Name the native Debian environment the seal ran in.
+
+    A minimal root can lack systemd entirely, which is not a reason to refuse
+    an otherwise complete audit; it is reported as an unknown environment.
+    """
+    try:
+        result = run(("systemd-detect-virt",), check=False)
+    except OSError:
+        kind = ""
+    else:
+        kind = (result.stdout or b"").decode("utf-8", errors="replace").strip()
     return f"native-{debian_architecture}-debian-{kind or 'unknown'}"
 
 
