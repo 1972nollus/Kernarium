@@ -22,8 +22,7 @@ bool wireNames(uml::platform::VideoCodec codec) noexcept
 {
     using enum uml::platform::VideoCodec;
     switch (codec) {
-    case h264: case hevc: case jpeg: return true;
-    case vp9: return false;
+    case h264: case hevc: case jpeg: case vp9: return true;
     }
     return false;
 }
@@ -35,7 +34,7 @@ std::uint32_t wireCodec(uml::platform::VideoCodec codec)
     case h264: return VIRTIO_VIDEO_FORMAT_H264;
     case hevc: return VIRTIO_VIDEO_FORMAT_HEVC;
     case jpeg: return VIRTIO_VIDEO_FORMAT_MJPEG;
-    case vp9: break;
+    case vp9: return VIRTIO_VIDEO_FORMAT_VP9;
     }
     throw std::invalid_argument("invalid codec");
 }
@@ -52,7 +51,7 @@ std::uint32_t wireProfile(uml::platform::VideoProfile profile)
     case hevcMain: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN;
     case hevcMain10: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN10;
     case jpegBaseline: return 0;
-    case vp9Profile0: break;
+    case vp9Profile0: return VIRTIO_VIDEO_PROFILE_VP9_PROFILE0;
     }
     throw std::invalid_argument("invalid video profile");
 }

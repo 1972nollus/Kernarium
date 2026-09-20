@@ -211,6 +211,13 @@ int main(int argc, char** argv)
                 decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
                 ++tested; continue;
             }
+            // VP9 states its profile in the stream itself, so the driver
+            // exposes no profile menu to walk: the advertised format is the
+            // whole capability.
+            if (fmt.pixelformat == V4L2_PIX_FMT_VP9) {
+                decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
+                ++tested; continue;
+            }
             require(fmt.pixelformat == V4L2_PIX_FMT_H264 || fmt.pixelformat == V4L2_PIX_FMT_HEVC, "advertised codec lacks a fixture");
             const bool avc = fmt.pixelformat == V4L2_PIX_FMT_H264;
             const unsigned id = avc ? V4L2_CID_MPEG_VIDEO_H264_PROFILE : V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;

@@ -11,4 +11,7 @@ imagery; the VP9 fixture is the same pattern losslessly re-encoded from
 The platform test decodes every profile advertised by the host and compares
 all output samples with the software-decoded reference. Hardware rounding may
 differ by two sample levels (four for JPEG). H.264 High10 and VP9 are exercised
-only on hosts whose hardware capability probe reports them.
+only on hosts whose hardware capability probe reports them. The guest V4L2
+probe uses the same VP9 fixture; VP9 states its profile in the stream, so the
+driver exposes no profile menu and the advertised format is the whole
+capability.
