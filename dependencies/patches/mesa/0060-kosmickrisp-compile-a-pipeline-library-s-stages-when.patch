@@ -1,4 +1,4 @@
-From 7864da4585d4fa2b399c6ec0f4d0d816f4f420a2 Mon Sep 17 00:00:00 2001
+From a05d215f816e9c4de3faf13cfdd0ca2f9586685d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 20:36:41 +0900
 Subject: [PATCH 060/105] kosmickrisp: compile a pipeline library's stages when

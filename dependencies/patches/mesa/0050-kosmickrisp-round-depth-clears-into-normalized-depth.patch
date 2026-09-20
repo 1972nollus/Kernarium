@@ -1,4 +1,4 @@
-From 1a1edb282dde016626e36deb6531cb8e3129b7f2 Mon Sep 17 00:00:00 2001
+From 21b111a76b9866b6f690a89f684b8c0d33509cbc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:35:49 +0900
 Subject: [PATCH 050/105] kosmickrisp: round depth clears into normalized depth

@@ -1,4 +1,4 @@
-From 2e4c5ce28746f12ba892ff9552bdb33d9438888e Mon Sep 17 00:00:00 2001
+From da3afedcffb034e8361792d6f9cc4fcbe877eaa8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 14:57:09 +0900
 Subject: [PATCH 029/105] kosmickrisp: implement pipeline statistics queries
@@ -765,7 +765,7 @@ index e90366d9..c1c5bd4c 100644
  
     if (save->desc0) {
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 8d48ef26..7baa9a78 100644
+index 426b2899..89639588 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -20,6 +20,7 @@
@@ -776,7 +776,7 @@ index 8d48ef26..7baa9a78 100644
  #include "vk_pipeline.h"
  
  #include "vulkan/vulkan_core.h"
-@@ -1191,9 +1192,75 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1204,9 +1205,75 @@ kk_nir_lower_descriptors(nir_shader *nir,
     return pass_lower_descriptors || pass_lower_ssbo;
  }
  
@@ -852,7 +852,7 @@ index 8d48ef26..7baa9a78 100644
     switch (intrin->intrinsic) {
     case nir_intrinsic_load_vs_outputs_poly:
        return lower_sysval_to_per_draw(b, intrin, vertex_outputs);
-@@ -1206,11 +1273,34 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1219,11 +1286,34 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
     case nir_intrinsic_load_index_size_poly:
        return lower_sysval_to_per_draw(b, intrin, index_size);
     case nir_intrinsic_load_stat_query_address_poly:
@@ -892,7 +892,7 @@ index 8d48ef26..7baa9a78 100644
     case nir_intrinsic_load_provoking_last:
        return lower_sysval_to_per_draw(b, intrin, provoking_last);
     case nir_intrinsic_load_rasterization_stream:
-@@ -1225,7 +1315,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1238,7 +1328,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return true;
     case nir_intrinsic_load_first_vertex:
        /* Lower only compute shaders */
@@ -901,7 +901,7 @@ index 8d48ef26..7baa9a78 100644
           uint32_t root_table_offset = kk_per_draw_offset(base_vertex_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1241,7 +1331,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1254,7 +1344,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return false;
     case nir_intrinsic_load_base_instance:
        /* Lower only compute shaders */
@@ -910,7 +910,7 @@ index 8d48ef26..7baa9a78 100644
           uint32_t root_table_offset = kk_per_draw_offset(base_instance_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1261,9 +1351,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1274,9 +1364,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
  }
  
  bool

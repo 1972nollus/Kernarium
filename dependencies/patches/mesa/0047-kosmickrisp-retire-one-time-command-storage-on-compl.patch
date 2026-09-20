@@ -1,4 +1,4 @@
-From 5f879b5b0b38d20dbdc5aba9cbe80d7945029362 Mon Sep 17 00:00:00 2001
+From 21f6d389aac8d3770092c376c8fd161ab46a0202 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 03:03:14 +0900
 Subject: [PATCH 047/105] kosmickrisp: retire one-time command storage on

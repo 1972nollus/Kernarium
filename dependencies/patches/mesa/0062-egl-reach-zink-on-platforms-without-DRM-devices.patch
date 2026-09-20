@@ -1,4 +1,4 @@
-From a907db3986bb1746eaa338b605e62c69043fd1b4 Mon Sep 17 00:00:00 2001
+From 4d5246eb43ae8be72c2d3860e296b1a3ac8ddb58 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:11:01 +0900
 Subject: [PATCH 062/105] egl: reach zink on platforms without DRM devices

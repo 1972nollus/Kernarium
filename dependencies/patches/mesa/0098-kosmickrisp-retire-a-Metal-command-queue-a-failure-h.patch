@@ -1,4 +1,4 @@
-From 486d36af8f7cc73286e60966dad3c1a99e77d1f1 Mon Sep 17 00:00:00 2001
+From a3df752899ac81e9dc46201c19e86f94c9f7cc0e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 11:34:29 +0900
 Subject: [PATCH 098/105] kosmickrisp: retire a Metal command queue a failure
