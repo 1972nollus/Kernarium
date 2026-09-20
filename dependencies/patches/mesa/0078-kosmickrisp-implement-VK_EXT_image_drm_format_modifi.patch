@@ -1,7 +1,7 @@
 From bc8cadc0bddf501b97c62355340f72d93f168e6f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:24:15 +0900
-Subject: [PATCH 078/103] kosmickrisp: implement
+Subject: [PATCH 078/104] kosmickrisp: implement
  VK_EXT_image_drm_format_modifier
 
 The Android 2025 baseline that VP_ANDROID_17_requirements inherits makes this
