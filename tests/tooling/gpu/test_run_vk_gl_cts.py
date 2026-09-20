@@ -1084,8 +1084,14 @@ registered_module=KHR-GLES3
         )
         self.assertEqual(cts.parse_qpa(terminated), {first: "Crash"})
 
-        with self.assertRaisesRegex(cts.CampaignError, "truncated"):
+        with self.assertRaisesRegex(cts.CampaignError, "no complete session"):
             cts.parse_qpa(qpa(qpa_result(first)).replace("#endSession\n", ""))
+        # A guest that continued its caselist in a fresh CTS session transports
+        # one document per session, read as one ordered result stream.
+        self.assertEqual(
+            cts.parse_qpa(qpa(qpa_result(first)) + qpa(qpa_result(second))),
+            {first: "Pass", second: "Pass"},
+        )
         with self.assertRaisesRegex(cts.CampaignError, "incomplete QPA"):
             cts.validate_qpa_union(qpa(qpa_result(first)), [first, second])
         with self.assertRaisesRegex(cts.CampaignError, "case order"):

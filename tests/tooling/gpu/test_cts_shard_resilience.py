@@ -906,6 +906,157 @@ printf 'final %s %s %s\\n' "$qpa_offset" "$qpa_segments" "$artifact_framed" \\
                 sorted(item.name for item in root.glob("*.gz*")), []
             )
 
+    def shell_region(self, launcher: str, first: str, last: str) -> str:
+        """The top-level statements from ``first`` up to (not into) ``last``."""
+
+        start = launcher.index(first)
+        end = launcher.index(last, start)
+        return launcher[start:end]
+
+    def test_a_session_that_ends_early_continues_the_rest_of_its_list(
+        self,
+    ) -> None:
+        """The defect: one ResourceError cost a fraction every case after it.
+
+        dEQP ends its whole session at the first resource error, so an iPad
+        fraction that met one at case 20,725 delivered 20,725 of 216,952
+        results and called that a finished session. The guest now runs the
+        remainder of the same enumerated order in a fresh CTS process: no case
+        is re-run, none is invented, and the host receives one ordered stream.
+        """
+
+        shell = shutil.which("sh")
+        self.assertIsNotNone(shell)
+        launcher = self.device_launcher()
+        region = self.shell_region(
+            launcher, "run_list=", "printf 'UML_VK_CTS_STATUS"
+        )
+        self.assertIn("--deqp-caselist-file=/run/uml-vk-cts/continue.txt", region)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binaries = root / "bin"
+            binaries.mkdir()
+            # dEQP is reached through runuser and timeout, which this host has
+            # neither of: both shims drop their own arguments and run the rest.
+            (binaries / "runuser").write_text(
+                '#!/bin/sh\nshift 3\nexec "$@"\n'
+            )
+            (binaries / "timeout").write_text(
+                '#!/bin/sh\nshift 3\nexec "$@"\n'
+            )
+            # The stub answers the first caselist with a session that stops at
+            # its third case, exactly as a resource error ends one.
+            (binaries / "deqp-vk").write_text(
+                f"#!{sys.executable}\n"
+                "import pathlib, sys\n"
+                "options = dict(\n"
+                "    argument.removeprefix('--deqp-').split('=', 1)\n"
+                "    for argument in sys.argv[1:] if '=' in argument\n"
+                ")\n"
+                "cases = pathlib.Path(options['caselist-file']).read_text()"
+                ".split()\n"
+                "state = pathlib.Path(options['archive-dir']) / 'sessions'\n"
+                "index = len(state.read_text().split()) if state.exists() else 0\n"
+                "state.write_text('x ' * (index + 1))\n"
+                "run = cases[:3] if index == 0 else cases\n"
+                "log = ['#sessionInfo releaseName 1.4.6.2', '#beginSession']\n"
+                "for position, case in enumerate(run):\n"
+                "    status = 'ResourceError' if index == 0 and position == 2 "
+                "else 'Pass'\n"
+                "    log.append(f'#beginTestCaseResult {case}')\n"
+                "    log.append(\n"
+                "        f'<TestCaseResult CasePath=\"{case}\">'\n"
+                "        f'<Result StatusCode=\"{status}\">ok</Result>'\n"
+                "        '</TestCaseResult>'\n"
+                "    )\n"
+                "    log.append('#endTestCaseResult')\n"
+                "log.append('#endSession')\n"
+                "pathlib.Path(options['log-filename']).write_text(\n"
+                "    '\\n'.join(log) + '\\n'\n"
+                ")\n"
+                "sys.exit(1 if index == 0 else 0)\n"
+            )
+            for name in ("runuser", "timeout", "deqp-vk"):
+                (binaries / name).chmod(0o755)
+            for name in ("expected.txt", "selected.txt"):
+                (root / name).write_text(
+                    "".join(f"{case}\n" for case in CASES)
+                )
+            (root / "results.qpa").write_text("")
+            harness = f"""set -eu
+output={root}
+qpa="$output/results.qpa"
+expected="$output/expected.txt"
+selected="$output/selected.txt"
+continuation="$output/continue.txt"
+cts_output="$output/cts-output.txt"
+progress_interval=1
+progress_timeout=0
+checkpoint_bytes=1048576
+checkpoint_failures=0
+progress_timed_out=0
+qpa_offset=0
+qpa_segments=0
+status=1
+cts_sessions=0
+cts_cases=0
+flush_qpa()
+{{
+    cat "$qpa" >> "$output/transported"
+    qpa_offset=$(wc -c < "$qpa" | tr -d ' ')
+    qpa_segments=$((qpa_segments + 1))
+    printf 'flush %s\n' "$qpa_offset" >> "$output/order"
+}}
+find_cts_process()
+{{
+    cts_process=
+}}
+cts_process_field()
+{{
+    printf '0'
+}}
+{region}
+# The exit path sends whatever the last session added, as finish() does.
+flush_qpa 1
+printf 'sessions=%s cases=%s status=%s\n' \
+    "$cts_sessions" "$cts_cases" "$status" > "$output/verdict"
+"""
+            (root / "harness.sh").write_text(
+                harness.replace(
+                    "/opt/vk-gl-cts/vulkan/deqp-vk", str(binaries / "deqp-vk")
+                ).replace("/opt/vk-gl-cts/vulkan", str(root)).replace(
+                    "/run/uml-vk-cts", str(root)
+                )
+            )
+            environment = dict(os.environ)
+            environment["PATH"] = f"{binaries}:{environment['PATH']}"
+            subprocess.run(
+                [shell, str(root / "harness.sh")],
+                check=True,
+                env=environment,
+                capture_output=True,
+            )
+            verdict = dict(
+                field.split("=", 1)
+                for field in (root / "verdict").read_text().split()
+            )
+            self.assertEqual(
+                verdict, {"sessions": "2", "cases": "7", "status": "1"}
+            )
+            # The continuation runs the traversal's remainder and nothing else.
+            self.assertEqual(
+                (root / "continue.txt").read_text().split(), list(CASES[3:])
+            )
+            results = gl.scan_qpa((root / "transported").read_text())
+            self.assertTrue(results.ended_session)
+            self.assertEqual(list(results.results), list(CASES))
+            self.assertEqual(results.results[CASES[2]], "ResourceError")
+            self.assertEqual(
+                [status for case, status in results.results.items()
+                 if case != CASES[2]],
+                ["Pass"] * (len(CASES) - 1),
+            )
+
     def test_the_summary_is_sent_last_even_after_a_failed_segment(self) -> None:
         """A fraction that lost results still reports its own verdict.
 

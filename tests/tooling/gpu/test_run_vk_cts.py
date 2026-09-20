@@ -267,8 +267,17 @@ class VulkanCtsToolingTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(cts.CampaignError, "duplicate"):
             cts.common.parse_qpa(qpa(qpa_result(cases[0]), qpa_result(cases[0])))
-        with self.assertRaisesRegex(cts.CampaignError, "truncated"):
+        with self.assertRaisesRegex(cts.CampaignError, "no complete session"):
             cts.common.parse_qpa(ordered.removesuffix("#endSession\n"))
+        # A guest whose CTS session ended early continues the same traversal in
+        # a fresh session, so the transported QPA is a sequence of documents.
+        continued = ordered.removesuffix("#endSession\n") + qpa(
+            qpa_result(self.identity["mandatory_cases"][2])
+        )
+        self.assertEqual(
+            list(cts.common.parse_qpa(continued)),
+            list(self.identity["mandatory_cases"][:3]),
+        )
 
     def test_capability_inventory_requires_operation_proof(self) -> None:
         inventory = {
@@ -357,6 +366,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "cts_rc=0\n"
                 "mode=smoke\n"
                 f"expected_case_count={len(selection.expected_cases)}\n"
+                "cts_sessions=1\n"
+                f"cts_cases_run={len(selection.expected_cases)}\n"
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
                 "formal_conformance=false\n"
@@ -432,6 +443,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "cts_rc=1\n"
                 "mode=current-must-pass\n"
                 f"expected_case_count={len(cases)}\n"
+                "cts_sessions=2\n"
+                f"cts_cases_run={len(cases)}\n"
                 "fraction=3,16\n"
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
@@ -1096,8 +1109,11 @@ class VulkanCtsToolingTests(unittest.TestCase):
             f"device_memory_mib=%s\\n' {cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB}",
             excluded,
         )
-        # The reported case count is what the guest will actually run.
-        self.assertIn('$(wc -l < "$selected" | tr -d \' \')', excluded)
+        # The reported case count is what the guest will actually run, taken
+        # once before any continuation rewrites the remaining selection.
+        self.assertIn("expected_case_count=%s", excluded)
+        self.assertIn("' \"${selected_count:-0}\" >> \"$summary\"", excluded)
+        self.assertIn('selected_count=$(wc -l < "$run_list" | tr -d \' \')', excluded)
         self.assertIn("skipped.txt", cts.common.ALLOWED_ARTIFACTS)
         for script in (plain, excluded):
             syntax = subprocess.run(
@@ -1223,7 +1239,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 )
                 stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                 try:
-                    _, report = device.run_campaign(options, log)
+                    _, report, _ = device.run_campaign(options, log)
                 except cts.common.CampaignError as error:
                     self.assertIn("stopped growing", str(error))
                     report = None
@@ -1235,7 +1251,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         for index in range(cts.APPLE_MUSTPASS_FRACTIONS):
             self.assertEqual(
                 cts.apple_mustpass_campaign(index),
-                f"vulkan-mustpass-{index:02d}of16-v2",
+                f"vulkan-mustpass-{index:02d}of16-v3",
             )
         with self.assertRaises(cts.CampaignError):
             cts.apple_mustpass_campaign(cts.APPLE_MUSTPASS_FRACTIONS)

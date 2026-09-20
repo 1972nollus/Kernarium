@@ -100,6 +100,11 @@ APPLE_MUSTPASS_PROGRESS_TIMEOUT = 1800
 # ceiling is the platform jetsam budget, not a choice: raising it trades the
 # guest reaper for the host one.
 APPLE_MUSTPASS_GUEST_MEMORY_MIB = 1536
+# dEQP ends its whole session at the first ResourceError, so one such case
+# otherwise costs a fraction every case after it. The guest continues the
+# remainder in a fresh process, at most this many processes in all.
+VULKAN_CTS_SESSION_LIMIT = 8
+CONTINUATION_CASELIST = "continue.txt"
 EXCLUSION_REASON = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
 
 
@@ -151,14 +156,15 @@ def apple_mustpass_campaign(index: int) -> str:
     """Name the campaign that runs fraction ``index`` of the released list.
 
     The version is part of the selection's identity: ``v2`` is the first
-    generation that applies ``DEVICE_EXCLUSIONS``.
+    generation that applies ``DEVICE_EXCLUSIONS``, and ``v3`` the first that
+    continues a fraction whose CTS session ended before the traversal did.
     """
 
     if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
         raise CampaignError(f"Vulkan mustpass fraction out of range: {index}")
     return (
         f"vulkan-mustpass-{index:02d}"
-        f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v2"
+        f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v3"
     )
 
 
@@ -715,11 +721,12 @@ def receipt_deqp_arguments(
     *,
     resume_after: int = 0,
     preselected: bool = False,
+    caselist: str = "selected.txt",
 ) -> tuple[str, ...]:
     install = receipt["cts"]["install_prefix"]
     arguments = [
         receipt["cts"]["executable"]["path"],
-        f"--deqp-caselist-file={output}/selected.txt",
+        f"--deqp-caselist-file={output}/{caselist}",
         f"--deqp-archive-dir={install}",
     ]
     # A resumed session executes an explicit suffix of the fraction the guest
@@ -1170,6 +1177,10 @@ def build_receipt_guest_launcher(
     if resume_after < 0 or checkpoint_bytes < 1 or progress_interval < 1:
         raise CampaignError("Vulkan shard resumption inputs are invalid")
     exclusions = validate_device_exclusions(device_exclusions)
+    # A fraction whose first session ends early is continued in fresh dEQP
+    # processes. The bound is on sessions, not on time: the whole run shares
+    # one deadline, so a continuation can only use what the first left.
+    continuation_limit = VULKAN_CTS_SESSION_LIMIT
     if exclusions and not selection.generated_expected:
         raise CampaignError(
             "device exclusions apply to an enumerated released fraction"
@@ -1221,8 +1232,29 @@ def build_receipt_guest_launcher(
         resume_after=resume_after,
         preselected=bool(exclusions),
     )
-    separator = " " + chr(92) + "\n    "
+    separator = " " + chr(92) + "\n        "
     quoted_command = separator.join(shlex.quote(argument) for argument in arguments)
+    # A continuation runs an explicit remainder of the traversal the guest has
+    # already enumerated, so the released fraction's own filter must not run
+    # again over it.
+    continuation_command = separator.join(
+        shlex.quote(argument)
+        for argument in receipt_deqp_arguments(
+            receipt,
+            selection,
+            output,
+            preselected=True,
+            caselist=CONTINUATION_CASELIST,
+        )
+    )
+    # The file whose order the guest's results follow. Only a released
+    # fraction that dEQP itself filters leaves that order in the enumerated
+    # list rather than in the selection handed to it.
+    run_list = (
+        '"$expected"'
+        if selection.generated_expected and not exclusions and not resume_after
+        else '"$selected"'
+    )
     if selection.generated_expected:
         selected_setup = (
             "cp "
@@ -1262,11 +1294,9 @@ chown uml:uml \"$selected\"
     exit 1
 }}
 """
-        expected_count = '$(wc -l < "$expected" | tr -d \' \')'
-        if resume_after:
-            expected_count = (
-                f'$(( {expected_count} - {resume_after} ))'
-            )
+        # The count is a snapshot of what this guest set out to run, taken
+        # before any continuation rewrites the remaining selection.
+        expected_count = '"${selected_count:-0}"'
         prerun_artifact_names = "renderer.txt selected.txt expected.txt"
         fraction_summary = (
             "    printf 'fraction=%s\\n' "
@@ -1303,7 +1333,7 @@ chown uml:uml \"$selected\"
                     "\"$expected\" || :)\n"
                 )
             expected_setup += 'chown uml:uml "$skipped"\n'
-            expected_count = '$(wc -l < "$selected" | tr -d \' \')'
+            expected_count = '"${selected_count:-0}"'
             prerun_artifact_names += " skipped.txt"
             fraction_summary += (
                 "    printf 'device_excluded=%s\\n' "
@@ -1338,9 +1368,9 @@ chown uml:uml \"$selected\"
                 'mv "$selected.resume" "$selected"\n'
                 'chown uml:uml "$selected"\n'
             )
-        expected_count = str(len(selection.expected_cases) - resume_after)
-        if int(expected_count) < 1:
+        if len(selection.expected_cases) - resume_after < 1:
             raise CampaignError("shard resumption selects no remaining cases")
+        expected_count = '"${selected_count:-0}"'
         prerun_artifact_names = "renderer.txt selected.txt"
         fraction_summary = ""
     verified_files = (
@@ -1404,11 +1434,13 @@ chown uml:uml \"$selected\"
         missing_source_status=1,
     )
     checkpoint_function = common.qpa_checkpoint_program()
+    continuation_caselist = CONTINUATION_CASELIST
     return f"""#!/bin/sh
 set -eu
 output={output}
 selected="$output/selected.txt"
 expected="$output/expected.txt"
+continuation="$output/{continuation_caselist}"
 {skipped_state}qpa="$output/results.qpa"
 renderer="$output/renderer.txt"
 summary="$output/summary.txt"
@@ -1425,6 +1457,9 @@ qpa_segments=0
 checkpoint_failures=0
 progress_timed_out=0
 status=1
+cts_sessions=0
+cts_cases=0
+selected_count=0
 
 prepare_channel()
 {{
@@ -1538,6 +1573,8 @@ finish()
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'mode=%s\n' {shlex.quote(selection.mode)} >> "$summary"
     printf 'expected_case_count=%s\n' {expected_count} >> "$summary"
+    printf 'cts_sessions=%s\n' "${{cts_sessions:-0}}" >> "$summary"
+    printf 'cts_cases_run=%s\n' "${{cts_cases:-0}}" >> "$summary"
 {fraction_summary}    printf 'forced_driver_file=%s\n' {shlex.quote(icd_path)} >> "$summary"
     printf 'receipt_sha256=%s\n' {shlex.quote(receipt_digest)} >> "$summary"
     printf 'formal_conformance=false\n' >> "$summary"
@@ -1604,12 +1641,31 @@ emit_prerun || {{
     exit 1
 }}
 
+run_list={run_list}
+selected_count=$(wc -l < "$run_list" | tr -d ' ')
+[ "$selected_count" -gt 0 ] || {{
+    echo 'UML_VK_CTS_ERROR: the guest selection is empty'
+    exit 1
+}}
 set +e
-runuser -u uml -- env \
-    HOME=/home/uml \
-{wsi_environment}    VK_DRIVER_FILES={shlex.quote(icd_path)} \
-    timeout --signal=TERM --kill-after=30 {timeout} \
-    {quoted_command} > "$cts_output" 2>&1 &
+deadline=$(( $(date +%s) + {timeout} ))
+while :; do
+    session_timeout=$(( deadline - $(date +%s) ))
+    [ "$session_timeout" -gt 0 ] || break
+    cts_sessions=$((cts_sessions + 1))
+    if [ "$cts_sessions" -eq 1 ]; then
+        runuser -u uml -- env \
+            HOME=/home/uml \
+{wsi_environment}            VK_DRIVER_FILES={shlex.quote(icd_path)} \
+            timeout --signal=TERM --kill-after=30 "$session_timeout" \
+            {quoted_command} >> "$cts_output" 2>&1 &
+    else
+        runuser -u uml -- env \
+            HOME=/home/uml \
+{wsi_environment}            VK_DRIVER_FILES={shlex.quote(icd_path)} \
+            timeout --signal=TERM --kill-after=30 "$session_timeout" \
+            {continuation_command} >> "$cts_output" 2>&1 &
+    fi
 cts_pid=$!
 last_qpa_size=0
 stalled_seconds=0
@@ -1662,12 +1718,44 @@ while kill -0 "$cts_pid" 2>/dev/null; do
         break
     fi
 done
-if [ "$progress_timed_out" -eq 1 ]; then
-    status=124
-else
-    wait "$cts_pid"
-    status=$?
-fi
+    if [ "$progress_timed_out" -eq 1 ]; then
+        session_status=124
+    else
+        wait "$cts_pid"
+        session_status=$?
+    fi
+    session_cases=$(grep -c '^#endTestCaseResult' "$qpa")
+    [ -n "$session_cases" ] || session_cases=0
+    cts_cases=$((cts_cases + session_cases))
+    # The first non-zero status owns the fraction, so a continuation that runs
+    # clean never hides the session that did not.
+    if [ "$cts_sessions" -eq 1 ] || [ "$status" -eq 0 ]; then
+        status=$session_status
+    fi
+    [ "$progress_timed_out" -eq 0 ] || break
+    [ "$cts_cases" -lt "$selected_count" ] || break
+    [ "$cts_sessions" -lt {continuation_limit} ] || break
+    # A session that transported no new result cannot be continued past
+    # whatever stopped it, so the shard ends rather than looping on it.
+    [ "$session_cases" -gt 0 ] || break
+    # dEQP ends its whole session at a resource error, so every case after one
+    # goes unrun. Send this session's results, release its log, and run the
+    # remainder of the same traversal in a fresh process: nothing is re-run,
+    # nothing is invented, and the host receives one ordered result stream.
+    flush_qpa 0
+    qpa_size_now=$(wc -c < "$qpa" | tr -d ' ')
+    [ "$qpa_offset" -eq "$qpa_size_now" ] || break
+    tail -n +$((session_cases + 1)) "$run_list" > "$continuation.next" || break
+    mv "$continuation.next" "$continuation" || break
+    chown uml:uml "$continuation"
+    run_list="$continuation"
+    [ -s "$run_list" ] || break
+    : > "$qpa"
+    chown uml:uml "$qpa"
+    qpa_offset=0
+    printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\n' \
+        "$((selected_count - cts_cases))"
+done
 set -e
 printf 'UML_VK_CTS_STATUS|rc=%s\n' "$status"
 exit "$status"
@@ -1961,6 +2049,22 @@ def validate_receipt_attempt(
         expected_summary["provenance"] = "host-merged"
         expected_summary["sessions"] = str(session_count)
     cts_rc = summary.pop("cts_rc", None)
+    # dEQP ends its whole session at a resource error, so a guest continues
+    # the remainder of the same ordered caselist in a fresh CTS process. How
+    # many processes that took, and how many cases they produced, is evidence
+    # about this guest rather than a fixed expectation: the union against the
+    # enumerated fraction is what decides completeness, and a shard the host
+    # resumed carries only its last guest's counters here.
+    cts_sessions = summary.pop("cts_sessions", "")
+    cts_cases_run = summary.pop("cts_cases_run", "")
+    if not cts_sessions.isdigit() or not (
+        1 <= int(cts_sessions) <= VULKAN_CTS_SESSION_LIMIT
+    ):
+        raise CampaignError("receipt-backed CTS states no guest session count")
+    if not cts_cases_run.isdigit() or not (
+        0 < int(cts_cases_run) <= len(expected_cases)
+    ):
+        raise CampaignError("receipt-backed CTS states no guest case count")
     allowed_return_codes = (
         {"0", "1"} if selection.generated_expected else {"0"}
     )

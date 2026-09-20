@@ -206,6 +206,36 @@ output layout, and the counter survives across draws, so every term of that
 derivation is application state. Each store recomputes its own extent and drops
 a write that would leave the bound range.
 
+### Host-visible memory is bounded by the blob aperture
+
+Host-visible Vulkan memory never becomes guest pages. The renderer allocates it
+as host shared memory and the device maps it into the guest's blob aperture,
+which is one fixed guest-physical region of
+`protocol::hostVisibleSharedMemoryRegionSize`. That constant and the kernel's
+`UML_VHOST_USER_SHMEM_SIZE` are one value, because `uml_vhost_user_shmem_claim`
+refuses a region of any other size; changing it is a change to both maintained
+kernel lines as well as to the host.
+
+The aperture, not host memory, is therefore what bounds host-visible Vulkan
+memory, and the renderer advertises it that way: the synthesized host-visible
+memory type gets its own heap whose size is the aperture, the same split a
+discrete GPU makes between its VRAM and the visible window into it. Heap
+budgets the host driver reports are mapped onto those heaps and bounded by
+them. Without that split a guest sizes its largest host-visible mapping from
+the host's whole system memory and asks for a mapping the aperture can never
+place.
+
+The peak the aperture must hold is larger than the mapping itself. The guest's
+blob allocator releases an aperture node only after the host has retired the
+resource, which takes one transport round trip, so a guest that allocates,
+maps and frees in a loop keeps the previous node resident while the next one is
+placed: two nodes concurrently on an idle host, and more where the host's
+retirement lags further behind. An aperture that cannot place the next node
+fails the blob at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, which a
+conformance run reports as a session-ending `ResourceError`. A host-visible
+heap of one aperture therefore leaves a mapping of a quarter of it usable with
+room to spare.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route. Its GLES stack
