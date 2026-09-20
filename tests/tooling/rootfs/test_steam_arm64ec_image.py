@@ -34,8 +34,10 @@ assert spec and spec.loader
 image = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(image)
 boot = load_tool("steam_boot", "tools/rootfs/steam-arm64ec/boot.py")
-storage = load_tool("steam_storage", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-storage.py")
-installer = load_tool("steam_installer", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-steam.py")
+# The storage and command-line contract is shared with the x86-64 appliance.
+launcher = boot.launcher
+storage = load_tool("steam_storage", "tools/rootfs/steam-common/overlay/usr/local/libexec/kernarium-storage.py")
+installer = load_tool("steam_installer", "tools/rootfs/steam-common/overlay/usr/local/libexec/kernarium-steam.py")
 compat = load_tool("steam_compat", "tools/rootfs/steam-arm64ec/overlay/usr/local/libexec/kernarium-compat.py")
 
 
@@ -203,7 +205,7 @@ class PersistentStorage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             disk = Path(directory) / "userdata.img"
             disk.write_bytes(b"existing user data")
-            with patch.object(boot, "disk_command", return_value="Invalid GPT"):
+            with patch.object(launcher, "disk_command", return_value="Invalid GPT"):
                 with self.assertRaisesRegex(ValueError, "GPT is invalid"):
                     boot.prepare_disk(disk, 32)
             self.assertEqual(disk.read_bytes(), b"existing user data")
@@ -212,7 +214,7 @@ class PersistentStorage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             disk = Path(directory) / "userdata.img"
             disk.write_bytes(b"existing user data")
-            with patch.object(boot, "disk_command", side_effect=[
+            with patch.object(launcher, "disk_command", side_effect=[
                     "No problems found", "   1 2048 8388574 4.0 GiB 8300 kernarium-data"]):
                 boot.prepare_disk(disk, 64)
             self.assertEqual(disk.read_bytes(), b"existing user data")

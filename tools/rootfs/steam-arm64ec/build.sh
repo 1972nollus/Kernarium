@@ -4,6 +4,8 @@
 set -euo pipefail
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$here/../../.." && pwd)
+# Storage, session and splash assets shared with the pure x86-64 appliance.
+shared=$(CDPATH= cd -- "$here/../steam-common" && pwd)
 usage()
 {
 	printf '%s\n' 'Usage: build.sh --inputs PATH --proton PATH --work ABSENT_PATH --output ABSENT_PATH.erofs [--vulkan-root PATH --vulkan-receipt PATH]'
@@ -39,6 +41,7 @@ mkdir -p "$work/root" "$(dirname "$output")"
 work=$(realpath "$work")
 root=$work/root
 sudo -n tar -xf "$inputs/base.tar.zst" -C "$root"
+sudo -n cp -a "$shared/overlay/." "$root/"
 sudo -n cp -a "$here/overlay/." "$root/"
 sudo -n install -d "$root/opt"
 sudo -n cp -a "$proton" "$root/opt/proton-uml-arm64ec"
@@ -130,7 +133,7 @@ sdk=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdk"])
 "$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
 	-v "$repository:$repository:ro" -v "$work:$work" "$sdk" \
 	sh -eu -c 'cd "$1/splash"; cmake --preset steam-sdk -B "$2/splash-build"; cmake --build "$2/splash-build"' \
-	sh "$here" "$work"
+	sh "$shared" "$work"
 sudo -n install -m 0755 "$work/splash-build/kernarium-screen" "$root/usr/local/libexec/kernarium-screen"
 "$here/offline-podman.sh" run --rm -u "$(id -u):$(id -g)" -e CCACHE_DISABLE=1 \
 	-v "$repository:$repository:ro" -v "$work:$work" "$sdk" \

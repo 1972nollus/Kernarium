@@ -28,7 +28,8 @@ def main() -> None:
     recorded = json.loads((args.inputs / "inputs.json").read_text())
     sources = [repository / "darwin/runtime/wine_cpu_protocol.h",
                repository / "dependencies/prepare.sh", here.parent / "wine-arm64ec/verify-pe.py"]
-    for directory in (here, here.parent / "wine-arm64ec/bridge", here.parent / "wine-arm64ec/wow64-bridge",
+    for directory in (here, here.parent / "steam-common",
+                      here.parent / "wine-arm64ec/bridge", here.parent / "wine-arm64ec/wow64-bridge",
                       here.parent / "wine-arm64ec/smoke", repository / "dependencies/steam-arm64ec"):
         sources += sorted(path for path in directory.rglob("*") if path.is_file() and path.name != "README.md")
     recorded["producer_sources"] = {path.relative_to(repository).as_posix(): digest(path) for path in sources}
