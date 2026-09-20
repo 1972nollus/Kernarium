@@ -454,7 +454,13 @@ def guest_utc_offset(report: dict[str, str]) -> int:
 
 def bootstrap_phases(log: str, realtime_shift: float,
                      utc_offset: int) -> dict[str, object]:
-    """Extract Steam's own update phases from its unmodified bootstrap log."""
+    """Extract Steam's own update phases from its unmodified bootstrap log.
+
+    The log lives on the retained data disk, so a later boot still reads what
+    every earlier boot did. Those lines land before this boot began, and
+    reporting them would credit a second boot with a download it never
+    performed. Only lines inside the boot being measured are read.
+    """
     phases: dict[str, object] = {}
     downloads: list[tuple[float, int, int]] = []
     markers = (
@@ -475,6 +481,8 @@ def bootstrap_phases(log: str, realtime_shift: float,
         except ValueError:
             continue
         at = seconds + realtime_shift
+        if at < 0:
+            continue
         progress = BOOTSTRAP_DOWNLOAD.search(line)
         if progress:
             downloads.append((
