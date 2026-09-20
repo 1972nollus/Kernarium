@@ -53,6 +53,24 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
+The window is a reservation, and it never returns address space to the process
+while the VM lives. It is created once as a single `PROT_NONE MAP_NORESERVE`
+anonymous mapping, guest pages are mapped over it with `MAP_FIXED`, and
+releasing one hands its range back to that reservation instead of unmapping it:
+one mapping call, no committed pages, and the replacement is atomic. `munmap`
+would delete the reservation along with the mapping and leave a free gap inside
+the window. Darwin's allocation hint follows the most recently freed range, so
+on iOS - where the host chooses the window's address and it therefore sits in
+the band the system allocators draw from - such a gap is not merely available to
+an unrelated `mmap(NULL)` or `mach_vm_allocate(ANYWHERE)` but preferred by it.
+Either party then destroys the other in silence: the guest's next `MAP_FIXED`
+replaces the new owner's memory and still reports success, and that owner's own
+release removes live guest mappings the guest never asked to drop. The window's
+map entries are bounded by its geometry rather than by how often the guest maps,
+because re-mapping a released range replaces its entry instead of adding one.
+Domain retirement follows the same rule: it ends one address space, not the
+process, and a later one maps the same window.
+
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.

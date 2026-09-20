@@ -47,6 +47,23 @@ private:
 [[nodiscard]] void *map_shared_backing(void *address, std::size_t length,
 	int protection, int flags, int fd, std::uint64_t offset) noexcept;
 
+/* Remove a mapping inside a reserved guest window without giving the address
+ * range back to the process.
+ *
+ * The window is one PROT_NONE MAP_NORESERVE reservation, and guest pages are
+ * mapped over it with MAP_FIXED. munmap would delete the reservation with the
+ * mapping and leave a genuine free gap that any unrelated mmap(NULL) or
+ * mach_vm_allocate(ANYWHERE) in this process may be given - and Darwin's
+ * allocation hint follows the most recently freed range, so it is not merely
+ * possible but preferred. A single MAP_FIXED PROT_NONE anonymous mapping
+ * replaces the range atomically, costs the same one syscall, commits no pages,
+ * and keeps the window fully reserved at every instant.
+ *
+ * Returns 0 on success and -1 with errno set otherwise; the range is left
+ * mapped, not released, on failure. */
+[[nodiscard]] int reserve_host_range(
+	void *address, std::size_t length) noexcept;
+
 /* Translate a Mach failure into the errno the kernel reads. An exhausted host
  * must arrive as ENOMEM, which is the only value that makes the kernel say the
  * host ran out rather than retry an address it believes is merely bad. */

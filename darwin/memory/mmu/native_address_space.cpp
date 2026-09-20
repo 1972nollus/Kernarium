@@ -689,7 +689,14 @@ public:
 				page += host_page_size();
 			} while (page < end && owners_.contains(page));
 			mmu_trace_live_stacks("unmap-direct", run, page - run);
-			if (munmap(reinterpret_cast<void *>(run), page - run) != 0) {
+			/* Hand the run back to the window's reservation rather
+			 * than to the process. munmap here would leave a free
+			 * gap inside the guest window that an unrelated host
+			 * allocation may be given, after which the next guest
+			 * MAP_FIXED silently replaces it and its owner's own
+			 * release removes live guest mappings. */
+			if (reserve_host_range(reinterpret_cast<void *>(run),
+				    page - run) != 0) {
 				/* A mapping the kernel believes it removed but the
 				 * host still serves outlives the page table that
 				 * named it, so say so rather than only failing. */
@@ -851,13 +858,17 @@ public:
 			return -1;
 		}
 		mmu_trace_live_stacks("release-shadow", slot, host_page_size());
-		if (munmap(reinterpret_cast<void *>(slot), host_page_size()) != 0)
+		if (reserve_host_range(reinterpret_cast<void *>(slot),
+			    host_page_size()) != 0)
 			return -1;
 		owners_.erase(found);
 		return 0;
 	}
 #endif
 
+	/* Retirement ends one domain, not the process, and a later domain maps
+	 * the same window. Its pages go back to the window's reservation for the
+	 * same reason an ordinary unmap's do. */
 	void retire(std::uint64_t owner) noexcept
 	{
 		std::lock_guard lock{mutex_};
@@ -871,7 +882,8 @@ public:
 			#endif
 				(void)msync(reinterpret_cast<void *>(position->first),
 					host_page_size(), MS_SYNC);
-			(void)munmap(reinterpret_cast<void *>(position->first),
+			(void)reserve_host_range(
+				reinterpret_cast<void *>(position->first),
 				host_page_size());
 			position = owners_.erase(position);
 		}

@@ -182,7 +182,7 @@ struct AnonymousTail final {
 		MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (root == MAP_FAILED) {
 		if (tail.address != nullptr)
-			(void)munmap(tail.address, tail.length);
+			(void)reserve_host_range(tail.address, tail.length);
 		return MAP_FAILED;
 	}
 #if UML_WIRE_ANONYMOUS_GUEST_RAM
@@ -207,9 +207,9 @@ struct AnonymousTail final {
 			"Darwin anonymous guest RAM: failed to wire the direct "
 			"physical window, errno=%d; refusing lazy guest RAM\n",
 			saved_errno);
-		(void)munmap(root, length);
+		(void)reserve_host_range(root, length);
 		if (tail.address != nullptr)
-			(void)munmap(tail.address, tail.length);
+			(void)reserve_host_range(tail.address, tail.length);
 		errno = saved_errno;
 		return MAP_FAILED;
 	}
@@ -231,6 +231,16 @@ struct AnonymousTail final {
 	anonymous_backing.root = reinterpret_cast<void *>(physical_root);
 	anonymous_backing.size = backing_size;
 	return root;
+}
+
+/* Undo a half-built alias. Every MAP_FIXED caller of this file maps inside the
+ * reserved guest window, so a fixed range is handed back to the window's
+ * reservation rather than to the process; an anywhere alias is this call's own
+ * allocation and is released outright. */
+int release_alias(void *address, std::size_t length, bool fixed) noexcept
+{
+	return fixed ? reserve_host_range(address, length) :
+		munmap(address, length);
 }
 
 [[nodiscard]] void *map_anonymous_alias(void *address, std::size_t length,
@@ -288,7 +298,8 @@ struct AnonymousTail final {
 	if (result != KERN_SUCCESS ||
 	    (fixed && target != reinterpret_cast<vm_address_t>(address))) {
 		if (result == KERN_SUCCESS)
-			(void)munmap(reinterpret_cast<void *>(target), length);
+			(void)release_alias(
+				reinterpret_cast<void *>(target), length, fixed);
 		errno = mach_failure_errno(result);
 		report_mapping_failure("guest RAM alias", address, length, errno);
 		return MAP_FAILED;
@@ -296,7 +307,7 @@ struct AnonymousTail final {
 	void *mapped = reinterpret_cast<void *>(target);
 	if (mprotect(mapped, length, protection) != 0) {
 		const int saved_errno = errno;
-		(void)munmap(mapped, length);
+		(void)release_alias(mapped, length, fixed);
 		errno = saved_errno;
 		report_mapping_failure("guest RAM alias protect", address, length,
 			saved_errno);
@@ -407,6 +418,25 @@ SharedBackingView acquire_shared_backing_view(int fd,
 	if (mapping == MAP_FAILED)
 		return {};
 	return SharedBackingView{mapping, length, true};
+}
+
+int reserve_host_range(void *address, std::size_t length) noexcept
+{
+	if (length == 0)
+		return 0;
+	void *reserved = mmap(address, length, PROT_NONE,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+	if (reserved == MAP_FAILED)
+		return -1;
+	if (reserved != address) {
+		/* MAP_FIXED cannot answer with a different address. Release only
+		 * what this call created rather than leave a second mapping
+		 * behind, and report the impossible answer as a failure. */
+		(void)munmap(reserved, length);
+		errno = EFAULT;
+		return -1;
+	}
+	return 0;
 }
 
 void *map_shared_backing(void *address, std::size_t length,

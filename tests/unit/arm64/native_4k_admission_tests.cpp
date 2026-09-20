@@ -95,21 +95,17 @@ public:
 		return base_ + DARWIN_UML_GUEST_PAGE_SIZE;
 	}
 
-	void require_absent() const
+	void require_released() const
 	{
-		require(absent(),
+		require(released(),
 			"native admission slot remained mapped after run");
 	}
 
-	[[nodiscard]] bool absent() const noexcept
+	/* Retirement hands the slot back to the guest window's reservation, not
+	 * to the process, so the slot carries no mapping and is not free. */
+	[[nodiscard]] bool released() const noexcept
 	{
-		mach_vm_address_t probe = base_;
-		if (mach_vm_allocate(mach_task_self(), &probe, size_,
-			    VM_FLAGS_FIXED) != KERN_SUCCESS)
-			return false;
-		const bool exact = probe == base_;
-		return mach_vm_deallocate(mach_task_self(), probe, size_) ==
-			KERN_SUCCESS && exact;
+		return uml::testing::released_into_native_window(base_, size_);
 	}
 
 private:
@@ -203,7 +199,7 @@ void before_gate_release(void *opaque) noexcept
 		value == state.retiring_value;
 	const bool retired =
 		uml::memory::testing::native_domain_count() == 0 &&
-		state.retiring_slot != nullptr && state.retiring_slot->absent() &&
+		state.retiring_slot != nullptr && state.retiring_slot->released() &&
 		backing_flushed;
 	{
 		std::lock_guard lock{state.mutex};
@@ -334,7 +330,7 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 		"serialized same-address kernels flushed the wrong backing");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"same-address serialization retained a native MMU domain");
-	slot.require_absent();
+	slot.require_released();
 }
 
 void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
@@ -409,7 +405,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 		"queued stop or retry crossed native backing bytes");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"queued stop or retry retained a native MMU domain");
-	slot.require_absent();
+	slot.require_released();
 }
 
 } // namespace

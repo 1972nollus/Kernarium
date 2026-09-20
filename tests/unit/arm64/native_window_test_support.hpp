@@ -114,4 +114,38 @@ private:
 		KERN_SUCCESS;
 }
 
+/* A window range the guest has released. The guest window never hands address
+ * space back to the process, so a released range is the window's own
+ * protectionless reservation: no mapping the guest can fault on, and no free
+ * gap the host can give to an unrelated allocation. A range that was never
+ * mapped stays absent instead, which is what the absence probes still mean. */
+[[nodiscard]] inline bool released_into_native_window(
+	std::uintptr_t address, std::size_t length) noexcept
+{
+	mach_vm_address_t cursor = address;
+	const mach_vm_address_t end = address + length;
+	while (cursor < end) {
+		mach_vm_address_t region = cursor;
+		mach_vm_size_t region_size = 0;
+		vm_region_basic_info_data_64_t information{};
+		mach_msg_type_number_t information_count =
+			VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const auto status = mach_vm_region(mach_task_self(), &region,
+			&region_size, VM_REGION_BASIC_INFO_64,
+			reinterpret_cast<vm_region_info_t>(&information),
+			&information_count, &object);
+		if (object != MACH_PORT_NULL)
+			(void)mach_port_deallocate(mach_task_self(), object);
+		/* A region starting past the cursor leaves a free gap, and a
+		 * region with any protection is still a live mapping. */
+		if (status != KERN_SUCCESS || region > cursor ||
+		    region_size == 0 || region + region_size <= cursor ||
+		    information.protection != VM_PROT_NONE)
+			return false;
+		cursor = region + region_size;
+	}
+	return true;
+}
+
 } // namespace uml::testing
