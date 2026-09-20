@@ -256,6 +256,19 @@ Darwin refuses to install an arriving `SCM_RIGHTS` once that table is full and
 reports the refusal as `EMSGSIZE` on the read, which the transport reports as
 the descriptor exhaustion it is rather than as an over-long message.
 
+A lost backend retires the device rather than being warned about. A virtqueue
+call or kick descriptor, or the backend request stream, that reports end of
+file or an error which is not a would-block means the backend is gone: the
+guest stops that interrupt source at once, reports it once per queue naming the
+device, and hands the device to the connection-broken path, which breaks its
+virtqueues and unregisters it so that pending and later requests fail instead
+of waiting for completions that cannot arrive. Stopping the source cannot wait
+for that teardown, because a host read registration is level triggered and a
+descriptor at end of file stays readable: its handler would otherwise be
+re-entered until it consumed a whole vCPU, which no amount of disabling the
+interrupt line prevents. A would-block still ends an ordinary pass, so a
+healthy device and a spurious wake are unaffected.
+
 The Apple graphics path is:
 
 ```text

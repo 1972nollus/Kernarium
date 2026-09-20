@@ -1,7 +1,7 @@
 From a34224c35a467adfba4f881d8b7e03f7238272bd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 4 Aug 2026 12:44:59 +0900
-Subject: [PATCH 14/30] virtio: uml: use a 64-bit DMA mask for vhost-user
+Subject: [PATCH 14/31] virtio: uml: use a 64-bit DMA mask for vhost-user
  transports
 
 Vhost-user transports guest physical addresses as 64-bit values and maps the complete UML memory table in the userspace backend. The default platform-device mask is only 32 bits, which rejects valid virtio-gpu backing pages once memory pressure moves them above 4 GiB.

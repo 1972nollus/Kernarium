@@ -1,7 +1,7 @@
 From 34120678a8daced90560ac0061a96c1febd58308 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:22:39 +0000
-Subject: [PATCH 21/30] UML-DARWIN-LOCAL: um: receive Darwin user network
+Subject: [PATCH 21/31] UML-DARWIN-LOCAL: um: receive Darwin user network
  frames with NAPI
 
 The driver drained up to 64 frames straight from the interrupt handler. The
