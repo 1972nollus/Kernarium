@@ -147,11 +147,15 @@ public:
 		return true;
 	}
 
-	void invalidate_code(std::uint64_t) override
+	/* A publication is where the MMU moves a page's code stamp; an ordinary
+	 * guest store does not move it. A reader validating on the stamp alone
+	 * therefore keeps its translation of a page nobody published. */
+	void invalidate_code(std::uint64_t address) override
 	{
 		++invalidations_;
 		if (code_changes_ != nullptr)
 			++*code_changes_;
+		bump_code_stamps(address, 1);
 	}
 	void set_executable_page(std::uint64_t address) noexcept
 	{
@@ -584,6 +588,216 @@ read_moving_code_sequences(void *opaque) noexcept
 		"a moving code-change sequence retranslated an untouched program") &&
 		expect(diagnostics.validation_stamp_hits != 0,
 			"a moving code-change sequence never reached the page stamp");
+}
+
+/* A native program owes one code-change publication per executable page it
+ * stores into. Suppressing a later store to a page it has already published is
+ * deliberate -- the published record is page granular, and the writer cools its
+ * own cached blocks by exact range on every store -- but a store to a
+ * different page has no record of its own, and the page stamp another vCPU
+ * validates against never moves.
+ */
+[[nodiscard]] bool slow_executable_writes_publish_every_code_page()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.set_every_page_executable(true);
+	std::array<std::byte, 16> bytes{};
+	bytes.fill(std::byte{0x55});
+	gadgets::NativeExecutionContext context{
+		.memory = &memory,
+	};
+	const auto first = gadgets::uml_x86_64_gadget_bulk_store(
+		&context, 0x800, bytes.data(), bytes.size());
+	const auto second = gadgets::uml_x86_64_gadget_bulk_store(
+		&context, 0x1800, bytes.data(), bytes.size());
+	/* And back inside the page just published, which still owes nothing. */
+	const auto repeated = gadgets::uml_x86_64_gadget_bulk_store(
+		&context, 0x1820, bytes.data(), bytes.size());
+	return expect(first == 1 && second == 1 && repeated == 1,
+		"slow executable stores did not complete") &&
+		expect(memory.invalidations() == 2 &&
+			context.code_publications == 2,
+			"a slow store to a second code page published nothing") &&
+		expect(memory.byte(0x800) == 0x55 && memory.byte(0x1800) == 0x55 &&
+			memory.byte(0x1820) == 0x55,
+			"slow executable stores lost guest bytes");
+}
+
+/* One store, two pages: a `rep movs` of code over a page boundary, or a
+ * relocating loader's wide write. Both halves need their own record. */
+[[nodiscard]] bool a_slow_store_across_a_page_boundary_publishes_both_pages()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.set_every_page_executable(true);
+	std::array<std::byte, 16> bytes{};
+	bytes.fill(std::byte{0x5a});
+	gadgets::NativeExecutionContext context{
+		.memory = &memory,
+	};
+	const auto stored = gadgets::uml_x86_64_gadget_bulk_store(
+		&context, 0x1000 - 8, bytes.data(), bytes.size());
+	return expect(stored == 1, "crossing slow store did not complete") &&
+		expect(memory.invalidations() == 2 &&
+			context.code_publications == 2,
+			"a store spanning two code pages published only one") &&
+		expect(memory.byte(0xff8) == 0x5a && memory.byte(0x1007) == 0x5a,
+			"crossing slow store lost guest bytes");
+}
+
+/* The same rule on the engine's own path, where the write translation carries
+ * the decision: cold, through the miss handler, and warm, where a repeat store
+ * to an already-published page skips the publication call outright. The middle
+ * store is a vector form, which the ordinary bank serves, so the register-baked
+ * bank and the hand-written one each have to cross a page here.
+ */
+[[nodiscard]] bool native_executable_stores_publish_every_code_page()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* MOV byte ptr [RAX], 0x7f; MOVD dword ptr [RCX], XMM0;
+	 * MOV byte ptr [RAX], 0x6e; SYSCALL -- page 0, page 1, page 0 again. */
+	memory.load(0, {
+		0xc6, 0x00, 0x7f,
+		0x66, 0x0f, 0x7e, 0x01,
+		0xc6, 0x00, 0x6e,
+		0x0f, 0x05,
+	});
+	memory.load(0x1000, {0x0f, 0x05});
+	memory.load(0x1800, {0xff, 0xff, 0xff, 0xff});
+	memory.set_every_page_executable(true);
+	gadgets::Executor writer;
+	writer.prepare(memory, 21, 1, 1);
+	gadgets::Executor reader;
+	reader.prepare(memory, 21, 1, 1);
+	const auto other = reader.select_program(
+		memory, 0x1000, ExecutionMode::long64);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(other.program != nullptr && block.program != nullptr,
+		"two-page publication setup did not cache both pages"))
+		return false;
+
+	const auto run = [&] {
+		CpuState cpu{};
+		cpu.gpr(Register::rax) = 0x800;
+		cpu.gpr(Register::rcx) = 0x1800;
+		return gadgets::execute(*block.program, cpu, memory, writer, 64);
+	};
+	const auto cold = run();
+	if (!expect(cold.event == uml::cpu::EngineEvent::system_call &&
+			cold.retired_instructions == 4,
+		"two-page publication block did not run") ||
+		!expect(memory.invalidations() == 3,
+			"a native store to a second code page published nothing"))
+		return false;
+	const auto warm = run();
+	return expect(warm.event == uml::cpu::EngineEvent::system_call &&
+		warm.retired_instructions == 4,
+		"warm two-page publication block did not run") &&
+		expect(memory.invalidations() == 6,
+			"a warm native store to a second code page published nothing") &&
+		expect(memory.byte(0x800) == 0x6e && memory.dword(0x1800) == 0,
+			"two-page publication block lost its guest stores");
+}
+
+/* A publication is owed once per page per program, and a program ends where a
+ * followed link settles its publications with the address space and clears
+ * what it owes. The page it published must stop counting as published there
+ * too, or the rule quietly becomes once per page per native run and a store
+ * after the link inherits a record it was never covered by.
+ */
+[[nodiscard]] bool a_settled_link_owes_its_page_a_fresh_publication()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* MOV byte ptr [RAX], 0x7f; JMP +8 -- then the same store again. */
+	memory.load(0, {0xc6, 0x00, 0x7f, 0xe9, 0x08, 0x00, 0x00, 0x00});
+	memory.load(16, {0xc6, 0x00, 0x6e, 0x0f, 0x05});
+	memory.set_executable_page(0);
+	TestCodeSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor executor;
+	executor.prepare(memory, 25, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto target = executor.select_program(
+		memory, 16, ExecutionMode::long64);
+	const auto source = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(target.program != nullptr && source.program != nullptr,
+		"settled-link setup did not cache both blocks"))
+		return false;
+
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x800;
+	const auto result = gadgets::execute(
+		*source.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		result.retired_instructions == 4,
+		"settled-link blocks did not run as one native chain") &&
+		expect(memory.byte(0x800) == 0x6e,
+			"settled-link blocks lost a guest store") &&
+		expect(memory.invalidations() == 2,
+			"a store after a settled link inherited the page's record");
+}
+
+/* What the missing record costs another vCPU. A publication moves the page's
+ * stamp; an ordinary guest store does not. Without one, the executor holding a
+ * translation of the second page revalidates on the sequence the first store
+ * moved, gets a stamp hit for its own page, and keeps a program whose bytes
+ * have just been rewritten.
+ */
+[[nodiscard]] bool an_unpublished_code_page_strands_another_translation()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* The second store lands on the immediate of the other page's block. */
+	memory.load(0, {0xc6, 0x00, 0x7f, 0xc6, 0x01, 0x6e, 0x0f, 0x05});
+	memory.load(0x1000, {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	memory.set_every_page_executable(true);
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor writer;
+	writer.prepare(memory, 23, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	gadgets::Executor reader;
+	reader.prepare(memory, 23, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto cached = reader.select_program(
+		memory, 0x1000, ExecutionMode::long64);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cached.program != nullptr && block.program != nullptr,
+		"stranded-translation setup did not cache both pages"))
+		return false;
+
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x800;
+	cpu.gpr(Register::rcx) = 0x1001;
+	const auto result = gadgets::execute(
+		*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call,
+			"stranded-translation writer did not run") ||
+		!expect(memory.byte(0x1001) == 0x6e,
+			"stranded-translation writer lost its second store"))
+		return false;
+
+	reader.prepare(memory, 23, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto again = reader.select_program(
+		memory, 0x1000, ExecutionMode::long64);
+	if (!expect(again.program != nullptr && !again.cache_hit,
+		"another executor kept a translation of an unpublished code page"))
+		return false;
+	CpuState other{};
+	other.rip = 0x1000;
+	const auto ran = gadgets::execute(
+		*again.program, other, memory, reader, 64);
+	return expect(ran.event == uml::cpu::EngineEvent::system_call &&
+		other.gpr(Register::rax) == 0x6e,
+		"rebuilt translation did not execute the rewritten bytes");
 }
 
 /* The same publisher must not be able to keep a program whose own bytes have
@@ -4954,6 +5168,11 @@ int main()
 		cache_validates_inline_source_spans() &&
 		cache_rejects_unrelated_code_pages_by_stamp() &&
 		a_moving_code_sequence_keeps_unchanged_programs() &&
+		slow_executable_writes_publish_every_code_page() &&
+		a_slow_store_across_a_page_boundary_publishes_both_pages() &&
+		native_executable_stores_publish_every_code_page() &&
+		a_settled_link_owes_its_page_a_fresh_publication() &&
+		an_unpublished_code_page_strands_another_translation() &&
 		a_moving_code_sequence_rebuilds_changed_programs() &&
 		a_recorded_code_stamp_is_no_newer_than_its_source() &&
 		a_write_racing_a_first_translation_does_not_survive() &&

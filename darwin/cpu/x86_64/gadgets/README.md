@@ -234,6 +234,28 @@ The Wine ARM64EC CPU service, whose arm64 translations live outside the
 registry, publishes on every executable store instead
 (`Executor::publish_every_executable_store`).
 
+A native program owes one publication per page it stores into, and a store
+spanning a page boundary owes both of them. The record a publication leaves is
+the whole page's -- the page stamp moves, and the code-change range is the page
+-- so a further store inside the page this program last published owes nothing;
+the program still cools its own overlapping cached blocks by exact range on
+every executable store. A store to any other page has no record at all, and
+because a page stamp is moved only by a publication, another vCPU validating
+against that stamp would keep its translation of the rewritten page
+indefinitely. The program therefore carries the page it last published, and a
+store whose page differs owes a publication again. A program alternating
+between two code pages pays one per store; a JIT patching two call sites, a
+code copy crossing a page and a relocating loader each pay one per page they
+touch.
+
+The writer's order is the contract, and it is the order
+[Keeping a cached translation](#keeping-a-cached-translation) reads in reverse:
+the bytes are stored, then the page stamp moves, then the code-change sequence
+moves. `finish_store` performs the guest store before its publication call, and
+`GuestAddressSpace::invalidate_code` moves the page stamp before publishing the
+range. A stamp taken after the bytes it stands for would certify a write the
+recorded source predates.
+
 ## Keeping a cached translation
 
 A cached program is reused when the guest bytes it was translated from are

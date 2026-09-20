@@ -47,13 +47,43 @@ void invalidate_cached_code(NativeExecutionContext &context,
 			->invalidate_cached_code(address, size);
 }
 
+/* One record per executable page this program stores into. A record covers its
+ * whole page, so a further store inside the page it last published owes
+ * nothing -- the writer still cools its own cached blocks by exact range on
+ * every store. A store to any other page has no record at all, and the page
+ * stamp another vCPU validates against is moved only by a publication, so
+ * without one that vCPU keeps its translation of the rewritten page.
+ *
+ * `code_page` alone decides that: it names no page until the first
+ * publication, and names no page again once a followed link settles this
+ * program's publications.
+ */
+bool publish_code_page(NativeExecutionContext &context,
+	std::uint64_t address) noexcept
+{
+	const auto page = address & page_mask;
+	if (context.code_page == page)
+		return false;
+	context.memory->invalidate_code(address, context.execution_context);
+	++context.code_publications;
+	context.write_code = write_code_published;
+	context.code_page = page;
+	return true;
+}
+
 void publish_code_write(NativeExecutionContext &context,
 	std::uint64_t address, std::size_t size) noexcept
 {
-	if (context.memory == nullptr || size == 0 ||
-	    (context.write_code == write_code_published &&
-		    context.sequence_context == nullptr))
+	if (context.memory == nullptr || size == 0)
 		return;
+	/* A store that stays inside the page already published, for a caller with
+	 * no executor whose cached blocks would need cooling, has nothing left to
+	 * ask the address space. */
+	if (context.sequence_context == nullptr &&
+	    (address & page_mask) == context.code_page &&
+	    ((address + size - 1) & page_mask) == context.code_page)
+		return;
+	bool cooled = false;
 	std::size_t completed = 0;
 	while (completed < size) {
 		const auto current = address + completed;
@@ -65,14 +95,11 @@ void publish_code_write(NativeExecutionContext &context,
 		if (context.memory->is_executable(current) &&
 		    (context.code_pages == nullptr ||
 			    context.code_pages->holds(current))) {
-			invalidate_cached_code(context, address, size);
-			if (context.write_code != write_code_published) {
-				context.memory->invalidate_code(
-					current, context.execution_context);
-				++context.code_publications;
+			if (!cooled) {
+				invalidate_cached_code(context, address, size);
+				cooled = true;
 			}
-			context.write_code = write_code_published;
-			return;
+			(void)publish_code_page(context, current);
 		}
 		completed += count;
 	}
@@ -138,8 +165,7 @@ extern "C" std::byte *uml_x86_64_gadget_tlb_miss(
 		if (registry == nullptr || registry->changes() == changes)
 			break;
 	}
-	if (writes_code &&
-		context->write_code != UML_X86_64_WRITE_CODE_PUBLISHED)
+	if (writes_code && context->code_page != page)
 		context->write_code = UML_X86_64_WRITE_CODE_PENDING;
 	return pointer;
 }
@@ -183,20 +209,18 @@ extern "C" void uml_x86_64_gadget_publish_code_write(
 	NativeExecutionContext *context, std::uint64_t address,
 	std::uint32_t size) noexcept
 {
-	/* The write TLB tagged this page executable while resolving it. Mapping
-	 * mutation is excluded by the execution gate until this block returns.
-	 * Every executable store selectively cools overlapping cached blocks;
-	 * only the first store in one native program publishes the global
-	 * sequence change.
+	/* The write TLB tagged this page executable while resolving it, and the
+	 * translation left `write_code` pending exactly when this store's page
+	 * still owes a record: its first store to a code page, or its first to a
+	 * code page other than the one it last published. Mapping mutation is
+	 * excluded by the execution gate until this block returns. Every
+	 * executable store selectively cools overlapping cached blocks.
 	 */
 	if (context == nullptr || context->memory == nullptr || size == 0)
 		return;
 	invalidate_cached_code(*context, address, size);
-	if (context->write_code != write_code_published) {
-		context->memory->invalidate_code(address, context->execution_context);
-		++context->code_publications;
-		context->write_code = write_code_published;
-	}
+	if (context->write_code != write_code_published)
+		(void)publish_code_page(*context, address);
 }
 
 extern "C" void uml_x86_64_gadget_invalidate_code(

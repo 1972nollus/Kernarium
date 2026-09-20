@@ -147,10 +147,16 @@ def translate(o, write, size, record_stack=False):
     o.emit(f'{hit}:')
     if write:
         ready, publishes = o.label('wcready'), o.label('publishes')
+        # A publication covers its whole page, so a store to a page some
+        # executor has translated owes a record unless this program has
+        # already published that very page. The page it last published answers
+        # that alone -- it is an impossible page until the first publication
+        # and again once a followed link settles them -- which keeps this
+        # decision the same length in a bank this size.
         o.emit(f'\ttbz x12, #1, {ready}')
-        o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit('\tsub w14, w14, #UML_X86_64_WRITE_CODE_PUBLISHED')
-        o.emit(f'\tcbz w14, {ready}')
+        o.emit('\tldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]')
+        o.emit('\teor x14, x9, x14')
+        o.emit(f'\tcbz x14, {ready}')
         o.emit('\tmov w14, #UML_X86_64_WRITE_CODE_PENDING')
         o.emit('\tstrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
         o.emit(f'{ready}:')

@@ -302,9 +302,18 @@ NAME(uml_x86_64_gadget_\name):
 	b .Lx86_tlb_done\@
 .Lx86_tlb_hit\@:
 	.if \access == 1
+	/* A page some executor holds a translation of. A publication covers its
+	 * whole page, so this store owes a record unless this program has already
+	 * published this very page; a store to any other page owes its own,
+	 * because the page stamp another vCPU validates against moves only with a
+	 * publication. The page this program last published answers that on its
+	 * own: it holds an impossible page until the first publication and again
+	 * whenever a followed link retires this program's publications, which is
+	 * exactly when `write_code` says nothing is owed.
+	 */
 	tbz x12, #1, .Lx86_tlb_write_code_ready\@
-	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cmp w14, #UML_X86_64_WRITE_CODE_PUBLISHED
+	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
+	cmp x9, x14
 	b.eq .Lx86_tlb_write_code_ready\@
 	mov w14, #UML_X86_64_WRITE_CODE_PENDING
 	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
@@ -467,6 +476,11 @@ NAME(uml_x86_64_gadget_\name):
 	bl NAME(uml_x86_64_gadget_code_link_safe)
 	cbz w0, .Lx86_link_code_exit\@
 	strb wzr, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	/* Those publications are settled, so the page they covered is no longer
+	 * one this program has published: the next store to it owes a record
+	 * again, just as it did before this program made any. */
+	mov w9, #UML_X86_64_CODE_PAGE_NONE
+	str x9, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 .Lx86_link_code_exit\@:
 	cbnz w0, .Lx86_link_code_ready\@
 	ldr x9, [x19, #16]

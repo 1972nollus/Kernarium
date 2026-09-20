@@ -63,6 +63,12 @@ struct NativeExecutionContext final {
 	 * re-checks this entry's tag before hashing its address, and a plain-page
 	 * tag lets it skip the store epilogue; it is never null. */
 	NativeTlbEntry *stack_entry{};
+	/* The executable page this program's last publication covered, or no page.
+	 * A published record is page granular, so a further store inside that page
+	 * owes nothing; a store to any other page owes its own record. A followed
+	 * link that settles this program's publications puts it back to no page,
+	 * so this is exactly the set of pages `write_code` still speaks for. */
+	std::uint64_t code_page{UML_X86_64_CODE_PAGE_NONE};
 };
 
 static_assert(sizeof(NativeTlbEntry) == 32);
@@ -98,6 +104,8 @@ static_assert(offsetof(NativeExecutionContext, target_links) ==
 	UML_X86_64_CONTEXT_TARGET_LINKS);
 static_assert(offsetof(NativeExecutionContext, stack_entry) ==
 	UML_X86_64_CONTEXT_STACK_ENTRY);
+static_assert(offsetof(NativeExecutionContext, code_page) ==
+	UML_X86_64_CONTEXT_CODE_PAGE);
 
 struct NativeEngineResult final {
 	std::int32_t event;
