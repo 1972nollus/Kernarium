@@ -15,6 +15,19 @@ template<class T> void append(std::vector<std::uint8_t>& bytes, const T& value)
 }
 }
 
+// The host platform may decode a codec this private wire contract has no
+// identifier for. Such a capability is dropped before the device sees it
+// rather than becoming an unnamed format on the queue.
+bool wireNames(uml::platform::VideoCodec codec) noexcept
+{
+    using enum uml::platform::VideoCodec;
+    switch (codec) {
+    case h264: case hevc: case jpeg: return true;
+    case vp9: return false;
+    }
+    return false;
+}
+
 std::uint32_t wireCodec(uml::platform::VideoCodec codec)
 {
     using enum uml::platform::VideoCodec;
@@ -22,6 +35,7 @@ std::uint32_t wireCodec(uml::platform::VideoCodec codec)
     case h264: return VIRTIO_VIDEO_FORMAT_H264;
     case hevc: return VIRTIO_VIDEO_FORMAT_HEVC;
     case jpeg: return VIRTIO_VIDEO_FORMAT_MJPEG;
+    case vp9: break;
     }
     throw std::invalid_argument("invalid codec");
 }
@@ -38,6 +52,7 @@ std::uint32_t wireProfile(uml::platform::VideoProfile profile)
     case hevcMain: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN;
     case hevcMain10: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN10;
     case jpegBaseline: return 0;
+    case vp9Profile0: break;
     }
     throw std::invalid_argument("invalid video profile");
 }

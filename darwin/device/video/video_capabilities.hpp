@@ -6,6 +6,7 @@
 #include <span>
 
 namespace uml::video {
+bool wireNames(uml::platform::VideoCodec codec) noexcept;
 std::uint32_t wireCodec(uml::platform::VideoCodec codec);
 std::uint32_t wireProfile(uml::platform::VideoProfile profile);
 std::vector<std::uint8_t> capabilityResponse(

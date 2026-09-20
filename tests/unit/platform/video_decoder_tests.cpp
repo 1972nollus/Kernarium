@@ -28,7 +28,7 @@ int main()
         const auto capabilities = videoDecodeCapabilities();
         require(!capabilities.empty(), "no hardware video decoder available");
         const char* names[] = {"h264-baseline", "h264-constrained-baseline", "h264-main",
-            "h264-high", "h264-high10", "hevc-main", "hevc-main10", "jpeg"};
+            "h264-high", "h264-high10", "hevc-main", "hevc-main10", "jpeg", "vp9-profile0"};
         for (const auto& cap : capabilities) {
             const char* name = names[unsigned(cap.profile)];
             std::printf("Decoding %s\n", name);

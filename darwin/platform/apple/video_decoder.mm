@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -72,6 +73,93 @@ bool high10Available()
     }
     return false;
 #endif
+}
+
+/* VP9 is a supplemental VideoToolbox decoder: `VTIsHardwareDecodeSupported`
+ * answers no until the process asks for it, which is what Chromium and FFmpeg
+ * do before probing. Asking once is harmless where no such decoder exists.
+ */
+bool vp9Available()
+{
+    static const bool available = [] {
+        if (@available(macOS 11.0, iOS 17.0, tvOS 17.0, *)) {
+            VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
+            return bool(VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9));
+        }
+        return false;
+    }();
+    return available;
+}
+
+class BitReader {
+public:
+    explicit BitReader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
+    std::uint32_t read(unsigned count)
+    {
+        std::uint32_t value = 0;
+        while (count-- > 0) {
+            if (position_ >= bytes_.size() * 8) throw std::runtime_error("truncated VP9 header");
+            value = (value << 1) | ((bytes_[position_ / 8] >> (7 - position_ % 8)) & 1);
+            ++position_;
+        }
+        return value;
+    }
+private:
+    std::span<const std::uint8_t> bytes_;
+    std::size_t position_ {};
+};
+
+struct Vp9KeyFrame { VideoFormat format; unsigned profile; };
+
+/* VP9 carries no parameter sets: a key frame's uncompressed header is the only
+ * place the profile, bit depth and frame size appear, so the format is read
+ * from the stream rather than configured ahead of it. Returns nothing for a
+ * frame that cannot change the format, and the caller keeps the current one.
+ */
+std::optional<Vp9KeyFrame> vp9KeyFrame(std::span<const std::uint8_t> bytes)
+{
+    BitReader reader(bytes);
+    if (reader.read(2) != 2) throw std::runtime_error("invalid VP9 frame marker");
+    const unsigned low = reader.read(1);
+    const unsigned high = reader.read(1);
+    const unsigned profile = (high << 1) | low;
+    if (profile == 3) reader.read(1);
+    if (reader.read(1) != 0) return std::nullopt;   // show_existing_frame
+    const bool key = reader.read(1) == 0;
+    reader.read(1);                                 // show_frame
+    reader.read(1);                                 // error_resilient_mode
+    if (!key) return std::nullopt;
+    if (reader.read(24) != 0x498342) throw std::runtime_error("invalid VP9 frame sync code");
+    unsigned bitDepth = 8;
+    if (profile >= 2) bitDepth = reader.read(1) != 0 ? 12 : 10;
+    if (reader.read(3) != 7 /* SRGB */) {
+        reader.read(1);                             // color_range
+        if (profile == 1 || profile == 3) {
+            if (reader.read(1) != 1 || reader.read(1) != 1)
+                throw std::runtime_error("VP9 decoder requires 4:2:0 chroma");
+            reader.read(1);
+        }
+    } else {
+        throw std::runtime_error("VP9 4:4:4 is not a supported decoder input");
+    }
+    const std::uint32_t width = reader.read(16) + 1;
+    const std::uint32_t height = reader.read(16) + 1;
+    return Vp9KeyFrame {{width, height, bitDepth}, profile};
+}
+
+// The VP9 codec configuration box a CMVideoFormatDescription needs, in the
+// same shape Chromium and FFmpeg build it.
+NSData* vp9Configuration(unsigned profile, unsigned bitDepth)
+{
+    const std::uint8_t atom[12] = {
+        1, 0, 0, 0,                                 // version and flags
+        std::uint8_t(profile),
+        41,                                         // level 4.1; advisory only
+        std::uint8_t((bitDepth << 4) | (1u << 1)),  // 4:2:0 colocated, limited range
+        2, 2, 2,                                    // unspecified colour description
+        0, 0,                                       // codecInitializationDataSize
+    };
+    return [NSData dataWithBytes:atom length:sizeof(atom)];
 }
 
 std::vector<std::span<const std::uint8_t>> annexB(std::span<const std::uint8_t> bytes)
@@ -145,6 +233,17 @@ public:
             changed = next != format_;
             format_ = next;
             packet.assign(bytes.begin(), bytes.end());
+        } else if (codec_ == VideoCodec::vp9) {
+            // A superframe reaches the decoder whole; its first frame's
+            // uncompressed header is the one that can resize the stream.
+            if (const auto key = vp9KeyFrame(bytes)) {
+                if (key->profile != 0) throw std::runtime_error("unsupported VP9 profile");
+                changed = key->format != format_;
+                format_ = key->format;
+            } else if (!description_.get()) {
+                throw std::runtime_error("VP9 stream does not start with a key frame");
+            }
+            packet.assign(bytes.begin(), bytes.end());
         } else {
             bool picture = false;
             for (const auto unit : annexB(bytes)) {
@@ -213,7 +312,7 @@ public:
 private:
     void configure()
     {
-        if (codec_ != VideoCodec::jpeg) {
+        if (codec_ != VideoCodec::jpeg && codec_ != VideoCodec::vp9) {
             const unsigned count = codec_ == VideoCodec::h264 ? 2 : 3;
             for (unsigned i = 0; i < count; ++i) if (parameters_[i].empty()) return;
         }
@@ -223,6 +322,15 @@ private:
         if (codec_ == VideoCodec::jpeg) {
             checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_JPEG,
                 int(format_.width), int(format_.height), nullptr, description_.address()), "describe JPEG");
+        } else if (codec_ == VideoCodec::vp9) {
+            NSDictionary* extensions = @{
+                (__bridge NSString*)kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms:
+                    @{@"vpcC": vp9Configuration(0, format_.bitDepth)},
+                (__bridge NSString*)kCMFormatDescriptionExtension_FullRangeVideo: @NO,
+            };
+            checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_VP9,
+                int(format_.width), int(format_.height), (__bridge CFDictionaryRef)extensions,
+                description_.address()), "describe VP9");
         } else {
             std::array<const std::uint8_t*, 3> data {};
             std::array<std::size_t, 3> sizes {};
@@ -269,7 +377,8 @@ private:
                 kCFAllocatorDefault, hardware.address());
             // Apple's JPEG decoder honors the required-hardware creation flag but
             // does not implement this property, as in the existing Virgl backend.
-            if (!(codec_ == VideoCodec::jpeg && status == kVTPropertyNotSupportedErr)) {
+            if (!((codec_ == VideoCodec::jpeg || codec_ == VideoCodec::vp9) &&
+                  status == kVTPropertyNotSupportedErr)) {
                 checked(status, "verify hardware video decoder");
                 if (hardware.get() != kCFBooleanTrue)
                     throw std::runtime_error("video decoder did not select hardware");
@@ -364,6 +473,8 @@ std::vector<VideoDecodeCapability> videoDecodeCapabilities()
     }
     if (VTIsHardwareDecodeSupported(kCMVideoCodecType_JPEG))
         result.push_back({VideoCodec::jpeg, VideoProfile::jpegBaseline, 4096, 2304, 0, 8});
+    if (vp9Available())
+        result.push_back({VideoCodec::vp9, VideoProfile::vp9Profile0, 4096, 2304, 0, 8});
     return result;
 }
 

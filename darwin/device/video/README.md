@@ -14,6 +14,10 @@ The Apple backend requires VideoToolbox hardware decoding. Capabilities match
 the maintained Virgl video backend: H.264 Baseline, Constrained Baseline, Main,
 and High; HEVC Main and Main10; and baseline JPEG, subject to host availability.
 H.264 High10 is conditional on the iOS profile probe and is excluded on macOS.
+The platform also decodes VP9 Profile 0 where VideoToolbox offers it as a
+supplemental decoder, but this wire contract has no VP9 identifier, so the
+device drops any capability the protocol cannot name rather than publishing an
+unnamed format. Adding VP9 to the queue is a wire and kernel-driver change.
 Decoded surfaces are copied into guest NV12, planar YUV420, or P010 buffers.
 This path does not implement encoding or share GPU surfaces.
 

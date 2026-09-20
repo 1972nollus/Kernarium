@@ -51,6 +51,7 @@ const char* codecName(uml::platform::VideoCodec codec) noexcept
     case uml::platform::VideoCodec::h264: return "h264";
     case uml::platform::VideoCodec::hevc: return "hevc";
     case uml::platform::VideoCodec::jpeg: return "jpeg";
+    case uml::platform::VideoCodec::vp9: return "vp9";
     }
     return "unknown";
 }
@@ -65,6 +66,7 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     case uml::platform::VideoProfile::hevcMain: return "hevc-main";
     case uml::platform::VideoProfile::hevcMain10: return "hevc-main10";
     case uml::platform::VideoProfile::jpegBaseline: return "jpeg-baseline";
+    case uml::platform::VideoProfile::vp9Profile0: return "vp9-profile0";
     }
     return "unknown";
 }
@@ -506,6 +508,8 @@ VirtioVideoDevice::VirtioVideoDevice(std::vector<uml::platform::VideoDecodeCapab
     : implementation_(std::make_unique<Implementation>())
 {
     if (caps.empty() || !factory) throw std::invalid_argument("video capabilities and decoder factory are required");
+    std::erase_if(caps, [](const auto& capability) { return !wireNames(capability.codec); });
+    if (caps.empty()) throw std::invalid_argument("no video capability this protocol can name");
     implementation_->capabilities = std::move(caps);
     implementation_->factory = std::move(factory);
     for (const auto& capability : implementation_->capabilities)

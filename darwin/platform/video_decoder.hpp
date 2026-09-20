@@ -8,10 +8,10 @@
 
 namespace uml::platform {
 
-enum class VideoCodec { h264, hevc, jpeg };
+enum class VideoCodec { h264, hevc, jpeg, vp9 };
 enum class VideoProfile {
     h264Baseline, h264ConstrainedBaseline, h264Main, h264High, h264High10,
-    hevcMain, hevcMain10, jpegBaseline,
+    hevcMain, hevcMain10, jpegBaseline, vp9Profile0,
 };
 
 struct VideoDecodeCapability {
