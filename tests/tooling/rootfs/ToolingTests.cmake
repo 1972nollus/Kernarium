@@ -27,6 +27,13 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME rootfs-steam-x86-64-image-audit
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_steam_x86_64_image.py
+    LABELS rootfs;steam;x86_64;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME rootfs-starter-image-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_starter_images.py

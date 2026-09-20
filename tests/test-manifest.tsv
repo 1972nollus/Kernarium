@@ -239,6 +239,7 @@ ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained
 rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained
 rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained
 rootfs-steam-arm64ec-image-audit	tests/tooling/rootfs/test_steam_arm64ec_image.py	tooling	retained
+rootfs-steam-x86-64-image-audit	tests/tooling/rootfs/test_steam_x86_64_image.py	tooling	retained
 rootfs-starter-image-contract	tests/tooling/rootfs/test_starter_images.py	tooling	retained
 rootfs-wine-arm64ec-pe-audit	tests/tooling/rootfs/test_wine_arm64ec_pe.py	tooling	retained
 gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
