@@ -4,8 +4,14 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <unistd.h>
 #include <utility>
 
 using namespace uml::platform;
@@ -173,6 +179,34 @@ void codecLevelControls()
     }
 }
 
+/* The activity log is how an observer outside the guest tells a real hardware
+ * decode from a silent software fallback, so it has to stay silent unless it
+ * is asked for and to name what each stream actually decoded when it is.
+ */
+void activityLog()
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("uml-video-activity-" + std::to_string(::getpid()) + ".log");
+    std::filesystem::remove(path);
+    ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+    exercise(VIRTIO_VIDEO_FORMAT_NV12, 4096);
+    require(!std::filesystem::exists(path), "the video activity log is not off by default");
+
+    ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
+    exercise(VIRTIO_VIDEO_FORMAT_NV12, 4096);
+    ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+    std::ostringstream buffer;
+    buffer << std::ifstream(path).rdbuf();
+    const auto text = buffer.str();
+    std::filesystem::remove(path);
+    require(text.find("advertise codec=h264 profile=h264-high max=4096x2304 depth=8") != std::string::npos,
+        "the video activity log omits the advertised profile");
+    require(text.find("stream=7 open codec=h264 profile=h264-high") != std::string::npos,
+        "the video activity log omits the stream a guest opened");
+    require(text.find("stream=7 close=destroy packets=1 bytes=5 frames=1 output=64x64") != std::string::npos,
+        "the video activity log omits what the stream decoded");
+}
+
 }
 int main()
 {
@@ -181,6 +215,7 @@ int main()
         for (const auto page : {4096u, 16384u})
             for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
                 exercise(format, page);
+        activityLog();
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what()); return 1;

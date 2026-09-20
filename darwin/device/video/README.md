@@ -23,6 +23,14 @@ complete cancellation and EOS through the command and event queues. Pending
 event buffers are bounded by the transport's maximum virtqueue size; full
 queues apply backpressure instead of completing empty events.
 
+Whether an application decoded in hardware cannot be settled from inside the
+guest: a player that falls back to software shows the same correct picture, and
+an open device node is not a decode. Setting `UML_VIDEO_ACTIVITY_LOG` to a
+writable path makes the device append the profiles it advertised, every stream a
+guest opened with its codec and profile, and each stream's packet, byte, and
+delivered-frame totals when it closes. It is a file because the emulator's
+stderr shares the guest console. Unset, the device opens and writes nothing.
+
 `virtio-video-protocol` exercises buffer layouts across 4 KiB and 16 KiB guest
 memory boundaries, stream lifecycle, EOS, and event backpressure with a synthetic
 decoder. `platform-video-decoder` decodes the checked-in generated fixtures on

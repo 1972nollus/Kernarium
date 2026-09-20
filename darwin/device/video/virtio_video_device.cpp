@@ -4,7 +4,9 @@
 #include "protocol.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <stdexcept>
@@ -43,6 +45,86 @@ std::uint64_t resourceKey(std::uint32_t queue, std::uint32_t id)
 {
     return (std::uint64_t(queue) << 32) | id;
 }
+const char* codecName(uml::platform::VideoCodec codec) noexcept
+{
+    switch (codec) {
+    case uml::platform::VideoCodec::h264: return "h264";
+    case uml::platform::VideoCodec::hevc: return "hevc";
+    case uml::platform::VideoCodec::jpeg: return "jpeg";
+    }
+    return "unknown";
+}
+const char* profileName(uml::platform::VideoProfile profile) noexcept
+{
+    switch (profile) {
+    case uml::platform::VideoProfile::h264Baseline: return "h264-baseline";
+    case uml::platform::VideoProfile::h264ConstrainedBaseline: return "h264-constrained-baseline";
+    case uml::platform::VideoProfile::h264Main: return "h264-main";
+    case uml::platform::VideoProfile::h264High: return "h264-high";
+    case uml::platform::VideoProfile::h264High10: return "h264-high10";
+    case uml::platform::VideoProfile::hevcMain: return "hevc-main";
+    case uml::platform::VideoProfile::hevcMain10: return "hevc-main10";
+    case uml::platform::VideoProfile::jpegBaseline: return "jpeg-baseline";
+    }
+    return "unknown";
+}
+
+/* Whether an application really decoded in hardware cannot be answered from
+ * inside the guest: a player that silently falls back to software shows the
+ * same correct picture, and the guest only sees that it opened a device node.
+ * Setting `UML_VIDEO_ACTIVITY_LOG` to a writable path makes the device append
+ * what it advertised, every stream a guest opened, and what each stream
+ * actually decoded. It is a file rather than stderr because the emulator's
+ * stderr shares the guest console and loses lines under load. Nothing is
+ * opened, formatted, or written when the variable is unset.
+ */
+class ActivityLog final {
+public:
+    ActivityLog()
+    {
+        const char* path = std::getenv("UML_VIDEO_ACTIVITY_LOG");
+        if (path != nullptr && path[0] != '\0') file_ = std::fopen(path, "ae");
+    }
+    ~ActivityLog() { if (file_ != nullptr) std::fclose(file_); }
+    ActivityLog(const ActivityLog&) = delete;
+    ActivityLog& operator=(const ActivityLog&) = delete;
+
+    void advertised(const char* codec, const char* profile, std::uint32_t width,
+                    std::uint32_t height, std::uint32_t bitDepth)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_, "uml-video %.3f advertise codec=%s profile=%s max=%ux%u depth=%u\n",
+            elapsed(), codec, profile, width, height, bitDepth);
+        std::fflush(file_);
+    }
+    void opened(std::uint32_t stream, const char* codec, const char* profile)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_, "uml-video %.3f stream=%u open codec=%s profile=%s\n",
+            elapsed(), stream, codec, profile);
+        std::fflush(file_);
+    }
+    void closed(std::uint32_t stream, const char* reason, std::uint64_t packets,
+                std::uint64_t packetBytes, std::uint64_t frames,
+                std::uint32_t width, std::uint32_t height)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_,
+            "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u\n",
+            elapsed(), stream, reason, static_cast<unsigned long long>(packets),
+            static_cast<unsigned long long>(packetBytes),
+            static_cast<unsigned long long>(frames), width, height);
+        std::fflush(file_);
+    }
+
+private:
+    [[nodiscard]] double elapsed() const noexcept
+    {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    }
+    std::FILE* file_ {};
+    std::chrono::steady_clock::time_point start_ {std::chrono::steady_clock::now()};
+};
 virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height)
 {
     virtio_video_params p {};
@@ -89,12 +171,16 @@ public:
         bool sourceKnown {};
         bool draining {};
         bool eosSent {};
+        std::uint64_t packets {};
+        std::uint64_t packetBytes {};
+        std::uint64_t delivered {};
         std::unique_ptr<uml::platform::VideoDecoder> decoder;
         std::unordered_map<std::uint64_t, Resource> resources;
         std::deque<Output> outputs;
         std::deque<uml::platform::DecodedVideoFrame> frames;
     };
 
+    ActivityLog log;
     std::vector<uml::platform::VideoDecodeCapability> capabilities;
     DecoderFactory factory;
     GuestMapper mapper;
@@ -102,6 +188,19 @@ public:
     std::deque<std::uint64_t> eventBuffers;
     std::deque<virtio_video_event> events;
     std::deque<VhostUserQueueCompletion> completions;
+
+    ~Implementation() { closeAll("shutdown"); }
+
+    void record(std::uint32_t id, const Stream& stream, const char* reason) noexcept
+    {
+        log.closed(id, reason, stream.packets, stream.packetBytes, stream.delivered,
+                   stream.output.frame_width, stream.output.frame_height);
+    }
+
+    void closeAll(const char* reason) noexcept
+    {
+        for (const auto& [id, stream] : streams) record(id, stream, reason);
+    }
 
     void event(std::uint32_t stream, std::uint32_t type)
     {
@@ -185,6 +284,7 @@ public:
             }
             auto frame = std::move(stream.frames.front());
             stream.frames.pop_front();
+            ++stream.delivered;
             std::vector<std::vector<std::uint8_t>> planes;
             if (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) {
                 frame.luma.insert(frame.luma.end(), frame.chroma.begin(), frame.chroma.end());
@@ -256,6 +356,7 @@ public:
             stream.input = params(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, q.coded_format, 128, 128);
             stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, VIRTIO_VIDEO_FORMAT_NV12, 128, 128);
             streams.emplace(id, std::move(stream));
+            log.opened(id, codecName(cap->codec), profileName(cap->profile));
             return done(reply(id));
         }
         const auto found = streams.find(id);
@@ -264,6 +365,7 @@ public:
         switch (header.type) {
         case VIRTIO_VIDEO_CMD_STREAM_DESTROY:
             cancelOutputs(id, stream);
+            record(id, stream, "destroy");
             streams.erase(found);
             return done(reply(id));
         case VIRTIO_VIDEO_CMD_GET_PARAMS: {
@@ -347,6 +449,8 @@ public:
                 if (!transfer(resource->second.planes[0], packet, false)) throw std::invalid_argument("short encoded video resource");
                 stream.draining = stream.eosSent = false;
                 stream.decoder->submit(packet, q.timestamp);
+                ++stream.packets;
+                stream.packetBytes += q.data_sizes[0];
                 collect(id, stream);
                 auto result = load<virtio_video_resource_queue_resp>(queued(id, q.timestamp, 0));
                 result.data_sizes[0] = q.data_sizes[0];
@@ -404,6 +508,9 @@ VirtioVideoDevice::VirtioVideoDevice(std::vector<uml::platform::VideoDecodeCapab
     if (caps.empty() || !factory) throw std::invalid_argument("video capabilities and decoder factory are required");
     implementation_->capabilities = std::move(caps);
     implementation_->factory = std::move(factory);
+    for (const auto& capability : implementation_->capabilities)
+        implementation_->log.advertised(codecName(capability.codec), profileName(capability.profile),
+            capability.maximumWidth, capability.maximumHeight, capability.bitDepth);
 }
 VirtioVideoDevice::~VirtioVideoDevice() = default;
 const char* VirtioVideoDevice::name() const noexcept { return "Virtio Video decoder"; }
@@ -467,6 +574,7 @@ bool VirtioVideoDevice::takeQueueCompletion(VhostUserQueueCompletion& completion
 void VirtioVideoDevice::reset() noexcept
 {
     auto& impl = *implementation_;
+    impl.closeAll("reset");
     impl.streams.clear(); impl.events.clear(); impl.eventBuffers.clear(); impl.completions.clear();
 }
 } // namespace uml::video
