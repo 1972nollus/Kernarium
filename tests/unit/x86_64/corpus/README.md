@@ -6,8 +6,8 @@ derived from the pinned K x86-64 semantics tests and complementary handwritten
 FEX assembly programs. CMake, CTest, and the test executable do not need either
 upstream checkout, an assembler, Python, or a network connection.
 
-The profile is portable x86-64-v3 userspace plus the AES, PCLMUL, XSAVE, and
-FSGSBASE extensions already owned by the product contract. Intel-only
+The profile is portable x86-64-v3 userspace plus the AES, PCLMUL, XSAVE,
+FSGSBASE, and ADX extensions already owned by the product contract. Intel-only
 facilities, privileged instructions, obsolete vendor extensions, and
 post-AVX2 extensions are outside this corpus. `excluded.tsv` records every
 producer input omitted by the profile, rejected by upstream, invalid as

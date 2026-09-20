@@ -1,7 +1,7 @@
 {
-  "cases": 74391,
-  "excluded_records": 95,
-  "fex_records": 2166,
+  "cases": 74394,
+  "excluded_records": 92,
+  "fex_records": 2169,
   "inputs": {
     "fex_commit": "e869aa644a16e4332cdc15c1ea0b4d13d482385d",
     "fex_corpus_sha256": "72124229990fec462bb2652573321a40141a957b990a0db0d76e4842698279a0",
@@ -14,8 +14,8 @@
     "sdm": "325462-092, June 2026"
   },
   "k_records": 188,
-  "pack_sha256": "3a6a0f1cea982f33ef2c35a5608aed0f2fb75b749a2badd3c2a2e5742bd208a4",
-  "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, and FSGSBASE",
-  "records": 2354,
+  "pack_sha256": "083bd11cfc4973154366ce8c2992c8c1316c35de163dd8f9a4a024a031a632b8",
+  "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, and ADX",
+  "records": 2357,
   "schema": 1
 }

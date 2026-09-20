@@ -30,11 +30,8 @@ fex	DAZTest.asm	AMD floating-point extension outside v3
 fex	FEX_bugs/3DNow_ModRMSIBDecode.asm	obsolete AMD-only 3DNow extension
 fex	FEX_bugs/H0F3AREXBug.asm	post-AVX2 SHA extension
 fex	FEX_bugs/REX/DDDNow.asm	obsolete AMD-only 3DNow extension
-fex	FEX_bugs/adcx_size.asm	post-x86-64-v3 ADX extension
 fex	FEX_bugs/fxsave_bug.asm	exact duplicate normalized case
 fex	FEX_bugs/nzcv_spill_enderlilies.asm	post-AVX2 SHA extension
-fex	H0F38/adcx.asm	post-x86-64-v3 ADX extension
-fex	H0F38/adox.asm	post-x86-64-v3 ADX extension
 fex	H0F38/sha1msg1.asm	post-AVX2 SHA extension
 fex	H0F38/sha1msg2.asm	post-AVX2 SHA extension
 fex	H0F38/sha1nexte.asm	post-AVX2 SHA extension

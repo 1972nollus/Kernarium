@@ -97,8 +97,10 @@ GPR_NAMES = (
 FLAG_NAMES = ("CF", "PF", "AF", "ZF", "SF", "DF", "OF")
 
 # The ordinary unit profile is the portable userspace ISA through AVX2.  AES,
-# PCLMUL, XSAVE, and FSGSBASE remain because they are already part of the
+# PCLMUL, XSAVE, FSGSBASE, and ADX remain because they are already part of the
 # product's documented userspace profile and are useful to desktop software.
+# ADX is what guest OpenSSL dispatches its Montgomery multiply on, so its two
+# carry chains and their flags belong in the pinned corpus.
 ALLOWED_FEX_FEATURES = frozenset(
     {
         "AVX",
@@ -112,6 +114,7 @@ ALLOWED_FEX_FEATURES = frozenset(
         "PCLMUL",
         "XSAVE",
         "FSGSBASE",
+        "ADX",
         "Linux",
     }
 )
@@ -121,7 +124,6 @@ EXCLUDED_FEX_FEATURES = {
     "EMMI": "obsolete AMD multimedia extension",
     "SHA": "post-AVX2 SHA extension",
     "AES256": "post-AVX2 vector AES extension",
-    "ADX": "post-x86-64-v3 ADX extension",
     "CLZERO": "AMD-only cache-zero extension",
     "RAND": "nondeterministic random-number extension outside v3",
     "AFP": "AMD floating-point extension outside v3",
@@ -1170,7 +1172,7 @@ def write_outputs(
     ]
     provenance = {
         "schema": 1,
-        "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, and FSGSBASE",
+        "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, and ADX",
         "inputs": identities,
         "records": len(records),
         "cases": sum(record.case_count for record in records),

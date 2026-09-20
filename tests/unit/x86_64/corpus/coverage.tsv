@@ -20,7 +20,9 @@ adcw:mem,r16	0	5
 adcw:r16,mem	0	6
 adcw:r16,r16	788	1
 adcxll:mem,r32	0	1
+adcxll:r32,r32	0	2
 adcxqq:mem,r64	0	2
+adcxqq:r64,r64	0	2
 addb:imm,mem	0	2
 addb:imm,r8	322	2
 addb:mem,r8	0	3
@@ -57,7 +59,9 @@ addw:mem,r16	0	3
 addw:r16,mem	0	3
 addw:r16,r16	322	0
 adoxll:mem,r32	0	1
+adoxll:r32,r32	0	1
 adoxqq:mem,r64	0	1
+adoxqq:r64,r64	0	1
 aesdec:mem,xmm	0	2
 aesdec:xmm,xmm	0	1
 aesdeclast:mem,xmm	0	2
@@ -185,7 +189,7 @@ bzhiqq:r64,r64,r64	0	1
 callq:mem	0	1
 callq:rel	0	4
 cbtww:	0	2
-clc:	0	76
+clc:	0	78
 cld:	0	3
 cldemote:mem	0	1
 clflush:mem	0	1
@@ -1685,7 +1689,7 @@ sqrtsd:mem,xmm	0	1
 sqrtsd:xmm,xmm	0	2
 sqrtss:mem,xmm	0	1
 sqrtss:xmm,xmm	701	2
-stc:	0	65
+stc:	0	67
 std:	0	2
 stmxcsr:mem	0	1
 stosbb:r8,r32	112	1
@@ -1724,7 +1728,7 @@ syscalll:	0	1
 testb:imm,mem	0	2
 testb:imm,r8	321	2
 testb:r8,mem	0	1
-testb:r8,r8	321	2
+testb:r8,r8	321	3
 testl:imm,mem	0	2
 testl:imm,r32	321	1
 testl:r32,mem	0	1
