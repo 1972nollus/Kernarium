@@ -121,6 +121,14 @@ public:
 		uml::memory::CodePageStamp &stamp) noexcept override
 	{
 		++code_stamp_queries_;
+		if (deferred_query_ != 0 &&
+		    code_stamp_queries_ == deferred_query_) {
+			deferred_query_ = 0;
+			auto target = deferred_address_;
+			for (const auto byte : deferred_bytes_)
+				bytes_[target++ - base_] = static_cast<std::byte>(byte);
+			bump_code_stamps(deferred_address_, deferred_bytes_.size());
+		}
 		if (!code_stamps_available_ || address < base_)
 			return false;
 		const auto page = static_cast<std::size_t>((address - base_) / 4096U);
@@ -196,6 +204,18 @@ public:
 		return code_stamp_queries_;
 	}
 	void reset_code_stamp_queries() noexcept { code_stamp_queries_ = 0; }
+	/* A guest write by another vCPU that lands in the middle of one
+	 * validation, immediately before the numbered page-stamp query this
+	 * memory answers. A page stamp certifies only bytes read after it, so a
+	 * write armed for the query that once followed the source comparison
+	 * must not be able to hide behind the stamp that validation records. */
+	void write_before_code_page_stamp(std::size_t query,
+		std::uint64_t address, std::initializer_list<std::uint8_t> bytes)
+	{
+		deferred_query_ = query;
+		deferred_address_ = address;
+		deferred_bytes_.assign(bytes.begin(), bytes.end());
+	}
 	void set_code_changes(std::uint64_t *code_changes) noexcept
 	{
 		code_changes_ = code_changes;
@@ -234,6 +254,9 @@ private:
 	std::uint64_t executable_page_{~std::uint64_t{}};
 	bool every_page_executable_{};
 	std::uint64_t *code_changes_{};
+	std::size_t deferred_query_{};
+	std::uint64_t deferred_address_{};
+	std::vector<std::uint8_t> deferred_bytes_;
 };
 
 struct TestCodeSequences final {
@@ -248,6 +271,20 @@ read_test_code_sequences(void *opaque) noexcept
 	return {
 		.mapping_changes = sequences.mapping_changes,
 		.code_changes = sequences.code_changes,
+		.interrupted = false,
+	};
+}
+
+/* Another vCPU publishing a code change between every two observations, which
+ * is what a guest whose JIT heap or executable stack shares a page with hot
+ * data does to every other vCPU of its address space. */
+[[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
+read_moving_code_sequences(void *opaque) noexcept
+{
+	auto &sequences = *static_cast<TestCodeSequences *>(opaque);
+	return {
+		.mapping_changes = sequences.mapping_changes,
+		.code_changes = ++sequences.code_changes,
 		.interrupted = false,
 	};
 }
@@ -457,6 +494,142 @@ read_test_code_sequences(void *opaque) noexcept
 		expect(diagnostics.validation_stamp_hits == 1 &&
 			diagnostics.validation_mismatches == 1,
 			"code-page stamp diagnostics did not describe both paths");
+}
+
+/* One vCPU publishing code changes at speed must not cost every other vCPU of
+ * the address space a fresh translation of every block it runs. Validation
+ * used to re-read the code-change sequence after comparing a program and throw
+ * the program away when it had moved, which under a fast publisher is every
+ * time. What keeps a program is its pages' stamps and its own saved bytes; a
+ * publication that did not touch it moves neither.
+ */
+[[nodiscard]] bool a_moving_code_sequence_keeps_unchanged_programs()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_moving_code_sequences);
+	const auto cold = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cold.status == gadgets::BuildStatus::built &&
+		cold.program != nullptr && !cold.cache_hit,
+		"moving code-change sequence did not populate the cache"))
+		return false;
+
+	const auto translated = executor.cache_diagnostics().translations;
+	for (int round = 0; round < 16; ++round) {
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			++sequences.code_changes, &sequences,
+			read_moving_code_sequences);
+		const auto again = executor.select_program(
+			memory, 0, ExecutionMode::long64);
+		if (!expect(again.program != nullptr && again.cache_hit,
+			"a code change published elsewhere rebuilt an untouched "
+			"program"))
+			return false;
+	}
+	const auto &diagnostics = executor.cache_diagnostics();
+	return expect(diagnostics.translations == translated,
+		"a moving code-change sequence retranslated an untouched program") &&
+		expect(diagnostics.validation_stamp_hits != 0,
+			"a moving code-change sequence never reached the page stamp");
+}
+
+/* The same publisher must not be able to keep a program whose own bytes have
+ * been rewritten. */
+[[nodiscard]] bool a_moving_code_sequence_rebuilds_changed_programs()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_moving_code_sequences);
+	if (!expect(executor.select_program(memory, 0,
+			ExecutionMode::long64).program != nullptr,
+		"changed-program setup did not populate the cache"))
+		return false;
+
+	memory.load(1, {0x02});
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_moving_code_sequences);
+	const auto changed = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(changed.program != nullptr && !changed.cache_hit,
+		"a moving code-change sequence kept a rewritten program"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(
+		*changed.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 2,
+		"rebuilt program did not execute the written bytes");
+}
+
+/* A validation records the stamp it took before reading the source, never one
+ * taken after. A write that lands between the two would otherwise be covered
+ * by the recorded stamp while the recorded source predates it, and the next
+ * validation would accept the stale program on a stamp match.
+ */
+[[nodiscard]] bool a_recorded_code_stamp_is_no_newer_than_its_source()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.load(2048, {0x00});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	if (!expect(executor.select_program(memory, 0,
+			ExecutionMode::long64).program != nullptr,
+		"stamp-order setup did not populate the cache"))
+		return false;
+
+	/* Move the page's stamp without touching the program, so the next
+	 * validation has to compare the saved source, and arm a write to the
+	 * program for the stamp query that used to follow that comparison. */
+	memory.load(2048, {0x01});
+	memory.reset_code_stamp_queries();
+	memory.write_before_code_page_stamp(2, 1, {0x02});
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_test_code_sequences);
+	if (!expect(executor.select_program(memory, 0,
+			ExecutionMode::long64).program != nullptr,
+		"stamp-order validation lost its program"))
+		return false;
+
+	/* Whether that write landed inside the validation or at the start of this
+	 * one, the cached program no longer matches the guest. */
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto after = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(after.program != nullptr && !after.cache_hit,
+		"a stamp recorded after its source accepted a stale program"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(
+		*after.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 2,
+		"stamp-order rebuild did not execute the written bytes");
 }
 
 [[nodiscard]] bool cache_retires_the_oldest_generation()
@@ -4508,6 +4681,9 @@ int main()
 		cache_reuses_and_revalidates_programs() &&
 		cache_validates_inline_source_spans() &&
 		cache_rejects_unrelated_code_pages_by_stamp() &&
+		a_moving_code_sequence_keeps_unchanged_programs() &&
+		a_moving_code_sequence_rebuilds_changed_programs() &&
+		a_recorded_code_stamp_is_no_newer_than_its_source() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

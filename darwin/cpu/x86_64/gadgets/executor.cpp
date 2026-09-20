@@ -117,6 +117,10 @@ struct ProgramCodeStamps final {
 		const ProgramCodeStamps &, const ProgramCodeStamps &) = default;
 };
 
+/* A page stamp certifies only the bytes read after it was taken: a store that
+ * lands later moves the stamp, and one that landed earlier is already visible
+ * in the bytes. Every caller therefore takes the stamp before the source it
+ * stands for, never after. */
 [[nodiscard]] ProgramCodeStamps capture_program_code_stamps(
 	::uml::memory::GuestAddressSpace &memory, const Program &program,
 	void *execution_context) noexcept
@@ -1186,13 +1190,48 @@ private:
 			discard(slot);
 			return false;
 		}
-		const auto sequences_stable = [&]() noexcept {
+		/* Two things say a cached program still matches the guest: the stamp
+		 * of every page it covers, which any publication of a code change on
+		 * that page moves, and the saved source bytes themselves. Their order
+		 * is what makes either of them mean anything. The stamp is taken once,
+		 * before a byte of source is read, and that same value is what a
+		 * successful validation records; taking it afterwards recorded a stamp
+		 * newer than the source it stands for, so the next validation could
+		 * accept that source on a stamp which already covered a write to it.
+		 *
+		 * With that order the code-change sequence has nothing left to guard.
+		 * It used to be re-read after the comparison and the whole program
+		 * thrown away when it had moved, which is what made one vCPU
+		 * publishing at speed -- a JIT heap, or a trampoline sharing a page
+		 * with hot data -- cost every other vCPU of the address space a fresh
+		 * translation of nearly every block it ran. A publication this reader
+		 * has not seen is not a program it must rebuild: a publication that
+		 * touched this program moved the stamp of the page carrying it, and
+		 * one that did not is no business of this program.
+		 *
+		 * What accepting here guarantees is what it guaranteed before: the
+		 * program matched guest memory at an instant inside this call, and
+		 * every change published up to the sequence this cache was prepared
+		 * with had landed before that instant, because the writer stores the
+		 * bytes, then moves the page stamp, then moves the sequence, and this
+		 * vCPU read that sequence before it looked. A store still in flight --
+		 * landed but not yet stamped, or not yet issued -- was outside that
+		 * instant under the old test exactly as it is under this one, and
+		 * reaches this vCPU at its next code-change checkpoint, which is where
+		 * the x86 cross-modifying-code protocol requires an executing
+		 * processor to look.
+		 *
+		 * The mapping sequence and an execution interrupt still abandon the
+		 * validation. Those say the memory this call reads through is being
+		 * replaced, or that this vCPU has been asked to leave, and no page
+		 * stamp describes either.
+		 */
+		const auto memory_settled = [&]() noexcept {
 			if (execution_context == nullptr || sequence_reader == nullptr)
 				return true;
 			const auto current = sequence_reader(execution_context);
 			if (!current.interrupted &&
-			    current.mapping_changes == mapping_changes &&
-			    current.code_changes == changes)
+			    current.mapping_changes == mapping_changes)
 				return true;
 			++diagnostics.validation_sequence_races;
 			return false;
@@ -1202,7 +1241,7 @@ private:
 			memory, *slot.program, execution_context);
 		if (slot.code_stamps.complete && current_stamps.complete &&
 		    current_stamps == slot.code_stamps) {
-			if (!sequences_stable())
+			if (!memory_settled())
 				return false;
 			slot.validated_changes = changes;
 			++diagnostics.validation_stamp_hits;
@@ -1224,12 +1263,10 @@ private:
 			break;
 		}
 
-		const auto validated_stamps = capture_program_code_stamps(
-			memory, *slot.program, execution_context);
-		if (!sequences_stable())
+		if (!memory_settled())
 			return false;
 		slot.validated_changes = changes;
-		slot.code_stamps = validated_stamps;
+		slot.code_stamps = current_stamps;
 		++diagnostics.validation_hits;
 		return true;
 	}
@@ -1561,10 +1598,11 @@ ProgramSelection Executor::select_program(
 
 	try {
 		std::vector<std::byte> source(built.program.byte_count());
-		if (!fetch_program_source(memory, built.program, source))
-			return use_transient();
+		/* Before the source it certifies, never after. */
 		const auto code_stamps = capture_program_code_stamps(
 			memory, built.program, storage_->execution_context);
+		if (!fetch_program_source(memory, built.program, source))
+			return use_transient();
 		const auto &stored = storage_->programs.store(
 			std::move(built.program), std::move(source),
 			storage_->code_changes, maximum_instructions, code_stamps);

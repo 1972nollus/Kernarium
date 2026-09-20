@@ -233,3 +233,35 @@ is executable. The registry guarantees:
 The Wine ARM64EC CPU service, whose arm64 translations live outside the
 registry, publishes on every executable store instead
 (`Executor::publish_every_executable_store`).
+
+## Keeping a cached translation
+
+A cached program is reused when the guest bytes it was translated from are
+still there. Two things answer that: the stamp of each page it covers, which
+any code-change publication on that page moves, and the program's own saved
+source bytes, compared whenever a stamp has moved.
+
+Their order is the contract. A page stamp certifies only the bytes read after
+it was taken, so a stamp is always taken before the source it stands for --
+before the bytes a fresh translation saves, and before the comparison a
+revalidation makes -- and a successful validation records that same stamp. A
+stamp taken afterwards would already cover a write that the recorded source
+predates, and the next validation would accept the stale program on it.
+
+The address space's code-change sequence says when to revalidate, not whether
+a program survives the revalidation. A publication that touched a program moved
+the stamp of the page carrying it; one that did not is no business of that
+program. So a vCPU publishing at speed -- a JIT heap, or a trampoline sharing a
+page with hot data -- costs the other vCPUs of its address space a
+revalidation per block, not a translation per block.
+
+A reader that keeps a program guarantees that the program matched guest memory
+at an instant inside the validation, and that every change published up to the
+sequence the cache was prepared with had landed before that instant, because a
+writer stores the bytes, then moves the page stamp, then moves the sequence,
+and the reader observed that sequence before it looked. A store still in
+flight reaches the vCPU at its next code-change checkpoint, which is where the
+x86 cross-modifying-code protocol requires an executing processor to look. A
+moved mapping sequence or a raised execution interrupt still abandons the
+validation: those say the memory being read through is being replaced, or that
+this vCPU has been asked to leave, and no page stamp describes either.
