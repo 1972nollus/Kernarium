@@ -2,6 +2,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <thread>
 
@@ -173,7 +174,9 @@ private:
 
 	/* The holder is normally gone within a few hundred nanoseconds. Past a
 	 * short spin it has been preempted, or it is applying a large batch, and
-	 * the core is better given away than burned. */
+	 * the core is better given away than burned. A writer can also wait out a
+	 * reader that holds the lock for as long as a vCPU stays in its guest;
+	 * that wait sleeps between its looks. */
 	static void wait(unsigned attempt) noexcept
 	{
 		if (attempt < 64) {
@@ -182,7 +185,11 @@ private:
 #endif
 			return;
 		}
-		std::this_thread::yield();
+		if (attempt < 4096) {
+			std::this_thread::yield();
+			return;
+		}
+		std::this_thread::sleep_for(std::chrono::microseconds{100});
 	}
 
 	std::atomic<std::uint64_t> state_{};

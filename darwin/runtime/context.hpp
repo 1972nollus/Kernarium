@@ -2,6 +2,7 @@
 #pragma once
 
 #include "execution_engine.hpp"
+#include "memory/mmu/word_shared_mutex.hpp"
 #include "platform/run_routing.hpp"
 
 #include <atomic>
@@ -50,13 +51,13 @@ private:
 	friend class Context;
 
 	ThreadExecutionStateAccess(
-		std::shared_lock<std::shared_mutex> lifecycle,
+		std::shared_lock<memory::WordSharedMutex> lifecycle,
 		std::shared_ptr<ThreadExecutionState> execution) noexcept
 		: lifecycle_{std::move(lifecycle)}, execution_{std::move(execution)}
 	{
 	}
 
-	std::shared_lock<std::shared_mutex> lifecycle_;
+	std::shared_lock<memory::WordSharedMutex> lifecycle_;
 	std::shared_ptr<ThreadExecutionState> execution_;
 };
 
@@ -96,7 +97,7 @@ private:
 	int stop_notification_write_{-1};
 	mutable std::mutex run_mutex_;
 	bool running_{};
-	mutable std::shared_mutex execution_lifecycle_mutex_;
+	mutable memory::WordSharedMutex execution_lifecycle_mutex_;
 	mutable std::mutex states_mutex_;
 	std::shared_ptr<ThreadStateStore> state_store_;
 };

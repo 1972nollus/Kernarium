@@ -1145,12 +1145,13 @@ private:
 				return found->second;
 		}
 		{
-			std::lock_guard lock{backing_mutex_};
+			/* An expired entry stays until the slow path below replaces
+			 * it; erasing it here would need the lock exclusively. */
+			std::shared_lock lock{backing_mutex_};
 			if (auto found = descriptor_backings_.find(fd);
 			    found != descriptor_backings_.end()) {
 				if (auto backing = found->second.lock())
 					return backing;
-				descriptor_backings_.erase(found);
 			}
 		}
 		struct stat status {};
@@ -1471,8 +1472,8 @@ private:
 			state, address & ~(page_size - 1), page_size);
 	}
 
-	mutable std::shared_mutex states_mutex_;
-	std::mutex backing_mutex_;
+	mutable WordSharedMutex states_mutex_;
+	WordSharedMutex backing_mutex_;
 	std::unordered_map<std::uint64_t, std::shared_ptr<GenerationState>> states_;
 	std::unordered_map<BackingKey, std::weak_ptr<MappedBacking>, BackingKeyHash>
 		backings_;

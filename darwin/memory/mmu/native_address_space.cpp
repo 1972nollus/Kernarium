@@ -2,6 +2,7 @@
 #include "native_address_space.hpp"
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
+#include "word_shared_mutex.hpp"
 #include "../domain_contract.hpp"
 #include "../shared_backing.hpp"
 
@@ -2958,7 +2959,7 @@ public:
 #endif
 
 private:
-	mutable std::shared_mutex mutex_;
+	mutable WordSharedMutex mutex_;
 	std::unordered_map<std::uint64_t,
 		std::shared_ptr<NativeAddressSpace>> spaces_;
 };
