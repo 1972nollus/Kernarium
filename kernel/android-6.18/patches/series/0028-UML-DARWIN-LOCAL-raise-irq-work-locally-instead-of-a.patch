@@ -1,4 +1,4 @@
-From 29770b62a820efacf0e09448f3250333f66c03a9 Mon Sep 17 00:00:00 2001
+From 329ca58cdfd3721a8bcbd1e241a5980c7558b949 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
 Subject: [PATCH 28/44] UML-DARWIN-LOCAL: raise irq work locally instead of at

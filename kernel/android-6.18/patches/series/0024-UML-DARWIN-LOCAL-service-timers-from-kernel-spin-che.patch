@@ -1,4 +1,4 @@
-From 76f05f27c7d8f5d2e34a16160d7ba0e293605c72 Mon Sep 17 00:00:00 2001
+From 93d1e69ba4cde7b4df488d4f2a2ecd525028c042 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 04:11:17 +0000
 Subject: [PATCH 24/44] UML-DARWIN-LOCAL: service timers from kernel spin

@@ -1,4 +1,4 @@
-From e6a03c16cec12fa9a32aab8870f0a046cb94f9a9 Mon Sep 17 00:00:00 2001
+From ab3319ccc6ef8214c5889c0254e6cfffa5595a74 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 08:02:37 +0900
 Subject: [PATCH 43/44] UML-DARWIN-LOCAL: virtio: add UML vhost-user

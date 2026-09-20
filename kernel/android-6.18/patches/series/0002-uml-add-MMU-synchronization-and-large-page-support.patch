@@ -1,10 +1,11 @@
-From d125289ce0c03feccd446f44f0dbc1d908ba4804 Mon Sep 17 00:00:00 2001
+From 14c7f2e6607819b9b443ca4db19166a329644351 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
 Subject: [PATCH 02/44] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, large-page handling, same-process address-space lifetime, and user-access behavior in one reviewable final-state topic.
 ---
+ arch/um/include/asm/tlb.h        |   9 +
  arch/um/kernel/hugetlb.c         | 250 +++++++++++++
  arch/um/kernel/mem.c             |  13 +
  arch/um/kernel/skas/Makefile     |   5 +
@@ -14,10 +15,29 @@ Keep page-table synchronization, large-page handling, same-process address-space
  arch/um/kernel/skas/uaccess.c    | 288 +++++++++++----
  arch/um/kernel/tlb.c             | 585 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  41 ++-
- 9 files changed, 1323 insertions(+), 107 deletions(-)
+ mm/mmu_gather.c                  |   7 +-
+ 11 files changed, 1338 insertions(+), 108 deletions(-)
  create mode 100644 arch/um/kernel/hugetlb.c
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
+diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
+index 0422467bda5ba309aa58820feb50a9198860ac1b..ed4e779424897a3d2d195eb5b48feb79083861c0 100644
+--- a/arch/um/include/asm/tlb.h
++++ b/arch/um/include/asm/tlb.h
+@@ -8,4 +8,13 @@
+ #include <asm/cacheflush.h>
+ #include <asm-generic/tlb.h>
+ 
++#ifdef UML_HOST_DARWIN
++/* Darwin range invalidation quiesces every executor for the generation and
++ * advances the mapping epoch before it returns.  Concurrent mmu-gather users
++ * therefore retain the precise range they collected instead of converting it
++ * to a generation-wide flush that would discard the software-MMU working set.
++ */
++#define arch_tlb_flush_nested_requires_fullmm(tlb) false
++#endif
++
+ #endif
 diff --git a/arch/um/kernel/hugetlb.c b/arch/um/kernel/hugetlb.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..78b40df35aacf0c1c0f4586a8b0c4df7a7041e1e
@@ -1884,3 +1904,28 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2
  	show_segv_info(regs);
  
  	if (err == -EACCES) {
+diff --git a/mm/mmu_gather.c b/mm/mmu_gather.c
+index 5619ee967f3c7d853c6c873d4d164537a6c75f3f..ac7842d2a4fc802e7173055f11939cfb82dec586 100644
+--- a/mm/mmu_gather.c
++++ b/mm/mmu_gather.c
+@@ -14,6 +14,10 @@
+ #include <asm/pgalloc.h>
+ #include <asm/tlb.h>
+ 
++#ifndef arch_tlb_flush_nested_requires_fullmm
++#define arch_tlb_flush_nested_requires_fullmm(tlb) true
++#endif
++
+ #ifndef CONFIG_MMU_GATHER_NO_GATHER
+ 
+ static bool tlb_next_batch(struct mmu_gather *tlb)
+@@ -513,7 +517,8 @@ void tlb_finish_mmu(struct mmu_gather *tlb)
+ 	 * may result in having stale TLB entries for some architectures,
+ 	 * e.g. aarch64, that could specify flush what level TLB.
+ 	 */
+-	if (mm_tlb_flush_nested(tlb->mm)) {
++	if (mm_tlb_flush_nested(tlb->mm) &&
++	    arch_tlb_flush_nested_requires_fullmm(tlb)) {
+ 		/*
+ 		 * The aarch64 yields better performance with fullmm by
+ 		 * avoiding multiple CPUs spamming TLBI messages at the
