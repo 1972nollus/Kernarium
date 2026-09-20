@@ -230,12 +230,16 @@ public:
 		deferred_bytes_.assign(bytes.begin(), bytes.end());
 	}
 	/* A guest write by another vCPU that lands while this block is being
-	 * decoded: it is applied immediately after the decoder has read
+	 * decoded: it is applied immediately after the fetch that starts at
 	 * `trigger`, so the decoded stream predates it and everything the
 	 * translation reads afterwards -- the source bytes it saves above all --
-	 * does not. It fires once, and the numbered stamp query it happens to
-	 * fall between is not part of the arrangement, so the same arming means
-	 * the same interleaving however many stamps a translation takes.
+	 * does not. `trigger` is a fetch address, and the decoder fetches an
+	 * instruction's bytes in one page-bounded window, so it is the address
+	 * the instruction covering the raced byte begins at, or the page
+	 * boundary the window refills at. It fires once, and the numbered stamp
+	 * query it happens to fall between is not part of the arrangement, so
+	 * the same arming means the same interleaving however many stamps a
+	 * translation takes.
 	 *
 	 * `publishes` false stores the bytes without moving the page stamp,
 	 * which is where a real writer is between its store and its call into
@@ -916,8 +920,9 @@ read_moving_code_sequences(void *opaque) noexcept
 		sequences.code_changes, &sequences, read_test_code_sequences);
 
 	/* Another vCPU rewrites the immediate just after the decoder has read
-	 * it, while this translation is still being built. */
-	memory.write_after_fetching(1, 1, {0x02});
+	 * it -- the window fetched at 0 carries it -- while this translation is
+	 * still being built. */
+	memory.write_after_fetching(0, 1, {0x02});
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	if (!expect(racing.program != nullptr && !racing.cache_hit,
@@ -1022,7 +1027,7 @@ read_moving_code_sequences(void *opaque) noexcept
 
 	/* The store alone: the writer has not reached its page stamp yet, so
 	 * nothing this translation can read afterwards has moved. */
-	memory.write_after_fetching(1, 1, {0x02}, false);
+	memory.write_after_fetching(0, 1, {0x02}, false);
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	if (!expect(racing.program != nullptr && !racing.cache_hit,
@@ -1095,7 +1100,7 @@ read_moving_code_sequences(void *opaque) noexcept
 			 * block starting here could have reached it, but which its
 			 * seven bytes never touch. */
 			memory.write_after_fetching(
-				item.address + 1U, 4096 + 64U, {0x11});
+				item.address, 4096 + 64U, {0x11});
 		}
 		const auto cold = executor.select_program(
 			memory, item.address, ExecutionMode::long64);
@@ -1116,6 +1121,34 @@ read_moving_code_sequences(void *opaque) noexcept
 	}
 	return expect(executor.cache_diagnostics().validation_stamp_hits != 0,
 		"an undisturbed translation never recorded a usable page stamp");
+}
+
+/* The decoder fetches an instruction's bytes in one window and the window
+ * stops at the guest page, so it can only fault for a page the instruction has
+ * already reached. An instruction ending inside the last mapped page still
+ * decodes, and one that runs past it reports the fault at the first byte the
+ * decoder could not read rather than at the address its window began at.
+ */
+[[nodiscard]] bool a_decode_at_a_page_edge_faults_where_it_stopped()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t edge = 16384;
+	TestMemory memory;
+	/* SYSCALL ending exactly on the last mapped byte. */
+	memory.load(edge - 2U, {0x0f, 0x05});
+	const auto ending = gadgets::build(memory, edge - 2U);
+	if (!expect(ending.status == gadgets::BuildStatus::built &&
+		ending.program.instruction_count() == 1,
+		"an instruction ending on the last mapped byte did not decode"))
+		return false;
+	/* MOV EAX, imm32 whose immediate runs into the unmapped page. */
+	memory.load(edge - 2U, {0xb8, 0x01});
+	const auto crossing = gadgets::build(memory, edge - 2U);
+	return expect(crossing.status == gadgets::BuildStatus::fetch_fault,
+		"an instruction running past the last mapped page decoded") &&
+		expect(crossing.fault_address == edge,
+			"a fetch fault was not reported at the first byte the "
+			"decoder could not read");
 }
 
 [[nodiscard]] bool cache_retires_the_oldest_generation()
@@ -5185,6 +5218,7 @@ int main()
 		a_write_racing_a_second_page_does_not_survive() &&
 		a_write_stamped_after_a_first_translation_does_not_survive() &&
 		an_undisturbed_first_translation_is_still_cached() &&
+		a_decode_at_a_page_edge_faults_where_it_stopped() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

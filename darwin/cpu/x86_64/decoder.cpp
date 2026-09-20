@@ -5,11 +5,19 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
 
 namespace uml::cpu::x86_64 {
 namespace {
 
+/* An instruction's bytes are fetched in one window rather than one at a time,
+ * because every fetch translates the guest address again. The window stops at
+ * the guest page, so it can only fault for a page the instruction has already
+ * reached: an instruction that ends before an unmapped page still decodes, and
+ * a fetch that does fault faults at exactly the byte the decoder wanted. Bytes
+ * past the instruction's end are fetched and discarded, so what the caller
+ * keeps is still only what the decode read. */
 class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
@@ -21,24 +29,9 @@ public:
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
-		if (position_ == maximum_instruction_bytes) {
-			fault_address_ = advance_instruction_pointer(
-				mode_, address_, position_);
+		if (position_ == filled_ && !fill())
 			return false;
-		}
-		std::byte byte{};
-		const auto fetch_address = advance_instruction_pointer(
-			mode_, address_, position_);
-		if (!memory_.fetch(fetch_address, std::span{&byte, 1})) {
-			fault_address_ = fetch_address;
-			return false;
-		}
-		value = std::to_integer<std::uint8_t>(byte);
-		/* Hand the caller the byte this decode actually saw. Reading the
-		 * instruction stream again later would be a second, separate
-		 * observation of guest memory. */
-		if (consumed_ != nullptr)
-			consumed_[position_] = byte;
+		value = std::to_integer<std::uint8_t>(window_[position_]);
 		++position_;
 		return true;
 	}
@@ -65,12 +58,43 @@ public:
 private:
 	static constexpr std::uint8_t maximum_instruction_bytes =
 		static_cast<std::uint8_t>(::uml::cpu::x86_64::maximum_instruction_bytes);
+	static constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
+
+	[[nodiscard]] bool fill()
+	{
+		const auto fetch_address = advance_instruction_pointer(
+			mode_, address_, position_);
+		if (position_ == maximum_instruction_bytes) {
+			fault_address_ = fetch_address;
+			return false;
+		}
+		const auto count = static_cast<std::uint8_t>(
+			std::min<std::uint64_t>(
+				maximum_instruction_bytes - position_,
+				page_size - (fetch_address & (page_size - 1U))));
+		if (!memory_.fetch(fetch_address,
+			    std::span{window_.data() + position_, count})) {
+			fault_address_ = fetch_address;
+			return false;
+		}
+		/* Hand the caller the bytes this decode actually saw. Reading the
+		 * instruction stream again later would be a second, separate
+		 * observation of guest memory. */
+		if (consumed_ != nullptr)
+			std::memcpy(consumed_ + position_,
+				window_.data() + position_, count);
+		filled_ = static_cast<std::uint8_t>(position_ + count);
+		return true;
+	}
+
 	::uml::memory::GuestAddressSpace &memory_;
 	std::uint64_t address_;
 	ExecutionMode mode_;
 	std::byte *consumed_;
 	std::uint64_t fault_address_{};
+	std::array<std::byte, maximum_instruction_bytes> window_{};
 	std::uint8_t position_{};
+	std::uint8_t filled_{};
 };
 
 struct Prefixes final {

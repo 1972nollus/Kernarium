@@ -255,10 +255,15 @@ inline constexpr std::size_t maximum_instruction_bytes = 15;
  * `maximum_instruction_bytes` writable bytes and receives every byte this call
  * read from guest memory, in the order it read them. On a decoded result the
  * first `instruction.length` of them are exactly the instruction's encoding,
- * because the length is the reader's position. A caller that keeps a
+ * because the length is the reader's position; bytes past it were fetched with
+ * the same window and belong to no instruction. A caller that keeps a
  * translation saves those bytes rather than reading the instruction stream a
  * second time: a second read can see another vCPU's store that the decode did
  * not, and nothing downstream could tell the two apart afterwards.
+ *
+ * The reader fetches in windows bounded by the guest page rather than one byte
+ * per call, so an instruction is normally one observation of guest memory
+ * instead of up to fifteen, and never fewer pages than it reaches.
  */
 [[nodiscard]] DecodeResult decode(
 	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
