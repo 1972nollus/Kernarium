@@ -1,4 +1,4 @@
-From ed671aba7d35e3ffcfb0b8df175a4961825ddf6e Mon Sep 17 00:00:00 2001
+From 0c5d3c66f998f5d5efda835d213f53f31eb70b37 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:41:11 +0900
 Subject: [PATCH 30/50] venus: advertise only what the pinned protocol defines

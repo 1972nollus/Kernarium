@@ -1,4 +1,4 @@
-From 48f65cdbe0618ef2d684c2b95605002b58c175d3 Mon Sep 17 00:00:00 2001
+From 0f027fb301be08a3f22a153741b7f184e9da0027 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:43:53 +0900
 Subject: [PATCH 47/50] vrend: cut the requested box out of a whole-level

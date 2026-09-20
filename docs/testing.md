@@ -106,6 +106,12 @@ sixteen `vulkan-mustpass-NNof16-v3` fractions of the released list; see its
 console for an error marker, because the application echoes the generated guest
 launcher and that script carries its own marker strings.
 
+Host and renderer diagnostics share that console with the artifact frames, and
+a line written into the middle of one is a malformed marker that costs the
+attempt its results. A host or renderer condition on a per-frame or per-bind
+path therefore reports once and not again, which is also the only way an
+operator can raise the renderer's log level on a device run.
+
 A baked device campaign is the one lane whose guest memory is fixed by the
 platform, so it is the only lane that leaves cases out. `DEVICE_EXCLUSIONS` in
 `run_vk_cts.py` names them by cause, and the generation suffix (`-v3`) is part of

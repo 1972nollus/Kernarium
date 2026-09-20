@@ -1,4 +1,4 @@
-From 1d9284953bd9845d141e68522aaa66cf1454d0b5 Mon Sep 17 00:00:00 2001
+From 9635c1daa007ecf417d1846e9b28bd44b60200c0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:27:55 +0900
 Subject: [PATCH 37/50] venus: allow the extensions the uprevved protocol

@@ -1,4 +1,4 @@
-From 47d032dcd38b20ffb440e5a5de08937bba275230 Mon Sep 17 00:00:00 2001
+From 178d935c4561f986ad60f3002d889d44c9ddfe22 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:45:41 +0900
 Subject: [PATCH 19/50] vrend: require EXT_texture_shadow_lod only for a real

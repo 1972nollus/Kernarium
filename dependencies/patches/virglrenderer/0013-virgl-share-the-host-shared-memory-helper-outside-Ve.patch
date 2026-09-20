@@ -1,4 +1,4 @@
-From 50ea2e99b93cba8ff0dc691bf5e1576730b7a785 Mon Sep 17 00:00:00 2001
+From 5530c2ebd54c63836181475b32de4a6904b965dd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 12:28:07 +0900
 Subject: [PATCH 13/50] virgl: share the host shared-memory helper outside
