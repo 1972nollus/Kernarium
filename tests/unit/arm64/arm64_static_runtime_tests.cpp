@@ -1279,29 +1279,23 @@ static void uml_static_batch_targets_explicit_generation()
 	require(darwin_uml_static_vm_destroy(target_generation) == 0);
 }
 
-static void uml_static_walker_turnstile_blocks_host_thread()
+/* A walker binds its own thread to a generation for the length of a walk.  The
+ * binding is per thread: a sibling walks the same generation meanwhile, and an
+ * exclusive binding would leave this join waiting for the unlock below it. */
+static void uml_static_walker_binding_is_per_thread()
 {
-	using namespace std::chrono_literals;
 	constexpr unsigned long generation = 106;
-	std::atomic_bool started{};
-	std::atomic_bool acquired{};
 
 	require(darwin_uml_static_vm_walker_lock(generation) == 0);
 	require(darwin_uml_static_vm_walker_lock(generation) == -1);
 	require(darwin_uml_static_vm_walker_unlock(generation + 1) == -1);
 	std::thread sibling{[&] {
-		started.store(true, std::memory_order_release);
-		started.notify_all();
 		require(darwin_uml_static_vm_walker_lock(generation) == 0);
-		acquired.store(true, std::memory_order_release);
 		require(darwin_uml_static_vm_walker_unlock(generation) == 0);
 	}};
-	started.wait(false, std::memory_order_acquire);
-	std::this_thread::sleep_for(20ms);
-	require(!acquired.load(std::memory_order_acquire));
-	require(darwin_uml_static_vm_walker_unlock(generation) == 0);
 	sibling.join();
-	require(acquired.load(std::memory_order_acquire));
+	require(darwin_uml_static_vm_walker_unlock(generation) == 0);
+	require(darwin_uml_static_vm_walker_unlock(generation) == -1);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
@@ -1334,6 +1328,6 @@ int main()
 	uml_static_tlb_shootdown_quiesces_execution();
 	uml_static_execution_context_code_publication();
 	uml_static_batch_targets_explicit_generation();
-	uml_static_walker_turnstile_blocks_host_thread();
+	uml_static_walker_binding_is_per_thread();
 	return 0;
 }

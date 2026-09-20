@@ -35,7 +35,6 @@ struct AddressSpaceLifetime final {
 };
 
 struct GenerationState final {
-	std::mutex walker_mutex;
 	mutable MappingsMutex mappings_mutex;
 	std::unordered_map<std::uint64_t, Mapping> mappings;
 	std::atomic_uint64_t mapping_changes{1};
@@ -167,6 +166,11 @@ struct MappingBatch final {
 	std::shared_ptr<GenerationState> state;
 };
 
+/* A Linux page-table walker binds its thread to one generation for the walk.
+ * The binding keeps the state alive and spares the batch a second lookup; it
+ * does not exclude other walkers.  Walkers of one generation run together, and
+ * the invalidation epoch a batch is published under is what orders them
+ * against a change to the page tables they sampled. */
 struct ActiveWalker final {
 	const void *address_space{};
 	std::uint64_t generation{};

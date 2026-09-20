@@ -81,17 +81,8 @@ void reset_mapping_batch() noexcept
 
 ActiveWalker &active_walker()
 {
-	struct ThreadWalker final {
-		~ThreadWalker()
-		{
-			if (value.state)
-				value.state->walker_mutex.unlock();
-		}
-
-		ActiveWalker value;
-	};
-	static thread_local ThreadWalker active;
-	return active.value;
+	static thread_local ActiveWalker active;
+	return active;
 }
 
 constexpr std::size_t maximum_mapping_history = 4096;
@@ -271,10 +262,9 @@ void prune_retired_thread_state() noexcept
 	}
 	auto &walker = active_walker();
 	if (domain_retired(walker.state.get())) {
-		auto state = std::move(walker.state);
+		walker.state.reset();
 		walker.address_space = nullptr;
 		walker.generation = 0;
-		state->walker_mutex.unlock();
 	}
 	auto &batch = mapping_batch();
 	if (domain_retired(batch.state.get()))
@@ -583,10 +573,9 @@ public:
 		}
 		auto &walker = active_walker();
 		if (walker.address_space == this && walker.state) {
-			auto state = std::move(walker.state);
+			walker.state.reset();
 			walker.address_space = nullptr;
 			walker.generation = 0;
-			state->walker_mutex.unlock();
 		}
 		auto &execution = active_thread_execution();
 		if (execution.address_space == this && execution.state != nullptr) {
@@ -899,7 +888,12 @@ public:
 			++batch.depth;
 			return 0;
 		}
-		auto state = state_for(generation);
+		/* A walker has already resolved the generation it is bound to. */
+		const auto &walker = active_walker();
+		auto state = walker.state && walker.address_space == this &&
+				walker.generation == generation &&
+				!walker.state->retired.load(std::memory_order_acquire) ?
+			walker.state : state_for(generation);
 		const auto invalidation_epoch = state->invalidation_epoch.load(
 			std::memory_order_acquire);
 		reset_mapping_batch();
@@ -967,11 +961,9 @@ public:
 		auto &active = active_walker();
 		if (active.state)
 			return -1;
-		auto state = state_for(generation);
-		state->walker_mutex.lock();
+		active.state = state_for(generation);
 		active.address_space = this;
 		active.generation = generation;
-		active.state = std::move(state);
 		return 0;
 	}
 
@@ -981,10 +973,9 @@ public:
 		if (!active.state || active.address_space != this ||
 		    active.generation != generation)
 			return -1;
-		auto state = std::move(active.state);
+		active.state.reset();
 		active.address_space = nullptr;
 		active.generation = 0;
-		state->walker_mutex.unlock();
 		return 0;
 	}
 

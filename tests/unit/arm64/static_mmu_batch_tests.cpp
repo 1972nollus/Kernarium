@@ -732,6 +732,48 @@ void test_empty_range_unmap_rejects_an_older_batch()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* Linux walkers of one generation run side by side, each bound to its thread
+ * with its own batch.  Neither waits for the other, and with no invalidation
+ * between them both publish. */
+void test_sibling_walkers_publish_side_by_side()
+{
+	constexpr unsigned long generation = 317;
+	constexpr unsigned long base = 0x60'0000;
+	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	const auto map_page = [&](unsigned long page) {
+		return darwin_uml_static_vm_map_generation(generation,
+			reinterpret_cast<void *>(
+				base + page * DARWIN_UML_GUEST_PAGE_SIZE),
+			backing.fd(), page * DARWIN_UML_GUEST_PAGE_SIZE,
+			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1);
+	};
+	const auto require_mapped = [&](unsigned long page) {
+		void *translated = nullptr;
+		require(darwin_uml_static_vm_translate(generation,
+				base + page * DARWIN_UML_GUEST_PAGE_SIZE,
+				DARWIN_UML_STATIC_READ, &translated) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+	};
+
+	require(darwin_uml_static_vm_walker_lock(generation) == 0);
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(map_page(0) == 0);
+	std::thread sibling{[&] {
+		require(darwin_uml_static_vm_walker_lock(generation) == 0);
+		require(darwin_uml_static_vm_batch_begin(generation) == 0);
+		require(map_page(1) == 0);
+		require(darwin_uml_static_vm_batch_end() == 0);
+		require(darwin_uml_static_vm_walker_unlock(generation) == 0);
+	}};
+	sibling.join();
+	require_mapped(1);
+	require(darwin_uml_static_vm_batch_end() == 0);
+	require(darwin_uml_static_vm_walker_unlock(generation) == 0);
+	require_mapped(0);
+	require_mapped(1);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 /* A batch plans one entry per touched page and indexes them by page address,
  * reserving the index up to a power-of-two cap.  libc++ keeps a power-of-two
  * bucket count for such a reservation and constrains the hash by masking, so
@@ -916,6 +958,7 @@ int main()
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
 	test_empty_range_unmap_rejects_an_older_batch();
+	test_sibling_walkers_publish_side_by_side();
 	test_page_index_hash_spreads_page_aligned_addresses();
 	test_page_index_reservation_never_shrinks_or_rehashes_needlessly();
 	test_page_index_hash_spreads_host_pages_under_a_masked_bucket_count();

@@ -335,8 +335,8 @@ void test_software_thread_exit_closes_walker_and_execution()
 	require(prepared.load(std::memory_order_acquire));
 
 	auto &state = *static_cast<uml::memory::ExecutionContext *>(context)->state;
-	require(state.walker_mutex.try_lock());
-	state.walker_mutex.unlock();
+	require(darwin_uml_static_vm_walker_lock(generation) == 0);
+	require(darwin_uml_static_vm_walker_unlock(generation) == 0);
 	require(state.execution_gate.load(std::memory_order_acquire) == 0);
 	require(darwin_uml_static_vm_execution_context_begin(context, 0) == 0);
 	require(darwin_uml_static_vm_execution_context_end(context) == 0);
