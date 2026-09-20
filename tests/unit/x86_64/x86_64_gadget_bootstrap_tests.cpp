@@ -4623,6 +4623,89 @@ read_test_sequences(void *context) noexcept
 		"clear-overflow INTO did not retire normally");
 }
 
+/* PALIGNR, PSRLDQ and PSLLDQ take a byte count as a full eight-bit immediate.
+ * Every count that reaches the operand's size discards the whole lane, so the
+ * only architecturally visible answer is zero.  The gadgets index their
+ * operands through a byte-wise table lookup whose index arithmetic wraps at
+ * 256, so a count of 241 or more used to fold back into the table and
+ * resurrect one byte per lane.  Counts below the size must keep working.
+ */
+[[nodiscard]] bool byte_shifts_discard_a_lane_for_an_oversized_count()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc4, 0xe3, 0x7d, 0x0f, 0xd1, 0xf1, // vpalignr $0xf1,ymm1,ymm0,ymm2
+		0xc5, 0xe5, 0x73, 0xd8, 0xf1,       // vpsrldq  $0xf1,ymm0,ymm3
+		0xc5, 0xdd, 0x73, 0xf8, 0xf1,       // vpslldq  $0xf1,ymm0,ymm4
+		0x66, 0x0f, 0x73, 0xdd, 0xf1,       // psrldq   $0xf1,xmm5
+		0x66, 0x0f, 0x73, 0xfe, 0xf1,       // pslldq   $0xf1,xmm6
+		0xc4, 0xe3, 0x7d, 0x0f, 0xf9, 0x11, // vpalignr $0x11,ymm1,ymm0,ymm7
+		0xc4, 0x63, 0x7d, 0x0f, 0xc1, 0x05, // vpalignr $0x05,ymm1,ymm0,ymm8
+		0x0f, 0x05,                         // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"oversized byte-shift block did not build"))
+		return false;
+	CpuState cpu{};
+	for (std::size_t lane = 0; lane < 32; ++lane) {
+		cpu.vectors[0][lane] = static_cast<std::byte>(0x10U + lane);
+		cpu.vectors[1][lane] = static_cast<std::byte>(0x80U + lane);
+	}
+	constexpr auto legacy_high = std::byte{0xc7};
+	for (std::size_t lane = 16; lane < 32; ++lane) {
+		cpu.vectors[5][lane] = legacy_high;
+		cpu.vectors[6][lane] = legacy_high;
+	}
+	const auto result = gadgets::execute(built.program, cpu, memory, 8);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		result.retired_instructions == 8 && cpu.rip == 40,
+		"oversized byte-shift block did not reach SYSCALL"))
+		return false;
+
+	/* PALIGNR's window is the r/m operand followed by the VEX operand, one
+	 * 128-bit lane at a time; a source byte past that pair reads as zero. */
+	const auto aligned = [&cpu](std::size_t lane, std::size_t index,
+			std::size_t count) {
+		const std::size_t at = index + count;
+		if (at >= 32)
+			return std::byte{};
+		return at < 16 ? cpu.vectors[1][lane * 16 + at] :
+			cpu.vectors[0][lane * 16 + at - 16];
+	};
+	for (std::size_t lane = 0; lane < 2; ++lane)
+	for (std::size_t index = 0; index < 16; ++index) {
+		const auto at = lane * 16 + index;
+		if (!expect(cpu.vectors[2][at] == std::byte{},
+			"VPALIGNR with a count of 241 kept a byte") ||
+			!expect(cpu.vectors[3][at] == std::byte{},
+				"VPSRLDQ with a count of 241 kept a byte") ||
+			!expect(cpu.vectors[4][at] == std::byte{},
+				"VPSLLDQ with a count of 241 kept a byte") ||
+			!expect(cpu.vectors[7][at] == aligned(lane, index, 0x11),
+				"VPALIGNR with a count of 17 is wrong") ||
+			!expect(cpu.vectors[8][at] == aligned(lane, index, 0x05),
+				"VPALIGNR with a count of 5 is wrong"))
+			return false;
+	}
+	for (std::size_t index = 0; index < 16; ++index) {
+		if (!expect(cpu.vectors[5][index] == std::byte{},
+			"PSRLDQ with a count of 241 kept a byte") ||
+			!expect(cpu.vectors[6][index] == std::byte{},
+				"PSLLDQ with a count of 241 kept a byte"))
+			return false;
+	}
+	/* A legacy SSE shift leaves the upper YMM lane alone. */
+	for (std::size_t index = 16; index < 32; ++index) {
+		if (!expect(cpu.vectors[5][index] == legacy_high &&
+			cpu.vectors[6][index] == legacy_high,
+			"a legacy byte shift disturbed the upper YMM lane"))
+			return false;
+	}
+	return true;
+}
+
 /* Clang's AVX2 path uses VMOVLHPS with the r/m source aliased to the
  * destination while saving its lexer stack.  The gadget must capture that
  * source lane before replacing the destination with the VEX merge operand.
@@ -5458,6 +5541,7 @@ int main()
 		migrated_gadgets_are_native_only() &&
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
+		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_invalid_results_use_x86_indefinite_nan() &&
 		locked_memory_updates_select_exclusive_gadgets() &&

@@ -187,8 +187,17 @@
 	mov v5.16b, v7.16b
 	.endif
 	.elseif \opcode == 0x0f
+	/* PALIGNR reads the concatenation through TBL, which answers an index
+	 * past the table with zero, and that is also what the architecture
+	 * produces for a byte count of 32 or more. The index addition is
+	 * byte-wise, so a count of 241 or more would wrap back into the table
+	 * and resurrect a byte the shift had discarded; clamp the count to the
+	 * table's size, which leaves every smaller count untouched. */
 	vector_map3_index_sequence 6
-	dup v7.16b, w13
+	mov w14, #32
+	cmp w13, w14
+	csel w14, w13, w14, lo
+	dup v7.16b, w14
 	add v6.16b, v6.16b, v7.16b
 	.if \width == 64
 	mov v7.d[0], v1.d[0]

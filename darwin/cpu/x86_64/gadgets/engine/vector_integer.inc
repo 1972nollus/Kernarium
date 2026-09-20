@@ -522,8 +522,17 @@ vector_integer_family fe
 /* Immediate shifts have no memory form. Translation selects the group once. */
 .macro vector_integer_immediate_lane opcode, group, output, input
 	.if \opcode == 0x73 && (\group == 3 || \group == 7)
+	/* PSRLDQ and PSLLDQ index the lane through TBL, which answers an index
+	 * past the sixteen-byte table with zero, and that is also what the
+	 * architecture produces for a byte count of 16 or more. The index
+	 * arithmetic is byte-wise, so a count of 241 or more would wrap back
+	 * into the table and resurrect a byte the shift had discarded; clamp
+	 * the count, which leaves every smaller count untouched. */
 	vector_integer_index_sequence
-	dup v7.16b, w13
+	mov w14, #16
+	cmp w13, w14
+	csel w14, w13, w14, lo
+	dup v7.16b, w14
 	.if \group == 3
 	add v6.16b, v6.16b, v7.16b
 	.else
