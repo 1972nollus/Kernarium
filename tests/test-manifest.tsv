@@ -20,7 +20,7 @@ arm64-gadget-tlb-layout	tests/unit/arm64	unit	retained
 static-mmu-batch	tests/unit/arm64	unit	retained
 memory-domain-lifetime	tests/unit/memory	unit	retained
 memory-execution-gate-profile	tests/unit/memory	unit	retained
-memory-mappings-mutex	tests/unit/memory/mappings_mutex_tests.cpp	unit	retained
+memory-word-shared-mutex	tests/unit/memory/word_shared_mutex_tests.cpp	unit	retained
 memory-shared-backing-view	tests/unit/memory/shared_backing_view_tests.cpp	unit	retained
 gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional
 gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional

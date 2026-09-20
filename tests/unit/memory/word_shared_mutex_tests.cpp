@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "mappings_mutex.hpp"
+#include "word_shared_mutex.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -12,12 +12,12 @@
 
 namespace {
 
-using uml::memory::MappingsMutex;
+using uml::memory::WordSharedMutex;
 
 [[nodiscard]] bool expect(bool condition, const char *message) noexcept
 {
 	if (!condition)
-		std::fprintf(stderr, "mappings mutex: %s\n", message);
+		std::fprintf(stderr, "word shared mutex: %s\n", message);
 	return condition;
 }
 
@@ -28,7 +28,7 @@ using uml::memory::MappingsMutex;
 	constexpr unsigned writers = 3;
 	constexpr unsigned readers = 5;
 	constexpr unsigned rounds = 20000;
-	MappingsMutex mutex;
+	WordSharedMutex mutex;
 	std::uint64_t first = 0;
 	std::uint64_t second = 0;
 	std::atomic<bool> torn{false};
@@ -68,7 +68,7 @@ using uml::memory::MappingsMutex;
 /* Readers share: a second reader gets in while the first still holds. */
 [[nodiscard]] bool readers_hold_the_lock_together()
 {
-	MappingsMutex mutex;
+	WordSharedMutex mutex;
 	std::shared_lock first{mutex};
 	std::atomic<bool> entered{false};
 	std::thread second{[&] {
@@ -91,7 +91,7 @@ using uml::memory::MappingsMutex;
 [[nodiscard]] bool a_waiting_writer_is_not_starved()
 {
 	constexpr unsigned readers = 4;
-	MappingsMutex mutex;
+	WordSharedMutex mutex;
 	std::atomic<bool> done{false};
 	std::vector<std::thread> threads;
 	for (unsigned index = 0; index < readers; ++index) {
