@@ -12,11 +12,21 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace uml::cpu::x86_64::gadgets {
+
+static_assert(std::is_trivially_copyable_v<Gadget>,
+	"a translation copies its decoded instructions into its own storage");
+static_assert(alignof(Gadget) <= alignof(std::max_align_t) &&
+	alignof(Gadget) <= sizeof(std::uintptr_t),
+	"the decoded instructions follow the native words without padding");
+
 namespace {
 
 [[nodiscard]] bool fatal_trace_enabled() noexcept
@@ -45,24 +55,46 @@ void trace_fatal(const char *stage, const Program &program,
 	std::fflush(stderr);
 }
 
+/* The decoded instructions and the native words a translation assembles are
+ * built into buffers the thread keeps, so the storage a build works in is
+ * bought once per thread rather than once per block. Only the finished block
+ * is allocated, at its own size. */
+[[nodiscard]] std::vector<Gadget> &decoded_scratch() noexcept
+{
+	thread_local std::vector<Gadget> scratch;
+	return scratch;
+}
+
+[[nodiscard]] std::vector<std::uintptr_t> &native_scratch() noexcept
+{
+	thread_local std::vector<std::uintptr_t> scratch;
+	return scratch;
+}
+
 } // namespace
 
 Program::Program(ExecutionMode mode, std::uint64_t address,
-	std::size_t byte_count,
-	std::vector<Gadget> gadgets, ProgramLinkResolver links)
+	std::size_t byte_count, std::span<const Gadget> gadgets,
+	ProgramLinkResolver links)
 	: mode_{mode}, address_{normalize_instruction_pointer(mode, address)},
-	  byte_count_{byte_count}, gadgets_{std::move(gadgets)},
-	  native_stream_{}
+	  byte_count_{byte_count}
 {
-	/* The decoder reserves the maximum block size before finding its first
-	 * branch. Retaining that capacity in every private cache costs nearly
-	 * 10 KiB even for a one-instruction block. Compact once, before publishing
-	 * any stream, so retained storage follows the actual instruction count. */
-	gadgets_.shrink_to_fit();
-	native_stream_ = build_native_stream(
-		gadgets_, advance_instruction_pointer(mode_, address_, byte_count_),
-		mode_, links);
-	native_stream_.shrink_to_fit();
+	auto &words = native_scratch();
+	words.clear();
+	append_native_stream(words, gadgets,
+		advance_instruction_pointer(mode_, address_, byte_count_), mode_,
+		links);
+	const auto word_bytes = words.size() * sizeof(std::uintptr_t);
+	const auto gadget_bytes = gadgets.size() * sizeof(Gadget);
+	storage_ = std::make_unique_for_overwrite<std::byte[]>(
+		word_bytes + gadget_bytes);
+	if (word_bytes != 0)
+		std::memcpy(storage_.get(), words.data(), word_bytes);
+	if (gadget_bytes != 0)
+		std::memcpy(storage_.get() + word_bytes, gadgets.data(),
+			gadget_bytes);
+	words_ = static_cast<std::uint32_t>(words.size());
+	gadgets_ = static_cast<std::uint32_t>(gadgets.size());
 }
 
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
@@ -86,7 +118,8 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::span<std::byte> source) noexcept
 {
 	try {
-		std::vector<Gadget> stream;
+		auto &stream = decoded_scratch();
+		stream.clear();
 		stream.reserve(maximum_instructions);
 		auto current = normalize_instruction_pointer(mode, address);
 		std::size_t bytes{};
@@ -140,8 +173,9 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		if (stream.empty())
 			return {BuildStatus::illegal_instruction, {}, address};
 		return {BuildStatus::built,
-			Program{mode, address, bytes, std::move(stream), links}, 0,
-			recorded};
+			Program{mode, address, bytes,
+				std::span<const Gadget>{stream}, links},
+			0, recorded};
 	} catch (const std::logic_error &) {
 		return {BuildStatus::illegal_instruction, {}, address};
 	} catch (...) {

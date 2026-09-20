@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -111,34 +112,43 @@ struct ProgramLinkResolver final {
 		void *, std::uint64_t, ExecutionMode){};
 };
 
+/* One translation owns one allocation. The native stream the engine runs comes
+ * first and the decoded instructions a budget-limited replay rebuilds from
+ * follow it, so a translation buys its retained storage once and an eviction
+ * gives it back once, at exactly the size the block turned out to need. */
 class Program final {
 public:
 	Program() = default;
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
-		std::vector<Gadget> gadgets, ProgramLinkResolver links = {});
+		std::span<const Gadget> gadgets, ProgramLinkResolver links = {});
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
 	[[nodiscard]] std::span<const Gadget> stream() const noexcept
 	{
-		return gadgets_;
+		return {reinterpret_cast<const Gadget *>(
+				storage_.get() +
+				words_ * sizeof(std::uintptr_t)),
+			gadgets_};
 	}
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return native_stream_;
+		return {reinterpret_cast<const std::uintptr_t *>(storage_.get()),
+			words_};
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
-		return gadgets_.size();
+		return gadgets_;
 	}
 
 private:
 	ExecutionMode mode_{ExecutionMode::long64};
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
-	std::vector<Gadget> gadgets_;
-	std::vector<std::uintptr_t> native_stream_;
+	std::unique_ptr<std::byte[]> storage_;
+	std::uint32_t words_{};
+	std::uint32_t gadgets_{};
 };
 
 enum class BuildStatus : std::uint8_t {

@@ -7065,12 +7065,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 
 } // namespace
 
-std::vector<std::uintptr_t> build_native_stream(
+void append_native_stream(std::vector<std::uintptr_t> &stream,
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, ProgramLinkResolver links)
 {
-	std::vector<std::uintptr_t> stream;
-	stream.reserve(gadgets.size() * 3U + 2U);
+	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
 	FlagState state{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
@@ -7094,10 +7093,18 @@ std::vector<std::uintptr_t> build_native_stream(
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_block_exit_linked));
 		stream.push_back(reinterpret_cast<std::uintptr_t>(link));
-		return stream;
+		return;
 	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
 	stream.push_back(next);
+}
+
+std::vector<std::uintptr_t> build_native_stream(
+	std::span<const Gadget> gadgets, std::uint64_t final_rip,
+	ExecutionMode mode, ProgramLinkResolver links)
+{
+	std::vector<std::uintptr_t> stream;
+	append_native_stream(stream, gadgets, final_rip, mode, links);
 	return stream;
 }
 
