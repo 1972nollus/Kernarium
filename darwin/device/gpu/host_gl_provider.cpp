@@ -45,6 +45,21 @@ void reportEglFailure(const char* operation) noexcept
         static_cast<unsigned int>(eglGetError()));
 }
 
+// The rendering API an EGL thread is bound to is per-thread state whose
+// default is EGL_OPENGL_ES_API, so binding it once where the display is
+// created leaves every other thread asking for the wrong client API. vrend
+// creates a context's shared sub-context on whichever thread services the
+// guest queue, and a GLES request cannot share with this provider's desktop
+// contexts: EGL answers EGL_BAD_MATCH. Select the API on each thread that
+// reaches EGL instead.
+bool bindClientApi() noexcept
+{
+    if (eglBindAPI(kClientApi) == EGL_TRUE)
+        return true;
+    reportEglFailure("API binding");
+    return false;
+}
+
 std::string glString(GLenum name)
 {
     const auto* value = glGetString(name);
@@ -61,6 +76,8 @@ HostGlProvider::~HostGlProvider()
     if (publishedDisplay == nullptr)
         return;
     const auto eglDisplay = static_cast<EGLDisplay>(publishedDisplay);
+    // eglMakeCurrent releases the context of the calling thread's bound API.
+    (void)bindClientApi();
     (void)eglMakeCurrent(
         eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     (void)eglTerminate(eglDisplay);
@@ -73,6 +90,8 @@ void* HostGlProvider::display() noexcept
 {
     try {
         std::lock_guard lock(mutex_);
+        if (!bindClientApi())
+            return nullptr;
         if (void* publishedDisplay =
                 display_.load(std::memory_order_acquire)) {
             return publishedDisplay;
@@ -91,11 +110,6 @@ void* HostGlProvider::display() noexcept
         EGLint minor = 0;
         if (eglInitialize(eglDisplay, &major, &minor) != EGL_TRUE) {
             reportEglFailure("initialization");
-            (void)eglTerminate(eglDisplay);
-            return nullptr;
-        }
-        if (eglBindAPI(kClientApi) != EGL_TRUE) {
-            reportEglFailure("API binding");
             (void)eglTerminate(eglDisplay);
             return nullptr;
         }
@@ -309,6 +323,8 @@ int HostGlProvider::makeCurrent(void* context) noexcept
 {
     void* publishedDisplay = display_.load(std::memory_order_acquire);
     if (publishedDisplay == nullptr)
+        return -EIO;
+    if (!bindClientApi())
         return -EIO;
     if (eglMakeCurrent(
             static_cast<EGLDisplay>(publishedDisplay),
