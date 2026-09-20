@@ -94,6 +94,14 @@ so a task that yields in a retry loop, as `tty_open()` does during the last
 close of a terminal, no longer stops the timer and the queued wakeups of its
 CPU. Both are the same source changes the mainline line carries.
 
+Threads of one process replay their mappings to the host side by side: a user
+`mm` has no replay lock, the host's invalidation epoch rejects a batch that
+sampled a PTE before Linux changed it, a replay is published in bounded batches
+with a scheduling checkpoint between them, user ranges are exact pages, and a
+fault replays ahead of Linux only when the PTE already grants the access. This
+is the same source change the mainline line carries; its
+[contract](../mainline-6.18/README.md) is described there.
+
 The standardized vhost-user shared-memory-region transport the mainline line
 adds for host-visible Virtio-GPU blobs is carried here as well. The Android
 product's Vulkan HAL is Mesa's Venus driver, which refuses to initialize

@@ -1,7 +1,7 @@
 From a30cca10c22c03a1ece7955faac680787bb44902 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 08:02:37 +0900
-Subject: [PATCH 27/31] virtio: add UML vhost-user shared-memory aperture
+Subject: [PATCH 27/32] virtio: add UML vhost-user shared-memory aperture
 
 ---
  arch/um/drivers/vhost_user.h          |  36 +++-

@@ -1,7 +1,7 @@
 From 6758153222467c7e7de3fbf74884fe7f4b6cd92d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 12/31] mm: handle zero-length cachestat ranges
+Subject: [PATCH 12/32] mm: handle zero-length cachestat ranges
 
 Apply the reviewed final-state topic without intermediate churn.
 ---

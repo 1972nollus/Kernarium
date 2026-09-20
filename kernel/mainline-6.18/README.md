@@ -174,6 +174,27 @@ nothing queued, and a CPU that blocked on it would absorb every later remote
 vector until an unrelated descriptor or timer woke it. The idle wait reads the
 mask after publishing the idle state and polls instead of blocking.
 
+Threads of one process replay their mappings to the host side by side; a user
+`mm` has no replay lock, and the host orders its walkers instead. A batch
+records the generation's invalidation epoch when it begins, Linux invalidates
+the host range after it changes a PTE and before it frees the page, every
+invalidation advances the epoch, and a batch publishes only while the epoch
+still matches, so a walker that sampled a PTE before it changed cannot publish
+it afterwards. Two walkers of one page can still publish out of order across a
+change that needs no invalidation. Every such change makes the PTE more
+permissive, so the stale batch leaves the page less accessible than Linux
+allows and the next access replays it. A user `mm` queues exact page ranges,
+while `init_mm`, which the host maps natively, still rounds to the 16 KiB host
+page. A fault replays before Linux resolves it only when the PTE already grants
+the access, and then brings its 16 KiB neighbours along; the replay after
+resolution covers the faulting page and joins the pending snapshot under one
+lock hold, so a sibling cannot take the range away and leave the task to return
+to a page nobody has published. A user replay is published in batches of 64
+pages which span the ranges of its snapshot, and only a rejected batch is walked
+again, with a timer, IPI and scheduling checkpoint after every full batch and
+every sixteenth rejection, so a whole-`mm` replay after a fork makes progress
+while siblings keep invalidating. `init_mm` keeps its serialized walker.
+
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
 Linux task. A synchronous fault enters the guest path only from a virtual CPU

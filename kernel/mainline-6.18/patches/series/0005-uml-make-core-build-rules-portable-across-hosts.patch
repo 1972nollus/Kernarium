@@ -1,7 +1,7 @@
 From e82b4cbae95f1641fef8ee5f312361317ecfb5fd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 05/31] uml: make core build rules portable across hosts
+Subject: [PATCH 05/32] uml: make core build rules portable across hosts
 
 Wire the split core objects and use a host-portable configuration transform in one build-only final-state topic.
 ---

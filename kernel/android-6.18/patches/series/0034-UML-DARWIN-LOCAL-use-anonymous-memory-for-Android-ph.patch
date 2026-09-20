@@ -1,7 +1,7 @@
 From 5d55644ce367d877fed77ad9b14153baeaf2c2bc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 25 Aug 2026 16:42:04 +0000
-Subject: [PATCH 34/43] UML-DARWIN-LOCAL: use anonymous memory for Android
+Subject: [PATCH 34/44] UML-DARWIN-LOCAL: use anonymous memory for Android
  physical RAM
 
 Change-Id: Id6e632e5323520c802a0217bb5a8ea773925955b

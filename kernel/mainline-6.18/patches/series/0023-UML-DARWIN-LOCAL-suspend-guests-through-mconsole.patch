@@ -1,7 +1,7 @@
 From a079591d0fdfaf2d868da4dfdad1f777914559bc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 12:54:23 +0900
-Subject: [PATCH 23/31] UML-DARWIN-LOCAL: suspend guests through mconsole
+Subject: [PATCH 23/32] UML-DARWIN-LOCAL: suspend guests through mconsole
 
 ---
  arch/um/Kconfig                    |  1 -

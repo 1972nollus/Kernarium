@@ -209,7 +209,7 @@ def validate_init_mm_wrapper(tlb: str) -> None:
             ),
             (
                 "serialized init_mm walker",
-                r"__um_tlb_sync\s*\(\s*&init_mm\s*,\s*false\s*\)\s*;",
+                r"__um_tlb_sync\s*\(\s*&init_mm\s*,\s*false\s*,\s*0\s*,\s*0\s*\)\s*;",
             ),
             (
                 "init_mm owner clearing",
@@ -245,7 +245,8 @@ def validate_init_mm_wrapper(tlb: str) -> None:
     find(
         locked.text,
         r"if\s*\(\s*WARN_ON_ONCE\s*\(\s*mm\s*==\s*&init_mm\s*\)\s*\)\s*"
-        r"return\s+-EINVAL\s*;\s*return\s+__um_tlb_sync\s*\(\s*mm\s*,\s*true\s*\)",
+        r"return\s+-EINVAL\s*;\s*return\s+__um_tlb_sync\s*\(\s*mm\s*,\s*true\s*,"
+        r"\s*start\s*,\s*end\s*\)",
         "um_tlb_sync_locked must reject init_mm before entering the core walker",
         flags=re.DOTALL,
     )
@@ -260,6 +261,12 @@ def validate_pending_range_transaction(tlb: str) -> None:
             (
                 "pending-range lock",
                 r"spin_lock_irqsave\s*\(\s*&mm->context\.sync_tlb_lock\s*,\s*flags\s*\)",
+            ),
+            (
+                "caller range joins the snapshot under the pending-range lock",
+                r"if\s*\(\s*force_end\s*>\s*force_start\s*\)\s*\{\s*"
+                r"um_tlb_mark_sync_locked\s*\(\s*mm\s*,\s*force_start\s*,\s*"
+                r"force_end\s*\)\s*;",
             ),
             (
                 "pending-range count snapshot",
@@ -279,8 +286,14 @@ def validate_pending_range_transaction(tlb: str) -> None:
                 r"spin_unlock_irqrestore\s*\(\s*&mm->context\.sync_tlb_lock\s*,\s*flags\s*\)",
             ),
             (
-                "complete snapshot application",
-                r"for\s*\(\s*sync_index\s*=\s*0\s*;\s*"
+                "complete user snapshot application",
+                r"if\s*\(\s*mm\s*!=\s*&init_mm\s*\)\s*"
+                r"ret\s*=\s*darwin_replay_user_ranges\s*\(\s*mm\s*,\s*&ops\s*,\s*"
+                r"sync_ranges\s*,\s*sync_count\s*\)\s*;",
+            ),
+            (
+                "complete init_mm snapshot application",
+                r"for\s*\(\s*sync_index\s*=\s*0\s*;\s*mm\s*==\s*&init_mm\s*&&\s*"
                 r"sync_index\s*<\s*sync_count\s*&&\s*!ret\s*;\s*\+\+sync_index\s*\)\s*\{\s*"
                 r"addr\s*=\s*sync_ranges\s*\[\s*sync_index\s*\]\.from\s*;\s*"
                 r"sync_end\s*=\s*sync_ranges\s*\[\s*sync_index\s*\]\.to\s*;\s*"
@@ -301,6 +314,86 @@ def validate_pending_range_transaction(tlb: str) -> None:
                 r"ret\s*=\s*0\s*;\s*goto\s+retry\s*;\s*\}",
             ),
         ),
+    )
+
+
+def validate_bounded_user_replay(tlb: str) -> None:
+    """A user replay publishes bounded batches and repeats only a rejected one."""
+    find(
+        tlb,
+        r"#\s*define\s+UML_TLB_SYNC_BATCH_PAGES\s+64U\b",
+        "a user replay batch must stay bounded at 64 pages",
+    )
+    pte_range = function_region(tlb, "update_pte_range")
+    find(
+        pte_range.text,
+        r"if\s*\(\s*!ret\s*&&\s*ops->budget\s*!=\s*0\s*&&\s*--ops->budget\s*==\s*0\s*\)\s*\{\s*"
+        r"ops->resume\s*=\s*addr\s*\+\s*PAGE_SIZE\s*;\s*"
+        r"ret\s*=\s*UML_TLB_SYNC_BATCH_FULL\s*;\s*\}",
+        "the PTE walk must stop a full batch and record where the next one resumes",
+    )
+    checkpoint = function_region(tlb, "darwin_tlb_sync_checkpoint")
+    require_order(
+        checkpoint.text,
+        (
+            ("logical-IRQ gate", r"if\s*\(\s*!um_get_signals\s*\(\s*\)\s*\)\s*return\s*;"),
+            ("cooperative timer checkpoint", r"darwin_timer_kernel_checkpoint\s*\(\s*\)\s*;"),
+            ("scheduling point", r"cond_resched\s*\(\s*\)\s*;"),
+        ),
+    )
+    find(
+        tlb,
+        r"#\s*define\s+UML_TLB_SYNC_REJECTS_PER_CHECKPOINT\s+16U\b",
+        "a losing walker must reach a checkpoint within sixteen rejections",
+    )
+    replay = function_region(tlb, "darwin_replay_user_ranges")
+    require_darwin_context(
+        tlb, replay.start, four_k_only=False, subject="bounded user replay"
+    )
+    require_order(
+        replay.text,
+        (
+            ("walker binding", r"darwin_uml_vm_walker_lock\s*\(\s*generation\s*\)"),
+            ("batch begin", r"ret\s*=\s*darwin_uml_vm_batch_begin\s*\(\s*generation\s*\)\s*;"),
+            (
+                "per-batch budget",
+                r"ops->budget\s*=\s*UML_TLB_SYNC_BATCH_PAGES\s*;",
+            ),
+            (
+                "bounded walk of the current range",
+                r"ret\s*=\s*update_mm_range\s*\(\s*mm\s*,\s*ops\s*,\s*batch_addr\s*,\s*"
+                r"ranges\s*\[\s*batch_index\s*\]\.to\s*\)\s*;",
+            ),
+            (
+                "one batch spans the snapshot's ranges",
+                r"if\s*\(\s*ret\s*\|\|\s*\+\+batch_index\s*==\s*count\s*\)\s*break\s*;\s*"
+                r"batch_addr\s*=\s*ranges\s*\[\s*batch_index\s*\]\.from\s*;",
+            ),
+            ("batch end", r"batch_ret\s*=\s*darwin_uml_vm_batch_end\s*\(\s*\)\s*;"),
+            ("walker release", r"darwin_uml_vm_walker_unlock\s*\(\s*generation\s*\)"),
+            (
+                "rejected batch repeats from its own start with a bounded checkpoint",
+                r"if\s*\(\s*ret\s*==\s*-EAGAIN\s*\)\s*\{\s*ret\s*=\s*0\s*;\s*"
+                r"if\s*\(\s*\+\+rejected\s*%\s*UML_TLB_SYNC_REJECTS_PER_CHECKPOINT\s*==\s*0\s*\)\s*"
+                r"darwin_tlb_sync_checkpoint\s*\(\s*\)\s*;\s*continue\s*;\s*\}",
+            ),
+            (
+                "published batch advances to its resume address",
+                r"index\s*=\s*batch_index\s*;\s*addr\s*=\s*ops->resume\s*;",
+            ),
+            (
+                "a range the batch finished hands over to the next",
+                r"if\s*\(\s*addr\s*>=\s*ranges\s*\[\s*index\s*\]\.to\s*&&\s*\+\+index\s*<\s*count\s*\)\s*"
+                r"addr\s*=\s*ranges\s*\[\s*index\s*\]\.from\s*;\s*"
+                r"darwin_tlb_sync_checkpoint\s*\(\s*\)\s*;",
+            ),
+        ),
+    )
+    core = function_region(tlb, "__um_tlb_sync")
+    find(
+        core.text,
+        r"ops\.budget\s*=\s*0\s*;",
+        "the init_mm walk must run unbounded inside its serialized wrapper",
     )
 
 
@@ -739,6 +832,7 @@ def validate_sources(
 ) -> None:
     validate_init_mm_wrapper(tlb)
     validate_pending_range_transaction(tlb)
+    validate_bounded_user_replay(tlb)
     validate_four_k_slot_policy(tlb)
     validate_trap_repair(trap)
     validate_nested_tlb_range_policy(um_tlb_header, mmu_gather)
@@ -810,7 +904,7 @@ def run_mutation_fixtures(
             lambda value: move_literal_after(
                 value,
                 "\tmutex_lock(&init_mm.context.turnstile);\n",
-                "\tret = __um_tlb_sync(&init_mm, false);\n",
+                "\tret = __um_tlb_sync(&init_mm, false, 0, 0);\n",
             ),
         ),
         (
@@ -838,6 +932,52 @@ def run_mutation_fixtures(
                 value,
                 r"(if\s*\(WARN_ON_ONCE\(mm == &init_mm\)\)\s*)return -EINVAL;",
                 r"\1return 0;",
+            ),
+        ),
+        (
+            "caller-range-joins-snapshot",
+            "tlb",
+            lambda value: substitute_once(
+                value,
+                r"um_tlb_mark_sync_locked\(mm, force_start, force_end\);",
+                "um_tlb_mark_sync(mm, force_start, force_end);",
+            ),
+        ),
+        (
+            "user-replay-batch-unbounded",
+            "tlb",
+            lambda value: substitute_once(
+                value,
+                r"ops->budget = UML_TLB_SYNC_BATCH_PAGES;",
+                "ops->budget = 0;",
+            ),
+        ),
+        (
+            "rejected-batch-retries-without-checkpoint",
+            "tlb",
+            lambda value: substitute_once(
+                value,
+                r"if \(\+\+rejected % UML_TLB_SYNC_REJECTS_PER_CHECKPOINT == 0\)\s*"
+                r"darwin_tlb_sync_checkpoint\(\);",
+                "++rejected;",
+            ),
+        ),
+        (
+            "full-batch-restarts-the-range",
+            "tlb",
+            lambda value: substitute_once(
+                value,
+                r"addr = ops->resume;",
+                "ops->resume = addr;",
+            ),
+        ),
+        (
+            "user-replay-batch-per-range",
+            "tlb",
+            lambda value: substitute_once(
+                value,
+                r"if \(ret \|\| \+\+batch_index == count\)\s*break;",
+                "++batch_index; break;",
             ),
         ),
         (

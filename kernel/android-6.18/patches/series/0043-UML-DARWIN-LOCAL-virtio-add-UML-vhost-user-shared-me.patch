@@ -1,7 +1,7 @@
 From e6a03c16cec12fa9a32aab8870f0a046cb94f9a9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 08:02:37 +0900
-Subject: [PATCH 43/43] UML-DARWIN-LOCAL: virtio: add UML vhost-user
+Subject: [PATCH 43/44] UML-DARWIN-LOCAL: virtio: add UML vhost-user
  shared-memory aperture
 
 Change-Id: I26602b97c76924ccaa673b3d43a057da18c42e29

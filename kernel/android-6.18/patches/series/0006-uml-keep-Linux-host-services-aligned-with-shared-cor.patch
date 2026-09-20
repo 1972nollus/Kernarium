@@ -1,7 +1,7 @@
 From 5b1e495eb8afd801eb5d85780b22a69bc2dedd0d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
-Subject: [PATCH 06/43] uml: keep Linux host services aligned with shared core
+Subject: [PATCH 06/44] uml: keep Linux host services aligned with shared core
  contracts
 
 Apply the reviewed final-state topic without intermediate churn.
