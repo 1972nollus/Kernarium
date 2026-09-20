@@ -503,7 +503,10 @@ buffer on each of 5120 or 8200 loop trips. dEQP reports each as
 `Upper left corner mismatch`, since a killed draw leaves the clear colour, never
 as a timeout. Their `vert`, `tessc`, `tesse`, `geom` and `comp` variants run
 the same loop a handful of times and pass, and which of the cases nearest the
-threshold fault varies from run to run.
+threshold fault varies from run to run. The `vec4.u64` group loses the same
+cases for the same reason, `clamp_frag` and twelve of its `bit_field_insert`
+cases in a full mustpass run, and the threshold is near enough for a narrow
+type to cross it as well: `vec4.i8.clamp_frag` failed once in that run.
 
 Two driver changes lower the per-iteration work and so moved several sibling
 cases under the threshold; they are mitigations, not a fix. Descriptor loads
@@ -582,13 +585,13 @@ that spacing is the margin a driver would have to buy back, and there is no
 per-sample work left in the generated MSL to remove. Both cases pass on a Mac,
 where the whole `image_robustness` and `robustness2` family is clean.
 
-The limit is not confined to 3D textures. The `rgba32f` `2d_array` siblings of
-the same test,
-`{bind,push}.notemplate.rgba32f.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.2d_array.{frag,vert}`
-and their pipeline-library variants, run the same loop over a layered
-four-channel image. In a full mustpass fraction five of those twelve
-render-stage cases fail, each with two submissions killed, while the other seven
-and every `1d` and `2d` sibling pass.
+The limit is not confined to 3D textures. The `2d_array` siblings of the same
+test,
+`{bind,push}.notemplate.{r32f,rgba32f}.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.2d_array.{frag,vert}`
+and their pipeline-library variants, run the same loop over a layered image. In
+a full mustpass run five of the twelve `rgba32f` render-stage cases of
+`pipeline_robustness` fail, each with two submissions killed, and so do the
+`bind` `r32f` `frag` and `vert` cases, while every `1d` and `2d` sibling passes.
 
 #### A long run of small render passes faults the GPU
 
