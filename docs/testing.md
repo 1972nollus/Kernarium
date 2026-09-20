@@ -123,6 +123,9 @@ overlay, transfers generated fixtures over the local SLiRP endpoint, checks
 every advertised profile's pixels, raw layouts, timestamps, source-change and
 EOS events, and rejects kernel faults or failed shutdown. Run it on both Linux
 page profiles; Android uses its own 16 KiB guest and deployment workflow.
+The fixed x86_64 userspace product registers no CTest suites, so the x86_64
+slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
+an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
 
 The optional `guest-futex-atomic` regression uses a static C++20 build of
 `tests/integration/futex/futex_atomic_probe.cpp`, selected through
