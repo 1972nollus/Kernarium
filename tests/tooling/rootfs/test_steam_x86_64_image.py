@@ -132,6 +132,27 @@ class SeedPinning(unittest.TestCase):
             inputs.validate_policy({**lock, "steam_platform": "linuxarm64"})
 
 
+class GamingSession(unittest.TestCase):
+    def setUp(self) -> None:
+        self.unit = (ROOT / "tools/rootfs/steam-common/overlay/etc/systemd/system"
+                     "/steam-gaming.service").read_text()
+
+    def test_session_keeps_no_capabilities(self) -> None:
+        # A TTY-owning PAM service is handed an ambient capability, and
+        # bubblewrap refuses to build Steam's runtime container for a process
+        # that holds capabilities without being setuid.
+        self.assertIn("\nCapabilityBoundingSet=\n", self.unit)
+        self.assertIn("PAMName=login", self.unit)
+
+    def test_session_selects_zink_only_with_the_imported_runtime(self) -> None:
+        session = (ROOT / PRODUCER / "overlay/usr/local/bin/steam-gaming-session").read_text()
+        self.assertIn("/usr/share/uml-vulkan/guest-runtime.json", session)
+        self.assertIn("MESA_LOADER_DRIVER_OVERRIDE=zink", session)
+        self.assertIn("GALLIUM_DRIVER=zink", session)
+        # Nothing ARM64EC specific belongs in the pure x86-64 session.
+        self.assertNotIn("PROTON_USE_ARM64", session)
+
+
 class Launcher(unittest.TestCase):
     def test_command_line_matches_the_appliance_contract(self) -> None:
         argv = boot.command(Path("/emulator"), Path("/new-root.erofs"), Path("/data.img"),
