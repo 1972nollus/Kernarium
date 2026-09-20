@@ -599,7 +599,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-kosmickrisp-device-address-commands-capabilities|gpu-kosmickrisp-dynamic-logic-op-capabilities|gpu-kosmickrisp-external-image-alias|gpu-kosmickrisp-graphics-pipeline-library-capabilities|gpu-kosmickrisp-incremental-present-capabilities|gpu-kosmickrisp-legacy-vertex-attribute-capabilities|gpu-kosmickrisp-legacy-vertex-input-draws|gpu-kosmickrisp-non-seamless-cube-capabilities|gpu-kosmickrisp-rgb32-texel-capabilities|gpu-kosmickrisp-unused-attachments-capabilities|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-console-protocol|virtio-sound-protocol|virtio-video-protocol|platform-video-decoder)$"
+          "name": "^(gpu-device-command-atomicity|gpu-display-resize|gpu-host-gl-provider-lifetime|gpu-kosmickrisp-device-address-commands-capabilities|gpu-kosmickrisp-dynamic-logic-op-capabilities|gpu-kosmickrisp-external-image-alias|gpu-kosmickrisp-graphics-pipeline-library-capabilities|gpu-kosmickrisp-incremental-present-capabilities|gpu-kosmickrisp-legacy-vertex-attribute-capabilities|gpu-kosmickrisp-legacy-vertex-input-draws|gpu-kosmickrisp-non-seamless-cube-capabilities|gpu-kosmickrisp-rgb32-texel-capabilities|gpu-kosmickrisp-unused-attachments-capabilities|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|gpu-vnc-product-readback|virtio-console-protocol|virtio-sound-protocol|virtio-video-protocol|platform-video-decoder)$"
         }
       },
       "execution": {
