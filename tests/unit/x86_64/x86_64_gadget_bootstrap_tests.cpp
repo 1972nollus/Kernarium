@@ -77,6 +77,14 @@ public:
 			fault_.access = uml::memory::MemoryAccess::execute;
 			return false;
 		}
+		if (fetch_trigger_armed_ && address == fetch_trigger_) {
+			fetch_trigger_armed_ = false;
+			auto target = fetch_deferred_address_;
+			for (const auto byte : fetch_deferred_bytes_)
+				bytes_[target++ - base_] = static_cast<std::byte>(byte);
+			bump_code_stamps(fetch_deferred_address_,
+				fetch_deferred_bytes_.size());
+		}
 		return true;
 	}
 
@@ -216,6 +224,25 @@ public:
 		deferred_address_ = address;
 		deferred_bytes_.assign(bytes.begin(), bytes.end());
 	}
+	/* A guest write by another vCPU that lands while this block is being
+	 * decoded: it is applied immediately after the decoder has read
+	 * `trigger`, so the decoded stream predates it and everything the
+	 * translation reads afterwards -- the source bytes it saves above all --
+	 * does not. It fires once, and the numbered stamp query it happens to
+	 * fall between is not part of the arrangement, so the same arming means
+	 * the same interleaving however many stamps a translation takes. */
+	void write_after_fetching(std::uint64_t trigger, std::uint64_t address,
+		std::initializer_list<std::uint8_t> bytes)
+	{
+		fetch_trigger_ = trigger;
+		fetch_trigger_armed_ = true;
+		fetch_deferred_address_ = address;
+		fetch_deferred_bytes_.assign(bytes.begin(), bytes.end());
+	}
+	[[nodiscard]] bool write_after_fetching_fired() const noexcept
+	{
+		return !fetch_trigger_armed_;
+	}
 	void set_code_changes(std::uint64_t *code_changes) noexcept
 	{
 		code_changes_ = code_changes;
@@ -257,6 +284,10 @@ private:
 	std::size_t deferred_query_{};
 	std::uint64_t deferred_address_{};
 	std::vector<std::uint8_t> deferred_bytes_;
+	std::uint64_t fetch_trigger_{};
+	bool fetch_trigger_armed_{};
+	std::uint64_t fetch_deferred_address_{};
+	std::vector<std::uint8_t> fetch_deferred_bytes_;
 };
 
 struct TestCodeSequences final {
@@ -630,6 +661,174 @@ read_moving_code_sequences(void *opaque) noexcept
 	return expect(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2,
 		"stamp-order rebuild did not execute the written bytes");
+}
+
+/* A first translation reads its block twice: the decoder reads it, and the
+ * source the slot saves is fetched afterwards. A write that lands between the
+ * two leaves a slot whose program is older than its source, and no later
+ * validation can tell: the stamp it records already covers the write, so a
+ * stamp match accepts the program outright, and a stamp that has moved since
+ * compares the saved source -- the new bytes -- against memory and accepts it
+ * too. The code-change replay does not repair it either, because retiring a
+ * changed range only unlinks the slot and leaves that same validation to
+ * decide. Such a translation must be used once and not cached.
+ */
+[[nodiscard]] bool a_write_racing_a_first_translation_is_not_cached()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+
+	/* Another vCPU rewrites the immediate just after the decoder has read
+	 * it, while this translation is still being built. */
+	memory.write_after_fetching(1, 1, {0x02});
+	const auto racing = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(racing.program != nullptr && !racing.cache_hit,
+		"a raced first translation did not produce a program") ||
+		!expect(memory.write_after_fetching_fired(),
+			"the racing write never landed inside the build"))
+		return false;
+
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto after = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(after.program != nullptr && !after.cache_hit,
+		"a write that raced the decoder was cached as a valid translation"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(
+		*after.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 2,
+		"the translation after a raced build did not execute the written "
+		"bytes") &&
+		expect(executor.cache_diagnostics().translations == 2,
+			"a raced first translation was served from the cache");
+}
+
+/* The same race on the second page of a block that spans two. Every page a
+ * block can span is held and stamped before the decoder reads it, so the page
+ * a block only reaches at its tail is covered exactly like the page it starts
+ * on.
+ */
+[[nodiscard]] bool a_write_racing_a_second_page_is_not_cached()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* mov eax, imm32 straddling the page boundary, then syscall. */
+	memory.load(4092, {
+		0x90, 0x90,
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+
+	memory.write_after_fetching(4096, 4096, {0x02});
+	const auto racing = executor.select_program(
+		memory, 4092, ExecutionMode::long64);
+	if (!expect(racing.program != nullptr && !racing.cache_hit,
+		"a raced second-page translation did not produce a program") ||
+		!expect(memory.write_after_fetching_fired(),
+			"the racing second-page write never landed inside the build"))
+		return false;
+
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto after = executor.select_program(
+		memory, 4092, ExecutionMode::long64);
+	if (!expect(after.program != nullptr && !after.cache_hit,
+		"a write to a block's second page was cached as a valid "
+		"translation"))
+		return false;
+	CpuState cpu{};
+	cpu.rip = 4092;
+	const auto result = gadgets::execute(
+		*after.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 0x201,
+		"the translation after a raced second page did not execute the "
+		"written bytes");
+}
+
+/* Refusing a raced translation must stay confined to the race. An undisturbed
+ * block is cached whether it spans one page or two, and a write to the other
+ * page a block could have spanned but did not is no business of that block --
+ * a block in the last bytes of a text page next to hot data would otherwise
+ * never be cached at all.
+ */
+[[nodiscard]] bool an_undisturbed_first_translation_is_still_cached()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.load(4092, {
+		0x90, 0x90,
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.load(4000, {
+		0xb8, 0x03, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	struct Case final {
+		std::uint64_t address;
+		bool disturb_neighbour;
+		const char *message;
+	};
+	for (const auto &item : std::initializer_list<Case>{
+		{0, false, "an undisturbed single-page translation was not cached"},
+		{4092, false, "an undisturbed two-page translation was not cached"},
+		{4000, true, "a write to a page the block does not cover refused "
+			"its translation"},
+	}) {
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			++sequences.code_changes, &sequences, read_test_code_sequences);
+		if (item.disturb_neighbour) {
+			/* On the next page, which this block's hold covers because a
+			 * block starting here could have reached it, but which its
+			 * seven bytes never touch. */
+			memory.write_after_fetching(
+				item.address + 1U, 4096 + 64U, {0x11});
+		}
+		const auto cold = executor.select_program(
+			memory, item.address, ExecutionMode::long64);
+		if (!expect(cold.program != nullptr && !cold.cache_hit,
+			"undisturbed translation setup did not build a program") ||
+			!expect(!item.disturb_neighbour ||
+				memory.write_after_fetching_fired(),
+				"the neighbouring write never landed inside the build"))
+			return false;
+
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			++sequences.code_changes, &sequences, read_test_code_sequences);
+		const auto again = executor.select_program(
+			memory, item.address, ExecutionMode::long64);
+		if (!expect(again.program != nullptr && again.cache_hit,
+			item.message))
+			return false;
+	}
+	return expect(executor.cache_diagnostics().validation_stamp_hits != 0,
+		"an undisturbed translation never recorded a usable page stamp");
 }
 
 [[nodiscard]] bool cache_retires_the_oldest_generation()
@@ -4684,6 +4883,9 @@ int main()
 		a_moving_code_sequence_keeps_unchanged_programs() &&
 		a_moving_code_sequence_rebuilds_changed_programs() &&
 		a_recorded_code_stamp_is_no_newer_than_its_source() &&
+		a_write_racing_a_first_translation_is_not_cached() &&
+		a_write_racing_a_second_page_is_not_cached() &&
+		an_undisturbed_first_translation_is_still_cached() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

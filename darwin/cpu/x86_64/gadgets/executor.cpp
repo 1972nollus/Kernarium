@@ -324,38 +324,156 @@ struct CodePageRegistries final {
 
 /* Holds a translation's possible pages in the registry while their bytes are
  * read, so any store another executor has already translated for them lands
- * first. The cache's own index keeps whichever pages the program turns out to
- * cover. */
+ * first. A cached program is at most maximum_cached_source_bytes long, so a
+ * block beginning at one address can span that page and the page its last
+ * possible byte falls in, and no other. The cache's own index keeps whichever
+ * pages the program turns out to cover. */
 class CodePageHold final {
 public:
-	CodePageHold(CodePageRegistries *registries, std::uint64_t address) noexcept
+	CodePageHold(CodePageRegistries *registries, std::uint64_t address,
+		ExecutionMode mode) noexcept
 	{
+		pages_[count_++] = address &
+			~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+		/* Advancing in the block's own mode keeps the bound right where a
+		 * compat32 block reaches its last byte past the 4 GiB wrap. */
+		const auto last = advance_instruction_pointer(mode, address,
+			maximum_cached_source_bytes - 1U) &
+			~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+		if (last != pages_[0])
+			pages_[count_++] = last;
 		if (registries == nullptr || !registries->current)
 			return;
 		registry_ = registries->current.get();
-		first_ = address & ~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
-		last_ = (address + maximum_cached_source_bytes - 1U) &
-			~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
-		registry_->add(first_, &registries->participant);
-		if (last_ != first_)
-			registry_->add(last_, &registries->participant);
+		for (std::size_t index = 0; index < count_; ++index)
+			registry_->add(pages_[index], &registries->participant);
 	}
 	~CodePageHold()
 	{
 		if (registry_ == nullptr)
 			return;
-		registry_->remove(first_);
-		if (last_ != first_)
-			registry_->remove(last_);
+		for (std::size_t index = 0; index < count_; ++index)
+			registry_->remove(pages_[index]);
 	}
 	CodePageHold(const CodePageHold &) = delete;
 	CodePageHold &operator=(const CodePageHold &) = delete;
 
+	[[nodiscard]] std::span<const std::uint64_t> pages() const noexcept
+	{
+		return {pages_.data(), count_};
+	}
+
 private:
+	std::array<std::uint64_t, 2> pages_{};
+	std::size_t count_{};
 	CodePageRegistry *registry_{};
-	std::uint64_t first_{};
-	std::uint64_t last_{};
 };
+
+/* The stamp of every page a block can span, read before the decoder reads a
+ * byte of any of them. A page whose stamp the address space cannot produce is
+ * recorded as absent rather than failing the whole capture, because a block
+ * near the end of a text page holds the page after it without ever reaching
+ * it, and that page need not be code at all. */
+struct HeldCodeStamps final {
+	std::array<::uml::memory::CodePageStamp, 2> stamps{};
+	std::array<bool, 2> present{};
+};
+
+[[nodiscard]] HeldCodeStamps capture_held_code_stamps(
+	::uml::memory::GuestAddressSpace &memory,
+	std::span<const std::uint64_t> pages, void *execution_context) noexcept
+{
+	HeldCodeStamps result;
+	for (std::size_t index = 0; index < pages.size(); ++index)
+		result.present[index] = memory.code_page_stamp(
+			pages[index], execution_context, result.stamps[index]);
+	return result;
+}
+
+struct SettledCodeStamps final {
+	ProgramCodeStamps stamps{};
+	/* A write landed on one of this program's pages while it was being
+	 * translated. The program is correct for the bytes it was decoded from
+	 * and must not be cached. */
+	bool raced{};
+};
+
+/* What a fresh translation may record, and whether it may record anything at
+ * all. Everything a cache slot keeps has to be older than the bytes the
+ * decoder read: the stamp because a stamp certifies only what is read after
+ * it, and the saved source because it is what a later validation compares.
+ * The decoder reads the block and the source is fetched afterwards, so a write
+ * that lands between the two leaves a slot whose program is older than its own
+ * source, and nothing downstream can tell -- the recorded stamp already covers
+ * the write, so a stamp match accepts the stale program outright, and a stamp
+ * that has moved since compares the new source against the new memory and
+ * accepts it too. The code-change replay does not repair it either: retiring a
+ * changed range only unlinks the slot and leaves that same validation to
+ * decide.
+ *
+ * `held` was taken before the build, over every page the block could span.
+ * Re-reading the stamp of each page the program turned out to cover, after its
+ * source has been fetched, closes the whole window: equal stamps say nothing
+ * published on those pages between the two reads, so the decoded stream, the
+ * saved source and guest memory are the same bytes and the recorded stamp
+ * predates all three. A page the program does not cover is left alone; a write
+ * there is no business of this block, and a text page next to hot data would
+ * otherwise never keep a translation at all. An address space that cannot
+ * stamp a page cannot report the race on it either, and keeps the exact byte
+ * validation it already relies on.
+ */
+[[nodiscard]] SettledCodeStamps settle_program_code_stamps(
+	::uml::memory::GuestAddressSpace &memory, const Program &program,
+	std::span<const std::uint64_t> held_pages, const HeldCodeStamps &held,
+	void *execution_context) noexcept
+{
+	SettledCodeStamps result;
+	std::size_t covered = 0;
+	auto address = program.address();
+	auto remaining = program.byte_count();
+	auto previous_page = ~std::uint64_t{};
+	bool stamped = true;
+	while (remaining != 0) {
+		const auto page = address &
+			~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+		if (page != previous_page) {
+			std::size_t held_index = held_pages.size();
+			for (std::size_t index = 0; index < held_pages.size(); ++index)
+				if (held_pages[index] == page)
+					held_index = index;
+			/* The byte bound above says this cannot happen. If it ever
+			 * did, the page was read without the registry holding it,
+			 * which is the one thing no later check can recover. */
+			if (held_index == held_pages.size() ||
+			    covered == result.stamps.pages.size())
+				return {.stamps = {}, .raced = true};
+			if (!held.present[held_index]) {
+				stamped = false;
+			} else {
+				::uml::memory::CodePageStamp current{};
+				if (!memory.code_page_stamp(page, execution_context,
+					    current) ||
+				    !(current == held.stamps[held_index]))
+					return {.stamps = {}, .raced = true};
+				result.stamps.pages[covered] =
+					held.stamps[held_index];
+			}
+			++covered;
+			previous_page = page;
+		}
+		const auto count = std::min<std::size_t>(remaining,
+			DARWIN_UML_GUEST_PAGE_SIZE -
+				(address & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
+		remaining -= count;
+		address = advance_instruction_pointer(
+			program.execution_mode(), address, count);
+	}
+	if (!stamped)
+		return {};
+	result.stamps.count = covered;
+	result.stamps.complete = covered != 0;
+	return result;
+}
 
 class ProgramCache final {
 private:
@@ -1569,7 +1687,13 @@ ProgramSelection Executor::select_program(
 		};
 	}
 	const CodePageHold hold{
-		storage_->cache_ready ? &storage_->registries : nullptr, address};
+		storage_->cache_ready ? &storage_->registries : nullptr, address,
+		mode};
+	/* Before the decoder reads a byte, and after the hold, so a store another
+	 * executor has already translated for one of these pages either lands
+	 * ahead of the read or moves the stamp this reads. */
+	const auto held_stamps = capture_held_code_stamps(
+		memory, hold.pages(), storage_->execution_context);
 	auto built = build(
 		memory, address, mode, maximum_instructions, links);
 	if (built.status != BuildStatus::built) {
@@ -1598,14 +1722,19 @@ ProgramSelection Executor::select_program(
 
 	try {
 		std::vector<std::byte> source(built.program.byte_count());
-		/* Before the source it certifies, never after. */
-		const auto code_stamps = capture_program_code_stamps(
-			memory, built.program, storage_->execution_context);
 		if (!fetch_program_source(memory, built.program, source))
+			return use_transient();
+		/* After both reads of the block, and recording the stamp taken
+		 * before either of them. */
+		const auto settled = settle_program_code_stamps(memory,
+			built.program, hold.pages(), held_stamps,
+			storage_->execution_context);
+		if (settled.raced)
 			return use_transient();
 		const auto &stored = storage_->programs.store(
 			std::move(built.program), std::move(source),
-			storage_->code_changes, maximum_instructions, code_stamps);
+			storage_->code_changes, maximum_instructions,
+			settled.stamps);
 		return {
 			.status = BuildStatus::built,
 			.program = &stored,

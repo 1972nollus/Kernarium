@@ -248,6 +248,21 @@ revalidation makes -- and a successful validation records that same stamp. A
 stamp taken afterwards would already cover a write that the recorded source
 predates, and the next validation would accept the stale program on it.
 
+A new translation reads its block twice, the decoder first and the saved
+source after it, so it is cached only when both reads saw the same bytes. The
+registry holds every page the block can span before the decoder starts, and
+each of those pages is stamped there; once the source has been fetched, the
+stamp of every page the program turned out to cover is read again, and the
+translation is cached only if none has moved. Equal stamps say nothing
+published on those pages in between, so the decoded stream, the saved source
+and guest memory are the same bytes and the recorded stamp predates all three.
+A stamp that moved is the one staleness no later check can see -- the source
+would be newer than the program it is supposed to stand for, and a stamp hit
+or a source comparison would each accept it -- so that translation runs once
+and is not cached, which is what a processor does with a store that races its
+own fetch. A page the block could have spanned but did not is not consulted,
+so a hot data page next to a text page costs its neighbour nothing.
+
 The address space's code-change sequence says when to revalidate, not whether
 a program survives the revalidation. A publication that touched a program moved
 the stamp of the page carrying it; one that did not is no business of that
