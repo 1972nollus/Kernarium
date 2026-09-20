@@ -2,6 +2,7 @@
 
 #include "metal_presentation.hpp"
 
+#include "display_activity_log.hpp"
 #include "display_geometry.hpp"
 
 #import <Metal/Metal.h>
@@ -101,8 +102,11 @@ std::string description(NSError* error)
 {
     static const double interval = [] {
         const char* value = std::getenv("UML_GPU_FRAME_STATS");
-        if (value == nullptr)
-            return 0.0;
+        if (value == nullptr) {
+            /* The display activity log wants the same counters, and asking
+             * for it is an explicit opt-in already. */
+            return displayActivityLog().enabled() ? 1.0 : 0.0;
+        }
         char* end = nullptr;
         const double seconds = std::strtod(value, &end);
         if (end == value || !(seconds > 0.0))
@@ -294,6 +298,18 @@ struct MetalPresentationState final :
                 scanout.height != scanout.sourceHeight ||
                 scanout.width != framebuffer.width() ||
                 scanout.height != framebuffer.height()) {
+                displayActivityLog().record(
+                    "present display=native reject=geometry texture=%p "
+                    "source=%ux%u view=%ux%u+%u+%u framebuffer=%ux%u",
+                    scanout.texture,
+                    scanout.sourceWidth,
+                    scanout.sourceHeight,
+                    scanout.width,
+                    scanout.height,
+                    scanout.sourceX,
+                    scanout.sourceY,
+                    framebuffer.width(),
+                    framebuffer.height());
                 return PresentOutcome::unsupported;
             }
             id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
@@ -303,8 +319,21 @@ struct MetalPresentationState final :
                   texture.arrayLength == 1));
             if (!supportedType || texture.device != device ||
                 texture.width < scanout.sourceWidth ||
-                texture.height < scanout.sourceHeight)
+                texture.height < scanout.sourceHeight) {
+                displayActivityLog().record(
+                    "present display=native reject=texture handle=%p "
+                    "type=%lu layers=%lu size=%lux%lu need=%ux%u "
+                    "same-device=%d",
+                    scanout.texture,
+                    static_cast<unsigned long>(texture.textureType),
+                    static_cast<unsigned long>(texture.arrayLength),
+                    static_cast<unsigned long>(texture.width),
+                    static_cast<unsigned long>(texture.height),
+                    scanout.sourceWidth,
+                    scanout.sourceHeight,
+                    texture.device == device ? 1 : 0);
                 return PresentOutcome::unsupported;
+            }
             bool superseded = false;
             {
                 std::lock_guard lock(presentationMutex);
@@ -515,6 +544,13 @@ struct MetalPresentationState final :
         if (frameStatisticsInterval() <= 0.0)
             return;
         const DisplayStatistics total = snapshot();
+        displayActivityLog().record(
+            "stats display=native final guest=%llu presented=%llu "
+            "dropped=%llu cpu-fallback=%llu",
+            static_cast<unsigned long long>(total.guestFrames),
+            static_cast<unsigned long long>(total.presentedFrames),
+            static_cast<unsigned long long>(total.droppedFrames),
+            static_cast<unsigned long long>(total.cpuFallbackFrames));
         std::fprintf(
             stderr,
             "Native display final: guest %llu presented %llu dropped %llu "
@@ -556,6 +592,13 @@ struct MetalPresentationState final :
         reportedPresentedFrames = total.presentedFrames;
         reportedDroppedFrames = total.droppedFrames;
         reportedCpuFallbackFrames = total.cpuFallbackFrames;
+        displayActivityLog().record(
+            "stats display=native guest=%llu presented=%llu dropped=%llu "
+            "cpu-fallback=%llu",
+            static_cast<unsigned long long>(total.guestFrames),
+            static_cast<unsigned long long>(total.presentedFrames),
+            static_cast<unsigned long long>(total.droppedFrames),
+            static_cast<unsigned long long>(total.cpuFallbackFrames));
         std::fprintf(
             stderr,
             "Native display frames: guest %.1f/s presented %.1f/s dropped "

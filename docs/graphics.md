@@ -44,6 +44,18 @@ usage-dependent lossless compression. A compositor can therefore import a
 render target for sampling without reinterpreting its compression metadata as
 pixels. Ordinary Vulkan images keep their eligible texture optimizations.
 
+A guest cannot tell a presented frame from a discarded one: every scanout
+flush succeeds whether the host presented it, dropped it, refused the native
+texture, or read it back out of memory that holds no pixels. Setting
+`UML_GPU_DISPLAY_ACTIVITY_LOG` to a writable path makes the device append
+every scanout it is given with its resource kind and geometry, the path and
+outcome of every flush, the reason a display refused a native texture, and the
+guest, presented, dropped, and CPU-fallback frame counters of whichever
+display is active. Repeated lines are counted rather than written. It is a
+file because the emulator's stderr shares the guest console and loses lines
+under load; unset, nothing is opened or written. `UML_GPU_FRAME_STATS=<seconds>`
+remains the stderr-only frame-rate report for the native display.
+
 Fenced Virgl submissions and host transfers from ordinary guest contexts may
 remain in flight together. Their descriptor chains retire only after the
 renderer reports the corresponding host-owned timeline cookie. Commands that

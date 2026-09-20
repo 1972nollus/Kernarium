@@ -2,6 +2,8 @@
 
 #include "vnc_display.hpp"
 
+#include "display_activity_log.hpp"
+
 #if UML_GPU_VNC_STARTUP_TESTING
 #include "vnc_display_testing.hpp"
 #endif
@@ -362,6 +364,7 @@ PresentOutcome VncDisplay::presentMetal(
      * Metal-to-CPU readback entirely. */
     if (stateClientCount(
             clientState_.load(std::memory_order_acquire)) == 0) {
+        displayActivityLog().record("present display=vnc drop=no-client");
         return PresentOutcome::dropped;
     }
     /* A Venus scanout is a Metal texture with no guest-visible virgl
@@ -370,6 +373,7 @@ PresentOutcome VncDisplay::presentMetal(
      * deliberately selects the ordinary CPU framebuffer path. */
     if (metalReadback_)
         return metalReadback_->present(scanout);
+    displayActivityLog().record("present display=vnc readback=absent");
     cpuFallbackExtent_.store(
         makeExtent(
             std::min(scanout.width, framebuffer_.width()),

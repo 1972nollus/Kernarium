@@ -2,12 +2,15 @@
 
 #include "virtio_gpu_device.hpp"
 
+#include "display_activity_log.hpp"
+
 #if UML_GPU_DEVICE_TESTING
 #include "virtio_gpu_device_testing.hpp"
 #endif
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -56,6 +59,35 @@ namespace {
 #define UML_GPU_RENDERER renderer_
 #define UML_GPU_DISPLAY display_
 #endif
+
+/* A blob scanout the renderer answered with a native Metal texture is backed
+ * by a host allocation; the descriptor the guest exported for it names that
+ * allocation and never carries its pixels. Reading it back therefore
+ * publishes zeros, which is indistinguishable from a black frame the guest
+ * drew, so say once that this happened. */
+void reportNativeScanoutFallback() noexcept
+{
+    static std::atomic_bool reported;
+    if (!reported.exchange(true, std::memory_order_relaxed)) {
+        std::fputs(
+            "Virtio-GPU: a native scanout fell back to CPU readback; its "
+            "blob names a host allocation and holds no pixels\n",
+            stderr);
+    }
+}
+
+[[nodiscard]] const char* presentOutcomeName(PresentOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case PresentOutcome::unsupported:
+        return "unsupported";
+    case PresentOutcome::presented:
+        return "presented";
+    case PresentOutcome::dropped:
+        return "dropped";
+    }
+    return "unknown";
+}
 
 template<typename Structure>
 const Structure* readStructure(std::span<const std::uint8_t> bytes)
@@ -359,6 +391,7 @@ void VirtioGpuDevice::releaseBlobScanout() noexcept
 
 void VirtioGpuDevice::clearScanout() noexcept
 {
+    displayActivityLog().record("scanout clear resource=%u", scanoutResource_);
     releaseBlobScanout();
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
@@ -1696,6 +1729,16 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
+        displayActivityLog().record(
+            "scanout set kind=%s resource=%u source=%ux%u rect=%ux%u+%u+%u",
+            virglResource != nullptr ? "virgl" : "2d",
+            scanout->resourceId,
+            width,
+            height,
+            scanout->rectangle.width,
+            scanout->rectangle.height,
+            scanout->rectangle.x,
+            scanout->rectangle.y);
         return success;
     }
 
@@ -1743,9 +1786,33 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             scanout->format, scanout->strides[0], scanout->offsets[0],
             texture);
         if (scanoutResult != 0 || texture == nullptr) {
+            displayActivityLog().record(
+                "scanout set kind=blob resource=%u source=%ux%u format=%u "
+                "stride=%u offset=%u texture=none error=%d",
+                scanout->resourceId,
+                scanout->width,
+                scanout->height,
+                scanout->format,
+                scanout->strides[0],
+                scanout->offsets[0],
+                scanoutResult);
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
+        displayActivityLog().record(
+            "scanout set kind=blob resource=%u source=%ux%u rect=%ux%u+%u+%u "
+            "format=%u stride=%u offset=%u texture=%p",
+            scanout->resourceId,
+            scanout->width,
+            scanout->height,
+            scanout->rectangle.width,
+            scanout->rectangle.height,
+            scanout->rectangle.x,
+            scanout->rectangle.y,
+            scanout->format,
+            scanout->strides[0],
+            scanout->offsets[0],
+            texture);
 
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
@@ -1780,6 +1847,13 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 return response(*header, protocol::GpuResponse::okNoData);
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
+            displayActivityLog().record(
+                "flush kind=2d resource=%u damage=%ux%u+%u+%u path=cpu",
+                flush->resourceId,
+                damage->width,
+                damage->height,
+                damage->x,
+                damage->y);
             try {
                 UML_GPU_DISPLAY.update(
                     std::span<const std::uint8_t>(resource.pixels),
@@ -1823,21 +1897,36 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
             void* metalTexture = nullptr;
-            if (UML_GPU_RENDERER.resourceMetalTexture(
-                    flush->resourceId, metalTexture) == 0 &&
-                presentAccepted(UML_GPU_DISPLAY.presentMetal(MetalScanout {
-                    .texture = metalTexture,
-                    .sourceWidth = resource.width,
-                    .sourceHeight = resource.height,
-                    .sourceX = scanoutRectangle_.x,
-                    .sourceY = scanoutRectangle_.y,
-                    .width = scanoutRectangle_.width,
-                    .height = scanoutRectangle_.height,
-                    .damageX = damage->x,
-                    .damageY = damage->y,
-                    .damageWidth = damage->width,
-                    .damageHeight = damage->height,
-                }))) {
+            const int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
+                flush->resourceId, metalTexture);
+            const auto outcome = textureResult == 0
+                ? UML_GPU_DISPLAY.presentMetal(MetalScanout {
+                      .texture = metalTexture,
+                      .sourceWidth = resource.width,
+                      .sourceHeight = resource.height,
+                      .sourceX = scanoutRectangle_.x,
+                      .sourceY = scanoutRectangle_.y,
+                      .width = scanoutRectangle_.width,
+                      .height = scanoutRectangle_.height,
+                      .damageX = damage->x,
+                      .damageY = damage->y,
+                      .damageWidth = damage->width,
+                      .damageHeight = damage->height,
+                  })
+                : PresentOutcome::unsupported;
+            displayActivityLog().record(
+                "flush kind=virgl resource=%u damage=%ux%u+%u+%u "
+                "texture=%p lookup=%d path=%s outcome=%s",
+                flush->resourceId,
+                damage->width,
+                damage->height,
+                damage->x,
+                damage->y,
+                metalTexture,
+                textureResult,
+                presentAccepted(outcome) ? "metal" : "cpu",
+                presentOutcomeName(outcome));
+            if (presentAccepted(outcome)) {
                 /* A dropped frame is success for the guest: it renders on its
                  * own timeline and the host presents the newest frame it can. */
                 return success;
@@ -1907,24 +1996,39 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::okNoData);
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-            if (scanoutTexture_ != nullptr &&
-                presentAccepted(UML_GPU_DISPLAY.presentMetal(MetalScanout {
-                    .texture = scanoutTexture_,
-                    .sourceWidth = scanoutWidth_,
-                    .sourceHeight = scanoutHeight_,
-                    .sourceX = scanoutRectangle_.x,
-                    .sourceY = scanoutRectangle_.y,
-                    .width = scanoutRectangle_.width,
-                    .height = scanoutRectangle_.height,
-                    .damageX = damage->x,
-                    .damageY = damage->y,
-                    .damageWidth = damage->width,
-                    .damageHeight = damage->height,
-                }))) {
+            const auto outcome = scanoutTexture_ != nullptr
+                ? UML_GPU_DISPLAY.presentMetal(MetalScanout {
+                      .texture = scanoutTexture_,
+                      .sourceWidth = scanoutWidth_,
+                      .sourceHeight = scanoutHeight_,
+                      .sourceX = scanoutRectangle_.x,
+                      .sourceY = scanoutRectangle_.y,
+                      .width = scanoutRectangle_.width,
+                      .height = scanoutRectangle_.height,
+                      .damageX = damage->x,
+                      .damageY = damage->y,
+                      .damageWidth = damage->width,
+                      .damageHeight = damage->height,
+                  })
+                : PresentOutcome::unsupported;
+            displayActivityLog().record(
+                "flush kind=blob resource=%u damage=%ux%u+%u+%u texture=%p "
+                "path=%s outcome=%s",
+                flush->resourceId,
+                damage->width,
+                damage->height,
+                damage->x,
+                damage->y,
+                scanoutTexture_,
+                presentAccepted(outcome) ? "metal" : "cpu",
+                presentOutcomeName(outcome));
+            if (presentAccepted(outcome)) {
                 return success;
             }
 
             UML_GPU_DISPLAY.recordCpuFallbackFrame();
+            if (scanoutTexture_ != nullptr)
+                reportNativeScanoutFallback();
             if (scanoutMapping_ == nullptr) {
                 void* mapping = nullptr;
                 std::uint64_t mappingSize = 0;

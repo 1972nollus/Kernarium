@@ -2,10 +2,13 @@
 
 #include "metal_readback.hpp"
 
+#include "display_activity_log.hpp"
+
 #import <Metal/Metal.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <limits>
@@ -80,6 +83,7 @@ struct MetalReadbackState final :
     [[nodiscard]] std::optional<ReadbackRequest> request(
         const MetalScanout& scanout) noexcept
     {
+        auto& activity = displayActivityLog();
         if (scanout.texture == nullptr || scanout.sourceWidth == 0 ||
             scanout.sourceHeight == 0 || scanout.width == 0 ||
             scanout.height == 0 || scanout.damageWidth == 0 ||
@@ -96,6 +100,20 @@ struct MetalReadbackState final :
             !rangeFits(
                 scanout.damageY, scanout.damageHeight,
                 scanout.sourceY + scanout.height)) {
+            activity.record(
+                "readback reject=geometry texture=%p source=%ux%u "
+                "view=%ux%u+%u+%u damage=%ux%u+%u+%u",
+                scanout.texture,
+                scanout.sourceWidth,
+                scanout.sourceHeight,
+                scanout.width,
+                scanout.height,
+                scanout.sourceX,
+                scanout.sourceY,
+                scanout.damageWidth,
+                scanout.damageHeight,
+                scanout.damageX,
+                scanout.damageY);
             return std::nullopt;
         }
 
@@ -107,11 +125,43 @@ struct MetalReadbackState final :
         if (!supportedType || texture.sampleCount != 1 ||
             texture.width < scanout.sourceWidth ||
             texture.height < scanout.sourceHeight) {
+            activity.record(
+                "readback reject=texture handle=%p type=%lu layers=%lu "
+                "samples=%lu size=%lux%lu need=%ux%u",
+                scanout.texture,
+                static_cast<unsigned long>(texture.textureType),
+                static_cast<unsigned long>(texture.arrayLength),
+                static_cast<unsigned long>(texture.sampleCount),
+                static_cast<unsigned long>(texture.width),
+                static_cast<unsigned long>(texture.height),
+                scanout.sourceWidth,
+                scanout.sourceHeight);
             return std::nullopt;
         }
         const auto format = readbackFormat(texture.pixelFormat);
-        if (!format)
+        if (!format) {
+            activity.record(
+                "readback reject=format handle=%p pixelFormat=%lu "
+                "storage=%lu usage=%lu",
+                scanout.texture,
+                static_cast<unsigned long>(texture.pixelFormat),
+                static_cast<unsigned long>(texture.storageMode),
+                static_cast<unsigned long>(texture.usage));
             return std::nullopt;
+        }
+        activity.record(
+            "readback accept handle=%p pixelFormat=%lu storage=%lu usage=%lu "
+            "size=%lux%lu damage=%ux%u+%u+%u",
+            scanout.texture,
+            static_cast<unsigned long>(texture.pixelFormat),
+            static_cast<unsigned long>(texture.storageMode),
+            static_cast<unsigned long>(texture.usage),
+            static_cast<unsigned long>(texture.width),
+            static_cast<unsigned long>(texture.height),
+            scanout.damageWidth,
+            scanout.damageHeight,
+            scanout.damageX,
+            scanout.damageY);
 
         return ReadbackRequest {
             .texture = texture,
@@ -236,6 +286,10 @@ struct MetalReadbackState final :
                     reportFailure();
                 }
             } else if (commands.status != MTLCommandBufferStatusCompleted) {
+                displayActivityLog().record(
+                    "readback incomplete status=%lu error=%ld",
+                    static_cast<unsigned long>(commands.status),
+                    static_cast<long>(commands.error.code));
                 reportFailure();
             }
 
@@ -263,11 +317,14 @@ struct MetalReadbackState final :
             return PresentOutcome::unsupported;
 
         std::lock_guard lock(mutex);
+        reportStatisticsLocked(false);
         if (!running)
             return PresentOutcome::unsupported;
         if (!inFlight) {
-            if (!scheduleLocked(std::move(*next)))
+            if (!scheduleLocked(std::move(*next))) {
+                displayActivityLog().record("readback reject=schedule");
                 return PresentOutcome::unsupported;
+            }
             if (!directPathReported.exchange(
                     true, std::memory_order_relaxed)) {
                 std::fputs(
@@ -290,6 +347,29 @@ struct MetalReadbackState final :
         if (!failureReported.exchange(true, std::memory_order_relaxed)) {
             std::fputs("VNC Metal readback failed\n", stderr);
         }
+    }
+
+    /* The guest and host frame counters are the only evidence that separates
+     * a display which never received a scanout from one which received and
+     * discarded every frame. */
+    void reportStatisticsLocked(bool final) noexcept
+    {
+        auto& activity = displayActivityLog();
+        if (!activity.enabled())
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        if (!final && now - reportedAt < std::chrono::seconds(1))
+            return;
+        reportedAt = now;
+        const auto total = snapshot();
+        activity.record(
+            "stats display=vnc%s guest=%llu presented=%llu dropped=%llu "
+            "cpu-fallback=%llu",
+            final ? " final" : "",
+            static_cast<unsigned long long>(total.guestFrames),
+            static_cast<unsigned long long>(total.presentedFrames),
+            static_cast<unsigned long long>(total.droppedFrames),
+            static_cast<unsigned long long>(total.cpuFallbackFrames));
     }
 
     DisplayStatistics snapshot() const noexcept
@@ -320,6 +400,7 @@ struct MetalReadbackState final :
         stateChanged.wait(lock, [this] {
             return !inFlight && !callbackActive;
         });
+        reportStatisticsLocked(true);
         publish = {};
     }
 
@@ -340,6 +421,7 @@ struct MetalReadbackState final :
     std::atomic_uint64_t presentedFrames {};
     std::atomic_uint64_t droppedFrames {};
     std::atomic_uint64_t cpuFallbackFrames {};
+    std::chrono::steady_clock::time_point reportedAt {};
 };
 
 MetalReadback::MetalReadback(PublishCallback publish)
