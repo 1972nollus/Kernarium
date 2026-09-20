@@ -113,14 +113,17 @@ struct ProgramLinkResolver final {
 };
 
 /* One translation owns one allocation. The native stream the engine runs comes
- * first and the decoded instructions a budget-limited replay rebuilds from
- * follow it, so a translation buys its retained storage once and an eviction
- * gives it back once, at exactly the size the block turned out to need. */
+ * first, then the decoded instructions a budget-limited replay rebuilds from,
+ * then the guest bytes the decoder read, so a translation buys its retained
+ * storage once and an eviction gives it back once, at exactly the size the
+ * block turned out to need. */
 class Program final {
 public:
 	Program() = default;
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
-		std::span<const Gadget> gadgets, ProgramLinkResolver links = {});
+		std::span<const Gadget> gadgets,
+		std::span<const std::byte> source = {},
+		ProgramLinkResolver links = {});
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
@@ -141,6 +144,15 @@ public:
 	{
 		return gadgets_;
 	}
+	/* The guest bytes the decoder read for this block, or empty when the
+	 * caller asked for none. A cached translation and the source that stands
+	 * for it are then one object as well as one observation. */
+	[[nodiscard]] std::span<const std::byte> source() const noexcept
+	{
+		return {storage_.get() + words_ * sizeof(std::uintptr_t) +
+				gadgets_ * sizeof(Gadget),
+			source_};
+	}
 
 private:
 	ExecutionMode mode_{ExecutionMode::long64};
@@ -149,6 +161,7 @@ private:
 	std::unique_ptr<std::byte[]> storage_;
 	std::uint32_t words_{};
 	std::uint32_t gadgets_{};
+	std::uint32_t source_{};
 };
 
 enum class BuildStatus : std::uint8_t {
@@ -162,10 +175,10 @@ struct BuildResult final {
 	BuildStatus status{BuildStatus::illegal_instruction};
 	Program program{};
 	std::uint64_t fault_address{};
-	/* `source` received every byte of every instruction this block kept, so
-	 * its first `program.byte_count()` bytes are what the decoder read. A
-	 * build given no room, or one whose block outgrew it, clears this and
-	 * the block cannot be cached. */
+	/* The program carries every byte of every instruction this block kept, so
+	 * `program.source()` is what the decoder read. A build given no room, or
+	 * one whose block outgrew it, clears this and the block cannot be
+	 * cached. */
 	bool source_recorded{};
 };
 
@@ -174,10 +187,11 @@ struct BuildResult final {
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions = 64) noexcept;
-/* `source`, when it is not empty, receives the bytes the decoder read for the
- * instructions this block keeps, in address order. Saving those rather than
- * reading the block again is what makes a cached program and its saved source
- * one observation of guest memory instead of two. */
+/* `source`, when it is not empty, is scratch the build fills with the bytes the
+ * decoder read for the instructions this block keeps, in address order, and the
+ * program it returns carries a copy of exactly those bytes. Saving those rather
+ * than reading the block again is what makes a cached program and its saved
+ * source one observation of guest memory instead of two. */
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions, ProgramLinkResolver links,

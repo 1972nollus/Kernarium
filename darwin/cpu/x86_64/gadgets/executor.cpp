@@ -462,7 +462,6 @@ private:
 		std::optional<Program> program;
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
-		std::vector<std::byte> source;
 		std::array<PageLink, 2> page_links{};
 	};
 
@@ -741,7 +740,7 @@ public:
 	void cancel_selection() noexcept { preceding_ = nullptr; }
 
 	[[nodiscard]] const Program &store(Program &&program,
-		std::vector<std::byte> &&source, std::uint64_t changes,
+		std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
 	{
 		(void)link(program.address(), program.execution_mode());
@@ -784,7 +783,6 @@ public:
 		slot.epoch = 0;
 		successors = {};
 		slot.program.emplace(std::move(program));
-		slot.source = std::move(source);
 		slot.generation = current_generation_;
 		slot.address = slot.program->address();
 		slot.validated_changes = changes;
@@ -802,7 +800,6 @@ public:
 		} catch (...) {
 			slot.epoch = 0;
 			slot.program.reset();
-			slot.source.clear();
 			throw;
 		}
 		activate_link(slot);
@@ -1249,7 +1246,6 @@ private:
 		deactivate(slot);
 		slot.epoch = 0;
 		slot.program.reset();
-		slot.source.clear();
 		slot.validated_changes = 0;
 		slot.code_stamps = {};
 		slot.terminal = false;
@@ -1261,9 +1257,11 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.program || slot.source.empty() ||
-			slot.source.size() != slot.program->byte_count() ||
-			slot.source.size() > maximum_cached_source_bytes) {
+		if (!slot.program || slot.program->source().empty() ||
+			slot.program->source().size() !=
+				slot.program->byte_count() ||
+			slot.program->source().size() >
+				maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
 			return false;
@@ -1328,7 +1326,7 @@ private:
 		}
 
 		switch (compare_program_source(
-			memory, *slot.program, slot.source)) {
+			memory, *slot.program, slot.program->source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
 			discard(slot);
@@ -1690,11 +1688,8 @@ ProgramSelection Executor::select_program(
 		return use_transient();
 
 	try {
-		const auto recorded = std::span{decoded_source}.first(
-			built.program.byte_count());
-		std::vector<std::byte> source(recorded.begin(), recorded.end());
 		const auto &stored = storage_->programs.store(
-			std::move(built.program), std::move(source),
+			std::move(built.program),
 			storage_->code_changes, maximum_instructions, *code_stamps);
 		return {
 			.status = BuildStatus::built,

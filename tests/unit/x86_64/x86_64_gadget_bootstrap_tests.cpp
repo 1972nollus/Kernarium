@@ -1675,7 +1675,8 @@ read_test_sequences(void *context) noexcept
 	 * One allocation holds the native words and the decoded instructions
 	 * behind them, so its base is the native stream's. */
 	const auto content = built.program.native_stream().size_bytes() +
-		built.program.stream().size_bytes();
+		built.program.stream().size_bytes() +
+		built.program.source().size_bytes();
 	return expect(static_cast<const void *>(built.program.stream().data()) ==
 			static_cast<const void *>(
 				built.program.native_stream().data() +

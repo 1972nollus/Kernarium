@@ -75,7 +75,7 @@ void trace_fatal(const char *stage, const Program &program,
 
 Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::size_t byte_count, std::span<const Gadget> gadgets,
-	ProgramLinkResolver links)
+	std::span<const std::byte> source, ProgramLinkResolver links)
 	: mode_{mode}, address_{normalize_instruction_pointer(mode, address)},
 	  byte_count_{byte_count}
 {
@@ -87,14 +87,18 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	const auto word_bytes = words.size() * sizeof(std::uintptr_t);
 	const auto gadget_bytes = gadgets.size() * sizeof(Gadget);
 	storage_ = std::make_unique_for_overwrite<std::byte[]>(
-		word_bytes + gadget_bytes);
+		word_bytes + gadget_bytes + source.size());
 	if (word_bytes != 0)
 		std::memcpy(storage_.get(), words.data(), word_bytes);
 	if (gadget_bytes != 0)
 		std::memcpy(storage_.get() + word_bytes, gadgets.data(),
 			gadget_bytes);
+	if (!source.empty())
+		std::memcpy(storage_.get() + word_bytes + gadget_bytes,
+			source.data(), source.size());
 	words_ = static_cast<std::uint32_t>(words.size());
 	gadgets_ = static_cast<std::uint32_t>(gadgets.size());
+	source_ = static_cast<std::uint32_t>(source.size());
 }
 
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
@@ -174,7 +178,10 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 			return {BuildStatus::illegal_instruction, {}, address};
 		return {BuildStatus::built,
 			Program{mode, address, bytes,
-				std::span<const Gadget>{stream}, links},
+				std::span<const Gadget>{stream},
+				recorded ? source.first(bytes) :
+					std::span<const std::byte>{},
+				links},
 			0, recorded};
 	} catch (const std::logic_error &) {
 		return {BuildStatus::illegal_instruction, {}, address};
