@@ -401,11 +401,11 @@ read without checking.
 
 ### A wide buffer load covers at most sixteen bytes
 
-Apple's GPU backend compiler cannot build a pipeline whose shader loads a
+Apple's GPU backend compiler cannot be trusted with a shader that loads a
 vector wider than sixteen bytes. A four-component 64-bit load - the only
-32-byte access the driver has reason to emit - ends the Metal compiler service
-with `unable to legalize instruction` on the `<4 x s64>` value the load
-produces, and `vkCreateGraphicsPipelines` answers `VK_ERROR_INVALID_SHADER_NV`
+32-byte access the driver has reason to emit - can end the Metal compiler
+service with `unable to legalize instruction` on the `<4 x s64>` value the
+load produces, not in every shader that has one, and `vkCreateGraphicsPipelines` answers `VK_ERROR_INVALID_SHADER_NV`
 after Metal has retried the crash. This is a compiler limit rather than a
 device one: it reproduces on an Apple7 Mac and on the Apple8 device alike, and
 the matching 32-byte store compiles on both.
