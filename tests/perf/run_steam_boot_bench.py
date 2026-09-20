@@ -139,6 +139,10 @@ ANCHOR_REPORT = (
     "printf 'anchor_realtime=%s\\n' \"$(date +%s.%N)\"; "
     "printf 'anchor_utc_offset=%s\\n' \"$(date +%z)\""
 )
+# Readiness comes from this unit and nothing else, so its state is the one
+# terminal condition worth watching for while waiting.
+SESSION_STATE = "systemctl show steam-gaming.service -p ActiveState --value"
+SESSION_CHECK_SECONDS = 30.0
 PHASE_REPORT = (
     "for unit in " + " ".join(PHASE_UNITS) + "; do "
     "systemctl show \"$unit\" -p ActiveEnterTimestampMonotonic "
@@ -581,6 +585,8 @@ def one_boot(image: dict[str, object], userdata: pathlib.Path,
         caption = ""
         viewable_at = None
         announced_at = 0.0
+        checked_at = 0.0
+        session_started = False
         while True:
             probe = guest.run_command(READY_PROBE, 90)
             text = probe.output.strip()
@@ -589,6 +595,21 @@ def one_boot(image: dict[str, object], userdata: pathlib.Path,
                 break
             guest.check_health()
             now = time.monotonic()
+            # Readiness can only ever arrive from the session supervisor, so
+            # once that unit has run and stopped, the window is never coming
+            # and waiting out the whole deadline learns nothing. Check rarely:
+            # this is a serial console, not a status bus.
+            if now - checked_at >= SESSION_CHECK_SECONDS:
+                checked_at = now
+                state = guest.run_command(SESSION_STATE, 60).output.strip()
+                session_started |= state == "active"
+                if session_started and state in ("failed", "inactive"):
+                    record["steam_gaming_service_state"] = state
+                    raise RuntimeError(
+                        f"{label} boot: the gaming session ended ({state}) "
+                        f"after {now - guest.started_at:.1f}s without a "
+                        f"viewable Big Picture window; last caption: "
+                        f"{caption!r}")
             if text and (text != caption or now - announced_at >= 120):
                 caption = text
                 announced_at = now
