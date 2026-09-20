@@ -226,6 +226,14 @@ VirglRenderer::VirglRenderer()
             rendererFlags |=
                 VIRGL_RENDERER_VENUS |
                 VIRGL_RENDERER_RENDER_SERVER;
+            /*
+             * Host-visible Venus memory reaches the guest only through the
+             * blob aperture, so the renderer advertises a host-visible heap
+             * the aperture can deliver rather than the host's system memory.
+             * A guest sizes its largest host-visible mapping from that heap.
+             */
+            virgl_renderer_set_host_visible_aperture_size(
+                protocol::hostVisibleSharedMemoryRegionSize);
         }
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
