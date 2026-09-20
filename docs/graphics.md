@@ -88,6 +88,14 @@ host codec profile set through the shared Linux and Android driver and copies
 decoded planes into guest memory. Its protocol and buffer ownership do not
 depend on Virgl or VA-API.
 
+Which decode API a guest application can reach is a property of that
+application's own build, not of this device. A Linux Chromium or CEF built for
+arm64 discovers the stateful decoder through `/dev/video-dec*`; the same
+upstream project built for x86-64 carries no stateful V4L2 decoder at all and
+offers only VA-API, for which no driver over a V4L2 stateful decoder exists.
+An x86-64 guest therefore reaches this service only from an application that
+speaks V4L2 itself.
+
 H.264 High10 is advertised only on Apple targets where a profile-specific
 VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
 10-bit bi-planar output. A session-only probe on macOS is insufficient: native
