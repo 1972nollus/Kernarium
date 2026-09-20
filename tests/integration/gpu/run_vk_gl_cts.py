@@ -2254,10 +2254,6 @@ def validate_inventory_report(
 
 
 def parse_qpa(text: str) -> dict[str, str]:
-    if text.count("#beginSession") != 1:
-        raise CampaignError("QPA does not contain exactly one session start")
-    if text.count("#endSession") != 1:
-        raise CampaignError("QPA is truncated or has multiple session trailers")
     prefix = scan_qpa(text)
     if prefix.in_flight_case is not None:
         raise CampaignError(f"QPA is truncated during case {prefix.in_flight_case}")
@@ -2267,25 +2263,35 @@ def parse_qpa(text: str) -> dict[str, str]:
 
 
 def scan_qpa(text: str) -> QpaPrefix:
-    """Parse a QPA session that may stop inside its last test case.
+    """Parse the QPA a guest transported, which may stop inside its last case.
 
     A guest killed while a case is running transports the bytes it had
     already written.  Every complete case block before that point is real
     evidence; the unterminated trailer is reported separately and never
     counted as a result.
-    """
-    if text.count("#beginSession") != 1:
-        raise CampaignError("QPA does not contain exactly one session start")
-    if text.count("#endSession") > 1:
-        raise CampaignError("QPA is truncated or has multiple session trailers")
 
+    A guest whose CTS process ended its session early continues the rest of
+    the same ordered caselist in a fresh process, so the transported text is
+    a sequence of complete CTS session documents.  They are read as one
+    ordered result stream: every case still appears exactly once, and the
+    trailer that matters is the last document's.
+    """
+    started = False
     results: dict[str, str] = {}
     current_case: str | None = None
     body: list[str] = []
     ended_session = False
     for raw_line in text.splitlines(keepends=True):
         line = raw_line.strip()
+        if line == "#beginSession":
+            if current_case is not None:
+                raise CampaignError(f"QPA session start inside case {current_case}")
+            started = True
+            ended_session = False
+            continue
         if line.startswith("#beginTestCaseResult "):
+            if not started:
+                raise CampaignError("QPA case precedes its session start")
             if current_case is not None or ended_session:
                 raise CampaignError("nested or post-session QPA case")
             current_case = line.removeprefix("#beginTestCaseResult ")
@@ -2324,29 +2330,43 @@ def scan_qpa(text: str) -> QpaPrefix:
         if line == "#endSession":
             if current_case is not None:
                 raise CampaignError(f"QPA ended during case {current_case}")
+            if not started:
+                raise CampaignError("QPA trailer precedes its session start")
             ended_session = True
             continue
         if current_case is not None and not line.startswith(QPA_BOUNDARY):
             body.append(raw_line)
 
+    if not started:
+        raise CampaignError("QPA does not contain a session start")
     return QpaPrefix(results, current_case, ended_session)
 
 
 def qpa_session_split(text: str) -> tuple[str, str]:
-    """Return one session's prologue and its complete case blocks.
+    """Return a guest's QPA prologue and its complete case blocks.
 
-    The prologue is everything through ``#beginSession``.  The body stops
-    after the last terminated case, so a truncated trailer never reaches a
-    merged transcript.
+    The prologue is everything through the first ``#beginSession``.  Each
+    document contributes the case blocks up to its last terminated case, so
+    a truncated trailer never reaches a merged transcript, and a guest that
+    continued its caselist in a fresh CTS process contributes every document
+    it transported under one prologue.
     """
     lines = text.splitlines(keepends=True)
+    prologue: int | None = None
     start: int | None = None
     end = 0
+    kept = 0
+    parts: list[str] = []
     for index, raw_line in enumerate(lines):
         line = raw_line.strip()
         if line == "#beginSession":
             if start is not None:
-                raise CampaignError("QPA does not contain exactly one session start")
+                parts.append("".join(lines[start:end]))
+                parts.append(
+                    f"{QPA_BOUNDARY}CTS session continues at index {kept}\n"
+                )
+            if prologue is None:
+                prologue = index + 1
             start = end = index + 1
             continue
         if start is None:
@@ -2355,11 +2375,11 @@ def qpa_session_split(text: str) -> tuple[str, str]:
             "#terminateTestCaseResult "
         ):
             end = index + 1
-        elif line == "#endSession":
-            break
-    if start is None:
-        raise CampaignError("QPA does not contain exactly one session start")
-    return "".join(lines[:start]), "".join(lines[start:end])
+            kept += 1
+    if prologue is None or start is None:
+        raise CampaignError("QPA does not contain a session start")
+    parts.append("".join(lines[start:end]))
+    return "".join(lines[:prologue]), "".join(parts)
 
 
 def merge_qpa_sessions(sessions: Sequence["SessionEvidence"]) -> str:

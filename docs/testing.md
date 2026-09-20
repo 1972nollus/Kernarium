@@ -101,14 +101,14 @@ ctest --test-dir .build/presets/macos-integration-venus \
 ```
 
 Run the runner directly to install a bundle, stage an image, or take one of the
-sixteen `vulkan-mustpass-NNof16-v2` fractions of the released list; see its
+sixteen `vulkan-mustpass-NNof16-v3` fractions of the released list; see its
 `--help`. A campaign is judged by its `summary.txt`, never by searching the
 console for an error marker, because the application echoes the generated guest
 launcher and that script carries its own marker strings.
 
 A baked device campaign is the one lane whose guest memory is fixed by the
 platform, so it is the only lane that leaves cases out. `DEVICE_EXCLUSIONS` in
-`run_vk_cts.py` names them by cause, and the generation suffix (`-v2`) is part of
+`run_vk_cts.py` names them by cause, and the generation suffix (`-v3`) is part of
 the selection's identity. The guest drops them from the fraction it enumerated
 and transports `skipped.txt` as `<reason>\t<case>` rows, with `device_excluded*`
 counts in `summary.txt`, so `cut -f2 skipped.txt` is the selection to re-run on
@@ -527,6 +527,17 @@ console and artifact transport both stop advancing. Kernel stall diagnostics --
 RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
 are not console progress for that bound, because a wedged kernel reprints them
 on its own timer and would otherwise hold the bound off indefinitely.
+dEQP ends its whole session at the first `ResourceError`, and offers no way to
+carry on, so every case after one used to go unrun: one such case once cost a
+device fraction 196,227 of its 216,952 cases. The guest therefore runs the
+remainder of the order it already enumerated in a fresh CTS process, up to
+eight processes for one shard and all of them inside the shard's single
+deadline. Nothing is re-run and nothing is invented: each process appends its
+own session document to the same transported stream, `summary.txt` states
+`cts_sessions` and `cts_cases_run`, and the host still requires the union of
+the results to be the enumerated selection, in its order, with each case
+present exactly once.
+
 An emulator exit -- an abandoned case, a host fault, a
 signal -- aborts the session rather than producing a result: the host invents
 no status for the case that was in flight, keeps the last `Test case` name the
