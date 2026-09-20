@@ -112,11 +112,12 @@ struct ProgramLinkResolver final {
 		void *, std::uint64_t, ExecutionMode){};
 };
 
-/* One translation owns one allocation. The native stream the engine runs comes
- * first, then the decoded instructions a budget-limited replay rebuilds from,
- * then the guest bytes the decoder read, so a translation buys its retained
- * storage once and an eviction gives it back once, at exactly the size the
- * block turned out to need. */
+/* A translation owns two allocations, each at exactly the size the block
+ * turned out to need: the native stream the engine runs, and the cold data
+ * behind it -- the decoded instructions a budget-limited replay rebuilds from,
+ * followed by the guest bytes the decoder read. Keeping the streams in their
+ * own allocations is what keeps them near each other in the allocator, which
+ * the workloads with the widest code notice. */
 class Program final {
 public:
 	Program() = default;
@@ -130,14 +131,11 @@ public:
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
 	[[nodiscard]] std::span<const Gadget> stream() const noexcept
 	{
-		return {reinterpret_cast<const Gadget *>(
-				storage_.get() +
-				words_ * sizeof(std::uintptr_t)),
-			gadgets_};
+		return {reinterpret_cast<const Gadget *>(decoded_.get()), gadgets_};
 	}
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return {reinterpret_cast<const std::uintptr_t *>(storage_.get()),
+		return {reinterpret_cast<const std::uintptr_t *>(words_storage_.get()),
 			words_};
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
@@ -149,16 +147,21 @@ public:
 	 * for it are then one object as well as one observation. */
 	[[nodiscard]] std::span<const std::byte> source() const noexcept
 	{
-		return {storage_.get() + words_ * sizeof(std::uintptr_t) +
-				gadgets_ * sizeof(Gadget),
-			source_};
+		return {decoded_.get() + gadgets_ * sizeof(Gadget), source_};
 	}
 
 private:
 	ExecutionMode mode_{ExecutionMode::long64};
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
-	std::unique_ptr<std::byte[]> storage_;
+	/* The words the engine runs, alone. A block's stream is a few hundred
+	 * bytes and its decoded instructions a few thousand, so holding both in
+	 * one allocation put every hot stream a cold kilobyte or two away from
+	 * the next and cost the workloads with the widest code. */
+	std::unique_ptr<std::byte[]> words_storage_;
+	/* The instructions a budget-limited replay rebuilds from, then the guest
+	 * bytes the decoder read. Neither is touched while the block runs. */
+	std::unique_ptr<std::byte[]> decoded_;
 	std::uint32_t words_{};
 	std::uint32_t gadgets_{};
 	std::uint32_t source_{};

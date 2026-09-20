@@ -1704,19 +1704,21 @@ read_test_sequences(void *context) noexcept
 		"short allocation-regression block did not build"))
 		return false;
 	/* Allow allocator rounding, but not a maximum-size decoder reservation.
-	 * Inspect the actual allocation rather than an implementation counter.
-	 * One allocation holds the native words and the decoded instructions
-	 * behind them, so its base is the native stream's. */
-	const auto content = built.program.native_stream().size_bytes() +
-		built.program.stream().size_bytes() +
+	 * Inspect the actual allocations rather than an implementation counter.
+	 * The native stream is its own; the decoded instructions and the saved
+	 * source share the other, in that order. */
+	const auto cold = built.program.stream().size_bytes() +
 		built.program.source().size_bytes();
-	return expect(static_cast<const void *>(built.program.stream().data()) ==
+	return expect(static_cast<const void *>(built.program.source().data()) ==
 			static_cast<const void *>(
-				built.program.native_stream().data() +
-				built.program.native_stream().size()),
-		"a translation's decoded instructions left its own allocation") &&
+				reinterpret_cast<const std::byte *>(
+					built.program.stream().data()) +
+				built.program.stream().size_bytes()),
+		"a translation's saved source left its own allocation") &&
 		expect(malloc_size(built.program.native_stream().data()) <=
-			2 * content,
+			2 * built.program.native_stream().size_bytes(),
+			"short cached block retained excess native stream capacity") &&
+		expect(malloc_size(built.program.stream().data()) <= 2 * cold,
 			"short cached block retained the decoder's spare capacity");
 }
 

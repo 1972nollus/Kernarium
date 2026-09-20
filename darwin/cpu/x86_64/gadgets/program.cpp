@@ -86,16 +86,16 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 		links);
 	const auto word_bytes = words.size() * sizeof(std::uintptr_t);
 	const auto gadget_bytes = gadgets.size() * sizeof(Gadget);
-	storage_ = std::make_unique_for_overwrite<std::byte[]>(
-		word_bytes + gadget_bytes + source.size());
+	words_storage_ = std::make_unique_for_overwrite<std::byte[]>(word_bytes);
+	decoded_ = std::make_unique_for_overwrite<std::byte[]>(
+		gadget_bytes + source.size());
 	if (word_bytes != 0)
-		std::memcpy(storage_.get(), words.data(), word_bytes);
+		std::memcpy(words_storage_.get(), words.data(), word_bytes);
 	if (gadget_bytes != 0)
-		std::memcpy(storage_.get() + word_bytes, gadgets.data(),
-			gadget_bytes);
+		std::memcpy(decoded_.get(), gadgets.data(), gadget_bytes);
 	if (!source.empty())
-		std::memcpy(storage_.get() + word_bytes + gadget_bytes,
-			source.data(), source.size());
+		std::memcpy(decoded_.get() + gadget_bytes, source.data(),
+			source.size());
 	words_ = static_cast<std::uint32_t>(words.size());
 	gadgets_ = static_cast<std::uint32_t>(gadgets.size());
 	source_ = static_cast<std::uint32_t>(source.size());
