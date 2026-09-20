@@ -11,13 +11,14 @@
 namespace uml::cpu::x86_64 {
 namespace {
 
-/* An instruction's bytes are fetched in one window rather than one at a time,
- * because every fetch translates the guest address again. The window stops at
- * the guest page, so it can only fault for a page the instruction has already
- * reached: an instruction that ends before an unmapped page still decodes, and
- * a fetch that does fault faults at exactly the byte the decoder wanted. Bytes
- * past the instruction's end are fetched and discarded, so what the caller
- * keeps is still only what the decode read. */
+/* Bytes are fetched in windows rather than one at a time, because every fetch
+ * translates the guest address again; a caller decoding a block hands the same
+ * window to each of its instructions, so the block costs about one fetch. The
+ * window stops at the guest page, so it can only fault for a page the decode
+ * has already reached: an instruction that ends before an unmapped page still
+ * decodes, and a fetch that does fault faults at exactly the byte the decoder
+ * wanted. Bytes past an instruction's end are fetched and discarded, so what
+ * the caller keeps is still only what the decode read. */
 class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
