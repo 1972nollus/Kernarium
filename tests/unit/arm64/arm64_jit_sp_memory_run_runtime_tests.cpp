@@ -600,8 +600,7 @@ void remapped_page_uses_new_backing() {
   engine::require(cpu.registers[1] == old_first &&
                   cpu.registers[2] == old_second);
 
-  engine::require(darwin_uml_static_vm_rebind(
-                      base + page_size, replacement.descriptor(), 0) == 0);
+  mapping.replace_page(base + page_size, replacement);
   cpu.pc = base;
   cpu.registers[1] = 0;
   cpu.registers[2] = 0;

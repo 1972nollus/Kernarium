@@ -336,8 +336,7 @@ void remapped_code_is_refetched_from_the_current_mapping()
 	require(run_once(executor, memory, generation, cpu).event ==
 		::uml::cpu::EngineEvent::system_call);
 	require(cpu.registers[0] == 3);
-	require(darwin_uml_static_vm_rebind(
-		base, replacement.descriptor(), 0) == 0);
+	mapping.replace_page(base, replacement);
 
 	cpu.pc = base;
 	cpu.registers[0] = 0;

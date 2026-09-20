@@ -616,20 +616,33 @@ public:
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
 		auto state = state_for(generation);
+		const auto names_other_backing = [&] {
+			const auto iterator = state->mappings.find(address);
+			return iterator != state->mappings.end() &&
+				(iterator->second.fd != fd ||
+				 iterator->second.offset != offset);
+		};
+		{
+			/* Nearly every caller finds the page absent or already right;
+			 * neither is worth stopping the generation's executors for. */
+			std::shared_lock lock{state->mappings_mutex};
+			if (!names_other_backing())
+				return 0;
+		}
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
-		auto iterator = state->mappings.find(address);
-		if (iterator == state->mappings.end())
+		if (!names_other_backing())
 			return 0;
-		if (iterator->second.fd == fd && iterator->second.offset == offset)
-			return 0;
-		const std::array changes{MappingChangePlan{
-			address, page_size, iterator->second.guest_code}};
-		PendingMappingChanges pending{*state, changes};
-		iterator->second.backing = std::move(backing);
-		iterator->second.offset = offset;
-		iterator->second.fd = fd;
-		pending.commit();
+		/* The caller pinned this backing from a PTE it no longer holds the
+		 * lock of, so the disagreement says only that one of the two is
+		 * stale, not which.  Installing the caller's page here is how a
+		 * uaccess that raced a copy-on-write pointed every sibling back at
+		 * the page Linux had just replaced, writable, and their stores were
+		 * lost to it.  An absent page is always sound: the next access
+		 * faults and a walker replays the PTE under the invalidation epoch.
+		 * This is an invalidation like any other, so older batches go too. */
+		(void)unmap_locked(*state, address, page_size);
+		state->invalidation_epoch.fetch_add(1, std::memory_order_release);
 		return 0;
 	}
 

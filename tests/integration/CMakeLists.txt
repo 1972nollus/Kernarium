@@ -251,6 +251,42 @@ add_custom_target(uml-guest-shared-mmap-stress
     DEPENDS "${UML_GUEST_SHARED_MMAP_STRESS}")
 add_dependencies(integration-test-binaries uml-guest-shared-mmap-stress)
 
+set(UML_GUEST_FORK_COW_COHERENCE
+    "${CMAKE_CURRENT_BINARY_DIR}/guest-fork-cow-coherence")
+add_custom_command(
+    OUTPUT "${UML_GUEST_FORK_COW_COHERENCE}"
+    COMMAND "${CMAKE_CXX_COMPILER}"
+        --target=aarch64-unknown-linux-gnu
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8.1-a
+        -mno-outline-atomics
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+        -nostdlib
+        -static
+        -fuse-ld=lld
+        -Wl,-e,_start
+        -Wl,-z,max-page-size=16384
+        -Wl,-s
+        "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_fork_cow_coherence.cpp"
+        -o "${UML_GUEST_FORK_COW_COHERENCE}"
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT=${UML_GUEST_FORK_COW_COHERENCE}
+        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_fork_cow_coherence.cpp"
+    COMMENT "Building the freestanding arm64 fork copy-on-write guest stress binary"
+    VERBATIM)
+add_custom_target(uml-guest-fork-cow-coherence
+    DEPENDS "${UML_GUEST_FORK_COW_COHERENCE}")
+add_dependencies(integration-test-binaries uml-guest-fork-cow-coherence)
+
 uml_add_guest_integration_test(
     NAME guest-mmu-stress
     COMMAND ${Python3_EXECUTABLE}
@@ -260,6 +296,7 @@ uml_add_guest_integration_test(
         --root-device /dev/ubda
         --overlay-shell
         --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
+        --fork-cow-binary ${UML_GUEST_FORK_COW_COHERENCE}
         --cpus 10
     LABELS guest;memory;mmu;full;pressure
     TIMEOUT 600

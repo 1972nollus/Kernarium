@@ -102,12 +102,23 @@ public:
 		   JitBacking &backing, std::size_t pages,
 		   int protection = PROT_READ | PROT_WRITE | PROT_EXEC)
 		: generation_{generation}
+		, protection_{protection}
 	{
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_map(
 			reinterpret_cast<void *>(base), backing.descriptor(), 0,
 			pages * DARWIN_UML_GUEST_PAGE_SIZE, protection, 1,
 			(protection & PROT_WRITE) != 0) == 0);
+	}
+
+	/* Put the first page of another backing behind one mapped page, as a
+	 * walker does after Linux replaces the page a PTE names. */
+	void replace_page(std::uint64_t address, JitBacking &backing)
+	{
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(address), backing.descriptor(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE, protection_, 1,
+			(protection_ & PROT_WRITE) != 0) == 0);
 	}
 
 	~JitMapping()
@@ -120,6 +131,7 @@ public:
 
 private:
 	unsigned long generation_;
+	int protection_;
 };
 
 inline int enter_jit(darwin_uml_guest_registers &registers,

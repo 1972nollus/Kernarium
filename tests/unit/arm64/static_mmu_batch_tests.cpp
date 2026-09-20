@@ -732,6 +732,49 @@ void test_empty_range_unmap_rejects_an_older_batch()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* A uaccess pins its page from a PTE whose lock it has already dropped, so
+ * when the host names other backing either of the two can be the stale one: a
+ * sibling's copy-on-write may have replaced the page in between.  The repair
+ * discards the mapping and never installs the caller's backing, and it rejects
+ * an older walk as any other invalidation does. */
+void test_rebind_discards_a_mapping_instead_of_installing_one()
+{
+	constexpr unsigned long generation = 318;
+	constexpr unsigned long base = 0x60'0000;
+	TemporaryBacking published{DARWIN_UML_GUEST_PAGE_SIZE};
+	TemporaryBacking pinned{DARWIN_UML_GUEST_PAGE_SIZE};
+	const auto map_published = [&] {
+		return darwin_uml_static_vm_map_generation(
+			generation, reinterpret_cast<void *>(base), published.fd(),
+			0, DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1);
+	};
+
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_rebind(base, pinned.fd(), 0) == 0);
+	require_unmapped(generation, base);
+
+	require(map_published() == 0);
+	require(darwin_uml_static_vm_mapping_matches(base, published.fd(), 0) == 1);
+	require(darwin_uml_static_vm_rebind(base, published.fd(), 0) == 0);
+	require(darwin_uml_static_vm_mapping_matches(base, published.fd(), 0) == 1);
+
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(map_published() == 0);
+	std::thread uaccess{[&] {
+		require(darwin_uml_static_vm_activate(generation) == 0);
+		require(darwin_uml_static_vm_mapping_matches(
+			base, pinned.fd(), 0) == 0);
+		require(darwin_uml_static_vm_rebind(base, pinned.fd(), 0) == 0);
+		require(darwin_uml_static_vm_mapping_matches(
+			base, pinned.fd(), 0) == -1);
+	}};
+	uaccess.join();
+	require_unmapped(generation, base);
+	require(darwin_uml_static_vm_batch_end() == -EAGAIN);
+	require_unmapped(generation, base);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 /* Linux walkers of one generation run side by side, each bound to its thread
  * with its own batch.  Neither waits for the other, and with no invalidation
  * between them both publish. */
@@ -958,6 +1001,7 @@ int main()
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
 	test_empty_range_unmap_rejects_an_older_batch();
+	test_rebind_discards_a_mapping_instead_of_installing_one();
 	test_sibling_walkers_publish_side_by_side();
 	test_page_index_hash_spreads_page_aligned_addresses();
 	test_page_index_reservation_never_shrinks_or_rehashes_needlessly();

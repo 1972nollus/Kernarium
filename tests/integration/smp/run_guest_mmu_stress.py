@@ -52,6 +52,12 @@ def parse_arguments() -> argparse.Namespace:
         type=pathlib.Path,
         help="freestanding arm64/Linux shared-mm stress executable",
     )
+    parser.add_argument(
+        "--fork-cow-binary",
+        required=True,
+        type=pathlib.Path,
+        help="freestanding arm64/Linux fork copy-on-write stress executable",
+    )
     return parser.parse_args()
 
 
@@ -101,19 +107,30 @@ def upload_bytes(guest: Guest, payload: bytes, destination: str) -> None:
         )
 
 
-def stage_shared_mmap_stress(guest: Guest, binary: pathlib.Path) -> str:
+def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
     binary = binary.resolve()
     if not binary.is_file():
-        raise ValueError(f"shared-mm stress binary is not a file: {binary}")
-    destination = "/tmp/guest-shared-mmap-stress"
+        raise ValueError(f"guest stress binary is not a file: {binary}")
+    destination = f"/tmp/{binary.name}"
     upload_bytes(guest, binary.read_bytes(), destination)
     result = guest.run_command(f"chmod 755 {shlex.quote(destination)}", 30)
     if result.return_code != 0:
         raise RuntimeError(
-            f"could not make shared-mm stress executable ({result.return_code})\n"
+            f"could not make {destination} executable ({result.return_code})\n"
             f"{result.output}"
         )
     return destination
+
+
+def require_marker(name: str, output: str, accepts) -> None:
+    # Kernel diagnostics share the serial console. run_timed() already
+    # requires exit status zero; require the payload's standalone marker.
+    lines = output.splitlines()
+    if sum(1 for line in lines if accepts(line)) != 1:
+        raise RuntimeError(f"{name} returned unexpected output {output!r}")
+    for line in lines:
+        if line != "OK":
+            print(line, flush=True)
 
 
 def main() -> int:
@@ -132,20 +149,21 @@ def main() -> int:
     )
     try:
         guest.boot_and_login()
-        executable = stage_shared_mmap_stress(
-            guest, arguments.shared_mmap_binary
-        )
+        executable = stage_executable(guest, arguments.shared_mmap_binary)
         output = run_timed(guest, "shared-mm-distant-mmap", executable)
-        # Kernel diagnostics share the serial console. run_timed() already
-        # requires exit status zero; require the payload's standalone marker.
-        lines = output.splitlines()
-        if lines.count("OK") != 1:
-            raise RuntimeError(
-                f"shared-mm workload returned unexpected output {output!r}"
-            )
-        for line in lines:
-            if line != "OK":
-                print(line, flush=True)
+        require_marker(
+            "shared-mm workload", output, lambda line: line == "OK"
+        )
+        # Threads that store to and futex-wait on a page which a sibling's
+        # forks keep write-protecting: a store or an unlock lost to the page
+        # Linux replaced fails the payload, which reports what it counted.
+        executable = stage_executable(guest, arguments.fork_cow_binary)
+        output = run_timed(guest, "fork-cow-coherence", executable)
+        require_marker(
+            "fork copy-on-write workload",
+            output,
+            lambda line: line.startswith("FORK-COW OK "),
+        )
         return 0
     finally:
         guest.close()

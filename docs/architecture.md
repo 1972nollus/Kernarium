@@ -66,6 +66,15 @@ non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
 Physical iOS wires all guest-allocatable pages before publishing them, while
 macOS and Simulator retain demand allocation.
 
+A generation's software-MMU mappings are published only by a page-table
+walker's batch. The batch records the generation's invalidation epoch when it
+begins and is rejected when any invalidation arrives before it ends, so a walk
+which sampled a PTE before Linux changed it cannot publish it afterwards.
+Nothing else installs a mapping. A kernel uaccess pins its page from a PTE
+whose lock it has already dropped, so when the host names other backing than
+that page either of the two may be the stale one; the uaccess discards the
+mapping and the next access replays the PTE. An absent page is always sound.
+
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
 publish RW pages as RX, control JIT write protection, or publish the instruction
