@@ -757,6 +757,70 @@ def summarize(results: list[dict[str, object]]) -> list[str]:
             f"{statistics.median(samples):>9.1f} {samples[0]:>9.1f} "
             f"{samples[-1]:>9.1f} "
             f"{statistics.median(without) if without else float('nan'):>19.1f}")
+    return lines + phase_medians(results)
+
+
+# Boot order, so the table reads as the sequence a user actually waits through.
+PHASE_OFFSETS = (
+    "guest_kernel_start", "storage_ready", "graphical_target_active",
+    "steam_gaming_service_exec_start", "serial_console_ready",
+    "steam_check_for_updates", "steam_download_start", "steam_download_end",
+    "steam_extract_package", "steam_install_update", "steam_update_complete",
+    "big_picture_viewable",
+)
+# Durations and sizes, which are not points on the boot timeline.
+PHASE_MAGNITUDES = (
+    "boot_seconds_excluding_download", "steam_download_seconds",
+    "steam_download_bytes", "shutdown_seconds",
+)
+PHASE_ORDER = PHASE_OFFSETS + PHASE_MAGNITUDES
+
+
+def phase_medians(results: list[dict[str, object]]) -> list[str]:
+    """Per-phase medians side by side, which is what locates a difference.
+
+    A total says one image is slower; only the phases say whether that is the
+    kernel, the seed copy, a network-bound download, or Steam's own install.
+    """
+    samples: dict[tuple[str, str, str], list[float]] = {}
+    images: list[str] = []
+    for run in results:
+        if run.get("status") != "ok":
+            continue
+        image = str(run["image"])
+        if image not in images:
+            images.append(image)
+        for record in run["boots"]:  # type: ignore[union-attr]
+            for phase in PHASE_ORDER:
+                value = record.get(phase)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    samples.setdefault(
+                        (str(record["boot"]), phase, image), []).append(float(value))
+    lines: list[str] = []
+    for boot in ("first", "second"):
+        for group, caption in (
+            (PHASE_OFFSETS, "median seconds since emulator exec"),
+            (PHASE_MAGNITUDES, "median durations and sizes"),
+        ):
+            present = [p for p in group
+                       if any((boot, p, image) in samples for image in images)]
+            if not present:
+                continue
+            lines.append("")
+            lines.append(f"{boot} boot, {caption}")
+            header = f"{'phase':<34}" + "".join(f"{i:>16}" for i in images)
+            lines.extend((header, "-" * len(header)))
+            for phase in present:
+                row = f"{phase:<34}"
+                for image in images:
+                    values = samples.get((boot, phase, image))
+                    if not values:
+                        row += f"{'-':>16}"
+                    elif phase.endswith("_bytes"):
+                        row += f"{round(statistics.median(values)):>16d}"
+                    else:
+                        row += f"{statistics.median(values):>16.1f}"
+                lines.append(row)
     return lines
 
 
@@ -764,18 +828,19 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--image", action="append", required=True,
-                        metavar="NAME", help="image label; repeat per image")
-    parser.add_argument("--emulator", action="append", required=True,
-                        type=pathlib.Path,
+    parser.add_argument("--summarize", type=pathlib.Path, metavar="RESULTS",
+                        help="re-print the tables from a finished campaign's "
+                             "results.json and exit, running nothing")
+    parser.add_argument("--image", action="append", metavar="NAME",
+                        help="image label; repeat per image")
+    parser.add_argument("--emulator", action="append", type=pathlib.Path,
                         help="emulator for the image at the same position")
-    parser.add_argument("--rootfs", action="append", required=True,
-                        type=pathlib.Path,
+    parser.add_argument("--rootfs", action="append", type=pathlib.Path,
                         help="EROFS image for the image at the same position")
     parser.add_argument("--image-extra", action="append", default=[],
                         metavar="NAME=ARGUMENT",
                         help="extra emulator argument for one image; repeatable")
-    parser.add_argument("--output-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--runs", type=int, default=3,
                         help="runs per image (default: 3)")
     parser.add_argument("--order", choices=("abba", "interleave"),
@@ -833,6 +898,14 @@ def build_images(options: argparse.Namespace) -> list[dict[str, object]]:
 
 def main(argv: list[str] | None = None) -> int:
     options = parse_arguments(argv)
+    if options.summarize is not None:
+        print("\n".join(summarize(json.loads(options.summarize.read_text()))))
+        return 0
+    if not (options.image and options.emulator and options.rootfs
+            and options.output_dir):
+        raise SystemExit(
+            "--image, --emulator, --rootfs and --output-dir are required "
+            "unless --summarize is given")
     if options.runs < 1:
         raise SystemExit("--runs must be positive")
     if options.poll_seconds <= 0:

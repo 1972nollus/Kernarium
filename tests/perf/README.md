@@ -177,9 +177,13 @@ unauthorized client whatever its window state is.
 Runs are strictly sequential and counterbalanced across images, so host drift
 cannot masquerade as an image difference. Each run records host load and memory
 pressure at its start; that is evidence, not an acceptance gate. Results are a
-`run.json` per run, a combined `results.tsv`/`results.json`, and a
-median/min/max summary. See `--help` for guest topology, timeout, and poll
-options.
+`run.json` per run, a combined `results.tsv`/`results.json`, and a summary that
+gives median/min/max totals and then the per-phase medians side by side: a
+total says one image is slower, only the phases say whether that is the kernel,
+the seed copy, a network-bound download, or Steam's own install.
+`--summarize RESULTS` re-prints those tables from a finished campaign's
+`results.json` without running anything. See `--help` for guest topology,
+timeout, and poll options.
 
 The harness never modifies an image. Phase times therefore come from records an
 unmodified appliance already keeps — systemd's monotonic unit timestamps, the
