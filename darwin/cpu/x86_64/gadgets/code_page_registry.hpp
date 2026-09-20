@@ -3,11 +3,15 @@
 
 #include "native_entry.hpp"
 
+#include "memory/mmu/word_shared_mutex.hpp"
+
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -32,9 +36,23 @@ namespace uml::cpu::x86_64::gadgets {
  * left the engine once -- bounded by the run's instruction window -- before
  * the translation reads the page's bytes.
  *
- * Membership is a count per hashed bit, which makes the query one load and
- * lets a page shared by several executors, or two pages sharing a bit, be
- * counted rather than tracked. A collision only makes a store publish.
+ * Membership is exact: a count per page. A bit per hashed page in front of it
+ * answers "no" with one load, which is the answer for almost every page a
+ * guest writes, and only a set bit is confirmed against the counts. The bits
+ * alone are not enough, because the hash keeps neighbours adjacent and a run of
+ * code pages shadows a run of data pages the same length: when that run was a
+ * thread's stack, every block that pushed published a code change, the
+ * sequence moved faster than any other vCPU could validate a cached block
+ * against it, and all of them translated every block again for as long as the
+ * process lived. Where a stack lands is up to the guest's address-space
+ * randomization, so one run in ten lost nine tenths of its speed.
+ *
+ * Every executor counts a page in when it caches a translation there and out
+ * when it drops one, and a guest whose code outgrows the caches does both
+ * hundreds of thousands of times a second across its vCPUs. The counts are
+ * therefore guarded in stripes by a lock that never sleeps; behind one
+ * std::mutex the vCPUs of a multi-core compile spent a tenth of their busy
+ * time queued in the kernel for it.
  */
 class CodePageRegistry final {
 public:
@@ -60,8 +78,10 @@ public:
 	[[nodiscard]] bool holds(std::uint64_t address) const noexcept
 	{
 		const auto bit = bit_index(address);
-		return (bits_[bit >> 6U].load(std::memory_order_relaxed) &
-			(std::uint64_t{1} << (bit & 63U))) != 0;
+		if ((bits_[bit >> 6U].load(std::memory_order_relaxed) &
+			    (std::uint64_t{1} << (bit & 63U))) == 0)
+			return false;
+		return holds_exactly(address, bit);
 	}
 	[[nodiscard]] std::uint64_t changes() const noexcept
 	{
@@ -88,14 +108,40 @@ private:
 		return static_cast<std::size_t>(
 			(page ^ (page >> bit_count_log2)) & (bit_count - 1U));
 	}
+	[[nodiscard]] bool holds_exactly(
+		std::uint64_t address, std::size_t bit) const noexcept;
 	void wait_for_participants(const Participant *self) noexcept;
+	void retire_write_translations(std::uint64_t page) noexcept;
 
-	std::mutex mutex_;
+	/* Neighbouring pages hash to neighbouring bits, so they land in
+	 * different stripes. A stripe guards the page counts, the bit counts and
+	 * the membership bits of its bits; it is taken before
+	 * participants_mutex_. A page that lost its last holder keeps its entry
+	 * at zero, so a cache that keeps replacing one translation does not keep
+	 * allocating one. */
+	static constexpr std::size_t stripe_count = 64;
+	struct alignas(64) Stripe final {
+		mutable ::uml::memory::WordSharedMutex mutex;
+		std::unordered_map<std::uint64_t, std::uint32_t> pages;
+	};
+	[[nodiscard]] Stripe &stripe_for(std::size_t bit) noexcept
+	{
+		return stripes_[bit & (stripe_count - 1U)];
+	}
+	[[nodiscard]] const Stripe &stripe_for(std::size_t bit) const noexcept
+	{
+		return stripes_[bit & (stripe_count - 1U)];
+	}
+
+	std::array<Stripe, stripe_count> stripes_;
+	::uml::memory::WordSharedMutex participants_mutex_;
 	std::vector<Participant *> participants_;
 	std::unique_ptr<std::atomic<std::uint64_t>[]> bits_;
 	std::unique_ptr<std::uint8_t[]> counts_;
 	std::atomic<std::uint64_t> changes_{0};
 	std::atomic<bool> conservative_{false};
+	/* A page count could not be allocated, so the bits answer alone again. */
+	std::atomic<bool> inexact_{false};
 };
 
 } // namespace uml::cpu::x86_64::gadgets

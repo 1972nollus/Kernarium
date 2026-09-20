@@ -214,6 +214,10 @@ publishes a code change only when its page is in that set, which is what
 makes publication precise under READ_IMPLIES_EXEC, where every readable page
 is executable. The registry guarantees:
 
+- membership is exact. A bit per hashed page answers "no" with one load, and
+  a set bit is confirmed against a count per page, because the hash keeps
+  neighbouring pages adjacent and a run of code pages would otherwise mark a
+  run of data pages, such as a thread's stack, as holding code;
 - a page enters the set before any translation built from it is handed out
   (`CodePageHold` covers the build), and leaves it when the last cached
   translation of the page in every executor is unlinked or invalidated;
@@ -222,7 +226,9 @@ is executable. The registry guarantees:
   inside the engine is waited for until it leaves or passes a checkpoint,
   bounded at 200 ms, so no executor keeps a stale "publishes nothing" entry;
 - a TLB fill that raced a registration retries: the fill re-reads the
-  registry's change counter after publishing its entry.
+  registry's change counter after publishing its entry;
+- counting a page in or out never sleeps: the counts are guarded in 64 stripes
+  by the word-sized lock the MMU uses.
 
 The Wine ARM64EC CPU service, whose arm64 translations live outside the
 registry, publishes on every executable store instead

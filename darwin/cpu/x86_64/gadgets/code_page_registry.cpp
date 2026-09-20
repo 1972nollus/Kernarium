@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -51,7 +53,7 @@ CodePageRegistry::~CodePageRegistry() = default;
 
 void CodePageRegistry::join(Participant &participant)
 {
-	const std::lock_guard lock{mutex_};
+	const std::lock_guard lock{participants_mutex_};
 	if (std::find(participants_.begin(), participants_.end(),
 		    &participant) == participants_.end())
 		participants_.push_back(&participant);
@@ -59,7 +61,7 @@ void CodePageRegistry::join(Participant &participant)
 
 void CodePageRegistry::leave(Participant &participant) noexcept
 {
-	const std::lock_guard lock{mutex_};
+	const std::lock_guard lock{participants_mutex_};
 	const auto found = std::find(
 		participants_.begin(), participants_.end(), &participant);
 	if (found != participants_.end())
@@ -71,28 +73,21 @@ void CodePageRegistry::set_conservative(bool value) noexcept
 	conservative_.store(value, std::memory_order_relaxed);
 	if (!value)
 		return;
-	const std::lock_guard lock{mutex_};
+	/* A removal that read the flag before it was set clears its bit under
+	 * its stripe; hold them all so the fill comes after every such clear. */
+	for (auto &stripe : stripes_)
+		stripe.mutex.lock();
 	for (std::size_t word = 0; word < bit_count / 64U; ++word)
 		bits_[word].store(~std::uint64_t{0}, std::memory_order_relaxed);
 	changes_.fetch_add(1, std::memory_order_acq_rel);
+	for (auto &stripe : stripes_)
+		stripe.mutex.unlock();
 }
 
-void CodePageRegistry::add(std::uint64_t page, const Participant *self) noexcept
+void CodePageRegistry::retire_write_translations(std::uint64_t page) noexcept
 {
-	const auto bit = bit_index(page);
-	std::unique_lock lock{mutex_};
-	auto &count = counts_[bit];
-	if (count == 0xff)
-		return;
-	if (count++ != 0)
-		return;
-	bits_[bit >> 6U].fetch_or(std::uint64_t{1} << (bit & 63U),
-		std::memory_order_release);
-	changes_.fetch_add(1, std::memory_order_acq_rel);
-	/* Order the count against the retirement below: a miss handler that read
-	 * the old count before this fence sees the new count after its own. */
-	std::atomic_thread_fence(std::memory_order_seq_cst);
 	const auto index = native_tlb_index(page);
+	const std::shared_lock lock{participants_mutex_};
 	for (auto *participant : participants_) {
 		if (participant->write_translations == nullptr)
 			continue;
@@ -100,6 +95,45 @@ void CodePageRegistry::add(std::uint64_t page, const Participant *self) noexcept
 			participant->write_translations[index].write_page}
 			.store(1, std::memory_order_relaxed);
 	}
+}
+
+bool CodePageRegistry::holds_exactly(
+	std::uint64_t address, std::size_t bit) const noexcept
+{
+	if (conservative_.load(std::memory_order_relaxed) ||
+	    inexact_.load(std::memory_order_relaxed))
+		return true;
+	const auto &stripe = stripe_for(bit);
+	const std::shared_lock lock{stripe.mutex};
+	const auto found = stripe.pages.find(address & ~std::uint64_t{0xfff});
+	return found != stripe.pages.end() && found->second != 0;
+}
+
+void CodePageRegistry::add(std::uint64_t page, const Participant *self) noexcept
+{
+	page &= ~std::uint64_t{0xfff};
+	const auto bit = bit_index(page);
+	auto &stripe = stripe_for(bit);
+	std::unique_lock lock{stripe.mutex};
+	bool gained = false;
+	try {
+		gained = stripe.pages.try_emplace(page, 0).first->second++ == 0;
+	} catch (...) {
+		/* Without its count the page is held for as long as its bit is. */
+		inexact_.store(true, std::memory_order_relaxed);
+		gained = true;
+	}
+	auto &count = counts_[bit];
+	if (count != 0xff && count++ == 0)
+		bits_[bit >> 6U].fetch_or(std::uint64_t{1} << (bit & 63U),
+			std::memory_order_release);
+	if (!gained)
+		return;
+	changes_.fetch_add(1, std::memory_order_acq_rel);
+	/* Order the count against the retirement below: a miss handler that read
+	 * the old count before this fence sees the new count after its own. */
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	retire_write_translations(page);
 	/* Participants may be inside the engine with a store already translated
 	 * through the entry just retired. Wait for each to leave once so that
 	 * store lands before the translation reads the page. */
@@ -111,7 +145,7 @@ void CodePageRegistry::wait_for_participants(const Participant *self) noexcept
 {
 	std::vector<std::pair<Participant *, std::uint64_t>> waiting;
 	{
-		const std::lock_guard lock{mutex_};
+		const std::shared_lock lock{participants_mutex_};
 		for (auto *participant : participants_) {
 			if (participant == self)
 				continue;
@@ -136,26 +170,25 @@ void CodePageRegistry::wait_for_participants(const Participant *self) noexcept
 
 void CodePageRegistry::remove(std::uint64_t page) noexcept
 {
+	page &= ~std::uint64_t{0xfff};
 	const auto bit = bit_index(page);
-	const std::lock_guard lock{mutex_};
+	auto &stripe = stripe_for(bit);
+	const std::lock_guard lock{stripe.mutex};
+	bool lost = false;
+	if (const auto found = stripe.pages.find(page);
+	    found != stripe.pages.end() && found->second != 0)
+		lost = --found->second == 0;
 	auto &count = counts_[bit];
-	if (count == 0 || count == 0xff)
+	if (count != 0 && count != 0xff && --count == 0 &&
+	    !conservative_.load(std::memory_order_relaxed))
+		bits_[bit >> 6U].fetch_and(~(std::uint64_t{1} << (bit & 63U)),
+			std::memory_order_release);
+	if (!lost || conservative_.load(std::memory_order_relaxed))
 		return;
-	if (--count != 0 || conservative_.load(std::memory_order_relaxed))
-		return;
-	bits_[bit >> 6U].fetch_and(~(std::uint64_t{1} << (bit & 63U)),
-		std::memory_order_release);
 	/* A write translation tagged while the page held code would keep
 	 * publishing; retire it so the next store refills it untagged. A
 	 * translation retired under a store in flight only publishes once more. */
-	const auto index = native_tlb_index(page);
-	for (auto *participant : participants_) {
-		if (participant->write_translations == nullptr)
-			continue;
-		std::atomic_ref<std::uint64_t>{
-			participant->write_translations[index].write_page}
-			.store(1, std::memory_order_relaxed);
-	}
+	retire_write_translations(page);
 }
 
 } // namespace uml::cpu::x86_64::gadgets

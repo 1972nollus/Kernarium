@@ -61,6 +61,7 @@ gpu-kosmickrisp-incremental-present-capabilities	tests/unit/gpu/kosmickrisp_incr
 vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained
 native-4k-shadow-mmu	tests/unit/arm64	unit	conditional
 emulator-native-4k-admission	tests/unit/arm64	unit	conditional
+x86-64-code-page-registry	tests/unit/x86_64/code_page_registry_tests.cpp	unit	conditional
 x86-64-gadget-bootstrap	tests/unit/x86_64/x86_64_gadget_bootstrap_tests.cpp	unit	conditional
 x86-64-instruction-corpus	tests/unit/x86_64/fex_asm_runner.cpp	unit	conditional
 emulator-native-16k-ownership	tests/unit/arm64	unit	conditional

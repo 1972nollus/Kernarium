@@ -15,6 +15,21 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_bootstrap_tests
     LABELS cpu;x86-64)
 
+add_executable(uml_x86_64_code_page_registry_tests
+    code_page_registry_tests.cpp)
+target_link_libraries(uml_x86_64_code_page_registry_tests PRIVATE
+    uml_x86_64_gadgets
+    UML::CpuContract)
+target_include_directories(uml_x86_64_code_page_registry_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+target_compile_features(uml_x86_64_code_page_registry_tests PRIVATE cxx_std_20)
+target_compile_options(uml_x86_64_code_page_registry_tests PRIVATE
+    -Wall -Wextra -Werror)
+uml_add_unit_test(
+    NAME x86-64-code-page-registry
+    COMMAND uml_x86_64_code_page_registry_tests
+    LABELS cpu;x86-64)
+
 # K instruction traces and complementary FEX assembly programs are normalized
 # into this checked-in pack. The ordinary unit test therefore has no runtime or
 # build dependency on either upstream project or on an x86 assembler.
