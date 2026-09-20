@@ -700,6 +700,38 @@ void test_empty_generation_flush_rejects_an_older_batch()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* Linux invalidates a range after it changes the PTE and before it frees the
+ * page.  A walker that sampled the old PTE may not have published it yet, so
+ * the invalidation finds nothing to remove; it must still reject that batch,
+ * or the walker maps a page Linux has already given away. */
+void test_empty_range_unmap_rejects_an_older_batch()
+{
+	constexpr unsigned long generation = 316;
+	constexpr unsigned long base = 0x60'0000;
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(darwin_uml_static_vm_map_generation(
+		generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	std::thread invalidator{[&] {
+		require(darwin_uml_static_vm_unmap_generation(
+			generation, reinterpret_cast<void *>(base),
+			DARWIN_UML_GUEST_PAGE_SIZE) == 0);
+	}};
+	invalidator.join();
+	require(darwin_uml_static_vm_batch_end() == -EAGAIN);
+	require_unmapped(generation, base);
+
+	/* The replayed walk starts after the invalidation and is accepted. */
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(darwin_uml_static_vm_map_generation(
+		generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	require(darwin_uml_static_vm_batch_end() == 0);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 /* A batch plans one entry per touched page and indexes them by page address,
  * reserving the index up to a power-of-two cap.  libc++ keeps a power-of-two
  * bucket count for such a reservation and constrains the hash by masking, so
@@ -883,6 +915,7 @@ int main()
 	test_large_sparse_unmap_visits_only_mapped_pages();
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
+	test_empty_range_unmap_rejects_an_older_batch();
 	test_page_index_hash_spreads_page_aligned_addresses();
 	test_page_index_reservation_never_shrinks_or_rehashes_needlessly();
 	test_page_index_hash_spreads_host_pages_under_a_masked_bucket_count();

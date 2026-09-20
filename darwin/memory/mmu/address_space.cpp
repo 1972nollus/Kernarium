@@ -464,9 +464,13 @@ public:
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
-		if (unmap_locked(*state, address, length))
-			state->invalidation_epoch.fetch_add(
-				1, std::memory_order_release);
+		/* Linux invalidates after it changes a PTE and before it frees the
+		 * page.  A walker which sampled the old PTE may not have published it
+		 * yet, so the range can be absent here and the snapshot still stale:
+		 * reject every batch that began before this point, whether or not a
+		 * mapping was removed. */
+		(void)unmap_locked(*state, address, length);
+		state->invalidation_epoch.fetch_add(1, std::memory_order_release);
 		return 0;
 	}
 
