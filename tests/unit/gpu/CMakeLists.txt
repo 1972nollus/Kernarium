@@ -675,6 +675,28 @@ if(TARGET uml_gpu_display)
         COMMAND uml_gpu_vnc_lifetime_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
+
+    # This one links the shipped display library rather than a test variant,
+    # so it also answers whether the product was built with the native Metal
+    # readback that a Venus scanout has no alternative to.
+    if(UML_TARGET_MACOS)
+        add_executable(uml_gpu_vnc_product_tests
+            vnc_display_product_tests.mm)
+        target_link_libraries(uml_gpu_vnc_product_tests PRIVATE
+            uml_gpu_display
+            "-framework Foundation"
+            "-framework Metal")
+        target_compile_features(uml_gpu_vnc_product_tests PRIVATE cxx_std_20)
+        set_target_properties(uml_gpu_vnc_product_tests PROPERTIES
+            OBJCXX_STANDARD 20)
+        target_compile_options(uml_gpu_vnc_product_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+            -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        uml_add_unit_test(NAME gpu-vnc-product-readback
+            COMMAND uml_gpu_vnc_product_tests
+            WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+            LABELS gpu)
+    endif()
 endif()
 
 unset(_uml_unit_binary_directory)

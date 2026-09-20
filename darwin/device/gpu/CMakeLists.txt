@@ -150,9 +150,12 @@ uml_configure_gpu_component(uml_gpu_display)
 set_target_properties(uml_gpu_display PROPERTIES OBJCXX_STANDARD 20)
 target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+# The renderer and the transport compile the Venus path unconditionally, so
+# the display must too: a scanout only this product produces has no other way
+# to reach a VNC client. Both are gated at run time by the same opt-in.
 target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_HAS_VNC=$<BOOL:${UML_TARGET_MACOS}>
-    UML_GPU_VULKAN_EXPERIMENT=$<BOOL:${_uml_apple_gpu_vulkan}>
+    UML_GPU_VULKAN_EXPERIMENT=1
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)

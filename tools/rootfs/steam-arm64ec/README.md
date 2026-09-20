@@ -188,7 +188,12 @@ Keep the data disk backed up separately from the replaceable rootfs.
 On macOS with Mesa 26.2.1 and the paired KosmicKrisp renderer, Gamescope can
 register its XR24 framebuffer through Mesa's private scanout-image path.
 The native allocation remains optimal and carries a logical pitch for DRM.
-Direct Vulkan color scanout reaches VNC through native Metal readback.
+That scanout is a private Metal texture with no guest-visible Virgl resource,
+so the display's native Metal readback is the only way it reaches a VNC
+client, and it does so only while a client is connected: with none, each flush
+is accepted and dropped. `UML_GPU_DISPLAY_ACTIVITY_LOG` names the path every
+flush took; a `kind=blob` flush that reports `path=cpu` is publishing the
+blob's own bytes, which name a host allocation and are not pixels.
 AR24 client buffers may still be rejected for direct KMS scanout and require
 composition. Shared Metal heaps use compatible texture storage across render
 target and compositor usages; the composed Vulkan cube renders correctly.
