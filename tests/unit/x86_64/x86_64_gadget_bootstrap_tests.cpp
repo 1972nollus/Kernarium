@@ -3935,6 +3935,160 @@ read_test_sequences(void *context) noexcept
 	return true;
 }
 
+/* A record is also hidden from the builder when it no longer exists: every
+ * gadget that materializes and republishes the flags leaves the carry settled
+ * in RFLAGS and the record empty. STC and CLC define the carry that way, ADCX
+ * and ADOX -- the pair OpenSSL's Montgomery multiply interleaves, with a DEC
+ * closing every loop between the carry's producer and its consumer -- do it
+ * after computing, and so does any consumer that had to materialize. An empty
+ * record is not a carry source: parking one in the carry slot makes the slot's
+ * operation-and-width table answer a carry of zero, so the settled carry has
+ * to survive the INC or DEC untouched instead.
+ */
+[[nodiscard]] bool a_settled_carry_survives_an_increment()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::array<std::uint64_t, 4> values{
+		0U, 1U, 0x8000'0000'0000'0000ULL, ~std::uint64_t{}};
+	enum class Producer { set, clear, adcx, adox, materialized };
+	static constexpr std::array<Producer, 5> producers{Producer::set,
+		Producer::clear, Producer::adcx, Producer::adox,
+		Producer::materialized};
+	enum class Hide { none, store, jump };
+	static constexpr std::array<Hide, 3> hides{Hide::none, Hide::store,
+		Hide::jump};
+	enum class Reader { adc, lahf, exit, twice_adc };
+	static constexpr std::array<Reader, 4> readers{Reader::adc, Reader::lahf,
+		Reader::exit, Reader::twice_adc};
+	for (const auto producer : producers)
+	for (const auto hide : hides)
+	for (const auto reader : readers)
+	for (const bool decrement : {false, true})
+	for (const bool memory_unary : {false, true})
+	for (const auto left : values)
+	for (const auto right : values) {
+		std::vector<std::byte> code;
+		const auto push = [&code](std::initializer_list<unsigned> bytes) {
+			for (const auto byte : bytes)
+				code.push_back(static_cast<std::byte>(byte));
+		};
+		const auto sum = left + right;
+		const std::uint64_t add_carry = sum < left ? 1U : 0U;
+		std::uint64_t carry{};
+		switch (producer) {
+		case Producer::set:
+			push({0xf9});
+			carry = 1;
+			break;
+		case Producer::clear:
+			push({0xf8});
+			carry = 0;
+			break;
+		case Producer::adcx:
+			/* STC; ADCX rax, rbx: a carry in and a carry out. */
+			push({0xf9, 0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc3});
+			carry = (add_carry != 0 || sum + 1U < sum) ? 1U : 0U;
+			break;
+		case Producer::adox:
+			/* STC; ADOX rax, rbx defines the overflow and preserves the
+			 * carry the instruction before it settled. */
+			push({0xf9, 0xf3, 0x48, 0x0f, 0x38, 0xf6, 0xc3});
+			carry = 1;
+			break;
+		case Producer::materialized:
+			/* ADD rax, rbx; SETP r8b: parity has no host-flag form, so the
+			 * consumer materializes and the record goes. */
+			push({0x48, 0x01, 0xd8, 0x41, 0x0f, 0x9a, 0xc0});
+			carry = add_carry;
+			break;
+		}
+		switch (hide) {
+		case Hide::none: break;
+		case Hide::store: push({0x48, 0x89, 0x0f}); break;
+		case Hide::jump: push({0xeb, 0x00}); break;
+		}
+		/* INC or DEC of rcx, or of [rdi]; both operands start at zero. */
+		const unsigned modrm = memory_unary ?
+			(decrement ? 0x0fU : 0x07U) : (decrement ? 0xc9U : 0xc1U);
+		push({0x48, 0xff, modrm});
+		switch (reader) {
+		case Reader::twice_adc:
+			push({0x48, 0xff, modrm});
+			[[fallthrough]];
+		case Reader::adc:
+			push({0x48, 0x83, 0xd2, 0x00}); /* adc rdx, 0 */
+			break;
+		case Reader::lahf:
+			push({0x9f});
+			break;
+		case Reader::exit:
+			break;
+		}
+		push({0x0f, 0x05});
+		TestMemory memory;
+		memory.fill(0, code);
+		CpuState cpu{};
+		cpu.gpr(Register::rax) = left;
+		cpu.gpr(Register::rbx) = right;
+		cpu.gpr(Register::rdi) = 0x2000;
+		gadgets::Executor executor;
+		executor.prepare(memory, 1, 1, 1);
+		bool reached = false;
+		for (unsigned step = 0; step < 8U; ++step) {
+			const auto selected = executor.select_program(
+				memory, cpu.rip, ExecutionMode::long64);
+			if (!expect(selected.status == gadgets::BuildStatus::built &&
+				selected.program != nullptr,
+				"settled carry program did not build"))
+				return false;
+			const auto result = gadgets::execute(
+				*selected.program, cpu, memory, executor, 64);
+			if (result.event == uml::cpu::EngineEvent::system_call) {
+				reached = true;
+				break;
+			}
+			if (!expect(result.event == uml::cpu::EngineEvent::continued,
+				"settled carry program left unexpectedly"))
+				return false;
+		}
+		if (!expect(reached, "settled carry program did not reach SYSCALL"))
+			return false;
+		std::uint64_t expected = carry;
+		std::uint64_t observed = 0;
+		switch (reader) {
+		case Reader::adc:
+		case Reader::twice_adc:
+			observed = cpu.gpr(Register::rdx);
+			break;
+		case Reader::lahf:
+			/* SF ZF 0 AF 0 PF 1 CF of the INC or DEC from zero. */
+			expected = (decrement ? 0x96U : 0x02U) | carry;
+			observed = (cpu.gpr(Register::rax) >> 8U) & 0xffU;
+			break;
+		case Reader::exit:
+			materialize_flags(cpu);
+			observed = cpu.rflags & 1U;
+			break;
+		}
+		if (observed != expected) {
+			char message[220];
+			std::snprintf(message, sizeof(message),
+				"an increment discarded a settled carry (producer %d hide %d "
+				"reader %d %s %s left %#llx right %#llx: expected %#llx "
+				"observed %#llx)",
+				static_cast<int>(producer), static_cast<int>(hide),
+				static_cast<int>(reader), decrement ? "dec" : "inc",
+				memory_unary ? "memory" : "register",
+				static_cast<unsigned long long>(left),
+				static_cast<unsigned long long>(right),
+				static_cast<unsigned long long>(expected),
+				static_cast<unsigned long long>(observed));
+			return expect(false, message);
+		}
+	}
+	return true;
+}
+
 /* The equality above holds whether or not the builder actually fuses, so pin
  * which pairs it fuses. A NOP between the producer and the consumer resets the
  * host flags the builder tracks, so the same consumer keeps the deferred
@@ -5225,6 +5379,7 @@ int main()
 		ordinary_bank_conditions_match_the_deferred_evaluation() &&
 		fused_conditions_cover_exactly_the_legal_pairs() &&
 		lazy_carry_reaches_every_reader() &&
+		a_settled_carry_survives_an_increment() &&
 		fused_conditional_jumps_take_the_same_edge() &&
 		cpuid_table_matches_the_gadget() &&
 		preserve_precise_memory_fault() &&

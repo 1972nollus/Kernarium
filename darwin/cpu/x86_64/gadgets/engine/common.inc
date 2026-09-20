@@ -141,13 +141,23 @@ NAME(uml_x86_64_gadget_\name):
  * bit. The prologue writes nothing but the slot and the bit, so a memory form
  * that faults after it leaves the record exactly as it found it. x5, x7, x8,
  * x10 and x14 to x16 are clobbered.
+ *
+ * An empty record is settled, not pending: RFLAGS already holds the carry,
+ * which is the state every gadget that materializes and republishes the flags
+ * leaves -- ADCX and ADOX, the flag writers, and any consumer that had to
+ * materialize. The slot answers only through the operation-and-width table,
+ * where an empty record reads as a carry of zero, so parking one would
+ * discard a settled carry. It takes the same way out as a pending INC or DEC
+ * record: nothing to do but a carry override, which is settled as before.
  */
 .macro lazy_carry_prologue
 	ldr x14, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	and w5, w14, #0xff
+	ands w5, w14, #0xff
 	sub w5, w5, #4
-	cmp w5, #1
-	b.ls .Lx86_lazy_unary\@
+	/* `sub` keeps the flags `ands` defined, so an empty record forces the
+	 * settled way out without a test of its own. */
+	ccmp w5, #1, #4, ne
+	b.ls .Lx86_lazy_settled\@
 	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
 	ldp x7, x8, [x15]
 	ldr x10, [x15, #16]
@@ -157,7 +167,7 @@ NAME(uml_x86_64_gadget_\name):
 	mov w16, #1
 	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
 	b .Lx86_lazy_ready\@
-.Lx86_lazy_unary\@:
+.Lx86_lazy_settled\@:
 	tbz x14, #32, .Lx86_lazy_ready\@
 	bl uml_x86_64_gadget_materialize_carry
 .Lx86_lazy_ready\@:

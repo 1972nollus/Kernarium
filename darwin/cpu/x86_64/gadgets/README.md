@@ -108,6 +108,14 @@ operation-and-width table, and the C++ materializer does the same. Every
 record write clears the bit, so a producer that follows leaves nothing
 pending.
 
+Only a record defines a carry, so only a record is parked. An empty record
+means the carry is already settled in RFLAGS, which is what every gadget that
+materializes and republishes the flags leaves behind -- ADCX and ADOX, the
+flag writers, and any consumer that had to materialize -- and the slot's table
+would answer a carry of zero for it. INC and DEC therefore take an empty
+record the way they take another INC or DEC record: nothing to park, and only
+a carry override on it is settled through the materializer.
+
 An operation that defines every arithmetic flag it does not leave undefined --
 COMISS and UCOMISS, PTEST, the packed string compares, the bit scans and
 counts, and the BMI flag writers -- discards the pending record instead of
