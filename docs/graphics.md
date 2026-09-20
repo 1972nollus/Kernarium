@@ -93,6 +93,16 @@ That version is the profile the guest reports, not a conformance result. Guest
 Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
 own conformance standing is whatever its recorded campaigns show.
 
+A point is clipped against user clip and cull distances and against the depth
+planes, never against the view-volume side planes, which is what KosmicKrisp
+reports as `VK_POINT_CLIPPING_BEHAVIOR_USER_CLIP_PLANES_ONLY`. A wide point
+whose centre sits just outside a viewport edge therefore still rasterizes the
+part that reaches the viewport, as the conformance reference rasterizer and
+OpenGL require; clipping such a centre instead made Zink's wide points vanish
+at an edge. The hardware keeps its own guard band around the volume, measured
+at 1.5 in normalized device coordinates on every viewport size and whatever
+the point size, and drops a point whose centre leaves it.
+
 The boundary that fixes this ladder has two sides. Guest userspace is an
 external input: the Mesa, libdrm, WSI, CTS executables and desktop packages
 installed in `rootfs.erofs` are used exactly as they are, never replaced,

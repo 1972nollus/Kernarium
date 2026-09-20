@@ -68,7 +68,7 @@ int main()
         "\"graphics_pipeline_library\":{"
         "\"pipeline_library_extension\":true,"
         "\"graphics_pipeline_library_extension\":true,"
-        "\"feature\":true,\"fast_linking\":false,"
+        "\"feature\":true,\"fast_linking\":true,"
         "\"independent_interpolation_decoration\":true}";
     constexpr std::string_view successfulProbe =
         "\"graphics_pipeline_library_probe\":{"
@@ -86,12 +86,13 @@ int main()
     require(countOccurrences(report, capability) == extCount);
     require(countOccurrences(report, successfulProbe) == extCount);
 
-    // Reject extension/feature mismatches and a fast-link claim: the measured
-    // cold native Metal link is intentionally reported as non-fast.
+    // Reject extension/feature mismatches and a withdrawn fast-link promise:
+    // a library compiles its own stages, so the link only builds pipeline
+    // state and the driver owes the extension a cheap link.
     require(report.find(
                 "\"graphics_pipeline_library_extension\":true,"
                 "\"feature\":false") == std::string_view::npos);
-    require(report.find("\"fast_linking\":true") ==
+    require(report.find("\"fast_linking\":false") ==
             std::string_view::npos);
 
     const auto firstLink = unsignedField(report, "\"first_link_ns\":");
