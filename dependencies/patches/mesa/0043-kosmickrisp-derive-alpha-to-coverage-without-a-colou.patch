@@ -1,4 +1,4 @@
-From 39d2302b2f9665c25a78583f180c7916b0cccbcc Mon Sep 17 00:00:00 2001
+From 6d6465b0b4a19eb15e4b0af75d6de4a429b9a575 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 02:18:00 +0900
 Subject: [PATCH 043/105] kosmickrisp: derive alpha to coverage without a

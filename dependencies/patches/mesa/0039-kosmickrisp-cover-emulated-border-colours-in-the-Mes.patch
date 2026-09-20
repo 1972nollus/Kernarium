@@ -1,4 +1,4 @@
-From 49405d647e1e39ba1359c789837fd6884e87f932 Mon Sep 17 00:00:00 2001
+From e7063446cf48aad86b0ea1227788730ef34dbbc0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
 Subject: [PATCH 039/105] kosmickrisp: cover emulated border colours in the

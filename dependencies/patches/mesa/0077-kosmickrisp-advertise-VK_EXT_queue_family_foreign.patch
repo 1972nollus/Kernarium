@@ -1,4 +1,4 @@
-From 0beec99257a3f88aa26d1aa56e614f5844731c95 Mon Sep 17 00:00:00 2001
+From 95f3162e1f5ce99eedae17723f1712752185daff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:14:52 +0900
 Subject: [PATCH 077/105] kosmickrisp: advertise VK_EXT_queue_family_foreign

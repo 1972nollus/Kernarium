@@ -1,4 +1,4 @@
-From 9f9820a2c82aa8469b79ed1db58e7d4c9f060d70 Mon Sep 17 00:00:00 2001
+From f23cdeb66a8b3effffe0820efdaf3ab2cb0789f4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
 Subject: [PATCH 041/105] kosmickrisp: survive Metal command queue timeouts
@@ -98,7 +98,7 @@ submission, so the timeout is still survived.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 4c8f4de9..24dd5058 100644
+index 4cde058c..6e41aecf 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -12,6 +12,7 @@
@@ -109,9 +109,9 @@ index 4c8f4de9..24dd5058 100644
  #include "kk_image_layout.h"
  #include "kk_nir_lower_vbo.h"
  #include "kk_physical_device.h"
-@@ -139,6 +140,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
-          },
-       .linear_stride_B = view->vk.range + tail_offset_B,
+@@ -149,6 +150,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+              : view->vk.range) +
+          tail_offset_B,
     };
 +
 +   /* Metal refuses a texture descriptor it cannot represent by aborting the

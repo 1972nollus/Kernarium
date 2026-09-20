@@ -1,4 +1,4 @@
-From 1cc8b46ab3696c7c9d423d2fe5f89d3c35698a5d Mon Sep 17 00:00:00 2001
+From 7e72b4fa893f153fddb9402284863a0fc8e86178 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:11:34 +0900
 Subject: [PATCH 073/105] kosmickrisp: write every channel of a swizzled colour

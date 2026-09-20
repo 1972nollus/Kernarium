@@ -1,4 +1,4 @@
-From dc5dbe5aee0c44a23fac7e5d37c0651383915195 Mon Sep 17 00:00:00 2001
+From de581492b49f1c5d073703afbca444eb2a689b84 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:59:32 +0900
 Subject: [PATCH 054/105] kosmickrisp: keep the helper tracking variable on
