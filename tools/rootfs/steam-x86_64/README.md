@@ -98,6 +98,27 @@ and the seed is copied, and Gamescope then shows the matching installation
 screen with real Steam download and extraction progress. The session is ready
 when the X window `Steam Big Picture Mode` becomes viewable.
 
+## Video decode boundary
+
+Big Picture plays `steamui/movies/bigpicture_startup.webm` on every start here
+as it does on the ARM64EC appliance, and the
+[shared assets](../steam-common/README.md) record why neither image decodes it
+in hardware. Two things are specific to this client:
+
+- Valve's x86-64 CEF has no stateful V4L2 decoder, so the image's
+  `/dev/video-dec0` is never a candidate for it. Its only hardware decode path
+  is VA-API, which it does attempt: `libva.so.2` and `libva-drm.so.2` are
+  mapped into its GPU process during a session.
+- No VA driver exists for this device and the image ships none, so that attempt
+  can only fail. Supplying one means writing a libva backend over the Virtio
+  video stateful decoder — `VAProfileVP9Profile0` with `VAEntrypointVLD` —
+  which neither Debian nor upstream provides.
+
+Even with such a backend the client would still decode in software today,
+because Chromium's decode pipeline first requires dma-buf-backed NV12 buffers
+that this guest's Zink-on-Venus GBM cannot export. Fix that before investing in
+a VA driver.
+
 ## Interactive boot
 
 ```sh

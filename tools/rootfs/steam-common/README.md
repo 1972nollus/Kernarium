@@ -17,22 +17,37 @@ change to the startup or storage contract reaches both images at once.
   needs, and the launcher rejects those and the storage, init, console and
   memory arguments in a caller's pass-through list.
 
-## Hardware video decode
+## The startup movie, and why it is not hardware decoded
 
-The decoder rule gives both images `/dev/video-dec0`, where a Linux Chromium or
-CEF build looks for a stateful V4L2 decoder. What each image does with it
-differs, and that difference belongs to the Steam client, not to this project:
+Big Picture plays a startup movie on every start, on both images. The client's
+UI bundle selects `steamui/movies/bigpicture_startup.webm` — VP9 Profile 0,
+1920x1200, 6 s, fullscreen — for any device that is neither SteamOS nor Deck,
+Steam Machine or Frame hardware, which is this profile, and `steamwebhelper`
+opens and streams that file within a second of the `Steam Big Picture Mode`
+window becoming viewable.
 
-- The ARM64 client's CEF has that decoder and asks for it. Its `steamwebhelper`
-  processes run with `--enable-features=PlatformHEVCDecoderSupport,V4L2VideoDecode`
-  and open and enumerate the node while the session starts.
-- The x86-64 client's CEF has no stateful V4L2 decoder and offers only VA-API,
-  for which no driver over this device exists.
+**Access times cannot observe this.** The user-data partition is mounted
+`noatime`, so every movie keeps its packaged timestamp however often it is
+read. Watch the directory with `inotify`, or sample `/proc/<pid>/fd`.
 
-Neither image plays a Steam startup movie. The `steamui/movies/*.webm` clips a
-Steam Deck shows are hardware-specific; on this profile Big Picture starts
-without one, and every movie file's access time is still its packaged value
-after a first boot through the client's self-update and after a later boot. The
-visible startup animation is this directory's own Kernarium splash, drawn with
-GBM/EGL, which is not a video stream. No startup movie is decoded, in hardware
-or otherwise, and no change to these images would produce one.
+It is decoded in software on both images, and the decoder is not the reason.
+Steam writes a `chrome://gpu` report to
+`~/.local/share/Steam/logs/webhelper_gpu.txt`; in both guests it reports
+`videoAcceleratorsInfo Decoding (null)`, every GpuMemoryBuffer format
+`Software only` and `YUV_420_BIPLANAR: not supported`, after the GPU process
+logs `gbm_wrapper.cc: Failed to export buffer to dma_buf` for every allocation
+it attempts. Chromium's `VideoDecoderPipeline` — the shared backend of both
+`V4L2VideoDecoder` and `VaapiVideoDecoder` — needs dma-buf-backed NV12 frames,
+so with no dma-buf export it advertises no decode configuration at all and CEF
+falls back to its built-in software decoder. The V4L2 node, this directory's
+udev rule, the device's VP9 Profile 0 advertisement and the client's own
+`--enable-features=PlatformHEVCDecoderSupport,V4L2VideoDecode` are all present
+and correct; the blocker is above them, in the guest's Zink-on-Venus GBM.
+
+Which decoder each client would then use still differs:
+
+- The ARM64 client's CEF carries the stateful V4L2 decoder and asks for the
+  node, which the decoder rule publishes as `/dev/video-dec0`.
+- The x86-64 client's CEF carries only VA-API. It does load `libva.so.2` and
+  `libva-drm.so.2` into its GPU process, and no image ships a VA driver, so
+  that client additionally needs a libva backend over this device.
