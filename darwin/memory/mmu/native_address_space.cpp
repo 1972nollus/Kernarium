@@ -1358,6 +1358,7 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 			std::copy_n(snapshot.begin() + index * guest_page_size,
 				guest_page_size, mapping.original.begin());
 			mapping.loaded = true;
+			note_shadow_offset_locked(mapping.offset);
 			mappings_.emplace(page, std::move(mapping));
 			if (backing_index_ready_) {
 				UML_MEMORY_ALLOCATION_CHECKPOINT(
@@ -2285,6 +2286,7 @@ int NativeAddressSpace::map(
 				}
 				UML_MEMORY_ALLOCATION_CHECKPOINT(
 					testing::AllocationSite::native_mapping);
+				note_shadow_offset_locked(page_offset);
 				mappings_.insert_or_assign(page,
 					Mapping{fd, page_offset, protection, identity});
 			}
@@ -2378,6 +2380,68 @@ int NativeAddressSpace::map(
 	return 0;
 }
 
+std::size_t NativeAddressSpace::shadow_filter_bit(
+	std::uint64_t offset) noexcept
+{
+	/* Backing offsets are page multiples; spread the page number. */
+	return static_cast<std::size_t>(
+		((offset / guest_page_size) * 0x9e3779b97f4a7c15ULL) >> (64 - 20));
+}
+
+bool NativeAddressSpace::may_alias_shadow(
+	std::uint64_t offset, std::uint64_t length) const noexcept
+{
+	if (length / guest_page_size > shadow_filter_scan_pages)
+		return true;
+	const auto sequence =
+		shadow_filter_sequence_.load(std::memory_order_seq_cst);
+	if ((sequence & 1U) != 0)
+		return true;
+	for (std::uint64_t position = 0; position < length;
+	     position += guest_page_size) {
+		const auto bit = shadow_filter_bit(offset + position);
+		if ((shadow_filter_[bit / 64].load(std::memory_order_seq_cst) &
+		     (std::uint64_t{1} << (bit % 64))) != 0)
+			return true;
+	}
+	return shadow_filter_sequence_.load(std::memory_order_seq_cst) !=
+		sequence;
+}
+
+void NativeAddressSpace::note_shadow_offset_locked(
+	std::uint64_t offset) noexcept
+{
+	/* Rebuild before the new bit: the mapping it stands for is not in
+	 * mappings_ yet, and a rebuild knows only what is. */
+	if (shadow_filter_population_ > 2 * mappings_.size() + 4096)
+		rebuild_shadow_filter_locked();
+	const auto bit = shadow_filter_bit(offset);
+	const auto mask = std::uint64_t{1} << (bit % 64);
+	auto &word = shadow_filter_[bit / 64];
+	if ((word.load(std::memory_order_relaxed) & mask) != 0)
+		return;
+	word.fetch_or(mask, std::memory_order_seq_cst);
+	++shadow_filter_population_;
+}
+
+void NativeAddressSpace::rebuild_shadow_filter_locked() noexcept
+{
+	shadow_filter_sequence_.fetch_add(1, std::memory_order_seq_cst);
+	for (auto &word : shadow_filter_)
+		word.store(0, std::memory_order_seq_cst);
+	shadow_filter_population_ = 0;
+	for (const auto &[page, mapping] : mappings_) {
+		const auto bit = shadow_filter_bit(mapping.offset);
+		const auto mask = std::uint64_t{1} << (bit % 64);
+		auto &word = shadow_filter_[bit / 64];
+		if ((word.load(std::memory_order_relaxed) & mask) != 0)
+			continue;
+		word.fetch_or(mask, std::memory_order_seq_cst);
+		++shadow_filter_population_;
+	}
+	shadow_filter_sequence_.fetch_add(1, std::memory_order_seq_cst);
+}
+
 int NativeAddressSpace::publish_backing(
 	int fd, std::uint64_t offset, std::uint64_t length)
 {
@@ -2389,6 +2453,9 @@ int NativeAddressSpace::publish_backing(
 		errno = EINVAL;
 		return -1;
 	}
+	if (!retired_.load(std::memory_order_acquire) &&
+	    !may_alias_shadow(offset, length))
+		return 0;
 	BackingIdentity identity{};
 	if (identify_backing(fd, identity) < 0)
 		return -1;

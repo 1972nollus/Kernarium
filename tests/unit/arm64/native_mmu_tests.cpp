@@ -38,14 +38,15 @@ void require(bool condition, const char *message)
 
 class TemporaryBacking final {
 public:
-	TemporaryBacking()
+	explicit TemporaryBacking(std::uint64_t pages = 4)
 	{
 		auto path = uml::testing::scratch_template(
 			"uml-native-mmu.XXXXXX");
 		fd_ = mkstemp(path.data());
 		require(fd_ >= 0, "mkstemp failed");
 		(void)unlink(path.data());
-		require(ftruncate(fd_, 4 * guest_page_size) == 0,
+		require(ftruncate(fd_, static_cast<off_t>(
+			pages * guest_page_size)) == 0,
 			"ftruncate failed");
 	}
 
@@ -264,6 +265,40 @@ void test_backing_index_tracks_rebind_unmap_and_retire()
 	require(space.publish_backing(second.fd(), guest_page_size,
 		guest_page_size) == -1 && errno == ESHUTDOWN,
 		"retired backing index accepted a publication");
+}
+
+/* publish_backing() asks a lock-free filter whether any shadow aliases the
+ * page before it takes the mutex.  The filter only gains bits, so it is rebuilt
+ * from the live mappings once it has outgrown them.  Rebind one quarter through
+ * more backing pages than it tolerates: every new alias must be published the
+ * moment it exists, including the one whose bit a rebuild immediately precedes,
+ * and an alias that lives through every rebuild must still be found. */
+void test_publication_filter_survives_its_rebuilds()
+{
+	constexpr std::uint64_t churned_pages = 10000;
+	TemporaryBacking backing{churned_pages + 1};
+	ReservedSlot slot;
+	uml::memory::NativeAddressSpace space;
+	const auto base = slot.address();
+	const auto churned = base + guest_page_size;
+	require(space.map(base, backing.fd(), 0, guest_page_size,
+		PROT_READ | PROT_WRITE) == 0, "filter fixture map failed");
+	for (std::uint64_t page = 1; page <= churned_pages; ++page) {
+		const auto offset = page * guest_page_size;
+		const auto marker = static_cast<std::byte>(page % 251 + 1);
+		require(space.map(churned, backing.fd(), offset, guest_page_size,
+			PROT_READ | PROT_WRITE) == 0, "filter churn map failed");
+		*reinterpret_cast<volatile std::byte *>(churned) = marker;
+		require(space.publish_backing(backing.fd(), offset,
+			guest_page_size) == 0 && backing.read_byte(offset) == marker,
+			"a new alias was not published");
+	}
+	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x5a};
+	require(space.publish_backing(backing.fd(), 0, guest_page_size) == 0 &&
+		backing.read_byte(0) == std::byte{0x5a},
+		"a filter rebuild lost a live alias");
+	require(space.unmap(base, 2 * guest_page_size) == 0,
+		"filter fixture cleanup failed");
 }
 
 void test_absent_quarter_and_alias_coherency()
@@ -1288,6 +1323,7 @@ int main()
 			"could not configure native MMU test window");
 		test_shadow_publication_precedes_software_mapping();
 		test_backing_index_tracks_rebind_unmap_and_retire();
+		test_publication_filter_survives_its_rebuilds();
 		test_absent_quarter_and_alias_coherency();
 		test_authoritative_reload_discards_stale_shadow_bytes();
 		test_duplicate_map_reconciles_reused_backing_page();

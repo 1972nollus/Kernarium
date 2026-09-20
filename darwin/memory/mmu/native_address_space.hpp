@@ -162,6 +162,29 @@ private:
 	PageAddressMap<DirectMapping> direct_mappings_;
 	PageAddressMap<ActiveKernelStack> active_kernel_stacks_;
 	bool backing_index_ready_{};
+
+	/* Every software mapping of a guest page publishes its backing first, and
+	 * almost none of those pages has a shadow alias: two multi-core workloads
+	 * published 1.8 million pages and 93 had one.  Asking cost an fstat and
+	 * this object's mutex per page, from every vCPU at once.  The filter holds
+	 * one hashed bit per backing page that some shadow maps; a clear bit lets
+	 * publish_backing() return without either.  Bits are only set while
+	 * mappings come and go, so a filter that has outgrown the live mappings is
+	 * rebuilt from them, under an odd sequence that sends readers the slow
+	 * way.  A reader that finds its bits clear and the sequence unchanged has
+	 * published before any alias created later, which the mutex allowed too. */
+	static constexpr std::size_t shadow_filter_bits = std::size_t{1} << 20;
+	static constexpr std::uint64_t shadow_filter_scan_pages = 64;
+	std::array<std::atomic<std::uint64_t>, shadow_filter_bits / 64>
+		shadow_filter_{};
+	std::atomic<std::uint64_t> shadow_filter_sequence_{};
+	std::size_t shadow_filter_population_{};
+	[[nodiscard]] static std::size_t shadow_filter_bit(
+		std::uint64_t offset) noexcept;
+	[[nodiscard]] bool may_alias_shadow(
+		std::uint64_t offset, std::uint64_t length) const noexcept;
+	void note_shadow_offset_locked(std::uint64_t offset) noexcept;
+	void rebuild_shadow_filter_locked() noexcept;
 #endif
 	PageAddressSet direct_slots_;
 	std::uint64_t ownership_id_{};
