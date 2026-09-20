@@ -582,6 +582,14 @@ that spacing is the margin a driver would have to buy back, and there is no
 per-sample work left in the generated MSL to remove. Both cases pass on a Mac,
 where the whole `image_robustness` and `robustness2` family is clean.
 
+The limit is not confined to 3D textures. The `rgba32f` `2d_array` siblings of
+the same test,
+`{bind,push}.notemplate.rgba32f.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.2d_array.{frag,vert}`
+and their pipeline-library variants, run the same loop over a layered
+four-channel image. In a full mustpass fraction five of those twelve
+render-stage cases fail, each with two submissions killed, while the other seven
+and every `1d` and `2d` sibling pass.
+
 #### A long run of small render passes faults the GPU
 
 A process that has already pushed a few thousand small render passes through
