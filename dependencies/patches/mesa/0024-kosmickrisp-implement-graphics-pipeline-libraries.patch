@@ -1,7 +1,7 @@
 From d247e87c07c41096cd435ba53f0177e5dabed97c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:49:11 +0900
-Subject: [PATCH 024/104] kosmickrisp: implement graphics pipeline libraries
+Subject: [PATCH 024/105] kosmickrisp: implement graphics pipeline libraries
 
 ---
  src/kosmickrisp/vulkan/kk_device.c            |   9 +-

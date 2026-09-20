@@ -1,7 +1,7 @@
 From 7269cfc54cf99f6ef963de15ea6463d1aa183448 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 04:10:30 +0900
-Subject: [PATCH 103/104] kosmickrisp: publish a submission's report with its
+Subject: [PATCH 103/105] kosmickrisp: publish a submission's report with its
  failure
 
 The commit callback publishes a submission's report, then describes the

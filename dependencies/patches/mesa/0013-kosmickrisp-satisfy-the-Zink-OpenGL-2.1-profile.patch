@@ -1,7 +1,7 @@
 From 498c413ae82e8c238e66f9819ea32589b92c027c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 14:57:25 +0900
-Subject: [PATCH 013/104] kosmickrisp: satisfy the Zink OpenGL 2.1 profile
+Subject: [PATCH 013/105] kosmickrisp: satisfy the Zink OpenGL 2.1 profile
 
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |  37 +++
