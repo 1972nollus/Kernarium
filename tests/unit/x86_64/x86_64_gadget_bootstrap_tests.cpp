@@ -4089,6 +4089,76 @@ read_test_sequences(void *context) noexcept
 	return true;
 }
 
+/* A conditional move writes its destination register on either condition: it
+ * writes the source or the destination's own value, and a 32-bit write in
+ * long mode clears the upper half of the register either way. All three forms
+ * owe that write -- the deferred one, the one fused to a producer's host
+ * flags, and the memory one.
+ */
+[[nodiscard]] bool conditional_moves_write_the_destination_either_way()
+{
+	using namespace uml::cpu::x86_64;
+	static constexpr std::uint64_t destination = 0xfedc'ba98'7654'3210ULL;
+	static constexpr std::uint64_t source = 0x0123'4567'89ab'cdefULL;
+	enum class Form { deferred, fused, memory };
+	static constexpr std::array<Form, 3> forms{Form::deferred, Form::fused,
+		Form::memory};
+	for (const unsigned width : {16U, 32U, 64U})
+	for (const auto form : forms)
+	/* After CMP rcx, rdx with both zero: equal, and not negative. */
+	for (const unsigned condition : {0x44U, 0x45U, 0x48U, 0x49U}) {
+		const bool take = condition == 0x44U || condition == 0x49U;
+		std::vector<std::byte> code;
+		const auto push = [&code](std::initializer_list<unsigned> bytes) {
+			for (const auto byte : bytes)
+				code.push_back(static_cast<std::byte>(byte));
+		};
+		push({0x48, 0x39, 0xd1});
+		/* A NOP resets the host flags the builder tracks, so the same
+		 * conditional move keeps the deferred gadget. */
+		if (form != Form::fused)
+			push({0x90});
+		if (width == 16U)
+			push({0x66});
+		else if (width == 64U)
+			push({0x48});
+		push({0x0f, condition, form == Form::memory ? 0x07U : 0xc3U});
+		push({0x0f, 0x05});
+		TestMemory memory;
+		memory.fill(0, code);
+		for (unsigned index = 0; index < 8U; ++index)
+			memory.load(0x2000 + index,
+				{static_cast<std::uint8_t>(source >> (index * 8U))});
+		CpuState cpu{};
+		cpu.gpr(Register::rax) = destination;
+		cpu.gpr(Register::rbx) = source;
+		cpu.gpr(Register::rdi) = 0x2000;
+		const auto block = gadgets::build(memory, 0, ExecutionMode::long64, 4);
+		if (!expect(block.status == gadgets::BuildStatus::built,
+			"conditional move program did not build"))
+			return false;
+		const auto result = gadgets::execute(block.program, cpu, memory, 4);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call,
+			"conditional move program did not reach SYSCALL"))
+			return false;
+		const auto chosen = take ? source : destination;
+		const auto expected = width == 64U ? chosen :
+			width == 32U ? (chosen & 0xffff'ffffULL) :
+			(destination & ~0xffffULL) | (chosen & 0xffffULL);
+		if (cpu.gpr(Register::rax) != expected) {
+			char message[200];
+			std::snprintf(message, sizeof(message),
+				"a conditional move wrote the wrong destination (width %u "
+				"form %d condition %#x: expected %#llx observed %#llx)",
+				width, static_cast<int>(form), condition,
+				static_cast<unsigned long long>(expected),
+				static_cast<unsigned long long>(cpu.gpr(Register::rax)));
+			return expect(false, message);
+		}
+	}
+	return true;
+}
+
 /* The equality above holds whether or not the builder actually fuses, so pin
  * which pairs it fuses. A NOP between the producer and the consumer resets the
  * host flags the builder tracks, so the same consumer keeps the deferred
@@ -5380,6 +5450,7 @@ int main()
 		fused_conditions_cover_exactly_the_legal_pairs() &&
 		lazy_carry_reaches_every_reader() &&
 		a_settled_carry_survives_an_increment() &&
+		conditional_moves_write_the_destination_either_way() &&
 		fused_conditional_jumps_take_the_same_edge() &&
 		cpuid_table_matches_the_gadget() &&
 		preserve_precise_memory_fault() &&

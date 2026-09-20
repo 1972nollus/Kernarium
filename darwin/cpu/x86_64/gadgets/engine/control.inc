@@ -146,10 +146,16 @@ gadget cmov_\condition\()_\width\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x13, x8, #16, #16
-	cbz w11, .Lx86_cmov_done\@
+	/* A conditional move writes its destination register whether or not it
+	 * moves, so a 32-bit one clears the upper half on the condition it does
+	 * not take as well. Selecting the destination's own value and storing
+	 * it unconditionally is that write, and costs a load in place of a
+	 * branch. */
 	\load \load_register\()12, [_cpu, x13]
+	\load \load_register\()14, [_cpu, x9]
+	cmp w11, #0
+	csel x12, x12, x14, ne
 	\store \store_register\()12, [_cpu, x9]
-.Lx86_cmov_done\@:
 	retire_and_next
 .endm
 
@@ -171,10 +177,11 @@ gadget cmov_\condition\()_\width\()_rm
 .Lx86_cmov_memory_loaded\@:
 	bl uml_x86_64_gadget_materialize_flags
 	evaluate_condition \condition
-	cbz w11, .Lx86_cmov_memory_done\@
 	and x8, x23, #0xffff
+	\load \host_register\()13, [_cpu, x8]
+	cmp w11, #0
+	csel x24, x24, x13, ne
 	\store \store_register\()24, [_cpu, x8]
-.Lx86_cmov_memory_done\@:
 	retire_and_next
 .endm
 
@@ -304,13 +311,15 @@ gadget set_\condition\()_nzcv
 .macro conditional_move_nzcv condition, host, width, load, store, load_register, store_register
 gadget cmov_\condition\()_\width\()_rr_nzcv
 	ldr x8, [_stream], #8
-	cset w11, \host
 	and x9, x8, #0xffff
 	ubfx x13, x8, #16, #16
-	cbz w11, .Lx86_cmov_nzcv_done\@
+	/* As the ordinary form: the destination is written either way, which a
+	 * 32-bit move must do to clear the upper half. Selecting on the
+	 * producer's own condition keeps NZCV as it found it. */
 	\load \load_register\()12, [_cpu, x13]
+	\load \load_register\()14, [_cpu, x9]
+	csel x12, x12, x14, \host
 	\store \store_register\()12, [_cpu, x9]
-.Lx86_cmov_nzcv_done\@:
 	retire_and_next
 .endm
 
