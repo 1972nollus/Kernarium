@@ -153,6 +153,47 @@ explicit offline compiler (append `--verify` for a read-only freshness check):
 python3 -B tests/perf/generate_rgb32_texel.py --glslc /path/to/glslc
 ```
 
+## Steam appliance boot time
+
+`run_steam_boot_bench.py` measures how long a Kernarium Steam appliance takes
+to reach its own readiness contract: an X window named `Steam Big Picture Mode`
+whose map state is `IsViewable`. One run creates a fresh GPT user-data disk,
+times a first boot while Steam downloads and installs its own update, shuts the
+guest down through systemd, then times a second boot on that same disk with no
+download. It works for any image that uses the shared Kernarium init and
+session supervisor, so images for different guest ISAs are directly comparable.
+
+```sh
+python3 tests/perf/run_steam_boot_bench.py \
+  --image arm64ec --emulator BUILD-A/bin/uml-darwin-wine-arm64ec --rootfs A.erofs \
+  --image x86_64  --emulator BUILD-B/bin/uml-darwin              --rootfs B.erofs \
+  --output-dir RESULTS --runs 3
+```
+
+Runs are strictly sequential and counterbalanced across images, so host drift
+cannot masquerade as an image difference. Each run records host load and memory
+pressure at its start; that is evidence, not an acceptance gate. Results are a
+`run.json` per run, a combined `results.tsv`/`results.json`, and a
+median/min/max summary. See `--help` for guest topology, timeout, and poll
+options.
+
+The harness never modifies an image. Phase times therefore come from records an
+unmodified appliance already keeps — systemd's monotonic unit timestamps, the
+storage stage's progress file, and Steam's `bootstrap_log.txt` — read once per
+boot over the ttyS0 console and converted to seconds since emulator exec through
+one clock anchor that is read in a command of its own and bracketed by host
+monotonic readings. Readiness is polled, so its resolution is the poll interval;
+the other phases resolve to half an anchor round trip, reported per boot as
+`phase_anchor_round_trip`. Storage preparation completes before the console
+exists, so it is recovered from that progress file's modification time rather
+than observed live.
+
+The display is `--gpu-display=vnc` with no client attached, which accepts and
+drops each scanout: measured boots are unattended and free of window-server
+scheduling, and they exclude the cost of presenting real pixels. Because the
+first boot includes a network download, report its total, the download bytes
+and duration, and the total excluding the download window together.
+
 ## Gadget forwarding controls
 
 Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
