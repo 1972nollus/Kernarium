@@ -45,21 +45,15 @@ INSTALL_ROOT = "/opt/vk-gl-cts/vulkan"
 OPENGL_INSTALL_ROOT = "/opt/vk-gl-cts/openglcts"
 GUEST_RECEIPT = "/usr/share/uml-vulkan/rootfs-build-receipt.json"
 GUEST_ORACLE = "/usr/share/uml-vulkan/status-oracle.json"
-EXPECTED_MESA_STAGE_FILES = {
-    "usr/lib/aarch64-linux-gnu/dri/libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
-    "usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-    "usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
-    "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-    "usr/share/drirc.d/00-mesa-defaults.conf",
-    "usr/share/drirc.d/00-venus-defaults.conf",
-    "usr/share/drirc.d/00-virtio_gpu-defaults.conf",
-    "usr/share/drirc.d/00-zink-defaults.conf",
-    "usr/share/glvnd/egl_vendor.d/50_mesa.json",
-    "usr/share/vulkan/icd.d/virtio_icd.json",
+MULTIARCH_TRIPLETS = {
+    "amd64": "x86_64-linux-gnu",
+    "arm64": "aarch64-linux-gnu",
 }
+ELF_MACHINES = {
+    "amd64": "Advanced Micro Devices X86-64",
+    "arm64": "AArch64",
+}
+DEFAULT_ARCHITECTURE = "arm64"
 EXPECTED_MESA_DRI_ALIASES = {
     "apple_dri.so",
     "armada-drm_dri.so",
@@ -103,64 +97,165 @@ EXPECTED_MESA_DRI_ALIASES = {
     "zink_dri.so",
     "zynqmp-dpsub_dri.so",
 }
-EXPECTED_MESA_STAGE_SYMLINKS = {
-    **{
-        f"usr/lib/aarch64-linux-gnu/dri/{alias}": "libdril_dri.so"
-        for alias in EXPECTED_MESA_DRI_ALIASES
-    },
-    "usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0": "libEGL_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0": "libGLX_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libgbm.so.1": "libgbm.so.1.0.0",
-}
-MESA_GUEST_SYMLINKS = {
-    "usr/lib/aarch64-linux-gnu/dri/kms_swrast_dri.so": "libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/dri/swrast_dri.so": "libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/dri/virtio_gpu_dri.so": "libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/dri/zink_dri.so": "libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0": "libEGL_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0": "libGLX_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libgbm.so.1": "libgbm.so.1.0.0",
-}
-MESA_ELF_STAGE_FILES = {
-    "usr/lib/aarch64-linux-gnu/dri/libdril_dri.so",
-    "usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
-    "usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-    "usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
-    "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-}
-EXPECTED_MESA_BUILD_OPTIONS = {
-    "buildtype": "release",
-    "egl": "enabled",
-    "gallium-drivers": ["virgl", "zink", "softpipe"],
-    "gallium-va": "disabled",
-    "gbm": "enabled",
-    "gles1": "enabled",
-    "gles2": "enabled",
-    "glvnd": "enabled",
-    "glx": "dri",
-    "libdir": "lib/aarch64-linux-gnu",
-    "llvm": "disabled",
-    "opengl": True,
-    "platforms": ["x11", "wayland"],
-    "prefix": "/usr",
-    "video-codecs": [],
-    "vulkan-beta": True,
-    "vulkan-drivers": ["virtio"],
-    "vulkan-layers": [],
-    "vulkan-manifest-per-architecture": False,
-}
-EXPECTED_LOADER_STAGE = {
-    "usr/lib/aarch64-linux-gnu/cmake/VulkanLoader/VulkanLoaderConfig-release.cmake",
-    "usr/lib/aarch64-linux-gnu/cmake/VulkanLoader/VulkanLoaderConfig.cmake",
-    "usr/lib/aarch64-linux-gnu/cmake/VulkanLoader/VulkanLoaderConfigVersion.cmake",
-    "usr/lib/aarch64-linux-gnu/libvulkan.so",
-    "usr/lib/aarch64-linux-gnu/libvulkan.so.1",
-    "usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
-    "usr/lib/aarch64-linux-gnu/pkgconfig/vulkan.pc",
-}
-LOADER_RUNTIME_GUEST_PATH = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357"
+SELECTED_MESA_DRI_ALIASES = (
+    "kms_swrast_dri.so",
+    "swrast_dri.so",
+    "virtio_gpu_dri.so",
+    "zink_dri.so",
+)
+
+
+def architecture_profile(debian_architecture: str) -> dict[str, Any]:
+    """Describe one Debian architecture's guest Vulkan runtime layout.
+
+    Only the multiarch library directory depends on the architecture. The
+    driver inventory, build options, ICD identity, and audited runtime closure
+    are the same contract for every guest, so a second guest product reuses it
+    instead of restating it.
+    """
+    triplet = MULTIARCH_TRIPLETS[debian_architecture]
+    libdir = f"lib/{triplet}"
+    libraries = f"usr/{libdir}"
+    mesa_stage_files = {
+        f"{libraries}/dri/libdril_dri.so",
+        f"{libraries}/gbm/dri_gbm.so",
+        f"{libraries}/libEGL_mesa.so.0.0.0",
+        f"{libraries}/libGLX_mesa.so.0.0.0",
+        f"{libraries}/libgallium-26.2.1.so",
+        f"{libraries}/libgbm.so.1.0.0",
+        f"{libraries}/libvulkan_virtio.so",
+        "usr/share/drirc.d/00-mesa-defaults.conf",
+        "usr/share/drirc.d/00-venus-defaults.conf",
+        "usr/share/drirc.d/00-virtio_gpu-defaults.conf",
+        "usr/share/drirc.d/00-zink-defaults.conf",
+        "usr/share/glvnd/egl_vendor.d/50_mesa.json",
+        "usr/share/vulkan/icd.d/virtio_icd.json",
+    }
+    mesa_library_symlinks = {
+        f"{libraries}/libEGL_mesa.so.0": "libEGL_mesa.so.0.0.0",
+        f"{libraries}/libGLX_mesa.so.0": "libGLX_mesa.so.0.0.0",
+        f"{libraries}/libgbm.so.1": "libgbm.so.1.0.0",
+    }
+    mesa_elf_stage_files = {
+        relative for relative in mesa_stage_files if relative.startswith(libraries)
+    }
+    return {
+        "debian_architecture": debian_architecture,
+        "triplet": triplet,
+        "elf_machine": ELF_MACHINES[debian_architecture],
+        "libdir": libdir,
+        "guest_libraries": f"/{libraries}",
+        "mesa_stage_files": mesa_stage_files,
+        "mesa_stage_symlinks": {
+            **{
+                f"{libraries}/dri/{alias}": "libdril_dri.so"
+                for alias in EXPECTED_MESA_DRI_ALIASES
+            },
+            **mesa_library_symlinks,
+        },
+        "mesa_guest_symlinks": {
+            **{
+                f"{libraries}/dri/{alias}": "libdril_dri.so"
+                for alias in SELECTED_MESA_DRI_ALIASES
+            },
+            **mesa_library_symlinks,
+        },
+        "mesa_elf_stage_files": mesa_elf_stage_files,
+        "mesa_build_options": {
+            "buildtype": "release",
+            "egl": "enabled",
+            "gallium-drivers": ["virgl", "zink", "softpipe"],
+            "gallium-va": "disabled",
+            "gbm": "enabled",
+            "gles1": "enabled",
+            "gles2": "enabled",
+            "glvnd": "enabled",
+            "glx": "dri",
+            "libdir": libdir,
+            "llvm": "disabled",
+            "opengl": True,
+            "platforms": ["x11", "wayland"],
+            "prefix": "/usr",
+            "video-codecs": [],
+            "vulkan-beta": True,
+            "vulkan-drivers": ["virtio"],
+            "vulkan-layers": [],
+            "vulkan-manifest-per-architecture": False,
+        },
+        "mesa_options": (
+            "--prefix=/usr",
+            f"--libdir={libdir}",
+            "--buildtype=release",
+            "-Dplatforms=x11,wayland",
+            "-Dgallium-drivers=virgl,zink,softpipe",
+            "-Dgallium-va=disabled",
+            "-Dvulkan-drivers=virtio",
+            "-Dvulkan-beta=true",
+            "-Dvulkan-layers=",
+            "-Dvulkan-manifest-per-architecture=false",
+            "-Dglx=dri",
+            "-Degl=enabled",
+            "-Dgbm=enabled",
+            "-Dgles1=enabled",
+            "-Dgles2=enabled",
+            "-Dopengl=true",
+            "-Dglvnd=enabled",
+            "-Dllvm=disabled",
+            "-Dvideo-codecs=",
+            "-Dbuild-tests=false",
+            "-Dvalgrind=disabled",
+            "-Dlibunwind=disabled",
+            "-Dlmsensors=disabled",
+            "-Dperfetto=false",
+            "-Dteflon=false",
+            "-Dxmlconfig=enabled",
+            "-Dshader-cache=enabled",
+            "-Dzstd=enabled",
+        ),
+        "loader_stage": {
+            f"{libraries}/cmake/VulkanLoader/VulkanLoaderConfig-release.cmake",
+            f"{libraries}/cmake/VulkanLoader/VulkanLoaderConfig.cmake",
+            f"{libraries}/cmake/VulkanLoader/VulkanLoaderConfigVersion.cmake",
+            f"{libraries}/libvulkan.so",
+            f"{libraries}/libvulkan.so.1",
+            f"{libraries}/libvulkan.so.1.4.357",
+            f"{libraries}/pkgconfig/vulkan.pc",
+        },
+        "loader_runtime": f"/{libraries}/libvulkan.so.1.4.357",
+        "loader_symlinks": {
+            f"/{libraries}/libvulkan.so": "libvulkan.so.1",
+            f"/{libraries}/libvulkan.so.1": "libvulkan.so.1.4.357",
+        },
+        "loader_options": (
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_INSTALL_PREFIX=/usr",
+            f"-DCMAKE_INSTALL_LIBDIR={libdir}",
+            "-DUPDATE_DEPS=OFF",
+            "-DBUILD_TESTS=OFF",
+        ),
+        "closure_consumers": (
+            f"/{libraries}/libvulkan_virtio.so",
+            f"/{libraries}/dri/libdril_dri.so",
+            f"/{libraries}/gbm/dri_gbm.so",
+            f"/{libraries}/libEGL_mesa.so.0.0.0",
+            f"/{libraries}/libGLX_mesa.so.0.0.0",
+            f"/{libraries}/libgallium-26.2.1.so",
+            f"/{libraries}/libgbm.so.1.0.0",
+            f"/{libraries}/libvulkan.so.1.4.357",
+        ),
+    }
+
+
+ARCHITECTURE = architecture_profile(DEFAULT_ARCHITECTURE)
+EXPECTED_MESA_STAGE_FILES = ARCHITECTURE["mesa_stage_files"]
+EXPECTED_MESA_STAGE_SYMLINKS = ARCHITECTURE["mesa_stage_symlinks"]
+MESA_GUEST_SYMLINKS = ARCHITECTURE["mesa_guest_symlinks"]
+MESA_ELF_STAGE_FILES = ARCHITECTURE["mesa_elf_stage_files"]
+EXPECTED_MESA_BUILD_OPTIONS = ARCHITECTURE["mesa_build_options"]
+EXPECTED_LOADER_STAGE = ARCHITECTURE["loader_stage"]
+LOADER_RUNTIME_GUEST_PATH = ARCHITECTURE["loader_runtime"]
 EXPECTED_FINAL_TREES = {
     "mesa": "dffd92480a3b7777d5de5f2915d85ddadd42409b",
     "venus-protocol": "ebd380d887b9e14120316d9499728a01bcb5f49a",
@@ -179,36 +274,7 @@ SOURCE_DIRECTORIES = {
     "vulkan-loader": "Vulkan-Loader",
     "vk-gl-cts": "VK-GL-CTS",
 }
-MESA_OPTIONS = (
-    "--prefix=/usr",
-    "--libdir=lib/aarch64-linux-gnu",
-    "--buildtype=release",
-    "-Dplatforms=x11,wayland",
-    "-Dgallium-drivers=virgl,zink,softpipe",
-    "-Dgallium-va=disabled",
-    "-Dvulkan-drivers=virtio",
-    "-Dvulkan-beta=true",
-    "-Dvulkan-layers=",
-    "-Dvulkan-manifest-per-architecture=false",
-    "-Dglx=dri",
-    "-Degl=enabled",
-    "-Dgbm=enabled",
-    "-Dgles1=enabled",
-    "-Dgles2=enabled",
-    "-Dopengl=true",
-    "-Dglvnd=enabled",
-    "-Dllvm=disabled",
-    "-Dvideo-codecs=",
-    "-Dbuild-tests=false",
-    "-Dvalgrind=disabled",
-    "-Dlibunwind=disabled",
-    "-Dlmsensors=disabled",
-    "-Dperfetto=false",
-    "-Dteflon=false",
-    "-Dxmlconfig=enabled",
-    "-Dshader-cache=enabled",
-    "-Dzstd=enabled",
-)
+MESA_OPTIONS = ARCHITECTURE["mesa_options"]
 CTS_OPTIONS = (
     "-G",
     "Ninja",
@@ -232,15 +298,7 @@ VULKAN_HEADERS_OPTIONS = (
     "Ninja",
     "-DCMAKE_BUILD_TYPE=Release",
 )
-VULKAN_LOADER_OPTIONS = (
-    "-G",
-    "Ninja",
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DCMAKE_INSTALL_PREFIX=/usr",
-    "-DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu",
-    "-DUPDATE_DEPS=OFF",
-    "-DBUILD_TESTS=OFF",
-)
+VULKAN_LOADER_OPTIONS = ARCHITECTURE["loader_options"]
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 GIT_OBJECT = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -288,11 +346,11 @@ def output(
     return run(arguments, env=env).stdout.decode("utf-8", errors="strict").strip()
 
 
-def detect_virtualization() -> str:
-    """Name the native arm64 Debian environment the seal ran in."""
+def detect_virtualization(debian_architecture: str = DEFAULT_ARCHITECTURE) -> str:
+    """Name the native Debian environment the seal ran in."""
     result = run(("systemd-detect-virt",), check=False)
     kind = (result.stdout or b"").decode("utf-8", errors="replace").strip()
-    return f"native-arm64-debian-{kind or 'unknown'}"
+    return f"native-{debian_architecture}-debian-{kind or 'unknown'}"
 
 
 def sha256(path: Path) -> str:
@@ -476,7 +534,10 @@ def verify_protocol_build(
 
 
 def verify_mesa_build(
-    mesa_tree: Path, mesa_build_root: Path, protocol_build: Path,
+    mesa_tree: Path,
+    mesa_build_root: Path,
+    protocol_build: Path,
+    profile: dict[str, Any] = ARCHITECTURE,
 ) -> str:
     info_root = mesa_build_root / "meson-info"
     info = json.loads((info_root / "meson-info.json").read_text(encoding="utf-8"))
@@ -500,7 +561,7 @@ def verify_mesa_build(
             (info_root / "intro-buildoptions.json").read_text(encoding="utf-8")
         )
     }
-    for name, expected in EXPECTED_MESA_BUILD_OPTIONS.items():
+    for name, expected in profile["mesa_build_options"].items():
         if options.get(name) != expected:
             fail(f"Mesa build option {name} changed: {options.get(name)!r} != {expected!r}")
     protocol_dir = options.get("venus-protocol-dir")
@@ -513,32 +574,40 @@ def verify_mesa_build(
     return wrap_mode
 
 
-def verify_mesa_stage_inventory(mesa_stage: Path) -> None:
+def verify_mesa_stage_inventory(
+    mesa_stage: Path, profile: dict[str, Any] = ARCHITECTURE
+) -> None:
+    expected_files = profile["mesa_stage_files"]
+    expected_symlinks = profile["mesa_stage_symlinks"]
     inventory = {
         path.relative_to(mesa_stage).as_posix()
         for path in mesa_stage.rglob("*")
         if path.is_file() and not path.is_symlink()
     }
-    if inventory != EXPECTED_MESA_STAGE_FILES:
-        fail(f"Mesa install file inventory changed: {sorted(inventory ^ EXPECTED_MESA_STAGE_FILES)}")
+    if inventory != expected_files:
+        fail(f"Mesa install file inventory changed: {sorted(inventory ^ expected_files)}")
     symlinks = {
         path.relative_to(mesa_stage).as_posix(): os.readlink(path)
         for path in mesa_stage.rglob("*")
         if path.is_symlink()
     }
-    if symlinks != EXPECTED_MESA_STAGE_SYMLINKS:
-        changed = set(symlinks.items()) ^ set(EXPECTED_MESA_STAGE_SYMLINKS.items())
+    if symlinks != expected_symlinks:
+        changed = set(symlinks.items()) ^ set(expected_symlinks.items())
         fail(f"Mesa install symlink inventory changed: {sorted(changed)}")
 
 
 def verify_mesa_build_stage(
-    mesa_tree: Path, mesa_build_root: Path, mesa_stage: Path, protocol_build: Path,
+    mesa_tree: Path,
+    mesa_build_root: Path,
+    mesa_stage: Path,
+    protocol_build: Path,
+    profile: dict[str, Any] = ARCHITECTURE,
 ) -> list[str]:
-    wrap_mode = verify_mesa_build(mesa_tree, mesa_build_root, protocol_build)
+    wrap_mode = verify_mesa_build(mesa_tree, mesa_build_root, protocol_build, profile)
     # A topic can change at the same source path. Let the owning build system
     # synchronize that confined build before authenticating its staged bytes.
     run(("meson", "compile", "-C", mesa_build_root, "-j", "4"))
-    if verify_mesa_build(mesa_tree, mesa_build_root, protocol_build) != wrap_mode:
+    if verify_mesa_build(mesa_tree, mesa_build_root, protocol_build, profile) != wrap_mode:
         fail("Mesa offline wrap mode changed during synchronization")
     introspection = json.loads(output((
         "meson", "introspect", "--installed", "--install-plan", mesa_build_root,
@@ -571,9 +640,10 @@ def verify_mesa_build_stage(
             if relative in runtime:
                 fail(f"Mesa runtime destination is duplicated: {destination}")
             runtime.add(relative)
-    if runtime != EXPECTED_MESA_STAGE_FILES:
-        fail(f"Mesa runtime install mapping changed: {sorted(runtime ^ EXPECTED_MESA_STAGE_FILES)}")
-    verify_mesa_stage_inventory(mesa_stage)
+    if runtime != profile["mesa_stage_files"]:
+        fail("Mesa runtime install mapping changed: "
+             f"{sorted(runtime ^ profile['mesa_stage_files'])}")
+    verify_mesa_stage_inventory(mesa_stage, profile)
     # Meson normalizes ELF RPATHs when installing. Its own fresh runtime install
     # is the byte oracle; raw build hashes or build IDs are not equivalent.
     with tempfile.TemporaryDirectory(
@@ -582,12 +652,12 @@ def verify_mesa_build_stage(
         canonical = Path(temporary)
         run(("meson", "install", "-C", mesa_build_root, "--no-rebuild",
              "--tags", "runtime", "--destdir", canonical))
-        verify_mesa_stage_inventory(canonical)
+        verify_mesa_stage_inventory(canonical, profile)
         for relative in sorted(runtime):
             if sha256(mesa_stage / relative) != sha256(canonical / relative):
                 fail(f"Mesa staged runtime differs from the selected build: {relative}")
     return ["meson", "setup", str(mesa_build_root), str(mesa_tree),
-            f"--wrap-mode={wrap_mode}", *MESA_OPTIONS,
+            f"--wrap-mode={wrap_mode}", *profile["mesa_options"],
             f"-Dvenus-protocol-dir={protocol_build}"]
 
 
@@ -683,10 +753,11 @@ def copy_generated_runtime_directory(
         fail(f"installed runtime closure changed: {destination}")
 
 
-def read_build_id(path: Path) -> str:
+def read_build_id(path: Path, profile: dict[str, Any] = ARCHITECTURE) -> str:
+    machine = profile["elf_machine"]
     header = output(("readelf", "-h", path))
-    if "Machine:                           AArch64" not in header:
-        fail(f"ELF is not AArch64: {path}")
+    if f"Machine:                           {machine}" not in header:
+        fail(f"ELF is not {machine}: {path}")
     notes = output(("readelf", "-n", path))
     match = re.search(r"Build ID: ([0-9a-f]+)", notes)
     if match is None:
@@ -871,12 +942,12 @@ def filesystem_uuid(tool: str, image: Path) -> str:
     return match.group(1).lower()
 
 
-def toolchain_record() -> dict[str, str]:
+def toolchain_record(debian_architecture: str = DEFAULT_ARCHITECTURE) -> dict[str, str]:
     os_release = Path("/etc/os-release").read_text(encoding="utf-8")
     match = re.search(r'^PRETTY_NAME="?([^"\n]+)"?$', os_release, re.MULTILINE)
     return {
-        "container_or_vm": detect_virtualization(),
-        "os": match.group(1) if match else "Debian arm64",
+        "container_or_vm": detect_virtualization(debian_architecture),
+        "os": match.group(1) if match else f"Debian {debian_architecture}",
         "kernel": output(("uname", "-srvmo")),
         "compiler": output(("c++", "--version")).splitlines()[0],
         "meson": output(("meson", "--version")),
@@ -1068,7 +1139,7 @@ def seal(options: argparse.Namespace) -> None:
     for exact in (
         "BUILD_TESTS:BOOL=OFF",
         "CMAKE_BUILD_TYPE:STRING=Release",
-        "CMAKE_INSTALL_LIBDIR:PATH=lib/aarch64-linux-gnu",
+        f"CMAKE_INSTALL_LIBDIR:PATH={ARCHITECTURE['libdir']}",
         "CMAKE_INSTALL_PREFIX:PATH=/usr",
         "UPDATE_DEPS:BOOL=OFF",
         f"VULKAN_HEADERS_INSTALL_DIR:UNINITIALIZED={headers_install}",
@@ -1153,7 +1224,7 @@ def seal(options: argparse.Namespace) -> None:
     for relative in sorted(EXPECTED_MESA_STAGE_FILES):
         copy_file(mesa_stage / relative, stage, f"/{relative}")
 
-    guest_loader_directory = guest_path(stage, "/usr/lib/aarch64-linux-gnu")
+    guest_loader_directory = guest_path(stage, ARCHITECTURE["guest_libraries"])
     old_loader = guest_loader_directory / "libvulkan.so.1.4.309"
     old_loader_link = guest_loader_directory / "libvulkan.so.1"
     development_link = guest_loader_directory / "libvulkan.so"
@@ -1279,10 +1350,7 @@ def seal(options: argparse.Namespace) -> None:
         "runtime": file_record(stage, LOADER_RUNTIME_GUEST_PATH),
         "build_id": loader_build_id,
         "soname": "libvulkan.so.1",
-        "symlinks": {
-            "/usr/lib/aarch64-linux-gnu/libvulkan.so": "libvulkan.so.1",
-            "/usr/lib/aarch64-linux-gnu/libvulkan.so.1": "libvulkan.so.1.4.357",
-        },
+        "symlinks": dict(ARCHITECTURE["loader_symlinks"]),
         "reported_api_version": "1.4.357",
     }
     resources = [
@@ -1384,14 +1452,7 @@ def seal(options: argparse.Namespace) -> None:
     closure = dynamic_closure(
         stage,
         (
-            "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-            "/usr/lib/aarch64-linux-gnu/dri/libdril_dri.so",
-            "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
-            "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
-            "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-            "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-            "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
-            LOADER_RUNTIME_GUEST_PATH,
+            *ARCHITECTURE["closure_consumers"],
             f"{INSTALL_ROOT}/deqp-vk",
             *((f"{OPENGL_INSTALL_ROOT}/glcts",) if options.include_opengl_cts else ()),
         ),

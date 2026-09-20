@@ -244,3 +244,42 @@ After direct transfer from the VM, verify both the receipt and image:
 tools/rootfs/vulkan/verify-receipt.py \
   --image .build/rootfs/rootfs-vulkan-venus.ext4
 ```
+
+## Relocatable guest runtime
+
+The guest runtime layout differs between architectures only in its multiarch
+library directory. `seal-in-vm.py` owns that single contract in
+`architecture_profile()`: the driver inventory, install mapping, Meson and
+Vulkan-Loader options, ICD identity, and audited runtime closure are shared,
+and each supported Debian architecture names the same runtime in its own
+library directory.
+
+`stage-runtime.py` produces that runtime for one architecture as a relocatable
+root plus its own receipt, with no CTS payload and no image identity. It runs
+natively on the target architecture, reuses the sealer's source, protocol,
+build, and stage verification, and records the runtime's dynamic-dependency
+closure against a base root of the distribution the consuming image will use,
+so an image's package set is known before the image exists.
+
+```sh
+sudo tools/rootfs/vulkan/stage-runtime.py --architecture amd64 \
+  --work-root WORK --runtime-root WORK/stage/runtime-amd64 \
+  --receipt WORK/output/guest-runtime-amd64.receipt.json \
+  --closure-root WORK/closure/trixie-amd64
+```
+
+`install-runtime.py` imports that pair into an image root. It authenticates
+every file against the receipt before the image is touched, recreates the
+recorded symlinks, removes every other ICD manifest so a software driver
+cannot mask a Venus failure, refuses an unresolved dynamic dependency, and
+records what it installed in `/usr/share/uml-vulkan/guest-runtime.json`.
+
+```sh
+sudo tools/rootfs/vulkan/install-runtime.py --architecture amd64 \
+  --source WORK/stage/runtime-amd64 \
+  --receipt WORK/output/guest-runtime-amd64.receipt.json --root IMAGE_ROOT
+```
+
+The ARM64EC producer keeps `tools/rootfs/steam-arm64ec/install-vulkan.py`,
+which imports the same runtime from the receipt-gated CTS image and is bound
+to that image's accepted identity.

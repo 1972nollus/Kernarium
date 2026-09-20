@@ -38,6 +38,13 @@ assert VERIFY_SPEC is not None and VERIFY_SPEC.loader is not None
 source_verifier = importlib.util.module_from_spec(VERIFY_SPEC)
 VERIFY_SPEC.loader.exec_module(source_verifier)
 
+IMPORTER_SPEC = importlib.util.spec_from_file_location(
+    "vulkan_runtime_importer", METADATA / "install-runtime.py"
+)
+assert IMPORTER_SPEC is not None and IMPORTER_SPEC.loader is not None
+importer = importlib.util.module_from_spec(IMPORTER_SPEC)
+IMPORTER_SPEC.loader.exec_module(importer)
+
 
 def source_rows(root: Path = METADATA) -> dict[str, dict[str, str]]:
     lines = [
@@ -679,6 +686,134 @@ class VulkanGuestRootfsTests(unittest.TestCase):
             )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("claim scope changed", result.stderr)
+
+
+class GuestRuntimeArchitectureTests(unittest.TestCase):
+    """The multiarch directory is the only architecture-dependent part."""
+
+    def test_default_profile_is_the_sealed_arm64_contract(self) -> None:
+        profile = sealer.architecture_profile("arm64")
+        self.assertEqual(sealer.DEFAULT_ARCHITECTURE, "arm64")
+        self.assertEqual(profile["mesa_stage_files"], sealer.EXPECTED_MESA_STAGE_FILES)
+        self.assertEqual(
+            profile["mesa_stage_symlinks"], sealer.EXPECTED_MESA_STAGE_SYMLINKS
+        )
+        self.assertEqual(profile["mesa_guest_symlinks"], sealer.MESA_GUEST_SYMLINKS)
+        self.assertEqual(profile["mesa_elf_stage_files"], sealer.MESA_ELF_STAGE_FILES)
+        self.assertEqual(profile["mesa_options"], sealer.MESA_OPTIONS)
+        self.assertEqual(profile["loader_options"], sealer.VULKAN_LOADER_OPTIONS)
+        self.assertEqual(profile["loader_stage"], sealer.EXPECTED_LOADER_STAGE)
+        self.assertEqual(profile["loader_runtime"], sealer.LOADER_RUNTIME_GUEST_PATH)
+        self.assertEqual(profile["elf_machine"], "AArch64")
+        self.assertIn("--libdir=lib/aarch64-linux-gnu", profile["mesa_options"])
+
+    def test_second_architecture_renames_only_the_library_directory(self) -> None:
+        arm64 = sealer.architecture_profile("arm64")
+        amd64 = sealer.architecture_profile("amd64")
+        self.assertNotEqual(arm64["elf_machine"], amd64["elf_machine"])
+
+        def renamed(value):
+            if isinstance(value, str):
+                return value.replace("aarch64-linux-gnu", "x86_64-linux-gnu")
+            if isinstance(value, dict):
+                return {renamed(key): renamed(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple, set, frozenset)):
+                return type(value)(renamed(item) for item in value)
+            return value
+
+        for name in (
+            "mesa_stage_files",
+            "mesa_stage_symlinks",
+            "mesa_guest_symlinks",
+            "mesa_elf_stage_files",
+            "mesa_build_options",
+            "mesa_options",
+            "loader_stage",
+            "loader_runtime",
+            "loader_symlinks",
+            "loader_options",
+            "closure_consumers",
+        ):
+            self.assertEqual(renamed(arm64[name]), amd64[name], name)
+
+    def test_every_staged_driver_is_in_the_audited_closure(self) -> None:
+        profile = sealer.architecture_profile("amd64")
+        consumers = set(profile["closure_consumers"])
+        self.assertEqual(
+            {f"/{relative}" for relative in profile["mesa_elf_stage_files"]}
+            | {profile["loader_runtime"]},
+            consumers,
+        )
+
+
+class GuestRuntimeImporterTests(unittest.TestCase):
+    """The importer authenticates a payload before it changes an image."""
+
+    @staticmethod
+    def fixture(root: Path) -> tuple[Path, Path, Path]:
+        source, target = root / "source", root / "root"
+        library = source / "usr/lib/x86_64-linux-gnu/libvulkan_virtio.so"
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b"driver")
+        target.mkdir()
+        receipt = root / "receipt.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema_version": importer.SCHEMA_VERSION,
+                    "artifact": importer.ARTIFACT,
+                    "architecture": {"debian": "amd64"},
+                    "mesa": {"portability_driver": False, "files": []},
+                    "vulkan_loader": {
+                        "runtime": {
+                            "path": "/usr/lib/x86_64-linux-gnu/libvulkan_virtio.so",
+                            "size": 6,
+                            "sha256": "0" * 64,
+                        }
+                    },
+                    "symlinks": {},
+                    "selected_icd_manifest": "/usr/share/vulkan/icd.d/virtio_icd.json",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return source, receipt, target
+
+    def test_rejects_a_payload_that_does_not_match_its_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, receipt, target = self.fixture(Path(temporary))
+            with self.assertRaisesRegex(importer.ImportError_, "does not match"):
+                importer.install(source, receipt, target, "amd64")
+            self.assertEqual(list(target.rglob("*")), [])
+
+    def test_rejects_a_foreign_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, receipt, target = self.fixture(Path(temporary))
+            value = json.loads(receipt.read_text(encoding="utf-8"))
+            value["artifact"] = "uml-vulkan-rootfs"
+            receipt.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(importer.ImportError_, "not a guest Vulkan"):
+                importer.install(source, receipt, target, "amd64")
+
+    def test_rejects_another_architecture_and_a_portability_driver(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, receipt, target = self.fixture(Path(temporary))
+            with self.assertRaisesRegex(importer.ImportError_, "describes amd64"):
+                importer.install(source, receipt, target, "arm64")
+            value = json.loads(receipt.read_text(encoding="utf-8"))
+            value["mesa"]["portability_driver"] = True
+            receipt.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(importer.ImportError_, "portability driver"):
+                importer.install(source, receipt, target, "amd64")
+
+    def test_rejects_an_unnormalized_guest_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, receipt, target = self.fixture(Path(temporary))
+            value = json.loads(receipt.read_text(encoding="utf-8"))
+            value["vulkan_loader"]["runtime"]["path"] = "/usr/../etc/passwd"
+            receipt.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(importer.ImportError_, "not a normalized"):
+                importer.install(source, receipt, target, "amd64")
 
 
 if __name__ == "__main__":
