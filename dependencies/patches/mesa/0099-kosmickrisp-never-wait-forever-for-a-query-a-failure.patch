@@ -1,4 +1,4 @@
-From 8be4b404454a8f28e53cd0a7a0ae05b2aaa160a9 Mon Sep 17 00:00:00 2001
+From 47a6b37a6ec74d43b0efd4284139d26e22f125f8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 11:42:25 +0900
 Subject: [PATCH 099/105] kosmickrisp: never wait forever for a query a failure

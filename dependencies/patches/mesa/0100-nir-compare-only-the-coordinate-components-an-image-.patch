@@ -1,4 +1,4 @@
-From 668ae784b50f50cc6d927a1d7a7c625864c398ab Mon Sep 17 00:00:00 2001
+From 14ff869fbe8348d75feaa4f724760931c8413db8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 15:12:54 +0900
 Subject: [PATCH 100/105] nir: compare only the coordinate components an image
