@@ -170,6 +170,10 @@ python3 tests/perf/run_steam_boot_bench.py \
   --output-dir RESULTS --runs 3
 ```
 
+The readiness query runs as the user who owns the display socket rather than as
+the console's root shell, because the session's X server refuses an
+unauthorized client whatever its window state is.
+
 Runs are strictly sequential and counterbalanced across images, so host drift
 cannot masquerade as an image difference. Each run records host load and memory
 pressure at its start; that is evidence, not an acceptance gate. Results are a

@@ -105,10 +105,19 @@ READY_PROBE = (
     "for socket in /tmp/.X11-unix/X*; do "
     "[ -e \"$socket\" ] || continue; "
     "display=\":${socket##*/X}\"; "
-    "window=$(DISPLAY=$display xwininfo -root -tree 2>/dev/null "
+    # The session's X server belongs to the session user and the console shell
+    # is root, which holds no authorization for it: an unauthorized query is
+    # refused ("Authorization required, but no authorization protocol
+    # specified") whatever the window state is, so it can never observe
+    # readiness. Ask as whoever owns the display socket.
+    "session=$(stat -c %U \"$socket\" 2>/dev/null) || continue; "
+    "[ -n \"$session\" ] || continue; "
+    "window=$(sudo -n -u \"$session\" -H env DISPLAY=$display "
+    "xwininfo -root -tree 2>/dev/null "
     "| grep -F '" + READY_WINDOW + "' | grep -oE '0x[0-9a-f]+' | head -n1); "
     "[ -n \"$window\" ] || continue; "
-    "DISPLAY=$display xwininfo -id \"$window\" 2>/dev/null "
+    "sudo -n -u \"$session\" -H env DISPLAY=$display "
+    "xwininfo -id \"$window\" 2>/dev/null "
     "| grep -q 'Map State: IsViewable' && { printf 'VIEWABLE'; break; }; "
     "done; echo"
 )
@@ -602,12 +611,18 @@ def one_boot(image: dict[str, object], userdata: pathlib.Path,
 
 
 def derived_totals(record: dict[str, object]) -> None:
-    """Add the network-independent view of a first boot."""
+    """Add the network-independent view of a first boot.
+
+    Steam's bootstrap log lives on the retained data disk, so a later boot
+    still reads the download an earlier boot performed. Those lines convert to
+    negative offsets, and subtracting that window would understate a boot that
+    downloaded nothing at all; only a window inside this boot is deducted.
+    """
     total = record.get("boot_seconds")
     start = record.get("steam_download_start")
     end = record.get("steam_download_end")
     if isinstance(total, (int, float)) and isinstance(start, (int, float)) \
-            and isinstance(end, (int, float)) and end >= start:
+            and isinstance(end, (int, float)) and end >= start >= 0:
         record["boot_seconds_excluding_download"] = round(total - (end - start), 3)
 
 
