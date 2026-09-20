@@ -269,6 +269,15 @@ re-entered until it consumed a whole vCPU, which no amount of disabling the
 interrupt line prevents. A would-block still ends an ordinary pass, so a
 healthy device and a spurious wake are unaffected.
 
+Retiring the device is where the guest's recovery ends. virtio-gpu has no
+broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
+submitter already parked waiting for control-queue space is not woken, and
+`drm_dev_unplug()` blocks behind it because that wait sits inside the section
+the unplug synchronises against. In practice a lost GPU backend retires the
+device and the guest's Vulkan client is killed within seconds, but a client
+that happens to be waiting on a full control queue stays blocked until Mesa's
+own ring timeout, on the order of fifteen minutes.
+
 The Apple graphics path is:
 
 ```text
