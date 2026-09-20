@@ -123,6 +123,15 @@ private:
 	std::size_t length_{};
 };
 
+/* The guest released this range, so the window's reservation holds it: nothing
+ * is mapped and nothing else in the process can be given the address. */
+[[nodiscard]] bool exactly_released(
+	std::uintptr_t address, std::size_t length = page_size) noexcept
+{
+	return uml::testing::released_into_native_window(address, length);
+}
+
+/* Nothing has ever mapped this range, so it is still free address space. */
 [[nodiscard]] bool exactly_absent(
 	std::uintptr_t address, std::size_t length = page_size) noexcept
 {
@@ -289,8 +298,8 @@ void test_nonoverlap_concurrency_and_leaked_cleanup(
 		"distinct native ownership domains did not overlap safely");
 	require(backing_a.byte() == 0x31 && backing_b.byte() == 0x42,
 		"callback-leaked mappings were not flushed to their own backings");
-	require(exactly_absent(arena.page(0)) &&
-		exactly_absent(arena.page(2)),
+	require(exactly_released(arena.page(0)) &&
+		exactly_released(arena.page(2)),
 		"callback-leaked mapping survived domain retirement");
 	require(counts_are_zero(),
 		"nonoverlap retirement retained a native domain or host owner");
@@ -461,7 +470,7 @@ void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 		"foreign same-address operations did not fail promptly and atomically");
 	require(backing_a.byte() == 0x35 && backing_b.byte() == 0x26,
 		"same-address collision altered the holder or contender backing");
-	require(exactly_absent(arena.page(4)) && counts_are_zero(),
+	require(exactly_released(arena.page(4)) && counts_are_zero(),
 		"same-address holder did not retire completely");
 
 	SimpleMapState retry{
@@ -473,7 +482,7 @@ void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 	set_dispatch(dispatch_b, simple_map, &retry);
 	require(run(handle_b.get()) == 0 && retry.valid,
 		"same-address contender could not retry after owner retirement");
-	require(backing_b.byte() == 0x46 && exactly_absent(arena.page(4)) &&
+	require(backing_b.byte() == 0x46 && exactly_released(arena.page(4)) &&
 		counts_are_zero(),
 		"same-address retry did not flush and retire cleanly");
 }
@@ -589,7 +598,7 @@ void test_retire_acquire_handoff(const NativeWindowArena &arena)
 		contender.saw_busy && contender.acquired && contender.valid,
 		"retire/acquire handoff lost or unmapped the successor mapping");
 	require(backing_a.byte() == 0x38 && backing_b.byte() == 0x49 &&
-		exactly_absent(arena.page(6)) && counts_are_zero(),
+		exactly_released(arena.page(6)) && counts_are_zero(),
 		"retire/acquire handoff did not flush and retire both owners");
 }
 
@@ -634,7 +643,7 @@ void test_same_owner_replacement(const NativeWindowArena &arena)
 	require(run(handle.get()) == 0 && state.valid,
 		"same owner could not replace its direct mapping");
 	require(first.byte() == 0x51 && second.byte() == 0x72 &&
-		exactly_absent(arena.page(8)) && counts_are_zero(),
+		exactly_released(arena.page(8)) && counts_are_zero(),
 		"same-owner replacement crossed backings or survived retirement");
 }
 
@@ -745,7 +754,7 @@ void test_mixed_foreign_range_is_atomic(const NativeWindowArena &arena)
 		"mixed range could not be acquired after foreign retirement");
 	require(mixed_backing.byte(0) == 0xa3 &&
 		mixed_backing.byte(1) == 0xb4 &&
-		exactly_absent(arena.page(10), 2 * page_size) && counts_are_zero(),
+		exactly_released(arena.page(10), 2 * page_size) && counts_are_zero(),
 		"mixed-range retry did not flush and retire atomically");
 }
 
@@ -782,7 +791,7 @@ int test_unowned_operations(void *opaque)
 		valid = darwin_uml_vm_unmap(
 			reinterpret_cast<void *>(state.reserved_address), page_size) == 0;
 	if (valid)
-		valid = exactly_absent(state.reserved_address);
+		valid = exactly_released(state.reserved_address);
 	if (valid)
 		valid = darwin_uml_vm_protect(
 			reinterpret_cast<void *>(state.absent_address), page_size,
@@ -808,7 +817,7 @@ void test_unowned_host_mapping_is_replaced(const NativeWindowArena &arena)
 	set_dispatch(dispatch_a, test_unowned_operations, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-unowned.img");
 	require(run(handle.get()) == 0 && state.valid &&
-		exactly_absent(arena.page(14)) && counts_are_zero(),
+		exactly_released(arena.page(14)) && counts_are_zero(),
 		"unowned host mapping did not follow required MAP_FIXED replacement");
 }
 
@@ -860,7 +869,7 @@ void run_failure_retry(const NativeWindowArena &arena, std::size_t page,
 	set_dispatch(dispatch_a, fail_then_retry_map, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-rollback.img");
 	require(run(handle.get()) == 0 && state.valid && backing.byte() == 0xe6 &&
-		exactly_absent(state.address) && counts_are_zero(),
+		exactly_released(state.address) && counts_are_zero(),
 		"failed native map did not roll back completely and permit retry");
 }
 
@@ -924,7 +933,7 @@ void test_direct_software_publication_is_identity(
 	auto handle = make_emulator(
 		kernel_a, "/tmp/native-16k-software-publication.img");
 	require(run(handle.get()) == 0 && state.valid && backing.byte() == 0xa2 &&
-		exactly_absent(state.native_address) && counts_are_zero(),
+		exactly_released(state.native_address) && counts_are_zero(),
 		"16 KiB shared mapping was not an identity publication path");
 }
 
@@ -985,14 +994,14 @@ int owned_bridge_lifecycle(void *opaque)
 		valid = darwin_uml_vm_unmap_generation(17,
 			reinterpret_cast<void *>(state.address), page_size) == 0;
 	if (valid)
-		valid = exactly_absent(state.address) &&
+		valid = exactly_released(state.address) &&
 			uml::memory::testing::native_host_mapping_count() == 1;
 	if (valid)
 		valid = darwin_uml_vm_unmap(
 			reinterpret_cast<void *>(state.address + page_size),
 			page_size) == 0;
 	if (valid)
-		valid = exactly_absent(state.address, 2 * page_size) &&
+		valid = exactly_released(state.address, 2 * page_size) &&
 			uml::memory::testing::native_host_mapping_count() == 0;
 	if (valid)
 		valid = darwin_uml_vm_map(
@@ -1004,7 +1013,7 @@ int owned_bridge_lifecycle(void *opaque)
 		valid = darwin_uml_vm_unmap(
 			reinterpret_cast<void *>(state.address), 2 * page_size) == 0;
 	state.valid = valid &&
-		exactly_absent(state.address, 2 * page_size) &&
+		exactly_released(state.address, 2 * page_size) &&
 		uml::memory::testing::native_host_mapping_count() == 0;
 	return state.valid ? 0 : 81;
 }
@@ -1043,6 +1052,10 @@ int two_page_rollback(void *opaque)
 	auto &state = *static_cast<TwoPageRollbackState *>(opaque);
 	const auto absent_and_unowned = [&]() {
 		return exactly_absent(state.address, 2 * page_size) &&
+			uml::memory::testing::native_host_mapping_count() == 0;
+	};
+	const auto released_and_unowned = [&]() {
+		return exactly_released(state.address, 2 * page_size) &&
 			uml::memory::testing::native_host_mapping_count() == 0;
 	};
 	const auto injected_failure = [&](
@@ -1111,7 +1124,7 @@ int two_page_rollback(void *opaque)
 	if (valid)
 		valid = darwin_uml_vm_unmap(
 			reinterpret_cast<void *>(state.address), 2 * page_size) == 0;
-	state.valid = valid && absent_and_unowned();
+	state.valid = valid && released_and_unowned();
 	return state.valid ? 0 : 82;
 }
 
@@ -1119,7 +1132,10 @@ void test_two_page_rollback(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0x73, 0x84};
 	TwoPageRollbackState state{
-		.address = arena.page(21),
+		/* A rollback leaves the range exactly as it found it, so this
+		 * test needs a range nothing has mapped: a released range is a
+		 * window reservation, not free address space. */
+		.address = arena.page(12),
 		.fd = backing.fd(),
 	};
 	set_dispatch(dispatch_a, two_page_rollback, &state);
@@ -1154,7 +1170,7 @@ int registry_oom(void *opaque)
 	const int unmap_result = retry_succeeded ? darwin_uml_vm_unmap(
 		reinterpret_cast<void *>(state.address), page_size) : -1;
 	state.safe = failure_was_contained && retry_succeeded &&
-		unmap_result == 0 && exactly_absent(state.address);
+		unmap_result == 0 && exactly_released(state.address);
 	return state.safe ? 0 : 80;
 }
 
@@ -1175,7 +1191,7 @@ int run_registry_oom_child(std::string_view mode)
 	const int status = run(handle.get());
 	return status == 0 && state.safe &&
 		uml::memory::testing::native_domain_count() == 0 &&
-		exactly_absent(state.address) ? EXIT_SUCCESS : EXIT_FAILURE;
+		exactly_released(state.address) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 void require_registry_oom_child(const char *executable, const char *mode)
