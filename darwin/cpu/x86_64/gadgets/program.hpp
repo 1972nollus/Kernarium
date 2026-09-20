@@ -152,6 +152,11 @@ struct BuildResult final {
 	BuildStatus status{BuildStatus::illegal_instruction};
 	Program program{};
 	std::uint64_t fault_address{};
+	/* `source` received every byte of every instruction this block kept, so
+	 * its first `program.byte_count()` bytes are what the decoder read. A
+	 * build given no room, or one whose block outgrew it, clears this and
+	 * the block cannot be cached. */
+	bool source_recorded{};
 };
 
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
@@ -159,9 +164,14 @@ struct BuildResult final {
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions = 64) noexcept;
+/* `source`, when it is not empty, receives the bytes the decoder read for the
+ * instructions this block keeps, in address order. Saving those rather than
+ * reading the block again is what makes a cached program and its saved source
+ * one observation of guest memory instead of two. */
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
-	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept;
+	std::size_t maximum_instructions, ProgramLinkResolver links,
+	std::span<std::byte> source = {}) noexcept;
 
 struct ExecuteResult final {
 	::uml::cpu::EngineEvent event{::uml::cpu::EngineEvent::fatal};

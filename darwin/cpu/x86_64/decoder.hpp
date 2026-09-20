@@ -4,6 +4,7 @@
 #include "cpu_state.hpp"
 #include "memory/guest_address_space.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uml::cpu::x86_64 {
@@ -246,8 +247,22 @@ struct DecodeResult final {
 	std::uint64_t fault_address{};
 };
 
+/* x86 encodes no instruction longer than this, and the decoder refuses one
+ * that reaches it. */
+inline constexpr std::size_t maximum_instruction_bytes = 15;
+
+/* `consumed`, when it is not null, must address at least
+ * `maximum_instruction_bytes` writable bytes and receives every byte this call
+ * read from guest memory, in the order it read them. On a decoded result the
+ * first `instruction.length` of them are exactly the instruction's encoding,
+ * because the length is the reader's position. A caller that keeps a
+ * translation saves those bytes rather than reading the instruction stream a
+ * second time: a second read can see another vCPU's store that the decode did
+ * not, and nothing downstream could tell the two apart afterwards.
+ */
 [[nodiscard]] DecodeResult decode(
 	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
-	ExecutionMode mode = ExecutionMode::long64) noexcept;
+	ExecutionMode mode = ExecutionMode::long64,
+	std::byte *consumed = nullptr) noexcept;
 
 } // namespace uml::cpu::x86_64

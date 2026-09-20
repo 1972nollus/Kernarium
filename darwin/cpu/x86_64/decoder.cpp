@@ -13,9 +13,10 @@ namespace {
 class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t address, ExecutionMode mode) noexcept
+		std::uint64_t address, ExecutionMode mode,
+		std::byte *consumed) noexcept
 		: memory_{memory}, address_{normalize_instruction_pointer(mode, address)},
-		  mode_{mode}
+		  mode_{mode}, consumed_{consumed}
 	{}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
@@ -33,6 +34,11 @@ public:
 			return false;
 		}
 		value = std::to_integer<std::uint8_t>(byte);
+		/* Hand the caller the byte this decode actually saw. Reading the
+		 * instruction stream again later would be a second, separate
+		 * observation of guest memory. */
+		if (consumed_ != nullptr)
+			consumed_[position_] = byte;
 		++position_;
 		return true;
 	}
@@ -57,10 +63,12 @@ public:
 	}
 
 private:
-	static constexpr std::uint8_t maximum_instruction_bytes = 15;
+	static constexpr std::uint8_t maximum_instruction_bytes =
+		static_cast<std::uint8_t>(::uml::cpu::x86_64::maximum_instruction_bytes);
 	::uml::memory::GuestAddressSpace &memory_;
 	std::uint64_t address_;
 	ExecutionMode mode_;
+	std::byte *consumed_;
 	std::uint64_t fault_address_{};
 	std::uint8_t position_{};
 };
@@ -152,8 +160,9 @@ struct Prefixes final {
 class InstructionDecoder final {
 public:
 	InstructionDecoder(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t rip, ExecutionMode mode) noexcept
-		: reader_{memory, rip, mode}, prefixes_{.mode = mode}
+		std::uint64_t rip, ExecutionMode mode,
+		std::byte *consumed) noexcept
+		: reader_{memory, rip, mode, consumed}, prefixes_{.mode = mode}
 	{}
 
 	[[nodiscard]] DecodeResult run()
@@ -3095,10 +3104,10 @@ bool Instruction::terminal() const noexcept
 }
 
 DecodeResult decode(::uml::memory::GuestAddressSpace &memory,
-	std::uint64_t rip, ExecutionMode mode) noexcept
+	std::uint64_t rip, ExecutionMode mode, std::byte *consumed) noexcept
 {
 	try {
-		return InstructionDecoder{memory, rip, mode}.run();
+		return InstructionDecoder{memory, rip, mode, consumed}.run();
 	} catch (...) {
 		return {DecodeStatus::fetch_fault, {},
 			normalize_instruction_pointer(mode, rip)};

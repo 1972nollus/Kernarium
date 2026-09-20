@@ -248,20 +248,26 @@ revalidation makes -- and a successful validation records that same stamp. A
 stamp taken afterwards would already cover a write that the recorded source
 predates, and the next validation would accept the stale program on it.
 
-A new translation reads its block twice, the decoder first and the saved
-source after it, so it is cached only when both reads saw the same bytes. The
-registry holds every page the block can span before the decoder starts, and
-each of those pages is stamped there; once the source has been fetched, the
-stamp of every page the program turned out to cover is read again, and the
-translation is cached only if none has moved. Equal stamps say nothing
-published on those pages in between, so the decoded stream, the saved source
-and guest memory are the same bytes and the recorded stamp predates all three.
-A stamp that moved is the one staleness no later check can see -- the source
-would be newer than the program it is supposed to stand for, and a stamp hit
-or a source comparison would each accept it -- so that translation runs once
-and is not cached, which is what a processor does with a store that races its
-own fetch. A page the block could have spanned but did not is not consulted,
-so a hot data page next to a text page costs its neighbour nothing.
+A new translation reads its block once. The saved source is the bytes the
+decoder consumed, so a cached program and the source that stands for it are one
+observation of guest memory, not two that a write could fall between. Reading
+the block a second time to fill the source left the two free to disagree, and
+nothing downstream could tell: the comparison a moved stamp forces would put
+the newer source against the newer memory and accept a program decoded from
+bytes that were already gone. Re-reading the stamp around the second read only
+narrowed that window, because a writer stores its bytes well before it reaches
+the stamp.
+
+What the stamp then has to be is older than the bytes the program was built
+from. The registry holds every page the block can span before the decoder
+starts and each of those pages is stamped there, which is the whole ordering a
+new translation needs. A write landing during the decode resolves through the
+ordinary validation: it moves the page's stamp, after its bytes and before the
+sequence that brings this vCPU back, and the comparison that follows puts the
+decoder's own bytes against guest memory. A page the block could have spanned
+but did not is never consulted, so a hot data page next to a text page costs
+its neighbour nothing, and a block whose source could not be recorded is used
+once and not cached.
 
 The address space's code-change sequence says when to revalidate, not whether
 a program survives the revalidation. A publication that touched a program moved

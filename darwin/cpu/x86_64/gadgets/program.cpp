@@ -5,10 +5,12 @@
 #include "native_entry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -80,15 +82,22 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
-	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept
+	std::size_t maximum_instructions, ProgramLinkResolver links,
+	std::span<std::byte> source) noexcept
 {
 	try {
 		std::vector<Gadget> stream;
 		stream.reserve(maximum_instructions);
 		auto current = normalize_instruction_pointer(mode, address);
 		std::size_t bytes{};
+		/* Only the instructions the block keeps are copied out, and only
+		 * after they have decoded, so a failed decode's partial read and
+		 * the bytes past the block's end never enter the source. */
+		std::array<std::byte, maximum_instruction_bytes> consumed{};
+		bool recorded = !source.empty();
 		for (std::size_t index = 0; index < maximum_instructions; ++index) {
-			const auto decoded = decode(memory, current, mode);
+			const auto decoded = decode(memory, current, mode,
+				recorded ? consumed.data() : nullptr);
 			if (decoded.status != DecodeStatus::decoded) {
 				/* Preserve the side effects and retirement order of the valid
 				 * prefix. Dispatch will decode the faulting instruction again
@@ -102,6 +111,16 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 				return {BuildStatus::illegal_instruction, {}, current};
 			}
 			stream.push_back({current, decoded.instruction});
+			if (recorded) {
+				if (decoded.instruction.length <=
+					source.size() - bytes) {
+					std::memcpy(source.data() + bytes,
+						consumed.data(),
+						decoded.instruction.length);
+				} else {
+					recorded = false;
+				}
+			}
 			current = advance_instruction_pointer(
 				mode, current, decoded.instruction.length);
 			bytes += decoded.instruction.length;
@@ -121,7 +140,8 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		if (stream.empty())
 			return {BuildStatus::illegal_instruction, {}, address};
 		return {BuildStatus::built,
-			Program{mode, address, bytes, std::move(stream), links}, 0};
+			Program{mode, address, bytes, std::move(stream), links}, 0,
+			recorded};
 	} catch (const std::logic_error &) {
 		return {BuildStatus::illegal_instruction, {}, address};
 	} catch (...) {

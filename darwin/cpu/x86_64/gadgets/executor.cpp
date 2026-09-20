@@ -78,30 +78,6 @@ struct ProgramCacheLocation final {
 	};
 }
 
-[[nodiscard]] bool fetch_program_source(
-	::uml::memory::GuestAddressSpace &memory, const Program &program,
-	std::span<std::byte> destination)
-{
-	if (destination.size() != program.byte_count())
-		return false;
-	auto address = program.address();
-	std::size_t completed = 0;
-	while (completed < destination.size()) {
-		auto count = destination.size() - completed;
-		const auto last = program.execution_mode() == ExecutionMode::compat32 ?
-			std::uint64_t{0xffff'ffffU} : ~std::uint64_t{};
-		const auto before_wrap = last - address;
-		if (count - 1U > before_wrap)
-			count = static_cast<std::size_t>(before_wrap) + 1U;
-		if (!memory.fetch(address, destination.subspan(completed, count)))
-			return false;
-		completed += count;
-		address = advance_instruction_pointer(
-			program.execution_mode(), address, count);
-	}
-	return true;
-}
-
 enum class ProgramSourceComparison {
 	match,
 	mismatch,
@@ -390,45 +366,39 @@ struct HeldCodeStamps final {
 	return result;
 }
 
-struct SettledCodeStamps final {
-	ProgramCodeStamps stamps{};
-	/* A write landed on one of this program's pages while it was being
-	 * translated. The program is correct for the bytes it was decoded from
-	 * and must not be cached. */
-	bool raced{};
-};
-
-/* What a fresh translation may record, and whether it may record anything at
- * all. Everything a cache slot keeps has to be older than the bytes the
- * decoder read: the stamp because a stamp certifies only what is read after
- * it, and the saved source because it is what a later validation compares.
- * The decoder reads the block and the source is fetched afterwards, so a write
- * that lands between the two leaves a slot whose program is older than its own
- * source, and nothing downstream can tell -- the recorded stamp already covers
- * the write, so a stamp match accepts the stale program outright, and a stamp
- * that has moved since compares the new source against the new memory and
- * accepts it too. The code-change replay does not repair it either: retiring a
- * changed range only unlinks the slot and leaves that same validation to
- * decide.
+/* The stamps a fresh translation records, taken from the read made before the
+ * decoder ran, for the pages the program turned out to cover.
  *
- * `held` was taken before the build, over every page the block could span.
- * Re-reading the stamp of each page the program turned out to cover, after its
- * source has been fetched, closes the whole window: equal stamps say nothing
- * published on those pages between the two reads, so the decoded stream, the
- * saved source and guest memory are the same bytes and the recorded stamp
- * predates all three. A page the program does not cover is left alone; a write
- * there is no business of this block, and a text page next to hot data would
- * otherwise never keep a translation at all. An address space that cannot
- * stamp a page cannot report the race on it either, and keeps the exact byte
- * validation it already relies on.
+ * That read is a lower bound on the program only because the program and the
+ * source the slot saves are one observation of guest memory: the decoder's
+ * bytes are what the slot keeps. Fetching the block a second time to fill the
+ * source instead left the two reads free to disagree, and nothing downstream
+ * could tell -- a write between them made the source newer than the program,
+ * so a later comparison of that source against memory matched and accepted a
+ * program decoded from bytes that were already gone. Re-reading the page stamp
+ * after the second read only narrowed that window, because a writer stores its
+ * bytes well before it moves the stamp.
+ *
+ * With one read the ordinary validation decides everything. A publication that
+ * touched the block moved the page's stamp -- after storing the bytes, and
+ * before moving the sequence that makes this vCPU revalidate -- so the
+ * comparison that follows sees the decoder's own bytes against guest memory
+ * and says exactly whether the translation is stale. A store that has landed
+ * but not yet published is missed here as it always was, and reaches this vCPU
+ * at its next code-change checkpoint, which is where the x86
+ * cross-modifying-code protocol requires an executing processor to look.
+ *
+ * `nullopt` means a page this program covers was not held while its bytes were
+ * read, which the block's byte bound makes impossible and which no later check
+ * could recover; such a translation is used once and not cached. An address
+ * space that cannot stamp a page gives no stamps at all, and the program keeps
+ * the exact byte validation that address space already relies on.
  */
-[[nodiscard]] SettledCodeStamps settle_program_code_stamps(
-	::uml::memory::GuestAddressSpace &memory, const Program &program,
-	std::span<const std::uint64_t> held_pages, const HeldCodeStamps &held,
-	void *execution_context) noexcept
+[[nodiscard]] std::optional<ProgramCodeStamps> program_code_stamps_from_hold(
+	const Program &program, std::span<const std::uint64_t> held_pages,
+	const HeldCodeStamps &held) noexcept
 {
-	SettledCodeStamps result;
-	std::size_t covered = 0;
+	ProgramCodeStamps result;
 	auto address = program.address();
 	auto remaining = program.byte_count();
 	auto previous_page = ~std::uint64_t{};
@@ -441,24 +411,15 @@ struct SettledCodeStamps final {
 			for (std::size_t index = 0; index < held_pages.size(); ++index)
 				if (held_pages[index] == page)
 					held_index = index;
-			/* The byte bound above says this cannot happen. If it ever
-			 * did, the page was read without the registry holding it,
-			 * which is the one thing no later check can recover. */
 			if (held_index == held_pages.size() ||
-			    covered == result.stamps.pages.size())
-				return {.stamps = {}, .raced = true};
-			if (!held.present[held_index]) {
-				stamped = false;
-			} else {
-				::uml::memory::CodePageStamp current{};
-				if (!memory.code_page_stamp(page, execution_context,
-					    current) ||
-				    !(current == held.stamps[held_index]))
-					return {.stamps = {}, .raced = true};
-				result.stamps.pages[covered] =
+			    result.count == result.pages.size())
+				return std::nullopt;
+			if (held.present[held_index])
+				result.pages[result.count] =
 					held.stamps[held_index];
-			}
-			++covered;
+			else
+				stamped = false;
+			++result.count;
 			previous_page = page;
 		}
 		const auto count = std::min<std::size_t>(remaining,
@@ -469,9 +430,8 @@ struct SettledCodeStamps final {
 			program.execution_mode(), address, count);
 	}
 	if (!stamped)
-		return {};
-	result.stamps.count = covered;
-	result.stamps.complete = covered != 0;
+		return ProgramCodeStamps{};
+	result.complete = result.count != 0;
 	return result;
 }
 
@@ -1694,8 +1654,12 @@ ProgramSelection Executor::select_program(
 	 * ahead of the read or moves the stamp this reads. */
 	const auto held_stamps = capture_held_code_stamps(
 		memory, hold.pages(), storage_->execution_context);
-	auto built = build(
-		memory, address, mode, maximum_instructions, links);
+	/* The decoder's own bytes, which become the slot's saved source. A block
+	 * this long cannot be cached anyway, so the bound is the cache's. */
+	std::array<std::byte, maximum_cached_source_bytes> decoded_source;
+	auto built = build(memory, address, mode, maximum_instructions, links,
+		storage_->cache_ready ? std::span{decoded_source} :
+			std::span<std::byte>{});
 	if (built.status != BuildStatus::built) {
 		storage_->programs.cancel_selection();
 		return {
@@ -1716,25 +1680,22 @@ ProgramSelection Executor::select_program(
 			.cache_hit = false,
 		};
 	};
-	if (!storage_->cache_ready || built.program.byte_count() == 0 ||
+	if (!storage_->cache_ready || !built.source_recorded ||
+		built.program.byte_count() == 0 ||
 		built.program.byte_count() > maximum_cached_source_bytes)
+		return use_transient();
+	const auto code_stamps = program_code_stamps_from_hold(
+		built.program, hold.pages(), held_stamps);
+	if (!code_stamps)
 		return use_transient();
 
 	try {
-		std::vector<std::byte> source(built.program.byte_count());
-		if (!fetch_program_source(memory, built.program, source))
-			return use_transient();
-		/* After both reads of the block, and recording the stamp taken
-		 * before either of them. */
-		const auto settled = settle_program_code_stamps(memory,
-			built.program, hold.pages(), held_stamps,
-			storage_->execution_context);
-		if (settled.raced)
-			return use_transient();
+		const auto recorded = std::span{decoded_source}.first(
+			built.program.byte_count());
+		std::vector<std::byte> source(recorded.begin(), recorded.end());
 		const auto &stored = storage_->programs.store(
 			std::move(built.program), std::move(source),
-			storage_->code_changes, maximum_instructions,
-			settled.stamps);
+			storage_->code_changes, maximum_instructions, *code_stamps);
 		return {
 			.status = BuildStatus::built,
 			.program = &stored,

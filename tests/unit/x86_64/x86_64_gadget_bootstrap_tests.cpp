@@ -82,8 +82,9 @@ public:
 			auto target = fetch_deferred_address_;
 			for (const auto byte : fetch_deferred_bytes_)
 				bytes_[target++ - base_] = static_cast<std::byte>(byte);
-			bump_code_stamps(fetch_deferred_address_,
-				fetch_deferred_bytes_.size());
+			if (fetch_deferred_publishes_)
+				bump_code_stamps(fetch_deferred_address_,
+					fetch_deferred_bytes_.size());
 		}
 		return true;
 	}
@@ -230,18 +231,29 @@ public:
 	 * translation reads afterwards -- the source bytes it saves above all --
 	 * does not. It fires once, and the numbered stamp query it happens to
 	 * fall between is not part of the arrangement, so the same arming means
-	 * the same interleaving however many stamps a translation takes. */
+	 * the same interleaving however many stamps a translation takes.
+	 *
+	 * `publishes` false stores the bytes without moving the page stamp,
+	 * which is where a real writer is between its store and its call into
+	 * the address space; the test moves the stamp afterwards with
+	 * `publish_code_page`, as that writer eventually does. */
 	void write_after_fetching(std::uint64_t trigger, std::uint64_t address,
-		std::initializer_list<std::uint8_t> bytes)
+		std::initializer_list<std::uint8_t> bytes, bool publishes = true)
 	{
 		fetch_trigger_ = trigger;
 		fetch_trigger_armed_ = true;
 		fetch_deferred_address_ = address;
+		fetch_deferred_publishes_ = publishes;
 		fetch_deferred_bytes_.assign(bytes.begin(), bytes.end());
 	}
 	[[nodiscard]] bool write_after_fetching_fired() const noexcept
 	{
 		return !fetch_trigger_armed_;
+	}
+	/* The stamp move a writer makes after its bytes have landed. */
+	void publish_code_page(std::uint64_t address) noexcept
+	{
+		bump_code_stamps(address, 1);
 	}
 	void set_code_changes(std::uint64_t *code_changes) noexcept
 	{
@@ -286,6 +298,7 @@ private:
 	std::vector<std::uint8_t> deferred_bytes_;
 	std::uint64_t fetch_trigger_{};
 	bool fetch_trigger_armed_{};
+	bool fetch_deferred_publishes_{true};
 	std::uint64_t fetch_deferred_address_{};
 	std::vector<std::uint8_t> fetch_deferred_bytes_;
 };
@@ -663,17 +676,18 @@ read_moving_code_sequences(void *opaque) noexcept
 		"stamp-order rebuild did not execute the written bytes");
 }
 
-/* A first translation reads its block twice: the decoder reads it, and the
- * source the slot saves is fetched afterwards. A write that lands between the
- * two leaves a slot whose program is older than its source, and no later
- * validation can tell: the stamp it records already covers the write, so a
- * stamp match accepts the program outright, and a stamp that has moved since
- * compares the saved source -- the new bytes -- against memory and accepts it
- * too. The code-change replay does not repair it either, because retiring a
- * changed range only unlinks the slot and leaves that same validation to
- * decide. Such a translation must be used once and not cached.
+/* A write that lands while a block is being decoded must not survive in the
+ * cache. What makes that decidable is that the slot's saved source is the
+ * bytes the decoder read: the write moves the page's stamp, and the comparison
+ * that follows puts those very bytes against guest memory. A translation that
+ * fetched its source separately kept a program older than its own source, and
+ * then every validation agreed with it -- a stamp match accepted the program
+ * outright, and a moved stamp compared the newer saved source against the
+ * newer memory and accepted it too. The code-change replay did not repair it
+ * either, because retiring a changed range only unlinks the slot and leaves
+ * that same validation to decide.
  */
-[[nodiscard]] bool a_write_racing_a_first_translation_is_not_cached()
+[[nodiscard]] bool a_write_racing_a_first_translation_does_not_survive()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -703,7 +717,7 @@ read_moving_code_sequences(void *opaque) noexcept
 	const auto after = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	if (!expect(after.program != nullptr && !after.cache_hit,
-		"a write that raced the decoder was cached as a valid translation"))
+		"a write that raced the decoder survived as a valid translation"))
 		return false;
 	CpuState cpu{};
 	const auto result = gadgets::execute(
@@ -721,7 +735,7 @@ read_moving_code_sequences(void *opaque) noexcept
  * a block only reaches at its tail is covered exactly like the page it starts
  * on.
  */
-[[nodiscard]] bool a_write_racing_a_second_page_is_not_cached()
+[[nodiscard]] bool a_write_racing_a_second_page_does_not_survive()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -751,7 +765,7 @@ read_moving_code_sequences(void *opaque) noexcept
 	const auto after = executor.select_program(
 		memory, 4092, ExecutionMode::long64);
 	if (!expect(after.program != nullptr && !after.cache_hit,
-		"a write to a block's second page was cached as a valid "
+		"a write to a block's second page survived as a valid "
 		"translation"))
 		return false;
 	CpuState cpu{};
@@ -761,6 +775,65 @@ read_moving_code_sequences(void *opaque) noexcept
 	return expect(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 0x201,
 		"the translation after a raced second page did not execute the "
+		"written bytes");
+}
+
+/* A writer stores its bytes well before it publishes them. The store lands in
+ * the gadget; the page stamp moves several calls later, once the writer has
+ * walked its own cache and entered the address space, and the code-change
+ * sequence moves after that. So a translation that read its block a second
+ * time to fill its saved source could fetch that source after the store and
+ * still find the page stamp unmoved on both sides of the fetch -- and the slot
+ * it kept, program older than source, was then accepted by every validation
+ * that followed, for as long as it lived. The window is not narrow: it is
+ * whatever the host lets pass between a store and its publication.
+ *
+ * One read of the block leaves the late stamp move nothing to hide behind. The
+ * saved source is the decoder's own bytes, so the comparison the moved stamp
+ * forces sees the write.
+ */
+[[nodiscard]] bool a_write_stamped_after_a_first_translation_does_not_survive()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+
+	/* The store alone: the writer has not reached its page stamp yet, so
+	 * nothing this translation can read afterwards has moved. */
+	memory.write_after_fetching(1, 1, {0x02}, false);
+	const auto racing = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(racing.program != nullptr && !racing.cache_hit,
+		"an unstamped racing write did not produce a program") ||
+		!expect(memory.write_after_fetching_fired(),
+			"the unstamped racing write never landed inside the build"))
+		return false;
+
+	/* The rest of that writer: the page stamp, and then the sequence which
+	 * brings this vCPU back to validate. */
+	memory.publish_code_page(0);
+	executor.prepare(memory, 42, sequences.mapping_changes,
+		++sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto after = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(after.program != nullptr && !after.cache_hit,
+		"a write that landed before its page stamp survived as a valid "
+		"translation"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(
+		*after.program, cpu, memory, executor, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 2,
+		"the translation after a late-stamped write did not execute the "
 		"written bytes");
 }
 
@@ -4883,8 +4956,9 @@ int main()
 		a_moving_code_sequence_keeps_unchanged_programs() &&
 		a_moving_code_sequence_rebuilds_changed_programs() &&
 		a_recorded_code_stamp_is_no_newer_than_its_source() &&
-		a_write_racing_a_first_translation_is_not_cached() &&
-		a_write_racing_a_second_page_is_not_cached() &&
+		a_write_racing_a_first_translation_does_not_survive() &&
+		a_write_racing_a_second_page_does_not_survive() &&
+		a_write_stamped_after_a_first_translation_does_not_survive() &&
 		an_undisturbed_first_translation_is_still_cached() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
