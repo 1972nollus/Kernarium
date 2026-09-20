@@ -196,7 +196,10 @@ Steam completes its client update and renders the Big Picture sign-in screen,
 including the username/password and QR-code panels. The launcher uses
 `-gamepadui`; Steam Deck hardware onboarding requires devices this guest does
 not provide. The Virtio video service supplies the V4L2 decoder and the image's
-udev rule provides `/dev/video-dec0`. A separate V4L2 probe verifies hardware
-decoding and output pixels; the UI observation alone does not establish that
-CEF used hardware decoding. Account login and a complete game download have been verified. Game launch
+udev rule provides `/dev/video-dec0`; this client's CEF asks for it with
+`--enable-features=V4L2VideoDecode` and enumerates the node as the session
+starts. It plays no startup movie, so nothing is decoded there; see the
+[shared assets](../steam-common/README.md). A separate V4L2 probe verifies
+hardware decoding and output pixels; a UI observation alone does not establish
+that CEF used hardware decoding. Account login and a complete game download have been verified. Game launch
 remains unqualified.
