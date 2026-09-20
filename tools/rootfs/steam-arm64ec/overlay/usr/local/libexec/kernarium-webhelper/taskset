@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The Steam client's own web-helper launcher exports LIBGL_KOPPER_DISABLE=true
+# and then runs taskset. OpenGL would then present through X11 DRI3, whose
+# buffer allocation this renderer supports for no image format, so the Big
+# Picture window would deliver no frame at all. The client verifies the sizes
+# of its installed files, so its launcher must not be edited; taskset is the
+# only program that launcher resolves through PATH.
+set -eu
+unset LIBGL_KOPPER_DISABLE
+exec /usr/bin/taskset "$@"

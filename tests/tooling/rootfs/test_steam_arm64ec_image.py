@@ -108,6 +108,11 @@ class ImageAudit(unittest.TestCase):
         rule = self.root / "etc/udev/rules.d/70-uml-virtio-video.rules"
         rule.parent.mkdir(parents=True)
         rule.write_text('SUBSYSTEM=="video4linux", SYMLINK+="video-dec%n"\n')
+        for relative in (image.WEBHELPER_HOOK, "usr/local/bin/steam"):
+            source = ROOT / "tools/rootfs/steam-arm64ec/overlay" / relative
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text())
         (self.root / image.PROTON / "version").write_text("test-proton-version\n")
         (self.root / image.PROTON / "toolmanifest.vdf").write_text(
             '"manifest" { "commandline" "/proton %verb%" }\n')
@@ -149,6 +154,54 @@ class ImageAudit(unittest.TestCase):
         library.write_bytes(library.read_bytes() + b"modified")
         with self.assertRaisesRegex(RuntimeError, "installed Vulkan runtime differs"):
             image.inventory(self.root)
+
+    def test_web_helper_presentation_hook_required(self) -> None:
+        # The client's web-helper launcher turns Mesa's Vulkan window system
+        # off; this guest then presents nothing at all. The image must carry
+        # the hook, and the launcher must select it.
+        hook = self.root / image.WEBHELPER_HOOK
+        hook.write_text("#!/bin/sh\nexec /usr/bin/taskset \"$@\"\n")
+        with self.assertRaisesRegex(RuntimeError, "presentation hook"):
+            image.inventory(self.root)
+        hook.unlink()
+        with self.assertRaisesRegex(RuntimeError, "presentation hook"):
+            image.inventory(self.root)
+        hook.write_text((ROOT / "tools/rootfs/steam-arm64ec/overlay"
+                         / image.WEBHELPER_HOOK).read_text())
+        launcher = self.root / "usr/local/bin/steam"
+        launcher.write_text(launcher.read_text().replace(
+            "/usr/local/libexec/kernarium-webhelper",
+            "/usr/local/libexec/kernarium-renamed"))
+        with self.assertRaisesRegex(RuntimeError, "does not select"):
+            image.inventory(self.root)
+
+    def test_web_helper_hook_drops_only_the_kopper_override(self) -> None:
+        # Run the shipped hook's own logic with the real taskset replaced by a
+        # stub, because the tooling host has none.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            stub = directory / "stub"
+            stub.write_text("#!/bin/sh\necho \"$*\"\necho "
+                            "\"kopper=${LIBGL_KOPPER_DISABLE-unset}\"\n"
+                            "echo \"keep=${STEAM_COMPAT_CLIENT_INSTALL_PATH-unset}\"\n")
+            stub.chmod(0o755)
+            hook = directory / "taskset"
+            source = (ROOT / "tools/rootfs/steam-arm64ec/overlay"
+                      / image.WEBHELPER_HOOK).read_text()
+            self.assertIn("exec /usr/bin/taskset \"$@\"", source)
+            hook.write_text(source.replace("/usr/bin/taskset", str(stub)))
+            hook.chmod(0o755)
+            result = subprocess.run(
+                [str(hook), "0x7c", "/path/to/steamwebhelper", "-nocrashdialog"],
+                capture_output=True, text=True, env={
+                    **os.environ, "LIBGL_KOPPER_DISABLE": "true",
+                    "STEAM_COMPAT_CLIENT_INSTALL_PATH": "/home/uml/kept"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), [
+                "0x7c /path/to/steamwebhelper -nocrashdialog",
+                "kopper=unset",
+                "keep=/home/uml/kept",
+            ])
 
     def test_decoder_discovery_rule_required(self) -> None:
         (self.root / "etc/udev/rules.d/70-uml-virtio-video.rules").unlink()

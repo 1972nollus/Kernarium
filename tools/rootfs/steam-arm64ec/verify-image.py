@@ -29,6 +29,7 @@ compat_spec.loader.exec_module(compat)
 
 STEAM = "usr/share/uml-steam/home/uml/.local/share/Steam/"
 PROTON = "opt/proton-uml-arm64ec/"
+WEBHELPER_HOOK = "usr/local/libexec/kernarium-webhelper/taskset"
 STEAM_FOREIGN = tuple(STEAM + name + "/" for name in (
     "linux32", "linux64", "steamrt32", "steamrt64", "ubuntu12_32", "ubuntu12_64",
 ))
@@ -110,6 +111,12 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
     decoder_rule = root / "etc/udev/rules.d/70-uml-virtio-video.rules"
     if not decoder_rule.is_file() or 'SYMLINK+="video-dec%n"' not in decoder_rule.read_text():
         raise RuntimeError("V4L2 decoder discovery rule is absent or invalid")
+    hook = root / WEBHELPER_HOOK
+    launcher = root / "usr/local/bin/steam"
+    if not hook.is_file() or "unset LIBGL_KOPPER_DISABLE" not in hook.read_text():
+        raise RuntimeError("web-helper presentation hook is absent or invalid")
+    if f'PATH="/{hook.parent.relative_to(root).as_posix()}:$PATH"' not in launcher.read_text():
+        raise RuntimeError("image launcher does not select the web-helper presentation hook")
     manifest = compat.Vdf((root / PROTON / "toolmanifest.vdf").read_text())
     if manifest.get(("manifest", "require_tool_appid")) not in (None, "0"):
         raise RuntimeError("bundled Proton requires a downloadable Steam runtime")

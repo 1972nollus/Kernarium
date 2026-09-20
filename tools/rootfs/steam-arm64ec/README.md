@@ -120,6 +120,18 @@ is backed up before its compatibility entries change. Account settings and
 game files are preserved. A second invocation leaves a running client's
 configuration alone.
 
+The image launcher also keeps Mesa's Vulkan window system enabled for the
+client's web helper. The ARM64 client installs its own `steamwebhelper`
+launcher that exports `LIBGL_KOPPER_DISABLE=true` and then runs `taskset`.
+OpenGL would then present through X11 DRI3, whose buffer allocation this
+renderer supports for no image format, so the Big Picture window would deliver
+no frame at all and the compositor would keep showing the installation screen.
+The client verifies the sizes of its installed files and reinstalls the whole
+package when one differs, so its launcher is never edited; the image prepends
+`/usr/local/libexec/kernarium-webhelper` to `PATH` instead, and the `taskset`
+there removes the variable before running the real one. The x86-64 client
+installs no such launcher and needs no correction.
+
 The Kernarium splash appears on the boot framebuffer while storage is checked
 and the seed is copied. Gamescope then displays a matching installation screen
 with actual Steam download bytes and extraction/verification stages. Steam's
@@ -208,8 +220,9 @@ Chromium finds no dma-buf-capable buffer allocator in this guest and so offers
 no accelerated decoder at all; see the
 [shared assets](../steam-common/README.md). A separate V4L2 probe verifies
 hardware decoding and output pixels; a UI observation alone does not establish
-that CEF used hardware decoding. Gamescope's composited output has also been
-observed to freeze on the last installation-screen frame once Big Picture takes
-the display, so this session produces no further pixels to read back. Account
+that CEF used hardware decoding. This session presents only through Mesa's
+Vulkan window system; a client that takes Mesa's X11 DRI3 path instead finds no
+supported image format, delivers no frame, and leaves the compositor showing
+its last one, which is what the web-helper hook above prevents. Account
 login and a complete game download have been verified. Game launch
 remains unqualified.
