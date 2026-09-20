@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <stdexcept>
 
@@ -155,10 +156,41 @@ void partialFrameStopUsesOwnedWake(bool partialPayload)
     require(descriptorCount() == before);
 }
 
+/*
+ * The guest endpoint of the vhost-user control socket must stay blocking.
+ *
+ * With in-band notifications negotiated the front-end's only queue
+ * notification is a synchronous VHOST_USER_VRING_KICK round trip on this
+ * socket, and virtqueue_notify() latches vq->broken permanently and
+ * irreversibly the moment that round trip reports a failure. A blocking
+ * endpoint is what makes every remaining failure a genuine one: there is no
+ * would-block to mistake for a dead backend, and a reply delayed behind GPU
+ * work -- the backend answers a kick only after running that queue -- is
+ * waited out rather than failed.
+ */
+void guestTransportEndpointBlocks()
+{
+    InProcessGpuOptions options;
+    options.vncPort = 0;
+    options.width = 64;
+    options.height = 64;
+    InProcessGpuService service {std::move(options)};
+    const int transport = descriptorFromName(service.takeConnectionName());
+    require(transport >= 0);
+
+    const int flags = ::fcntl(transport, F_GETFL);
+    require(flags >= 0);
+    require((flags & O_NONBLOCK) == 0);
+
+    service.stop();
+    require(::close(transport) == 0);
+}
+
 } // namespace
 
 void runInProcessServiceTests()
 {
+    guestTransportEndpointBlocks();
     forceRepeatedFailure(StartupFailure::afterTransportSocketPair);
     forceRepeatedFailure(StartupFailure::afterInputSocketPair);
     forceRepeatedFailure(StartupFailure::workerEntry);

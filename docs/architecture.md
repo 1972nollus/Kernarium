@@ -287,6 +287,18 @@ re-entered until it consumed a whole vCPU, which no amount of disabling the
 interrupt line prevents. A would-block still ends an ordinary pass, so a
 healthy device and a spurious wake are unaffected.
 
+In-band notifications are always negotiated, so a queue is kicked by a
+synchronous request on the control socket rather than through a kick
+descriptor, and the backend answers a kick only after it has run that queue.
+The guest endpoint of that socket is therefore blocking and the guest imposes
+no deadline on the answer: a kick behind a long submission is waited out, for
+as long as the submission takes. That is what makes every failure of the round
+trip a real one, because `virtqueue_notify()` latches a virtqueue broken
+permanently and irreversibly as soon as a notification reports failure, and no
+driver can undo it. A backend that answers late is healthy; a backend whose
+answer never comes, or comes malformed, is gone, and is retired by the same
+path as a lost descriptor.
+
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
 submitter already parked waiting for control-queue space is not woken, and
