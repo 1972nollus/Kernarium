@@ -85,14 +85,14 @@ COMMON_UPSTREAM_TREE=$UML_KERNEL_UPSTREAM_TREE
 COMMON_BASE_REF=$UML_KERNEL_BASE_REF
 COMMON_ABI_VERSION=$UML_KERNEL_ABI_VERSION
 COMMON_ABI_FINGERPRINT=$UML_KERNEL_ABI_FINGERPRINT
-[ "$COMMON_PATCH_COUNT" -eq 30 ] ||
-	fail "common series has $COMMON_PATCH_COUNT patches; expected 30"
-[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 30 ] ||
-	fail "common series manifest is not the canonical 30-topic base"
+[ "$COMMON_PATCH_COUNT" -eq 31 ] ||
+	fail "common series has $COMMON_PATCH_COUNT patches; expected 31"
+[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 31 ] ||
+	fail "common series manifest is not the canonical 31-topic base"
 common_patch_files=$(find "$COMMON_SERIES" -maxdepth 1 -type f \
 	-name '*.patch' | wc -l | tr -d ' ')
-[ "$common_patch_files" -eq 30 ] ||
-	fail "common series contains $common_patch_files generated patches; expected 30"
+[ "$common_patch_files" -eq 31 ] ||
+	fail "common series contains $common_patch_files generated patches; expected 31"
 if grep -E -i \
 	'UML_X86_64_USERSPACE_ONLY|UPT_IS_X86_64|upt_is_x86_64|UML_GUEST_ISA_X86_64|enum uml_guest_isa|run x86-64 userspace through Darwin gadgets' \
 	"$COMMON_SERIES"/*.patch >/dev/null; then
