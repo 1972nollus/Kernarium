@@ -1151,6 +1151,39 @@ read_moving_code_sequences(void *opaque) noexcept
 			"decoder could not read");
 }
 
+/* One fetch window serves a run of instructions, and a block can outrun it.
+ * Every instruction after a refill has to decode from the bytes at its own
+ * address, so a window that forgets where it starts, or one that is refilled
+ * from the wrong address, shows up as the wrong immediate here.
+ */
+[[nodiscard]] bool a_block_longer_than_the_fetch_window_decodes()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr unsigned count = 40;
+	TestMemory memory;
+	std::array<std::byte, count * 5U + 2U> code{};
+	for (unsigned index = 0; index < count; ++index) {
+		/* MOV EAX, index + 1 */
+		code[index * 5U] = std::byte{0xb8};
+		code[index * 5U + 1U] =
+			static_cast<std::byte>(index + 1U);
+	}
+	code[count * 5U] = std::byte{0x0f};
+	code[count * 5U + 1U] = std::byte{0x05};
+	memory.fill(0, code);
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == count + 1U,
+		"a block longer than one fetch window did not decode whole"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == count,
+		"a block decoded across a window refill did not run its own "
+		"instructions");
+}
+
 [[nodiscard]] bool cache_retires_the_oldest_generation()
 {
 	using namespace uml::cpu::x86_64;
@@ -5220,6 +5253,7 @@ int main()
 		a_write_stamped_after_a_first_translation_does_not_survive() &&
 		an_undisturbed_first_translation_is_still_cached() &&
 		a_decode_at_a_page_edge_faults_where_it_stopped() &&
+		a_block_longer_than_the_fetch_window_decodes() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

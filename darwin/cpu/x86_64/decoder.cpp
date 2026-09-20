@@ -22,16 +22,33 @@ class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
 		std::uint64_t address, ExecutionMode mode,
-		std::byte *consumed) noexcept
+		std::byte *consumed, FetchWindow &window) noexcept
 		: memory_{memory}, address_{normalize_instruction_pointer(mode, address)},
-		  mode_{mode}, consumed_{consumed}
+		  mode_{mode}, consumed_{consumed}, window_{window}
 	{}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
-		if (position_ == filled_ && !fill())
+		if (position_ == maximum_instruction_bytes) {
+			fault_address_ = advance_instruction_pointer(
+				mode_, address_, position_);
 			return false;
-		value = std::to_integer<std::uint8_t>(window_[position_]);
+		}
+		const auto address = advance_instruction_pointer(
+			mode_, address_, position_);
+		auto offset = address - window_.address;
+		if (offset >= window_.filled) {
+			if (!fill(address))
+				return false;
+			offset = 0;
+		}
+		const auto byte = window_.bytes[static_cast<std::size_t>(offset)];
+		value = std::to_integer<std::uint8_t>(byte);
+		/* Hand the caller the byte this decode used. Reading the instruction
+		 * stream again later would be a second, separate observation of guest
+		 * memory. */
+		if (consumed_ != nullptr)
+			consumed_[position_] = byte;
 		++position_;
 		return true;
 	}
@@ -60,30 +77,21 @@ private:
 		static_cast<std::uint8_t>(::uml::cpu::x86_64::maximum_instruction_bytes);
 	static constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
-	[[nodiscard]] bool fill()
+	[[nodiscard]] bool fill(std::uint64_t address)
 	{
-		const auto fetch_address = advance_instruction_pointer(
-			mode_, address_, position_);
-		if (position_ == maximum_instruction_bytes) {
-			fault_address_ = fetch_address;
+		const auto count = static_cast<std::uint32_t>(
+			std::min<std::uint64_t>(FetchWindow::capacity,
+				page_size - (address & (page_size - 1U))));
+		/* A partial fetch leaves the window's contents unknown, and its
+		 * address would then stand for bytes it does not hold. */
+		window_.filled = 0;
+		if (!memory_.fetch(address,
+			    std::span{window_.bytes.data(), count})) {
+			fault_address_ = address;
 			return false;
 		}
-		const auto count = static_cast<std::uint8_t>(
-			std::min<std::uint64_t>(
-				maximum_instruction_bytes - position_,
-				page_size - (fetch_address & (page_size - 1U))));
-		if (!memory_.fetch(fetch_address,
-			    std::span{window_.data() + position_, count})) {
-			fault_address_ = fetch_address;
-			return false;
-		}
-		/* Hand the caller the bytes this decode actually saw. Reading the
-		 * instruction stream again later would be a second, separate
-		 * observation of guest memory. */
-		if (consumed_ != nullptr)
-			std::memcpy(consumed_ + position_,
-				window_.data() + position_, count);
-		filled_ = static_cast<std::uint8_t>(position_ + count);
+		window_.address = address;
+		window_.filled = count;
 		return true;
 	}
 
@@ -91,10 +99,9 @@ private:
 	std::uint64_t address_;
 	ExecutionMode mode_;
 	std::byte *consumed_;
+	FetchWindow &window_;
 	std::uint64_t fault_address_{};
-	std::array<std::byte, maximum_instruction_bytes> window_{};
 	std::uint8_t position_{};
-	std::uint8_t filled_{};
 };
 
 struct Prefixes final {
@@ -184,9 +191,10 @@ struct Prefixes final {
 class InstructionDecoder final {
 public:
 	InstructionDecoder(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t rip, ExecutionMode mode,
-		std::byte *consumed) noexcept
-		: reader_{memory, rip, mode, consumed}, prefixes_{.mode = mode}
+		std::uint64_t rip, ExecutionMode mode, std::byte *consumed,
+		FetchWindow &window) noexcept
+		: reader_{memory, rip, mode, consumed, window},
+		  prefixes_{.mode = mode}
 	{}
 
 	[[nodiscard]] DecodeResult run()
@@ -3128,10 +3136,13 @@ bool Instruction::terminal() const noexcept
 }
 
 DecodeResult decode(::uml::memory::GuestAddressSpace &memory,
-	std::uint64_t rip, ExecutionMode mode, std::byte *consumed) noexcept
+	std::uint64_t rip, ExecutionMode mode, std::byte *consumed,
+	FetchWindow *window) noexcept
 {
 	try {
-		return InstructionDecoder{memory, rip, mode, consumed}.run();
+		FetchWindow own;
+		return InstructionDecoder{memory, rip, mode, consumed,
+			window != nullptr ? *window : own}.run();
 	} catch (...) {
 		return {DecodeStatus::fetch_fault, {},
 			normalize_instruction_pointer(mode, rip)};

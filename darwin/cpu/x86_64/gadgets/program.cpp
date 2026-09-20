@@ -132,9 +132,13 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		 * the bytes past the block's end never enter the source. */
 		std::array<std::byte, maximum_instruction_bytes> consumed{};
 		bool recorded = !source.empty();
+		/* One window for the whole block: a run of instructions inside it is
+		 * one fetch, and the bytes the decode uses are still the bytes the
+		 * block is cached against. */
+		FetchWindow window{};
 		for (std::size_t index = 0; index < maximum_instructions; ++index) {
 			const auto decoded = decode(memory, current, mode,
-				recorded ? consumed.data() : nullptr);
+				recorded ? consumed.data() : nullptr, &window);
 			if (decoded.status != DecodeStatus::decoded) {
 				/* Preserve the side effects and retirement order of the valid
 				 * prefix. Dispatch will decode the faulting instruction again

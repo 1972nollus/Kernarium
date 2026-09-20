@@ -4,6 +4,7 @@
 #include "cpu_state.hpp"
 #include "memory/guest_address_space.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -251,6 +252,21 @@ struct DecodeResult final {
  * that reaches it. */
 inline constexpr std::size_t maximum_instruction_bytes = 15;
 
+/* Guest bytes a decode has already fetched. A caller decoding a run of
+ * instructions hands the same window to each of them, so a block is fetched
+ * once per window rather than once per instruction. The window never spans a
+ * guest page, which is what keeps it unable to fault for a page the decode has
+ * not reached; it is refilled from the address a decode wants whenever that
+ * address is not already in it, so a caller may hand a stale one to any
+ * address. */
+struct FetchWindow final {
+	static constexpr std::size_t capacity = 128;
+
+	std::uint64_t address{};
+	std::uint32_t filled{};
+	std::array<std::byte, capacity> bytes{};
+};
+
 /* `consumed`, when it is not null, must address at least
  * `maximum_instruction_bytes` writable bytes and receives every byte this call
  * read from guest memory, in the order it read them. On a decoded result the
@@ -263,11 +279,14 @@ inline constexpr std::size_t maximum_instruction_bytes = 15;
  *
  * The reader fetches in windows bounded by the guest page rather than one byte
  * per call, so an instruction is normally one observation of guest memory
- * instead of up to fifteen, and never fewer pages than it reaches.
+ * instead of up to fifteen, and never fewer pages than it reaches. `window`,
+ * when it is given, is reused across calls, so a block's bytes are fetched
+ * once for the run of instructions that fits in it -- the same single
+ * observation, made earlier.
  */
 [[nodiscard]] DecodeResult decode(
 	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
 	ExecutionMode mode = ExecutionMode::long64,
-	std::byte *consumed = nullptr) noexcept;
+	std::byte *consumed = nullptr, FetchWindow *window = nullptr) noexcept;
 
 } // namespace uml::cpu::x86_64
