@@ -296,8 +296,10 @@ as long as the submission takes. That is what makes every failure of the round
 trip a real one, because `virtqueue_notify()` latches a virtqueue broken
 permanently and irreversibly as soon as a notification reports failure, and no
 driver can undo it. A backend that answers late is healthy; a backend whose
-answer never comes, or comes malformed, is gone, and is retired by the same
-path as a lost descriptor.
+answer never comes, or comes malformed, is gone: the guest reports the failed
+round trip once, naming the queue and the error, and retires the device by the
+same path as a lost descriptor, so a failed kick never leaves a silently broken
+virtqueue behind.
 
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a

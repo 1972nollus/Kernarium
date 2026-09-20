@@ -1,4 +1,4 @@
-From 896aa04539a56e4d3bae28051a69d3117b5994ac Mon Sep 17 00:00:00 2001
+From 72f38b39bc09dffef75e4f5da22dcdc6401e7cc9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 09:54:30 +0900
 Subject: [PATCH 31/31] uml: stop a vhost-user device whose backend has gone
@@ -38,17 +38,58 @@ gone. A would-block still returns early, so a healthy device and a spurious
 wake are unaffected, and a partial notification is still a protocol WARN rather
 than a dead peer.
 
+A kick has a second shape, and it is the only one this port ever uses. In-band
+notifications are in VHOST_USER_SUPPORTED_PROTOCOL_F and every backend offers
+them, so vu_setup_vq() leaves kick_fd at -1 on every queue of every device and
+a kick is a synchronous VHOST_USER_VRING_KICK round trip on the main socket.
+That branch turned any failure of the round trip into a bare false, and
+virtqueue_notify() answers a false notification by latching vq->broken --
+permanently, irreversibly, with no message and no retirement. The guest is left
+holding a device that can never accept another buffer and is never told. Give
+the branch the same treatment as a descriptor: report once, naming the queue
+and the error, stop that queue's call descriptor, and hand the device to the
+connection-broken path.
+
+Stopping the call descriptor is not optional, and the kick-descriptor path was
+wrong about it too. Setting info->backend_gone makes vu_interrupt() return
+without draining info->call_fd, so a completion the backend has already written
+leaves that descriptor readable for ever. The read registration is level
+triggered, so the handler is re-entered from the host poll loop without end and
+the CPU that took the interrupt never leaves it -- measured as a vCPU pinned in
+os_waiting_for_events_epoll() and an RCU stall twenty seconds later, which is
+the very storm the call-descriptor path above exists to prevent. The latch and
+os_del_epoll_fd() must move together, exactly as they do in vu_interrupt().
+
+Reporting cannot cost a healthy guest its device, because that round trip has
+no transient left to lose. The guest endpoint of the main socket is blocking
+and neither the send nor the reply wait carries a deadline; -EINTR is retried
+at every step; full_read() loops over a split header; sock_lock serializes
+concurrent kicks; and backend requests that arrive during the reply wait are
+drained first. A kick is acknowledged only after its queue has run, so a reply
+behind a long submission is waited out rather than failed -- a reply held for
+45 s, four times the host GPU watchdog's own limit, costs 45 s of wall clock
+and nothing else. What is left is a desynchronized control stream, a non-zero
+acknowledgement status, end of file, or a hard errno, and each of those is a
+backend that is gone.
+
+Leaving that branch silent was measured. One run broke a virtio-gpu control
+queue through it and then printed 92335 WARN_ONs from drivers/gpu/drm/virtio
+and 1.02 million console lines without ever stopping, because the framebuffer
+console lives on that same device: each warning damages the framebuffer, whose
+repair submits the two buffers that warn again. The device was never retired
+and the workload never failed, it only stopped making progress.
+
 Note that a broken virtio device is not by itself enough for virtio-gpu, which
 never tests virtqueue_is_broken() and discards the -EIO from virtqueue_add_sgs();
 that is a separate defect in drivers/gpu/drm/virtio.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- arch/um/drivers/virtio_uml.c | 91 ++++++++++++++++++++++++++++++++----
- 1 file changed, 81 insertions(+), 10 deletions(-)
+ arch/um/drivers/virtio_uml.c | 106 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 93 insertions(+), 13 deletions(-)
 
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index 555b1029b..d749206b3 100644
+index 555b1029b..cc2879c5e 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
 @@ -67,6 +67,7 @@ struct virtio_uml_device {
@@ -135,37 +176,49 @@ index 555b1029b..d749206b3 100644
  	struct virtio_uml_vq_info *info = vq->priv;
  	const uint64_t n = 1;
  	int rc;
-@@ -1025,38 +1065,69 @@ static bool vu_notify(struct virtqueue *vq)
+@@ -1025,38 +1065,78 @@ static bool vu_notify(struct virtqueue *vq)
  	if (info->suspended)
  		return true;
  
--	time_travel_propagate_time();
--
--	if (info->kick_fd < 0) {
--		struct virtio_uml_device *vu_dev;
 +	if (unlikely(info->backend_gone))
 +		return false;
- 
--		vu_dev = to_virtio_uml_device(vq->vdev);
-+	time_travel_propagate_time();
- 
-+	if (info->kick_fd < 0)
- 		return vhost_user_set_vring_state(vu_dev, VHOST_USER_VRING_KICK,
- 						  vq->index, 0) == 0;
--	}
- 
- 	do {
- 		rc = os_write_file(info->kick_fd, &n, sizeof(n));
- 	} while (rc == -EINTR);
--	return !WARN(rc != sizeof(n), "write returned %d\n", rc);
-+	if (rc == sizeof(n))
-+		return true;
 +
+ 	time_travel_propagate_time();
+ 
+ 	if (info->kick_fd < 0) {
+-		struct virtio_uml_device *vu_dev;
+-
+-		vu_dev = to_virtio_uml_device(vq->vdev);
+-
+-		return vhost_user_set_vring_state(vu_dev, VHOST_USER_VRING_KICK,
+-						  vq->index, 0) == 0;
++		/*
++		 * An in-band notification is a synchronous round trip on the
++		 * main socket. Its transient failures are already retried or
++		 * waited out inside that round trip, so anything it reports
++		 * here is a genuine transport failure.
++		 */
++		rc = vhost_user_set_vring_state(vu_dev, VHOST_USER_VRING_KICK,
++						vq->index, 0);
++		if (!rc)
++			return true;
++	} else {
++		do {
++			rc = os_write_file(info->kick_fd, &n, sizeof(n));
++		} while (rc == -EINTR);
++		if (rc == sizeof(n))
++			return true;
+ 	}
+ 
+-	do {
+-		rc = os_write_file(info->kick_fd, &n, sizeof(n));
+-	} while (rc == -EINTR);
+-	return !WARN(rc != sizeof(n), "write returned %d\n", rc);
 +	info->backend_gone = true;
 +	vu_err(vu_dev,
-+	       "%s: kick descriptor returned %d, the vhost-user backend is gone\n",
++	       "%s: kick returned %d, the vhost-user backend is gone\n",
 +	       info->name, rc);
-+	vu_backend_gone(vu_dev, -1);
++	vu_backend_gone(vu_dev, info->call_fd);
 +	return false;
  }
  
