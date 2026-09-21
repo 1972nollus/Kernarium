@@ -27,6 +27,51 @@ template<class T> T load(std::span<const std::uint8_t> bytes)
     std::memcpy(&value, bytes.data(), sizeof(value));
     return value;
 }
+/* A frame that was decoded before the client negotiated a packed capture
+ * format still has to be delivered in it, and a decoder that will not emit
+ * packed frames at all must still answer the format it advertised. The host
+ * converts such a frame itself; a frame the decoder produced packed is copied
+ * unchanged. Unspecified color attachments are interpreted the way the
+ * platform decoder interprets them, by frame height, so the two paths agree.
+ * An empty result rejects the frame rather than delivering wrong pixels. */
+std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame)
+{
+    const auto width = std::size_t(frame.format.width);
+    const auto height = std::size_t(frame.format.height);
+    const std::size_t step = frame.format.bitDepth == 10 ? 2 : 1;
+    const auto chromaWidth = (width + 1) / 2;
+    if (!width || !height || frame.luma.size() < width * height * step ||
+        frame.chroma.size() < chromaWidth * 2 * ((height + 1) / 2) * step)
+        return {};
+    const bool highDefinition = height > 576;
+    const double kr = highDefinition ? 1.793 : 1.596;
+    const double kb = highDefinition ? 2.112 : 2.017;
+    const double gu = highDefinition ? 0.213 : 0.392;
+    const double gv = highDefinition ? 0.533 : 0.813;
+    // A 10-bit sample keeps its data in the high bits of a little-endian pair.
+    const auto sample = [step](const std::vector<std::uint8_t>& plane, std::size_t index) {
+        return int(plane[step * index + step - 1]);
+    };
+    const auto byte = [](double value) {
+        return std::uint8_t(std::clamp(value, 0.0, 255.0) + 0.5);
+    };
+    std::vector<std::uint8_t> pixels(width * height * 4);
+    for (std::size_t row = 0; row < height; ++row) {
+        const auto pairs = (row / 2) * chromaWidth * 2;
+        for (std::size_t column = 0; column < width; ++column) {
+            const double luma = 1.164 * (sample(frame.luma, row * width + column) - 16);
+            const double u = sample(frame.chroma, pairs + (column / 2) * 2) - 128;
+            const double v = sample(frame.chroma, pairs + (column / 2) * 2 + 1) - 128;
+            auto* out = pixels.data() + (row * width + column) * 4;
+            out[0] = byte(luma + kb * u);
+            out[1] = byte(luma - gu * u - gv * v);
+            out[2] = byte(luma + kr * v);
+            out[3] = 0xff;
+        }
+    }
+    return pixels;
+}
+
 template<class T> std::vector<std::uint8_t> bytes(const T& value)
 {
     std::vector<std::uint8_t> result(sizeof(value));
@@ -146,7 +191,11 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
         const auto y = width * height;
         const auto cw = (width + 1) / 2;
         const auto ch = (height + 1) / 2;
-        if (format == VIRTIO_VIDEO_FORMAT_P010) {
+        if (format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
+            // One packed plane of 8-bit B, G, R, A samples, one row per line.
+            p.num_planes = 1;
+            p.plane_formats[0] = {4 * y, 4 * width};
+        } else if (format == VIRTIO_VIDEO_FORMAT_P010) {
             p.num_planes = 1;
             p.plane_formats[0] = {2 * y + 4 * cw * ch, 2 * width};
         } else {
@@ -279,11 +328,15 @@ public:
     void collect(std::uint32_t id, Stream& stream)
     {
         const auto format = stream.decoder->format();
+        /* Packed capture has left the YCbCr domain, so the stream's bit depth
+         * neither selects the raw format nor invalidates the negotiated one. */
+        const bool packed = stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
         if (format.width && (!stream.sourceKnown || stream.output.frame_width != format.width ||
             stream.output.frame_height != format.height ||
-            (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) != (format.bitDepth == 10))) {
+            (!packed && (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) != (format.bitDepth == 10)))) {
             auto raw = stream.output.format;
-            if (format.bitDepth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
+            if (packed) { /* keep the negotiated packed format */ }
+            else if (format.bitDepth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
             else if (raw == VIRTIO_VIDEO_FORMAT_P010) raw = VIRTIO_VIDEO_FORMAT_NV12;
             stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, format.width, format.height);
             stream.sourceKnown = true;
@@ -313,7 +366,12 @@ public:
             stream.frames.pop_front();
             ++stream.delivered;
             std::vector<std::vector<std::uint8_t>> planes;
-            if (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) {
+            if (stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
+                planes.push_back(frame.layout == uml::platform::VideoPixelLayout::packedBgra
+                    ? std::move(frame.pixels) : packBgra(frame));
+            } else if (frame.layout == uml::platform::VideoPixelLayout::packedBgra) {
+                planes.emplace_back(); // a packed frame cannot answer a planar format
+            } else if (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) {
                 frame.luma.insert(frame.luma.end(), frame.chroma.begin(), frame.chroma.end());
                 planes.push_back(std::move(frame.luma));
             } else if (stream.output.format == VIRTIO_VIDEO_FORMAT_YUV420) {
@@ -328,9 +386,9 @@ public:
                 planes.push_back(std::move(frame.luma));
                 planes.push_back(std::move(frame.chroma));
             }
-            bool good = resource.planes.size() == planes.size();
+            bool good = resource.planes.size() == planes.size() && !planes.empty();
             for (std::size_t i = 0; good && i < planes.size(); ++i)
-                good = transfer(resource.planes[i], planes[i], true);
+                good = !planes[i].empty() && transfer(resource.planes[i], planes[i], true);
             completions.push_back({output.request, queued(id, frame.timestamp,
                 good ? 0 : VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, good ? &stream.output : nullptr)});
         }
@@ -422,13 +480,18 @@ public:
                 }
                 stream.input = params(p.queue_type, p.format, p.frame_width, p.frame_height);
             } else {
-                if (p.format != VIRTIO_VIDEO_FORMAT_NV12 && p.format != VIRTIO_VIDEO_FORMAT_YUV420 &&
+                const bool packed = p.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
+                if (!packed && p.format != VIRTIO_VIDEO_FORMAT_NV12 && p.format != VIRTIO_VIDEO_FORMAT_YUV420 &&
                     p.format != VIRTIO_VIDEO_FORMAT_P010) throw std::invalid_argument("unsupported raw video format");
                 const bool tenBit = p.format == VIRTIO_VIDEO_FORMAT_P010;
-                if (std::none_of(capabilities.begin(), capabilities.end(), [&stream, tenBit](const auto& c) {
+                /* A packed format carries 8-bit samples whatever the stream's
+                 * depth is, so only a planar choice has to match it. */
+                if (!packed && (std::none_of(capabilities.begin(), capabilities.end(), [&stream, tenBit](const auto& c) {
                         return wireCodec(c.codec) == stream.coded && c.bitDepth == (tenBit ? 10u : 8u);
-                    }) || (stream.sourceKnown && (stream.decoder->format().bitDepth == 10) != tenBit))
+                    }) || (stream.sourceKnown && (stream.decoder->format().bitDepth == 10) != tenBit)))
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
+                stream.decoder->requestOutputLayout(packed ? uml::platform::VideoPixelLayout::packedBgra
+                                                           : uml::platform::VideoPixelLayout::planarYuv);
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
             }
             return done(reply(id));

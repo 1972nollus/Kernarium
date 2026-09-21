@@ -30,13 +30,24 @@ struct VideoFormat {
     friend bool operator==(const VideoFormat&, const VideoFormat&) = default;
 };
 
-// Tightly packed NV12 (8-bit) or P010 (10-bit); timestamps retain the caller's
-// units and are returned in presentation order, including delayed drain output.
+// How a decoded frame carries its samples. A planar frame is the decoder's
+// native 4:2:0 output; a packed frame has already left the YCbCr domain and is
+// what a client that only draws through a 32-bit RGB surface needs.
+enum class VideoPixelLayout { planarYuv, packedBgra };
+
+// Timestamps retain the caller's units and are returned in presentation order,
+// including delayed drain output. `layout` selects which buffers carry the
+// samples and is the layout the frame actually has, not the one last requested.
 struct DecodedVideoFrame {
     VideoFormat format;
+    VideoPixelLayout layout {VideoPixelLayout::planarYuv};
     std::uint64_t timestamp {};
+    // planarYuv: tightly packed NV12 (8-bit) or P010 (10-bit).
     std::vector<std::uint8_t> luma;
     std::vector<std::uint8_t> chroma;
+    // packedBgra: tightly packed rows of 8-bit B, G, R, A samples, each row
+    // `format.width * 4` bytes and alpha opaque.
+    std::vector<std::uint8_t> pixels;
 };
 
 class VideoDecoder {
@@ -47,6 +58,10 @@ public:
     virtual void drain() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;
+    // Requests the layout of frames decoded from this point on. Frames already
+    // decoded keep the layout they were produced with, and a decoder that
+    // cannot produce the request keeps producing its native layout.
+    virtual void requestOutputLayout(VideoPixelLayout layout) = 0;
 };
 
 [[nodiscard]] std::vector<VideoDecodeCapability> videoDecodeCapabilities();

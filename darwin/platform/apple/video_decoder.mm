@@ -309,6 +309,16 @@ public:
     }
     VideoFormat format() const noexcept override { return format_; }
 
+    /* A client negotiates its capture layout after the decoder has already
+     * seen the stream's headers, so the session is rebuilt in place. Frames
+     * decoded before the request keep the layout they were produced with. */
+    void requestOutputLayout(VideoPixelLayout layout) override
+    {
+        if (layout == layout_) return;
+        layout_ = layout;
+        if (description_.get()) configure();
+    }
+
 private:
     void configure()
     {
@@ -361,16 +371,25 @@ private:
         const auto maxHeight = codec_ == VideoCodec::hevc ? 4320u : 2304u;
         if (!format_.width || !format_.height || format_.width > maxWidth || format_.height > maxHeight)
             throw std::runtime_error("video dimensions exceed decoder capabilities");
-        const OSType pixelFormat = format_.bitDepth == 10 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+        const OSType planarFormat = format_.bitDepth == 10 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
                                                         : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
         if (@available(macOS 10.9, iOS 17.0, tvOS 17.0, *)) {
             NSDictionary* specification = @{(__bridge NSString*)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES};
-            NSDictionary* attributes = @{(__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(pixelFormat),
-                                        (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{}};
             VTDecompressionOutputCallbackRecord callback {output, this};
-            checked(VTDecompressionSessionCreate(kCFAllocatorDefault, description_.get(),
-                (__bridge CFDictionaryRef)specification, (__bridge CFDictionaryRef)attributes,
-                &callback, session_.address()), "create hardware video decoder");
+            const auto create = [&](OSType pixelFormat) {
+                NSDictionary* attributes = @{(__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(pixelFormat),
+                                            (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{}};
+                return VTDecompressionSessionCreate(kCFAllocatorDefault, description_.get(),
+                    (__bridge CFDictionaryRef)specification, (__bridge CFDictionaryRef)attributes,
+                    &callback, session_.address());
+            };
+            /* The hardware converts to packed BGRA as part of decoding, which
+             * is why a client that draws through an RGB surface asks for it.
+             * A decoder that will not emit it still decodes, in its own
+             * layout, and the frame reports which layout it carries. */
+            if (layout_ == VideoPixelLayout::packedBgra && create(kCVPixelFormatType_32BGRA) != noErr)
+                session_.reset();
+            if (!session_.get()) checked(create(planarFormat), "create hardware video decoder");
             CFObject<CFTypeRef> hardware;
             const auto status = VTSessionCopyProperty(session_.get(),
                 kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
@@ -398,12 +417,15 @@ private:
             if (!image) return;
             if (self.frames_.size() >= 32) throw std::runtime_error("decoded video queue is full");
             const auto pixelFormat = CVPixelBufferGetPixelFormatType(image);
+            const bool packed = pixelFormat == kCVPixelFormatType_32BGRA;
             const bool tenBit = pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-            if (!tenBit && pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
+            if (!packed && !tenBit && pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
                 pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
                 throw std::runtime_error("unexpected hardware video pixel format");
-            if (CVPixelBufferGetPlaneCount(image) != 2) throw std::runtime_error("invalid hardware video planes");
+            if (CVPixelBufferGetPlaneCount(image) != (packed ? 0u : 2u))
+                throw std::runtime_error("invalid hardware video planes");
             DecodedVideoFrame frame;
+            frame.layout = packed ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
             frame.format = {std::uint32_t(CVPixelBufferGetWidth(image)),
                             std::uint32_t(CVPixelBufferGetHeight(image)), tenBit ? 10u : 8u};
             if (!CMTIME_IS_NUMERIC(timestamp) || timestamp.value < 0)
@@ -414,6 +436,17 @@ private:
                 CVPixelBufferRef image;
                 ~Unlock() { CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly); }
             } unlock {image};
+            if (packed) {
+                const std::size_t rowBytes = std::size_t(frame.format.width) * 4;
+                const auto stride = CVPixelBufferGetBytesPerRow(image);
+                const auto* source = static_cast<const std::uint8_t*>(CVPixelBufferGetBaseAddress(image));
+                if (!source || stride < rowBytes) throw std::runtime_error("truncated hardware video surface");
+                frame.pixels.resize(rowBytes * frame.format.height);
+                for (std::size_t row = 0; row < frame.format.height; ++row)
+                    std::memcpy(frame.pixels.data() + row * rowBytes, source + row * stride, rowBytes);
+                self.frames_.push_back(std::move(frame));
+                return;
+            }
             for (unsigned plane = 0; plane < 2; ++plane) {
                 const std::size_t width = plane ? ((frame.format.width + 1) / 2) * 2 : frame.format.width;
                 const std::size_t height = plane ? (frame.format.height + 1) / 2 : frame.format.height;
@@ -442,6 +475,7 @@ private:
 
     VideoCodec codec_;
     VideoFormat format_;
+    VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     std::array<std::vector<std::uint8_t>, 3> parameters_;
     CFObject<CMVideoFormatDescriptionRef> description_;
     CFObject<VTDecompressionSessionRef> session_;

@@ -19,8 +19,21 @@ which every Apple silicon host does; the wire contract and the maintained
 driver already name VP9, so this needs no kernel or protocol change. The device
 still drops a platform capability the protocol cannot name rather than
 publishing an unnamed format on the queue.
-Decoded surfaces are copied into guest NV12, planar YUV420, or P010 buffers.
-This path does not implement encoding.
+Decoded surfaces are copied into guest NV12, planar YUV420, P010, or packed
+BGRA buffers. This path does not implement encoding.
+
+Packed BGRA is a single plane of 8-bit B, G, R, A samples, `width * 4` bytes per
+row and opaque alpha, reached over the wire as `VIRTIO_VIDEO_FORMAT_BGRA8888`
+and in the guest as `V4L2_PIX_FMT_ABGR32`. It is offered for every stream
+whatever the coded bit depth is, because a client that can only draw through a
+32-bit RGB surface would otherwise convert every frame on a guest processor,
+which costs far more than decoding it. Selecting it makes the host decoder
+produce the packed samples itself, so no processor in the path converts a
+frame. A frame that was already decoded when the client negotiated the format,
+and a frame from a decoder that will not emit packed samples, are converted by
+the device instead; both paths read unspecified color attachments the way the
+platform decoder does, by frame height, so a stream never changes appearance
+part way through.
 
 A capture buffer may also be a host-visible Virtio-GPU blob, which has no
 guest-physical address because it lives in the vhost-user shared-memory region

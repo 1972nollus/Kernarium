@@ -39,24 +39,42 @@ template<class T> T read(std::span<const std::uint8_t> data)
     std::memcpy(&result, data.data(), sizeof(result));
     return result;
 }
+/* `packs` distinguishes a decoder that produces packed frames itself, as the
+ * Apple hardware does, from one that only ever produces its planar output and
+ * leaves the device to convert. */
 class Decoder final : public VideoDecoder {
 public:
-    explicit Decoder(bool ten) : ten_(ten) {}
+    explicit Decoder(bool ten, bool packs = false) : ten_(ten), packs_(packs) {}
     void submit(std::span<const std::uint8_t> packet, std::uint64_t timestamp) override
     {
         require(packet.size() == 5 && packet[0] == 1 && packet[4] == 5, "scatter input changed");
         format_ = {64, 64, ten_ ? 10u : 8u};
-        DecodedVideoFrame frame {format_, timestamp, {}, {}};
-        frame.luma.resize(4096 * (ten_ ? 2 : 1), 0x39);
-        frame.chroma.resize(2048 * (ten_ ? 2 : 1));
-        for (std::size_t i = 0; i < frame.chroma.size(); ++i) frame.chroma[i] = i % 2 ? 0x91 : 0x27;
+        DecodedVideoFrame frame;
+        frame.format = format_;
+        frame.timestamp = timestamp;
+        if (packs_ && layout_ == VideoPixelLayout::packedBgra) {
+            frame.layout = VideoPixelLayout::packedBgra;
+            frame.format.bitDepth = 8;
+            frame.pixels.resize(64 * 64 * 4);
+            for (std::size_t i = 0; i < frame.pixels.size(); i += 4) {
+                frame.pixels[i] = 0x10; frame.pixels[i + 1] = 0x20;
+                frame.pixels[i + 2] = 0x30; frame.pixels[i + 3] = 0xff;
+            }
+        } else {
+            frame.luma.resize(4096 * (ten_ ? 2 : 1), 0x39);
+            frame.chroma.resize(2048 * (ten_ ? 2 : 1));
+            for (std::size_t i = 0; i < frame.chroma.size(); ++i) frame.chroma[i] = i % 2 ? 0x91 : 0x27;
+        }
         frames_.push_back(std::move(frame));
     }
     void drain() override {}
     std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
     VideoFormat format() const noexcept override { return format_; }
+    void requestOutputLayout(VideoPixelLayout layout) override { layout_ = layout; }
 private:
     bool ten_;
+    bool packs_ {};
+    VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
     std::vector<DecodedVideoFrame> frames_;
 };
@@ -367,12 +385,124 @@ void sharedMemoryCapture()
     ::close(descriptor);
 }
 
+/* A client that only draws through a 32-bit RGB surface negotiates packed
+ * capture. The frames the decoder produces packed arrive unchanged; a frame it
+ * produced planar before the negotiation is converted by the device, so the
+ * client never sees the format it did not ask for. */
+void packedCapture(std::size_t page, bool decoderPacks)
+{
+    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
+    VirtioVideoDevice device(caps, [decoderPacks](auto) { return std::make_unique<Decoder>(false, decoderPacks); });
+    std::vector<std::uint8_t> memory(8 * page, 0xcc);
+    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
+        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
+        return std::span(memory).subspan(offset, size);
+    });
+    std::uint64_t next = 1;
+    auto command = [&](const auto& value) {
+        std::vector<std::uint8_t> request;
+        append(request, value);
+        return device.processQueue(0, next++, request, 16384);
+    };
+    auto ok = [&](const auto& value) {
+        auto result = command(value);
+        require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "command failed");
+    };
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+
+    // The capture queue advertises the packed format for every stream.
+    std::vector<std::uint8_t> query;
+    append(query, virtio_video_query_capability{{VIRTIO_VIDEO_CMD_QUERY_CAPABILITY, 0}, output, {}});
+    const auto capability = device.processQueue(0, next++, query, 65536).response;
+    auto offset = sizeof(virtio_video_query_capability_resp);
+    bool advertised = false;
+    for (unsigned i = 0; i < read<virtio_video_query_capability_resp>(capability).num_descs; ++i) {
+        const auto desc = read<virtio_video_format_desc>(
+            std::span(capability).subspan(offset));
+        if (desc.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
+            require(desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER, "packed capture is not one buffer");
+            require(desc.mask != 0, "packed capture reaches no codec");
+            advertised = true;
+        }
+        offset += sizeof(virtio_video_format_desc);
+        for (unsigned frame = 0; frame < desc.num_frames; ++frame) {
+            const auto described = read<virtio_video_format_frame>(std::span(capability).subspan(offset));
+            offset += sizeof(virtio_video_format_frame) +
+                described.num_rates * sizeof(virtio_video_format_range);
+        }
+    }
+    require(advertised, "packed capture format is not advertised");
+
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 7};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+    ok(create);
+    virtio_video_set_params set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 7};
+    set.params.queue_type = output;
+    set.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
+    set.params.frame_width = set.params.frame_height = 64;
+    ok(set);
+    virtio_video_get_params get {};
+    get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 7};
+    get.queue_type = output;
+    const auto negotiated = read<virtio_video_get_params_resp>(command(get).response).params;
+    require(negotiated.format == VIRTIO_VIDEO_FORMAT_BGRA8888, "packed capture was substituted");
+    require(negotiated.num_planes == 1, "packed capture is not a single plane");
+    require(negotiated.plane_formats[0].stride == 64 * 4, "packed capture stride differs");
+    require(negotiated.plane_formats[0].plane_size == 64 * 64 * 4, "packed capture plane size differs");
+
+    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 7, queue, id});
+        for (const auto& plane : planes) {
+            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
+            for (const auto& segment : plane) append(request, segment);
+        }
+        return device.processQueue(0, next++, request, 16384);
+    };
+    memory[page - 2] = 1; memory[page - 1] = 2;
+    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+    const std::uint64_t base = 3 * page;
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
+    virtio_video_resource_queue capture {};
+    capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+    capture.stream_id = 7; capture.queue_type = output; capture.resource_id = 2;
+    const auto captureRequest = next;
+    require(command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    virtio_video_resource_queue packet {};
+    packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+    packet.stream_id = 7; packet.queue_type = input; packet.resource_id = 1;
+    packet.data_sizes[0] = 5; packet.timestamp = 7654321;
+    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    VhostUserQueueCompletion completion;
+    require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
+    const auto result = read<virtio_video_resource_queue_resp>(completion.response);
+    require(result.flags == 0 && result.timestamp == packet.timestamp, "packed frame was not delivered");
+    require(result.data_sizes[0] == 64 * 64 * 4, "packed frame size differs");
+    /* BT.601 limited range for a frame this small, matching what the platform
+     * decoder infers from an unspecified color attachment. */
+    const std::uint8_t expected[4] = {decoderPacks ? std::uint8_t(0x10) : std::uint8_t(0),
+                                      decoderPacks ? std::uint8_t(0x20) : std::uint8_t(69),
+                                      decoderPacks ? std::uint8_t(0x30) : std::uint8_t(75), 0xff};
+    for (std::size_t pixel : {std::size_t(0), std::size_t(64 * 64 - 1)})
+        for (unsigned channel = 0; channel < 4; ++channel)
+            require(memory[base + pixel * 4 + channel] == expected[channel], "packed pixels differ");
+    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
+    device.reset();
+}
+
 }
 int main()
 {
     try {
         codecLevelControls();
         sharedMemoryCapture();
+        for (const auto page : {4096u, 16384u})
+            for (const bool decoderPacks : {true, false})
+                packedCapture(page, decoderPacks);
         for (const auto page : {4096u, 16384u})
             for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
                 exercise(format, page);

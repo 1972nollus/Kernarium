@@ -79,7 +79,12 @@ std::vector<std::uint8_t> capabilityResponse(
         if (std::find(coded.begin(), coded.end(), format) == coded.end()) coded.push_back(format);
         tenBit |= cap.bitDepth == 10;
     }
-    std::vector<std::uint32_t> raw {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420};
+    /* Packed BGRA is decoded to by the host, so it is offered for every
+     * stream regardless of the coded bit depth. A client that can only draw
+     * through a 32-bit RGB surface would otherwise convert each frame itself
+     * on the guest processor. */
+    std::vector<std::uint32_t> raw {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420,
+                                    VIRTIO_VIDEO_FORMAT_BGRA8888};
     if (tenBit) raw.push_back(VIRTIO_VIDEO_FORMAT_P010);
     const auto& formats = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? coded : raw;
     virtio_video_query_capability_resp header {};
@@ -93,7 +98,8 @@ std::vector<std::uint8_t> capabilityResponse(
         for (const auto& cap : capabilities) {
             const bool input = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
             if (input && wireCodec(cap.codec) != format) continue;
-            if (!input && cap.bitDepth != (format == VIRTIO_VIDEO_FORMAT_P010 ? 10u : 8u)) continue;
+            if (!input && format != VIRTIO_VIDEO_FORMAT_BGRA8888 &&
+                cap.bitDepth != (format == VIRTIO_VIDEO_FORMAT_P010 ? 10u : 8u)) continue;
             width = std::max(width, cap.maximumWidth);
             height = std::max(height, cap.maximumHeight);
             if (input) {

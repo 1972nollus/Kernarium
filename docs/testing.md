@@ -120,9 +120,9 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`, `tar`,
 `sha256sum`, `timeout`, and either `curl` or `wget`. The test boots a disposable
 overlay, transfers generated fixtures over the local SLiRP endpoint, checks
-every advertised profile's pixels, raw layouts, imported dma-buf capture,
-timestamps, source-change and EOS events, and rejects kernel faults or failed
-shutdown. Run it on both Linux
+every advertised profile's pixels, raw layouts including packed BGRA capture,
+imported dma-buf capture, timestamps, source-change and EOS events, and rejects
+kernel faults or failed shutdown. Run it on both Linux
 page profiles; Android uses its own 16 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with

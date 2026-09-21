@@ -15,6 +15,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -234,6 +235,51 @@ void decode(const char* device, const std::string& directory, const char* name, 
             const auto* data = static_cast<const std::uint8_t*>(outputs[buffer.index][i].data);
             actual.insert(actual.end(), data + planes[i].data_offset, data + planes[i].bytesused);
         }
+        if (raw == V4L2_PIX_FMT_ABGR32) {
+            /* The host decodes straight to packed B, G, R, A. The reference is
+             * the planar fixture taken through the limited-range BT.601 matrix
+             * a frame this small carries when the stream states nothing, and
+             * only a pixel whose chroma neighborhood is constant is compared:
+             * hardware interpolates the subsampled field, so a pixel beside a
+             * chroma edge has no single defined answer. */
+            require(actual.size() == 128u * 96u * 4u, "packed frame size differs");
+            const unsigned step = reference.size() == 128u * 96u * 3u ? 2u : 1u;
+            const auto sample = [&](std::size_t index) { return int(reference[step * index + step - 1]); };
+            const auto chroma = [&](long cellRow, long cellColumn) {
+                cellRow = cellRow < 0 ? 0 : cellRow > 47 ? 47 : cellRow;
+                cellColumn = cellColumn < 0 ? 0 : cellColumn > 63 ? 63 : cellColumn;
+                const auto pair = std::size_t(128 * 96 + cellRow * 128 + cellColumn * 2);
+                return std::pair<int, int>{sample(pair), sample(pair + 1)};
+            };
+            unsigned maximum = 0, checked = 0;
+            for (long row = 0; row < 96; ++row)
+                for (long column = 0; column < 128; ++column) {
+                    const auto* got = actual.data() + (row * 128 + column) * 4;
+                    require(got[3] == 0xff, "packed frame is not opaque");
+                    const auto cell = chroma(row / 2, column / 2);
+                    bool flat = true;
+                    for (long dy = -1; dy <= 1; ++dy)
+                        for (long dx = -1; dx <= 1; ++dx)
+                            flat = flat && chroma(row / 2 + dy, column / 2 + dx) == cell;
+                    if (!flat) continue;
+                    ++checked;
+                    const double luma = 1.164 * (sample(std::size_t(row * 128 + column)) - 16);
+                    const double u = cell.first - 128, v = cell.second - 128;
+                    const double wanted[3] = {luma + 2.017 * u, luma - 0.392 * u - 0.813 * v,
+                                              luma + 1.596 * v};
+                    for (unsigned channel = 0; channel < 3; ++channel) {
+                        const double clamped = wanted[channel] < 0 ? 0 : wanted[channel] > 255 ? 255 : wanted[channel];
+                        const int difference = int(got[channel]) - int(clamped + 0.5);
+                        maximum = std::max(maximum, unsigned(difference < 0 ? -difference : difference));
+                    }
+                }
+            require(checked >= 128 * 96 / 8, "too little of the packed frame could be verified");
+            require(maximum <= 8, "V4L2 packed pixels differ from the reference");
+            std::printf("PASS %s raw=%08x memory=%s max-error=%u pixels=%u\n", name, raw,
+                memory == V4L2_MEMORY_DMABUF ? "dmabuf" : "mmap", maximum, checked);
+            std::fflush(stdout);
+            continue;
+        }
         require(actual.size() == reference.size(), "decoded plane sizes differ");
         if (raw == V4L2_PIX_FMT_YUV420M) {
             const auto planar = actual;
@@ -288,6 +334,8 @@ int main(int argc, char** argv)
             if (fmt.pixelformat == V4L2_PIX_FMT_MJPEG) {
                 decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
                 decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_DMABUF);
+                decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_ABGR32);
+                decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_ABGR32, V4L2_MEMORY_DMABUF);
                 ++tested; continue;
             }
             // VP9 states its profile in the stream itself, so the driver
@@ -296,6 +344,9 @@ int main(int argc, char** argv)
             if (fmt.pixelformat == V4L2_PIX_FMT_VP9) {
                 decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
                 decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_NV12M,
+                       V4L2_MEMORY_DMABUF);
+                decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_ABGR32);
+                decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_ABGR32,
                        V4L2_MEMORY_DMABUF);
                 ++tested; continue;
             }
@@ -316,8 +367,14 @@ int main(int argc, char** argv)
                 const auto* profile = std::find_if(first, last, [value](const auto& p) { return p.value == unsigned(value); });
                 require(profile != last, "advertised profile lacks a fixture");
                 decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw);
+                /* Packed capture is what a client that only draws through a
+                 * 32-bit RGB surface negotiates, and it is offered whatever
+                 * the stream's bit depth is. */
+                decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_ABGR32);
                 if (!imported) {
                     decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw,
+                           V4L2_MEMORY_DMABUF);
+                    decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_ABGR32,
                            V4L2_MEMORY_DMABUF);
                     imported = true;
                 }
