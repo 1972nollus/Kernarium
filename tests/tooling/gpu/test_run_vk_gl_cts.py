@@ -2174,6 +2174,14 @@ native_display_cleanup
                 venus_generated,
             )
             self.assertIn("formal_conformance=false", venus_generated)
+            self.assertIn("vulkan-mustpass-03of16-v4", venus_generated)
+            self.assertNotIn("vulkan-mustpass-03of16-v3", venus_generated)
+            self.assertIn(
+                "pipeline.fast_linked_library.render_to_image.core.2d_array."
+                "huge.width_height_layers.r8g8b8a8_unorm",
+                venus_generated,
+            )
+            self.assertIn("sleep 20", venus_generated)
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
         shards = cts.load_apple_matrix_shards()

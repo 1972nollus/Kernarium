@@ -260,7 +260,8 @@ def vulkan_mustpass_setup(
     device-memory exclusions. The guest transports the excluded names.
     """
 
-    identifier = driver.apple_mustpass_campaign(index)
+    profile = driver.apple_mustpass_profile(index)
+    identifier = profile.identifier
     selection = driver.resolve_receipt_selection(
         "current-must-pass",
         (),
@@ -475,7 +476,9 @@ def generate_header(
                         "raw-string delimiter collision for Vulkan mustpass "
                         f"fraction {fraction}"
                     )
-            identifier = vulkan_driver.apple_mustpass_campaign(fraction)
+            identifier = vulkan_driver.apple_mustpass_profile(
+                fraction
+            ).identifier
             rows.append(
                 "    Campaign {"
                 f"{json.dumps(identifier)}, "

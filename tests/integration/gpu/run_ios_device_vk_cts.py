@@ -64,6 +64,26 @@ def fail(message: str) -> None:
     raise cts.CampaignError(message)
 
 
+def apply_campaign_profile(
+    options: argparse.Namespace,
+) -> vulkan.AppleMustpassProfile | None:
+    """Set the baked memory or reject an explicitly mismatched launch."""
+
+    profile = vulkan.apple_mustpass_profile_for_campaign(options.campaign)
+    if profile is None:
+        if options.memory_mib is None:
+            options.memory_mib = vulkan.APPLE_MUSTPASS_GUEST_MEMORY_MIB
+        return None
+    if options.memory_mib is None:
+        options.memory_mib = profile.guest_memory_mib
+    elif options.memory_mib != profile.guest_memory_mib:
+        fail(
+            f"{profile.identifier} is baked for "
+            f"{profile.guest_memory_mib} MiB, not {options.memory_mib} MiB"
+        )
+    return profile
+
+
 def device_command(*arguments: str) -> list[str]:
     return ["xcrun", "devicectl", *arguments]
 
@@ -240,6 +260,7 @@ def report(
     oom_report: str | None = None,
     rejected: Sequence[str] = (),
     transport_report: str | None = None,
+    profile: vulkan.AppleMustpassProfile | None = None,
 ) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
@@ -263,6 +284,14 @@ def report(
             key, separator, value = line.partition("=")
             if separator:
                 summary[key] = value
+        if profile is not None:
+            actual_memory = summary.get("device_memory_mib")
+            if actual_memory != str(profile.guest_memory_mib):
+                fail(
+                    f"{profile.identifier} reported device_memory_mib="
+                    f"{actual_memory or 'missing'}, expected "
+                    f"{profile.guest_memory_mib}"
+                )
         for key in (
             "mode",
             "fraction",
@@ -337,7 +366,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--rootfs-filename", default=DEFAULT_ROOTFS_FILENAME)
     parser.add_argument("--cpus", type=int, default=4)
-    parser.add_argument("--memory-mib", type=int, default=1536)
+    parser.add_argument("--memory-mib", type=int)
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
     parser.add_argument("--timeout", type=int, default=86400)
@@ -346,7 +375,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--artifact-root", type=Path,
                         default=DEFAULT_ARTIFACT_ROOT)
     options = parser.parse_args(argv)
-    if options.cpus < 1 or options.memory_mib < 512:
+    if options.cpus < 1 or (
+        options.memory_mib is not None and options.memory_mib < 512
+    ):
         parser.error("guest CPU and memory settings are invalid")
     if options.timeout < 1 or options.stall_timeout < 1:
         parser.error("timeouts must be positive")
@@ -363,6 +394,7 @@ def main(argv: list[str] | None = None) -> int:
             f"no Vulkan campaign {options.campaign}; the application carries "
             + ", ".join(carried)
         )
+    profile = apply_campaign_profile(options)
     if options.artifact_root.exists():
         fail(f"artifact directory already exists: {options.artifact_root}")
     options.artifact_root.mkdir(parents=True)
@@ -385,7 +417,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
     print(f"artifacts: {options.artifact_root / 'artifacts'}")
-    return report(artifacts, transcript, oom_report, rejected, transport_report)
+    return report(
+        artifacts,
+        transcript,
+        oom_report,
+        rejected,
+        transport_report,
+        profile,
+    )
 
 
 if __name__ == "__main__":

@@ -661,8 +661,9 @@ overflow report is a shader-side `printf` and `abort()` that reaches neither
 Metal nor the host log, so a smaller size is validated only by a conformance
 run.
 
-A released mustpass fraction is one `deqp-vk` process over about 200,000 cases,
-and a 1536 MiB guest cannot hold one. The cost is in two parts, both measured on
+An uninterrupted released mustpass fraction runs about 200,000 cases in one
+`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that traversal.
+The cost is in two parts, both measured on
 macOS at the same guest profile. A baseline that grows: the process holds 134 MiB
 before its first case, from the released case hierarchy the enumeration builds,
 reaches about 560 MiB within the first 15,000 cases, and about 1.1 GB by 88
@@ -686,8 +687,9 @@ fraction, which is why the campaign names carry a generation suffix. The guest
 drops them from the list it enumerated and transports exactly which cases and
 under which reason, so an excluded case is a case not run, never a pass and
 never a failure, and the same selection can be run on a device with more memory.
-The contract is in [`testing.md`](testing.md); the reasoned list is
-`DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
+Each baked profile also fixes guest memory and any planned CTS process
+boundary. The contract is in [`testing.md`](testing.md); the reasoned exclusion
+list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 
 ### Experimental host memory
 

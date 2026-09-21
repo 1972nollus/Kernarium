@@ -101,10 +101,11 @@ ctest --test-dir .build/presets/macos-integration-venus \
 ```
 
 Run the runner directly to install a bundle, stage an image, or take one of the
-sixteen `vulkan-mustpass-NNof16-v3` fractions of the released list; see its
-`--help`. A campaign is judged by its `summary.txt`, never by searching the
-console for an error marker, because the application echoes the generated guest
-launcher and that script carries its own marker strings.
+fifteen `vulkan-mustpass-NNof16-v3` fractions of the released list or the
+`vulkan-mustpass-03of16-v4` fraction. See the runner's `--help`. A campaign is judged
+by its `summary.txt`, never by searching the console for an error marker,
+because the application echoes the generated guest launcher and that script
+carries its own marker strings.
 
 Host and renderer diagnostics share that console with the artifact frames, and
 a line written into the middle of one is a malformed marker that costs the
@@ -113,8 +114,10 @@ path therefore reports once and not again, which is also the only way an
 operator can raise the renderer's log level on a device run.
 
 A baked device campaign is the one lane whose guest memory is fixed by the
-platform, so it is the only lane that leaves cases out. `DEVICE_EXCLUSIONS` in
-`run_vk_cts.py` names them by cause, and the generation suffix (`-v3`) is part of
+platform, so it is the only lane that leaves cases out. Its profile fixes the
+identifier, guest memory, and any planned process boundary; the device runner
+refuses a different memory value before launch. `DEVICE_EXCLUSIONS` in
+`run_vk_cts.py` names exclusions by cause, and the generation suffix is part of
 the selection's identity. The guest drops them from the fraction it enumerated
 and transports `skipped.txt` as `<reason>\t<case>` rows, with `device_excluded*`
 counts in `summary.txt`, so `cut -f2 skipped.txt` is the selection to re-run on
@@ -543,6 +546,14 @@ own session document to the same transported stream, `summary.txt` states
 `cts_sessions` and `cts_cases_run`, and the host still requires the union of
 the results to be the enumerated selection, in its order, with each case
 present exactly once.
+
+Fraction 03 uses 1280 MiB and one planned CTS process restart immediately
+before `dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array.huge.width_height_layers.r8g8b8a8_unorm`.
+After the prefix process exits, the guest waits 20 seconds before starting
+the suffix. The boundary uses the same continuation path as a `ResourceError`:
+it preserves
+the enumerated order and the eight-process limit, so the normal two-process run
+retains six recovery sessions.
 
 An emulator exit -- an abandoned case, a host fault, a
 signal -- aborts the session rather than producing a result: the host invents

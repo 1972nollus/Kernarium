@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1142,6 +1143,199 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 device_exclusions=cts.DEVICE_EXCLUSIONS,
             )
 
+    def test_fraction03_profile_plans_one_exact_process_boundary(self) -> None:
+        profile = cts.apple_mustpass_profile(3)
+        selection = cts.resolve_receipt_selection(
+            "current-must-pass", (), None, cts.Fraction(3, 16)
+        )
+        launcher = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            page_size=16384,
+            timeout=cts.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+
+        self.assertEqual(profile.guest_memory_mib, 1280)
+        self.assertEqual(profile.restart_settle_seconds, 20)
+        self.assertIn(profile.restart_before, launcher)
+        self.assertIn("device_memory_mib=%s\\n' 1280", launcher)
+        self.assertIn(
+            'head -n "$planned_prefix_count" "$selected" > "$continuation"',
+            launcher,
+        )
+        self.assertIn(
+            'selected_count=$(wc -l < "$selected" | tr -d \' \')',
+            launcher,
+        )
+        self.assertIn(
+            '[ "$cts_cases" -eq "$planned_prefix_count" ]', launcher
+        )
+        self.assertIn(
+            'tail -n +$((planned_prefix_count + 1)) "$selected"', launcher
+        )
+        self.assertIn("sleep 20", launcher)
+        # The fixture never executes the generated retirement delay; syntax
+        # validation replaces it with a no-op so this test stays immediate.
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher.replace("sleep 20", ": # retirement wait"),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        # Exercise the generated shell with an early ResourceError-sized
+        # prefix. The first continuation retains the unfinished planned
+        # prefix; reaching the cumulative boundary then selects the suffix
+        # beginning with the boundary case, exactly once and in order.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selected = root / "selected.txt"
+            continuation = root / "continue.txt"
+            state = root / "state.txt"
+            cases = (
+                "dEQP-VK.fixture.first",
+                "dEQP-VK.fixture.second",
+                profile.restart_before,
+                "dEQP-VK.fixture.last",
+            )
+            selected.write_text(
+                "".join(f"{case}\n" for case in cases), encoding="utf-8"
+            )
+            setup_start = launcher.index("restart_matches=$(grep")
+            setup_end = launcher.index(': > "$cts_output"', setup_start)
+            setup = launcher[setup_start:setup_end]
+            shell = subprocess.run(
+                ["sh"],
+                input=(
+                    "set -eu\n"
+                    "chown() { :; }\n"
+                    f"selected={shlex.quote(str(selected))}\n"
+                    f"continuation={shlex.quote(str(continuation))}\n"
+                    + setup
+                ),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(shell.returncode, 0, shell.stderr)
+            self.assertEqual(
+                continuation.read_text(encoding="utf-8").splitlines(),
+                list(cases[:2]),
+            )
+
+            transition_start = launcher.index("    planned_restart=0\n")
+            transition_end = launcher.index(
+                '    [ -s "$run_list" ]', transition_start
+            )
+            transition = launcher[transition_start:transition_end]
+
+            def run_transition(cts_cases: int) -> tuple[int, int]:
+                command = (
+                    "set -eu\n"
+                    "chown() { :; }\n"
+                    f"selected={shlex.quote(str(selected))}\n"
+                    f"continuation={shlex.quote(str(continuation))}\n"
+                    f"state={shlex.quote(str(state))}\n"
+                    'run_list="$continuation"\n'
+                    "session_cases=1\n"
+                    f"cts_cases={cts_cases}\n"
+                    "planned_prefix_count=2\n"
+                    "planned_restart_pending=1\n"
+                    "while :; do\n"
+                    + transition
+                    + 'printf \'%s %s\\n\' "$planned_restart_pending" '
+                    '"$planned_restart" > "$state"\n'
+                    "break\n"
+                    "done\n"
+                )
+                result = subprocess.run(
+                    ["sh"], input=command, text=True, capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                pending, planned = state.read_text(encoding="utf-8").split()
+                return int(pending), int(planned)
+
+            self.assertEqual(run_transition(1), (1, 0))
+            self.assertEqual(
+                continuation.read_text(encoding="utf-8").splitlines(),
+                [cases[1]],
+            )
+            self.assertEqual(run_transition(2), (0, 1))
+            suffix = continuation.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(suffix, list(cases[2:]))
+            self.assertEqual([cases[0], cases[1], *suffix], list(cases))
+
+        ordinary = cts.build_receipt_guest_launcher(
+            self.receipt,
+            cts.resolve_receipt_selection(
+                "current-must-pass", (), None, cts.Fraction(2, 16)
+            ),
+            page_size=16384,
+            timeout=cts.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+        self.assertNotIn("planned restart before", ordinary)
+        self.assertNotIn("sleep 20", ordinary)
+
+    def test_device_cli_enforces_the_baked_memory_before_launch(self) -> None:
+        fraction03 = cts.apple_mustpass_profile(3)
+        options = argparse.Namespace(
+            campaign=fraction03.identifier, memory_mib=None
+        )
+        self.assertEqual(device.apply_campaign_profile(options), fraction03)
+        self.assertEqual(options.memory_mib, 1280)
+
+        wrong = argparse.Namespace(
+            campaign=fraction03.identifier, memory_mib=1536
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "baked for 1280 MiB"):
+            device.apply_campaign_profile(wrong)
+
+        ordinary = cts.apple_mustpass_profile(2)
+        options = argparse.Namespace(
+            campaign=ordinary.identifier, memory_mib=None
+        )
+        self.assertEqual(device.apply_campaign_profile(options), ordinary)
+        self.assertEqual(options.memory_mib, 1536)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_root = Path(temporary) / "must-not-exist"
+            arguments = (
+                "--device", "fixture",
+                "--campaign", fraction03.identifier,
+                "--memory-mib", "1536",
+                "--artifact-root", str(artifact_root),
+            )
+            with mock.patch.object(device.sys, "platform", "darwin"), \
+                 mock.patch.object(device, "run_campaign") as run, \
+                 self.assertRaisesRegex(
+                     cts.CampaignError, "baked for 1280 MiB"
+                 ):
+                device.main(list(arguments))
+            run.assert_not_called()
+            self.assertFalse(artifact_root.exists())
+
+    def test_device_summary_must_match_the_baked_memory_profile(self) -> None:
+        profile = cts.apple_mustpass_profile(3)
+        artifacts = {
+            "summary.txt": b"cts_rc=0\ndevice_memory_mib=1280\n",
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(device.report(artifacts, "", profile=profile), 0)
+        artifacts["summary.txt"] = (
+            b"cts_rc=0\ndevice_memory_mib=1536\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+            cts.CampaignError, "reported device_memory_mib=1536"
+        ):
+            device.report(artifacts, "", profile=profile)
+
     def test_a_guest_memory_kill_ends_the_device_wait_and_still_reports(
         self,
     ) -> None:
@@ -1249,10 +1443,16 @@ class VulkanCtsToolingTests(unittest.TestCase):
         names = cts.apple_campaigns()
         self.assertEqual(len(names), cts.APPLE_MUSTPASS_FRACTIONS + 2)
         for index in range(cts.APPLE_MUSTPASS_FRACTIONS):
+            version = 4 if index == 3 else 3
             self.assertEqual(
                 cts.apple_mustpass_campaign(index),
-                f"vulkan-mustpass-{index:02d}of16-v3",
+                f"vulkan-mustpass-{index:02d}of16-v{version}",
             )
+        self.assertIsNone(
+            cts.apple_mustpass_profile_for_campaign(
+                "vulkan-mustpass-03of16-v3"
+            )
+        )
         with self.assertRaises(cts.CampaignError):
             cts.apple_mustpass_campaign(cts.APPLE_MUSTPASS_FRACTIONS)
 

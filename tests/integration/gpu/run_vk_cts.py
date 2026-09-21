@@ -96,10 +96,18 @@ APPLE_MUSTPASS_FRACTIONS = 16
 # the progress guard is what actually ends a wedged run.
 APPLE_MUSTPASS_TIMEOUT = 86400
 APPLE_MUSTPASS_PROGRESS_TIMEOUT = 1800
-# Guest memory the baked device campaigns are sized for. The application's
-# ceiling is the platform jetsam budget, not a choice: raising it trades the
-# guest reaper for the host one.
+# Guest memory the ordinary baked device campaigns are sized for. The
+# application's ceiling is the platform jetsam budget, not a choice: raising
+# it trades the guest reaper for the host one. Fraction 03 has a narrower
+# profile below because its large render-to-image transition reaches the host
+# budget before it reaches the guest budget.
 APPLE_MUSTPASS_GUEST_MEMORY_MIB = 1536
+APPLE_MUSTPASS_FRACTION03_GUEST_MEMORY_MIB = 1280
+APPLE_MUSTPASS_FRACTION03_RESTART_BEFORE = (
+    "dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array."
+    "huge.width_height_layers.r8g8b8a8_unorm"
+)
+APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS = 20
 # dEQP ends its whole session at the first ResourceError, so one such case
 # otherwise costs a fraction every case after it. The guest continues the
 # remainder in a fresh process, at most this many processes in all.
@@ -136,6 +144,17 @@ class DeviceExclusion:
         return self.reason.replace("-", "_")
 
 
+@dataclass(frozen=True)
+class AppleMustpassProfile:
+    """The immutable launch contract for one baked device fraction."""
+
+    index: int
+    identifier: str
+    guest_memory_mib: int
+    restart_before: str | None = None
+    restart_settle_seconds: int = 0
+
+
 # What a baked device campaign leaves out, by cause. Nothing here is a verdict:
 # an excluded case is neither a pass nor a failure, the guest transports exactly
 # which cases it left out and under which reason, and only the baked device
@@ -152,20 +171,59 @@ DEVICE_EXCLUSIONS: tuple[DeviceExclusion, ...] = (
 )
 
 
-def apple_mustpass_campaign(index: int) -> str:
-    """Name the campaign that runs fraction ``index`` of the released list.
+def apple_mustpass_profile(index: int) -> AppleMustpassProfile:
+    """Return the baked identity, memory, and process plan for a fraction.
 
     The version is part of the selection's identity: ``v2`` is the first
     generation that applies ``DEVICE_EXCLUSIONS``, and ``v3`` the first that
     continues a fraction whose CTS session ended before the traversal did.
+    Fraction 03's ``v4`` profile is the first to use 1280 MiB and one planned
+    CTS restart before its large render-to-image block.
     """
 
     if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
         raise CampaignError(f"Vulkan mustpass fraction out of range: {index}")
-    return (
-        f"vulkan-mustpass-{index:02d}"
-        f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v3"
+    version = 4 if index == 3 else 3
+    return AppleMustpassProfile(
+        index=index,
+        identifier=(
+            f"vulkan-mustpass-{index:02d}"
+            f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v{version}"
+        ),
+        guest_memory_mib=(
+            APPLE_MUSTPASS_FRACTION03_GUEST_MEMORY_MIB
+            if index == 3
+            else APPLE_MUSTPASS_GUEST_MEMORY_MIB
+        ),
+        restart_before=(
+            APPLE_MUSTPASS_FRACTION03_RESTART_BEFORE
+            if index == 3
+            else None
+        ),
+        restart_settle_seconds=(
+            APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS
+            if index == 3
+            else 0
+        ),
     )
+
+
+def apple_mustpass_campaign(index: int) -> str:
+    """Name the campaign that runs fraction ``index`` of the released list."""
+
+    return apple_mustpass_profile(index).identifier
+
+
+def apple_mustpass_profile_for_campaign(
+    identifier: str,
+) -> AppleMustpassProfile | None:
+    """Resolve a baked mustpass identifier without accepting stale versions."""
+
+    for index in range(APPLE_MUSTPASS_FRACTIONS):
+        profile = apple_mustpass_profile(index)
+        if identifier == profile.identifier:
+            return profile
+    return None
 
 
 def device_exclusion_partition(
@@ -1177,6 +1235,7 @@ def build_receipt_guest_launcher(
     if resume_after < 0 or checkpoint_bytes < 1 or progress_interval < 1:
         raise CampaignError("Vulkan shard resumption inputs are invalid")
     exclusions = validate_device_exclusions(device_exclusions)
+    device_profile: AppleMustpassProfile | None = None
     # A fraction whose first session ends early is continued in fresh dEQP
     # processes. The bound is on sessions, not on time: the whole run shares
     # one deadline, so a continuation can only use what the first left.
@@ -1189,6 +1248,16 @@ def build_receipt_guest_launcher(
         raise CampaignError(
             "a device exclusion and a resumed shard are not combined"
         )
+    if exclusions:
+        if selection.fraction.count != APPLE_MUSTPASS_FRACTIONS:
+            raise CampaignError(
+                "a baked device profile requires the native 16-way fraction"
+            )
+        device_profile = apple_mustpass_profile(selection.fraction.index)
+        if bool(device_profile.restart_before) != bool(
+            device_profile.restart_settle_seconds
+        ):
+            raise CampaignError("a planned device restart profile is invalid")
     # Venus reports a stuck wait on the CTS process's own stderr, which is
     # redirected into a guest file and never leaves the guest. Surfacing it
     # names what the guest is waiting on at the moment a shard stalls, which
@@ -1247,6 +1316,18 @@ def build_receipt_guest_launcher(
             caselist=CONTINUATION_CASELIST,
         )
     )
+    planned_restart_setup = ""
+    planned_restart_state = ""
+    first_session_condition = '[ "$cts_sessions" -eq 1 ]'
+    continuation_selection = """    tail -n +$((session_cases + 1)) "$run_list" > "$continuation.next" || break
+    mv "$continuation.next" "$continuation" || break
+    chown uml:uml "$continuation"
+    run_list="$continuation"
+"""
+    continuation_note = (
+        "    printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\n' "
+        '        "$((selected_count - cts_cases))"\n'
+    )
     # The file whose order the guest's results follow. Only a released
     # fraction that dEQP itself filters leaves that order in the enumerated
     # list rather than in the selection handed to it.
@@ -1255,6 +1336,62 @@ def build_receipt_guest_launcher(
         if selection.generated_expected and not exclusions and not resume_after
         else '"$selected"'
     )
+    selected_count_source = '"$run_list"'
+    if device_profile is not None and device_profile.restart_before is not None:
+        restart_case = shlex.quote(device_profile.restart_before)
+        planned_restart_state = """planned_restart_pending=1
+planned_prefix_count=0
+"""
+        first_session_condition += ' && [ "$planned_restart_pending" -eq 0 ]'
+        run_list = '"$continuation"'
+        selected_count_source = '"$selected"'
+        planned_restart_setup = f"""restart_matches=$(grep -n -F -x -- {restart_case} "$selected" || :)
+restart_match_count=$(printf '%s\n' "$restart_matches" | grep -c . || :)
+[ "$restart_match_count" -eq 1 ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart case is not unique in the selection'
+    exit 1
+}}
+restart_line=${{restart_matches%%:*}}
+[ "$restart_line" -gt 1 ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart has no preceding cases'
+    exit 1
+}}
+planned_prefix_count=$((restart_line - 1))
+head -n "$planned_prefix_count" "$selected" > "$continuation"
+chown uml:uml "$continuation"
+[ -s "$continuation" ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart prefix is empty'
+    exit 1
+}}
+"""
+        continuation_selection = """    planned_restart=0
+    if [ "$planned_restart_pending" -eq 1 ]; then
+        [ "$cts_cases" -le "$planned_prefix_count" ] || break
+    fi
+    if [ "$planned_restart_pending" -eq 1 ] && \\
+       [ "$cts_cases" -eq "$planned_prefix_count" ]; then
+        tail -n +$((planned_prefix_count + 1)) "$selected" \\
+            > "$continuation.next" || break
+        planned_restart_pending=0
+        planned_restart=1
+    else
+        tail -n +$((session_cases + 1)) "$run_list" \\
+            > "$continuation.next" || break
+    fi
+    mv "$continuation.next" "$continuation" || break
+    chown uml:uml "$continuation"
+    run_list="$continuation"
+"""
+        continuation_note = f"""    if [ "$planned_restart" -eq 1 ]; then
+        sleep {device_profile.restart_settle_seconds}
+        printf 'UML_VK_CTS_NOTE: planned restart before %s; continuing %s cases\\n' \\
+            {restart_case} \\
+            "$((selected_count - cts_cases))"
+    else
+        printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\\n' \\
+            "$((selected_count - cts_cases))"
+    fi
+"""
     if selection.generated_expected:
         selected_setup = (
             "cp "
@@ -1349,7 +1486,7 @@ chown uml:uml \"$selected\"
                 )
             fraction_summary += (
                 "    printf 'device_memory_mib=%s\\n' "
-                f"{APPLE_MUSTPASS_GUEST_MEMORY_MIB}"
+                f"{device_profile.guest_memory_mib}"
                 ' >> "$summary"\n'
             )
     else:
@@ -1460,7 +1597,7 @@ status=1
 cts_sessions=0
 cts_cases=0
 selected_count=0
-
+{planned_restart_state}
 prepare_channel()
 {{
     [ "$channel_ready" -eq 0 ] || return 0
@@ -1628,7 +1765,7 @@ verify_file()
 {verification_rows}
 
 {wsi_setup}
-{expected_setup}
+{expected_setup}{planned_restart_setup}
 : > "$cts_output"
 chown uml:uml "$cts_output"
 cd {shlex.quote(cts['install_prefix'])}
@@ -1642,7 +1779,7 @@ emit_prerun || {{
 }}
 
 run_list={run_list}
-selected_count=$(wc -l < "$run_list" | tr -d ' ')
+selected_count=$(wc -l < {selected_count_source} | tr -d ' ')
 [ "$selected_count" -gt 0 ] || {{
     echo 'UML_VK_CTS_ERROR: the guest selection is empty'
     exit 1
@@ -1653,7 +1790,7 @@ while :; do
     session_timeout=$(( deadline - $(date +%s) ))
     [ "$session_timeout" -gt 0 ] || break
     cts_sessions=$((cts_sessions + 1))
-    if [ "$cts_sessions" -eq 1 ]; then
+    if {first_session_condition}; then
         runuser -u uml -- env \
             HOME=/home/uml \
 {wsi_environment}            VK_DRIVER_FILES={shlex.quote(icd_path)} \
@@ -1745,17 +1882,11 @@ done
     flush_qpa 0
     qpa_size_now=$(wc -c < "$qpa" | tr -d ' ')
     [ "$qpa_offset" -eq "$qpa_size_now" ] || break
-    tail -n +$((session_cases + 1)) "$run_list" > "$continuation.next" || break
-    mv "$continuation.next" "$continuation" || break
-    chown uml:uml "$continuation"
-    run_list="$continuation"
-    [ -s "$run_list" ] || break
+{continuation_selection}    [ -s "$run_list" ] || break
     : > "$qpa"
     chown uml:uml "$qpa"
     qpa_offset=0
-    printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\n' \
-        "$((selected_count - cts_cases))"
-done
+{continuation_note}done
 set -e
 printf 'UML_VK_CTS_STATUS|rc=%s\n' "$status"
 exit "$status"
