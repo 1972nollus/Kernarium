@@ -100,6 +100,19 @@ ctest --test-dir .build/presets/macos-integration-venus \
     -R apple-ios-device-vk-cts
 ```
 
+For a baked device mustpass fraction, the runner prints
+`vulkan_campaign_complete=true` only after validating the exact post-exclusion
+QPA case sequence, the exclusion report, the status oracle, and a lossless
+artifact transfer. This completion marker is independent of
+`vulkan_statuses_accepted`: a complete fraction may retain CTS failures for
+diagnosis. Other device campaign modes do not print these validation markers.
+
+The headless device lane requires WSI-dependent cases to return
+`NotSupported`. The `surface.query_devgroup_present_capabilities` and
+`surface.destroy_null_handle` cases do not need a native window or live
+surface, so their results use the ordinary CTS status oracle; a `Fail` remains
+a failure. Both cases remain in the required ordered coverage.
+
 Run the runner directly to install a bundle, stage an image, or take one of the
 fifteen `vulkan-mustpass-NNof16-v3` fractions of the released list or the
 `vulkan-mustpass-03of16-v4` fraction. See the runner's `--help`. A campaign is judged

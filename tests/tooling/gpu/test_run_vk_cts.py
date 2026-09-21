@@ -99,6 +99,78 @@ class VulkanCtsToolingTests(unittest.TestCase):
             self.identity, "smoke", (), None, cts.Fraction(0, 1)
         )
 
+    def _device_fraction_artifacts(
+        self, status: str = "Fail", *, fraction: int = 0
+    ) -> tuple[tuple[str, ...], dict[str, bytes]]:
+        profile = cts.apple_mustpass_profile(fraction)
+        cases = (
+            "dEQP-VK.info.build",
+            "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+            profile.restart_before or "dEQP-VK.api.version_check.entry_points",
+            "dEQP-VK.wsi.xlib.synthetic",
+        )
+        selected = (cases[0], cases[2], cases[3])
+        receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
+        artifacts = {
+            "renderer.txt": (
+                "x11_server=xorg\n"
+                "x11_dri3=1\n"
+                "x11_present=1\n"
+                "x11_glamor=1\n"
+                "x11_connected=1\n"
+                "x11_drm_fd=1\n"
+                "x11_blanking=off\n"
+                "wayland_server=kwin-x11\n"
+                "wayland_lockscreen=off\n"
+                "device=/dev/dri/card0\n"
+                "device=/dev/dri/renderD128\n"
+                "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
+                f"receipt_sha256={receipt_digest}\n"
+                "vulkan_loader="
+                f"{self.receipt['vulkan_loader']['runtime']['path']}\n"
+                "vulkan_loader_sha256="
+                f"{self.receipt['vulkan_loader']['runtime']['sha256']}\n"
+                '"library_path": "libvulkan_virtio.so"\n'
+            ).encode(),
+            "selected.txt": "".join(
+                f"{case}\n" for case in selected
+            ).encode(),
+            "expected.txt": "".join(
+                f"{case}\n" for case in cases
+            ).encode(),
+            "skipped.txt": (
+                f"guest-memory\t{cases[1]}\n"
+            ).encode(),
+            "results.qpa": qpa(
+                qpa_result(
+                    selected[0], identity="deviceName = Virtio GPU Venus"
+                ),
+                qpa_result(selected[1], status=status),
+                qpa_result(selected[2], status="NotSupported"),
+            ).encode(),
+            # Historical v3 attempts omitted counters. The v4 profile must
+            # account for its planned restart and every selected case.
+            "summary.txt": (
+                f"cts_rc={'0' if status != 'Fail' else '1'}\n"
+                "mode=current-must-pass\n"
+                f"expected_case_count={len(selected)}\n"
+                f"fraction={fraction},16\n"
+                "device_excluded=1\n"
+                "device_excluded_guest_memory=1\n"
+                "device_exclusion_guest_memory=dEQP-VK.reconvergence.\n"
+                f"device_memory_mib={profile.guest_memory_mib}\n"
+                "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
+                f"receipt_sha256={receipt_digest}\n"
+                "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
+            ).encode(),
+        }
+        if profile.restart_before is not None:
+            artifacts["summary.txt"] += (
+                f"cts_sessions=2\ncts_cases_run={len(selected)}\n"
+            ).encode()
+        return selected, artifacts
+
     def test_frozen_identity_and_physical_hold_are_exact(self) -> None:
         campaigns = cts.load_campaigns()
         self.assertEqual(len(self.identity["mandatory_cases"]), 19)
@@ -1143,6 +1215,263 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 device_exclusions=cts.DEVICE_EXCLUSIONS,
             )
 
+    def test_device_completion_is_independent_of_case_failures(self) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        _, artifacts = self._device_fraction_artifacts()
+        result = device.validate_device_mustpass_attempt(
+            campaign, "", artifacts
+        )
+        self.assertTrue(result["traversal_complete"])
+        self.assertFalse(result["accepted_statuses"])
+        self.assertEqual(result["rejected_status_count"], 1)
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(artifacts, "", campaign=campaign)
+        self.assertEqual(status, 1)
+        text = printed.getvalue()
+        self.assertIn("vulkan_campaign_complete=true", text)
+        self.assertIn("vulkan_statuses_accepted=false", text)
+        self.assertIn("vulkan_campaign_failed=true", text)
+
+        _, accepted = self._device_fraction_artifacts("NotSupported")
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = device.report(accepted, "", campaign=campaign)
+        self.assertEqual(status, 0)
+
+    def test_headless_wsi_surface_independent_results_keep_their_verdicts(
+        self,
+    ) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        for platform in ("xlib", "wayland", "xcb", "headless", "direct"):
+            for leaf in (
+                "query_devgroup_present_capabilities", "destroy_null_handle"
+            ):
+                for status in ("Pass", "Fail"):
+                    case = f"dEQP-VK.wsi.{platform}.surface.{leaf}"
+                    with self.subTest(case=case, status=status):
+                        selected, artifacts = self._device_fraction_artifacts(
+                            status
+                        )
+                        artifacts = {
+                            name: payload.replace(
+                                selected[-1].encode(), case.encode()
+                            )
+                            for name, payload in artifacts.items()
+                        }
+                        artifacts["results.qpa"] = artifacts[
+                            "results.qpa"
+                        ].replace(
+                            b'StatusCode="NotSupported"',
+                            f'StatusCode="{status}"'.encode(),
+                        )
+                        result = device.validate_device_mustpass_attempt(
+                            campaign, "", artifacts
+                        )
+                        self.assertTrue(result["traversal_complete"])
+                        self.assertEqual(
+                            result["rejected_status_count"],
+                            2 if status == "Fail" else 0,
+                        )
+                        self.assertEqual(
+                            result["accepted_statuses"], status == "Pass"
+                        )
+
+        for leaf in (
+            "query_capabilities", "query_formats", "create",
+            "query_devgroup_present_capabilities_extra",
+            "destroy_null_handle_extra",
+        ):
+            with self.subTest(rejected_leaf=leaf), self.assertRaisesRegex(
+                cts.CampaignError, "headless Vulkan WSI"
+            ):
+                cts.validate_headless_wsi_results(
+                    {f"dEQP-VK.wsi.headless.surface.{leaf}": "Pass"}
+                )
+
+    def test_device_completion_rejects_missing_duplicate_or_lost_results(
+        self,
+    ) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        selected, artifacts = self._device_fraction_artifacts()
+
+        missing = dict(artifacts)
+        missing["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            )
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "missing"):
+            device.validate_device_mustpass_attempt(campaign, "", missing)
+
+        duplicate = dict(artifacts)
+        duplicate["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            ),
+            qpa_result(selected[0], status="Fail"),
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "duplicate QPA case"):
+            device.validate_device_mustpass_attempt(campaign, "", duplicate)
+
+        reordered = dict(artifacts)
+        reordered["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            ),
+            qpa_result(selected[2], status="NotSupported"),
+            qpa_result(selected[1], status="Fail"),
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "order"):
+            device.validate_device_mustpass_attempt(campaign, "", reordered)
+
+        presented = dict(artifacts)
+        presented["results.qpa"] = presented["results.qpa"].replace(
+            b'StatusCode="NotSupported"', b'StatusCode="Pass"'
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "headless Vulkan WSI"):
+            device.validate_device_mustpass_attempt(campaign, "", presented)
+
+        lost = dict(artifacts)
+        lost["summary.txt"] = lost["summary.txt"].replace(
+            b"qpa_transfer=complete\n",
+            b"qpa_transfer=failed\nqpa_missing_bytes=16\n",
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "transfer is incomplete"):
+            device.validate_device_mustpass_attempt(campaign, "", lost)
+
+        recovered = dict(artifacts)
+        recovered["summary.txt"] = recovered["summary.txt"].replace(
+            b"qpa_transfer=complete\n",
+            b"qpa_transfer=recovered\nqpa_missing_bytes=0\n",
+        )
+        result = device.validate_device_mustpass_attempt(
+            campaign, "", recovered
+        )
+        self.assertTrue(result["traversal_complete"])
+
+        still_missing = dict(recovered)
+        still_missing["summary.txt"] = still_missing["summary.txt"].replace(
+            b"qpa_missing_bytes=0", b"qpa_missing_bytes=1"
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "still misses bytes"):
+            device.validate_device_mustpass_attempt(
+                campaign, "", still_missing
+            )
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(
+                artifacts,
+                "",
+                rejected=("results.qpa.0001",),
+                campaign=campaign,
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("vulkan_campaign_complete=false", printed.getvalue())
+
+    def test_non_mustpass_report_fails_closed_on_delivered_evidence(
+        self,
+    ) -> None:
+        campaign = cts.APPLE_RECEIPT_SMOKE_CAMPAIGN
+
+        def reported(
+            artifacts: dict[str, bytes],
+            *,
+            oom_report: str | None = None,
+        ) -> tuple[int, str]:
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                status = device.report(
+                    artifacts,
+                    "",
+                    oom_report=oom_report,
+                    campaign=campaign,
+                )
+            text = printed.getvalue()
+            self.assertNotIn("vulkan_campaign_complete=", text)
+            self.assertNotIn("vulkan_statuses_accepted=", text)
+            return status, text
+
+        # Older smoke summaries did not state transfer diagnostics.  Their
+        # shape remains valid, without gaining a mustpass completion marker.
+        historical = {"summary.txt": b"cts_rc=0\nmode=smoke\n"}
+        status, _ = reported(historical)
+        self.assertEqual(status, 0)
+
+        malformed = {
+            "summary.txt": b"cts_rc=1\ncts_rc=0\nmode=smoke\n"
+        }
+        status, text = reported(malformed)
+        self.assertEqual(status, 1)
+        self.assertIn("Vulkan CTS summary is malformed", text)
+
+        qpa_payload = qpa(
+            qpa_result("dEQP-VK.info.build")
+        ).encode()
+        recovered = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\n"
+                b"qpa_transfer=recovered\nqpa_missing_bytes=0\n"
+            ),
+            "results.qpa": qpa_payload,
+        }
+        status, _ = reported(recovered)
+        self.assertEqual(status, 0)
+
+        invalid_transfers = (
+            b"qpa_transfer=failed\nqpa_missing_bytes=64\n",
+            b"qpa_transfer=recovered\nqpa_missing_bytes=1\n",
+            b"qpa_transfer=complete\nqpa_missing_bytes=0\n",
+            b"qpa_missing_bytes=0\n",
+        )
+        for transfer in invalid_transfers:
+            with self.subTest(transfer=transfer):
+                status, text = reported(
+                    {
+                        "summary.txt": (
+                            b"cts_rc=0\nmode=smoke\n" + transfer
+                        ),
+                        "results.qpa": qpa_payload,
+                    }
+                )
+                self.assertEqual(status, 1)
+                self.assertIn("campaign_evidence_error=", text)
+
+        killed = (
+            "Out of memory: Killed process 1604 (deqp-vk) "
+            "total-vm:2793424kB"
+        )
+        status, text = reported(historical, oom_report=killed)
+        self.assertEqual(status, 1)
+        self.assertIn("guest_out_of_memory=", text)
+
+        nonaccepted = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\nqpa_transfer=complete\n"
+            ),
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.info.build", status="Fail")
+            ).encode(),
+        }
+        status, text = reported(nonaccepted)
+        self.assertEqual(status, 1)
+        self.assertIn(
+            "CTS exit status disagrees with its delivered QPA", text
+        )
+
+        unknown_status = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\nqpa_transfer=complete\n"
+            ),
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.info.build", status="UnknownResult")
+            ).encode(),
+        }
+        status, text = reported(unknown_status)
+        self.assertEqual(status, 1)
+        self.assertIn("released Vulkan CTS returned unknown status", text)
+
     def test_fraction03_profile_plans_one_exact_process_boundary(self) -> None:
         profile = cts.apple_mustpass_profile(3)
         selection = cts.resolve_receipt_selection(
@@ -1175,12 +1504,18 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn(
             'tail -n +$((planned_prefix_count + 1)) "$selected"', launcher
         )
-        self.assertIn("sleep 20", launcher)
-        # The fixture never executes the generated retirement delay; syntax
-        # validation replaces it with a no-op so this test stays immediate.
+        self.assertEqual(launcher.count("sleep 20"), 1)
+        self.assertIn('[ "$cts_sessions" -lt 8 ] || break', launcher)
+        self.assertIn(
+            'if [ "$cts_sessions" -eq 1 ] || [ "$status" -eq 0 ]; then\n'
+            '        status=$session_status\n'
+            '    fi',
+            launcher,
+        )
+        # Syntax checking does not execute the generated retirement delay.
         syntax = subprocess.run(
             ["sh", "-n"],
-            input=launcher.replace("sleep 20", ": # retirement wait"),
+            input=launcher,
             text=True,
             capture_output=True,
             check=False,
@@ -1323,18 +1658,29 @@ class VulkanCtsToolingTests(unittest.TestCase):
 
     def test_device_summary_must_match_the_baked_memory_profile(self) -> None:
         profile = cts.apple_mustpass_profile(3)
-        artifacts = {
-            "summary.txt": b"cts_rc=0\ndevice_memory_mib=1280\n",
-        }
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(device.report(artifacts, "", profile=profile), 0)
-        artifacts["summary.txt"] = (
-            b"cts_rc=0\ndevice_memory_mib=1536\n"
+        _, artifacts = self._device_fraction_artifacts("Pass", fraction=3)
+        result = device.validate_device_mustpass_attempt(
+            profile.identifier, "", artifacts
         )
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(
-            cts.CampaignError, "reported device_memory_mib=1536"
+        self.assertTrue(result["traversal_complete"])
+        self.assertTrue(result["accepted_statuses"])
+
+        for old, new, error in (
+            (b"device_memory_mib=1280", b"device_memory_mib=1536", "summary"),
+            (b"cts_sessions=2\ncts_cases_run=3\n", b"", "session count"),
+            (b"cts_sessions=2", b"cts_sessions=1", "session count"),
+            (b"cts_sessions=2", b"cts_sessions=9", "session count"),
+            (b"cts_cases_run=3", b"cts_cases_run=2", "complete selection"),
         ):
-            device.report(artifacts, "", profile=profile)
+            with self.subTest(mutation=new):
+                changed = dict(artifacts)
+                changed["summary.txt"] = artifacts["summary.txt"].replace(
+                    old, new
+                )
+                with self.assertRaisesRegex(cts.CampaignError, error):
+                    device.validate_device_mustpass_attempt(
+                        profile.identifier, "", changed
+                    )
 
     def test_a_guest_memory_kill_ends_the_device_wait_and_still_reports(
         self,
@@ -1377,6 +1723,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("skipped_for_a_device_limit=1", text)
         self.assertIn("skipped_guest-memory=1", text)
         self.assertIn("guest_out_of_memory=", text)
+        self.assertNotIn("vulkan_campaign_complete=", text)
+        self.assertNotIn("vulkan_statuses_accepted=", text)
 
     def _device_wait(self, killed: str) -> tuple[float, str | None]:
         """Drive the device console wait over a scripted transcript."""

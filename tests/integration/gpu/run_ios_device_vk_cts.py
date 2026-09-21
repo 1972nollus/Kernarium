@@ -156,6 +156,117 @@ def stop_console(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
+def device_mustpass_selection(
+    campaign: str,
+) -> vulkan.ReceiptSelection | None:
+    """Resolve a baked device mustpass identifier to its released fraction."""
+
+    for index in range(vulkan.APPLE_MUSTPASS_FRACTIONS):
+        if campaign == vulkan.apple_mustpass_campaign(index):
+            return vulkan.resolve_receipt_selection(
+                "current-must-pass",
+                (),
+                None,
+                vulkan.Fraction(index, vulkan.APPLE_MUSTPASS_FRACTIONS),
+            )
+    return None
+
+
+def validate_device_mustpass_attempt(
+    campaign: str,
+    transcript: str,
+    artifacts: dict[str, bytes],
+) -> dict[str, object]:
+    """Validate complete device coverage independently of case verdicts.
+
+    A returned result proves the QPA contains the exact post-exclusion case
+    union once, its transfer lost no bytes, and every status belongs to the
+    receipt's fail-closed oracle.  ``accepted_statuses`` is separate because a
+    complete campaign may contain real CTS failures and still be resumable as
+    finished coverage.
+    """
+
+    selection = device_mustpass_selection(campaign)
+    if selection is None:
+        fail(f"not a Vulkan device mustpass campaign: {campaign}")
+    receipt = vulkan.receipt_contract.validate_receipt(vulkan.RECEIPT_PATH)
+    result = vulkan.validate_receipt_attempt(
+        receipt,
+        selection,
+        transcript,
+        artifacts,
+        device_exclusions=vulkan.DEVICE_EXCLUSIONS,
+        headless_wsi=True,
+    )
+    return {
+        **result,
+        "traversal_complete": True,
+        "accepted_statuses": bool(result["qualification"]),
+    }
+
+
+def validate_non_mustpass_report(
+    artifacts: dict[str, bytes],
+    oom_report: str | None = None,
+    rejected: Sequence[str] = (),
+    transport_report: str | None = None,
+) -> dict[str, str]:
+    """Fail closed on generic device evidence without claiming coverage.
+
+    Historical smoke summaries do not all carry the newer transfer fields, so
+    their absence remains valid.  When the guest does state a transfer result,
+    however, it must describe a lossless QPA that the host actually received.
+    A delivered QPA is also authoritative enough to reject an exit status that
+    contradicts the released status oracle.
+    """
+
+    payload = artifacts.get("summary.txt")
+    if payload is None:
+        fail("the campaign delivered no summary")
+    summary = vulkan._summary(payload)
+    if oom_report is not None:
+        fail("the guest kernel killed the CTS process")
+    if transport_report is not None:
+        fail("the Vulkan transport was lost")
+    if rejected:
+        fail(
+            "the host rejected transported artifacts: "
+            + ",".join(sorted(rejected))
+        )
+
+    transfer = summary.get("qpa_transfer")
+    missing = summary.get("qpa_missing_bytes")
+    if transfer is None:
+        if missing is not None:
+            fail("device QPA missing-byte count has no transfer state")
+    elif transfer == "complete":
+        if missing is not None:
+            fail("complete device QPA transfer reports missing bytes")
+    elif transfer == "recovered":
+        if missing != "0":
+            fail("recovered device QPA transfer still misses bytes")
+    else:
+        fail("device QPA transfer is incomplete")
+
+    qpa = artifacts.get("results.qpa")
+    if transfer is not None and qpa is None:
+        fail("device QPA transfer has no host artifact")
+    if qpa is not None:
+        results = cts.parse_qpa(cts.decode_qpa(qpa))
+        receipt = vulkan.receipt_contract.validate_receipt(
+            vulkan.RECEIPT_PATH
+        )
+        nonaccepted = vulkan.classify_released_results(
+            results, receipt["runner_oracle"]
+        )
+        cts_rc = summary.get("cts_rc")
+        if (bool(nonaccepted) and cts_rc != "1") or (
+            not nonaccepted and cts_rc != "0"
+        ):
+            fail("CTS exit status disagrees with its delivered QPA")
+    return summary
+
+
 def run_campaign(
     options: argparse.Namespace, log: Path
 ) -> tuple[str, str | None, str | None]:
@@ -260,7 +371,7 @@ def report(
     oom_report: str | None = None,
     rejected: Sequence[str] = (),
     transport_report: str | None = None,
-    profile: vulkan.AppleMustpassProfile | None = None,
+    campaign: str | None = None,
 ) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
@@ -284,14 +395,6 @@ def report(
             key, separator, value = line.partition("=")
             if separator:
                 summary[key] = value
-        if profile is not None:
-            actual_memory = summary.get("device_memory_mib")
-            if actual_memory != str(profile.guest_memory_mib):
-                fail(
-                    f"{profile.identifier} reported device_memory_mib="
-                    f"{actual_memory or 'missing'}, expected "
-                    f"{profile.guest_memory_mib}"
-                )
         for key in (
             "mode",
             "fraction",
@@ -317,8 +420,40 @@ def report(
         print(f"skipped_for_a_device_limit={sum(reasons.values())}")
         for reason, count in sorted(reasons.items()):
             print(f"skipped_{reason}={count}")
+    validation: dict[str, object] | None = None
+    validation_error: str | None = None
+    selection = device_mustpass_selection(campaign) if campaign else None
+    if selection is not None:
+        try:
+            if oom_report is not None:
+                fail("the guest kernel killed the CTS process")
+            if transport_report is not None:
+                fail("the Vulkan transport was lost")
+            if rejected:
+                fail(
+                    "the host rejected transported artifacts: "
+                    + ",".join(sorted(rejected))
+                )
+            validation = validate_device_mustpass_attempt(
+                campaign or "", transcript, artifacts
+            )
+        except cts.CampaignError as error:
+            validation_error = str(error)
+    else:
+        try:
+            validate_non_mustpass_report(
+                artifacts,
+                oom_report,
+                rejected,
+                transport_report,
+            )
+        except cts.CampaignError as error:
+            validation_error = str(error)
     qpa = artifacts.get("results.qpa")
-    if qpa is not None:
+    if validation is not None:
+        for status, count in validation["status_counts"].items():
+            print(f"{status}={count}")
+    elif qpa is not None:
         statuses = Counter(
             match.decode("ascii")
             for match in re.findall(
@@ -337,11 +472,17 @@ def report(
         # A frame group the host could not accept: results the guest framed and
         # this run does not hold. Named so the loss is not read as a short run.
         print("undecodable_artifacts=" + ",".join(sorted(rejected)))
-    failed = (
-        payload is None
-        or summary.get("cts_rc") != "0"
-        or transport_report is not None
-    )
+    if validation_error is not None:
+        print(f"campaign_evidence_error={validation_error}")
+    if selection is not None:
+        complete = validation is not None
+        accepted = bool(validation and validation["accepted_statuses"])
+        failed = not accepted
+        print("vulkan_campaign_complete=" + ("true" if complete else "false"))
+        print("vulkan_statuses_accepted=" + ("true" if accepted else "false"))
+    else:
+        accepted = summary.get("cts_rc") == "0"
+        failed = validation_error is not None or not accepted
     print("vulkan_campaign_failed=" + ("true" if failed else "false"))
     print("--------------------------")
     return 1 if failed else 0
@@ -394,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
             f"no Vulkan campaign {options.campaign}; the application carries "
             + ", ".join(carried)
         )
-    profile = apply_campaign_profile(options)
+    apply_campaign_profile(options)
     if options.artifact_root.exists():
         fail(f"artifact directory already exists: {options.artifact_root}")
     options.artifact_root.mkdir(parents=True)
@@ -423,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
         oom_report,
         rejected,
         transport_report,
-        profile,
+        campaign=options.campaign,
     )
 
 

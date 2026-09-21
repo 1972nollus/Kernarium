@@ -419,6 +419,30 @@ def validate_wsi_operation(
         )
 
 
+def validate_headless_wsi_results(results: dict[str, str]) -> None:
+    """Require the headless device lane to reject every WSI-dependent case."""
+
+    # These two leaves use device-group queries or VK_NULL_HANDLE; neither
+    # creates a native window or a live VkSurfaceKHR. Their verdicts still go
+    # through the same released CTS status oracle as every other result.
+    without_surface = re.compile(
+        r"dEQP-VK\.wsi\.[^.]+\.surface\."
+        r"(?:query_devgroup_present_capabilities|destroy_null_handle)\Z"
+    )
+    unexpected = [
+        (case, status)
+        for case, status in results.items()
+        if case_needs_wsi(case)
+        and without_surface.fullmatch(case) is None
+        and status != "NotSupported"
+    ]
+    if unexpected:
+        case, status = unexpected[0]
+        raise CampaignError(
+            f"headless Vulkan WSI case returned {case}={status}"
+        )
+
+
 RECEIPT_QPA_CASE_ORDER = (
     "dEQP-VK.info.build",
     "dEQP-VK.info.device",
@@ -2131,26 +2155,64 @@ def validate_receipt_attempt(
     artifacts: dict[str, bytes],
     *,
     session_count: int = 1,
+    device_exclusions: Sequence[DeviceExclusion] = (),
+    headless_wsi: bool = False,
 ) -> dict[str, Any]:
     if session_count < 1:
         raise CampaignError("a shard needs at least one guest session")
+    exclusions = validate_device_exclusions(device_exclusions)
+    if exclusions and not selection.generated_expected:
+        raise CampaignError(
+            "device exclusions require an enumerated released fraction"
+        )
+    device_profile: AppleMustpassProfile | None = None
+    if exclusions:
+        if selection.fraction.count != APPLE_MUSTPASS_FRACTIONS:
+            raise CampaignError(
+                "a baked device profile requires the native 16-way fraction"
+            )
+        device_profile = apple_mustpass_profile(selection.fraction.index)
     required = {"renderer.txt", "selected.txt", "results.qpa", "summary.txt"}
     if selection.generated_expected:
         required.add("expected.txt")
+    if exclusions:
+        required.add("skipped.txt")
     if set(artifacts) != required:
         raise CampaignError("receipt-backed Vulkan CTS artifact set is incomplete")
     selected_payload = artifacts["selected.txt"]
     if selection.generated_expected:
-        selected_contract = receipt["mustpass"]["top_level"]
-        if (
-            len(selected_payload) != selected_contract["size"]
-            or hashlib.sha256(selected_payload).hexdigest()
-            != selected_contract["sha256"]
-        ):
-            raise CampaignError("receipt-backed top-level CTS selection drifted")
-        expected_cases = _parse_case_artifact(
+        enumerated_cases = _parse_case_artifact(
             artifacts["expected.txt"], "receipt-backed enumerated fraction"
         )
+        if exclusions:
+            expected_cases, skipped = device_exclusion_partition(
+                enumerated_cases, exclusions
+            )
+            expected_selected = "".join(
+                f"{case}\n" for case in expected_cases
+            ).encode()
+            if selected_payload != expected_selected:
+                raise CampaignError(
+                    "device CTS selection does not match its exclusions"
+                )
+            expected_skipped = "".join(
+                f"{reason}\t{case}\n"
+                for reason, cases in skipped.items()
+                for case in cases
+            ).encode()
+            if artifacts["skipped.txt"] != expected_skipped:
+                raise CampaignError("device CTS exclusion report drifted")
+        else:
+            selected_contract = receipt["mustpass"]["top_level"]
+            if (
+                len(selected_payload) != selected_contract["size"]
+                or hashlib.sha256(selected_payload).hexdigest()
+                != selected_contract["sha256"]
+            ):
+                raise CampaignError(
+                    "receipt-backed top-level CTS selection drifted"
+                )
+            expected_cases = enumerated_cases
     else:
         selected = selected_payload.decode("utf-8", errors="strict")
         expected_selected = "".join(
@@ -2167,11 +2229,27 @@ def validate_receipt_attempt(
         "forced_driver_file": "/usr/share/vulkan/icd.d/virtio_icd.json",
         "receipt_sha256": receipt_digest,
         "formal_conformance": "false",
+    }
+    if exclusions:
+        expected_summary["device_excluded"] = str(
+            sum(len(cases) for cases in skipped.values())
+        )
+        for exclusion in exclusions:
+            cases = skipped[exclusion.reason]
+            expected_summary[f"device_excluded_{exclusion.row}"] = str(
+                len(cases)
+            )
+            expected_summary[f"device_exclusion_{exclusion.row}"] = " ".join(
+                exclusion.patterns
+            )
+        expected_summary["device_memory_mib"] = str(
+            device_profile.guest_memory_mib
+        )
+    else:
         # The guest states whether every QPA byte it produced reached the host.
         # Anything but a complete transfer means results were lost, which no
         # attempt may be accepted with, however the cases themselves went.
-        "qpa_transfer": "complete",
-    }
+        expected_summary["qpa_transfer"] = "complete"
     if selection.generated_expected:
         expected_summary["fraction"] = selection.fraction.argument()
     if session_count > 1:
@@ -2186,16 +2264,52 @@ def validate_receipt_attempt(
     # about this guest rather than a fixed expectation: the union against the
     # enumerated fraction is what decides completeness, and a shard the host
     # resumed carries only its last guest's counters here.
-    cts_sessions = summary.pop("cts_sessions", "")
-    cts_cases_run = summary.pop("cts_cases_run", "")
-    if not cts_sessions.isdigit() or not (
-        1 <= int(cts_sessions) <= VULKAN_CTS_SESSION_LIMIT
-    ):
-        raise CampaignError("receipt-backed CTS states no guest session count")
-    if not cts_cases_run.isdigit() or not (
-        0 < int(cts_cases_run) <= len(expected_cases)
-    ):
-        raise CampaignError("receipt-backed CTS states no guest case count")
+    cts_sessions = summary.pop("cts_sessions", None)
+    cts_cases_run = summary.pop("cts_cases_run", None)
+    # Device campaigns recorded before these diagnostic counters were added are
+    # still complete when their QPA proves the exact selected union. The v4
+    # profile requires counters and at least two sessions for its planned
+    # restart. A single device launch must account for every selected case.
+    minimum_sessions = (
+        2 if device_profile is not None and device_profile.restart_before else 1
+    )
+    if (cts_sessions is None) != (cts_cases_run is None):
+        raise CampaignError("receipt-backed CTS guest counters are incomplete")
+    if cts_sessions is None:
+        if not exclusions or minimum_sessions > 1:
+            raise CampaignError(
+                "receipt-backed CTS states no guest session count"
+            )
+    else:
+        if not cts_sessions.isdigit() or not (
+            minimum_sessions <= int(cts_sessions) <= VULKAN_CTS_SESSION_LIMIT
+        ):
+            raise CampaignError(
+                "receipt-backed CTS states no guest session count"
+            )
+        if not cts_cases_run.isdigit() or not (
+            0 < int(cts_cases_run) <= len(expected_cases)
+        ):
+            raise CampaignError("receipt-backed CTS states no guest case count")
+        if exclusions and int(cts_cases_run) != len(expected_cases):
+            raise CampaignError(
+                "device CTS guest case count is not the complete selection"
+            )
+    if exclusions:
+        transfer = summary.pop("qpa_transfer", None)
+        missing = summary.pop("qpa_missing_bytes", None)
+        if transfer == "complete":
+            if missing is not None:
+                raise CampaignError(
+                    "complete device QPA transfer reports missing bytes"
+                )
+        elif transfer == "recovered":
+            if missing != "0":
+                raise CampaignError(
+                    "recovered device QPA transfer still misses bytes"
+                )
+        else:
+            raise CampaignError("device QPA transfer is incomplete")
     allowed_return_codes = (
         {"0", "1"} if selection.generated_expected else {"0"}
     )
@@ -2247,7 +2361,10 @@ def validate_receipt_attempt(
         )
     if FORBIDDEN_SOFTWARE_ICD.search(renderer):
         raise CampaignError("receipt-backed renderer evidence selected a software ICD")
-    validate_wsi_operation(selection, results, renderer)
+    if headless_wsi:
+        validate_headless_wsi_results(results)
+    else:
+        validate_wsi_operation(selection, results, renderer)
     if not selection.generated_expected:
         return {
             "outcome": "receipt-backed-cts",
