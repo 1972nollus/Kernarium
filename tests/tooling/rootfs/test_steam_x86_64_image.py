@@ -10,8 +10,10 @@ import ast
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,6 +35,8 @@ def load_tool(name: str, relative: str):
 image = load_tool("steam_x86_image", f"{PRODUCER}/verify-image.py")
 inputs = load_tool("steam_x86_inputs", f"{PRODUCER}/prepare-inputs.py")
 boot = load_tool("steam_x86_boot", f"{PRODUCER}/boot.py")
+record = load_tool("steam_x86_provenance", f"{PRODUCER}/provenance.py")
+installer = load_tool("uml_vulkan_installer", "tools/rootfs/vulkan/install-runtime.py")
 
 
 def write_elf(path: Path, machine: int) -> None:
@@ -241,6 +245,35 @@ class Launcher(unittest.TestCase):
             with self.subTest(argument=argument), self.assertRaisesRegex(ValueError, "launcher controls"):
                 boot.command(Path("/emulator"), Path("/root.erofs"), Path("/data.img"),
                              "8G", "graphical.target", [argument])
+
+
+class Provenance(unittest.TestCase):
+    def test_the_installed_vulkan_runtime_is_recorded(self) -> None:
+        # The image's only record of which guest graphics runtime it carries is
+        # the one the maintained importer writes, so provenance must read that
+        # very path rather than a name the producer never installs.
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            inputs = base / "inputs"
+            inputs.mkdir()
+            (inputs / "inputs.json").write_text(
+                json.dumps({"steam_channel": "beta", "steam_platform": "ubuntu12"}))
+            root = base / "root"
+            metadata = root / installer.METADATA.lstrip("/")
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text(json.dumps({"mesa": {"patched_tree": "0" * 40}}))
+            steam = root / STEAM
+            (steam / "steamrt64").mkdir(parents=True)
+            (steam / "package").mkdir(parents=True)
+            for relative in ("steamrt64/steam", "steamrt64/steamwebhelper",
+                             "package/steam_client_beta_ubuntu12.manifest"):
+                (steam / relative).write_bytes(b"seed")
+            output = base / "provenance.json"
+            with mock.patch.object(sys, "argv", ["provenance.py", "--inputs", str(inputs),
+                                                 "--root", str(root), "--output", str(output)]):
+                record.main()
+            recorded = json.loads(output.read_text())
+            self.assertEqual(recorded["vulkan_runtime"]["mesa"]["patched_tree"], "0" * 40)
 
 
 if __name__ == "__main__":
