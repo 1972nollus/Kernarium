@@ -81,6 +81,31 @@ exactly one object. The backing store is chosen once per process:
 A descriptor a client hands back is recognised by its identity, so importing a
 surface this driver exported shares the same memory instead of copying it.
 
+## Decoding straight to packed RGB
+
+A browser converts every decoded frame to RGB before it can draw it, and under
+OpenGL it asks this driver to do it through a video-processing blit. That
+conversion costs more on a guest processor than the decode itself, so when the
+device can deliver packed RGB the driver asks for it and the blit becomes a
+copy of what the host already produced.
+
+| condition | decoded format |
+| --- | --- |
+| the device does not enumerate `AR24` on its CAPTURE queue | NV12, always |
+| `UML_VA_V4L2_RGB=off` | NV12 |
+| `UML_VA_V4L2_RGB=force` | packed RGB |
+| `auto` (default) | packed RGB once the client has created a video-processing config, NV12 before that |
+
+The choice is made when a decode session is configured and holds for that
+session, because a stateful decoder's capture format cannot change without
+losing its reference frames. A client that creates its video-processing
+context after the first session therefore gets packed RGB from the next one.
+
+The surface's own format stays NV12: the packed picture lives in a shadow
+buffer, and `vaDeriveImage`, `vaGetImage` and `vaExportSurfaceHandle` convert
+it back the moment a client really wants NV12. A client that only ever
+converts never pays for that.
+
 ## Environment
 
 | variable | meaning |
@@ -89,6 +114,7 @@ surface this driver exported shares the same memory instead of copying it.
 | `UML_VA_V4L2_DEVICE` | the decoder node, instead of `/dev/video-dec0` or a scan of `/dev/video*` |
 | `UML_VA_V4L2_SURFACES` | the backing store, as above |
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
+| `UML_VA_V4L2_RGB` | `auto` (default), `off` or `force`, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
 

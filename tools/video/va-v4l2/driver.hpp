@@ -55,6 +55,10 @@ struct Surface {
     unsigned rtFormat {};
     std::uint32_t fourcc {};
     std::shared_ptr<PixelBuffer> buffer;
+    // When the decoder delivers packed RGB, the picture lands here and the
+    // NV12 buffer above is filled only if a client really asks for NV12.
+    std::shared_ptr<PixelBuffer> shadow;
+    bool nativeValid {true};
     enum class State { idle, pending, ready, failed };
     State state {State::idle};
     std::uint64_t sequence {};
@@ -135,15 +139,30 @@ public:
     void harvest(Context& context, std::chrono::milliseconds wait);
     VAStatus process(Context& context, Surface& target);
 
+    // Fills a surface's NV12 buffer from its RGB shadow, if it has one and the
+    // buffer is not already current. A client that only ever uses the video
+    // processing path never pays for this.
+    void materialise(Surface& surface);
+    // The decoded format to ask a new decode session for: packed RGB when the
+    // device offers it and the policy wants it, otherwise zero for NV12.
+    std::uint32_t preferredCapture();
+    void observeVideoProcessing() noexcept { videoProcessing_ = true; }
+
     void note(const char* message) const;
 
 private:
     void probeCodecs();
+    bool deviceOffersRgb();
 
     std::mutex lock_;
     VADriverContextP driverContext_;
     std::vector<CodecSupport> codecs_;
     std::string device_;
+    RgbCapture rgbPolicy_ {RgbCapture::automatic};
+    bool videoProcessing_ {};
+    // Probed once, because it opens the device node.
+    bool rgbProbed_ {};
+    bool rgbOffered_ {};
 };
 
 }

@@ -62,6 +62,7 @@ std::uint64_t identityOfDescriptor(int fd) noexcept
 Driver::Driver(VADriverContextP context) : driverContext_(context)
 {
     selectStorage(std::getenv("UML_VA_V4L2_SURFACES"));
+    rgbPolicy_ = rgbCaptureRequest(std::getenv("UML_VA_V4L2_RGB"));
     probeCodecs();
 }
 
@@ -87,6 +88,38 @@ void Driver::probeCodecs()
     CodecSupport vp9 {VAProfileVP9Profile0, V4L2_PIX_FMT_VP9, 16, 16, 4096, 2304};
     queryCodecLimits(device_, V4L2_PIX_FMT_VP9, vp9.minWidth, vp9.minHeight, vp9.maxWidth, vp9.maxHeight);
     codecs_.push_back(vp9);
+}
+
+bool Driver::deviceOffersRgb()
+{
+    if (!rgbProbed_) {
+        rgbProbed_ = true;
+        rgbOffered_ = decoderOffersCapture(device_, V4L2_PIX_FMT_ABGR32);
+    }
+    return rgbOffered_;
+}
+
+std::uint32_t Driver::preferredCapture()
+{
+    if (rgbPolicy_ == RgbCapture::off) return 0;
+    if (!useRgbCapture(rgbPolicy_, deviceOffersRgb(), videoProcessing_)) return 0;
+    // The device writes B, G, R, A in memory, which is what VA-API calls
+    // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
+    return V4L2_PIX_FMT_ABGR32;
+}
+
+void Driver::materialise(Surface& target)
+{
+    if (target.nativeValid || !target.shadow || !target.buffer) return;
+    const std::uint8_t* from = target.shadow->map();
+    std::uint8_t* to = target.buffer->map();
+    if (!from || !to) return;
+    const ConstPlaneView in {from + target.shadow->offset(0), target.shadow->pitch(0)};
+    const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
+                            {to + target.buffer->offset(1), target.buffer->pitch(1)}};
+    const Region region {0, 0, target.width, target.height};
+    convertArgbToNv12(in, region, out, region, isBt709(target.height));
+    target.nativeValid = true;
 }
 
 const CodecSupport* Driver::codec(VAProfile profile) const noexcept
@@ -135,7 +168,29 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
         if (found != context.awaiting.end()) {
             Surface* target = surface(found->second);
             context.awaiting.erase(found);
-            if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && picture.planes >= 2 &&
+            const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
+            if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && packed &&
+                picture.planes >= 1 && !picture.error) {
+                // The host already converted, so keep the picture packed and
+                // leave the NV12 buffer stale until somebody asks for it.
+                std::string error;
+                if (!target->shadow)
+                    target->shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, target->width, target->height,
+                                                           error);
+                std::uint8_t* destination = target->shadow ? target->shadow->map() : nullptr;
+                if (destination) {
+                    const ConstPlaneView in {picture.plane[0], picture.pitch[0]};
+                    const PlaneView out {destination + target->shadow->offset(0), target->shadow->pitch(0)};
+                    const Region region {0, 0, std::min(target->width, picture.width),
+                                         std::min(target->height, picture.height)};
+                    copyPacked32(in, region, out, region);
+                    target->nativeValid = false;
+                    target->state = Surface::State::ready;
+                } else {
+                    if (!error.empty()) note(error.c_str());
+                    target->state = Surface::State::failed;
+                }
+            } else if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && picture.planes >= 2 &&
                 !picture.error) {
                 if (std::uint8_t* destination = target->buffer->map()) {
                     const ConstPlaneView source[2] {
@@ -146,6 +201,7 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                         {destination + target->buffer->offset(1), target->buffer->pitch(1)}};
                     copyNv12(source, sink, std::min(target->width, picture.width),
                              std::min(target->height, picture.height));
+                    target->nativeValid = true;
                     target->state = Surface::State::ready;
                 } else {
                     target->state = Surface::State::failed;
@@ -201,6 +257,22 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
         if (!source || !source->buffer || !target.buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
         const auto status = waitFor(*source, kDecodeWait);
         if (status != VA_STATUS_SUCCESS) return status;
+        if (source->shadow && !source->nativeValid && target.shadow) {
+            // Both sides hold packed pixels, so serve the repeat frame from
+            // the shadow and leave the NV12 buffers alone.
+            const std::uint8_t* packed = source->shadow->map();
+            std::uint8_t* out = target.shadow->map();
+            if (!packed || !out) return VA_STATUS_ERROR_OPERATION_FAILED;
+            const Region region {0, 0, std::min(source->width, target.width),
+                                 std::min(source->height, target.height)};
+            copyPacked32(ConstPlaneView {packed + source->shadow->offset(0), source->shadow->pitch(0)},
+                         region, PlaneView {out + target.shadow->offset(0), target.shadow->pitch(0)},
+                         region);
+            target.nativeValid = false;
+            target.state = Surface::State::ready;
+            return VA_STATUS_SUCCESS;
+        }
+        materialise(*source);
         const std::uint8_t* from = source->buffer->map();
         std::uint8_t* to = target.buffer->map();
         if (!from || !to) return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -280,6 +352,25 @@ VAStatus Driver::process(Context& owner, Surface& target)
         targetRegion.x + targetRegion.width > target.width ||
         targetRegion.y + targetRegion.height > target.height)
         return VA_STATUS_ERROR_INVALID_PARAMETER;
+
+    if (source->shadow && !source->nativeValid && target.buffer->planes() == 1 &&
+        (target.fourcc == VA_FOURCC_ARGB || target.fourcc == VA_FOURCC_BGRA ||
+         target.fourcc == VA_FOURCC_RGBX || target.fourcc == VA_FOURCC_BGRX)) {
+        // The device decoded straight into the format this blit was going to
+        // produce, so the conversion the caller asked for is a copy.
+        const std::uint8_t* packed = source->shadow->map();
+        if (!packed) return VA_STATUS_ERROR_OPERATION_FAILED;
+        const ConstPlaneView in {packed + source->shadow->offset(0), source->shadow->pitch(0)};
+        const PlaneView out {to + target.buffer->offset(0), target.buffer->pitch(0)};
+        copyPacked32(in, sourceRegion, out, targetRegion);
+        return VA_STATUS_SUCCESS;
+    }
+    if (source->shadow && !source->nativeValid) {
+        // Any other destination needs the NV12 the decoder did not produce.
+        materialise(*source);
+        from = source->buffer->map();
+        if (!from) return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
 
     if (source->fourcc == VA_FOURCC_NV12 && target.fourcc == VA_FOURCC_NV12) {
         if (sourceRegion.width != targetRegion.width || sourceRegion.height != targetRegion.height)
@@ -415,6 +506,9 @@ VAStatus createConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entr
         if (!driver.codec(profile)) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
         if (entrypoint != VAEntrypointVLD) return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
+    // A client that asks for video processing is going to convert every frame,
+    // which is the case where a packed decode saves the guest the work.
+    if (proc) driver.observeVideoProcessing();
     Config config;
     config.profile = profile;
     config.entrypoint = entrypoint;
@@ -634,9 +728,11 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         if (!codec) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
         if (!width || !height) return VA_STATUS_ERROR_INVALID_PARAMETER;
         std::string error;
-        context->decoder = V4l2Decoder::open(driver.device(), codec->v4l2Format, unsigned(width), unsigned(height),
-                                             error);
+        context->decoder = V4l2Decoder::open(driver.device(), codec->v4l2Format, unsigned(width),
+                                             unsigned(height), driver.preferredCapture(), error);
         if (!context->decoder) { driver.note(error.c_str()); return VA_STATUS_ERROR_ALLOCATION_FAILED; }
+        driver.note(context->decoder->captureFormat() == V4L2_PIX_FMT_ABGR32
+                        ? "decoding to packed RGB" : "decoding to NV12");
     }
     *id = driver.nextContext++;
     driver.contexts.emplace(*id, std::move(context));
@@ -948,6 +1044,7 @@ VAStatus deriveImage(VADriverContextP ctx, VASurfaceID id, VAImage* out)
     if (!surface || !surface->buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
     const auto status = driver.waitFor(*surface, kDecodeWait);
     if (status != VA_STATUS_SUCCESS) return status;
+    driver.materialise(*surface);
     std::uint8_t* data = surface->buffer->map();
     if (!data) return VA_STATUS_ERROR_OPERATION_FAILED;
     VAImage image {};
@@ -995,6 +1092,7 @@ VAStatus destroyImage(VADriverContextP ctx, VAImageID id)
 // layouts clients ask for.
 VAStatus readSurface(Driver& driver, Surface& surface, const Region& region, Image& target)
 {
+    driver.materialise(surface);
     std::uint8_t* destination = nullptr;
     if (Buffer* buffer = driver.buffer(target.image.buf)) destination = buffer->data();
     const std::uint8_t* source = surface.buffer ? surface.buffer->map() : nullptr;
@@ -1082,6 +1180,9 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
     if (unsigned(destinationX) + destinationWidth > surface->width ||
         unsigned(destinationY) + destinationHeight > surface->height)
         return VA_STATUS_ERROR_INVALID_PARAMETER;
+    // Whatever the decoder left in a shadow is now stale.
+    surface->shadow.reset();
+    surface->nativeValid = true;
     if (surface->fourcc == VA_FOURCC_NV12) {
         const ConstPlaneView in[2] {
             {source + image.offsets[0] + std::size_t(sourceY) * image.pitches[0] + sourceX, image.pitches[0]},
@@ -1113,6 +1214,9 @@ VAStatus exportSurfaceHandle(VADriverContextP ctx, VASurfaceID id, uint32_t memo
     Surface* surface = driver.surface(id);
     if (!surface || !surface->buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
     if (memoryType != VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
+    // A descriptor names the surface's own format, so it has to hold the
+    // surface's own pixels even when the decoder delivered packed RGB.
+    driver.materialise(*surface);
     const int fd = surface->buffer->exportDescriptor();
     if (fd < 0) return VA_STATUS_ERROR_OPERATION_FAILED;
     auto* descriptor = static_cast<VADRMPRIMESurfaceDescriptor*>(out);

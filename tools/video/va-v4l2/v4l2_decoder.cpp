@@ -64,6 +64,43 @@ bool acceptsFormat(int fd, std::uint32_t codedFormat) noexcept
 
 }
 
+RgbCapture rgbCaptureRequest(const char* request) noexcept
+{
+    if (!request || !*request) return RgbCapture::automatic;
+    const std::string wanted = request;
+    if (wanted == "off" || wanted == "0" || wanted == "nv12") return RgbCapture::off;
+    if (wanted == "force" || wanted == "1" || wanted == "rgb") return RgbCapture::force;
+    return RgbCapture::automatic;
+}
+
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing) noexcept
+{
+    if (!deviceOffers) return false;
+    switch (policy) {
+    case RgbCapture::off: return false;
+    case RgbCapture::force: return true;
+    case RgbCapture::automatic: return videoProcessing;
+    }
+    return false;
+}
+
+bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc)
+{
+    if (device.empty() || !fourcc) return false;
+    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    bool offered = false;
+    for (unsigned index = 0; !offered; ++index) {
+        v4l2_fmtdesc description {};
+        description.type = kCapture;
+        description.index = index;
+        if (call(fd, VIDIOC_ENUM_FMT, &description) < 0) break;
+        offered = description.pixelformat == fourcc;
+    }
+    ::close(fd);
+    return offered;
+}
+
 std::string findDecoderDevice(std::uint32_t codedFormat)
 {
     if (const char* override_ = std::getenv("UML_VA_V4L2_DEVICE"); override_ && *override_)
@@ -113,10 +150,12 @@ bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsi
 }
 
 std::unique_ptr<V4l2Decoder> V4l2Decoder::open(const std::string& device, std::uint32_t codedFormat,
-                                               unsigned width, unsigned height, std::string& error)
+                                               unsigned width, unsigned height,
+                                               std::uint32_t preferredCapture, std::string& error)
 {
     if (device.empty()) { error = "no Virtio video decoder node"; return nullptr; }
     std::unique_ptr<V4l2Decoder> decoder(new V4l2Decoder);
+    decoder->preferredCapture_ = preferredCapture;
     decoder->fd_ = ::open(device.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (decoder->fd_ < 0) { error = reason("open decoder"); return nullptr; }
     if (!acceptsFormat(decoder->fd_, codedFormat)) { error = "decoder does not offer the codec"; return nullptr; }
@@ -220,9 +259,31 @@ bool V4l2Decoder::setupCapture(std::string& error)
     v4l2_format format {};
     format.type = kCapture;
     if (call(fd_, VIDIOC_G_FMT, &format) < 0) { error = reason("read the decoded format"); return false; }
-    format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
-    if (call(fd_, VIDIOC_S_FMT, &format) < 0) { error = reason("set the decoded format"); return false; }
-    if (format.fmt.pix_mp.pixelformat != V4L2_PIX_FMT_NV12M) { error = "decoder cannot produce NV12"; return false; }
+    // A packed RGB capture format lets the host do the colour conversion the
+    // caller would otherwise do on the guest processor, so it is asked for
+    // first and the request falls back to NV12 when the device declines.
+    captureFormat_ = 0;
+    if (preferredCapture_) {
+        v4l2_format wanted = format;
+        wanted.fmt.pix_mp.pixelformat = preferredCapture_;
+        wanted.fmt.pix_mp.num_planes = 1;
+        if (call(fd_, VIDIOC_S_FMT, &wanted) >= 0 && wanted.fmt.pix_mp.pixelformat == preferredCapture_) {
+            format = wanted;
+            captureFormat_ = preferredCapture_;
+        } else if (call(fd_, VIDIOC_G_FMT, &format) < 0) {
+            error = reason("read the decoded format");
+            return false;
+        }
+    }
+    if (!captureFormat_) {
+        format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+        if (call(fd_, VIDIOC_S_FMT, &format) < 0) { error = reason("set the decoded format"); return false; }
+        if (format.fmt.pix_mp.pixelformat != V4L2_PIX_FMT_NV12M) {
+            error = "decoder cannot produce NV12";
+            return false;
+        }
+        captureFormat_ = V4L2_PIX_FMT_NV12M;
+    }
     width_ = format.fmt.pix_mp.width;
     height_ = format.fmt.pix_mp.height;
     capturePlanes_ = format.fmt.pix_mp.num_planes;

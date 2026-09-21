@@ -4,8 +4,10 @@
 // rule depends on, and the pixel paths. Runs natively on any Linux build host.
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <span>
 #include <string>
@@ -15,6 +17,7 @@
 
 #include "../convert.hpp"
 #include "../storage.hpp"
+#include "../v4l2_decoder.hpp"
 #include "../vp9.hpp"
 
 namespace {
@@ -251,6 +254,80 @@ void testMemoryStorage()
     check(buffer->map()[0] == 0x5a, "a memory surface keeps what is written to it");
 }
 
+// The decode format policy: which capture format a session asks the device
+// for, given what the device offers and what the client is doing.
+void testCapturePolicy()
+{
+    using uml::va::RgbCapture;
+    check(uml::va::rgbCaptureRequest(nullptr) == RgbCapture::automatic,
+          "an unset request leaves the policy automatic");
+    check(uml::va::rgbCaptureRequest("off") == RgbCapture::off, "off is honoured");
+    check(uml::va::rgbCaptureRequest("nv12") == RgbCapture::off, "nv12 means off");
+    check(uml::va::rgbCaptureRequest("force") == RgbCapture::force, "force is honoured");
+    check(uml::va::rgbCaptureRequest("nonsense") == RgbCapture::automatic,
+          "an unrecognised request leaves the policy automatic");
+
+    check(!uml::va::useRgbCapture(RgbCapture::force, false, true),
+          "a device that does not offer packed RGB is never asked for it");
+    check(!uml::va::useRgbCapture(RgbCapture::off, true, true),
+          "off never asks for packed RGB");
+    check(uml::va::useRgbCapture(RgbCapture::force, true, false),
+          "force asks for packed RGB without a video-processing client");
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false),
+          "automatic keeps NV12 while nothing converts");
+    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true),
+          "automatic asks for packed RGB once a client converts");
+}
+
+// A surface decoded as packed RGB still has to be readable as NV12, so the
+// inverse conversion has to come back to where it started.
+void testArgbToNv12()
+{
+    constexpr unsigned width = 16;
+    constexpr unsigned height = 8;
+    std::vector<std::uint8_t> luma(width * height);
+    std::vector<std::uint8_t> chroma(width * height / 2);
+    for (unsigned row = 0; row < height; ++row)
+        for (unsigned column = 0; column < width; ++column)
+            luma[row * width + column] = std::uint8_t(80 + 4 * column);
+    // Colours a decoder really produces: chroma near the neutral point, so the
+    // round trip measures the conversion rather than gamut clipping.
+    for (unsigned row = 0; row < height / 2; ++row)
+        for (unsigned column = 0; column < width / 2; ++column) {
+            chroma[row * width + 2 * column] = std::uint8_t(120 + 2 * column);
+            chroma[row * width + 2 * column + 1] = std::uint8_t(136 - 2 * column);
+        }
+    const uml::va::ConstPlaneView source[2] {{luma.data(), width}, {chroma.data(), width}};
+    const uml::va::Region region {0, 0, width, height};
+
+    std::vector<std::uint8_t> packed(width * height * 4);
+    const uml::va::PlaneView argb {packed.data(), width * 4};
+    uml::va::convertNv12ToArgb(source, region, argb, region, false);
+
+    std::vector<std::uint8_t> backLuma(width * height, 0);
+    std::vector<std::uint8_t> backChroma(width * height / 2, 0);
+    const uml::va::PlaneView destination[2] {{backLuma.data(), width}, {backChroma.data(), width}};
+    uml::va::convertArgbToNv12(uml::va::ConstPlaneView {packed.data(), width * 4}, region,
+                               destination, region, false);
+
+    int worstLuma = 0;
+    for (std::size_t index = 0; index < luma.size(); ++index)
+        worstLuma = std::max(worstLuma, std::abs(int(luma[index]) - int(backLuma[index])));
+    int worstChroma = 0;
+    for (std::size_t index = 0; index < chroma.size(); ++index)
+        worstChroma = std::max(worstChroma, std::abs(int(chroma[index]) - int(backChroma[index])));
+    check(worstLuma <= 2, "a round trip through packed RGB preserves luma");
+    check(worstChroma <= 3, "a round trip through packed RGB preserves chroma");
+
+    // The fast path a video-processing blit takes when the decoder already
+    // produced the destination format: a plain copy, byte for byte.
+    std::vector<std::uint8_t> blit(width * height * 4, 0);
+    uml::va::copyPacked32(uml::va::ConstPlaneView {packed.data(), width * 4}, region,
+                          uml::va::PlaneView {blit.data(), width * 4}, region);
+    check(std::memcmp(blit.data(), packed.data(), blit.size()) == 0,
+          "the packed fast path copies the picture unchanged");
+}
+
 }
 
 int main()
@@ -261,6 +338,8 @@ int main()
     testPixels();
     testLayout();
     testMemoryStorage();
+    testCapturePolicy();
+    testArgbToNv12();
     if (failures) {
         std::fprintf(stderr, "UML_VA_V4L2_TESTS: FAIL (%d)\n", failures);
         return 1;

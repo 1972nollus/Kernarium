@@ -37,6 +37,13 @@ void convertNv12ToArgb(const ConstPlaneView source[2], const Region& sourceRegio
                        const PlaneView& destination, const Region& destinationRegion,
                        bool bt709) noexcept;
 
+// Converts a packed 32-bit region (B, G, R, A in memory) back into NV12,
+// with the same studio-swing matrices as the forward conversion. Chroma is
+// averaged over each 2x2 block.
+void convertArgbToNv12(const ConstPlaneView& source, const Region& sourceRegion,
+                       const PlaneView destination[2], const Region& destinationRegion,
+                       bool bt709) noexcept;
+
 // Copies a packed 32-bit image region.
 void copyPacked32(const ConstPlaneView& source, const Region& sourceRegion,
                   const PlaneView& destination, const Region& destinationRegion) noexcept;

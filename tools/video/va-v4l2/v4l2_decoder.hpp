@@ -30,8 +30,11 @@ struct DecodedPicture {
 class V4l2Decoder {
 public:
     // `codedFormat` is a V4L2_PIX_FMT_* value for the compressed queue.
+    // `preferredCapture` asks for a decoded format other than NV12, and is
+    // ignored when the device does not offer it; zero means NV12.
     static std::unique_ptr<V4l2Decoder> open(const std::string& device, std::uint32_t codedFormat,
-                                             unsigned width, unsigned height, std::string& error);
+                                             unsigned width, unsigned height,
+                                             std::uint32_t preferredCapture, std::string& error);
     ~V4l2Decoder();
 
     V4l2Decoder(const V4l2Decoder&) = delete;
@@ -53,6 +56,9 @@ public:
     // starts a new one. Pictures are delivered through collect() as usual.
     bool drain(std::string& error);
 
+    // The format the decoder really produces, which is NV12 unless a
+    // preferred format was both asked for and accepted.
+    std::uint32_t captureFormat() const noexcept { return captureFormat_; }
     unsigned width() const noexcept { return width_; }
     unsigned height() const noexcept { return height_; }
     bool streaming() const noexcept { return captureStreaming_; }
@@ -79,6 +85,8 @@ private:
     bool pendingSourceChange(std::string& error);
 
     int fd_ {-1};
+    std::uint32_t preferredCapture_ {};
+    std::uint32_t captureFormat_ {};
     unsigned width_ {};
     unsigned height_ {};
     unsigned capturePlanes_ {};
@@ -92,6 +100,24 @@ private:
 // The device node the driver talks to, honouring UML_VA_V4L2_DEVICE and
 // falling back to a scan for a stateful decoder that accepts `codedFormat`.
 std::string findDecoderDevice(std::uint32_t codedFormat);
+
+// Whether to ask the decoder for packed RGB rather than NV12. `off` never
+// does; `automatic` does when the client has a video-processing context, which
+// is the case where the colour conversion would otherwise be done on the guest
+// processor; `force` does whenever the device offers it.
+enum class RgbCapture { off, automatic, force };
+
+// Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
+RgbCapture rgbCaptureRequest(const char* request) noexcept;
+
+// The decision itself, given the policy and what is known about the device and
+// the client.
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing) noexcept;
+
+// Whether the device can deliver decoded pictures in `fourcc`. A device that
+// does not enumerate it makes the RGB decode path unavailable, and the driver
+// then decodes NV12 and converts.
+bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc);
 
 // The frame sizes the device accepts for a coded format. Returns false and
 // leaves the arguments untouched when the device does not say.
