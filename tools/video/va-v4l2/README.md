@@ -115,3 +115,19 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
 
 Both binaries are Linux guest programs; the unit test also runs on any Linux
 build host.
+
+`--vpp` additionally converts every decoded frame to ARGB through a
+`VAProfileNone` video-processing context, and `--export` exports a decoded
+surface as `DRM_PRIME_2`, re-imports the descriptor and compares the pixels.
+Those are the two paths a browser uses beyond decoding.
+
+## In the Steam x86-64 image
+
+[`tools/rootfs/steam-x86_64`](../../rootfs/steam-x86_64/README.md) compiles
+this driver in its builder root, runs the unit test there, and installs the
+module as `/usr/lib/x86_64-linux-gnu/dri/uml_drv_video.so`. The gaming session
+exports `LIBVA_DRIVER_NAME=uml` when the module and `/dev/video-dec0` are both
+present, and the client is then started with Valve's `-cef-enable-vaapi`, the
+option that gives its web helper the `VaapiVideoDecodeLinuxGL` and
+`VaapiIgnoreDriverChecks` Chromium features. `VaapiIgnoreDriverChecks` matters
+here: without it Chromium accepts only the driver vendor strings it knows.

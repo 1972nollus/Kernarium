@@ -123,6 +123,19 @@ sudo -n chroot "$builder" env CCACHE_DISABLE=1 sh -eu -c \
 sudo -n install -m 0755 "$builder/splash-build/kernarium-screen" "$root/usr/local/libexec/kernarium-screen"
 sudo -n chroot "$root" ldd /usr/local/libexec/kernarium-screen > "$work/kernarium-screen.ldd"
 ! grep -q 'not found' "$work/kernarium-screen.ldd"
+
+# The VA-API backend over the Virtio video stateful decoder is compiled in the
+# same builder root, against the libva and libdrm the image ships, and its own
+# tests run there before the module is installed.
+sudo -n cp -a "$repository/tools/video/va-v4l2" "$builder/va-v4l2"
+sudo -n rm -rf "$builder/va-v4l2/build"
+sudo -n chroot "$builder" env CCACHE_DISABLE=1 sh -eu -c \
+	'cd /va-v4l2; cmake --preset guest -B /va-v4l2-build; cmake --build /va-v4l2-build;
+	 /va-v4l2-build/uml_va_v4l2_tests'
+sudo -n install -D -m 0644 "$builder/va-v4l2-build/uml_drv_video.so" \
+	"$root/usr/lib/x86_64-linux-gnu/dri/uml_drv_video.so"
+sudo -n chroot "$root" ldd /usr/lib/x86_64-linux-gnu/dri/uml_drv_video.so > "$work/uml_drv_video.ldd"
+! grep -q 'not found' "$work/uml_drv_video.ldd"
 sudo -n rm -rf "$builder"
 
 if [ -n "$vulkan_root" ]; then

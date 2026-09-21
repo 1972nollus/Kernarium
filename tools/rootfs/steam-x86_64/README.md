@@ -67,15 +67,18 @@ payload verification and is what `build.sh` runs before it touches anything;
 
 Preparation produces two roots: `base.tar.zst` is the image runtime closure,
 and `builder.tar.zst` is that closure plus its development packages. The
-splash renderer is compiled offline in the builder chroot, so it links against
-exactly the libraries the image ships; the builder never enters the image.
+splash renderer and the VA-API backend are compiled offline in the builder
+chroot, so they link against exactly the libraries the image ships; the builder
+never enters the image. A builder prepared before the backend existed lacks
+`libva-dev` and is rebuilt by preparation, which is a network stage.
 
 ## Image and startup contract
 
 The output carries SHA-256, package and binary inventories, and input
 provenance sidecars. The audit requires the native x86-64 Steam client and web
 helper, Gamescope, the splash renderer, the GTK/OpenAL/libnm aliases the native
-Steam UI needs, and the V4L2 decoder rule; it rejects foreign ELF payloads,
+Steam UI needs, the V4L2 decoder rule, and the VA-API backend with the session
+and launcher wiring that selects it; it rejects foreign ELF payloads,
 system i386 payloads, an installed desktop environment, a bundled compatibility
 tool under `/opt`, and a guest FEX engine.
 
@@ -109,15 +112,23 @@ in hardware. Two things are specific to this client:
   `/dev/video-dec0` is never a candidate for it. Its only hardware decode path
   is VA-API, which it does attempt: `libva.so.2` and `libva-drm.so.2` are
   mapped into its GPU process during a session.
-- No VA driver exists for this device and the image ships none, so that attempt
-  can only fail. Supplying one means writing a libva backend over the Virtio
-  video stateful decoder — `VAProfileVP9Profile0` with `VAEntrypointVLD` —
-  which neither Debian nor upstream provides.
+- Neither Debian nor upstream has a VA driver for this device, so the image
+  builds and installs its own: [`tools/video/va-v4l2`](../../video/va-v4l2/README.md),
+  a libva backend over the Virtio video stateful decoder advertising
+  `VAProfileVP9Profile0` with `VAEntrypointVLD` and a VA-API video-processing
+  entry point. It is compiled in the builder root against the libva the image
+  ships, installed as `/usr/lib/x86_64-linux-gnu/dri/uml_drv_video.so`, and
+  selected by the session through `LIBVA_DRIVER_NAME=uml`. The session sets
+  `KERNARIUM_CEF_VAAPI=1` only when both the module and `/dev/video-dec0` are
+  present, and the shared launcher then starts the client with Valve's
+  `-cef-enable-vaapi` option, which is how this client asks Chromium for the
+  `VaapiVideoDecodeLinuxGL` and `VaapiIgnoreDriverChecks` features its GPU
+  process needs.
 
-Even with such a backend the client would still decode in software today,
-because Chromium's decode pipeline first requires dma-buf-backed NV12 buffers
-that this guest's Zink-on-Venus GBM cannot export. Fix that before investing in
-a VA driver.
+The client can still decode in software: Chromium's decode pipeline requires
+dma-buf-backed NV12 buffers, which this guest's Zink-on-Venus GBM does not yet
+export. The backend then falls back to memfd-backed surfaces, which satisfy
+`vainfo` and a VA-API client but not Chromium's import path.
 
 ## Interactive boot
 

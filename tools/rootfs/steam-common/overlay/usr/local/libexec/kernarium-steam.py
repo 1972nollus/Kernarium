@@ -65,6 +65,12 @@ def main() -> int:
         staged.write_text(f"{fraction if fraction is not None else -1}\n{message.replace(chr(10), chr(32))}\n")
         staged.replace(state)
 
+    options = ["-gamepadui"]
+    if os.environ.get("KERNARIUM_CEF_VAAPI") == "1":
+        # Valve's own client option is what turns on the Chromium features that
+        # let its web helper decode video through VA-API in an OpenGL session.
+        options.append("-cef-enable-vaapi")
+
     display("Starting Steam")
     screen = subprocess.Popen(["/usr/local/libexec/kernarium-screen", "--status", str(state)])
     client = None
@@ -73,7 +79,7 @@ def main() -> int:
         for attempt in range(4):
             offset = log.stat().st_size if log.exists() else 0
             updated = False
-            client = subprocess.Popen(["/usr/local/bin/steam", "-gamepadui"])
+            client = subprocess.Popen(["/usr/local/bin/steam", *options])
             deadline = time.monotonic() + 1800
             visible = False
             while True:

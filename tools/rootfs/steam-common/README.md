@@ -48,6 +48,10 @@ Which decoder each client would then use still differs:
 
 - The ARM64 client's CEF carries the stateful V4L2 decoder and asks for the
   node, which the decoder rule publishes as `/dev/video-dec0`.
-- The x86-64 client's CEF carries only VA-API. It does load `libva.so.2` and
-  `libva-drm.so.2` into its GPU process, and no image ships a VA driver, so
-  that client additionally needs a libva backend over this device.
+- The x86-64 client's CEF carries only VA-API. It loads `libva.so.2` and
+  `libva-drm.so.2` into its GPU process, so that client needs a libva backend
+  over this device; the x86-64 image installs
+  [one](../../video/va-v4l2/README.md) and this launcher then starts the client
+  with Valve's `-cef-enable-vaapi` option, which the x86-64 session requests
+  through `KERNARIUM_CEF_VAAPI`. The ARM64EC image ships no such backend and
+  never sets that variable.

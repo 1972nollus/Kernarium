@@ -4,7 +4,11 @@
 set -euo pipefail
 inputs=$1
 root=$inputs/base-root
-if [ -f "$inputs/base.tar.zst" ] && [ -f "$inputs/builder.tar.zst" ]; then
+# The recorded builder package list decides whether a prepared builder still
+# matches this policy, so a builder missing a newly required development
+# package is rebuilt instead of silently reused.
+if [ -f "$inputs/base.tar.zst" ] && [ -f "$inputs/builder.tar.zst" ] &&
+	grep -q '^libva-dev	' "$inputs/builder.packages.tsv" 2>/dev/null; then
 	exit 0
 fi
 if [ ! -d "$root" ]; then
@@ -63,7 +67,8 @@ fi
 sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --no-install-recommends \
 	cmake ninja-build g++ pkgconf \
-	libcairo2-dev libdrm-dev libgbm-dev libegl-dev libgles-dev libx11-dev
+	libcairo2-dev libdrm-dev libgbm-dev libegl-dev libgles-dev libx11-dev \
+	libva-dev
 test -z "$(sudo -n chroot "$root" dpkg --audit)"
 sudo -n chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$inputs/builder.packages.tsv"
 sudo -n chroot "$root" apt-get clean
