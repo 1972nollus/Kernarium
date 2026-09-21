@@ -4549,6 +4549,115 @@ read_test_sequences(void *context) noexcept
 			"RSQRTSS of a negative value did not return the x86 indefinite NaN");
 }
 
+/* A packed-integer register form leaves its result in v4, and in v5 with it at
+ * 256 bits, and bit 62 of the next gadget's descriptor takes its left operand
+ * from there instead of reading the state slot back. The bit is only sound
+ * while the producer really is the gadget immediately before: anything between
+ * the two withdraws it, and a block that begins at the consumer -- which is
+ * what a fault between the two leaves behind, because the handler returns to
+ * the consumer and the engine translates a fresh block there -- must forward
+ * nothing, since v4 then holds whatever last ran.
+ */
+[[nodiscard]] bool vector_integer_forwards_only_from_the_gadget_before()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uintptr_t forward_left = std::uintptr_t{1} << 62U;
+	const auto seed = [](CpuState &cpu, std::size_t index,
+		std::uint32_t base) noexcept {
+		for (std::size_t position = 0; position < 8U; ++position) {
+			const auto value = static_cast<std::uint32_t>(
+				base + position * 0x11U);
+			std::memcpy(cpu.vectors[index].data() + position * 4U,
+				&value, sizeof(value));
+		}
+	};
+	const auto lane = [](const CpuState &cpu, std::size_t index,
+		std::size_t position) noexcept {
+		std::uint32_t value{};
+		std::memcpy(&value, cpu.vectors[index].data() + position * 4U,
+			sizeof(value));
+		return value;
+	};
+	/* Subtraction tells the two operands apart, and the lanes differ so that
+	 * a path taking v4 where it owes v5 shows up.
+	 */
+	const auto run = [&](std::initializer_list<std::uint8_t> code,
+		std::uint64_t entry, std::size_t instructions, CpuState &cpu,
+		std::uintptr_t &consumer) {
+		TestMemory memory;
+		memory.load(0, code);
+		const auto built = gadgets::build(memory, entry);
+		if (built.status != gadgets::BuildStatus::built)
+			return false;
+		const auto stream = built.program.native_stream();
+		const std::size_t descriptor = entry == 0 ? 3U : 1U;
+		consumer = stream.size() > descriptor ? stream[descriptor] : 0U;
+		cpu.rip = entry;
+		seed(cpu, 1, 0x0100'0000);
+		seed(cpu, 2, 0x0002'0000);
+		seed(cpu, 3, 0x0033'0000);
+		seed(cpu, 4, 0x4000'0000);
+		seed(cpu, 5, 0x0000'0500);
+		const auto result = gadgets::execute(built.program, cpu, memory,
+			instructions);
+		return result.event == uml::cpu::EngineEvent::system_call;
+	};
+
+	CpuState adjacent{};
+	std::uintptr_t adjacent_descriptor{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
+			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
+			0x0f, 0x05,             // syscall
+		}, 0, 3, adjacent, adjacent_descriptor),
+		"forwarded left operand did not reach SYSCALL"))
+		return false;
+	if (!expect((adjacent_descriptor & forward_left) != 0,
+			"a consumer of the gadget before it did not forward its left "
+			"operand") ||
+		!expect(lane(adjacent, 0, 0) == 0x0102'0000U - 0x4000'0000U &&
+			lane(adjacent, 0, 7) == (0x0102'0000U + 14U * 0x11U) -
+				(0x4000'0000U + 7U * 0x11U),
+			"a forwarded left operand produced the wrong difference"))
+		return false;
+
+	/* VMOVDQA ymm3,ymm5 between the two: the consumer must read the slot the
+	 * move has just written, not the registers the producer left.
+	 */
+	CpuState withdrawn{};
+	std::uintptr_t ignored{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
+			0xc5, 0xfd, 0x6f, 0xdd, // vmovdqa ymm3,ymm5
+			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
+			0x0f, 0x05,             // syscall
+		}, 0, 4, withdrawn, ignored),
+		"withdrawn forwarding did not reach SYSCALL"))
+		return false;
+	if (!expect(lane(withdrawn, 0, 0) == 0x0000'0500U - 0x4000'0000U &&
+			lane(withdrawn, 0, 7) == (0x0000'0500U + 7U * 0x11U) -
+				(0x4000'0000U + 7U * 0x11U),
+			"a move between producer and consumer did not withdraw the "
+			"forwarded registers"))
+		return false;
+
+	/* The same two instructions, entered at the consumer. */
+	CpuState resumed{};
+	std::uintptr_t first_descriptor{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda,
+			0xc5, 0xe5, 0xfa, 0xc4,
+			0x0f, 0x05,
+		}, 4, 2, resumed, first_descriptor),
+		"a block entered at the consumer did not reach SYSCALL"))
+		return false;
+	return expect((first_descriptor & forward_left) == 0,
+			"the first gadget of a block forwarded an operand") &&
+		expect(lane(resumed, 0, 0) == 0x0033'0000U - 0x4000'0000U,
+			"a block entered at the consumer did not read its operand from "
+			"the state");
+}
+
 /* The gadget a block selects for its first instruction. */
 [[nodiscard]] std::uintptr_t first_native_entry(
 	std::initializer_list<std::uint8_t> code)
@@ -5310,6 +5419,7 @@ int main()
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
 		vex_vmovlhps_preserves_aliased_source() &&
+		vector_integer_forwards_only_from_the_gadget_before() &&
 		vector_invalid_results_use_x86_indefinite_nan() &&
 		locked_memory_updates_select_exclusive_gadgets() &&
 		glibc_rwlock_xadd_fast_path_is_exact() &&
