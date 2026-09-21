@@ -22,6 +22,8 @@ public:
     std::vector<std::uint8_t> configuration() const override;
     void writeConfiguration(std::uint32_t, std::uint32_t, std::span<const std::uint8_t>) override;
     void setGuestMapper(GuestMapper mapper) override;
+    void setSharedMemoryRegions(
+        std::shared_ptr<const uml::virtio::SharedMemoryRegions> regions) override;
     uml::virtio::VhostUserQueueResult processQueue(std::uint32_t index, std::uint64_t requestId,
         std::span<const std::uint8_t> request, std::size_t responseCapacity) override;
     bool takeQueueCompletion(uml::virtio::VhostUserQueueCompletion&) override;

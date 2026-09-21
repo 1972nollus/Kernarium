@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -51,6 +52,13 @@ public:
         int connection,
         const std::atomic_bool& stopRequested,
         const std::function<void()>& ready = {});
+
+    /* Shares one shared-memory index with the other backends of the same
+     * guest. The backend that owns a region publishes its ranges here; a
+     * device whose guest names buffers inside a region resolves them here.
+     * Call before run(). */
+    void setSharedMemoryRegions(
+        std::shared_ptr<uml::virtio::SharedMemoryRegions> regions);
 
 private:
     struct Mapping {
@@ -140,6 +148,7 @@ private:
     std::unique_ptr<Display> display_;
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;
     std::vector<Mapping> mappings_;
     std::vector<Queue> queues_;
     std::unordered_map<std::uint64_t, PendingRequest> pendingRequests_;

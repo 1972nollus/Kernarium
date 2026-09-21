@@ -1439,6 +1439,11 @@ int runtimeRun(
             guestMemoryMiB,
             guestProcessorCount);
 
+        /* The host-visible shared-memory region belongs to the GPU backend,
+         * and the video decoder fills capture buffers that live in it, so
+         * both backends share one index of the ranges published there. */
+        auto sharedMemoryRegions =
+            std::make_shared<uml::virtio::SharedMemoryRegions>();
         uml::gpu::InProcessGpuService gpuService(
             uml::gpu::InProcessGpuOptions {
                 .displayMode = uml::gpu::DisplayMode::native,
@@ -1447,6 +1452,7 @@ int runtimeRun(
                 .dotsPerInch = dotsPerInch,
                 .nativeView = (__bridge void*)view,
                 .autoResizeGuest = boot->auto_resize_guest != 0,
+                .sharedMemoryRegions = sharedMemoryRegions,
             });
         uml::input::virtio::InProcessInputService touchscreen(
             uml::input::virtio::DeviceKind::touchscreen, width, height);
@@ -1455,7 +1461,8 @@ int runtimeRun(
         uml::audio::InProcessAudioService audioService;
         std::unique_ptr<uml::video::InProcessVideoService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
-            videoService = std::make_unique<uml::video::InProcessVideoService>();
+            videoService = std::make_unique<uml::video::InProcessVideoService>(
+                sharedMemoryRegions);
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         uml::battery::InProcessBatteryService batteryService;
 #endif

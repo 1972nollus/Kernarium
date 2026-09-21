@@ -96,8 +96,10 @@ private:
 
 class InProcessVideoService::Implementation final {
 public:
-    Implementation()
-        : descriptors_(makeSocketPair())
+    explicit Implementation(
+        std::shared_ptr<uml::virtio::SharedMemoryRegions> regions)
+        : regions_(std::move(regions))
+        , descriptors_(makeSocketPair())
         , stopDescriptor_(duplicateDescriptor(descriptors_[0].get()))
         , connectionName_("fd=" + std::to_string(descriptors_[1].get()))
         , thread_([this] { run(); })
@@ -144,6 +146,8 @@ private:
             auto device = std::make_unique<VirtioVideoDevice>(
                 uml::platform::videoDecodeCapabilities(), uml::platform::makeVideoDecoder);
             uml::gpu::VhostUserServer server(std::move(device));
+            if (regions_)
+                server.setSharedMemoryRegions(regions_);
             server.runConnected(
                 descriptors_[0].release(), stopRequested_, [this] {
                     {
@@ -161,6 +165,7 @@ private:
         }
     }
 
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> regions_;
     DescriptorPair descriptors_;
     uml::gpu::UniqueDescriptor stopDescriptor_;
     std::string connectionName_;
@@ -172,10 +177,11 @@ private:
     std::thread thread_;
 };
 
-InProcessVideoService::InProcessVideoService()
+InProcessVideoService::InProcessVideoService(
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> regions)
 {
     ScopedGuestTimerBlock timerBlock;
-    implementation_ = std::make_unique<Implementation>();
+    implementation_ = std::make_unique<Implementation>(std::move(regions));
 }
 
 InProcessVideoService::~InProcessVideoService() = default;

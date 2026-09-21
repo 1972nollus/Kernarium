@@ -506,6 +506,11 @@ int uml::app::runEmbeddedKernel(
 	std::unique_ptr<uml::input::virtio::InProcessInputService> touchscreen;
 	std::unique_ptr<uml::input::virtio::InProcessInputService> keyboard;
 	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service;
+	/* The guest's host-visible shared-memory region belongs to the GPU
+	 * backend, and the video decoder fills capture buffers that live in it,
+	 * so both backends share one index of the ranges published there. */
+	auto shared_memory_regions =
+		std::make_shared<uml::virtio::SharedMemoryRegions>();
 	if (prepared.gpu.enabled && !informational(argc, argv)) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
@@ -569,6 +574,8 @@ int uml::app::runEmbeddedKernel(
 						.autoResizeGuest =
 							prepared.gpu.auto_resize_guest,
 						.inputSink = std::move(input_sink),
+						.sharedMemoryRegions =
+							shared_memory_regions,
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
@@ -592,7 +599,8 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 		try {
-			video_service = std::make_unique<uml::video::InProcessVideoService>();
+			video_service = std::make_unique<uml::video::InProcessVideoService>(
+				gpu_service ? shared_memory_regions : nullptr);
 			prepared.kernel.emplace_back("virtio_uml.device=" +
 				video_service->takeConnectionName() + ":" + std::to_string(uml::video::deviceId));
 		} catch (const std::exception& error) {

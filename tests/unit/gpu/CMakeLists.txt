@@ -537,6 +537,7 @@ if(TARGET uml_gpu_service)
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 
     add_library(uml_gpu_transport_slow_stop_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp)
     target_include_directories(uml_gpu_transport_slow_stop_test_variant
         PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)

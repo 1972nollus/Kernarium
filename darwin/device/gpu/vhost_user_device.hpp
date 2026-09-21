@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "shared_memory_regions.hpp"
 #include "unique_descriptor.hpp"
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -78,6 +80,13 @@ public:
     // Called only on the transport worker. Returned spans are borrowed until
     // reset; devices must release all retained guest state in reset().
     virtual void setGuestMapper(GuestMapper) {}
+    /* The shared-memory ranges published to this guest, for a device whose
+     * guest names buffers by region and offset instead of by guest-physical
+     * address. Shared with the backend that owns the region. */
+    virtual void setSharedMemoryRegions(
+        std::shared_ptr<const SharedMemoryRegions>)
+    {
+    }
 
     [[nodiscard]] virtual std::optional<VhostUserSharedMemoryRegion>
         sharedMemoryRegion() const noexcept

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "shared_memory_regions.hpp"
 #include "video_capabilities.hpp"
 
 #include <algorithm>
@@ -11,6 +12,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <fcntl.h>
+#include <memory>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <utility>
 
@@ -207,11 +211,168 @@ void activityLog()
         "the video activity log omits what the stream decoded");
 }
 
+/* A capture buffer may be a host-visible blob: the guest names an offset in
+ * the shared-memory region its GPU backend published instead of a
+ * guest-physical address, and the decoder writes the frame into the host
+ * memory behind that region. A range withdrawn while a buffer is queued must
+ * fail that buffer rather than reach memory the guest no longer has.
+ */
+void sharedMemoryCapture()
+{
+    constexpr std::uint8_t regionId = 1;
+    constexpr std::uint64_t regionOffset = 64 * 1024;
+    constexpr std::size_t regionLength = 64 * 1024;
+    const auto path = std::filesystem::temp_directory_path() /
+        ("uml-video-shm-" + std::to_string(::getpid()));
+    const int descriptor = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
+    require(descriptor >= 0, "shared-memory fixture could not be created");
+    std::filesystem::remove(path);
+    require(::ftruncate(descriptor, regionLength) == 0, "shared-memory fixture could not be sized");
+
+    auto regions = std::make_shared<SharedMemoryRegions>();
+    require(regions->publish(regionId, regionOffset, regionLength, descriptor, 0),
+        "publishing a shared-memory range failed");
+    require(!regions->publish(regionId, regionOffset + 4096, 4096, descriptor, 0),
+        "an overlapping shared-memory range was published");
+    require(regions->contains(regionId, regionOffset, 16) &&
+        regions->contains(regionId, regionOffset + regionLength - 1, 1),
+        "a published range does not contain its own memory");
+    require(!regions->contains(regionId, regionOffset - 1, 1) &&
+        !regions->contains(regionId, regionOffset + regionLength - 1, 2) &&
+        !regions->contains(regionId + 1, regionOffset, 1),
+        "an unpublished range resolved");
+
+    std::vector<VideoDecodeCapability> caps {
+        {VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
+    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false); });
+    require((device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) == 0,
+        "a device with no shared-memory index offered the region feature");
+    device.setSharedMemoryRegions(regions);
+    require((device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) != 0,
+        "a device with a shared-memory index withheld the region feature");
+    std::vector<std::uint8_t> memory(8 * 4096, 0xcc);
+    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
+        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
+        return std::span(memory).subspan(offset, size);
+    });
+    std::uint64_t next = 1;
+    auto command = [&](const auto& value) {
+        std::vector<std::uint8_t> request;
+        append(request, value);
+        return device.processQueue(0, next++, request, 16384);
+    };
+    auto ok = [&](const auto& value) {
+        auto result = command(value);
+        require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+            "command failed");
+    };
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 3};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+    ok(create);
+    virtio_video_set_params set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 3};
+    set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    set.params.format = VIRTIO_VIDEO_FORMAT_NV12;
+    set.params.frame_width = set.params.frame_height = 64;
+    ok(set);
+    auto attach = [&](unsigned queue, unsigned id,
+                      const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 3, queue, id});
+        for (const auto& plane : planes) {
+            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
+            for (const auto& segment : plane) append(request, segment);
+        }
+        return device.processQueue(0, next++, request, 16384);
+    };
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    memory[0] = 1; memory[1] = 2; memory[2] = 3; memory[3] = 4; memory[4] = 5;
+    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{0, 5, {}}}}).response) .type ==
+        VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+
+    const std::uint32_t shared = VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION |
+        (std::uint32_t(regionId) << VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT);
+    /* NV12 at 64x64: a 4096-byte luma plane followed by a 2048-byte chroma
+     * plane, both inside the published range. */
+    const std::vector<std::vector<virtio_video_resource_sg_entry>> planes {
+        {{regionOffset, 4096, shared}},
+        {{regionOffset + 4096, 2048, shared}},
+    };
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+        VIRTIO_VIDEO_RESP_OK_NODATA, "shared-memory attach failed");
+    require(read<virtio_video_cmd_hdr>(attach(output, 3, {
+            {{regionOffset + regionLength, 4096, shared}},
+            {{regionOffset, 2048, shared}},
+        }).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
+        "a range outside the published region was accepted");
+    require(read<virtio_video_cmd_hdr>(attach(output, 4, {
+            {{regionOffset, 4096, shared | 0x8000u}},
+            {{regionOffset + 4096, 2048, shared}},
+        }).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
+        "an unknown scatter entry flag was accepted");
+    /* Rebinding a buffer index to other memory reattaches its identifier. */
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+        VIRTIO_VIDEO_RESP_OK_NODATA, "reattaching an idle resource failed");
+
+    virtio_video_resource_queue capture {};
+    capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+    capture.stream_id = 3; capture.queue_type = output; capture.resource_id = 2;
+    const auto captureRequest = next;
+    require(command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+        VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "a queued resource was reattached");
+    virtio_video_resource_queue packet {};
+    packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+    packet.stream_id = 3; packet.queue_type = input; packet.resource_id = 1;
+    packet.data_sizes[0] = 5; packet.timestamp = 12345;
+    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+        "decode input failed");
+    VhostUserQueueCompletion completion;
+    bool delivered = false;
+    while (device.takeQueueCompletion(completion)) {
+        if (completion.requestId != captureRequest) continue;
+        const auto result = read<virtio_video_resource_queue_resp>(completion.response);
+        require(result.flags == 0 && result.timestamp == packet.timestamp,
+            "shared-memory capture did not complete");
+        delivered = true;
+    }
+    require(delivered, "shared-memory capture produced no completion");
+    bool written = false;
+    require(regions->resolve(regionId, regionOffset, 4096 + 2048,
+        [&](std::span<std::uint8_t> frame) {
+            written = frame[0] == 0x39 && frame[4095] == 0x39 && frame[4096] == 0x27 &&
+                frame[4097] == 0x91;
+        }), "the published range could not be resolved");
+    require(written, "the decoded frame did not reach the shared-memory range");
+
+    /* A blob revoked while its buffer is queued fails that buffer. */
+    const auto revokedRequest = next;
+    require(command(capture).action == VhostUserQueueAction::defer, "second capture failed");
+    regions->revoke(regionId, regionOffset, regionLength);
+    require(!regions->contains(regionId, regionOffset, 1), "revoking a range left it published");
+    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+        "decode input after revocation failed");
+    bool failed = false;
+    while (device.takeQueueCompletion(completion)) {
+        if (completion.requestId != revokedRequest) continue;
+        failed = read<virtio_video_resource_queue_resp>(completion.response).flags ==
+            VIRTIO_VIDEO_DEQUEUE_FLAG_ERR;
+    }
+    require(failed, "a capture buffer whose region was revoked did not fail");
+    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 3}});
+    device.reset();
+    regions->revokeAll();
+    ::close(descriptor);
+}
+
 }
 int main()
 {
     try {
         codecLevelControls();
+        sharedMemoryCapture();
         for (const auto page : {4096u, 16384u})
             for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
                 exercise(format, page);

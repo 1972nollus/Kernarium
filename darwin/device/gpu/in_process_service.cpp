@@ -247,6 +247,8 @@ private:
                 options_.dotsPerInch,
                 options_.pointerMode,
                 options_.autoResizeGuest);
+            if (options_.sharedMemoryRegions)
+                server.setSharedMemoryRegions(options_.sharedMemoryRegions);
             server.runConnected(
                 descriptors_[0].release(), stopRequested_, ready);
 #endif

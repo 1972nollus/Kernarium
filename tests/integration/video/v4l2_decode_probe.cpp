@@ -51,6 +51,17 @@ std::vector<std::uint8_t> read(const std::string& path)
 constexpr auto output = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
 constexpr auto capture = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 using Buffers = std::vector<std::vector<Mapping>>;
+struct Prime {
+    int fd {-1};
+    std::size_t length {};
+    Prime() = default;
+    Prime(int descriptor, std::size_t size) : fd(descriptor), length(size) {}
+    Prime(Prime&& other) noexcept : fd(other.fd), length(other.length) { other.fd = -1; }
+    Prime& operator=(Prime&&) = delete;
+    Prime(const Prime&) = delete;
+    ~Prime() { if (fd >= 0) close(fd); }
+};
+using Primes = std::vector<std::vector<Prime>>;
 Buffers allocate(int fd, v4l2_buf_type type, unsigned count)
 {
     v4l2_requestbuffers request {};
@@ -71,6 +82,40 @@ Buffers allocate(int fd, v4l2_buf_type type, unsigned count)
     }
     return result;
 }
+/* Exports the queue's own buffers as dma-bufs and hands the queue back
+ * empty. vb2 orphans buffers an exported dma-buf still holds, so the
+ * descriptors keep their memory alive after the mapped allocation is gone
+ * and the same queue can import them again. */
+Primes exportAndRelease(int fd, v4l2_buf_type type, const Buffers& maps)
+{
+    Primes result;
+    for (unsigned i = 0; i < maps.size(); ++i) {
+        result.emplace_back();
+        for (unsigned j = 0; j < maps[i].size(); ++j) {
+            v4l2_exportbuffer request {};
+            request.type = type; request.index = i; request.plane = j;
+            request.flags = O_RDWR | O_CLOEXEC;
+            call(fd, VIDIOC_EXPBUF, &request, "EXPBUF");
+            require(request.fd >= 0, "EXPBUF returned no descriptor");
+            result.back().emplace_back(request.fd, maps[i][j].length);
+        }
+    }
+    return result;
+}
+void release(int fd, v4l2_buf_type type)
+{
+    v4l2_requestbuffers request {};
+    request.type = type; request.memory = V4L2_MEMORY_MMAP; request.count = 0;
+    call(fd, VIDIOC_REQBUFS, &request, "REQBUFS release");
+}
+unsigned import(int fd, v4l2_buf_type type, unsigned count)
+{
+    v4l2_requestbuffers request {};
+    request.type = type; request.memory = V4L2_MEMORY_DMABUF; request.count = count;
+    call(fd, VIDIOC_REQBUFS, &request, "REQBUFS dmabuf");
+    require(request.count >= count && request.count <= 32, "unexpected imported buffer count");
+    return request.count;
+}
 void queue(int fd, v4l2_buf_type type, unsigned index, const std::vector<Mapping>& maps, unsigned bytes = 0)
 {
     v4l2_plane planes[VIDEO_MAX_PLANES] {};
@@ -82,7 +127,24 @@ void queue(int fd, v4l2_buf_type type, unsigned index, const std::vector<Mapping
     planes[0].bytesused = bytes;
     call(fd, VIDIOC_QBUF, &buffer, "QBUF");
 }
-void decode(const char* device, const std::string& directory, const char* name, unsigned coded, unsigned raw)
+void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector<Prime>& primes)
+{
+    v4l2_plane planes[VIDEO_MAX_PLANES] {};
+    v4l2_buffer buffer {};
+    buffer.type = type; buffer.memory = V4L2_MEMORY_DMABUF; buffer.index = index;
+    buffer.length = primes.size(); buffer.m.planes = planes;
+    buffer.timestamp.tv_sec = 7; buffer.timestamp.tv_usec = 654321;
+    for (unsigned i = 0; i < primes.size(); ++i) {
+        planes[i].m.fd = primes[i].fd;
+        planes[i].length = primes[i].length;
+    }
+    call(fd, VIDIOC_QBUF, &buffer, "QBUF dmabuf");
+}
+/* `memory` selects how the capture queue holds its frames: its own mapped
+ * buffers, or dma-buf descriptors it imports. The imported case is the one a
+ * GPU client uses, so it is qualified against the same fixtures. */
+void decode(const char* device, const std::string& directory, const char* name, unsigned coded, unsigned raw,
+            unsigned memory = V4L2_MEMORY_MMAP)
 {
     const auto packet = read(directory + "/" + name + ".bin");
     const auto reference = read(directory + "/" + name + ".raw");
@@ -128,7 +190,22 @@ void decode(const char* device, const std::string& directory, const char* name, 
     call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
     require(format.fmt.pix_mp.pixelformat == raw, "raw format was substituted");
     auto outputs = allocate(fd, capture, 4);
-    for (unsigned i = 0; i < outputs.size(); ++i) queue(fd, capture, i, outputs[i]);
+    Primes primes;
+    if (memory == V4L2_MEMORY_DMABUF) {
+        primes = exportAndRelease(fd, capture, outputs);
+        outputs.clear();
+        release(fd, capture);
+        require(import(fd, capture, primes.size()) == primes.size(), "imported buffer count differs");
+        for (auto& planes : primes) {
+            outputs.emplace_back();
+            for (auto& plane : planes)
+                outputs.back().emplace_back(plane.fd, plane.length, 0);
+        }
+    }
+    for (unsigned i = 0; i < outputs.size(); ++i) {
+        if (memory == V4L2_MEMORY_DMABUF) queueImported(fd, capture, i, primes[i]);
+        else queue(fd, capture, i, outputs[i]);
+    }
     type = capture;
     call(fd, VIDIOC_STREAMON, &type, "STREAMON capture");
     v4l2_decoder_cmd drain {};
@@ -140,7 +217,7 @@ void decode(const char* device, const std::string& directory, const char* name, 
         if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll capture failed");
         v4l2_plane planes[VIDEO_MAX_PLANES] {};
         v4l2_buffer buffer {};
-        buffer.type = capture; buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.type = capture; buffer.memory = memory;
         buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
         if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
             require(errno == EAGAIN, "DQBUF capture failed"); continue;
@@ -173,7 +250,8 @@ void decode(const char* device, const std::string& directory, const char* name, 
             maximum = std::max(maximum, unsigned(std::abs(got - wanted)));
         }
         require(maximum <= (coded == V4L2_PIX_FMT_MJPEG ? 4u : 2u), "V4L2 pixels differ from reference");
-        std::printf("PASS %s raw=%08x max-error=%u\n", name, raw, maximum);
+        std::printf("PASS %s raw=%08x memory=%s max-error=%u\n", name, raw,
+            memory == V4L2_MEMORY_DMABUF ? "dmabuf" : "mmap", maximum);
         std::fflush(stdout);
     }
     require(frame && eos, "capture frame/EOS timeout");
@@ -209,6 +287,7 @@ int main(int argc, char** argv)
             }
             if (fmt.pixelformat == V4L2_PIX_FMT_MJPEG) {
                 decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
+                decode(device, argv[1], "jpeg", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_DMABUF);
                 ++tested; continue;
             }
             // VP9 states its profile in the stream itself, so the driver
@@ -216,6 +295,8 @@ int main(int argc, char** argv)
             // whole capability.
             if (fmt.pixelformat == V4L2_PIX_FMT_VP9) {
                 decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_NV12M);
+                decode(device, argv[1], "vp9-profile0", fmt.pixelformat, V4L2_PIX_FMT_NV12M,
+                       V4L2_MEMORY_DMABUF);
                 ++tested; continue;
             }
             require(fmt.pixelformat == V4L2_PIX_FMT_H264 || fmt.pixelformat == V4L2_PIX_FMT_HEVC, "advertised codec lacks a fixture");
@@ -224,6 +305,7 @@ int main(int argc, char** argv)
             v4l2_queryctrl control {}; control.id = id;
             call(capabilities.fd, VIDIOC_QUERYCTRL, &control, "QUERYCTRL profiles");
             require(control.minimum >= 0 && control.maximum <= 32, "invalid profile menu bounds");
+            bool imported = false;
             for (int value = control.minimum; value <= control.maximum; ++value) {
                 v4l2_querymenu menu {}; menu.id = id; menu.index = value;
                 if (ioctl(capabilities.fd, VIDIOC_QUERYMENU, &menu) < 0) {
@@ -234,6 +316,11 @@ int main(int argc, char** argv)
                 const auto* profile = std::find_if(first, last, [value](const auto& p) { return p.value == unsigned(value); });
                 require(profile != last, "advertised profile lacks a fixture");
                 decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw);
+                if (!imported) {
+                    decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw,
+                           V4L2_MEMORY_DMABUF);
+                    imported = true;
+                }
                 ++tested;
                 if (avc && profile->value == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH)
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_YUV420M);

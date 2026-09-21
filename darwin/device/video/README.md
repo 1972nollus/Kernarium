@@ -20,7 +20,19 @@ driver already name VP9, so this needs no kernel or protocol change. The device
 still drops a platform capability the protocol cannot name rather than
 publishing an unnamed format on the queue.
 Decoded surfaces are copied into guest NV12, planar YUV420, or P010 buffers.
-This path does not implement encoding or share GPU surfaces.
+This path does not implement encoding.
+
+A capture buffer may also be a host-visible Virtio-GPU blob, which has no
+guest-physical address because it lives in the vhost-user shared-memory region
+the GPU backend publishes. With `VIRTIO_VIDEO_F_RESOURCE_SHM_REGION` the guest
+names such a plane by region and offset, and the device resolves it through the
+shared-memory index both backends hold, so decoded planes land directly in the
+memory the renderer imported. The device offers the feature only when it was
+given that index. A range leaves the index before its owner revokes it from the
+guest, and every transfer resolves again, so a buffer whose blob has gone
+completes with an error rather than reaching memory the guest no longer has.
+The guest chooses the plane layout it negotiated: planes packed into one
+dma-buf follow one another at their negotiated sizes.
 
 Input uses complete Annex B H.264/HEVC access units or complete JPEG frames.
 Streams retain timestamps, signal format changes, drain delayed output, and

@@ -187,7 +187,9 @@ target_link_libraries(uml_gpu_protocol_device PUBLIC
 add_library(uml_gpu_transport_wire STATIC vhost_user_message.cpp)
 uml_configure_gpu_component(uml_gpu_transport_wire)
 
-add_library(uml_gpu_transport STATIC vhost_user_server.cpp)
+add_library(uml_gpu_transport STATIC
+    shared_memory_regions.cpp
+    vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)
 target_compile_definitions(uml_gpu_transport PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>

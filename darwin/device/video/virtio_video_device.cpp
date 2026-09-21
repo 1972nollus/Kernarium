@@ -162,7 +162,14 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
 
 class VirtioVideoDevice::Implementation {
 public:
-    struct Segment { std::uint64_t address; std::uint32_t length; };
+    /* `address` is a guest-physical address, or an offset in shared-memory
+     * region `region` when the guest marked the entry shared. */
+    struct Segment {
+        std::uint64_t address;
+        std::uint32_t length;
+        bool shared {};
+        std::uint8_t region {};
+    };
     struct Resource { std::vector<std::vector<Segment>> planes; bool queued {}; };
     struct Output { std::uint64_t request; std::uint32_t resource; };
     struct Stream {
@@ -186,6 +193,7 @@ public:
     std::vector<uml::platform::VideoDecodeCapability> capabilities;
     DecoderFactory factory;
     GuestMapper mapper;
+    std::shared_ptr<const uml::virtio::SharedMemoryRegions> regions;
     std::unordered_map<std::uint32_t, Stream> streams;
     std::deque<std::uint64_t> eventBuffers;
     std::deque<virtio_video_event> events;
@@ -236,16 +244,33 @@ public:
         stream.outputs.clear();
     }
 
+    /* A shared-memory range is resolved again for every transfer: the
+     * backend that owns the region withdraws it from the index before the
+     * guest unmaps it, so a resource whose blob has gone completes with an
+     * error instead of writing into memory the guest no longer has. */
     bool transfer(const std::vector<Segment>& segments, std::span<std::uint8_t> data, bool write)
     {
         std::size_t offset = 0;
         for (const auto segment : segments) {
             const auto size = std::min<std::size_t>(data.size() - offset, segment.length);
             if (!size) break;
-            auto memory = mapper ? mapper(segment.address, size) : std::span<std::uint8_t>{};
-            if (memory.size() != size) return false;
-            if (write) std::memcpy(memory.data(), data.data() + offset, size);
-            else std::memcpy(data.data() + offset, memory.data(), size);
+            if (segment.shared) {
+                bool copied = false;
+                const auto copy = [&](std::span<std::uint8_t> memory) {
+                    if (memory.size() != size) return;
+                    if (write) std::memcpy(memory.data(), data.data() + offset, size);
+                    else std::memcpy(data.data() + offset, memory.data(), size);
+                    copied = true;
+                };
+                if (!regions || !regions->resolve(segment.region, segment.address, size, copy) ||
+                    !copied)
+                    return false;
+            } else {
+                auto memory = mapper ? mapper(segment.address, size) : std::span<std::uint8_t>{};
+                if (memory.size() != size) return false;
+                if (write) std::memcpy(memory.data(), data.data() + offset, size);
+                else std::memcpy(data.data() + offset, memory.data(), size);
+            }
             offset += size;
         }
         return offset == data.size();
@@ -410,10 +435,17 @@ public:
         }
         case VIRTIO_VIDEO_CMD_RESOURCE_ATTACH: {
             const auto q = load<virtio_video_resource_attach>(request);
-            if (!validQueue(q.queue_type) || !q.resource_id || stream.resources.size() >= 128)
+            if (!validQueue(q.queue_type) || !q.resource_id)
                 throw std::invalid_argument("invalid video resource");
             const auto key = resourceKey(q.queue_type, q.resource_id);
-            if (stream.resources.contains(key)) throw std::invalid_argument("duplicate video resource");
+            /* A guest rebinds a buffer index to different memory by attaching
+             * its resource identifier again, so an identifier the guest is
+             * not using answers with its new memory rather than an error. */
+            const auto previous = stream.resources.find(key);
+            if (previous != stream.resources.end() && previous->second.queued)
+                throw std::invalid_argument("video resource is already queued");
+            if (previous == stream.resources.end() && stream.resources.size() >= 128)
+                throw std::invalid_argument("invalid video resource");
             const auto& p = q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? stream.input : stream.output;
             auto payload = request.subspan(sizeof(q));
             Resource resource;
@@ -428,15 +460,29 @@ public:
                 for (unsigned i = 0; i < count; ++i) {
                     const auto entry = load<virtio_video_resource_sg_entry>(payload);
                     payload = payload.subspan(sizeof(entry));
-                    if (!entry.length || entry.length > maximumResource - total || !mapper ||
-                        mapper(entry.addr, entry.length).size() != entry.length)
+                    if ((entry.flags & ~VIRTIO_VIDEO_RESOURCE_SG_FLAG_MASK) != 0)
+                        throw std::invalid_argument("unknown video scatter entry flags");
+                    const bool shared = (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION) != 0;
+                    const auto region = static_cast<std::uint8_t>(
+                        (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK) >>
+                        VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT);
+                    if (!entry.length || entry.length > maximumResource - total ||
+                        (!shared && region != 0))
+                        throw std::invalid_argument("invalid video scatter entry");
+                    if (shared) {
+                        if (!regions || !regions->contains(region, entry.addr, entry.length))
+                            throw std::invalid_argument(
+                                "video resource is not in a published shared-memory region");
+                    } else if (!mapper || mapper(entry.addr, entry.length).size() != entry.length) {
                         throw std::invalid_argument("video resource lies outside guest memory");
+                    }
                     total += entry.length;
-                    resource.planes.back().push_back({entry.addr, entry.length});
+                    resource.planes.back().push_back({entry.addr, entry.length, shared, region});
                 }
             }
             if (!payload.empty()) throw std::invalid_argument("trailing video resource data");
-            stream.resources.emplace(key, std::move(resource));
+            if (previous != stream.resources.end()) previous->second = std::move(resource);
+            else stream.resources.emplace(key, std::move(resource));
             return done(reply(id));
         }
         case VIRTIO_VIDEO_CMD_RESOURCE_QUEUE: {
@@ -520,7 +566,11 @@ VirtioVideoDevice::~VirtioVideoDevice() = default;
 const char* VirtioVideoDevice::name() const noexcept { return "Virtio Video decoder"; }
 std::uint64_t VirtioVideoDevice::features() const noexcept
 {
-    return (1 << VIRTIO_VIDEO_F_RESOURCE_GUEST_PAGES) | (1 << VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG);
+    const std::uint64_t base = (1 << VIRTIO_VIDEO_F_RESOURCE_GUEST_PAGES) |
+        (1 << VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG);
+    /* Only a guest whose host also serves a shared-memory region can name
+     * buffers inside one. */
+    return implementation_->regions ? base | (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION) : base;
 }
 std::size_t VirtioVideoDevice::queueCount() const noexcept { return 2; }
 std::vector<std::uint8_t> VirtioVideoDevice::configuration() const
@@ -529,6 +579,11 @@ std::vector<std::uint8_t> VirtioVideoDevice::configuration() const
 }
 void VirtioVideoDevice::writeConfiguration(std::uint32_t, std::uint32_t, std::span<const std::uint8_t>) {}
 void VirtioVideoDevice::setGuestMapper(GuestMapper mapper) { implementation_->mapper = std::move(mapper); }
+void VirtioVideoDevice::setSharedMemoryRegions(
+    std::shared_ptr<const uml::virtio::SharedMemoryRegions> regions)
+{
+    implementation_->regions = std::move(regions);
+}
 VhostUserQueueResult VirtioVideoDevice::processQueue(std::uint32_t index, std::uint64_t id,
     std::span<const std::uint8_t> request, std::size_t capacity)
 {

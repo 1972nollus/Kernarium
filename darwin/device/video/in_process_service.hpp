@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "shared_memory_regions.hpp"
+
 #include <memory>
 #include <string>
 
@@ -8,7 +10,11 @@ namespace uml::video {
 
 class InProcessVideoService final {
 public:
-    InProcessVideoService();
+    /* `regions` is the shared-memory index of the backend that owns the
+     * guest's host-visible region, when the guest has one. With it the
+     * decoder can fill a capture buffer that lives in that region. */
+    explicit InProcessVideoService(
+        std::shared_ptr<uml::virtio::SharedMemoryRegions> regions = {});
     ~InProcessVideoService();
 
     InProcessVideoService(const InProcessVideoService&) = delete;

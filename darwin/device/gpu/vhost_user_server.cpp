@@ -1054,10 +1054,19 @@ VhostUserServer::~VhostUserServer()
     resetConnection();
 }
 
+void VhostUserServer::setSharedMemoryRegions(
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> regions)
+{
+    sharedMemoryRegions_ = std::move(regions);
+    device_->setSharedMemoryRegions(sharedMemoryRegions_);
+}
+
 void VhostUserServer::resetConnection() noexcept
 {
     resetDeviceState();
     slaveRequestDescriptor_.reset();
+    if (sharedMemoryRegions_ && device_ && device_->sharedMemoryRegion())
+        sharedMemoryRegions_->revokeAll();
     clearMappings();
     resetQueues();
     negotiatedFeatures_ = 0;
@@ -1684,6 +1693,14 @@ void VhostUserServer::dispatchSharedMemoryActions()
                 reinterpret_cast<const std::uint8_t*>(&payload),
                 sizeof(payload),
             };
+            /* A revoked range leaves the index before the guest is told
+             * to unmap it, and a published one enters only once the guest
+             * holds it, so no other backend can resolve a range the guest
+             * does not have. */
+            if (sharedMemoryRegions_ && !map) {
+                sharedMemoryRegions_->revoke(
+                    action.regionId, action.regionOffset, action.length);
+            }
             if (map) {
                 writeFrameWithDescriptor(
                     slaveRequestDescriptor_.get(),
@@ -1723,6 +1740,16 @@ void VhostUserServer::dispatchSharedMemoryActions()
                 payloadAs<std::uint64_t>(reply.payload) != 0) {
                 throw std::runtime_error(
                     "invalid vhost-user shared-memory acknowledgement");
+            }
+            if (sharedMemoryRegions_ && map &&
+                !sharedMemoryRegions_->publish(
+                    action.regionId,
+                    action.regionOffset,
+                    action.length,
+                    action.descriptor.get(),
+                    action.descriptorOffset)) {
+                throw std::runtime_error(
+                    "shared-memory range could not be published to the host");
             }
             device_->completeSharedMemoryAction(action.actionId, true);
             completed = true;
