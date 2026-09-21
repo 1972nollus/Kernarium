@@ -1,4 +1,4 @@
-From ac8f7ae8110fe2accca12bfd1a8947922238842f Mon Sep 17 00:00:00 2001
+From 0363641e98453b35aca1166995a8e84035edcb60 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 11:28:39 +0000
 Subject: [PATCH 42/45] UML-DARWIN-LOCAL: media: add the shared Virtio video
@@ -21,14 +21,14 @@ Change-Id: I7bcd52774ff2241bc917359b3fb64c7ea66826f2
  drivers/media/virtio/Makefile               |    5 +
  drivers/media/virtio/README                 |   11 +
  drivers/media/virtio/virtio_video.h         |  449 ++++++
- drivers/media/virtio/virtio_video_caps.c    |  462 ++++++
- drivers/media/virtio/virtio_video_dec.c     |  455 ++++++
- drivers/media/virtio/virtio_video_device.c  | 1447 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_caps.c    |  466 ++++++
+ drivers/media/virtio/virtio_video_dec.c     |  470 ++++++
+ drivers/media/virtio/virtio_video_device.c  | 1453 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  240 +++
  drivers/media/virtio/virtio_video_helpers.c |  308 ++++
  drivers/media/virtio/virtio_video_vq.c      |  981 +++++++++++++
  include/uapi/linux/virtio_video.h           |  539 +++++++
- 13 files changed, 4910 insertions(+)
+ 13 files changed, 4935 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -564,10 +564,10 @@ index 0000000000000000000000000000000000000000..709317cca34c30fd9454cd876e891b73
 +#endif /* _VIRTIO_VIDEO_H */
 diff --git a/drivers/media/virtio/virtio_video_caps.c b/drivers/media/virtio/virtio_video_caps.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..382369ad29e009d6be1e43f3f6c65900c84d1ca2
+index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f68fee1cf
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_caps.c
-@@ -0,0 +1,462 @@
+@@ -0,0 +1,466 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -762,7 +762,11 @@ index 0000000000000000000000000000000000000000..382369ad29e009d6be1e43f3f6c65900
 +			goto parse_fmt_err;
 +		}
 +		offset += fmt_size;
-+		list_add(&fmt->formats_list_entry, ret_fmt_list);
++		/* The device numbers a coded format's capture-format mask by
++		 * the order it sent the descriptors in, so the list has to
++		 * keep that order rather than reverse it.
++		 */
++		list_add_tail(&fmt->formats_list_entry, ret_fmt_list);
 +	}
 +
 +	*ret_num_fmts = fmt_count;
@@ -1032,10 +1036,10 @@ index 0000000000000000000000000000000000000000..382369ad29e009d6be1e43f3f6c65900
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c52975326b4ea1f3c93bab1d399ab6b74c615fa1
+index 0000000000000000000000000000000000000000..e2225ecc19deea498f5db224f9dbbb29b91a179d
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,470 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Decoder for virtio video device.
 + *
@@ -1397,6 +1401,19 @@ index 0000000000000000000000000000000000000000..c52975326b4ea1f3c93bab1d399ab6b7
 +	return 0;
 +}
 +
++/* The format negotiation of a mem2mem device is required to answer TRY_FMT,
++ * and a client that filters its candidates with it, as Chromium's V4L2 decoder
++ * does, discards every format the call fails for. The stream already knows how
++ * to resolve a format without changing any state.
++ */
++static int virtio_video_dec_try_fmt(struct file *file, void *fh,
++				    struct v4l2_format *f)
++{
++	struct virtio_video_stream *stream = file2stream(file);
++
++	return virtio_video_try_fmt(stream, f);
++}
++
 +static int virtio_video_dec_s_selection(struct file *file, void *fh,
 +					struct v4l2_selection *sel)
 +{
@@ -1439,9 +1456,11 @@ index 0000000000000000000000000000000000000000..c52975326b4ea1f3c93bab1d399ab6b7
 +#endif
 +	.vidioc_g_fmt_vid_cap_mplane	= virtio_video_g_fmt,
 +	.vidioc_s_fmt_vid_cap_mplane	= virtio_video_dec_s_fmt,
++	.vidioc_try_fmt_vid_cap_mplane	= virtio_video_dec_try_fmt,
 +
 +	.vidioc_g_fmt_vid_out_mplane	= virtio_video_g_fmt,
 +	.vidioc_s_fmt_vid_out_mplane	= virtio_video_dec_s_fmt,
++	.vidioc_try_fmt_vid_out_mplane	= virtio_video_dec_try_fmt,
 +
 +	.vidioc_g_selection = virtio_video_g_selection,
 +	.vidioc_s_selection = virtio_video_dec_s_selection,
@@ -1493,10 +1512,10 @@ index 0000000000000000000000000000000000000000..c52975326b4ea1f3c93bab1d399ab6b7
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..65c134ebb069f60e9a5dee7872d5ed6f3fb56f1b
+index 0000000000000000000000000000000000000000..ceb9696a92a200f9d145b5de5c3759ddf9e7681a
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1447 @@
+@@ -0,0 +1,1453 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -2045,13 +2064,19 @@ index 0000000000000000000000000000000000000000..65c134ebb069f60e9a5dee7872d5ed6f
 +		return 0;
 +	}
 +
-+	f->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
++	/* A continuous range is a stepwise range whose step is one, and the
++	 * two carry the same information. Report the stepwise form: a client
++	 * that reads only that one, as Chromium's V4L2 decoder does, otherwise
++	 * keeps a built-in maximum coded size and refuses a larger stream
++	 * before it ever opens a decoder.
++	 */
++	f->type = V4L2_FRMSIZE_TYPE_STEPWISE;
 +	f->stepwise.min_width = frame->width.min;
 +	f->stepwise.max_width = frame->width.max;
 +	f->stepwise.min_height = frame->height.min;
 +	f->stepwise.max_height = frame->height.max;
-+	f->stepwise.step_width = frame->width.step;
-+	f->stepwise.step_height = frame->height.step;
++	f->stepwise.step_width = frame->width.step ? frame->width.step : 1;
++	f->stepwise.step_height = frame->height.step ? frame->height.step : 1;
 +	return 0;
 +}
 +

@@ -164,6 +164,9 @@ void decode(const char* device, const std::string& directory, const char* name, 
     input.fmt.pix_mp.pixelformat = coded;
     input.fmt.pix_mp.num_planes = 1;
     input.fmt.pix_mp.plane_fmt[0].sizeimage = packet.size();
+    v4l2_format codedCandidate = input;
+    call(fd, VIDIOC_TRY_FMT, &codedCandidate, "TRY_FMT coded");
+    require(codedCandidate.fmt.pix_mp.pixelformat == coded, "TRY_FMT substituted the coded format");
     call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
     require(input.fmt.pix_mp.pixelformat == coded, "coded format was substituted");
     auto inputs = allocate(fd, output, 2);
@@ -188,6 +191,11 @@ void decode(const char* device, const std::string& directory, const char* name, 
     call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
     require(format.fmt.pix_mp.width == 128 && format.fmt.pix_mp.height == 96, "decoded dimensions differ");
     format.fmt.pix_mp.pixelformat = raw;
+    /* A client filters its candidates with TRY_FMT and drops the ones it
+     * fails, so the call has to answer before the format is set. */
+    v4l2_format candidate = format;
+    call(fd, VIDIOC_TRY_FMT, &candidate, "TRY_FMT capture");
+    require(candidate.fmt.pix_mp.pixelformat == raw, "TRY_FMT substituted the raw format");
     call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
     require(format.fmt.pix_mp.pixelformat == raw, "raw format was substituted");
     auto outputs = allocate(fd, capture, 4);
@@ -324,6 +332,40 @@ int main(int argc, char** argv)
             {V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10, "hevc-main10", V4L2_PIX_FMT_P010},
         };
         Device capabilities(device);
+        /* The discovery a V4L2 client performs before it builds a decoder.
+         * Each of these answers gated Chromium's decoder entirely: a
+         * continuous frame-size range left it on its built-in maximum coded
+         * size, an unimplemented TRY_FMT made it discard every capture
+         * candidate, and a reversed format list hid the planar formats a
+         * coded format names. */
+        for (unsigned index = 0;; ++index) {
+            v4l2_fmtdesc coded {};
+            coded.type = output; coded.index = index;
+            if (ioctl(capabilities.fd, VIDIOC_ENUM_FMT, &coded) < 0) {
+                require(errno == EINVAL, "ENUM_FMT failed"); break;
+            }
+            v4l2_frmsizeenum sizes {};
+            sizes.index = 0; sizes.pixel_format = coded.pixelformat;
+            call(capabilities.fd, VIDIOC_ENUM_FRAMESIZES, &sizes, "ENUM_FRAMESIZES");
+            require(sizes.type == V4L2_FRMSIZE_TYPE_STEPWISE,
+                    "frame sizes are not reported stepwise");
+            require(sizes.stepwise.step_width >= 1 && sizes.stepwise.step_height >= 1,
+                    "a stepwise frame size has a zero step");
+            require(sizes.stepwise.max_width >= 1920 && sizes.stepwise.max_height >= 1200,
+                    "the advertised maximum coded size is too small");
+            /* A capture list in wire order names the planar format the device
+             * actually decodes to; a reversed one names only the tail. */
+            bool planar = false;
+            for (unsigned raw = 0;; ++raw) {
+                v4l2_fmtdesc fmt {};
+                fmt.type = capture; fmt.index = raw;
+                if (ioctl(capabilities.fd, VIDIOC_ENUM_FMT, &fmt) < 0) {
+                    require(errno == EINVAL, "ENUM_FMT capture failed"); break;
+                }
+                planar = planar || fmt.pixelformat == V4L2_PIX_FMT_NV12M;
+            }
+            require(planar, "the capture list does not name the planar format");
+        }
         unsigned tested = 0;
         for (unsigned index = 0;; ++index) {
             v4l2_fmtdesc fmt {};
