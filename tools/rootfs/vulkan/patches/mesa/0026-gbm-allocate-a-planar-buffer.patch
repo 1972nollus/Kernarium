@@ -1,0 +1,78 @@
+From 8f29a1eeb2ac17e1d808cdfe8ffb03c882efb979 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 22:59:57 +0900
+Subject: [PATCH 26/28] gbm: allocate a planar buffer
+
+A video pipeline asks this device for its frames: Chromium's GpuMemoryBuffer
+support for YUV_420_BIPLANAR is exactly gbm_bo_create(GBM_FORMAT_NV12), and a
+decoder that writes into a buffer the compositor later samples needs the same
+allocation. Today every such call fails with EINVAL before it reaches a
+driver, because gbm's visual table lists colour formats only, so
+gbm_format_to_pipe_format() has nothing to return for a planar FourCC.
+
+List the planar formats whose pipe format names them. That is NV12 and P010:
+the three-plane 4:2:0 layouts all share PIPE_FORMAT_IYUV and can only be told
+apart by their FourCC, so a lookup that starts from the pipe format cannot
+serve them and they stay out.
+
+The DRI frontend then has to find the row. Its rows carry both the FourCC an
+importer names and the format an allocator names, and the planar rows were
+written when the second had no value to hold for a whole planar image; it is
+a pipe format now, and the two rows above have one that belongs to them
+alone. Giving it to them lets an allocation name a planar image, and lets
+every later query on that image find its row instead of dereferencing NULL.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/gallium/frontends/dri/dri_helpers.c |  9 +++++++--
+ src/gbm/backends/dri/gbm_dri.c          | 10 ++++++++++
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/frontends/dri/dri_helpers.c b/src/gallium/frontends/dri/dri_helpers.c
+index 68e9ae6..1fb5a68 100644
+--- a/src/gallium/frontends/dri/dri_helpers.c
++++ b/src/gallium/frontends/dri/dri_helpers.c
+@@ -583,7 +583,12 @@ static const struct dri2_format_mapping dri2_format_table[] = {
+           { 1, 0, 0, __DRI_IMAGE_FORMAT_R16 },
+           { 2, 0, 0, __DRI_IMAGE_FORMAT_R16 } } },
+ 
+-      { DRM_FORMAT_NV12,          __DRI_IMAGE_FORMAT_NONE,
++      /* A planar row's image format is the format a caller names to allocate
++       * the whole image, and only a row whose pipe format belongs to it alone
++       * can have one: the three-plane rows above all share PIPE_FORMAT_IYUV
++       * and stay without, so that they are told apart by their FourCC.
++       */
++      { DRM_FORMAT_NV12,          PIPE_FORMAT_NV12,
+         PIPE_FORMAT_NV12, 2,
+         { { 0, 0, 0, __DRI_IMAGE_FORMAT_R8 },
+           { 1, 1, 1, __DRI_IMAGE_FORMAT_GR88 } } },
+@@ -604,7 +609,7 @@ static const struct dri2_format_mapping dri2_format_table[] = {
+         { { 0, 0, 0, __DRI_IMAGE_FORMAT_NONE },
+           { 1, 1, 0, __DRI_IMAGE_FORMAT_NONE } } },
+ 
+-      { DRM_FORMAT_P010,          __DRI_IMAGE_FORMAT_NONE,
++      { DRM_FORMAT_P010,          PIPE_FORMAT_P010,
+         PIPE_FORMAT_P010, 2,
+         { { 0, 0, 0, __DRI_IMAGE_FORMAT_R16 },
+           { 1, 1, 1, __DRI_IMAGE_FORMAT_GR1616 } } },
+diff --git a/src/gbm/backends/dri/gbm_dri.c b/src/gbm/backends/dri/gbm_dri.c
+index 6640f16..5bac6b5 100644
+--- a/src/gbm/backends/dri/gbm_dri.c
++++ b/src/gbm/backends/dri/gbm_dri.c
+@@ -353,6 +353,16 @@ static const struct gbm_dri_visual gbm_dri_visuals_table[] = {
+    { DRM_FORMAT_BGR161616F,    PIPE_FORMAT_R16G16B16_FLOAT },
+    { DRM_FORMAT_BGR323232F,    PIPE_FORMAT_R32G32B32_FLOAT },
+    { DRM_FORMAT_ABGR32323232F, PIPE_FORMAT_R32G32B32A32_FLOAT },
++
++   /* A video pipeline allocates its frames through this device and hands them
++    * on as a dma-buf whose planes sit at their own offsets in one allocation,
++    * so a planar format belongs in this table exactly like a colour format
++    * does. Only a format whose pipe format names it alone can be listed: the
++    * three-plane 4:2:0 layouts all share PIPE_FORMAT_IYUV and are told apart
++    * by their FourCC only.
++    */
++   { DRM_FORMAT_NV12,          PIPE_FORMAT_NV12 },
++   { DRM_FORMAT_P010,          PIPE_FORMAT_P010 },
+ };
+ 
+ static int

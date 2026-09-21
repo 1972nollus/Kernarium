@@ -1,7 +1,7 @@
 From 2cd0efd15240cbe994f7c016911b74b1263ae159 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 12:18:35 +0900
-Subject: [PATCH 24/24] venus: give a legacy private WSI scanout the native
+Subject: [PATCH 24/28] venus: give a legacy private WSI scanout the native
  heap identity
 
 Common WSI chains VkExternalMemoryImageCreateInfo on every swapchain image it

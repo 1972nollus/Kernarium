@@ -1,7 +1,7 @@
 From bd0d9229bb6dd7669566e3cb203aa0bb3fb15326 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
-Subject: [PATCH 08/24] venus: forward device address and maintenance commands
+Subject: [PATCH 08/28] venus: forward device address and maintenance commands
 
 Expose device address commands and maintenance8/10 only through renderer-supported features and properties. Forward native addresses through typed protocol commands, preserving rendering teardown and query feedback bookkeeping. Keep acceleration-structure creation in the Venus typed object domain.
 ---

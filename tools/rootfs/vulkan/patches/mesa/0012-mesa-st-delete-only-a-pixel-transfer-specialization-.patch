@@ -1,7 +1,7 @@
 From 41ae5b81ea2b66b398bf53dd13b5992c284ac9ff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:13:28 +0900
-Subject: [PATCH 12/24] mesa/st: delete only a pixel-transfer specialization
+Subject: [PATCH 12/28] mesa/st: delete only a pixel-transfer specialization
  that was compiled
 
 A specialized pixel-transfer conversion shader is prepared in two steps: a

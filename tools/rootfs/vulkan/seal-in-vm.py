@@ -259,7 +259,7 @@ EXPECTED_MESA_BUILD_OPTIONS = ARCHITECTURE["mesa_build_options"]
 EXPECTED_LOADER_STAGE = ARCHITECTURE["loader_stage"]
 LOADER_RUNTIME_GUEST_PATH = ARCHITECTURE["loader_runtime"]
 EXPECTED_FINAL_TREES = {
-    "mesa": "dffd92480a3b7777d5de5f2915d85ddadd42409b",
+    "mesa": "99bb2adc315eb12d02c791cbfd8e22afc43a4c2d",
     "venus-protocol": "ebd380d887b9e14120316d9499728a01bcb5f49a",
     "vulkan-headers": "7509994568d7423209793fb72c3ac793d9aec0c9",
     "vulkan-loader": "9a68aaf7a98185b4e9224323003df0699033d0c4",

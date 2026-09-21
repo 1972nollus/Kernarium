@@ -1,7 +1,7 @@
 From c28393559248b774c4c70c7c04fa8732f0f20358 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:22 +0900
-Subject: [PATCH 17/24] nir: index the split 64-bit vec3/vec4 arrays by leaf
+Subject: [PATCH 17/28] nir: index the split 64-bit vec3/vec4 arrays by leaf
  element
 
 nir_split_64bit_vec3_and_vec4 replaces a function-temp variable whose leaf

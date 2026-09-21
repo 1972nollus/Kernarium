@@ -145,6 +145,14 @@ tools/rootfs/vulkan/rebase-patches.sh \
   --component mesa --source /path/to/mesa-topic
 ```
 
+The accepted CTS image and its receipt name one patched tree per component, and
+`EXPECTED_FINAL_TREES` in `seal-in-vm.py` names the same trees. Advancing a
+series therefore invalidates the accepted receipt until a new image is sealed
+and accepted: every receipt-bound tooling gate fails with `<component>.patches
+differs from the generated series` in the meantime. That is the intended
+interlock, not a defect in the gates; the way to clear it is to seal a new
+image, never to relax a verifier.
+
 The final build, installation, CTS build, image creation, filesystem checks,
 and receipt generation run in a native arm64 Debian VM or, under `fakeroot`,
 in an unprivileged arm64 Debian container that cannot create device nodes; the
