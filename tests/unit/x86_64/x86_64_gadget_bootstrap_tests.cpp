@@ -1703,23 +1703,192 @@ read_test_sequences(void *context) noexcept
 		built.program.instruction_count() == 1,
 		"short allocation-regression block did not build"))
 		return false;
-	/* Allow allocator rounding, but not a maximum-size decoder reservation.
-	 * Inspect the actual allocations rather than an implementation counter.
-	 * The native stream is its own; the decoded instructions and the saved
-	 * source share the other, in that order. */
-	const auto cold = built.program.stream().size_bytes() +
-		built.program.source().size_bytes();
-	return expect(static_cast<const void *>(built.program.source().data()) ==
-			static_cast<const void *>(
-				reinterpret_cast<const std::byte *>(
-					built.program.stream().data()) +
-				built.program.stream().size_bytes()),
-		"a translation's saved source left its own allocation") &&
+	/* Allow allocator rounding and its smallest bucket, but not a
+	 * maximum-size decoder reservation, and nothing outside the two
+	 * allocations a translation is: the native stream, and the guest bytes
+	 * the decoder read. Inspect the actual allocations rather than an
+	 * implementation counter. */
+	return expect(built.program.source().size() == 2,
+		"short cached block did not save its own two bytes") &&
+		expect(built.program.replay_bytes() == 0,
+			"a translation nothing replayed carries decoded "
+			"instructions") &&
 		expect(malloc_size(built.program.native_stream().data()) <=
 			2 * built.program.native_stream().size_bytes(),
 			"short cached block retained excess native stream capacity") &&
-		expect(malloc_size(built.program.stream().data()) <= 2 * cold,
+		expect(malloc_size(built.program.source().data()) <=
+			2 * built.program.source().size() + 32,
 			"short cached block retained the decoder's spare capacity");
+}
+
+/* What a block keeps, and when. A translation is built with its native stream
+ * and its saved source and nothing else; the first budget-limited replay
+ * decodes the block out of that source and the block keeps the result, because
+ * the dispatches that end inside a block keep ending inside it.
+ */
+[[nodiscard]] bool a_replay_keeps_what_it_decoded()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 5 &&
+		built.program.replay_bytes() == 0,
+		"a fresh translation did not build empty of decoded "
+		"instructions"))
+		return false;
+	/* A block entered with the budget to finish it never asks. */
+	CpuState whole{};
+	const auto ran = gadgets::execute(built.program, whole, memory, 5);
+	if (!expect(ran.event == uml::cpu::EngineEvent::system_call &&
+		built.program.replay_bytes() == 0,
+		"a block that ran to its end decoded itself again"))
+		return false;
+	const auto kept = 5 * sizeof(gadgets::Gadget);
+	CpuState cpu{};
+	const auto first = gadgets::execute(built.program, cpu, memory, 2);
+	if (!expect(first.event == uml::cpu::EngineEvent::continued &&
+		first.instruction_budget_exhausted && cpu.rip == 10 &&
+		cpu.gpr(Register::rax) == 2,
+		"a first replay did not stop at its budget") ||
+		!expect(built.program.replay_bytes() == kept,
+			"a replayed block did not keep what it decoded"))
+		return false;
+	CpuState second{};
+	const auto again = gadgets::execute(built.program, second, memory, 3);
+	return expect(again.event == uml::cpu::EngineEvent::continued &&
+		again.instruction_budget_exhausted && second.rip == 14 &&
+		second.gpr(Register::rax) == 4,
+		"a second replay did not read the kept instructions") &&
+		expect(built.program.replay_bytes() == kept,
+			"a second replay decoded the block again");
+}
+
+/* What a budget shorter than the block replays, against the block itself. A
+ * translation keeps no decoded instructions, so the replay decodes them back
+ * out of the bytes the build saved, and what it must reproduce is every
+ * instruction boundary of the original block. */
+[[nodiscard]] bool budget_limited_replay_matches_the_whole_block()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* Seven instructions of four different lengths, so a replay that
+	 * mistakes one boundary lands on a different instruction. */
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x04,                   // add rax, 4
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 7 &&
+		built.program.byte_count() == 26 &&
+		built.program.source().size() == 26,
+		"mixed-length replay block did not build") ||
+		!expect(built.program.terminal(),
+			"a block ending at SYSCALL is not terminal"))
+		return false;
+	static constexpr std::uint64_t boundaries[] = {0, 7, 10, 14, 17, 20, 24};
+	static constexpr std::uint64_t reached[] = {1, 2, 4, 8, 9, 13};
+	for (std::size_t budget = 1; budget < 7; ++budget) {
+		CpuState cpu{};
+		const auto result = gadgets::execute(
+			built.program, cpu, memory, budget);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.instruction_budget_exhausted &&
+			result.retired_instructions == budget,
+			"a budget-limited replay did not stop at its budget") ||
+			!expect(cpu.rip == boundaries[budget] &&
+				cpu.gpr(Register::rax) == reached[budget - 1],
+				"a budget-limited replay lost an instruction "
+				"boundary"))
+			return false;
+	}
+	const auto cut = gadgets::build(memory, 0, ExecutionMode::long64, 3);
+	return expect(cut.status == gadgets::BuildStatus::built &&
+		cut.program.instruction_count() == 3 && !cut.program.terminal(),
+		"a block cut at its instruction limit reported itself terminal");
+}
+
+/* A replay decodes the bytes its block was built from, not the bytes at its
+ * address now. Guest memory is free to change under a translation -- deciding
+ * whether a cached one survives that is the validation's job -- and a block
+ * already entered has to finish as itself. */
+[[nodiscard]] bool budget_limited_replay_ignores_rewritten_guest_code()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 5,
+		"replay-source block did not build"))
+		return false;
+	/* Six DEC RAX in place of the block. A replay reading guest memory
+	 * decodes those instead, and both the register it leaves and the RIP it
+	 * stops at say which bytes it read. */
+	memory.load(0, {
+		0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8,
+		0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8,
+	});
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 3);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 3 &&
+		result.instruction_budget_exhausted,
+		"replay after a code rewrite did not stop at its budget") &&
+		expect(cpu.rip == 14 && cpu.gpr(Register::rax) == 4,
+			"a replay decoded the guest's newer bytes");
+}
+
+/* A fault inside a replayed prefix reports exactly what the same fault in the
+ * whole block reports: the faulting instruction's own RIP, nothing retired for
+ * it, and the prefix before it retired. */
+[[nodiscard]] bool budget_limited_replay_faults_where_the_block_does()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x8b, 0x1b,                         // mov rbx, [rbx]
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 6,
+		"faulting replay block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rbx) = 16383;
+	const auto result = gadgets::execute(built.program, cpu, memory, 4);
+	return expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+		result.fault.address == 16383 &&
+		result.fault.access == uml::memory::MemoryAccess::read,
+		"a replayed prefix lost its precise fault") &&
+		expect(result.retired_instructions == 2 && cpu.rip == 10 &&
+			cpu.gpr(Register::rax) == 2,
+			"a replayed prefix did not stop at the faulting "
+			"instruction");
 }
 
 [[nodiscard]] bool executable_store_publishes_code_change()
@@ -5373,6 +5542,10 @@ int main()
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		short_blocks_retain_only_their_translated_storage() &&
+		a_replay_keeps_what_it_decoded() &&
+		budget_limited_replay_matches_the_whole_block() &&
+		budget_limited_replay_ignores_rewritten_guest_code() &&
+		budget_limited_replay_faults_where_the_block_does() &&
 		executable_store_publishes_code_change() &&
 		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&

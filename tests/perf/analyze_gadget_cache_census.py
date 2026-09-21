@@ -17,7 +17,8 @@ how much more would collapse if a fork family's identical pages did too.
 
 Footprint fields an engine does not have are simply absent: only arm64 owns a
 stream lookup index and counts the lookups against it, and only x86-64 owns a
-per-address-space target link table and reports its compiled slot size.
+per-address-space target link table, reports its compiled slot size, and holds
+the decoded instructions of the blocks a budget-limited replay has entered.
 """
 
 from __future__ import annotations
@@ -195,6 +196,10 @@ def main() -> int:
         print(f"  target link tables                  "
               f"{targets / 2**20:7.1f} MiB")
     bodies = sum(e.footprint.get("streams", 0) for e in executors)
+    decoded = sum(e.footprint.get("decoded", 0) for e in executors)
+    if decoded:
+        print(f"  instructions kept by a replay       "
+              f"{decoded / 2**20:7.1f} MiB")
     links = sum(e.footprint.get("links", 0) +
                 e.footprint.get("indirect", 0) for e in executors)
     print(f"  bodies and streams                  {bodies / 2**20:7.1f} MiB"

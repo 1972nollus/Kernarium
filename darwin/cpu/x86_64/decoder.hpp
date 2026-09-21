@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace uml::cpu::x86_64 {
 
@@ -288,5 +289,18 @@ struct FetchWindow final {
 	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
 	ExecutionMode mode = ExecutionMode::long64,
 	std::byte *consumed = nullptr, FetchWindow *window = nullptr) noexcept;
+
+/* Decode one instruction out of bytes the caller already read, `code`
+ * beginning at the instruction's first byte. Those bytes stand in for the
+ * window a fetch would fill, so this decode reads guest memory not at all and
+ * cannot fault against it: a translation handed its own saved source decodes
+ * exactly the instruction it was built from, whatever has happened to that
+ * memory since. `rip` names where the instruction sits, which is what a
+ * shortfall is reported against; an encoding that reaches past the bytes it
+ * was given reports a fetch fault there, the same answer the same shortfall
+ * gets from guest memory.
+ */
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> code,
+	std::uint64_t rip, ExecutionMode mode = ExecutionMode::long64) noexcept;
 
 } // namespace uml::cpu::x86_64

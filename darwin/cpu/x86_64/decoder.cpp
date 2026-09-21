@@ -24,9 +24,24 @@ public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
 		std::uint64_t address, ExecutionMode mode,
 		std::byte *consumed, FetchWindow &window) noexcept
-		: memory_{memory}, address_{normalize_instruction_pointer(mode, address)},
+		: memory_{&memory},
+		  address_{normalize_instruction_pointer(mode, address)},
 		  mode_{mode}, consumed_{consumed}, window_{window}
 	{}
+
+	/* Read the caller's own bytes instead of guest memory. They stand in for
+	 * the window's contents, so the reader works exactly as it does over a
+	 * fetched window and an instruction decodes the same wherever it sits;
+	 * what it cannot do is fetch. */
+	ByteReader(std::span<const std::byte> code, std::uint64_t address,
+		ExecutionMode mode, FetchWindow &window) noexcept
+		: address_{normalize_instruction_pointer(mode, address)},
+		  mode_{mode}, window_{window}, code_{code}
+	{
+		/* An empty window is refilled before its first byte is read,
+		 * which is where the caller's bytes enter it. */
+		window_.filled = 0;
+	}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
@@ -80,13 +95,33 @@ private:
 
 	[[nodiscard]] bool fill(std::uint64_t address)
 	{
-		const auto count = static_cast<std::uint32_t>(
-			std::min<std::uint64_t>(FetchWindow::capacity,
-				page_size - (address & (page_size - 1U))));
 		/* A partial fetch leaves the window's contents unknown, and its
 		 * address would then stand for bytes it does not hold. */
 		window_.filled = 0;
-		if (!memory_.fetch(address,
+		if (memory_ == nullptr) {
+			/* The caller's own bytes, which are addressed by the
+			 * reader's position rather than by a guest address, so
+			 * an encoding that crosses a 32-bit wrap refills here
+			 * and keeps reading them in order. Running out of them
+			 * is the same shortfall a fetch reports, at the byte
+			 * the decode wanted. */
+			if (position_ >= code_.size()) {
+				fault_address_ = address;
+				return false;
+			}
+			const auto count = static_cast<std::uint32_t>(
+				std::min<std::size_t>(FetchWindow::capacity,
+					code_.size() - position_));
+			std::memcpy(window_.bytes.data(),
+				code_.data() + position_, count);
+			window_.address = address;
+			window_.filled = count;
+			return true;
+		}
+		const auto count = static_cast<std::uint32_t>(
+			std::min<std::uint64_t>(FetchWindow::capacity,
+				page_size - (address & (page_size - 1U))));
+		if (!memory_->fetch(address,
 			    std::span{window_.bytes.data(), count})) {
 			fault_address_ = address;
 			return false;
@@ -96,11 +131,14 @@ private:
 		return true;
 	}
 
-	::uml::memory::GuestAddressSpace &memory_;
+	/* Null exactly when this reader was given its own bytes, which is what
+	 * `fill` then refills the window from. */
+	::uml::memory::GuestAddressSpace *memory_{};
 	std::uint64_t address_;
 	ExecutionMode mode_;
-	std::byte *consumed_;
+	std::byte *consumed_{};
 	FetchWindow &window_;
+	std::span<const std::byte> code_{};
 	std::uint64_t fault_address_{};
 	std::uint8_t position_{};
 };
@@ -196,6 +234,11 @@ public:
 		FetchWindow &window) noexcept
 		: reader_{memory, rip, mode, consumed, window},
 		  prefixes_{.mode = mode}
+	{}
+
+	InstructionDecoder(std::span<const std::byte> code, std::uint64_t rip,
+		ExecutionMode mode, FetchWindow &window) noexcept
+		: reader_{code, rip, mode, window}, prefixes_{.mode = mode}
 	{}
 
 	[[nodiscard]] DecodeResult run()
@@ -3144,6 +3187,20 @@ DecodeResult decode(::uml::memory::GuestAddressSpace &memory,
 		FetchWindow own;
 		return InstructionDecoder{memory, rip, mode, consumed,
 			window != nullptr ? *window : own}.run();
+	} catch (...) {
+		return {DecodeStatus::fetch_fault, {},
+			normalize_instruction_pointer(mode, rip)};
+	}
+}
+
+DecodeResult decode(std::span<const std::byte> code, std::uint64_t rip,
+	ExecutionMode mode) noexcept
+{
+	try {
+		/* The window is the reader's own, and what fills it is `code`
+		 * rather than a fetch. */
+		FetchWindow own;
+		return InstructionDecoder{code, rip, mode, own}.run();
 	} catch (...) {
 		return {DecodeStatus::fetch_fault, {},
 			normalize_instruction_pointer(mode, rip)};

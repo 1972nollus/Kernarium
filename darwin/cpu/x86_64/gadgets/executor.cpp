@@ -796,9 +796,7 @@ public:
 		slot.code_stamps = code_stamps;
 		slot.instruction_limit = instruction_limit;
 		slot.mode = slot.program->execution_mode();
-		const auto stream = slot.program->stream();
-		slot.terminal = !stream.empty() &&
-			stream.back().instruction.terminal();
+		slot.terminal = slot.program->terminal();
 		/* Epoch is the validity marker and is written only after the slot is
 		 * complete. */
 		slot.epoch = epoch_;
@@ -825,10 +823,11 @@ public:
 	 * exists whether or not its ways are occupied; everything else is
 	 * proportional to what the workload translated. */
 	struct Footprint final {
-		std::size_t slabs, streams, links, indirect, targets;
+		std::size_t slabs, streams, decoded, links, indirect, targets;
 		[[nodiscard]] std::size_t total() const noexcept
 		{
-			return slabs + streams + links + indirect + targets;
+			return slabs + streams + decoded + links + indirect +
+				targets;
 		}
 	};
 
@@ -836,6 +835,7 @@ public:
 	{
 		std::size_t slabs = 0;
 		std::size_t streams = 0;
+		std::size_t decoded = 0;
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
@@ -843,13 +843,14 @@ public:
 			for (const auto &slot : slab->slots) {
 				if (!resident(slot))
 					continue;
-				/* A translation owns exactly two allocations:
-				 * the native stream, and the decoded
-				 * instructions followed by the saved source. */
+				/* A translation is the native stream and the
+				 * saved source; a block some replay has ended
+				 * inside also holds what that replay
+				 * decoded. */
 				const auto &program = *slot.program;
 				streams += program.native_stream().size_bytes() +
-					program.stream().size_bytes() +
 					program.source().size();
+				decoded += program.replay_bytes();
 			}
 		}
 		std::size_t links = 0;
@@ -873,6 +874,7 @@ public:
 		return {
 			.slabs = slabs,
 			.streams = streams,
+			.decoded = decoded,
 			.links = links,
 			.indirect = indirect,
 			.targets = targets,
@@ -910,12 +912,12 @@ public:
 		 * separates them. */
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slot_bytes=%zu "
-			"slabs=%zu streams=%zu links=%zu indirect=%zu "
-			"targets=%zu total=%zu\n",
+			"slabs=%zu streams=%zu decoded=%zu links=%zu "
+			"indirect=%zu targets=%zu total=%zu\n",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), sizeof(Slot), parts.slabs, parts.streams,
-			parts.links, parts.indirect, parts.targets,
-			parts.total());
+			parts.decoded, parts.links, parts.indirect,
+			parts.targets, parts.total());
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
@@ -1836,12 +1838,7 @@ ProgramSelection Executor::select_program(
 	 * ahead of the read or moves the stamp this reads. */
 	const auto held_stamps = capture_held_code_stamps(
 		memory, hold.pages(), storage_->execution_context);
-	/* The decoder's own bytes, which become the slot's saved source. A block
-	 * this long cannot be cached anyway, so the bound is the cache's. */
-	std::array<std::byte, maximum_cached_source_bytes> decoded_source;
-	auto built = build(memory, address, mode, maximum_instructions, links,
-		storage_->cache_ready ? std::span{decoded_source} :
-			std::span<std::byte>{});
+	auto built = build(memory, address, mode, maximum_instructions, links);
 	if (built.status != BuildStatus::built) {
 		storage_->programs.cancel_selection();
 		return {
@@ -1862,8 +1859,7 @@ ProgramSelection Executor::select_program(
 			.cache_hit = false,
 		};
 	};
-	if (!storage_->cache_ready || !built.source_recorded ||
-		built.program.byte_count() == 0 ||
+	if (!storage_->cache_ready || built.program.byte_count() == 0 ||
 		built.program.byte_count() > maximum_cached_source_bytes)
 		return use_transient();
 	const auto code_stamps = program_code_stamps_from_hold(
