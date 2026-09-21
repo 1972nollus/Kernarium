@@ -62,6 +62,9 @@ std::uint64_t identityOfDescriptor(int fd) noexcept
 Driver::Driver(VADriverContextP context) : driverContext_(context)
 {
     selectStorage(std::getenv("UML_VA_V4L2_SURFACES"));
+    // Which backing store a client's surfaces will come from decides whether
+    // an exported handle is a dma-buf at all, so it belongs in the log.
+    note((std::string("surfaces ") + storageName(selectedStorage())).c_str());
     rgbPolicy_ = rgbCaptureRequest(std::getenv("UML_VA_V4L2_RGB"));
     probeCodecs();
 }
