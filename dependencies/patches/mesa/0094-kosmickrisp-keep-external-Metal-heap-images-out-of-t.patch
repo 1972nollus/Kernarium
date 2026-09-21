@@ -1,7 +1,7 @@
-From 8dc9de239c5d3a9477a31acffd0c14cc1505f948 Mon Sep 17 00:00:00 2001
+From cc2e0919d5975e1fd6c007dc98886e91eb30695a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 12:19:57 +0900
-Subject: [PATCH 94/95] kosmickrisp: keep external Metal heap images out of the
+Subject: [PATCH 94/97] kosmickrisp: keep external Metal heap images out of the
  optimized layout
 
 Metal's lossless texture compression is a property of how a texture is

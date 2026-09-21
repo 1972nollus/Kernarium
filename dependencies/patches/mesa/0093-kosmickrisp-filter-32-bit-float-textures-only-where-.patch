@@ -1,7 +1,7 @@
-From 58a0b7e6d4074ce722bf7d7f44396422e9bd2d48 Mon Sep 17 00:00:00 2001
+From 90ff688b84317749c60c15cef9af35dee58afd9d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 12:21:15 +0900
-Subject: [PATCH 93/95] kosmickrisp: filter 32-bit float textures only where
+Subject: [PATCH 93/97] kosmickrisp: filter 32-bit float textures only where
  Metal can
 
 The format table names every pixel format Metal can filter, but filtering a

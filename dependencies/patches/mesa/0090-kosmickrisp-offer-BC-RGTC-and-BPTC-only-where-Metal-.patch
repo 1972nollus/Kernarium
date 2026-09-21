@@ -1,7 +1,7 @@
-From 2c54bd7cf17c6b1af9efb166bd277e997192e6ab Mon Sep 17 00:00:00 2001
+From 1d2a61b539b96eae77e7c3a0766d54e4aa806ed9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 14:11:49 +0900
-Subject: [PATCH 90/95] kosmickrisp: offer BC, RGTC and BPTC only where Metal
+Subject: [PATCH 90/97] kosmickrisp: offer BC, RGTC and BPTC only where Metal
  accepts them
 
 The format table names the BC/S3TC, RGTC and BPTC pixel formats because

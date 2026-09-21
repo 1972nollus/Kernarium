@@ -1,0 +1,131 @@
+From 63c863b2f2d9d268b29ed73d51a175ca17dce85f Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 23:05:13 +0900
+Subject: [PATCH 97/97] kosmickrisp: lay a multi-plane image out for sharing
+
+A video frame crosses this driver as a multi-plane image under
+DRM_FORMAT_MOD_LINEAR: its planes sit in one allocation, each at its own
+offset, and an importer is told where they are through the image's memory
+planes. This driver already lays such an image out that way and binds it that
+way, but could describe only the first of them, so a two-plane frame could not
+be shared at all.
+
+A memory plane is a plane of the modifier's layout. DRM_FORMAT_MOD_LINEAR is
+the only modifier offered here and lays a format's planes out in their own
+order, so memory plane n is format plane n. Say that, instead of refusing
+every plane past the first.
+
+The offset of a plane is then the one its binding uses: the end of the plane
+before it, raised to the alignment this plane's own layout asks for. The
+reported layout raised it for every earlier plane but not for the plane being
+asked about, so it could name an offset below where the bind actually put the
+plane, and an explicit layout was accepted only when every plane claimed
+offset zero, which no joined multi-plane image can claim. Compute the offset
+once and use it in both places.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/kosmickrisp/vulkan/kk_image.c | 36 ++++++++++++++++++++++---------
+ src/kosmickrisp/vulkan/kk_image.h | 18 ++++++++++++----
+ 2 files changed, 40 insertions(+), 14 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
+index ca26fbf1..33c037b9 100644
+--- a/src/kosmickrisp/vulkan/kk_image.c
++++ b/src/kosmickrisp/vulkan/kk_image.c
+@@ -631,6 +631,26 @@ kk_GetPhysicalDeviceSparseImageFormatProperties2(
+    return;
+ }
+ 
++/* A joined image packs its planes into one allocation, each starting at the
++ * alignment its own layout asks for, which is the walk kk_image_plane_bind()
++ * performs. A disjoint image binds every plane separately, so each one starts
++ * its own allocation.
++ */
++static uint64_t
++kk_image_plane_offset_B(const struct kk_image *image, uint8_t plane)
++{
++   if (image->disjoint)
++      return 0;
++
++   uint64_t offset_B = 0;
++   for (uint8_t i = 0; i < plane; i++) {
++      offset_B = align64(offset_B, image->planes[i].layout.align_B);
++      offset_B += image->planes[i].layout.size_B;
++   }
++
++   return align64(offset_B, image->planes[plane].layout.align_B);
++}
++
+ static VkResult
+ kk_image_init(struct kk_device *dev, struct kk_image *image,
+               const VkImageCreateInfo *pCreateInfo)
+@@ -748,17 +768,20 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+       for (uint8_t plane = 0; plane < image->plane_count; plane++) {
+          const struct kk_image_layout *layout = &image->planes[plane].layout;
+          const VkSubresourceLayout *given = &mod_explicit->pPlaneLayouts[plane];
++         const uint64_t offset_B = kk_image_plane_offset_B(image, plane);
+ 
+-         if (given->offset != 0 || given->rowPitch != layout->linear_stride_B ||
++         if (given->offset != offset_B ||
++             given->rowPitch != layout->linear_stride_B ||
+              (given->size != 0 && given->size != layout->size_B) ||
+              given->arrayPitch != 0 || given->depthPitch != 0) {
+             vk_image_finish(&image->vk);
+             return vk_errorf(
+                dev, VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT,
+                "plane %u wants offset %llu pitch %llu, Metal lays it out at "
+-               "offset 0 pitch %u",
++               "offset %llu pitch %u",
+                (unsigned)plane, (unsigned long long)given->offset,
+                (unsigned long long)given->rowPitch,
++               (unsigned long long)offset_B,
+                (unsigned)layout->linear_stride_B);
+          }
+       }
+@@ -995,14 +1018,7 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
+    const uint8_t p = kk_image_memory_aspects_to_plane(image, isr->aspectMask);
+    const struct kk_image_plane *plane = &image->planes[p];
+ 
+-   uint64_t offset_B = 0;
+-   if (!image->disjoint) {
+-      uint32_t align_B = 0;
+-      for (unsigned i = 0; i < p; i++) {
+-         kk_image_plane_add_req(dev, image, &image->planes[i], &offset_B,
+-                                &align_B);
+-      }
+-   }
++   const uint64_t offset_B = kk_image_plane_offset_B(image, p);
+ 
+    pLayout->subresourceLayout = (VkSubresourceLayout){
+       .offset = offset_B,
+diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
+index 9b9e9280..2a665b3f 100644
+--- a/src/kosmickrisp/vulkan/kk_image.h
++++ b/src/kosmickrisp/vulkan/kk_image.h
+@@ -146,11 +146,21 @@ kk_image_memory_aspects_to_plane(ASSERTED const struct kk_image *image,
+                      VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT |
+                      VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT |
+                      VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT)) {
+-      /* We don't support DRM format modifiers on anything but single-plane
+-       * color at the moment.
++      /* DRM_FORMAT_MOD_LINEAR is the only modifier this driver offers, and it
++       * lays a format's planes out in their own order, so memory plane n is
++       * format plane n.
+        */
+-      assert(aspectMask == VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT);
+-      return 0;
++      switch (aspectMask) {
++      case VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT:
++         assert(image->plane_count > 1);
++         return 1;
++      case VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT:
++         assert(image->plane_count > 2);
++         return 2;
++      default:
++         assert(aspectMask == VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT);
++         return 0;
++      }
+    } else {
+       return kk_image_aspects_to_plane(image, aspectMask);
+    }

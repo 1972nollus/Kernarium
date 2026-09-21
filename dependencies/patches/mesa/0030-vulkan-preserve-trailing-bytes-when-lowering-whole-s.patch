@@ -1,7 +1,7 @@
-From c68a5003667c9714f2b36d277e9589a55dbf4201 Mon Sep 17 00:00:00 2001
+From f7e59c7f9ce54a8ecc333d6a3576a2c747f57843 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 19:28:45 +0900
-Subject: [PATCH 30/95] vulkan: preserve trailing bytes when lowering
+Subject: [PATCH 30/97] vulkan: preserve trailing bytes when lowering
  whole-size fills
 
 vkCmdFillBuffer with VK_WHOLE_SIZE fills complete uint32 words and leaves any trailing one to three bytes untouched. Round only that resolved range with a 64-bit mask, and skip dispatch when it contains no full word. Explicit sizes and generic device address ranges retain their existing semantics.

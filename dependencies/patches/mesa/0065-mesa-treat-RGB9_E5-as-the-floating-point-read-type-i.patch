@@ -1,7 +1,7 @@
-From 786159076ef1907c3b0ba02eb31ad6970b422272 Mon Sep 17 00:00:00 2001
+From 3df8498b9c59c601ff80ef30fc68517b049e527c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 05:11:39 +0900
-Subject: [PATCH 65/95] mesa: treat RGB9_E5 as the floating-point read type it
+Subject: [PATCH 65/97] mesa: treat RGB9_E5 as the floating-point read type it
  is
 
 glReadPixels with GL_UNSIGNED_INT_5_9_9_9_REV packs floating-point

@@ -1,7 +1,7 @@
-From 252f9806dc1975f903cc614ff0244376a2ac19b7 Mon Sep 17 00:00:00 2001
+From 4488cf39199b07c31204be9300c32f3e4e5893e6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 14:58:02 +0900
-Subject: [PATCH 95/95] kosmickrisp: declare the primitive ID varying unsigned
+Subject: [PATCH 95/97] kosmickrisp: declare the primitive ID varying unsigned
  at both ends
 
 An authored primitive ID crosses the Metal vertex/fragment interface as a user
