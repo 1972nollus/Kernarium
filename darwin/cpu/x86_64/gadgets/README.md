@@ -149,6 +149,13 @@ entries, 1 MiB, indexed by the page number folded once at that width;
 `native_tlb_entry_count` is the one constant, and the four assembly copies of
 the index must change with it.
 
+A translation may miss, and a miss is a call. Nothing saves the host vector
+registers around it, so a gadget may not hold a guest value in one across its
+own translation: a stored value is read out of the state after the destination
+is settled, and a page-crossing helper is handed the state's address rather
+than a copy made before the call. The same rule is why only register forms
+take part in vector result forwarding.
+
 PUSH, POP, CALL and RET re-check the entry the last stack access translated
 through, which the execution context carries, before hashing an address of
 their own. A tag equal to the page, with no code bit and, for a write, no
