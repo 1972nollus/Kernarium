@@ -8,13 +8,18 @@ gadget vector_mask_store_\width
 	mov x7, x25
 	page_cross_check (\width / 8), .Lx86_vector_mask_store_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	mov x7, x25
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	/* The bytes the mask leaves alone are read back only once both
+	 * translations are settled: either of them may miss and call out, and the
+	 * host vector registers do not survive a call. The read translation above
+	 * still reports a page this instruction may not read.
+	 */
 	.if \width == 64
 	ldr d2, [x7]
 	.else
 	ldr q2, [x7]
 	.endif
-	mov x7, x25
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	and x9, x23, #0xffff
 	ubfx x10, x23, #16, #16
 	.if \width == 64

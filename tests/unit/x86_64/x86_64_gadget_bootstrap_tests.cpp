@@ -4813,6 +4813,12 @@ read_test_sequences(void *context) noexcept
 /* The same rule, executed. The address space's own read of a page-crossing
  * operand runs C++, which is free to use every caller-saved host vector
  * register, including the two a vector gadget leaves its result in. */
+/* Every helper a gadget calls is an ordinary function, so it may leave
+ * anything in the caller-saved vector registers. This memory leaves a value
+ * no test stores, on both the slow paths a gadget reaches: the page-crossing
+ * copy and the software TLB's miss, which resolves a guest page through
+ * `atomic_pointer`.
+ */
 class CallingOutMemory final : public TestMemory {
 public:
 	using TestMemory::TestMemory;
@@ -4820,9 +4826,30 @@ public:
 	[[nodiscard]] bool read(std::uint64_t address,
 		std::span<std::byte> destination) override
 	{
-		asm volatile("movi v4.16b, #0xaa\n\tmovi v5.16b, #0xaa"
-			::: "v4", "v5");
+		dirty_call_clobbered_vectors();
 		return TestMemory::read(address, destination);
+	}
+
+	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
+		std::size_t size, uml::memory::MemoryAccess access) override
+	{
+		dirty_call_clobbered_vectors();
+		return TestMemory::atomic_pointer(address, size, access);
+	}
+
+private:
+	static void dirty_call_clobbered_vectors() noexcept
+	{
+		asm volatile(
+			"movi v0.16b, #0xaa\n\t"
+			"movi v1.16b, #0xaa\n\t"
+			"movi v2.16b, #0xaa\n\t"
+			"movi v3.16b, #0xaa\n\t"
+			"movi v4.16b, #0xaa\n\t"
+			"movi v5.16b, #0xaa\n\t"
+			"movi v6.16b, #0xaa\n\t"
+			"movi v7.16b, #0xaa"
+			::: "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7");
 	}
 };
 
@@ -4854,6 +4881,97 @@ public:
 			"the calling-out vector sequence did not reach SYSCALL") &&
 		expect(exact,
 			"a vector operand survived a call out between two gadgets");
+}
+
+[[nodiscard]] bool a_lane_extract_store_keeps_the_lane_across_a_miss()
+{
+	using namespace uml::cpu::x86_64;
+	CallingOutMemory memory;
+	memory.load(0, {
+		0xc4, 0xe3, 0x7d, 0x39, 0x07, 0x01, // vextracti128 $1,ymm0,[rdi]
+		0x0f, 0x05,                         // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"the lane-extract store did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.registers[7] = 0x2000; // rdi, a page no translation covers yet
+	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
+		std::byte{0x11});
+	std::fill(cpu.vectors[0].begin() + 16, cpu.vectors[0].end(),
+		std::byte{0x77});
+	const auto result = gadgets::execute(built.program, cpu, memory, 2);
+	bool exact = true;
+	for (unsigned index = 0; index < 16; ++index)
+		exact = exact && memory.byte(0x2000 + index) == 0x77U;
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2,
+			"the lane-extract store did not reach SYSCALL") &&
+		expect(exact,
+			"a lane extract stored something other than its upper lane");
+}
+
+[[nodiscard]] bool a_lane_extract_store_keeps_the_lane_across_a_page()
+{
+	using namespace uml::cpu::x86_64;
+	CallingOutMemory memory;
+	memory.load(0, {
+		0xc4, 0xe3, 0x7d, 0x39, 0x07, 0x01, // vextracti128 $1,ymm0,[rdi]
+		0x0f, 0x05,                         // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"the crossing lane-extract store did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.registers[7] = 0x1ff8; // rdi, eight bytes short of the next page
+	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
+		std::byte{0x11});
+	std::fill(cpu.vectors[0].begin() + 16, cpu.vectors[0].end(),
+		std::byte{0x77});
+	const auto result = gadgets::execute(built.program, cpu, memory, 2);
+	bool exact = true;
+	for (unsigned index = 0; index < 16; ++index)
+		exact = exact && memory.byte(0x1ff8 + index) == 0x77U;
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2,
+			"the crossing lane-extract store did not reach SYSCALL") &&
+		expect(exact,
+			"a lane extract across a page stored something else");
+}
+
+[[nodiscard]] bool a_masked_store_keeps_the_unselected_bytes_across_a_miss()
+{
+	using namespace uml::cpu::x86_64;
+	CallingOutMemory memory;
+	memory.load(0, {
+		0x66, 0x0f, 0xf7, 0xc1, // maskmovdqu xmm0,xmm1: [rdi] under a mask
+		0x0f, 0x05,             // syscall
+	});
+	for (unsigned index = 0; index < 16; ++index)
+		memory.load(0x2000 + index, {0x5a});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"the masked store did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.registers[7] = 0x2000; // rdi, a page no translation covers yet
+	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
+		std::byte{0x33});
+	for (unsigned index = 0; index < 16; ++index)
+		cpu.vectors[1][index] = static_cast<std::byte>(
+			(index % 2) == 0 ? 0x80U : 0x00U);
+	const auto result = gadgets::execute(built.program, cpu, memory, 2);
+	bool exact = true;
+	for (unsigned index = 0; index < 16; ++index)
+		exact = exact && memory.byte(0x2000 + index) ==
+			((index % 2) == 0 ? 0x33U : 0x5aU);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2,
+			"the masked store did not reach SYSCALL") &&
+		expect(exact,
+			"a masked store did not leave the unselected bytes alone");
 }
 
 [[nodiscard]] bool vector_invalid_results_use_x86_indefinite_nan()
@@ -5658,6 +5776,9 @@ int main()
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&
 		a_call_out_between_vector_gadgets_keeps_the_result() &&
+		a_lane_extract_store_keeps_the_lane_across_a_miss() &&
+		a_lane_extract_store_keeps_the_lane_across_a_page() &&
+		a_masked_store_keeps_the_unselected_bytes_across_a_miss() &&
 		vector_invalid_results_use_x86_indefinite_nan() &&
 		locked_memory_updates_select_exclusive_gadgets() &&
 		glibc_rwlock_xadd_fast_path_is_exact() &&

@@ -90,28 +90,31 @@ gadget vector_map3_extract_128_r
 	str q1, [x9, #16]
 	retire_and_next
 
+/* The lane to store stays in the register file until the destination has been
+ * translated: a translation may miss and call out, and the host vector
+ * registers do not survive a call. x24 holds the lane's address in the state,
+ * which does survive one, and the page-crossing helper reads the lane from
+ * there as well.
+ */
 gadget vector_map3_extract_128_m
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
 	and x10, x26, #0xffff
 	ubfx x13, x26, #16, #1
-	add x10, _cpu, x10
-	add x10, x10, x13, lsl #4
-	ldr q0, [x10]
+	add x24, _cpu, x10
+	add x24, x24, x13, lsl #4
 	page_cross_check 16, .Lx86_vector_map3_extract_128_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
+	ldr q0, [x24]
 	str q0, [x7]
 	finish_store 16
 .Lx86_vector_map3_extract_128_cross:
-	sub sp, sp, #16
-	str q0, [sp]
 	mov x0, _context
 	mov x1, x25
-	mov x2, sp
+	mov x2, x24
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
-	add sp, sp, #16
 	cbz w0, .Lx86_memory_fault
 	finish_store 16
 
