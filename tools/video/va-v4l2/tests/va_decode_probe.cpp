@@ -78,6 +78,11 @@ struct Output {
     std::FILE* file {};
     std::uint32_t running {};
     unsigned frames {};
+    // Plane means, so two decode paths that cannot be compared byte for byte -
+    // a packed decode has been through the host's own colour conversion - can
+    // still be compared as pictures.
+    double sum[3] {};
+    std::uint64_t samples[3] {};
 };
 
 bool writeI420(Output& output, const std::uint8_t* base, const VAImage& image, unsigned width, unsigned height)
@@ -86,6 +91,8 @@ bool writeI420(Output& output, const std::uint8_t* base, const VAImage& image, u
     for (unsigned line = 0; line < height; ++line) {
         const std::uint8_t* source = base + image.offsets[0] + std::size_t(line) * image.pitches[0];
         output.running = crc32(source, width, output.running);
+        for (unsigned column = 0; column < width; ++column) output.sum[0] += source[column];
+        output.samples[0] += width;
         if (output.file && std::fwrite(source, 1, width, output.file) != width) return false;
     }
     const unsigned chromaWidth = (width + 1) / 2;
@@ -95,6 +102,8 @@ bool writeI420(Output& output, const std::uint8_t* base, const VAImage& image, u
             const std::uint8_t* source = base + image.offsets[1] + std::size_t(line) * image.pitches[1];
             for (unsigned column = 0; column < chromaWidth; ++column) row[column] = source[2 * column + plane];
             output.running = crc32(row.data(), chromaWidth, output.running);
+            for (unsigned column = 0; column < chromaWidth; ++column) output.sum[plane + 1] += row[column];
+            output.samples[plane + 1] += chromaWidth;
             if (output.file && std::fwrite(row.data(), 1, chromaWidth, output.file) != chromaWidth) return false;
         }
     }
@@ -383,6 +392,10 @@ int main(int argc, char** argv)
     }
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     if (output.file && output.file != stdout) std::fclose(output.file);
+    std::fprintf(stderr, "plane means Y %.3f U %.3f V %.3f\n",
+                 output.samples[0] ? output.sum[0] / double(output.samples[0]) : 0.0,
+                 output.samples[1] ? output.sum[1] / double(output.samples[1]) : 0.0,
+                 output.samples[2] ? output.sum[2] / double(output.samples[2]) : 0.0);
     std::fprintf(stderr, "submitted %u frames, %u shown, crc32 %08x, %.2f s (%.1f fps)\n", submitted, shown,
                  output.running, elapsed, elapsed > 0 ? shown / elapsed : 0.0);
     if (videoProcess)
