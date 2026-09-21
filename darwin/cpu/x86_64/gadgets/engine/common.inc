@@ -196,6 +196,8 @@ NAME(uml_x86_64_gadget_\name):
  *   51:50  segment (0 none, 1 FS, 2 GS)
  *   52     32-bit effective-address arithmetic
  *   53     16-bit effective-address arithmetic
+ *   54     none of the three above: the address is complete once the base,
+ *          the scaled index and the displacement are summed
  *   59:56  instruction length
  *   60     a write translation proved this store publishes nothing:
  *          its page holds no cached code and no publication is pending
@@ -212,6 +214,26 @@ NAME(uml_x86_64_gadget_\name):
 	lsl x13, x13, x12
 	add x7, x14, x10
 	add x7, x7, x13
+	/* A long-mode address with no segment override is finished here. The
+	 * builder proves that from the operand, because what remains costs a
+	 * load of the selected segment base through a computed address -- a form
+	 * the host cannot disambiguate against the CpuState stores every gadget
+	 * makes, and the most expensive instruction of the generic address path.
+	 * Adding a zero segment base and masking nothing are what that work comes
+	 * to in the plain case, so skipping it is the same address.
+	 */
+	tbnz x23, #UML_X86_64_MEMORY_PLAIN_ADDRESS, .Lx86_segment_ready\@
+	b .Lx86_address_general\@
+	/* What a segment override or a narrow address space still needs is two
+	 * instructions in the entry and its whole body in the cold section, so a
+	 * bank this size keeps only the plain form in the hot stream.
+	 */
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+.Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
 	 */
@@ -235,11 +257,14 @@ NAME(uml_x86_64_gadget_\name):
 	 * wrap follows the selector, not the base value, so a zero FS base in
 	 * compat32 still wraps exactly as before.
 	 */
-	cbz x9, .Lx86_segment_ready\@
+	cbz x9, .Lx86_address_done\@
 	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
 	cmp w11, #1
-	b.ne .Lx86_segment_ready\@
+	b.ne .Lx86_address_done\@
 	mov w7, w7
+.Lx86_address_done\@:
+	b .Lx86_segment_ready\@
+	.popsection
 .Lx86_segment_ready\@:
 .endm
 

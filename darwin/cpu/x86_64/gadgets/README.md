@@ -39,6 +39,19 @@ prefix, and the ordinary bank for everything else. `UML_X86_64_GADGET_BAKED=0`
 in the environment keeps the ordinary bank for every instruction, for
 comparison.
 
+The ordinary bank's memory descriptor resolves base, index, scale, segment and
+address size with no branch on which of them are present, which means the
+common long-mode address still pays for a segment base it adds as zero. That
+addition is not free: the selected base is reached through a computed address
+rather than a constant offset from the CPU state, a form the host cannot
+disambiguate against the CPU-state stores every gadget makes, and it is the
+most expensive instruction of the generic address path. The builder therefore
+proves the absence of all three from the operand and sets one descriptor bit
+(`UML_X86_64_MEMORY_PLAIN_ADDRESS`), on which the gadget stops once base,
+scaled index and displacement are summed. The bit is only ever an optimization:
+a descriptor that leaves it clear takes the general tail and resolves the same
+address.
+
 ## Host-flag fusion
 
 A producer that computes with a flag-setting host instruction leaves NZCV

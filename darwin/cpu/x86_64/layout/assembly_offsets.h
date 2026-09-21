@@ -47,6 +47,12 @@
 /* No page: guest pages are 4 KiB aligned, so this is none of them. */
 #define UML_X86_64_CODE_PAGE_NONE 1
 
+/* Stream-descriptor bit: the effective address is the sum of base, scaled
+ * index and displacement with nothing after it -- long-mode arithmetic and no
+ * segment base to add.
+ */
+#define UML_X86_64_MEMORY_PLAIN_ADDRESS 54
+
 #define UML_X86_64_CONTEXT_MEMORY 0
 #define UML_X86_64_CONTEXT_TLB 8
 #define UML_X86_64_CONTEXT_PROGRAM_BEGIN 16
