@@ -371,6 +371,8 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
             }
             return true;
         }
+        // EPIPE is how a drained stateful decoder says there is nothing more.
+        if (errno == EPIPE) { sawEos_ = true; return false; }
         if (errno != EAGAIN) { error = reason("collect a decoded picture"); return false; }
         if (std::chrono::steady_clock::now() >= deadline) return false;
         pollfd waiting {fd_, POLLIN | POLLPRI, 0};

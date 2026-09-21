@@ -106,7 +106,7 @@ int main(int argc, char** argv)
 {
     const char* stream = nullptr;
     const char* destination = nullptr;
-    const char* node = "/dev/dri/renderD128";
+    const char* node = nullptr;
     unsigned limit = 0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -126,23 +126,38 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "cannot read %s as IVF\n", stream);
         return 2;
     }
-    std::printf("stream %s %ux%u packets %zu\n", stream, width, height, packets.size());
+    std::fprintf(stderr, "stream %s %ux%u packets %zu\n", stream, width, height, packets.size());
 
-    const int drm = ::open(node, O_RDWR | O_CLOEXEC);
-    if (drm < 0) { std::perror("open render node"); return 2; }
-    VADisplay display = vaGetDisplayDRM(drm);
-    if (!display) { std::fprintf(stderr, "no VA display\n"); return 2; }
+    // The driver ignores the device a VA display names, so any node libva
+    // accepts will do when a guest has no render node.
+    const char* candidates[] {node, "/dev/dri/renderD128", "/dev/dri/card0", "/dev/video-dec0", "/dev/video0"};
+    int drm = -1;
+    VADisplay display = nullptr;
     int major = 0;
     int minor = 0;
-    if (!check(vaInitialize(display, &major, &minor), "vaInitialize")) return 1;
-    std::printf("libva %d.%d vendor \"%s\"\n", major, minor, vaQueryVendorString(display));
+    for (const char* candidate : candidates) {
+        if (!candidate || !*candidate) continue;
+        drm = ::open(candidate, O_RDWR | O_CLOEXEC);
+        if (drm < 0) continue;
+        display = vaGetDisplayDRM(drm);
+        if (display && vaInitialize(display, &major, &minor) == VA_STATUS_SUCCESS) {
+            std::fprintf(stderr, "display %s\n", candidate);
+            break;
+        }
+        if (display) vaTerminate(display);
+        display = nullptr;
+        ::close(drm);
+        drm = -1;
+    }
+    if (!display) { std::fprintf(stderr, "no VA display\n"); return 2; }
+    std::fprintf(stderr, "libva %d.%d vendor \"%s\"\n", major, minor, vaQueryVendorString(display));
 
     std::vector<VAProfile> profiles(std::size_t(vaMaxNumProfiles(display)));
     int profileCount = 0;
     if (!check(vaQueryConfigProfiles(display, profiles.data(), &profileCount), "vaQueryConfigProfiles")) return 1;
     bool vp9 = false;
     for (int index = 0; index < profileCount; ++index) {
-        std::printf("profile %s\n", vaProfileStr(profiles[index]));
+        std::fprintf(stderr, "profile %s\n", vaProfileStr(profiles[index]));
         vp9 = vp9 || profiles[index] == VAProfileVP9Profile0;
     }
     if (!vp9) { std::fprintf(stderr, "the driver does not offer VP9 profile 0\n"); return 1; }
@@ -168,7 +183,7 @@ int main(int argc, char** argv)
               "vaQuerySurfaceAttributes")) {
         for (const auto& entry : attributes)
             if (entry.type == VASurfaceAttribMaxWidth || entry.type == VASurfaceAttribMaxHeight)
-                std::printf("limit %s %d\n",
+                std::fprintf(stderr, "limit %s %d\n",
                             entry.type == VASurfaceAttribMaxWidth ? "max-width" : "max-height",
                             entry.value.value.i);
     }

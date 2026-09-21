@@ -228,7 +228,9 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
     }
     if (packet.empty()) return VA_STATUS_ERROR_OPERATION_FAILED;
 
-    const auto sequence = ++owner.sequence;
+    // V4L2 carries a buffer timestamp as a timeval, so a submission key has to
+    // be a whole microsecond to survive the round trip through both queues.
+    const auto sequence = ++owner.sequence * 1000ull;
     std::string error;
     if (!owner.decoder->submit(packet, sequence, error)) {
         note(error.c_str());
