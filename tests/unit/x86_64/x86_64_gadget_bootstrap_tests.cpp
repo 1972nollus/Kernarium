@@ -27,7 +27,7 @@
 
 namespace {
 
-class TestMemory final : public uml::memory::GuestAddressSpace {
+class TestMemory : public uml::memory::GuestAddressSpace {
 public:
 	/* Most tests need a few pages. The repeat-budget tests need enough to
 	 * run past a whole executor entry's worth of copying, which is far more
@@ -4743,6 +4743,119 @@ read_test_sequences(void *context) noexcept
 			"VEX VMOVLHPS did not clear the upper YMM lane");
 }
 
+/* How many operands a block takes from the vector result registers instead of
+ * from the state slot. Only a vector register form's descriptor sets bit 62;
+ * an entry address, a displacement, a guest address and a length word all
+ * leave it clear. */
+[[nodiscard]] std::size_t forwarded_vector_operands(
+	std::initializer_list<std::uint8_t> code)
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, code);
+	const auto built = gadgets::build(memory, 0);
+	if (built.status != gadgets::BuildStatus::built)
+		return ~std::size_t{};
+	std::size_t forwarded{};
+	for (const auto word : built.program.native_stream())
+		if ((word & (std::uintptr_t{1} << 62U)) != 0)
+			++forwarded;
+	return forwarded;
+}
+
+/* A vector result is left in host registers that the calling convention lets
+ * any call destroy. A flag-neutral baked transfer hands the producer's host
+ * flags to the next consumer, and the bank's miss tails save NZCV around the
+ * calls they make -- but nothing saves the vector registers, so a transfer
+ * that reaches guest memory must not hand a vector result on as well. */
+[[nodiscard]] bool vector_results_cross_only_a_transfer_that_stays_inline()
+{
+	/* vpaddb ymm0,ymm1,ymm2; <transfer>; vpaddb ymm3,ymm0,ymm4; syscall */
+	static constexpr std::size_t taken = 1;
+	struct Case final {
+		std::initializer_list<std::uint8_t> code;
+		std::size_t expected;
+		const char *message;
+	};
+	const Case cases[] = {
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05},
+			taken,
+			"a vector operand was not taken from the gadget before it"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x48, 0x89, 0xd8,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, taken,
+			"a register MOV stopped a vector operand being forwarded"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x48, 0x8d, 0x47, 0x08,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, taken,
+			"LEA stopped a vector operand being forwarded"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x48, 0x8b, 0x07,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, 0,
+			"a vector operand was taken across a load"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x48, 0x89, 0x07,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, 0,
+			"a vector operand was taken across a store"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x0f, 0xb6, 0x07,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, 0,
+			"a vector operand was taken across a widening load"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x50,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, 0,
+			"a vector operand was taken across a PUSH"},
+		{{0xc5, 0xf5, 0xfc, 0xc2, 0x58,
+			0xc5, 0xfd, 0xfc, 0xdc, 0x0f, 0x05}, 0,
+			"a vector operand was taken across a POP"},
+	};
+	for (const auto &item : cases)
+		if (!expect(forwarded_vector_operands(item.code) == item.expected,
+			item.message))
+			return false;
+	return true;
+}
+
+/* The same rule, executed. The address space's own read of a page-crossing
+ * operand runs C++, which is free to use every caller-saved host vector
+ * register, including the two a vector gadget leaves its result in. */
+class CallingOutMemory final : public TestMemory {
+public:
+	using TestMemory::TestMemory;
+
+	[[nodiscard]] bool read(std::uint64_t address,
+		std::span<std::byte> destination) override
+	{
+		asm volatile("movi v4.16b, #0xaa\n\tmovi v5.16b, #0xaa"
+			::: "v4", "v5");
+		return TestMemory::read(address, destination);
+	}
+};
+
+[[nodiscard]] bool a_call_out_between_vector_gadgets_keeps_the_result()
+{
+	using namespace uml::cpu::x86_64;
+	CallingOutMemory memory;
+	memory.load(0, {
+		0xc5, 0xf5, 0xfc, 0xc2, // vpaddb ymm0,ymm1,ymm2
+		0x48, 0x8b, 0x07,       // mov rax,[rdi]: crosses a page
+		0xc5, 0xfd, 0xfc, 0xdc, // vpaddb ymm3,ymm0,ymm4
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"the calling-out vector sequence did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.registers[7] = 0x0ffc; // rdi, four bytes short of the next page
+	cpu.vectors[1].fill(std::byte{0x11});
+	cpu.vectors[2].fill(std::byte{0x22});
+	cpu.vectors[4].fill(std::byte{0x33});
+	const auto result = gadgets::execute(built.program, cpu, memory, 4);
+	bool exact = true;
+	for (const auto byte : cpu.vectors[3])
+		exact = exact && byte == std::byte{0x66};
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 4,
+			"the calling-out vector sequence did not reach SYSCALL") &&
+		expect(exact,
+			"a vector operand survived a call out between two gadgets");
+}
+
 [[nodiscard]] bool vector_invalid_results_use_x86_indefinite_nan()
 {
 	using namespace uml::cpu::x86_64;
@@ -5543,6 +5656,8 @@ int main()
 		native_into_reports_overflow_precisely() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
+		vector_results_cross_only_a_transfer_that_stays_inline() &&
+		a_call_out_between_vector_gadgets_keeps_the_result() &&
 		vector_invalid_results_use_x86_indefinite_nan() &&
 		locked_memory_updates_select_exclusive_gadgets() &&
 		glibc_rwlock_xadd_fast_path_is_exact() &&

@@ -6028,6 +6028,24 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	}
 }
 
+/* A flag-neutral baked transfer hands the producer's host flags to the next
+ * consumer, and the bank's miss tails save NZCV around the calls they make.
+ * Nothing saves the vector result registers, which are call-clobbered, so a
+ * vector result may only cross a transfer that cannot call out at all: one
+ * that never accesses guest memory. LEA's memory operand is an address
+ * computation, never an access; PUSH and POP always reach the stack. */
+[[nodiscard]] bool baked_transfer_keeps_vector_results(
+	const Instruction &instruction) noexcept
+{
+	if (instruction.operation == Operation::lea)
+		return true;
+	if (instruction.operation == Operation::push ||
+		instruction.operation == Operation::pop)
+		return false;
+	return instruction.destination.kind != OperandKind::memory &&
+		instruction.source.kind != OperandKind::memory;
+}
+
 /* `state` is what the previous gadget left for a fused condition and for a
  * carry-preserving consumer; `produced` receives what this one leaves.
  * `has_following` says whether more of this block is translated behind this
@@ -6101,8 +6119,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			instruction.operation == Operation::push ||
 			instruction.operation == Operation::pop;
 		if (transparent && produced.condition == HostFlags::none &&
-			produced.carry == CarrySource::unknown)
+			produced.carry == CarrySource::unknown) {
 			produced = state;
+			if (!baked_transfer_keeps_vector_results(instruction))
+				produced.vector = {};
+		}
 		return true;
 	}
 	produced = {host_flags_of(instruction), ordinary_carry_of(instruction)};
