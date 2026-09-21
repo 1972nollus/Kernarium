@@ -73,13 +73,13 @@ RgbCapture rgbCaptureRequest(const char* request) noexcept
     return RgbCapture::automatic;
 }
 
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing) noexcept
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing, bool zeroCopy) noexcept
 {
     if (!deviceOffers) return false;
     switch (policy) {
     case RgbCapture::off: return false;
     case RgbCapture::force: return true;
-    case RgbCapture::automatic: return videoProcessing;
+    case RgbCapture::automatic: return videoProcessing && zeroCopy;
     }
     return false;
 }
@@ -165,6 +165,23 @@ std::unique_ptr<V4l2Decoder> V4l2Decoder::open(const std::string& device, std::u
     subscription.type = V4L2_EVENT_EOS;
     call(decoder->fd_, VIDIOC_SUBSCRIBE_EVENT, &subscription);
     if (!decoder->setupOutput(codedFormat, width, height, error)) return nullptr;
+    // The decoded format is negotiated before the first packet: the device
+    // keeps it across the source-change event, and changing it once a decode
+    // session exists means asking the host to switch layout underneath it.
+    if (preferredCapture) {
+        v4l2_format wanted {};
+        wanted.type = kCapture;
+        wanted.fmt.pix_mp.width = width;
+        wanted.fmt.pix_mp.height = height;
+        wanted.fmt.pix_mp.pixelformat = preferredCapture;
+        wanted.fmt.pix_mp.num_planes = 1;
+        wanted.fmt.pix_mp.field = V4L2_FIELD_NONE;
+        wanted.fmt.pix_mp.plane_fmt[0].bytesperline = width * 4;
+        wanted.fmt.pix_mp.plane_fmt[0].sizeimage = width * 4 * height;
+        if (call(decoder->fd_, VIDIOC_S_FMT, &wanted) < 0 ||
+            wanted.fmt.pix_mp.pixelformat != preferredCapture)
+            decoder->preferredCapture_ = 0;
+    }
     return decoder;
 }
 
@@ -263,17 +280,10 @@ bool V4l2Decoder::setupCapture(std::string& error)
     // caller would otherwise do on the guest processor, so it is asked for
     // first and the request falls back to NV12 when the device declines.
     captureFormat_ = 0;
-    if (preferredCapture_) {
-        v4l2_format wanted = format;
-        wanted.fmt.pix_mp.pixelformat = preferredCapture_;
-        wanted.fmt.pix_mp.num_planes = 1;
-        if (call(fd_, VIDIOC_S_FMT, &wanted) >= 0 && wanted.fmt.pix_mp.pixelformat == preferredCapture_) {
-            format = wanted;
-            captureFormat_ = preferredCapture_;
-        } else if (call(fd_, VIDIOC_G_FMT, &format) < 0) {
-            error = reason("read the decoded format");
-            return false;
-        }
+    if (preferredCapture_ && format.fmt.pix_mp.pixelformat == preferredCapture_) {
+        // Already negotiated before the stream started, and kept across the
+        // source change: take the device's own plane layout as it stands.
+        captureFormat_ = preferredCapture_;
     }
     if (!captureFormat_) {
         format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
@@ -287,6 +297,10 @@ bool V4l2Decoder::setupCapture(std::string& error)
     width_ = format.fmt.pix_mp.width;
     height_ = format.fmt.pix_mp.height;
     capturePlanes_ = format.fmt.pix_mp.num_planes;
+    layout_ = std::to_string(width_) + "x" + std::to_string(height_) + " planes " +
+              std::to_string(capturePlanes_) + " pitch " +
+              std::to_string(format.fmt.pix_mp.plane_fmt[0].bytesperline) + " size " +
+              std::to_string(format.fmt.pix_mp.plane_fmt[0].sizeimage);
     if (!allocate(kCapture, kCaptureBuffers, capture_, error)) return false;
     for (unsigned index = 0; index < capture_.size(); ++index)
         if (!queueCapture(index, error)) return false;

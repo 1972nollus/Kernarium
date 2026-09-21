@@ -72,6 +72,7 @@ struct Context {
     unsigned width {};
     unsigned height {};
     std::unique_ptr<V4l2Decoder> decoder;
+    bool reportLayout {};
     Vp9Context vp9;
     std::uint64_t sequence {};
     // The frame being assembled between vaBeginPicture and vaEndPicture.

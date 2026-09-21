@@ -59,6 +59,8 @@ public:
     // The format the decoder really produces, which is NV12 unless a
     // preferred format was both asked for and accepted.
     std::uint32_t captureFormat() const noexcept { return captureFormat_; }
+    // The decoded plane layout the device settled on, for diagnostics.
+    const std::string& captureLayout() const noexcept { return layout_; }
     unsigned width() const noexcept { return width_; }
     unsigned height() const noexcept { return height_; }
     bool streaming() const noexcept { return captureStreaming_; }
@@ -87,6 +89,7 @@ private:
     int fd_ {-1};
     std::uint32_t preferredCapture_ {};
     std::uint32_t captureFormat_ {};
+    std::string layout_;
     unsigned width_ {};
     unsigned height_ {};
     unsigned capturePlanes_ {};
@@ -102,17 +105,18 @@ private:
 std::string findDecoderDevice(std::uint32_t codedFormat);
 
 // Whether to ask the decoder for packed RGB rather than NV12. `off` never
-// does; `automatic` does when the client has a video-processing context, which
-// is the case where the colour conversion would otherwise be done on the guest
-// processor; `force` does whenever the device offers it.
+// does; `force` does whenever the device offers it; `automatic` does only when
+// the picture would also reach the client without a guest-side copy, because a
+// packed frame is 2.6 times the bytes of NV12 and moving it costs more than
+// the conversion it saves (measured: 187 ms against 164 ms for 1920x1200).
 enum class RgbCapture { off, automatic, force };
 
 // Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
 RgbCapture rgbCaptureRequest(const char* request) noexcept;
 
-// The decision itself, given the policy and what is known about the device and
-// the client.
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing) noexcept;
+// The decision itself. `zeroCopy` says the decoded picture lands in the
+// client's own buffer instead of being copied out of an MMAP capture queue.
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing, bool zeroCopy) noexcept;
 
 // Whether the device can deliver decoded pictures in `fourcc`. A device that
 // does not enumerate it makes the RGB decode path unavailable, and the driver

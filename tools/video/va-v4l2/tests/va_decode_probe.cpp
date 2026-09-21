@@ -225,6 +225,8 @@ int main(int argc, char** argv)
     VAContextID vppContext = VA_INVALID_ID;
     VASurfaceID argb = VA_INVALID_SURFACE;
     std::uint32_t argbCrc = 0;
+    double argbSum[3] {};
+    std::uint64_t argbSamples = 0;
     double blitSeconds = 0;
     if (videoProcess) {
         VAConfigAttrib vppAttribute {};
@@ -332,9 +334,16 @@ int main(int argc, char** argv)
                 void* pixels = nullptr;
                 if (!check(vaMapBuffer(display, converted.buf, &pixels), "vaMapBuffer argb")) return 1;
                 const auto* bytes = static_cast<const std::uint8_t*>(pixels) + converted.offsets[0];
-                for (unsigned line = 0; line < header.height; ++line)
-                    argbCrc = crc32(bytes + std::size_t(line) * converted.pitches[0], std::size_t(width) * 4,
-                                    argbCrc);
+                for (unsigned line = 0; line < header.height; ++line) {
+                    const std::uint8_t* row = bytes + std::size_t(line) * converted.pitches[0];
+                    for (unsigned column = 0; column < width; ++column) {
+                        argbSum[0] += row[std::size_t(column) * 4 + 0];
+                        argbSum[1] += row[std::size_t(column) * 4 + 1];
+                        argbSum[2] += row[std::size_t(column) * 4 + 2];
+                    }
+                    argbSamples += width;
+                    argbCrc = crc32(row, std::size_t(width) * 4, argbCrc);
+                }
                 vaUnmapBuffer(display, converted.buf);
                 vaDestroyImage(display, converted.image_id);
             }
@@ -399,7 +408,10 @@ int main(int argc, char** argv)
     std::fprintf(stderr, "submitted %u frames, %u shown, crc32 %08x, %.2f s (%.1f fps)\n", submitted, shown,
                  output.running, elapsed, elapsed > 0 ? shown / elapsed : 0.0);
     if (videoProcess)
-        std::fprintf(stderr, "argb crc32 %08x, %.2f s of blits (%.0f ms each)\n", argbCrc, blitSeconds,
+        std::fprintf(stderr, "argb crc32 %08x, means B %.3f G %.3f R %.3f, %.2f s of blits (%.0f ms each)\n",
+                     argbCrc, argbSamples ? argbSum[0] / double(argbSamples) : 0.0,
+                     argbSamples ? argbSum[1] / double(argbSamples) : 0.0,
+                     argbSamples ? argbSum[2] / double(argbSamples) : 0.0, blitSeconds,
                      shown ? 1000.0 * blitSeconds / shown : 0.0);
     if (argb != VA_INVALID_SURFACE) vaDestroySurfaces(display, &argb, 1);
     if (vppContext != VA_INVALID_ID) vaDestroyContext(display, vppContext);

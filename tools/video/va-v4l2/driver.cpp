@@ -102,7 +102,10 @@ bool Driver::deviceOffersRgb()
 std::uint32_t Driver::preferredCapture()
 {
     if (rgbPolicy_ == RgbCapture::off) return 0;
-    if (!useRgbCapture(rgbPolicy_, deviceOffersRgb(), videoProcessing_)) return 0;
+    // The capture queue is still an MMAP queue whose pictures are copied into
+    // the surface, so there is no zero-copy path to weigh against the
+    // conversion yet; a DMABUF capture queue is what makes packed RGB pay.
+    if (!useRgbCapture(rgbPolicy_, deviceOffersRgb(), videoProcessing_, false)) return 0;
     // The device writes B, G, R, A in memory, which is what VA-API calls
     // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
     return V4L2_PIX_FMT_ABGR32;
@@ -160,6 +163,11 @@ std::shared_ptr<PixelBuffer> Driver::knownBuffer(std::uint64_t identity)
 void Driver::harvest(Context& context, std::chrono::milliseconds wait)
 {
     if (!context.decoder) return;
+    if (context.reportLayout && !context.decoder->captureLayout().empty()) {
+        context.reportLayout = false;
+        const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
+        note(((packed ? "decoded packed RGB " : "decoded NV12 ") + context.decoder->captureLayout()).c_str());
+    }
     DecodedPicture picture {};
     std::string error;
     while (context.decoder->collect(picture, wait, error)) {
@@ -734,8 +742,9 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         context->decoder = V4l2Decoder::open(driver.device(), codec->v4l2Format, unsigned(width),
                                              unsigned(height), driver.preferredCapture(), error);
         if (!context->decoder) { driver.note(error.c_str()); return VA_STATUS_ERROR_ALLOCATION_FAILED; }
-        driver.note(context->decoder->captureFormat() == V4L2_PIX_FMT_ABGR32
-                        ? "decoding to packed RGB" : "decoding to NV12");
+        // The decoded format is only settled when the decoder has parsed the
+        // stream, so it is reported with the layout at the first picture.
+        context->reportLayout = true;
     }
     *id = driver.nextContext++;
     driver.contexts.emplace(*id, std::move(context));

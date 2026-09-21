@@ -267,16 +267,18 @@ void testCapturePolicy()
     check(uml::va::rgbCaptureRequest("nonsense") == RgbCapture::automatic,
           "an unrecognised request leaves the policy automatic");
 
-    check(!uml::va::useRgbCapture(RgbCapture::force, false, true),
+    check(!uml::va::useRgbCapture(RgbCapture::force, false, true, true),
           "a device that does not offer packed RGB is never asked for it");
-    check(!uml::va::useRgbCapture(RgbCapture::off, true, true),
+    check(!uml::va::useRgbCapture(RgbCapture::off, true, true, true),
           "off never asks for packed RGB");
-    check(uml::va::useRgbCapture(RgbCapture::force, true, false),
-          "force asks for packed RGB without a video-processing client");
-    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false),
+    check(uml::va::useRgbCapture(RgbCapture::force, true, false, false),
+          "force asks for packed RGB whatever the client does");
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false, true),
           "automatic keeps NV12 while nothing converts");
-    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true),
-          "automatic asks for packed RGB once a client converts");
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, true, false),
+          "automatic keeps NV12 while the picture still has to be copied out");
+    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true, true),
+          "automatic asks for packed RGB when the copy goes away too");
 }
 
 // A surface decoded as packed RGB still has to be readable as NV12, so the

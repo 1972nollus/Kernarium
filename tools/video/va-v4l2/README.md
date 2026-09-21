@@ -94,12 +94,17 @@ copy of what the host already produced.
 | the device does not enumerate `AR24` on its CAPTURE queue | NV12, always |
 | `UML_VA_V4L2_RGB=off` | NV12 |
 | `UML_VA_V4L2_RGB=force` | packed RGB |
-| `auto` (default) | packed RGB once the client has created a video-processing config, NV12 before that |
+| `auto` (default) | packed RGB when the client converts *and* the picture reaches it without a guest-side copy, otherwise NV12 |
 
-The choice is made when a decode session is configured and holds for that
-session, because a stateful decoder's capture format cannot change without
-losing its reference frames. A client that creates its video-processing
-context after the first session therefore gets packed RGB from the next one.
+The copy is why `auto` waits: a packed frame is 2.6 times the bytes of NV12,
+and in a guest, moving it costs about what converting it costs. Measured on
+one 1920x1200 frame: 164 ms to convert NV12, 187 ms to copy the packed frame
+the device produced. Packed decode pays when the decoder writes into the
+client's own buffer and nothing is copied at all.
+
+The format is negotiated before the first packet, not after the source-change
+event: the device keeps the choice across that event, and changing it once the
+host has a decode session asks it to switch layout underneath one.
 
 The surface's own format stays NV12: the packed picture lives in a shadow
 buffer, and `vaDeriveImage`, `vaGetImage` and `vaExportSurfaceHandle` convert
