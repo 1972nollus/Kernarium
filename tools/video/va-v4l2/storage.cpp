@@ -144,12 +144,13 @@ void selectStorage(const char* request)
     const std::string wanted = request && *request ? request : "auto";
     if (wanted == "memory" || wanted == "memfd") { selection() = StorageKind::memory; return; }
     if (wanted == "gbm") { selection() = StorageKind::gbm; return; }
-    // Auto: keep GBM only when a linear NV12 buffer really can be allocated and
-    // exported, because the guest graphics stack has been unable to do that.
+    // Auto: keep GBM only when a linear NV12 buffer really can be allocated,
+    // exported and written to, because the decoder copies each picture into it
+    // and the guest graphics stack has not always allowed all three.
     std::string error;
     selection() = StorageKind::gbm;
     auto probe = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
-    if (probe && probe->exportDescriptor() >= 0) return;
+    if (probe && probe->kind() == StorageKind::gbm && probe->exportDescriptor() >= 0 && probe->map()) return;
     selection() = StorageKind::memory;
 }
 
