@@ -18,6 +18,8 @@
 #include <va/va_dec_vp9.h>
 #include <va/va_str.h>
 #include <va/va_drm.h>
+#include <va/va_drmcommon.h>
+#include <va/va_vpp.h>
 
 #include "../vp9.hpp"
 
@@ -108,15 +110,21 @@ int main(int argc, char** argv)
     const char* destination = nullptr;
     const char* node = nullptr;
     unsigned limit = 0;
+    bool videoProcess = false;
+    bool exportCheck = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--out" && index + 1 < argc) destination = argv[++index];
         else if (argument == "--device" && index + 1 < argc) node = argv[++index];
         else if (argument == "--frames" && index + 1 < argc) limit = unsigned(std::atoi(argv[++index]));
+        else if (argument == "--vpp") videoProcess = true;
+        else if (argument == "--export") exportCheck = true;
         else if (!stream) stream = argv[index];
     }
     if (!stream) {
-        std::fprintf(stderr, "usage: va_decode_probe STREAM.ivf [--out FILE|-] [--device NODE] [--frames N]\n");
+        std::fprintf(stderr,
+                     "usage: va_decode_probe STREAM.ivf [--out FILE|-] [--device NODE] [--frames N]"
+                     " [--vpp] [--export]\n");
         return 2;
     }
     unsigned width = 0;
@@ -201,6 +209,37 @@ int main(int argc, char** argv)
     if (!check(vaCreateContext(display, config, int(width), int(height), VA_PROGRESSIVE, surfaces, kSurfaces,
                                &context), "vaCreateContext")) return 1;
 
+    // The same video processing Chromium's image processor asks for: a
+    // VAProfileNone/VAEntrypointVideoProc context with a 0x0 extent, one
+    // pipeline parameter buffer per frame, an ARGB destination surface.
+    VAConfigID vppConfig = VA_INVALID_ID;
+    VAContextID vppContext = VA_INVALID_ID;
+    VASurfaceID argb = VA_INVALID_SURFACE;
+    std::uint32_t argbCrc = 0;
+    double blitSeconds = 0;
+    if (videoProcess) {
+        VAConfigAttrib vppAttribute {};
+        vppAttribute.type = VAConfigAttribRTFormat;
+        if (!check(vaGetConfigAttributes(display, VAProfileNone, VAEntrypointVideoProc, &vppAttribute, 1),
+                   "vaGetConfigAttributes vpp")) return 1;
+        if (!(vppAttribute.value & VA_RT_FORMAT_RGB32)) {
+            std::fprintf(stderr, "video processing does not offer RGB32\n");
+            return 1;
+        }
+        vppAttribute.value = VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_RGB32;
+        if (!check(vaCreateConfig(display, VAProfileNone, VAEntrypointVideoProc, &vppAttribute, 1, &vppConfig),
+                   "vaCreateConfig vpp")) return 1;
+        if (!check(vaCreateContext(display, vppConfig, 0, 0, 0, nullptr, 0, &vppContext),
+                   "vaCreateContext vpp")) return 1;
+        VASurfaceAttrib rgb {};
+        rgb.type = VASurfaceAttribPixelFormat;
+        rgb.flags = VA_SURFACE_ATTRIB_SETTABLE;
+        rgb.value.type = VAGenericValueTypeInteger;
+        rgb.value.value.i = VA_FOURCC_ARGB;
+        if (!check(vaCreateSurfaces(display, VA_RT_FORMAT_RGB32, width, height, &argb, 1, &rgb, 1),
+                   "vaCreateSurfaces argb")) return 1;
+    }
+
     Output output;
     if (destination) output.file = std::strcmp(destination, "-") == 0 ? stdout : std::fopen(destination, "wb");
     if (destination && !output.file) { std::perror("open output"); return 2; }
@@ -258,6 +297,85 @@ int main(int argc, char** argv)
             }
             vaUnmapBuffer(display, image.buf);
             vaDestroyImage(display, image.image_id);
+
+            if (videoProcess) {
+                VAProcPipelineParameterBuffer pipeline {};
+                VARectangle source {0, 0, static_cast<std::uint16_t>(header.width),
+                                    static_cast<std::uint16_t>(header.height)};
+                VARectangle sink = source;
+                pipeline.surface = target;
+                pipeline.surface_region = &source;
+                pipeline.output_region = &sink;
+                pipeline.output_background_color = 0xff000000;
+                pipeline.filter_flags = VA_FILTER_SCALING_DEFAULT;
+                const auto blitStart = std::chrono::steady_clock::now();
+                VABufferID parameters = VA_INVALID_ID;
+                if (!check(vaCreateBuffer(display, vppContext, VAProcPipelineParameterBufferType,
+                                          sizeof(pipeline), 1, &pipeline, &parameters),
+                           "vaCreateBuffer pipeline")) return 1;
+                if (!check(vaBeginPicture(display, vppContext, argb), "vaBeginPicture vpp")) return 1;
+                if (!check(vaRenderPicture(display, vppContext, &parameters, 1), "vaRenderPicture vpp")) return 1;
+                if (!check(vaEndPicture(display, vppContext), "vaEndPicture vpp")) return 1;
+                vaDestroyBuffer(display, parameters);
+                blitSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - blitStart).count();
+                VAImage converted {};
+                if (!check(vaDeriveImage(display, argb, &converted), "vaDeriveImage argb")) return 1;
+                void* pixels = nullptr;
+                if (!check(vaMapBuffer(display, converted.buf, &pixels), "vaMapBuffer argb")) return 1;
+                const auto* bytes = static_cast<const std::uint8_t*>(pixels) + converted.offsets[0];
+                for (unsigned line = 0; line < header.height; ++line)
+                    argbCrc = crc32(bytes + std::size_t(line) * converted.pitches[0], std::size_t(width) * 4,
+                                    argbCrc);
+                vaUnmapBuffer(display, converted.buf);
+                vaDestroyImage(display, converted.image_id);
+            }
+
+            if (exportCheck && shown == 0) {
+                VADRMPRIMESurfaceDescriptor descriptor {};
+                if (!check(vaSyncSurface(display, target), "vaSyncSurface export")) return 1;
+                if (!check(vaExportSurfaceHandle(display, target, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+                                                 VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+                                                 &descriptor), "vaExportSurfaceHandle")) return 1;
+                std::fprintf(stderr, "export objects %u layers %u fourcc %08x size %u modifier %llx"
+                             " pitch %u/%u offset %u/%u\n",
+                             descriptor.num_objects, descriptor.num_layers, descriptor.fourcc,
+                             descriptor.objects[0].size,
+                             static_cast<unsigned long long>(descriptor.objects[0].drm_format_modifier),
+                             descriptor.layers[0].pitch[0], descriptor.layers[1].pitch[0],
+                             descriptor.layers[0].offset[0], descriptor.layers[1].offset[0]);
+                if (descriptor.num_objects != 1) {
+                    std::fprintf(stderr, "an exported surface must be one object\n");
+                    return 1;
+                }
+                // Import it back the way Chromium's image processor does.
+                VASurfaceAttrib importAttributes[2] {};
+                importAttributes[0].type = VASurfaceAttribMemoryType;
+                importAttributes[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
+                importAttributes[0].value.type = VAGenericValueTypeInteger;
+                importAttributes[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2;
+                importAttributes[1].type = VASurfaceAttribExternalBufferDescriptor;
+                importAttributes[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
+                importAttributes[1].value.type = VAGenericValueTypePointer;
+                importAttributes[1].value.value.p = &descriptor;
+                VASurfaceID imported = VA_INVALID_SURFACE;
+                if (!check(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, width, height, &imported, 1,
+                                            importAttributes, 2), "vaCreateSurfaces import")) return 1;
+                VAImage back {};
+                if (!check(vaDeriveImage(display, imported, &back), "vaDeriveImage import")) return 1;
+                void* address2 = nullptr;
+                if (!check(vaMapBuffer(display, back.buf, &address2), "vaMapBuffer import")) return 1;
+                Output check_ {};
+                writeI420(check_, static_cast<const std::uint8_t*>(address2), back, header.width, header.height);
+                std::fprintf(stderr, "import crc32 %08x (decoded %08x)\n", check_.running, output.running);
+                if (check_.running != output.running) {
+                    std::fprintf(stderr, "an imported surface must show the same pixels\n");
+                    return 1;
+                }
+                vaUnmapBuffer(display, back.buf);
+                vaDestroyImage(display, back.image_id);
+                vaDestroySurfaces(display, &imported, 1);
+                ::close(descriptor.objects[0].fd);
+            }
             ++shown;
             if (limit && shown >= limit) break;
         }
@@ -267,6 +385,12 @@ int main(int argc, char** argv)
     if (output.file && output.file != stdout) std::fclose(output.file);
     std::fprintf(stderr, "submitted %u frames, %u shown, crc32 %08x, %.2f s (%.1f fps)\n", submitted, shown,
                  output.running, elapsed, elapsed > 0 ? shown / elapsed : 0.0);
+    if (videoProcess)
+        std::fprintf(stderr, "argb crc32 %08x, %.2f s of blits (%.0f ms each)\n", argbCrc, blitSeconds,
+                     shown ? 1000.0 * blitSeconds / shown : 0.0);
+    if (argb != VA_INVALID_SURFACE) vaDestroySurfaces(display, &argb, 1);
+    if (vppContext != VA_INVALID_ID) vaDestroyContext(display, vppContext);
+    if (vppConfig != VA_INVALID_ID) vaDestroyConfig(display, vppConfig);
     vaDestroyContext(display, context);
     vaDestroySurfaces(display, surfaces, kSurfaces);
     vaDestroyConfig(display, config);
