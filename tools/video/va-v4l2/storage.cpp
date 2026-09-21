@@ -6,6 +6,9 @@
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+
+#include <cerrno>
+#include <cstdio>
 #include <unistd.h>
 
 #include <algorithm>
@@ -38,6 +41,18 @@ struct Gbm {
     int drm {-1};
 };
 
+int& clientDrm() noexcept
+{
+    static int descriptor = -1;
+    return descriptor;
+}
+
+const char*& reason() noexcept
+{
+    static const char* text = "not probed";
+    return text;
+}
+
 Gbm& gbm()
 {
     static Gbm instance;
@@ -59,8 +74,16 @@ Gbm& gbm()
         instance.boGetModifier = reinterpret_cast<std::uint64_t (*)(void*)>(symbol(instance.library, "gbm_bo_get_modifier"));
         if (!instance.createDevice || !instance.boCreate || !instance.boGetFd || !instance.boGetStrideForPlane ||
             !instance.boGetOffset || !instance.boGetPlaneCount) return;
+        if (const int client = clientDrm(); client >= 0) {
+            instance.drm = ::fcntl(client, F_DUPFD_CLOEXEC, 0);
+            if (instance.drm >= 0) {
+                instance.device = instance.createDevice(instance.drm);
+                if (!instance.device) { ::close(instance.drm); instance.drm = -1; }
+            }
+        }
         const char* node = std::getenv("UML_VA_DRM_DEVICE");
         for (const char* candidate : {node, "/dev/dri/renderD128", "/dev/dri/card0"}) {
+            if (instance.device) break;
             if (!candidate || !*candidate) continue;
             instance.drm = ::open(candidate, O_RDWR | O_CLOEXEC);
             if (instance.drm < 0) continue;
@@ -142,16 +165,37 @@ void selectStorage(const char* request)
     if (selectionDone()) return;
     selectionDone() = true;
     const std::string wanted = request && *request ? request : "auto";
-    if (wanted == "memory" || wanted == "memfd") { selection() = StorageKind::memory; return; }
-    if (wanted == "gbm") { selection() = StorageKind::gbm; return; }
+    if (wanted == "memory" || wanted == "memfd") { selection() = StorageKind::memory; reason() = "requested"; return; }
+    if (wanted == "gbm") { selection() = StorageKind::gbm; reason() = "requested"; return; }
     // Auto: keep GBM only when a linear NV12 buffer really can be allocated,
     // exported and written to, because the decoder copies each picture into it
     // and the guest graphics stack has not always allowed all three.
     std::string error;
     selection() = StorageKind::gbm;
-    auto probe = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
-    if (probe && probe->kind() == StorageKind::gbm && probe->exportDescriptor() >= 0 && probe->map()) return;
+    auto& loader = gbm();
+    if (!loader.library) reason() = "no libgbm";
+    else if (!loader.device) reason() = "no DRM device";
+    else {
+        auto probe = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
+        if (!probe || probe->kind() != StorageKind::gbm) reason() = "no GBM allocation";
+        else if (probe->exportDescriptor() < 0) reason() = "no dma-buf export";
+        else if (errno = 0, !probe->map()) {
+            // The exact refusal matters to whoever owns the graphics stack:
+            // a dma-buf that cannot be mapped cannot carry a decoded picture.
+            static char text[64] {};
+            std::snprintf(text, sizeof(text), "no mapping: %s", std::strerror(errno));
+            reason() = text;
+        }
+        else { reason() = "probed"; return; }
+    }
     selection() = StorageKind::memory;
+}
+
+const char* storageReason() noexcept { return reason(); }
+
+void useClientDrmDescriptor(int fd)
+{
+    if (fd >= 0) clientDrm() = fd;
 }
 
 StorageKind selectedStorage() noexcept { return selection(); }

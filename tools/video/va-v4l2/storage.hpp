@@ -77,6 +77,15 @@ private:
 void selectStorage(const char* request);
 StorageKind selectedStorage() noexcept;
 const char* storageName(StorageKind kind) noexcept;
+// Why the choice came out that way, for the log: a client that cannot import
+// an exported surface needs to know which step of the probe declined.
+const char* storageReason() noexcept;
+
+// The DRM device a client passed to vaGetDisplayDRM. It is already open and
+// already permitted, which a node this driver opens itself need not be, so the
+// GBM device is made from it when there is one. Must be called before the
+// first allocation.
+void useClientDrmDescriptor(int fd);
 
 // A planar surface is allocated as one single-plane buffer that carries every
 // plane, because a client that imports it may only be handed one object.
