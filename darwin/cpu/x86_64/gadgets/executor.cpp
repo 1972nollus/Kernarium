@@ -9,8 +9,15 @@
 
 #include <algorithm>
 #include <array>
+#if UML_GADGET_CACHE_CENSUS
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <memory>
+#if UML_GADGET_CACHE_CENSUS
+#include <mutex>
+#endif
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -812,9 +819,163 @@ public:
 		return generations_.size();
 	}
 
+#if UML_GADGET_CACHE_CENSUS
+	/* What this cache costs, in bytes it actually holds rather than in the
+	 * capacity it was configured with. The slab array is the only part that
+	 * exists whether or not its ways are occupied; everything else is
+	 * proportional to what the workload translated. */
+	struct Footprint final {
+		std::size_t slabs, streams, links, indirect, targets;
+		[[nodiscard]] std::size_t total() const noexcept
+		{
+			return slabs + streams + links + indirect + targets;
+		}
+	};
+
+	[[nodiscard]] Footprint footprint() const noexcept
+	{
+		std::size_t slabs = 0;
+		std::size_t streams = 0;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			slabs += sizeof(Slab);
+			for (const auto &slot : slab->slots) {
+				if (!resident(slot))
+					continue;
+				/* A translation owns exactly two allocations:
+				 * the native stream, and the decoded
+				 * instructions followed by the saved source. */
+				const auto &program = *slot.program;
+				streams += program.native_stream().size_bytes() +
+					program.stream().size_bytes() +
+					program.source().size();
+			}
+		}
+		std::size_t links = 0;
+		std::size_t indirect = 0;
+		std::size_t targets = 0;
+		for (const auto &[generation, state] : generations_) {
+			for (const auto &mode : state.links)
+				links += map_bytes(mode);
+			links += state.slots.capacity() *
+					sizeof(std::uint32_t) +
+				map_bytes(state.code_pages);
+			for (const auto &mode : state.indirect)
+				indirect += map_bytes(mode);
+			for (const auto &live : state.live_indirect)
+				indirect += live.capacity() *
+					sizeof(IndirectLink *);
+			for (const auto &table : state.target_links)
+				if (table)
+					targets += sizeof(TargetLinkTable);
+		}
+		return {
+			.slabs = slabs,
+			.streams = streams,
+			.links = links,
+			.indirect = indirect,
+			.targets = targets,
+		};
+	}
+
+	[[nodiscard]] std::size_t occupancy() const noexcept
+	{
+		std::size_t occupied = 0;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots)
+				if (resident(slot))
+					++occupied;
+		}
+		return occupied;
+	}
+
+	/* Write what this cache holds, so duplication can be counted instead of
+	 * estimated. The record format is the arm64 executor's, so one analyzer
+	 * reads either engine's capture.
+	 *
+	 * A translation is identified by the guest bytes it consumed, not by the
+	 * stream it produced: two executors translating the same code emit the
+	 * same gadgets but embed pointers to their own link records, so only the
+	 * source identifies the work. The stream length goes out with it because
+	 * it decides what a body costs.
+	 */
+	void census(std::FILE *out) const noexcept
+	{
+		const auto parts = footprint();
+		/* sizeof(Slot) is reported because the slab total covers the
+		 * successor sets as well as the tags, and only the slot size
+		 * separates them. */
+		std::fprintf(out,
+			"E %p generations=%zu occupancy=%zu slot_bytes=%zu "
+			"slabs=%zu streams=%zu links=%zu indirect=%zu "
+			"targets=%zu total=%zu\n",
+			static_cast<const void *>(this), resident_generations(),
+			occupancy(), sizeof(Slot), parts.slabs, parts.streams,
+			parts.links, parts.indirect, parts.targets,
+			parts.total());
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots) {
+				if (!resident(slot))
+					continue;
+				const auto &program = *slot.program;
+				const auto source = program.source();
+				/* The same bytes decoded in the other
+				 * execution mode are a different translation,
+				 * so the mode seeds the digest. */
+				std::uint64_t digest = 0xcbf29ce484222325ULL ^
+					mode_index(slot.mode);
+				for (const auto byte : source)
+					digest = (digest ^
+							 static_cast<
+								 std::uint8_t>(
+								 byte)) *
+						0x100000001b3ULL;
+				std::fprintf(out,
+					"P %llu 0x%llx %zu %zu %zu 0x%llx\n",
+					static_cast<unsigned long long>(
+						slot.generation),
+					static_cast<unsigned long long>(
+						slot.address),
+					program.instruction_count(),
+					program.native_stream().size(),
+					source.size(),
+					static_cast<unsigned long long>(
+						digest));
+			}
+		}
+	}
+#endif
+
 private:
 	static constexpr std::uint64_t code_page_mask =
 		~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+
+#if UML_GADGET_CACHE_CENSUS
+	/* A slot holds a translation only while its epoch is the live one; the
+	 * epoch is written last, so nothing else has to be cleared to retire
+	 * one. */
+	[[nodiscard]] bool resident(const Slot &slot) const noexcept
+	{
+		return slot.epoch == epoch_ && slot.program.has_value();
+	}
+
+	/* libc++ keeps one heap node per element -- the value, a next pointer
+	 * and the cached hash -- plus one pointer per bucket. Exact for the
+	 * value, close enough for the node. */
+	template <typename Map>
+	[[nodiscard]] static std::size_t map_bytes(const Map &map) noexcept
+	{
+		constexpr std::size_t node = 2 * sizeof(void *);
+		return map.size() *
+			(sizeof(typename Map::value_type) + node) +
+			map.bucket_count() * sizeof(void *);
+	}
+#endif
 
 	struct ProgramPages final {
 		std::array<std::uint64_t, 2> pages{};
@@ -1361,6 +1522,23 @@ private:
 	void *code_change_context_{};
 };
 
+#if UML_GADGET_CACHE_CENSUS
+void dump_cache_census(const ProgramCache &programs) noexcept
+{
+	const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
+	if (path == nullptr || *path == '\0')
+		return;
+	/* Appended, because every executor of the run reports its own cache and
+	 * the union across them is the measurement. */
+	static std::mutex census_mutex;
+	const std::lock_guard guard{census_mutex};
+	if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
+		programs.census(out);
+		std::fclose(out);
+	}
+}
+#endif
+
 } // namespace
 
 struct Executor::Storage final {
@@ -1370,6 +1548,12 @@ struct Executor::Storage final {
 	 * executor's own destructor. */
 	~Storage()
 	{
+#if UML_GADGET_CACHE_CENSUS
+		/* Before the cache is emptied, and here rather than in the
+		 * executor's own destructor so that a move-assigned executor
+		 * reports the storage it drops. */
+		dump_cache_census(programs);
+#endif
 		programs.invalidate();
 		registries.drop_all();
 	}

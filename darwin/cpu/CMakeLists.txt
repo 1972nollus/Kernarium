@@ -48,6 +48,16 @@ unset(_uml_gadget_cache_slots_invalid)
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
+# Default-off: the census walks every cache slot when an executor is destroyed
+# and writes its measured footprint plus one record per resident translation,
+# which is how duplication between executors and between address spaces is
+# measured rather than estimated. Both engines report it, so the option is
+# declared with the shared cache geometry above rather than beside the arm64
+# translation diagnostics below.
+option(UML_GADGET_CACHE_CENSUS
+    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
+    OFF)
+
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
 # The fixed x86 Linux slice and the ARM64EC Wine service both use a 4 KiB guest
 # profile; Apple-platform-specific imports provide their exact math archives.
@@ -72,6 +82,7 @@ if(UML_BUILD_X86_64_GUEST)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
+        UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
         UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
@@ -134,14 +145,6 @@ option(UML_GADGET_DEPENDENCY_COVERAGE
 # which is what a static host-instruction cost per entry must be weighted by.
 option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
-    OFF)
-
-# Also default-off: the census walks every cache slot when the last executor
-# of a run is destroyed and writes one record per resident translation, which
-# is how duplication between executors and between address spaces is measured
-# rather than estimated.
-option(UML_GADGET_CACHE_CENSUS
-    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
     OFF)
 
 option(UML_GADGET_SCALAR_FORWARDING

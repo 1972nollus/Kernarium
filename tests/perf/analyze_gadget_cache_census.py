@@ -5,14 +5,19 @@
 The census records what every executor's private cache still held when the run
 ended: one `E` line per executor with its measured footprint, and one `P` line
 per resident translation naming the address space, the guest PC, the stream
-length and a digest of the guest words the translation consumed.
+length and a digest of the guest code the translation consumed. Both gadget
+engines write it, so one capture reads the same way for either.
 
-A translation is identified by the guest words it consumed rather than by the
+A translation is identified by the guest code it consumed rather than by the
 stream it produced, because two executors translating the same code emit
 equivalent streams that embed pointers to their own link records. That is what
 makes the counts here answer how much of the cache is duplicate work: how much
 would collapse if executors running one address space shared their bodies, and
 how much more would collapse if a fork family's identical pages did too.
+
+Footprint fields an engine does not have are simply absent: only arm64 owns a
+stream lookup index and counts the lookups against it, and only x86-64 owns a
+per-address-space target link table and reports its compiled slot size.
 """
 
 from __future__ import annotations
@@ -31,6 +36,9 @@ class Executor:
     tag: str
     generations: int = 0
     occupancy: int = 0
+    # The engine that compiles its slot size into the record reports it; the
+    # other is measured from the command line.
+    slot_bytes: int | None = None
     footprint: dict[str, int] = field(default_factory=dict)
 
 
@@ -40,7 +48,10 @@ class Program:
     pc: int
     instructions: int
     words: int
-    source_words: int
+    # arm64 counts the source in guest words and x86-64 in bytes; the digest
+    # taken over it is what identifies a translation, so the unit only has to
+    # be consistent within an engine.
+    source: int
     digest: int
 
 
@@ -59,6 +70,8 @@ def parse(path: Path) -> tuple[list[Executor], list[list[Program]]]:
                     executor.generations = int(value)
                 elif name == "occupancy":
                     executor.occupancy = int(value)
+                elif name == "slot_bytes":
+                    executor.slot_bytes = int(value)
                 else:
                     executor.footprint[name] = int(value)
             executors.append(executor)
@@ -71,7 +84,7 @@ def parse(path: Path) -> tuple[list[Executor], list[list[Program]]]:
                 pc=int(fields[2], 16),
                 instructions=int(fields[3]),
                 words=int(fields[4]),
-                source_words=int(fields[5]),
+                source=int(fields[5]),
                 digest=int(fields[6], 16)))
     return executors, programs
 
@@ -102,7 +115,8 @@ def main() -> int:
     parser.add_argument("--slots", type=int, default=65536,
                         help="cache slots per executor, for occupancy (%(default)s)")
     parser.add_argument("--slot-bytes", type=int, default=56,
-                        help="bytes per cache slot in the measured build (%(default)s)")
+                        help="bytes per cache slot for a record that does not "
+                             "carry its own slot size (%(default)s)")
     arguments = parser.parse_args()
 
     executors, programs = parse(arguments.census)
@@ -167,12 +181,19 @@ def main() -> int:
 
     # The slot array exists whether or not its ways are occupied, so it is the
     # part of the cache that sharing bodies cannot reduce.
-    tags = len(executors) * arguments.slots * arguments.slot_bytes
+    slot_bytes = [e.slot_bytes if e.slot_bytes is not None
+                  else arguments.slot_bytes for e in executors]
+    tags = arguments.slots * sum(slot_bytes)
+    sizes = "/".join(str(size) for size in sorted(set(slot_bytes)))
     print("\nwhere sharing bodies would leave the cache")
     print(f"  slot tags, {len(executors)} x {arguments.slots:,} x "
-          f"{arguments.slot_bytes} B   {tags / 2**20:7.1f} MiB")
+          f"{sizes} B   {tags / 2**20:7.1f} MiB")
     index = sum(e.footprint.get("stream_index", 0) for e in executors)
     print(f"  stream lookup maps                  {index / 2**20:7.1f} MiB")
+    targets = sum(e.footprint.get("targets", 0) for e in executors)
+    if targets:
+        print(f"  target link tables                  "
+              f"{targets / 2**20:7.1f} MiB")
     bodies = sum(e.footprint.get("streams", 0) for e in executors)
     links = sum(e.footprint.get("links", 0) +
                 e.footprint.get("indirect", 0) for e in executors)
