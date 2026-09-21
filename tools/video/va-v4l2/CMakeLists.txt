@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+cmake_minimum_required(VERSION 3.27)
+project(UmlVaV4l2 LANGUAGES CXX)
+# A guest-side libva backend over the Virtio video V4L2 stateful decoder. It is
+# built natively for the guest it runs in (amd64 today), against that guest's
+# own libva and libdrm headers, and never as part of the Apple host build.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "The VA-API backend is a Linux guest component")
+endif()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBVA REQUIRED IMPORTED_TARGET libva)
+pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
+
+add_library(uml_va_v4l2_core OBJECT
+    convert.cpp
+    storage.cpp
+    v4l2_decoder.cpp
+    vp9.cpp)
+target_compile_features(uml_va_v4l2_core PUBLIC cxx_std_20)
+target_compile_options(uml_va_v4l2_core PUBLIC -Wall -Wextra -Werror)
+target_link_libraries(uml_va_v4l2_core PUBLIC PkgConfig::LIBVA PkgConfig::LIBDRM ${CMAKE_DL_LIBS})
+target_include_directories(uml_va_v4l2_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_property(TARGET uml_va_v4l2_core PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+# libva loads <LIBVA_DRIVER_NAME>_drv_video.so out of its driver directory.
+add_library(uml_drv_video MODULE driver.cpp)
+target_link_libraries(uml_drv_video PRIVATE uml_va_v4l2_core)
+set_target_properties(uml_drv_video PROPERTIES PREFIX "" OUTPUT_NAME "uml_drv_video")
+# Nothing outside the one libva entry point is part of the contract.
+target_link_options(uml_drv_video PRIVATE
+    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver.map" "-Wl,--no-undefined")
+set_property(TARGET uml_drv_video APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/driver.map")
+
+add_executable(uml_va_v4l2_tests tests/va_v4l2_tests.cpp)
+target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core)
+
+# The guest-side qualification client. It talks to libva, not to this driver
+# directly, so it also runs against any other VA-API backend.
+add_executable(va_decode_probe tests/va_decode_probe.cpp)
+target_link_libraries(va_decode_probe PRIVATE uml_va_v4l2_core)
+pkg_check_modules(LIBVA_DRM REQUIRED IMPORTED_TARGET libva-drm)
+target_link_libraries(va_decode_probe PRIVATE PkgConfig::LIBVA_DRM)
+
+include(GNUInstallDirs)
+install(TARGETS uml_drv_video LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/dri)

@@ -1,0 +1,401 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "v4l2_decoder.hpp"
+
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+
+namespace uml::va {
+namespace {
+
+constexpr auto kOutput = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+constexpr auto kCapture = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+constexpr unsigned kOutputBuffers = 2;
+constexpr unsigned kCaptureBuffers = 8;
+
+int call(int fd, unsigned long request, void* argument) noexcept
+{
+    int result;
+    do { result = ioctl(fd, request, argument); } while (result < 0 && errno == EINTR);
+    return result;
+}
+
+std::string reason(const char* what)
+{
+    return std::string(what) + ": " + std::strerror(errno);
+}
+
+std::uint64_t toNanoseconds(const timeval& time) noexcept
+{
+    return std::uint64_t(time.tv_sec) * 1000000000ull + std::uint64_t(time.tv_usec) * 1000ull;
+}
+
+timeval fromNanoseconds(std::uint64_t value) noexcept
+{
+    timeval time {};
+    time.tv_sec = time_t(value / 1000000000ull);
+    time.tv_usec = suseconds_t(value % 1000000000ull / 1000ull);
+    return time;
+}
+
+bool acceptsFormat(int fd, std::uint32_t codedFormat) noexcept
+{
+    v4l2_capability capability {};
+    if (call(fd, VIDIOC_QUERYCAP, &capability) < 0) return false;
+    const auto wanted = V4L2_CAP_VIDEO_M2M_MPLANE | V4L2_CAP_STREAMING;
+    if ((capability.device_caps & wanted) != wanted) return false;
+    for (unsigned index = 0;; ++index) {
+        v4l2_fmtdesc description {};
+        description.type = kOutput;
+        description.index = index;
+        if (call(fd, VIDIOC_ENUM_FMT, &description) < 0) return false;
+        if (description.pixelformat == codedFormat) return true;
+    }
+}
+
+}
+
+std::string findDecoderDevice(std::uint32_t codedFormat)
+{
+    if (const char* override_ = std::getenv("UML_VA_V4L2_DEVICE"); override_ && *override_)
+        return override_;
+    std::vector<std::string> candidates {"/dev/video-dec0"};
+    if (DIR* directory = opendir("/dev")) {
+        std::vector<std::string> nodes;
+        while (const dirent* entry = readdir(directory))
+            if (std::strncmp(entry->d_name, "video", 5) == 0)
+                nodes.push_back(std::string("/dev/") + entry->d_name);
+        closedir(directory);
+        std::sort(nodes.begin(), nodes.end());
+        candidates.insert(candidates.end(), nodes.begin(), nodes.end());
+    }
+    for (const auto& candidate : candidates) {
+        const int fd = ::open(candidate.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd < 0) continue;
+        const bool good = acceptsFormat(fd, codedFormat);
+        ::close(fd);
+        if (good) return candidate;
+    }
+    return {};
+}
+
+bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsigned& minWidth,
+                      unsigned& minHeight, unsigned& maxWidth, unsigned& maxHeight)
+{
+    if (device.empty()) return false;
+    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    v4l2_frmsizeenum sizes {};
+    sizes.index = 0;
+    sizes.pixel_format = codedFormat;
+    const bool good = call(fd, VIDIOC_ENUM_FRAMESIZES, &sizes) == 0;
+    ::close(fd);
+    if (!good) return false;
+    if (sizes.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+        minWidth = maxWidth = sizes.discrete.width;
+        minHeight = maxHeight = sizes.discrete.height;
+        return true;
+    }
+    minWidth = sizes.stepwise.min_width;
+    minHeight = sizes.stepwise.min_height;
+    maxWidth = sizes.stepwise.max_width;
+    maxHeight = sizes.stepwise.max_height;
+    return minWidth && minHeight && maxWidth && maxHeight;
+}
+
+std::unique_ptr<V4l2Decoder> V4l2Decoder::open(const std::string& device, std::uint32_t codedFormat,
+                                               unsigned width, unsigned height, std::string& error)
+{
+    if (device.empty()) { error = "no Virtio video decoder node"; return nullptr; }
+    std::unique_ptr<V4l2Decoder> decoder(new V4l2Decoder);
+    decoder->fd_ = ::open(device.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (decoder->fd_ < 0) { error = reason("open decoder"); return nullptr; }
+    if (!acceptsFormat(decoder->fd_, codedFormat)) { error = "decoder does not offer the codec"; return nullptr; }
+    v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+    if (call(decoder->fd_, VIDIOC_SUBSCRIBE_EVENT, &subscription) < 0) { error = reason("subscribe source change"); return nullptr; }
+    subscription.type = V4L2_EVENT_EOS;
+    call(decoder->fd_, VIDIOC_SUBSCRIBE_EVENT, &subscription);
+    if (!decoder->setupOutput(codedFormat, width, height, error)) return nullptr;
+    return decoder;
+}
+
+V4l2Decoder::~V4l2Decoder()
+{
+    if (fd_ >= 0) {
+        if (captureStreaming_) { auto type = unsigned(kCapture); call(fd_, VIDIOC_STREAMOFF, &type); }
+        if (outputStreaming_) { auto type = unsigned(kOutput); call(fd_, VIDIOC_STREAMOFF, &type); }
+        unmap(capture_);
+        unmap(output_);
+        ::close(fd_);
+    }
+}
+
+bool V4l2Decoder::setupOutput(std::uint32_t codedFormat, unsigned width, unsigned height, std::string& error)
+{
+    v4l2_format format {};
+    format.type = kOutput;
+    format.fmt.pix_mp.width = width;
+    format.fmt.pix_mp.height = height;
+    format.fmt.pix_mp.pixelformat = codedFormat;
+    format.fmt.pix_mp.num_planes = 1;
+    format.fmt.pix_mp.plane_fmt[0].sizeimage = 4u * 1024u * 1024u;
+    if (call(fd_, VIDIOC_S_FMT, &format) < 0) { error = reason("set coded format"); return false; }
+    if (format.fmt.pix_mp.pixelformat != codedFormat) { error = "decoder substituted the coded format"; return false; }
+    if (!allocate(kOutput, kOutputBuffers, output_, error)) return false;
+    auto type = unsigned(kOutput);
+    if (call(fd_, VIDIOC_STREAMON, &type) < 0) { error = reason("start the coded queue"); return false; }
+    outputStreaming_ = true;
+    width_ = width;
+    height_ = height;
+    return true;
+}
+
+bool V4l2Decoder::allocate(unsigned type, unsigned count, std::vector<Buffer>& buffers, std::string& error)
+{
+    v4l2_requestbuffers request {};
+    request.type = type;
+    request.memory = V4L2_MEMORY_MMAP;
+    request.count = count;
+    if (call(fd_, VIDIOC_REQBUFS, &request) < 0) { error = reason("request buffers"); return false; }
+    if (!request.count || request.count > 32) { error = "unusable video buffer count"; return false; }
+    buffers.clear();
+    for (unsigned index = 0; index < request.count; ++index) {
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = type;
+        buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.index = index;
+        buffer.length = VIDEO_MAX_PLANES;
+        buffer.m.planes = planes;
+        if (call(fd_, VIDIOC_QUERYBUF, &buffer) < 0) { error = reason("query buffer"); return false; }
+        if (!buffer.length || buffer.length > 3) { error = "unusable video plane count"; return false; }
+        Buffer mapped;
+        mapped.count = buffer.length;
+        for (unsigned plane = 0; plane < buffer.length; ++plane) {
+            void* address = mmap(nullptr, planes[plane].length, PROT_READ | PROT_WRITE, MAP_SHARED,
+                                 fd_, off_t(planes[plane].m.mem_offset));
+            if (address == MAP_FAILED) { error = reason("map video buffer"); return false; }
+            mapped.planes[plane] = {static_cast<std::uint8_t*>(address), planes[plane].length};
+        }
+        buffers.push_back(mapped);
+    }
+    return true;
+}
+
+void V4l2Decoder::unmap(std::vector<Buffer>& buffers)
+{
+    for (auto& buffer : buffers)
+        for (unsigned plane = 0; plane < buffer.count; ++plane)
+            if (buffer.planes[plane].data) munmap(buffer.planes[plane].data, buffer.planes[plane].length);
+    buffers.clear();
+}
+
+bool V4l2Decoder::pendingSourceChange(std::string& error)
+{
+    for (;;) {
+        v4l2_event event {};
+        if (call(fd_, VIDIOC_DQEVENT, &event) < 0) {
+            if (errno == ENOENT || errno == EAGAIN || errno == EINVAL) return false;
+            error = reason("dequeue decoder event");
+            return false;
+        }
+        if (event.type == V4L2_EVENT_SOURCE_CHANGE &&
+            (event.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION))
+            return true;
+    }
+}
+
+bool V4l2Decoder::setupCapture(std::string& error)
+{
+    v4l2_format format {};
+    format.type = kCapture;
+    if (call(fd_, VIDIOC_G_FMT, &format) < 0) { error = reason("read the decoded format"); return false; }
+    format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+    if (call(fd_, VIDIOC_S_FMT, &format) < 0) { error = reason("set the decoded format"); return false; }
+    if (format.fmt.pix_mp.pixelformat != V4L2_PIX_FMT_NV12M) { error = "decoder cannot produce NV12"; return false; }
+    width_ = format.fmt.pix_mp.width;
+    height_ = format.fmt.pix_mp.height;
+    capturePlanes_ = format.fmt.pix_mp.num_planes;
+    if (!allocate(kCapture, kCaptureBuffers, capture_, error)) return false;
+    for (unsigned index = 0; index < capture_.size(); ++index)
+        if (!queueCapture(index, error)) return false;
+    auto type = unsigned(kCapture);
+    if (call(fd_, VIDIOC_STREAMON, &type) < 0) { error = reason("start the decoded queue"); return false; }
+    captureStreaming_ = true;
+    return true;
+}
+
+bool V4l2Decoder::teardownCapture(std::string& error)
+{
+    if (!captureStreaming_) return true;
+    auto type = unsigned(kCapture);
+    if (call(fd_, VIDIOC_STREAMOFF, &type) < 0) { error = reason("stop the decoded queue"); return false; }
+    captureStreaming_ = false;
+    unmap(capture_);
+    v4l2_requestbuffers request {};
+    request.type = kCapture;
+    request.memory = V4L2_MEMORY_MMAP;
+    request.count = 0;
+    call(fd_, VIDIOC_REQBUFS, &request);
+    return true;
+}
+
+bool V4l2Decoder::queueCapture(unsigned index, std::string& error)
+{
+    if (index >= capture_.size()) { error = "decoded buffer index out of range"; return false; }
+    auto& buffer = capture_[index];
+    if (buffer.queued) return true;
+    v4l2_plane planes[VIDEO_MAX_PLANES] {};
+    v4l2_buffer request {};
+    request.type = kCapture;
+    request.memory = V4L2_MEMORY_MMAP;
+    request.index = index;
+    request.length = buffer.count;
+    request.m.planes = planes;
+    for (unsigned plane = 0; plane < buffer.count; ++plane) planes[plane].length = buffer.planes[plane].length;
+    if (call(fd_, VIDIOC_QBUF, &request) < 0) { error = reason("queue a decoded buffer"); return false; }
+    buffer.queued = true;
+    return true;
+}
+
+bool V4l2Decoder::reclaimOutput(std::string& error)
+{
+    for (;;) {
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = kOutput;
+        buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.length = VIDEO_MAX_PLANES;
+        buffer.m.planes = planes;
+        if (call(fd_, VIDIOC_DQBUF, &buffer) < 0) {
+            if (errno == EAGAIN) return true;
+            error = reason("reclaim a coded buffer");
+            return false;
+        }
+        if (buffer.index < output_.size()) output_[buffer.index].queued = false;
+    }
+}
+
+bool V4l2Decoder::submit(std::span<const std::uint8_t> packet, std::uint64_t timestamp, std::string& error)
+{
+    if (!reclaimOutput(error)) return false;
+    auto free = std::find_if(output_.begin(), output_.end(), [](const Buffer& b) { return !b.queued; });
+    if (free == output_.end()) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (free == output_.end() && std::chrono::steady_clock::now() < deadline) {
+            pollfd waiting {fd_, POLLOUT, 0};
+            if (poll(&waiting, 1, 50) < 0 && errno != EINTR) { error = reason("wait for a coded buffer"); return false; }
+            if (!reclaimOutput(error)) return false;
+            free = std::find_if(output_.begin(), output_.end(), [](const Buffer& b) { return !b.queued; });
+        }
+        if (free == output_.end()) { error = "the decoder kept every coded buffer"; return false; }
+    }
+    if (packet.size() > free->planes[0].length) { error = "compressed frame exceeds the coded buffer"; return false; }
+    std::memcpy(free->planes[0].data, packet.data(), packet.size());
+    const auto index = unsigned(free - output_.begin());
+    v4l2_plane planes[VIDEO_MAX_PLANES] {};
+    v4l2_buffer buffer {};
+    buffer.type = kOutput;
+    buffer.memory = V4L2_MEMORY_MMAP;
+    buffer.index = index;
+    buffer.length = free->count;
+    buffer.m.planes = planes;
+    buffer.timestamp = fromNanoseconds(timestamp);
+    for (unsigned plane = 0; plane < free->count; ++plane) planes[plane].length = free->planes[plane].length;
+    planes[0].bytesused = unsigned(packet.size());
+    if (call(fd_, VIDIOC_QBUF, &buffer) < 0) { error = reason("queue a compressed frame"); return false; }
+    free->queued = true;
+    sawEos_ = false;
+    if (!captureStreaming_) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        bool changed = pendingSourceChange(error);
+        while (!changed && error.empty() && std::chrono::steady_clock::now() < deadline) {
+            pollfd waiting {fd_, POLLPRI, 0};
+            if (poll(&waiting, 1, 50) < 0 && errno != EINTR) { error = reason("wait for the decoded format"); return false; }
+            changed = pendingSourceChange(error);
+        }
+        if (!error.empty()) return false;
+        if (!changed) { error = "the decoder never reported a decoded format"; return false; }
+        if (!setupCapture(error)) return false;
+    }
+    return true;
+}
+
+bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wait, std::string& error)
+{
+    if (!captureStreaming_) return false;
+    const auto deadline = std::chrono::steady_clock::now() + wait;
+    for (;;) {
+        if (pendingSourceChange(error)) {
+            // A mid-stream resolution change: give the queue back and build it
+            // again at the new size. The picture that triggered it arrives next.
+            if (!teardownCapture(error) || !setupCapture(error)) return false;
+            continue;
+        }
+        if (!error.empty()) return false;
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = kCapture;
+        buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.length = VIDEO_MAX_PLANES;
+        buffer.m.planes = planes;
+        if (call(fd_, VIDIOC_DQBUF, &buffer) == 0) {
+            if (buffer.index >= capture_.size()) { error = "decoder returned an unknown buffer"; return false; }
+            capture_[buffer.index].queued = false;
+            const bool last = (buffer.flags & V4L2_BUF_FLAG_LAST) != 0;
+            if (last) sawEos_ = true;
+            if (last && !planes[0].bytesused) { queueCapture(buffer.index, error); continue; }
+            picture = {};
+            picture.timestamp = toNanoseconds(buffer.timestamp);
+            picture.index = buffer.index;
+            picture.width = width_;
+            picture.height = height_;
+            picture.planes = capture_[buffer.index].count;
+            picture.error = (buffer.flags & V4L2_BUF_FLAG_ERROR) != 0;
+            for (unsigned plane = 0; plane < picture.planes; ++plane) {
+                picture.plane[plane] = capture_[buffer.index].planes[plane].data + planes[plane].data_offset;
+                picture.bytes[plane] = planes[plane].bytesused > planes[plane].data_offset
+                    ? planes[plane].bytesused - planes[plane].data_offset
+                    : 0;
+                picture.pitch[plane] = width_;
+            }
+            return true;
+        }
+        if (errno != EAGAIN) { error = reason("collect a decoded picture"); return false; }
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        pollfd waiting {fd_, POLLIN | POLLPRI, 0};
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (poll(&waiting, 1, int(std::min<std::int64_t>(std::max<std::int64_t>(left, 0), 50))) < 0 && errno != EINTR) {
+            error = reason("wait for a decoded picture");
+            return false;
+        }
+    }
+}
+
+void V4l2Decoder::release(unsigned index)
+{
+    std::string ignored;
+    queueCapture(index, ignored);
+}
+
+bool V4l2Decoder::drain(std::string& error)
+{
+    if (!captureStreaming_) return true;
+    v4l2_decoder_cmd command {};
+    command.cmd = V4L2_DEC_CMD_STOP;
+    if (call(fd_, VIDIOC_DECODER_CMD, &command) < 0) { error = reason("drain the decoder"); return false; }
+    return true;
+}
+
+}
