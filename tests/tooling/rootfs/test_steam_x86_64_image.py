@@ -6,6 +6,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -15,6 +16,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCER = "tools/rootfs/steam-x86_64"
+SHARED = "tools/rootfs/steam-common"
+SESSION = "usr/local/bin/steam-gaming-session"
+LAUNCHER = "usr/local/libexec/kernarium-steam.py"
 STEAM = "usr/share/uml-steam/home/uml/.local/share/Steam"
 
 
@@ -60,6 +64,12 @@ class ImageAudit(unittest.TestCase):
         icd = self.root / "usr/share/vulkan/icd.d/virtio_icd.json"
         icd.parent.mkdir(parents=True, exist_ok=True)
         icd.write_text("{}\n")
+        # The real session and launcher, so the audit is applied to what the
+        # image actually installs.
+        for source, relative in ((PRODUCER, SESSION), (SHARED, LAUNCHER)):
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text((ROOT / source / "overlay" / relative).read_text())
 
     def test_complete_image_is_accepted(self) -> None:
         entries = image.inventory(self.root)
@@ -92,6 +102,18 @@ class ImageAudit(unittest.TestCase):
     def test_desktop_environment_is_rejected(self) -> None:
         write_elf(self.root / "usr/bin/startplasma-wayland", AMD64)
         with self.assertRaisesRegex(RuntimeError, "desktop environment"):
+            image.inventory(self.root)
+
+    def test_video_decode_wiring_is_required(self) -> None:
+        session = self.root / SESSION
+        session.write_text("#!/bin/sh\nexec true\n")
+        with self.assertRaisesRegex(RuntimeError, "does not select"):
+            image.inventory(self.root)
+
+    def test_launcher_must_enable_vaapi_decode(self) -> None:
+        launcher = self.root / LAUNCHER
+        launcher.write_text('subprocess.Popen(["/usr/local/bin/steam", "-gamepadui"])\n')
+        with self.assertRaisesRegex(RuntimeError, "never enables VA-API"):
             image.inventory(self.root)
 
     def test_installed_vulkan_runtime_must_match_its_record(self) -> None:
@@ -151,6 +173,54 @@ class GamingSession(unittest.TestCase):
         self.assertIn("GALLIUM_DRIVER=zink", session)
         # Nothing ARM64EC specific belongs in the pure x86-64 session.
         self.assertNotIn("PROTON_USE_ARM64", session)
+
+
+class VideoDecodeWiring(unittest.TestCase):
+    """Hardware video decode is an x86-64 arrangement and must stay one.
+
+    The ARM64EC appliance shares this launcher but ships no VA-API backend, so
+    the client option must reach Valve's web helper only where the backend and
+    the decoder node exist.
+    """
+
+    def setUp(self) -> None:
+        self.session = (ROOT / PRODUCER / "overlay" / SESSION).read_text()
+        self.launcher = (ROOT / SHARED / "overlay" / LAUNCHER).read_text()
+
+    def test_session_selects_the_image_backend_behind_both_halves(self) -> None:
+        self.assertIn("LIBVA_DRIVER_NAME=uml", self.session)
+        self.assertIn("LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri", self.session)
+        self.assertIn("KERNARIUM_CEF_VAAPI=1", self.session)
+        gate = [line for line in self.session.splitlines() if line.startswith("if [ -e ")]
+        self.assertTrue(any("uml_drv_video.so" in line and "/dev/video-dec0" in line
+                            for line in gate),
+                        "the session must require the module and the decoder node")
+
+    def test_arm64ec_session_stays_inert(self) -> None:
+        arm64ec = (ROOT / "tools/rootfs/steam-arm64ec/overlay" / SESSION).read_text()
+        for token in ("KERNARIUM_CEF_VAAPI", "LIBVA_DRIVER_NAME", "LIBVA_DRIVERS_PATH",
+                      "cef-enable-vaapi"):
+            self.assertNotIn(token, arm64ec)
+
+    def test_shared_launcher_only_adds_the_option_when_asked(self) -> None:
+        self.assertIn("-cef-enable-vaapi", self.launcher)
+        guarded = False
+        for node in ast.walk(ast.parse(self.launcher)):
+            if not isinstance(node, ast.If):
+                continue
+            test = ast.unparse(node.test)
+            if "KERNARIUM_CEF_VAAPI" not in test:
+                continue
+            body = "\n".join(ast.unparse(statement) for statement in node.body)
+            guarded = "-cef-enable-vaapi" in body
+            if guarded:
+                break
+        self.assertTrue(guarded,
+                        "the client option must be gated on KERNARIUM_CEF_VAAPI")
+        # and nowhere else in the file
+        outside = [line for line in self.launcher.splitlines()
+                   if "-cef-enable-vaapi" in line and "append" not in line]
+        self.assertEqual(outside, [])
 
 
 class Launcher(unittest.TestCase):
