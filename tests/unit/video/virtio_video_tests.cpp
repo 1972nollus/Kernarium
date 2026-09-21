@@ -602,11 +602,78 @@ void lateNegotiation(std::size_t page)
     device.reset();
 }
 
+/* A format descriptor's `mask` names positions in the other queue's list, in
+ * the order the same response carries them, and a guest that walks that list
+ * offers its client exactly the formats the bits select. This checks both
+ * directions against the lists actually sent, so a raw format added in the
+ * middle of the list cannot silently stop being reachable. */
+void capabilityMasks()
+{
+    std::vector<VideoDecodeCapability> caps {
+        {VideoCodec::vp9, VideoProfile::vp9Profile0, 4096, 2304, 0, 8},
+        {VideoCodec::hevc, VideoProfile::hevcMain, 8192, 4320, 0, 8},
+        {VideoCodec::hevc, VideoProfile::hevcMain10, 8192, 4320, 0, 10},
+    };
+    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false); });
+    std::uint64_t next = 1;
+    auto formats = [&](std::uint32_t queue) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_query_capability{{VIRTIO_VIDEO_CMD_QUERY_CAPABILITY, 0}, queue, {}});
+        const auto reply = device.processQueue(0, next++, request, 65536).response;
+        std::vector<std::pair<std::uint32_t, std::uint64_t>> described;
+        auto offset = sizeof(virtio_video_query_capability_resp);
+        for (unsigned i = 0; i < read<virtio_video_query_capability_resp>(reply).num_descs; ++i) {
+            const auto desc = read<virtio_video_format_desc>(std::span(reply).subspan(offset));
+            described.emplace_back(desc.format, desc.mask);
+            offset += sizeof(virtio_video_format_desc);
+            for (unsigned frame = 0; frame < desc.num_frames; ++frame) {
+                const auto range = read<virtio_video_format_frame>(std::span(reply).subspan(offset));
+                offset += sizeof(virtio_video_format_frame) +
+                    range.num_rates * sizeof(virtio_video_format_range);
+            }
+        }
+        return described;
+    };
+    const auto coded = formats(VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
+    const auto raw = formats(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT);
+    require(coded.size() == 2 && raw.size() == 4, "capability lists changed shape");
+
+    auto selected = [](const auto& list, std::uint64_t mask) {
+        std::vector<std::uint32_t> chosen;
+        for (std::size_t index = 0; index < list.size(); ++index)
+            if (mask & (std::uint64_t(1) << index)) chosen.push_back(list[index].first);
+        std::sort(chosen.begin(), chosen.end());
+        return chosen;
+    };
+    auto sorted = [](std::vector<std::uint32_t> values) {
+        std::sort(values.begin(), values.end());
+        return values;
+    };
+
+    for (const auto& [format, mask] : coded) {
+        // VP9 is 8-bit here, HEVC has both an 8-bit and a 10-bit capability.
+        const auto expected = format == VIRTIO_VIDEO_FORMAT_VP9
+            ? sorted({VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420,
+                      VIRTIO_VIDEO_FORMAT_BGRA8888})
+            : sorted({VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420,
+                      VIRTIO_VIDEO_FORMAT_BGRA8888, VIRTIO_VIDEO_FORMAT_P010});
+        require(selected(raw, mask) == expected, "a coded format names the wrong capture formats");
+    }
+    for (const auto& [format, mask] : raw) {
+        const auto expected = format == VIRTIO_VIDEO_FORMAT_P010
+            ? sorted({VIRTIO_VIDEO_FORMAT_HEVC})
+            : sorted({VIRTIO_VIDEO_FORMAT_VP9, VIRTIO_VIDEO_FORMAT_HEVC});
+        require(selected(coded, mask) == expected, "a capture format names the wrong codecs");
+    }
+    device.reset();
+}
+
 }
 int main()
 {
     try {
         codecLevelControls();
+        capabilityMasks();
         sharedMemoryCapture();
         for (const auto page : {4096u, 16384u})
             for (const bool decoderPacks : {true, false})

@@ -103,7 +103,18 @@ std::vector<std::uint8_t> capabilityResponse(
             width = std::max(width, cap.maximumWidth);
             height = std::max(height, cap.maximumHeight);
             if (input) {
-                mask |= cap.bitDepth == 10 ? 4 : 3;
+                /* A descriptor's mask names positions in the *other* queue's
+                 * list, in the order this very response carries it. A coded
+                 * format reaches the packed format whatever its coded bit
+                 * depth, an 8-bit one reaches the 8-bit planar formats, and a
+                 * 10-bit one reaches P010 - which is what the device itself
+                 * enforces when a stream negotiates its capture format. */
+                for (std::size_t index = 0; index < raw.size(); ++index) {
+                    const bool packed = raw[index] == VIRTIO_VIDEO_FORMAT_BGRA8888;
+                    const bool tenBitRaw = raw[index] == VIRTIO_VIDEO_FORMAT_P010;
+                    if (packed || tenBitRaw == (cap.bitDepth == 10))
+                        mask |= std::uint64_t(1) << index;
+                }
             } else {
                 const auto found = std::find(coded.begin(), coded.end(), wireCodec(cap.codec));
                 mask |= std::uint64_t(1) << std::size_t(found - coded.begin());
