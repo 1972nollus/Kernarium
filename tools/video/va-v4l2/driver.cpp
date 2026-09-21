@@ -281,6 +281,9 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
         const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
                                 {to + target.buffer->offset(1), target.buffer->pitch(1)}};
         copyNv12(in, out, std::min(source->width, target.width), std::min(source->height, target.height));
+        // The NV12 buffer is now the truth for this surface, whatever an
+        // earlier packed decode left in its shadow.
+        target.nativeValid = true;
         target.state = Surface::State::ready;
         return VA_STATUS_SUCCESS;
     }
