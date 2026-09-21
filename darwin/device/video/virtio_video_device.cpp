@@ -31,9 +31,11 @@ template<class T> T load(std::span<const std::uint8_t> bytes)
  * format still has to be delivered in it, and a decoder that will not emit
  * packed frames at all must still answer the format it advertised. The host
  * converts such a frame itself; a frame the decoder produced packed is copied
- * unchanged. Unspecified color attachments are interpreted the way the
- * platform decoder interprets them, by frame height, so the two paths agree.
- * An empty result rejects the frame rather than delivering wrong pixels. */
+ * unchanged. The matrix and range come from the frame, which reports the
+ * description the hardware applied to it, so a converted frame and a packed
+ * one are the same picture and a stream does not change appearance when the
+ * client negotiates part way through. An empty result rejects the frame
+ * rather than delivering wrong pixels. */
 std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame)
 {
     const auto width = std::size_t(frame.format.width);
@@ -43,11 +45,19 @@ std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame
     if (!width || !height || frame.luma.size() < width * height * step ||
         frame.chroma.size() < chromaWidth * 2 * ((height + 1) / 2) * step)
         return {};
-    const bool highDefinition = height > 576;
-    const double kr = highDefinition ? 1.793 : 1.596;
-    const double kb = highDefinition ? 2.112 : 2.017;
-    const double gu = highDefinition ? 0.213 : 0.392;
-    const double gv = highDefinition ? 0.533 : 0.813;
+    // ITU-R luma coefficients for the matrix the frame states.
+    double kr = 0.2126, kb = 0.0722;
+    if (frame.color.matrix == uml::platform::VideoColorMatrix::bt601) { kr = 0.299; kb = 0.114; }
+    else if (frame.color.matrix == uml::platform::VideoColorMatrix::bt2020) { kr = 0.2627; kb = 0.0593; }
+    const double kg = 1.0 - kr - kb;
+    // Studio swing scales 16..235 and 16..240 onto the full output range.
+    const double lumaGain = frame.color.fullRange ? 1.0 : 255.0 / 219.0;
+    const double lumaFloor = frame.color.fullRange ? 0.0 : 16.0;
+    const double chromaGain = frame.color.fullRange ? 1.0 : 255.0 / 224.0;
+    const double vToR = chromaGain * 2.0 * (1.0 - kr);
+    const double uToB = chromaGain * 2.0 * (1.0 - kb);
+    const double uToG = chromaGain * 2.0 * kb * (1.0 - kb) / kg;
+    const double vToG = chromaGain * 2.0 * kr * (1.0 - kr) / kg;
     // A 10-bit sample keeps its data in the high bits of a little-endian pair.
     const auto sample = [step](const std::vector<std::uint8_t>& plane, std::size_t index) {
         return int(plane[step * index + step - 1]);
@@ -59,13 +69,13 @@ std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame
     for (std::size_t row = 0; row < height; ++row) {
         const auto pairs = (row / 2) * chromaWidth * 2;
         for (std::size_t column = 0; column < width; ++column) {
-            const double luma = 1.164 * (sample(frame.luma, row * width + column) - 16);
+            const double luma = lumaGain * (sample(frame.luma, row * width + column) - lumaFloor);
             const double u = sample(frame.chroma, pairs + (column / 2) * 2) - 128;
             const double v = sample(frame.chroma, pairs + (column / 2) * 2 + 1) - 128;
             auto* out = pixels.data() + (row * width + column) * 4;
-            out[0] = byte(luma + kb * u);
-            out[1] = byte(luma - gu * u - gv * v);
-            out[2] = byte(luma + kr * v);
+            out[0] = byte(luma + uToB * u);
+            out[1] = byte(luma - uToG * u - vToG * v);
+            out[2] = byte(luma + vToR * v);
             out[3] = 0xff;
         }
     }

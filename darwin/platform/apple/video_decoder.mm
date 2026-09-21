@@ -26,6 +26,8 @@ void checked(OSStatus status, const char* operation)
 template<class T> class CFObject {
 public:
     CFObject() = default;
+    // Adopts a reference a CF "Copy" function already retained for us.
+    explicit CFObject(T value) : value_(value) {}
     ~CFObject() { reset(); }
     CFObject(const CFObject&) = delete;
     CFObject& operator=(const CFObject&) = delete;
@@ -109,7 +111,12 @@ private:
     std::size_t position_ {};
 };
 
-struct Vp9KeyFrame { VideoFormat format; unsigned profile; };
+struct Vp9KeyFrame {
+    VideoFormat format;
+    unsigned profile;
+    unsigned colorSpace;   // VP9 CS_* as the uncompressed header states it
+    bool fullRange;
+};
 
 /* VP9 carries no parameter sets: a key frame's uncompressed header is the only
  * place the profile, bit depth and frame size appear, so the format is read
@@ -132,8 +139,10 @@ std::optional<Vp9KeyFrame> vp9KeyFrame(std::span<const std::uint8_t> bytes)
     if (reader.read(24) != 0x498342) throw std::runtime_error("invalid VP9 frame sync code");
     unsigned bitDepth = 8;
     if (profile >= 2) bitDepth = reader.read(1) != 0 ? 12 : 10;
-    if (reader.read(3) != 7 /* SRGB */) {
-        reader.read(1);                             // color_range
+    unsigned colorSpace = 0, colorRange = 0;
+    colorSpace = reader.read(3);
+    if (colorSpace != 7 /* SRGB */) {
+        colorRange = reader.read(1);
         if (profile == 1 || profile == 3) {
             if (reader.read(1) != 1 || reader.read(1) != 1)
                 throw std::runtime_error("VP9 decoder requires 4:2:0 chroma");
@@ -144,19 +153,40 @@ std::optional<Vp9KeyFrame> vp9KeyFrame(std::span<const std::uint8_t> bytes)
     }
     const std::uint32_t width = reader.read(16) + 1;
     const std::uint32_t height = reader.read(16) + 1;
-    return Vp9KeyFrame {{width, height, bitDepth}, profile};
+    return Vp9KeyFrame {{width, height, bitDepth}, profile, colorSpace, colorRange != 0};
+}
+
+/* VP9 states its color space in the frame header rather than in a parameter
+ * set, so the configuration record has to carry it across or the decoder
+ * resolves an unstated description by frame size and a stream that means
+ * BT.601 at HD size is converted with the wrong matrix. The values are the
+ * ISO/IEC 23001-8 code points the record is defined in. */
+struct Vp9ColorDescription { std::uint8_t primaries, transfer, matrix; };
+
+Vp9ColorDescription vp9ColorDescription(unsigned colorSpace)
+{
+    switch (colorSpace) {
+    case 1: return {5, 6, 6};    // CS_BT_601
+    case 2: return {1, 1, 1};    // CS_BT_709
+    case 3: return {6, 6, 6};    // CS_SMPTE_170
+    case 4: return {7, 7, 7};    // CS_SMPTE_240
+    case 5: return {9, 14, 9};   // CS_BT_2020
+    default: return {2, 2, 2};   // unstated; the decoder resolves it
+    }
 }
 
 // The VP9 codec configuration box a CMVideoFormatDescription needs, in the
 // same shape Chromium and FFmpeg build it.
-NSData* vp9Configuration(unsigned profile, unsigned bitDepth)
+NSData* vp9Configuration(unsigned profile, unsigned bitDepth, unsigned colorSpace, bool fullRange)
 {
+    const auto color = vp9ColorDescription(colorSpace);
     const std::uint8_t atom[12] = {
         1, 0, 0, 0,                                 // version and flags
         std::uint8_t(profile),
         41,                                         // level 4.1; advisory only
-        std::uint8_t((bitDepth << 4) | (1u << 1)),  // 4:2:0 colocated, limited range
-        2, 2, 2,                                    // unspecified colour description
+        // bit depth, 4:2:0 colocated chroma, and the stream's range
+        std::uint8_t((bitDepth << 4) | (1u << 1) | (fullRange ? 1u : 0u)),
+        color.primaries, color.transfer, color.matrix,
         0, 0,                                       // codecInitializationDataSize
     };
     return [NSData dataWithBytes:atom length:sizeof(atom)];
@@ -228,18 +258,26 @@ public:
             throw std::runtime_error("video packet size is outside the decoder limit");
         std::vector<std::uint8_t> packet;
         bool changed = false;
+        // A point where restarting the session loses nothing, because the
+        // picture that follows needs no earlier frame.
+        bool randomAccess = false;
         if (codec_ == VideoCodec::jpeg) {
             const auto next = jpegFormat(bytes);
             changed = next != format_;
             format_ = next;
+            randomAccess = true;   // every JPEG frame stands alone
             packet.assign(bytes.begin(), bytes.end());
         } else if (codec_ == VideoCodec::vp9) {
             // A superframe reaches the decoder whole; its first frame's
             // uncompressed header is the one that can resize the stream.
             if (const auto key = vp9KeyFrame(bytes)) {
                 if (key->profile != 0) throw std::runtime_error("unsupported VP9 profile");
-                changed = key->format != format_;
+                changed = key->format != format_ || key->colorSpace != vp9ColorSpace_ ||
+                          key->fullRange != vp9FullRange_;
                 format_ = key->format;
+                vp9ColorSpace_ = key->colorSpace;
+                vp9FullRange_ = key->fullRange;
+                randomAccess = true;
             } else if (!description_.get()) {
                 throw std::runtime_error("VP9 stream does not start with a key frame");
             }
@@ -253,9 +291,11 @@ public:
                     if (type == 7) parameter = 0;
                     if (type == 8) parameter = 1;
                     picture |= type >= 1 && type <= 5;
+                    randomAccess |= type == 5;          // IDR
                 } else {
                     if (type >= 32 && type <= 34) parameter = int(type - 32);
                     picture |= type <= 31;
+                    randomAccess |= type >= 16 && type <= 23;   // IRAP
                 }
                 if (parameter >= 0) {
                     auto& saved = parameters_[std::size_t(parameter)];
@@ -272,7 +312,8 @@ public:
             }
             if (!picture) packet.clear();
         }
-        if (changed || !description_.get()) configure();
+        if (changed || !description_.get() || (randomAccess && layout_ != sessionLayout_))
+            configure();
         if (packet.empty()) return;
         if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
 
@@ -309,14 +350,20 @@ public:
     }
     VideoFormat format() const noexcept override { return format_; }
 
-    /* A client negotiates its capture layout after the decoder has already
-     * seen the stream's headers, so the session is rebuilt in place. Frames
-     * decoded before the request keep the layout they were produced with. */
+    /* A client negotiates its capture layout only after the decoder has seen
+     * the stream's headers, which is the middle of a group of pictures. A
+     * decompression session cannot change its output layout, and restarting
+     * one there throws away the reference frames the next picture needs, which
+     * the hardware reports as kVTVideoDecoderBadDataErr. The request is
+     * therefore recorded and applied at the next random access point, where a
+     * restart costs nothing; until then the decoder keeps producing its
+     * current layout and the caller converts, which every frame states. */
     void requestOutputLayout(VideoPixelLayout layout) override
     {
         if (layout == layout_) return;
         layout_ = layout;
-        if (description_.get()) configure();
+        if (!description_.get()) return;
+        if (!session_.get()) configure();
     }
 
 private:
@@ -335,8 +382,8 @@ private:
         } else if (codec_ == VideoCodec::vp9) {
             NSDictionary* extensions = @{
                 (__bridge NSString*)kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms:
-                    @{@"vpcC": vp9Configuration(0, format_.bitDepth)},
-                (__bridge NSString*)kCMFormatDescriptionExtension_FullRangeVideo: @NO,
+                    @{@"vpcC": vp9Configuration(0, format_.bitDepth, vp9ColorSpace_, vp9FullRange_)},
+                (__bridge NSString*)kCMFormatDescriptionExtension_FullRangeVideo: @(vp9FullRange_),
             };
             checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_VP9,
                 int(format_.width), int(format_.height), (__bridge CFDictionaryRef)extensions,
@@ -387,9 +434,13 @@ private:
              * is why a client that draws through an RGB surface asks for it.
              * A decoder that will not emit it still decodes, in its own
              * layout, and the frame reports which layout it carries. */
+            sessionLayout_ = layout_;
             if (layout_ == VideoPixelLayout::packedBgra && create(kCVPixelFormatType_32BGRA) != noErr)
                 session_.reset();
-            if (!session_.get()) checked(create(planarFormat), "create hardware video decoder");
+            if (!session_.get()) {
+                sessionLayout_ = VideoPixelLayout::planarYuv;
+                checked(create(planarFormat), "create hardware video decoder");
+            }
             CFObject<CFTypeRef> hardware;
             const auto status = VTSessionCopyProperty(session_.get(),
                 kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
@@ -428,6 +479,25 @@ private:
             frame.layout = packed ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
             frame.format = {std::uint32_t(CVPixelBufferGetWidth(image)),
                             std::uint32_t(CVPixelBufferGetHeight(image)), tenBit ? 10u : 8u};
+            /* Read back the description the hardware itself applied, so a
+             * caller that converts this frame reaches the same picture the
+             * hardware would have packed. A stream that states nothing is
+             * resolved by VideoToolbox, not guessed again here. */
+            frame.color.fullRange = pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+            CFObject<CFTypeRef> matrixValue {
+                CVBufferCopyAttachment(image, kCVImageBufferYCbCrMatrixKey, nullptr)};
+            if (const auto matrix = matrixValue.get()) {
+                if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4) ||
+                    CFEqual(matrix, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
+                    frame.color.matrix = VideoColorMatrix::bt601;
+                else if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020))
+                    frame.color.matrix = VideoColorMatrix::bt2020;
+                else frame.color.matrix = VideoColorMatrix::bt709;
+            } else {
+                // The same rule VideoToolbox applies to an unstated matrix.
+                frame.color.matrix = frame.format.height > 576 ? VideoColorMatrix::bt709
+                                                               : VideoColorMatrix::bt601;
+            }
             if (!CMTIME_IS_NUMERIC(timestamp) || timestamp.value < 0)
                 throw std::runtime_error("invalid decoded video timestamp");
             frame.timestamp = std::uint64_t(CMTimeConvertScale(timestamp, 1000000000, kCMTimeRoundingMethod_Default).value);
@@ -476,6 +546,9 @@ private:
     VideoCodec codec_;
     VideoFormat format_;
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
+    VideoPixelLayout sessionLayout_ {VideoPixelLayout::planarYuv};
+    unsigned vp9ColorSpace_ {};
+    bool vp9FullRange_ {};
     std::array<std::vector<std::uint8_t>, 3> parameters_;
     CFObject<CMVideoFormatDescriptionRef> description_;
     CFObject<VTDecompressionSessionRef> session_;

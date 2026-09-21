@@ -44,7 +44,8 @@ template<class T> T read(std::span<const std::uint8_t> data)
  * leaves the device to convert. */
 class Decoder final : public VideoDecoder {
 public:
-    explicit Decoder(bool ten, bool packs = false) : ten_(ten), packs_(packs) {}
+    explicit Decoder(bool ten, bool packs = false, bool defers = false)
+        : ten_(ten), packs_(packs), defers_(defers) {}
     void submit(std::span<const std::uint8_t> packet, std::uint64_t timestamp) override
     {
         require(packet.size() == 5 && packet[0] == 1 && packet[4] == 5, "scatter input changed");
@@ -52,7 +53,11 @@ public:
         DecodedVideoFrame frame;
         frame.format = format_;
         frame.timestamp = timestamp;
-        if (packs_ && layout_ == VideoPixelLayout::packedBgra) {
+        // A deferring decoder keeps its layout until a later picture, which is
+        // what a real one does in the middle of a group of pictures.
+        if (defers_ && layout_ != adopted_) { ++deferred_; if (deferred_ > 1) adopted_ = layout_; }
+        else adopted_ = layout_;
+        if (packs_ && adopted_ == VideoPixelLayout::packedBgra) {
             frame.layout = VideoPixelLayout::packedBgra;
             frame.format.bitDepth = 8;
             frame.pixels.resize(64 * 64 * 4);
@@ -61,6 +66,7 @@ public:
                 frame.pixels[i + 2] = 0x30; frame.pixels[i + 3] = 0xff;
             }
         } else {
+            frame.color = {VideoColorMatrix::bt601, false};
             frame.luma.resize(4096 * (ten_ ? 2 : 1), 0x39);
             frame.chroma.resize(2048 * (ten_ ? 2 : 1));
             for (std::size_t i = 0; i < frame.chroma.size(); ++i) frame.chroma[i] = i % 2 ? 0x91 : 0x27;
@@ -74,7 +80,10 @@ public:
 private:
     bool ten_;
     bool packs_ {};
+    bool defers_ {};
+    unsigned deferred_ {};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
+    VideoPixelLayout adopted_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
     std::vector<DecodedVideoFrame> frames_;
 };
@@ -494,6 +503,105 @@ void packedCapture(std::size_t page, bool decoderPacks)
     device.reset();
 }
 
+/* The stateful-decoder order a V4L2 client actually uses: the capture format
+ * is chosen only after the decoder has reported the stream's size, so the
+ * first frames are already decoded when the request arrives. Every frame must
+ * still reach the client in the negotiated format, whether the decoder adopted
+ * the layout or the device converted for it. */
+void lateNegotiation(std::size_t page)
+{
+    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
+    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true, true); });
+    std::vector<std::uint8_t> memory(8 * page, 0xcc);
+    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
+        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
+        return std::span(memory).subspan(offset, size);
+    });
+    std::uint64_t next = 1;
+    auto command = [&](const auto& value) {
+        std::vector<std::uint8_t> request;
+        append(request, value);
+        return device.processQueue(0, next++, request, 16384);
+    };
+    auto ok = [&](const auto& value) {
+        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+                "command failed");
+    };
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 5};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+    ok(create);
+    require(device.processQueue(1, 900, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 5, queue, id});
+        for (const auto& plane : planes) {
+            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
+            for (const auto& segment : plane) append(request, segment);
+        }
+        return device.processQueue(0, next++, request, 16384);
+    };
+    memory[page - 2] = 1; memory[page - 1] = 2;
+    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+
+    // Decode before any capture format is chosen; this raises the source change.
+    virtio_video_resource_queue packet {};
+    packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+    packet.stream_id = 5; packet.queue_type = input; packet.resource_id = 1;
+    packet.data_sizes[0] = 5; packet.timestamp = 11;
+    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    VhostUserQueueCompletion completion;
+    require(device.takeQueueCompletion(completion) && completion.requestId == 900, "missing source event");
+    require(read<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED,
+            "incorrect source event");
+
+    // Only now does the client choose packed capture.
+    virtio_video_set_params set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 5};
+    set.params.queue_type = output;
+    set.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
+    set.params.frame_width = set.params.frame_height = 64;
+    ok(set);
+    const std::uint64_t base = 3 * page;
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
+
+    // Three pictures: the one decoded before the request, one the decoder is
+    // still deferring, and one it has adopted the layout for.
+    const std::uint8_t converted[4] = {0, 69, 75, 0xff};
+    const std::uint8_t adopted[4] = {0x10, 0x20, 0x30, 0xff};
+    for (unsigned round = 0; round < 3; ++round) {
+        std::memset(memory.data() + base, 0xcc, 64 * 64 * 4);
+        virtio_video_resource_queue capture {};
+        capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+        capture.stream_id = 5; capture.queue_type = output; capture.resource_id = 2;
+        const auto captureRequest = next;
+        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        if (round) {
+            packet.timestamp = 11 + round;
+            require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+                    "later decode failed");
+        }
+        require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+                "missing capture completion");
+        const auto result = read<virtio_video_resource_queue_resp>(completion.response);
+        require(result.flags == 0, "late negotiation failed a capture buffer");
+        require(result.data_sizes[0] == 64 * 64 * 4, "packed frame size differs");
+        const auto* expected = round == 2 ? adopted : converted;
+        for (std::size_t pixel : {std::size_t(0), std::size_t(64 * 64 - 1)})
+            for (unsigned channel = 0; channel < 4; ++channel)
+                require(memory[base + pixel * 4 + channel] == expected[channel],
+                        "a late-negotiated frame has the wrong pixels");
+    }
+    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 5}});
+    device.reset();
+}
+
 }
 int main()
 {
@@ -503,6 +611,7 @@ int main()
         for (const auto page : {4096u, 16384u})
             for (const bool decoderPacks : {true, false})
                 packedCapture(page, decoderPacks);
+        for (const auto page : {4096u, 16384u}) lateNegotiation(page);
         for (const auto page : {4096u, 16384u})
             for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
                 exercise(format, page);

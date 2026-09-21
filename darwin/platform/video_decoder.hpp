@@ -35,12 +35,24 @@ struct VideoFormat {
 // what a client that only draws through a 32-bit RGB surface needs.
 enum class VideoPixelLayout { planarYuv, packedBgra };
 
+// How a planar frame's samples relate to RGB. It is read back from the decoded
+// surface rather than guessed, so it is the description the hardware itself
+// used: a frame converted by a caller and a frame the hardware packed then
+// agree by construction, whatever the stream declared or left unstated.
+enum class VideoColorMatrix { bt601, bt709, bt2020 };
+struct VideoColorimetry {
+    VideoColorMatrix matrix {VideoColorMatrix::bt709};
+    bool fullRange {};
+    friend bool operator==(const VideoColorimetry&, const VideoColorimetry&) = default;
+};
+
 // Timestamps retain the caller's units and are returned in presentation order,
 // including delayed drain output. `layout` selects which buffers carry the
 // samples and is the layout the frame actually has, not the one last requested.
 struct DecodedVideoFrame {
     VideoFormat format;
     VideoPixelLayout layout {VideoPixelLayout::planarYuv};
+    VideoColorimetry color;
     std::uint64_t timestamp {};
     // planarYuv: tightly packed NV12 (8-bit) or P010 (10-bit).
     std::vector<std::uint8_t> luma;
@@ -58,9 +70,12 @@ public:
     virtual void drain() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;
-    // Requests the layout of frames decoded from this point on. Frames already
-    // decoded keep the layout they were produced with, and a decoder that
-    // cannot produce the request keeps producing its native layout.
+    // Requests the layout of frames decoded from this point on. A decoder that
+    // cannot produce the request keeps producing its native layout, and one
+    // that must restart to honor it waits for a point in the stream where
+    // restarting is lossless, so a request never interrupts decoding. Frames
+    // already decoded keep the layout they were produced with, and every frame
+    // reports the layout it actually carries.
     virtual void requestOutputLayout(VideoPixelLayout layout) = 0;
 };
 

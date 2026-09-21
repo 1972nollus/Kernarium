@@ -28,6 +28,7 @@ int main()
     try {
         const auto capabilities = videoDecodeCapabilities();
         require(!capabilities.empty(), "no hardware video decoder available");
+        VideoColorimetry colorimetry[16] {};
         const char* names[] = {"h264-baseline", "h264-constrained-baseline", "h264-main",
             "h264-high", "h264-high10", "hevc-main", "hevc-main10", "jpeg", "vp9-profile0"};
         for (const auto& cap : capabilities) {
@@ -43,6 +44,13 @@ int main()
             const auto& frame = frames[0];
             require(frame.timestamp == 123456789, "decoder changed the frame timestamp");
             require(frame.format == VideoFormat{128, 96, cap.bitDepth}, "decoder output format differs");
+            /* The hardware states which description it applied. These fixtures
+             * carry no color description and are below the standard-definition
+             * line, so the answer is limited-range BT.601; the point of
+             * reading it back is that the conversion below never guesses. */
+            require(frame.color.matrix == VideoColorMatrix::bt601 && !frame.color.fullRange,
+                    "decoder reported an unexpected color description");
+            colorimetry[unsigned(cap.profile)] = frame.color;
             const auto reference = read(std::string(name) + ".raw");
             std::vector<std::uint8_t> actual = frame.luma;
             actual.insert(actual.end(), frame.chroma.begin(), frame.chroma.end());
@@ -86,6 +94,21 @@ int main()
             const auto sample = [&](std::size_t index) {
                 return int(reference[step * index + step - 1]);
             };
+            /* Converted with the description the hardware reported for the
+             * planar decode of this same fixture, so the two paths cannot
+             * disagree about matrix or range. */
+            const auto color = colorimetry[unsigned(cap.profile)];
+            double kr = 0.2126, kb = 0.0722;
+            if (color.matrix == VideoColorMatrix::bt601) { kr = 0.299; kb = 0.114; }
+            else if (color.matrix == VideoColorMatrix::bt2020) { kr = 0.2627; kb = 0.0593; }
+            const double kg = 1.0 - kr - kb;
+            const double lumaGain = color.fullRange ? 1.0 : 255.0 / 219.0;
+            const double lumaFloor = color.fullRange ? 0.0 : 16.0;
+            const double chromaGain = color.fullRange ? 1.0 : 255.0 / 224.0;
+            const double vToR = chromaGain * 2.0 * (1.0 - kr);
+            const double uToB = chromaGain * 2.0 * (1.0 - kb);
+            const double uToG = chromaGain * 2.0 * kb * (1.0 - kb) / kg;
+            const double vToG = chromaGain * 2.0 * kr * (1.0 - kr) / kg;
             /* Hardware interpolates the subsampled chroma field, so only a
              * pixel whose chroma neighborhood is constant has one defined
              * answer. Everywhere else the two upsamplings legitimately
@@ -109,10 +132,10 @@ int main()
                                                   std::ptrdiff_t(column / 2) + dx) == cell;
                     if (!flat) continue;
                     ++checked;
-                    const double luma = 1.164 * (sample(row * 128 + column) - 16);
+                    const double luma = lumaGain * (sample(row * 128 + column) - lumaFloor);
                     const double u = cell.first - 128, v = cell.second - 128;
-                    const double wanted[3] = {luma + 2.017 * u, luma - 0.392 * u - 0.813 * v,
-                                              luma + 1.596 * v};
+                    const double wanted[3] = {luma + uToB * u, luma - uToG * u - vToG * v,
+                                              luma + vToR * v};
                     for (unsigned channel = 0; channel < 3; ++channel)
                         maximum = std::max(maximum, unsigned(std::abs(
                             int(got[channel]) - int(std::clamp(wanted[channel], 0.0, 255.0) + 0.5))));
@@ -122,6 +145,33 @@ int main()
             std::fflush(stdout);
             require(checked >= 128 * 96 / 8, "too little of the packed frame could be verified");
             require(maximum <= 8, "packed pixels differ from the converted reference");
+        }
+        /* A V4L2 client negotiates its capture format only after the decoder
+         * has reported the stream's size, which is the middle of a group of
+         * pictures. Asking there must not disturb decoding: restarting the
+         * session would throw away the reference frames the next picture needs
+         * and the hardware would answer kVTVideoDecoderBadDataErr. */
+        for (const auto& cap : capabilities) {
+            const char* name = names[unsigned(cap.profile)];
+            const auto encoded = read(std::string(name) + ".bin");
+            auto decoder = makeVideoDecoder(cap.codec);
+            decoder->submit(encoded, 1);
+            require(decoder->format().width == 128, "decoder did not report the stream size");
+            decoder->requestOutputLayout(VideoPixelLayout::packedBgra);
+            decoder->submit(encoded, 2);
+            decoder->drain();
+            auto frames = decoder->takeFrames();
+            require(frames.size() == 2, "late format negotiation lost a frame");
+            for (const auto& frame : frames)
+                require(!frame.pixels.empty() || !frame.luma.empty(), "late negotiation emptied a frame");
+            /* Each fixture is a single random access picture, so the request
+             * takes effect on the next one. A stream whose next picture needs
+             * an earlier one keeps its layout until the next such point, which
+             * every frame states and the caller converts. */
+            require(frames[1].layout == VideoPixelLayout::packedBgra,
+                    "a random access picture did not adopt the requested layout");
+            require(frames[0].layout == VideoPixelLayout::planarYuv,
+                    "a frame decoded before the request changed layout");
         }
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;

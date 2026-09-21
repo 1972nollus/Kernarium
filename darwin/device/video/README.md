@@ -29,11 +29,18 @@ whatever the coded bit depth is, because a client that can only draw through a
 32-bit RGB surface would otherwise convert every frame on a guest processor,
 which costs far more than decoding it. Selecting it makes the host decoder
 produce the packed samples itself, so no processor in the path converts a
-frame. A frame that was already decoded when the client negotiated the format,
-and a frame from a decoder that will not emit packed samples, are converted by
-the device instead; both paths read unspecified color attachments the way the
-platform decoder does, by frame height, so a stream never changes appearance
-part way through.
+frame.
+
+A client negotiates its capture format only after the source-change event, so
+the first pictures of a stream are already decoded when the request arrives,
+and a decoder cannot change a running session's output layout without
+discarding the reference frames the next picture needs. The decoder therefore
+adopts a requested layout at the next random access point and states the layout
+each frame actually carries; the device converts the frames that still arrive
+planar. The conversion uses the matrix and range the frame reports, which the
+decoder reads back from the surface the hardware produced rather than inferring
+again, so a converted frame and a packed one are the same picture and a stream
+does not change appearance when the client negotiates part way through.
 
 A capture buffer may also be a host-visible Virtio-GPU blob, which has no
 guest-physical address because it lives in the vhost-user shared-memory region
