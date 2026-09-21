@@ -114,9 +114,16 @@ enum class RgbCapture { off, automatic, force };
 // Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
 RgbCapture rgbCaptureRequest(const char* request) noexcept;
 
-// The decision itself. `zeroCopy` says the decoded picture lands in the
-// client's own buffer instead of being copied out of an MMAP capture queue.
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing, bool zeroCopy) noexcept;
+// The decision itself, made once at initialisation so that the first decode
+// session of a boot gets the same answer as every later one. `zeroCopy` says
+// the decoded picture lands in the client's own buffer instead of being copied
+// out of an MMAP capture queue.
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool zeroCopy) noexcept;
+
+// Whether the decoder's CAPTURE queue accepts imported dma-buf memory, which
+// is what makes a packed decode worth asking for: the picture then lands in
+// the client's own buffer instead of being copied out of an MMAP queue.
+bool decoderImportsCapture(const std::string& device);
 
 // Whether the device can deliver decoded pictures in `fourcc`. A device that
 // does not enumerate it makes the RGB decode path unavailable, and the driver

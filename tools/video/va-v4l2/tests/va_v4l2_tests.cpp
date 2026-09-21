@@ -267,18 +267,40 @@ void testCapturePolicy()
     check(uml::va::rgbCaptureRequest("nonsense") == RgbCapture::automatic,
           "an unrecognised request leaves the policy automatic");
 
-    check(!uml::va::useRgbCapture(RgbCapture::force, false, true, true),
+    check(!uml::va::useRgbCapture(RgbCapture::force, false, true),
           "a device that does not offer packed RGB is never asked for it");
-    check(!uml::va::useRgbCapture(RgbCapture::off, true, true, true),
+    check(!uml::va::useRgbCapture(RgbCapture::off, true, true),
           "off never asks for packed RGB");
-    check(uml::va::useRgbCapture(RgbCapture::force, true, false, false),
-          "force asks for packed RGB whatever the client does");
-    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false, true),
-          "automatic keeps NV12 while nothing converts");
-    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, true, false),
+    check(uml::va::useRgbCapture(RgbCapture::force, true, false),
+          "force asks for packed RGB even where it has to be copied out");
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false),
           "automatic keeps NV12 while the picture still has to be copied out");
-    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true, true),
-          "automatic asks for packed RGB when the copy goes away too");
+    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true),
+          "automatic asks for packed RGB when the copy goes away");
+}
+
+// A planar surface is carried by one packed buffer, because a client that
+// imports it may only be handed one object.
+void testPlanarCarrier()
+{
+    unsigned carrierWidth = 0;
+    unsigned carrierHeight = 0;
+    std::size_t pitch = 0;
+    check(uml::va::planarCarrier(VA_FOURCC_NV12, 1920, 1200, carrierWidth, carrierHeight, pitch),
+          "NV12 is carried");
+    check(pitch == 1920, "a 1920 wide surface needs no row padding");
+    check(carrierWidth == 480, "the carrier is a quarter as wide in 32-bit pixels");
+    check(carrierHeight == 1800, "the carrier holds the luma and the chroma rows");
+    check(pitch * carrierHeight == 3456000, "the carrier is exactly the NV12 size");
+
+    check(uml::va::planarCarrier(VA_FOURCC_NV12, 1918, 1080, carrierWidth, carrierHeight, pitch),
+          "an unaligned width is carried too");
+    check(pitch == 1920, "the row is padded to the alignment GBM uses");
+    check(carrierWidth * 4 == pitch, "the carrier's pixels cover the padded row");
+    check(carrierHeight == 1620, "an odd number of chroma rows is rounded up");
+
+    check(!uml::va::planarCarrier(VA_FOURCC_ARGB, 64, 64, carrierWidth, carrierHeight, pitch),
+          "a packed format needs no carrier");
 }
 
 // A surface decoded as packed RGB still has to be readable as NV12, so the
@@ -341,6 +363,7 @@ int main()
     testLayout();
     testMemoryStorage();
     testCapturePolicy();
+    testPlanarCarrier();
     testArgbToNv12();
     if (failures) {
         std::fprintf(stderr, "UML_VA_V4L2_TESTS: FAIL (%d)\n", failures);

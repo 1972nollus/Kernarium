@@ -78,6 +78,13 @@ void selectStorage(const char* request);
 StorageKind selectedStorage() noexcept;
 const char* storageName(StorageKind kind) noexcept;
 
+// A planar surface is allocated as one single-plane buffer that carries every
+// plane, because a client that imports it may only be handed one object.
+// Returns the packed carrier's extent and the planar layout inside it, or
+// false for a format that needs no carrier.
+bool planarCarrier(std::uint32_t fourcc, unsigned width, unsigned height, unsigned& carrierWidth,
+                   unsigned& carrierHeight, std::size_t& pitch) noexcept;
+
 // The plane layout this driver uses for a format, matching what the Virtio
 // video device produces: tightly packed rows.
 bool planeLayout(std::uint32_t fourcc, unsigned width, unsigned height, unsigned& planes,

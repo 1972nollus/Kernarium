@@ -90,22 +90,29 @@ void Driver::probeCodecs()
     codecs_.push_back(vp9);
 }
 
-bool Driver::deviceOffersRgb()
+// A packed decode is only worth having when the host's conversion is the one a
+// client would have done itself. The device's packed output currently leaves
+// the studio-swing range unapplied, so the automatic policy holds it back until
+// `v4l2-dmabuf` announces a range-correct, late-negotiation-safe format.
+constexpr bool kPackedDecodeTrusted = false;
+
+void Driver::probeCapture()
 {
-    if (!rgbProbed_) {
-        rgbProbed_ = true;
-        rgbOffered_ = decoderOffersCapture(device_, V4L2_PIX_FMT_ABGR32);
-    }
-    return rgbOffered_;
+    if (captureProbed_) return;
+    captureProbed_ = true;
+    rgbOffered_ = decoderOffersCapture(device_, V4L2_PIX_FMT_ABGR32);
+    // Both halves are settled here, at initialisation, so that the first
+    // decode session of a boot - which is the one that plays a startup movie -
+    // gets the same answer as every later one.
+    importCapture_ = decoderImportsCapture(device_);
 }
 
 std::uint32_t Driver::preferredCapture()
 {
     if (rgbPolicy_ == RgbCapture::off) return 0;
-    // The capture queue is still an MMAP queue whose pictures are copied into
-    // the surface, so there is no zero-copy path to weigh against the
-    // conversion yet; a DMABUF capture queue is what makes packed RGB pay.
-    if (!useRgbCapture(rgbPolicy_, deviceOffersRgb(), videoProcessing_, false)) return 0;
+    probeCapture();
+    if (rgbPolicy_ == RgbCapture::automatic && !kPackedDecodeTrusted) return 0;
+    if (!useRgbCapture(rgbPolicy_, rgbOffered_, importCapture_)) return 0;
     // The device writes B, G, R, A in memory, which is what VA-API calls
     // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
     return V4L2_PIX_FMT_ABGR32;
@@ -517,9 +524,6 @@ VAStatus createConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entr
         if (!driver.codec(profile)) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
         if (entrypoint != VAEntrypointVLD) return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
-    // A client that asks for video processing is going to convert every frame,
-    // which is the case where a packed decode saves the guest the work.
-    if (proc) driver.observeVideoProcessing();
     Config config;
     config.profile = profile;
     config.entrypoint = entrypoint;

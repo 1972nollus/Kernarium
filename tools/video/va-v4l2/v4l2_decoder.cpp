@@ -73,15 +73,31 @@ RgbCapture rgbCaptureRequest(const char* request) noexcept
     return RgbCapture::automatic;
 }
 
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool videoProcessing, bool zeroCopy) noexcept
+bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool zeroCopy) noexcept
 {
     if (!deviceOffers) return false;
     switch (policy) {
     case RgbCapture::off: return false;
     case RgbCapture::force: return true;
-    case RgbCapture::automatic: return videoProcessing && zeroCopy;
+    case RgbCapture::automatic: return zeroCopy;
     }
     return false;
+}
+
+bool decoderImportsCapture(const std::string& device)
+{
+    if (device.empty()) return false;
+    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    // Asking for no buffers is the harmless way to learn whether a memory type
+    // is supported at all: an unsupported one is refused outright.
+    v4l2_requestbuffers request {};
+    request.type = kCapture;
+    request.memory = V4L2_MEMORY_DMABUF;
+    request.count = 0;
+    const bool supported = call(fd, VIDIOC_REQBUFS, &request) >= 0;
+    ::close(fd);
+    return supported;
 }
 
 bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc)

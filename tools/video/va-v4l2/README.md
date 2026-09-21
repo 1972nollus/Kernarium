@@ -81,6 +81,12 @@ exactly one object. The backing store is chosen once per process:
 A descriptor a client hands back is recognised by its identity, so importing a
 surface this driver exported shares the same memory instead of copying it.
 
+A planar surface is always **one** object: a browser refuses a descriptor with
+more (`CHECK_EQ(num_objects, 1u)`), while the guest's GBM gives each plane of
+a planar buffer an object of its own. So an NV12 surface is carried by a
+single packed 32-bit buffer whose rows hold the luma and then the chroma, and
+the descriptor names both planes inside it at their offsets.
+
 ## Decoding straight to packed RGB
 
 A browser converts every decoded frame to RGB before it can draw it, and under
@@ -94,13 +100,18 @@ copy of what the host already produced.
 | the device does not enumerate `AR24` on its CAPTURE queue | NV12, always |
 | `UML_VA_V4L2_RGB=off` | NV12 |
 | `UML_VA_V4L2_RGB=force` | packed RGB |
-| `auto` (default) | packed RGB when the client converts *and* the picture reaches it without a guest-side copy, otherwise NV12 |
+| `auto` (default) | packed RGB when the decoded picture also reaches the client without a guest-side copy, otherwise NV12 |
 
-The copy is why `auto` waits: a packed frame is 2.6 times the bytes of NV12,
-and in a guest, moving it costs about what converting it costs. Measured on
-one 1920x1200 frame: 164 ms to convert NV12, 187 ms to copy the packed frame
-the device produced. Packed decode pays when the decoder writes into the
-client's own buffer and nothing is copied at all.
+`auto` decides once, at initialisation, from what the device offers and
+whether its capture queue imports dma-bufs - not from what a client has done
+so far - so the first decode session of a boot gets the same answer as every
+later one.
+
+The copy is why `auto` waits for an importing capture queue: a packed frame is
+2.6 times the bytes of NV12, and in a guest, moving it costs about what
+converting it costs. Measured on one 1920x1200 frame: 164 ms to convert NV12,
+187 ms to copy the packed frame the device produced. Packed decode pays when
+the decoder writes into the client's own buffer and nothing is copied at all.
 
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the

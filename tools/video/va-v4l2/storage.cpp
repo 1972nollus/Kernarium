@@ -165,6 +165,20 @@ const char* storageName(StorageKind kind) noexcept
     return "unknown";
 }
 
+bool planarCarrier(std::uint32_t fourcc, unsigned width, unsigned height, unsigned& carrierWidth,
+                   unsigned& carrierHeight, std::size_t& pitch) noexcept
+{
+    if (fourcc != VA_FOURCC_NV12 || !width || !height) return false;
+    // Rows are aligned the way the guest's GBM aligns them, and the carrier is
+    // a 32-bit format whose own alignment then leaves the pitch unchanged.
+    const std::size_t rowBytes = (std::size_t(width) + 15u) & ~std::size_t(15u);
+    const unsigned rows = height + (height + 1u) / 2u;
+    carrierWidth = unsigned(rowBytes / 4u);
+    carrierHeight = rows;
+    pitch = rowBytes;
+    return carrierWidth && carrierHeight;
+}
+
 std::unique_ptr<PixelBuffer> PixelBuffer::allocate(std::uint32_t fourcc, unsigned width, unsigned height,
                                                    std::string& error)
 {
@@ -176,27 +190,48 @@ std::unique_ptr<PixelBuffer> PixelBuffer::allocate(std::uint32_t fourcc, unsigne
     if (!width || !height) { error = "surface has no extent"; return nullptr; }
     if (selection() == StorageKind::gbm) {
         auto& loader = gbm();
-        const auto format = drmFormat(fourcc);
+        // A planar surface is carried by one packed buffer: the guest's GBM
+        // gives each plane of a planar buffer its own object, and a client that
+        // imports a surface may only be handed one.
+        unsigned requestWidth = width;
+        unsigned requestHeight = height;
+        std::size_t carrierPitch = 0;
+        const bool carried = planarCarrier(fourcc, width, height, requestWidth, requestHeight, carrierPitch);
+        const auto format = carried ? drmFormat(VA_FOURCC_BGRX) : drmFormat(fourcc);
         if (loader.device && format) {
-            void* bo = loader.boCreate(loader.device, width, height, format, kGbmBoUseLinear | kGbmBoUseRendering);
+            void* bo = loader.boCreate(loader.device, requestWidth, requestHeight, format,
+                                       kGbmBoUseLinear | kGbmBoUseRendering);
             if (bo) {
                 const int count = loader.boGetPlaneCount(bo);
-                if (count > 0 && count <= 4) {
+                if (count == 1 || (!carried && count > 0 && count <= 4)) {
                     buffer->kind_ = StorageKind::gbm;
                     buffer->bo_ = bo;
-                    buffer->planes_ = unsigned(count);
-                    std::size_t end = 0;
-                    for (int plane = 0; plane < count; ++plane) {
-                        buffer->pitch_[plane] = loader.boGetStrideForPlane(bo, plane);
-                        buffer->offset_[plane] = loader.boGetOffset(bo, plane);
-                        const unsigned rows = plane && fourcc == VA_FOURCC_NV12 ? (height + 1u) / 2u : height;
-                        end = std::max(end, buffer->offset_[plane] + buffer->pitch_[plane] * rows);
+                    const std::size_t stride = loader.boGetStrideForPlane(bo, 0);
+                    if (carried && stride >= carrierPitch) {
+                        buffer->planes_ = 2;
+                        buffer->pitch_[0] = stride;
+                        buffer->pitch_[1] = stride;
+                        buffer->offset_[0] = 0;
+                        buffer->offset_[1] = stride * height;
+                        buffer->size_ = stride * requestHeight;
+                    } else if (!carried) {
+                        std::size_t end = 0;
+                        buffer->planes_ = unsigned(count);
+                        for (int plane = 0; plane < count; ++plane) {
+                            buffer->pitch_[plane] = loader.boGetStrideForPlane(bo, plane);
+                            buffer->offset_[plane] = loader.boGetOffset(bo, plane);
+                            end = std::max(end, buffer->offset_[plane] + buffer->pitch_[plane] * height);
+                        }
+                        buffer->size_ = end;
+                    } else {
+                        buffer->planes_ = 0;
                     }
-                    buffer->size_ = end;
-                    if (loader.boGetModifier) buffer->modifier_ = loader.boGetModifier(bo);
-                    buffer->fd_ = loader.boGetFd(bo);
-                    buffer->identity_ = identityOf(buffer->fd_);
-                    if (buffer->fd_ >= 0) return buffer;
+                    if (buffer->planes_) {
+                        if (loader.boGetModifier) buffer->modifier_ = loader.boGetModifier(bo);
+                        buffer->fd_ = loader.boGetFd(bo);
+                        buffer->identity_ = identityOf(buffer->fd_);
+                        if (buffer->fd_ >= 0) return buffer;
+                    }
                 }
                 loader.boDestroy(bo);
                 buffer->bo_ = nullptr;

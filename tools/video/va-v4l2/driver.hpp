@@ -147,23 +147,23 @@ public:
     // The decoded format to ask a new decode session for: packed RGB when the
     // device offers it and the policy wants it, otherwise zero for NV12.
     std::uint32_t preferredCapture();
-    void observeVideoProcessing() noexcept { videoProcessing_ = true; }
 
     void note(const char* message) const;
 
 private:
     void probeCodecs();
-    bool deviceOffersRgb();
+    // Learns once what the decoder's capture queue can do.
+    void probeCapture();
 
     std::mutex lock_;
     VADriverContextP driverContext_;
     std::vector<CodecSupport> codecs_;
     std::string device_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};
-    bool videoProcessing_ {};
-    // Probed once, because it opens the device node.
-    bool rgbProbed_ {};
+    // Probed once at initialisation, because each probe opens the device node.
+    bool captureProbed_ {};
     bool rgbOffered_ {};
+    bool importCapture_ {};
 };
 
 }
