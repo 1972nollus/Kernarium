@@ -1,23 +1,33 @@
-From 3c21768c0161dd0bd4275e161a004d8d8f56023b Mon Sep 17 00:00:00 2001
+From bbb4826ea982175cafe59148657b4ecfc8f97660 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 20:12:50 +0900
-Subject: [PATCH 30/32] media: add the Darwin UML Virtio video decoder
+Subject: [PATCH 31/33] media: add the Darwin UML Virtio video decoder
 
+The stateful V4L2 decoder for the Darwin host's Virtio video device.
+
+A buffer queued as V4L2_MEMORY_DMABUF is described by the imported dma-buf's
+own scatter list, whose entries may have no struct page, so its mapped DMA
+addresses are the only valid ones. A host-visible virtio buffer has no
+guest-physical address at all: when its exporter names a shared-memory
+region, the resource entry carries that region's ID and the plane's offset
+inside it, which the negotiated VIRTIO_VIDEO_F_RESOURCE_SHM_REGION feature
+permits. V4L2 carries no per-plane offset on a capture buffer, so planes
+that share one dma-buf follow one another at their negotiated sizes.
 ---
  drivers/media/Kconfig                       |    2 +
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    5 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  446 +++++++
- drivers/media/virtio/virtio_video_caps.c    |  462 +++++++
- drivers/media/virtio/virtio_video_dec.c     |  455 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1270 +++++++++++++++++++
- drivers/media/virtio/virtio_video_driver.c  |  236 ++++
- drivers/media/virtio/virtio_video_helpers.c |  308 +++++
- drivers/media/virtio/virtio_video_vq.c      |  981 ++++++++++++++
- include/uapi/linux/virtio_video.h           |  522 ++++++++
- 13 files changed, 4709 insertions(+)
+ drivers/media/virtio/virtio_video.h         |  449 ++++++
+ drivers/media/virtio/virtio_video_caps.c    |  462 ++++++
+ drivers/media/virtio/virtio_video_dec.c     |  455 ++++++
+ drivers/media/virtio/virtio_video_device.c  | 1446 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_driver.c  |  240 +++
+ drivers/media/virtio/virtio_video_helpers.c |  308 ++++
+ drivers/media/virtio/virtio_video_vq.c      |  981 +++++++++++++
+ include/uapi/linux/virtio_video.h           |  539 +++++++
+ 13 files changed, 4909 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -98,10 +108,10 @@ index 000000000..90e8a3531
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 000000000..2161b4c2d
+index 000000000..709317cca
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,449 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -278,6 +288,9 @@ index 000000000..2161b4c2d
 +
 +	bool has_iommu;
 +	bool supp_non_contig;
++
++	/* Imported host-visible buffers may name a shared-memory region. */
++	bool supp_shm_region;
 +
 +	int debug;
 +	int use_dma_mem;
@@ -1479,10 +1492,10 @@ index 000000000..c52975326
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 000000000..882627fb9
+index 000000000..9097b136b
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1270 @@
+@@ -0,0 +1,1446 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1502,7 +1515,9 @@ index 000000000..882627fb9
 + * along with this program; if not, see <http://www.gnu.org/licenses/>.
 + */
 +
++#include <linux/dma-buf.h>
 +#include <linux/version.h>
++#include <linux/virtio_dma_buf.h>
 +#include <media/v4l2-event.h>
 +#include <media/v4l2-ioctl.h>
 +#include <media/videobuf2-dma-sg.h>
@@ -1677,20 +1692,194 @@ index 000000000..882627fb9
 +	return VIRTIO_VIDEO_RESOURCE_SG_SIZE(sgt->nents);
 +}
 +
++/*
++ * An imported buffer starts where the planes before it that share its dma-buf
++ * end: V4L2 carries no per-plane offset on a capture buffer, so planes packed
++ * into one dma-buf follow the negotiated plane sizes.
++ */
++static u64 virtio_video_plane_dmabuf_offset(struct vb2_buffer *vb,
++					    unsigned int plane)
++{
++	u64 offset = 0;
++	unsigned int i;
++
++	for (i = 0; i < plane; i++)
++		if (vb->planes[i].dbuf == vb->planes[plane].dbuf)
++			offset += vb->planes[i].min_length;
++
++	return offset;
++}
++
++/*
++ * A host-visible dma-buf has no guest-physical address at all: it lives in a
++ * virtio shared-memory region, which the host resolves to the same memory its
++ * exporting device published. The importing device is told the region and the
++ * offset instead.
++ */
++static int build_virtio_video_sglist_shm(struct virtio_video_device *vvd,
++					 struct virtio_video_resource_sg_list *sgl,
++					 struct vb2_buffer *vb,
++					 unsigned int plane, unsigned int *size)
++{
++	struct dma_buf *dbuf = vb->planes[plane].dbuf;
++	u64 offset, region_offset, region_size;
++	u64 length = vb->planes[plane].min_length;
++	u8 region_id;
++
++	if (!dbuf)
++		return -ENODEV;
++
++	/* Anything that does not name a region is described by addresses. */
++	if (virtio_dma_buf_get_shm_region(dbuf, &region_id, &region_offset,
++					  &region_size))
++		return -ENODEV;
++
++	if (!vvd->supp_shm_region) {
++		v4l2_err(&vvd->v4l2_dev,
++			 "host-visible buffers need VIRTIO_VIDEO_F_RESOURCE_SHM_REGION\n");
++		return -ENOTTY;
++	}
++
++	offset = virtio_video_plane_dmabuf_offset(vb, plane);
++	if (!length || offset > region_size || length > region_size - offset ||
++	    region_offset > U64_MAX - region_size ||
++	    length > U32_MAX)
++		return -EINVAL;
++
++	sgl->entries[0].addr = cpu_to_le64(region_offset + offset);
++	sgl->entries[0].length = cpu_to_le32(length);
++	sgl->entries[0].flags =
++		cpu_to_le32(VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION |
++			    ((u32)region_id <<
++			     VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT));
++	sgl->num_entries = cpu_to_le32(1);
++	*size = VIRTIO_VIDEO_RESOURCE_SG_SIZE(1);
++
++	return 0;
++}
++
++/*
++ * An imported dma-buf's scatter list belongs to its exporter, which may
++ * describe memory that has no struct page. Only the mapped DMA addresses are
++ * meaningful there, and the plane covers exactly its negotiated extent from
++ * its offset in the dma-buf.
++ */
++static int build_virtio_video_sglist_dmabuf(struct virtio_video_device *vvd,
++					    struct virtio_video_resource_sg_list *sgl,
++					    struct vb2_buffer *vb,
++					    unsigned int plane, unsigned int *size)
++{
++	struct sg_table *sgt;
++	struct scatterlist *sg;
++	u64 skip, want = vb->planes[plane].min_length;
++	unsigned int i, used = 0;
++	int ret;
++
++	ret = build_virtio_video_sglist_shm(vvd, sgl, vb, plane, size);
++	if (ret != -ENODEV)
++		return ret;
++
++	if (!vvd->supp_non_contig) {
++		*size = build_virtio_video_sglist_contig(sgl, vb, plane);
++		return 0;
++	}
++
++	sgt = vb2_dma_sg_plane_desc(vb, plane);
++	if (!sgt || !sgt->nents || !want)
++		return -EINVAL;
++
++	skip = virtio_video_plane_dmabuf_offset(vb, plane);
++	if (skip > vb->planes[plane].length ||
++	    want > vb->planes[plane].length - skip)
++		return -EINVAL;
++
++	for_each_sgtable_dma_sg(sgt, sg, i) {
++		u64 addr = sg_dma_address(sg);
++		u64 length = sg_dma_len(sg);
++
++		if (skip >= length) {
++			skip -= length;
++			continue;
++		}
++		addr += skip;
++		length -= skip;
++		skip = 0;
++		if (length > want)
++			length = want;
++		if (used == sgt->nents || length > U32_MAX)
++			return -EINVAL;
++		sgl->entries[used].addr = cpu_to_le64(addr);
++		sgl->entries[used].length = cpu_to_le32(length);
++		sgl->entries[used].flags = 0;
++		used++;
++		want -= length;
++		if (!want)
++			break;
++	}
++
++	if (want)
++		return -EINVAL;
++
++	sgl->num_entries = cpu_to_le32(used);
++	*size = VIRTIO_VIDEO_RESOURCE_SG_SIZE(used);
++
++	return 0;
++}
++
++static size_t virtio_video_sglist_capacity(struct vb2_buffer *vb,
++					   struct virtio_video_device *vvd)
++{
++	size_t capacity = 0;
++	unsigned int i, nents;
++
++	for (i = 0; i < vb->num_planes; i++) {
++		if (!vvd->supp_non_contig) {
++			nents = 1;
++		} else {
++			struct sg_table *sgt = vb2_dma_sg_plane_desc(vb, i);
++
++			nents = sgt ? sgt->nents : 1;
++			if (!nents)
++				nents = 1;
++		}
++		capacity += VIRTIO_VIDEO_RESOURCE_SG_SIZE(nents);
++	}
++
++	return capacity;
++}
++
 +int virtio_video_buf_init(struct vb2_buffer *vb)
 +{
 +	int ret = 0;
 +	void *buf;
 +	size_t buf_size = 0;
 +	struct virtio_video_resource_sg_list *sg_list;
-+	unsigned int i, offset = 0, resource_id, nents = 0;
++	unsigned int i, used, offset = 0, resource_id, nents = 0;
 +	struct vb2_queue *vq = vb->vb2_queue;
 +	enum v4l2_buf_type queue_type = vq->type;
 +	struct virtio_video_stream *stream = vb2_get_drv_priv(vq);
 +	struct virtio_video_buffer *virtio_vb = to_virtio_vb(vb);
 +	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
 +
-+	if (vvd->supp_non_contig) {
++	if (vb->memory == VB2_MEMORY_DMABUF) {
++		buf_size = virtio_video_sglist_capacity(vb, vvd);
++
++		buf = kcalloc(1, buf_size, GFP_KERNEL);
++		if (!buf)
++			return -ENOMEM;
++
++		for (i = 0; i < vb->num_planes; i++) {
++			sg_list = buf + offset;
++			ret = build_virtio_video_sglist_dmabuf(vvd, sg_list, vb,
++							       i, &used);
++			if (ret) {
++				kfree(buf);
++				return ret;
++			}
++			offset += used;
++		}
++		buf_size = offset;
++	} else if (vvd->supp_non_contig) {
 +		for (i = 0; i < vb->num_planes; i++) {
 +			nents = vb2_dma_sg_plane_desc(vb, i)->nents;
 +			buf_size += VIRTIO_VIDEO_RESOURCE_SG_SIZE(nents);
@@ -2755,10 +2944,10 @@ index 000000000..882627fb9
 +}
 diff --git a/drivers/media/virtio/virtio_video_driver.c b/drivers/media/virtio/virtio_video_driver.c
 new file mode 100644
-index 000000000..47592bf9f
+index 000000000..b303bda5a
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_driver.c
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,240 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -2856,6 +3045,9 @@ index 000000000..47592bf9f
 +
 +	if (virtio_has_feature(vdev, VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG))
 +		vvd->supp_non_contig = true;
++
++	if (virtio_has_feature(vdev, VIRTIO_VIDEO_F_RESOURCE_SHM_REGION))
++		vvd->supp_shm_region = true;
 +
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
 +	vvd->has_iommu = !virtio_has_dma_quirk(vdev);
@@ -2973,6 +3165,7 @@ index 000000000..47592bf9f
 +static unsigned int features[] = {
 +	VIRTIO_VIDEO_F_RESOURCE_GUEST_PAGES,
 +	VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG,
++	VIRTIO_VIDEO_F_RESOURCE_SHM_REGION,
 +};
 +
 +static struct virtio_driver virtio_video_driver = {
@@ -4298,10 +4491,10 @@ index 000000000..abbabfafb
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h
 new file mode 100644
-index 000000000..6c7045606
+index 000000000..6a66a95f3
 --- /dev/null
 +++ b/include/uapi/linux/virtio_video.h
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,539 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/*
 + * Virtio Video Device
@@ -4367,7 +4560,10 @@ index 000000000..6c7045606
 +	   such as scatter-gather lists. */
 +	VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG = 1,
 +	/* Support of vendor virtqueues */
-+	VIRTIO_VIDEO_F_VENDOR = 2
++	VIRTIO_VIDEO_F_VENDOR = 2,
++	/* Scatter entries may name an offset in a virtio shared-memory
++	   region instead of a guest-physical address. */
++	VIRTIO_VIDEO_F_RESOURCE_SHM_REGION = 3
 +};
 +
 +
@@ -4609,10 +4805,24 @@ index 000000000..6c7045606
 +	__u8 uuid [16];
 +};
 +
++/*
++ * A scatter entry normally names guest-physical memory. An entry whose
++ * VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION flag is set instead names an offset
++ * in the virtio shared-memory region its flags identify, which the host
++ * resolves to the memory the region's owning device published there. Such an
++ * entry is only valid when VIRTIO_VIDEO_F_RESOURCE_SHM_REGION is negotiated.
++ */
++#define VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION (1u << 0)
++#define VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT 8
++#define VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK (0xffu << 8)
++#define VIRTIO_VIDEO_RESOURCE_SG_FLAG_MASK \
++	(VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION | \
++	 VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK)
++
 +struct virtio_video_resource_sg_entry {
 +	__le64 addr;
 +	__le32 length;
-+	__u8 padding[4];
++	__le32 flags; /* Bitmask with VIRTIO_VIDEO_RESOURCE_SG_FLAG_* */
 +};
 +
 +struct virtio_video_resource_sg_list {

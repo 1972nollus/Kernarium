@@ -63,7 +63,10 @@ enum {
 	   such as scatter-gather lists. */
 	VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG = 1,
 	/* Support of vendor virtqueues */
-	VIRTIO_VIDEO_F_VENDOR = 2
+	VIRTIO_VIDEO_F_VENDOR = 2,
+	/* Scatter entries may name an offset in a virtio shared-memory
+	   region instead of a guest-physical address. */
+	VIRTIO_VIDEO_F_RESOURCE_SHM_REGION = 3
 };
 
 
@@ -305,10 +308,24 @@ struct virtio_video_resource_object {
 	__u8 uuid [16];
 };
 
+/*
+ * A scatter entry normally names guest-physical memory. An entry whose
+ * VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION flag is set instead names an offset
+ * in the virtio shared-memory region its flags identify, which the host
+ * resolves to the memory the region's owning device published there. Such an
+ * entry is only valid when VIRTIO_VIDEO_F_RESOURCE_SHM_REGION is negotiated.
+ */
+#define VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION (1u << 0)
+#define VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT 8
+#define VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK (0xffu << 8)
+#define VIRTIO_VIDEO_RESOURCE_SG_FLAG_MASK \
+	(VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION | \
+	 VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK)
+
 struct virtio_video_resource_sg_entry {
 	__le64 addr;
 	__le32 length;
-	__u8 padding[4];
+	__le32 flags; /* Bitmask with VIRTIO_VIDEO_RESOURCE_SG_FLAG_* */
 };
 
 struct virtio_video_resource_sg_list {

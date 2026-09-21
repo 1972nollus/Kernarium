@@ -1,4 +1,4 @@
-From 65a839b0c0832ef57f352173558dcbcf9baf6e93 Mon Sep 17 00:00:00 2001
+From 2b84fbf6c053feff94a648eb263c964b41979938 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
 Subject: [PATCH 2/3] arm64: add i386 userspace task support

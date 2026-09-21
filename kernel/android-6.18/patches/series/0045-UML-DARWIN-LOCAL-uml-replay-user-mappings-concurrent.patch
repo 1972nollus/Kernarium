@@ -1,7 +1,8 @@
-From 479964418c99c4b4318cf792a9d9e5bb41992164 Mon Sep 17 00:00:00 2001
+From f7e80f4c7e6b31344addb188a69aa3022a36d920 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 09:14:08 +0900
-Subject: [PATCH 32/32] uml: replay user mappings concurrently
+Subject: [PATCH 45/45] UML-DARWIN-LOCAL: uml: replay user mappings
+ concurrently
 
 Threads of one process replayed their page-table changes to the Darwin
 software MMU one at a time, behind a sleeping per-mm turnstile taken with
@@ -69,6 +70,13 @@ Eight vCPUs, 4 KiB pages, same-session controls, with the host changes
 this needs: first-touch of fresh anonymous memory 593 -> 1490 MiB/s on
 one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
 800, Navigation 997 -> 1444, Background Blur 721 -> 770, HDR 842 -> 896.
+
+This is the source change the mainline line carries. The Android product
+has only 16 KiB pages, where a pending range was already exact and the
+granted-fault replay already covered one page; the hint, the concurrent
+walkers and the bounded batches are what it gains, and binder-heavy boot
+is where threads of one process fault together. The figures above are
+the mainline 4 KiB measurements.
 ---
  arch/um/include/asm/pgtable.h      |  29 ++--
  arch/um/include/asm/tlbflush.h     |   5 +-
@@ -80,7 +88,7 @@ one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
  7 files changed, 295 insertions(+), 111 deletions(-)
 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index ec490ced2..8d02b821d 100644
+index ec490ced2163af7fbdc5d6bbf7ab8b74be8c8d27..8d02b821d4bfaeef86e1a6f7896190fbaca8e692 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -306,26 +306,28 @@ static inline void set_pte(pte_t *pteptr, pte_t pteval)
@@ -137,7 +145,7 @@ index ec490ced2..8d02b821d 100644
  static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
  			      pmd_t *pmdp, pmd_t pmd)
 diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
-index 1e7594036..f2010ae96 100644
+index 1e7594036606ee51401df5750cb83863ebec9871..f2010ae962c677ad6ae6e7b5a05d0fd9acec4d89 100644
 --- a/arch/um/include/asm/tlbflush.h
 +++ b/arch/um/include/asm/tlbflush.h
 @@ -34,7 +34,10 @@ extern int um_tlb_sync(struct mm_struct *mm);
@@ -153,7 +161,7 @@ index 1e7594036..f2010ae96 100644
  					unsigned long start,
  					unsigned long end);
 diff --git a/arch/um/include/shared/skas/skas.h b/arch/um/include/shared/skas/skas.h
-index 15b8f71bf..404b80088 100644
+index 15b8f71bfad4ececfe1b862aa7ba5b0cbe8683af..404b800886bd3633b3320695bb279913d574162a 100644
 --- a/arch/um/include/shared/skas/skas.h
 +++ b/arch/um/include/shared/skas/skas.h
 @@ -20,6 +20,7 @@ extern void current_mm_sync(void);
@@ -165,7 +173,7 @@ index 15b8f71bf..404b80088 100644
  void initial_jmpbuf_lock(void);
  void initial_jmpbuf_unlock(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 5ad85f4e0..112d9734f 100644
+index 5ad85f4e04e6fb438998e6b0891fb55070741774..112d9734f69b3b87ca06288fab39279bf87e280a 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -11,34 +11,6 @@
@@ -204,7 +212,7 @@ index 5ad85f4e0..112d9734f 100644
  {
  #ifndef CONFIG_PAGE_SIZE_16KB
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 64b45ceee..0469be5b9 100644
+index 64b45ceee19d24bb51dd736faa6c87df2c7ca40c..0469be5b9e70b97547ad6d64564cf358d3f98803 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -92,21 +92,18 @@ void current_mm_sync(void)
@@ -319,7 +327,7 @@ index 64b45ceee..0469be5b9 100644
  	return 0;
  }
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index aefa0b506..6c65b2b7b 100644
+index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c012b4ff28c 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -25,9 +25,33 @@ struct vm_ops {
@@ -685,7 +693,7 @@ index aefa0b506..6c65b2b7b 100644
  #endif
  
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 15c41d52f..2c98e0fb2 100644
+index 15c41d52f659892fdba982af5b3afb24f7839f1a..2c98e0fb247b72b5d901f5aa82b2e3f2e1991dc0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -566,12 +566,16 @@ void userspace(struct uml_pt_regs *registers)

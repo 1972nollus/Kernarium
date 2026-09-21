@@ -16,3 +16,6 @@ mm/mmu_gather.c	uml-generic	carry-locally	Architecture hook for preserving preci
 security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	Independent connected-stream sendmsg correctness fix; remove locally when the selected base contains it.
 drivers/media/*	uml-devices	carry-locally	Stateful V4L2 decoding through the shared Virtio device.
 include/uapi/linux/virtio_video.h	uml-devices	carry-locally	Paired host and kernel video queue contract.
+drivers/gpu/drm/virtio/virtgpu_prime.c	uml-devices	carry-locally	The exported blob must name the shared-memory region a second virtio device resolves.
+drivers/virtio/virtio_dma_buf.c	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.
+include/linux/virtio_dma_buf.h	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.

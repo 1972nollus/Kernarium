@@ -1,7 +1,7 @@
 From cdb95a83fba7cbacc8751466db560164bcea0d83 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:04:02 +0000
-Subject: [PATCH 21/44] UML-DARWIN-LOCAL: um: target arm64 Rust kernel code
+Subject: [PATCH 21/45] UML-DARWIN-LOCAL: um: target arm64 Rust kernel code
 
 Change-Id: I7bfbcc2c96f95b63c4d5285e3c8efa254ef51f27
 ---

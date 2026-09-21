@@ -12,6 +12,9 @@ use `sync-protocol.py --kernel-source PATH --verify`. Never edit generated patch
 
 The protocol supports guest-page resources, separate command and event queues,
 H.264/HEVC/JPEG coded input, and NV12/YUV420/P010 output. Resource flags are bit
-masks. Stream IDs, buffer extents, and response capacities are validated by the
+masks. A scatter entry normally names guest-physical memory; with
+`VIRTIO_VIDEO_F_RESOURCE_SHM_REGION` negotiated, an entry may instead name an
+offset inside a virtio shared-memory region, which is how a guest describes a
+host-visible buffer that has no guest-physical address. Stream IDs, buffer extents, and response capacities are validated by the
 host. The wire format is shared by both guest page profiles and all maintained
 kernel slices; Android has only a 16 KiB profile.
