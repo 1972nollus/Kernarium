@@ -308,3 +308,12 @@ x86 cross-modifying-code protocol requires an executing processor to look. A
 moved mapping sequence or a raised execution interrupt still abandons the
 validation: those say the memory being read through is being replaced, or that
 this vCPU has been asked to leave, and no page stamp describes either.
+
+## Measuring what the cache costs
+
+A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
+private cache still held at teardown: the committed slabs, each resident
+translation's two allocations, the link and indirect records, and the target
+link table each address space owns. The record format is the arm64 engine's,
+so one analyzer reads a capture from either. See
+[`tests/perf/README.md`](../../../../tests/perf/README.md).
