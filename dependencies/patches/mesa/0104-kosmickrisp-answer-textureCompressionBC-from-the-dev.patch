@@ -1,0 +1,60 @@
+From cd3775fb319048359b13d14918b03128c89554a5 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 06:33:45 +0900
+Subject: [PATCH 104/107] kosmickrisp: answer textureCompressionBC from the
+ device
+
+Only a Metal device that reports BC support accepts a texture in a BC/S3TC,
+RGTC or BPTC pixel format, and an Apple GPU under iOS does not.
+kk_get_image_format_features() already reports every one of those layouts as
+unsupported there, but the Vulkan feature was a constant VK_TRUE, so the
+driver claimed BC texture compression on a device whose format properties
+denied all sixteen BC formats.
+
+dEQP-VK.api.info.format_properties.compressed_formats reports the
+disagreement directly: "textureCompressionBC = VK_TRUE but BC formats not
+supported". Answer the feature from the same MTLDevice.supportsBCTextureCompression
+answer the format properties use, so the two cannot disagree. On a device that
+does support BC, including every Apple silicon Mac, nothing changes.
+
+Nothing else in the stack keys on the feature rather than the format: the
+driver has no BC decode or emulation path, Venus forwards the host driver's
+feature set verbatim, and Zink gates S3TC on format properties.
+---
+ src/kosmickrisp/vulkan/kk_physical_device.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index 33a9322..cb1eb62 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -223,6 +223,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
+ 
+ static void
+ kk_get_device_features(
++   const struct kk_physical_device *pdev,
+    const struct vk_device_extension_table *supported_extensions,
+    struct vk_features *features)
+ {
+@@ -264,7 +265,11 @@ kk_get_device_features(
+       .shaderUniformBufferArrayDynamicIndexing = true,
+       .tessellationShader = true,
+       .textureCompressionASTC_LDR = true,
+-      .textureCompressionBC = true,
++      /* Only a device that reports BC support accepts a texture in a BC/RGTC/
++       * BPTC pixel format; an Apple GPU on iOS does not. kk_get_image_format_
++       * features() already reports those formats as unsupported there, so the
++       * feature has to answer from the same place or the two disagree. */
++      .textureCompressionBC = pdev->info.supports_bc_compression,
+       .textureCompressionETC2 = true,
+       .vertexPipelineStoresAndAtomics = true,
+ 
+@@ -1194,7 +1199,7 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
+    kk_get_device_extensions(instance, &supported_extensions);
+ 
+    struct vk_features supported_features;
+-   kk_get_device_features(&supported_extensions, &supported_features);
++   kk_get_device_features(pdev, &supported_extensions, &supported_features);
+ 
+    struct vk_properties properties;
+    kk_get_device_properties(pdev, instance, &properties);

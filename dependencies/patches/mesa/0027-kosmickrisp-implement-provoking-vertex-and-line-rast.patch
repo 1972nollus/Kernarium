@@ -1,7 +1,7 @@
-From 72a28f39b3c478fde5722122379e4290e1ac169f Mon Sep 17 00:00:00 2001
+From 517e32ad15708dff57989dde5a3c7ef8be62192a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:00:37 +0900
-Subject: [PATCH 27/95] kosmickrisp: implement provoking vertex and line
+Subject: [PATCH 027/107] kosmickrisp: implement provoking vertex and line
  rasterization
 
 Development checkpoint: materialize final TES/GS/XFB raster outputs with compact source-position records, guarded restart handling, checked line allocations, and a linear stipple prefix pass. The generated line raster stage is the sole Metal raster entrypoint, and smooth-line coverage modulates primary RT0 alpha before blend lowering.
@@ -97,7 +97,7 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  create mode 100644 src/poly/nir/tests/test_passthrough_gs.c
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index 5fd6c04f..41577634 100644
+index 5fd6c04..4157763 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -74,7 +74,7 @@ static const struct {
@@ -110,7 +110,7 @@ index 5fd6c04f..41577634 100644
     [VARYING_SLOT_VAR1] = {"vary_01", .user = true},
     [VARYING_SLOT_VAR2] = {"vary_02", .user = true},
 diff --git a/src/kosmickrisp/libkk/kk_draws.cl b/src/kosmickrisp/libkk/kk_draws.cl
-index cd9f13f1..7d77eace 100644
+index cd9f13f..7d77eac 100644
 --- a/src/kosmickrisp/libkk/kk_draws.cl
 +++ b/src/kosmickrisp/libkk/kk_draws.cl
 @@ -87,16 +87,23 @@ KERNEL(1024)
@@ -142,7 +142,7 @@ index cd9f13f1..7d77eace 100644
 +                        scratch);
  }
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 2d05d94a..799efd4c 100644
+index 2d05d94..799efd4 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -10,6 +10,66 @@
@@ -418,7 +418,7 @@ index 2d05d94a..799efd4c 100644
     out_draw[2] = 0;
     out_draw[3] = in_draw[index_size_B ? 4 : 3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 1bf8c0d9..d1905a75 100644
+index 1bf8c0d..d1905a7 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -83,6 +83,9 @@ struct kk_per_draw_data {
@@ -479,7 +479,7 @@ index 1bf8c0d9..d1905a75 100644
     struct kk_descriptor_state descriptors;
     struct kk_per_draw_data per_draw_data;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 57940cbe..4e1b451c 100644
+index 57940cb..4e1b451 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -14,6 +14,7 @@
@@ -1550,7 +1550,7 @@ index 57940cbe..4e1b451c 100644
        .predicate_op[0] = cmd->state.cond_render.inverted
 diff --git a/src/kosmickrisp/vulkan/kk_line_raster.h b/src/kosmickrisp/vulkan/kk_line_raster.h
 new file mode 100644
-index 00000000..f4b7b01a
+index 0000000..f4b7b01
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_line_raster.h
 @@ -0,0 +1,284 @@
@@ -1839,7 +1839,7 @@ index 00000000..f4b7b01a
 +          rs->line.stipple.enable;
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_multiview.c b/src/kosmickrisp/vulkan/kk_nir_lower_multiview.c
-index 12fd5806..8d11b518 100644
+index 12fd580..8d11b51 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_multiview.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_multiview.c
 @@ -8,8 +8,68 @@
@@ -1923,7 +1923,7 @@ index 12fd5806..8d11b518 100644
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index a7d974c3..8b24e457 100644
+index a7d974c..8b24e45 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -188,6 +188,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -1969,7 +1969,7 @@ index a7d974c3..8b24e457 100644
        .shaderReplicatedComposites = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a3845756..01e48812 100644
+index a384575..01e4881 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -14,6 +14,7 @@
@@ -4100,7 +4100,7 @@ index a3845756..01e48812 100644
  kk_cmd_bind_linked_graphics_pipeline(struct vk_command_buffer *cmd_buffer,
                                       void *linked_data)
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index bc206eba..04fc7113 100644
+index bc206eb..04fc711 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -70,6 +70,8 @@ struct kk_shader_info {
@@ -4169,7 +4169,7 @@ index bc206eba..04fc7113 100644
 +
  #endif /* KK_SHADER_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 466bfc89..433a82d6 100644
+index 466bfc8..433a82d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -90,6 +90,7 @@ kk_files = files(
@@ -4244,7 +4244,7 @@ index 466bfc89..433a82d6 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.h b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.h
 new file mode 100644
-index 00000000..71d3909f
+index 0000000..71d3909
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.h
 @@ -0,0 +1,25 @@
@@ -4275,7 +4275,7 @@ index 00000000..71d3909f
 +#endif
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
 new file mode 100644
-index 00000000..95aabcce
+index 0000000..95aabcc
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
 @@ -0,0 +1,103 @@
@@ -4384,7 +4384,7 @@ index 00000000..95aabcce
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp
 new file mode 100644
-index 00000000..ff37f166
+index 0000000..ff37f16
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp
 @@ -0,0 +1,4 @@
@@ -4394,7 +4394,7 @@ index 00000000..ff37f166
 +void main() {}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp.h
 new file mode 100644
-index 00000000..4ba89493
+index 0000000..4ba8949
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.comp.h
 @@ -0,0 +1,11 @@
@@ -4411,7 +4411,7 @@ index 00000000..4ba89493
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag
 new file mode 100644
-index 00000000..c56f39f9
+index 0000000..c56f39f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag
 @@ -0,0 +1,4 @@
@@ -4421,7 +4421,7 @@ index 00000000..c56f39f9
 +void main() { color = vec4(1.0); }
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag.h
 new file mode 100644
-index 00000000..9ffecbd4
+index 0000000..9ffecbd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.frag.h
 @@ -0,0 +1,18 @@
@@ -4445,7 +4445,7 @@ index 00000000..9ffecbd4
 +0x00000009,0x0000000b,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc
 new file mode 100644
-index 00000000..5dafb0df
+index 0000000..5dafb0d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc
 @@ -0,0 +1,12 @@
@@ -4463,7 +4463,7 @@ index 00000000..5dafb0df
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc.h
 new file mode 100644
-index 00000000..070f02f0
+index 0000000..070f02f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.tesc.h
 @@ -0,0 +1,80 @@
@@ -4549,7 +4549,7 @@ index 00000000..070f02f0
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert
 new file mode 100644
-index 00000000..acad4120
+index 0000000..acad412
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert
 @@ -0,0 +1,3 @@
@@ -4558,7 +4558,7 @@ index 00000000..acad4120
 +void main() { gl_Position = vec4(float(gl_VertexIndex) - 1.0, 0.0, 0.5, 1.0); }
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert.h
 new file mode 100644
-index 00000000..1e4786bd
+index 0000000..1e4786b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/cache.vert.h
 @@ -0,0 +1,40 @@
@@ -4604,7 +4604,7 @@ index 00000000..1e4786bd
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh
 new file mode 100644
-index 00000000..8021be2c
+index 0000000..8021be2
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -4617,7 +4617,7 @@ index 00000000..8021be2c
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom
 new file mode 100644
-index 00000000..72efdaab
+index 0000000..72efdaa
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom
 @@ -0,0 +1,9 @@
@@ -4632,7 +4632,7 @@ index 00000000..72efdaab
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom.h
 new file mode 100644
-index 00000000..8a9d6338
+index 0000000..8a9d633
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.geom.h
 @@ -0,0 +1,52 @@
@@ -4690,7 +4690,7 @@ index 00000000..8a9d6338
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese
 new file mode 100644
-index 00000000..1a5c69f7
+index 0000000..1a5c69f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese
 @@ -0,0 +1,4 @@
@@ -4700,7 +4700,7 @@ index 00000000..1a5c69f7
 +void main() { gl_Position = vec4(gl_TessCoord.xy - 0.5, 0.5, 1.0); }
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese.h
 new file mode 100644
-index 00000000..bae4b5b0
+index 0000000..bae4b5b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/lines.tese.h
 @@ -0,0 +1,47 @@
@@ -4753,7 +4753,7 @@ index 00000000..bae4b5b0
 +0x0000001e,0x0000001c,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom
 new file mode 100644
-index 00000000..9e8b5ac1
+index 0000000..9e8b5ac
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom
 @@ -0,0 +1,10 @@
@@ -4769,7 +4769,7 @@ index 00000000..9e8b5ac1
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom.h
 new file mode 100644
-index 00000000..81964031
+index 0000000..8196403
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.geom.h
 @@ -0,0 +1,44 @@
@@ -4819,7 +4819,7 @@ index 00000000..81964031
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese
 new file mode 100644
-index 00000000..546c5807
+index 0000000..546c580
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese
 @@ -0,0 +1,4 @@
@@ -4829,7 +4829,7 @@ index 00000000..546c5807
 +void main() { gl_Position = vec4(gl_TessCoord.xy - 0.5, 0.5, 1.0); }
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese.h
 new file mode 100644
-index 00000000..28acf5b6
+index 0000000..28acf5b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/triangles.tese.h
 @@ -0,0 +1,47 @@
@@ -4882,7 +4882,7 @@ index 00000000..28acf5b6
 +0x0000001e,0x0000001c,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert b/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert
 new file mode 100644
-index 00000000..20f84988
+index 0000000..20f8498
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert
 @@ -0,0 +1,8 @@
@@ -4896,7 +4896,7 @@ index 00000000..20f84988
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert.h b/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert.h
 new file mode 100644
-index 00000000..5663ebf3
+index 0000000..5663ebf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/line_raster_shaders/xfb.vert.h
 @@ -0,0 +1,50 @@
@@ -4952,7 +4952,7 @@ index 00000000..5663ebf3
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh
 new file mode 100644
-index 00000000..ce3afbe6
+index 0000000..ce3afbe
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -4965,7 +4965,7 @@ index 00000000..ce3afbe6
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag
 new file mode 100644
-index 00000000..80f7f93a
+index 0000000..80f7f93
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag
 @@ -0,0 +1,7 @@
@@ -4978,7 +4978,7 @@ index 00000000..80f7f93a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag.h b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag.h
 new file mode 100644
-index 00000000..50544d69
+index 0000000..50544d6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.frag.h
 @@ -0,0 +1,20 @@
@@ -5004,7 +5004,7 @@ index 00000000..50544d69
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom
 new file mode 100644
-index 00000000..211d4b95
+index 0000000..211d4b9
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom
 @@ -0,0 +1,25 @@
@@ -5035,7 +5035,7 @@ index 00000000..211d4b95
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom.h b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom.h
 new file mode 100644
-index 00000000..b52453ff
+index 0000000..b52453f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.geom.h
 @@ -0,0 +1,67 @@
@@ -5108,7 +5108,7 @@ index 00000000..b52453ff
 +0x000100db,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert
 new file mode 100644
-index 00000000..74032651
+index 0000000..7403265
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert
 @@ -0,0 +1,15 @@
@@ -5129,7 +5129,7 @@ index 00000000..74032651
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert.h b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert.h
 new file mode 100644
-index 00000000..ca7c2d81
+index 0000000..ca7c2d8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert.h
 @@ -0,0 +1,38 @@
@@ -5173,7 +5173,7 @@ index 00000000..ca7c2d81
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster.c b/src/kosmickrisp/vulkan/tests/test_line_raster.c
 new file mode 100644
-index 00000000..d6623ec1
+index 0000000..d6623ec
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_line_raster.c
 @@ -0,0 +1,292 @@
@@ -5471,7 +5471,7 @@ index 00000000..d6623ec1
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 new file mode 100644
-index 00000000..cbffca7a
+index 0000000..cbffca7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 @@ -0,0 +1,879 @@
@@ -6356,7 +6356,7 @@ index 00000000..cbffca7a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_polygon_point_raster.cpp b/src/kosmickrisp/vulkan/tests/test_polygon_point_raster.cpp
 new file mode 100644
-index 00000000..adc46cb4
+index 0000000..adc46cb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_polygon_point_raster.cpp
 @@ -0,0 +1,509 @@
@@ -6870,7 +6870,7 @@ index 00000000..adc46cb4
 +   return 0;
 +}
 diff --git a/src/poly/cl/restart.h b/src/poly/cl/restart.h
-index 995720da..66ccf3ee 100644
+index 995720d..66ccf3e 100644
 --- a/src/poly/cl/restart.h
 +++ b/src/poly/cl/restart.h
 @@ -135,15 +135,41 @@ static inline global void *
@@ -7059,7 +7059,7 @@ index 995720da..66ccf3ee 100644
     }
  
 diff --git a/src/poly/geometry.h b/src/poly/geometry.h
-index b732add2..ac92bcfb 100644
+index b732add..ac92bcf 100644
 --- a/src/poly/geometry.h
 +++ b/src/poly/geometry.h
 @@ -19,6 +19,94 @@
@@ -7249,7 +7249,7 @@ index b732add2..ac92bcfb 100644
  static inline void
  poly_geometry_params_init(struct poly_geometry_params *p,
 diff --git a/src/poly/nir/meson.build b/src/poly/nir/meson.build
-index a489a522..abfd305a 100644
+index a489a52..abfd305 100644
 --- a/src/poly/nir/meson.build
 +++ b/src/poly/nir/meson.build
 @@ -18,3 +18,41 @@ libpoly_nir = static_library(
@@ -7295,7 +7295,7 @@ index a489a522..abfd305a 100644
 +  )
 +endif
 diff --git a/src/poly/nir/poly_nir.h b/src/poly/nir/poly_nir.h
-index 70715618..60d64651 100644
+index 7071561..60d6465 100644
 --- a/src/poly/nir/poly_nir.h
 +++ b/src/poly/nir/poly_nir.h
 @@ -32,6 +32,11 @@ struct poly_gs_info {
@@ -7327,7 +7327,7 @@ index 70715618..60d64651 100644
  bool poly_nir_lower_tcs(struct nir_shader *tcs,
                          bool can_ignore_shader_out_barriers);
 diff --git a/src/poly/nir/poly_nir_lower_gs.c b/src/poly/nir/poly_nir_lower_gs.c
-index bf0e74db..895541b0 100644
+index bf0e74d..895541b 100644
 --- a/src/poly/nir/poly_nir_lower_gs.c
 +++ b/src/poly/nir/poly_nir_lower_gs.c
 @@ -85,7 +85,9 @@ rewrite_intrinsics(nir_builder *b, nir_intrinsic_instr *intr, void *state_)
@@ -7679,7 +7679,7 @@ index bf0e74db..895541b0 100644
   * Vertex shaders (tessellation evaluation shaders) before a geometry shader run
   * as a dedicated compute prepass. They are invoked as (count, instances, 1).
 diff --git a/src/poly/nir/poly_nir_passthrough_gs.c b/src/poly/nir/poly_nir_passthrough_gs.c
-index 1c2e9ed9..df9e4c3a 100644
+index 1c2e9ed..df9e4c3 100644
 --- a/src/poly/nir/poly_nir_passthrough_gs.c
 +++ b/src/poly/nir/poly_nir_passthrough_gs.c
 @@ -111,4 +111,6 @@ poly_nir_passthrough_gs(nir_builder *b, const void *key_)
@@ -7691,7 +7691,7 @@ index 1c2e9ed9..df9e4c3a 100644
  }
 diff --git a/src/poly/nir/tests/test_gs_side_effects.c b/src/poly/nir/tests/test_gs_side_effects.c
 new file mode 100644
-index 00000000..5bcbbe68
+index 0000000..5bcbbe6
 --- /dev/null
 +++ b/src/poly/nir/tests/test_gs_side_effects.c
 @@ -0,0 +1,126 @@
@@ -7823,7 +7823,7 @@ index 00000000..5bcbbe68
 +}
 diff --git a/src/poly/nir/tests/test_passthrough_gs.c b/src/poly/nir/tests/test_passthrough_gs.c
 new file mode 100644
-index 00000000..e183c3a8
+index 0000000..e183c3a
 --- /dev/null
 +++ b/src/poly/nir/tests/test_passthrough_gs.c
 @@ -0,0 +1,72 @@

@@ -1,7 +1,7 @@
-From d32b215997716ba061a52fef5c7c1d14b69a22fb Mon Sep 17 00:00:00 2001
+From 57930aad3b50b55f8127434aac5b631ac5ddd2e7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:35:40 +0900
-Subject: [PATCH 31/95] kosmickrisp: match initial render pass attachment
+Subject: [PATCH 031/107] kosmickrisp: match initial render pass attachment
  samples
 
 Collect attachment sample counts before setting the Metal 4 render-pass default. Color-only multisample passes otherwise start with a raster sample count of one, leaving their source draw and subsequent resolves invalid.
@@ -15,7 +15,7 @@ Add a native GPU regression for single-sample controls, default and maintenance1
  create mode 100644 src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 105bd3a1..a0df6b4f 100644
+index 105bd3a..a0df6b4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -391,8 +391,6 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -39,7 +39,7 @@ index 105bd3a1..a0df6b4f 100644
     /* Render targets are always arrays */
     mtl_render_pass_descriptor_set_render_target_array_length(
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b3f81c68..3b062b2f 100644
+index b3f81c6..3b062b2 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -288,6 +288,26 @@ if with_tests
@@ -71,7 +71,7 @@ index b3f81c68..3b062b2f 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c b/src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c
 new file mode 100644
-index 00000000..ab791b90
+index 0000000..ab791b9
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c
 @@ -0,0 +1,484 @@

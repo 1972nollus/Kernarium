@@ -1,7 +1,7 @@
-From d549f10e190751b30062a53247cf6999f2ef5151 Mon Sep 17 00:00:00 2001
+From 0c62f5417640bc2bae36656841c1e15382349090 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 07:09:27 +0900
-Subject: [PATCH 35/95] kosmickrisp: capture tessellation outputs on the GPU
+Subject: [PATCH 035/107] kosmickrisp: capture tessellation outputs on the GPU
 
 Produce ordered TES records once, then pull raw capture and raster outputs without re-executing application effects. Preserve shared GPU capacity and query accounting, independent raster provoking values, and empty-patch draws.
 
@@ -16,7 +16,7 @@ Use one tessellator index winding for native and software consumers. Match indir
  6 files changed, 192 insertions(+), 65 deletions(-)
 
 diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
-index 0e8c1a91..abc66ebb 100644
+index 0e8c1a9..abc66eb 100644
 --- a/src/kosmickrisp/libkk/kk_tessellation.cl
 +++ b/src/kosmickrisp/libkk/kk_tessellation.cl
 @@ -11,7 +11,7 @@
@@ -59,7 +59,7 @@ index 0e8c1a91..abc66ebb 100644
 +   grids[17] = 1;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index c3fa39bb..639810e9 100644
+index c3fa39b..639810e 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1464,6 +1464,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
@@ -216,7 +216,7 @@ index c3fa39bb..639810e9 100644
              kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 0bddef0d..7c50bfe1 100644
+index 0bddef0..7c50bfe 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1228,6 +1228,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
@@ -475,7 +475,7 @@ index 0bddef0d..7c50bfe1 100644
  
        mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
 diff --git a/src/poly/cl/tessellation.cl b/src/poly/cl/tessellation.cl
-index d0004cbf..aef5b82e 100644
+index d0004cb..aef5b82 100644
 --- a/src/poly/cl/tessellation.cl
 +++ b/src/poly/cl/tessellation.cl
 @@ -40,7 +40,7 @@ poly_load_tes_index(constant struct poly_tess_params *p, uint32_t index)
@@ -488,7 +488,7 @@ index d0004cbf..aef5b82e 100644
  
        if (id == 1)
 diff --git a/src/poly/cl/tessellator.h b/src/poly/cl/tessellator.h
-index f46081cd..27010097 100644
+index f46081c..2701009 100644
 --- a/src/poly/cl/tessellator.h
 +++ b/src/poly/cl/tessellator.h
 @@ -90,6 +90,7 @@ struct INDEX_PATCH_CONTEXT2 {
@@ -527,7 +527,7 @@ index f46081cd..27010097 100644
  
     // Is the patch culled?
 diff --git a/src/poly/tessellator.h b/src/poly/tessellator.h
-index 6087d97d..06dbae12 100644
+index 6087d97..06dbae1 100644
 --- a/src/poly/tessellator.h
 +++ b/src/poly/tessellator.h
 @@ -95,11 +95,14 @@ struct poly_tess_params {

@@ -32,7 +32,12 @@ void require(
     std::abort();
 }
 
-void providerOwnsOneSharedAngleTopology()
+// The highest desktop version vrend probes, and the one it then asks for again
+// for every sub-context it creates.
+constexpr int kProbedMajor = 4;
+constexpr int kProbedMinor = 6;
+
+void providerOwnsOneSharedContextTopology()
 {
     uml::gpu::HostGlProvider provider;
     require(provider.display() != nullptr);
@@ -41,8 +46,8 @@ void providerOwnsOneSharedAngleTopology()
     virgl_renderer_gl_ctx_param parameters {
         .version = 2,
         .shared = true,
-        .major_ver = 3,
-        .minor_ver = 0,
+        .major_ver = kProbedMajor,
+        .minor_ver = kProbedMinor,
         .compat_ctx = 0,
     };
     require(provider.createContext(parameters) == nullptr);
@@ -62,6 +67,42 @@ void providerOwnsOneSharedAngleTopology()
     provider.destroyContext(root);
 }
 
+// vrend creates a virgl context's shared sub-context on whichever thread
+// services the guest queue, never on the thread that created the display. The
+// EGL rendering API a thread is bound to is per-thread state defaulting to
+// GLES, so a provider that binds its desktop API only once answers
+// EGL_BAD_MATCH there and every guest GL context creation fails.
+void providerCreatesSharedContextsOnAnyThread()
+{
+    uml::gpu::HostGlProvider provider;
+    virgl_renderer_gl_ctx_param parameters {
+        .version = 2,
+        .shared = false,
+        .major_ver = kProbedMajor,
+        .minor_ver = kProbedMinor,
+        .compat_ctx = 0,
+    };
+    void* root = provider.createContext(parameters);
+    require(root != nullptr);
+    require(provider.makeCurrent(root) == 0);
+
+    parameters.shared = true;
+    void* shared = nullptr;
+    int current = -1;
+    std::thread consumer([&] {
+        shared = provider.createContext(parameters);
+        if (shared != nullptr)
+            current = provider.makeCurrent(shared);
+    });
+    consumer.join();
+    require(shared != nullptr);
+    require(current == 0);
+
+    provider.destroyContext(shared);
+    require(provider.makeCurrent(nullptr) == 0);
+    provider.destroyContext(root);
+}
+
 void providerRejectsUnsupportedContexts()
 {
     uml::gpu::HostGlProvider provider;
@@ -77,7 +118,7 @@ void providerRejectsUnsupportedContexts()
     parameters.major_ver = 1;
     require(provider.createContext(parameters) == nullptr);
     // The provider serves desktop GL 3.x and 4.x core contexts.
-    parameters.major_ver = 5;
+    parameters.major_ver = kProbedMajor + 1;
     require(provider.createContext(parameters) == nullptr);
     parameters.major_ver = 3;
     parameters.version = 1;
@@ -138,7 +179,8 @@ int main()
 {
     providerRejectsUnsupportedContexts();
     providerReportsExplicitEsVersionRequests();
-    providerOwnsOneSharedAngleTopology();
+    providerOwnsOneSharedContextTopology();
+    providerCreatesSharedContextsOnAnyThread();
     rendererRetiresFencesThroughTheExternalProvider();
     std::puts("host GL provider lifetime tests passed");
     return 0;

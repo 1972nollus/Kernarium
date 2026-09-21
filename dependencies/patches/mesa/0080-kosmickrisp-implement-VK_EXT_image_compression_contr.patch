@@ -1,7 +1,8 @@
-From 7c5529c261431c09e975ada50a9fec54f5df65ba Mon Sep 17 00:00:00 2001
+From 89af5817d56d040014478fabf0e39d336ededd64 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:51 +0900
-Subject: [PATCH 80/95] kosmickrisp: implement VK_EXT_image_compression_control
+Subject: [PATCH 080/107] kosmickrisp: implement
+ VK_EXT_image_compression_control
 
 VP_ANDROID_17_requirements makes this extension and its swapchain companion
 mandatory. Both are queries: an application asks what compression an image
@@ -29,7 +30,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 46 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index b2d12e26..54321d3a 100644
+index b2d12e2..54321d3 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -251,6 +251,15 @@ kk_GetPhysicalDeviceImageFormatProperties2(
@@ -73,7 +74,7 @@ index b2d12e26..54321d3a 100644
  
  VKAPI_ATTR void VKAPI_CALL
 diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
-index 8f4e3b4e..9b9e9280 100644
+index 8f4e3b4..9b9e928 100644
 --- a/src/kosmickrisp/vulkan/kk_image.h
 +++ b/src/kosmickrisp/vulkan/kk_image.h
 @@ -62,6 +62,23 @@ struct kk_image {
@@ -101,7 +102,7 @@ index 8f4e3b4e..9b9e9280 100644
     for (uint32_t ndx = region->subresource_member.baseArrayLayer;              \
          ndx < (region->subresource_member.baseArrayLayer +                     \
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 5749fb5e..cb199e69 100644
+index 5749fb5..cb199e6 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,8 @@ kk_get_device_extensions(const struct kk_instance *instance,

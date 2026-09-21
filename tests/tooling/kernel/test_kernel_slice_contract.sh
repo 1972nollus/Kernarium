@@ -69,7 +69,7 @@ for path in \
 	require_file "$path"
 done
 
-# The normal arm64 product owns the shared 32-topic base and no compatibility
+# The normal arm64 product owns the shared 34-topic base and no compatibility
 # topic.  These identifiers name the former mixed-ABI implementation rather
 # than ordinary architecture-neutral x86 references in upstream UML code.
 # shellcheck disable=SC1090
@@ -85,14 +85,14 @@ COMMON_UPSTREAM_TREE=$UML_KERNEL_UPSTREAM_TREE
 COMMON_BASE_REF=$UML_KERNEL_BASE_REF
 COMMON_ABI_VERSION=$UML_KERNEL_ABI_VERSION
 COMMON_ABI_FINGERPRINT=$UML_KERNEL_ABI_FINGERPRINT
-[ "$COMMON_PATCH_COUNT" -eq 32 ] ||
-	fail "common series has $COMMON_PATCH_COUNT patches; expected 32"
-[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 32 ] ||
-	fail "common series manifest is not the canonical 32-topic base"
+[ "$COMMON_PATCH_COUNT" -eq 34 ] ||
+	fail "common series has $COMMON_PATCH_COUNT patches; expected 34"
+[ "$(manifest_count "$COMMON_SERIES/manifest.tsv")" -eq 34 ] ||
+	fail "common series manifest is not the canonical 34-topic base"
 common_patch_files=$(find "$COMMON_SERIES" -maxdepth 1 -type f \
 	-name '*.patch' | wc -l | tr -d ' ')
-[ "$common_patch_files" -eq 32 ] ||
-	fail "common series contains $common_patch_files generated patches; expected 32"
+[ "$common_patch_files" -eq 34 ] ||
+	fail "common series contains $common_patch_files generated patches; expected 34"
 if grep -E -i \
 	'UML_X86_64_USERSPACE_ONLY|UPT_IS_X86_64|upt_is_x86_64|UML_GUEST_ISA_X86_64|enum uml_guest_isa|run x86-64 userspace through Darwin gadgets' \
 	"$COMMON_SERIES"/*.patch >/dev/null; then

@@ -1,4 +1,4 @@
-From 65a839b0c0832ef57f352173558dcbcf9baf6e93 Mon Sep 17 00:00:00 2001
+From 5543be4ce88f1afb1d3cabec1e90326a34556a7e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
 Subject: [PATCH 2/3] arm64: add i386 userspace task support
@@ -3041,7 +3041,7 @@ index f4f5b15ab..300039328 100644
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 6c65b2b7b..b1f470af5 100644
+index ef849ea26..465b8a2c7 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -11,6 +11,9 @@
@@ -3054,7 +3054,7 @@ index 6c65b2b7b..b1f470af5 100644
  #include <mem_user.h>
  #include <os.h>
  #include <skas.h>
-@@ -906,6 +909,19 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
+@@ -1019,6 +1022,19 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
  		return;
  	start &= PAGE_MASK;
  	end = PAGE_ALIGN(end);

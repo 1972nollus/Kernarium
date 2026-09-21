@@ -1,7 +1,7 @@
-From e9b0a1e969bfbea97fa4f312b8947cd0d6c77ce8 Mon Sep 17 00:00:00 2001
+From 9ca3f33f1f36eb1df54b22b7f956dd0bdd8acb86 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:12:22 +0900
-Subject: [PATCH 66/95] poly: compute a tessellation shader's index once, not
+Subject: [PATCH 066/107] poly: compute a tessellation shader's index once, not
  once per load
 
 Lowering a tessellation evaluation shader to compute replaces every
@@ -25,7 +25,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 45 insertions(+), 6 deletions(-)
 
 diff --git a/src/poly/nir/poly_nir_lower_tess.c b/src/poly/nir/poly_nir_lower_tess.c
-index c286924f..8498306d 100644
+index c286924..8498306 100644
 --- a/src/poly/nir/poly_nir_lower_tess.c
 +++ b/src/poly/nir/poly_nir_lower_tess.c
 @@ -263,13 +263,53 @@ lower_tes_indexing(nir_builder *b, nir_intrinsic_instr *intr, void *data)

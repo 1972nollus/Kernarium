@@ -107,11 +107,42 @@ ctest --test-dir .build/presets/macos-integration-venus \
     -R apple-ios-device-vk-cts
 ```
 
+For a baked device mustpass fraction, the runner prints
+`vulkan_campaign_complete=true` only after validating the exact post-exclusion
+QPA case sequence, the exclusion report, the status oracle, and a lossless
+artifact transfer. This completion marker is independent of
+`vulkan_statuses_accepted`: a complete fraction may retain CTS failures for
+diagnosis. Other device campaign modes do not print these validation markers.
+
+The headless device lane requires WSI-dependent cases to return
+`NotSupported`. The `surface.query_devgroup_present_capabilities` and
+`surface.destroy_null_handle` cases do not need a native window or live
+surface, so their results use the ordinary CTS status oracle; a `Fail` remains
+a failure. Both cases remain in the required ordered coverage.
+
 Run the runner directly to install a bundle, stage an image, or take one of the
-sixteen `vulkan-mustpass-NNof16-v1` fractions of the released list; see its
-`--help`. A campaign is judged by its `summary.txt`, never by searching the
-console for an error marker, because the application echoes the generated guest
-launcher and that script carries its own marker strings.
+fifteen `vulkan-mustpass-NNof16-v3` fractions of the released list or the
+`vulkan-mustpass-03of16-v4` fraction. See the runner's `--help`. A campaign is judged
+by its `summary.txt`, never by searching the console for an error marker,
+because the application echoes the generated guest launcher and that script
+carries its own marker strings.
+
+Host and renderer diagnostics share that console with the artifact frames, and
+a line written into the middle of one is a malformed marker that costs the
+attempt its results. A host or renderer condition on a per-frame or per-bind
+path therefore reports once and not again, which is also the only way an
+operator can raise the renderer's log level on a device run.
+
+A baked device campaign is the one lane whose guest memory is fixed by the
+platform, so it is the only lane that leaves cases out. Its profile fixes the
+identifier, guest memory, and any planned process boundary; the device runner
+refuses a different memory value before launch. `DEVICE_EXCLUSIONS` in
+`run_vk_cts.py` names exclusions by cause, and the generation suffix is part of
+the selection's identity. The guest drops them from the fraction it enumerated
+and transports `skipped.txt` as `<reason>\t<case>` rows, with `device_excluded*`
+counts in `summary.txt`, so `cut -f2 skipped.txt` is the selection to re-run on
+hardware without that limit. An excluded case is neither a pass nor a failure.
+Every macOS lane runs the released selection unchanged.
 
 The optional `guest-v4l2-decode` test qualifies the
 [Virtio video decoder](../darwin/device/video/README.md). Build
@@ -538,7 +569,15 @@ reaching poweroff.
 A shard is one or more guest sessions. The guest transports its growing QPA as
 ordered checkpoint segments, so a killed guest still leaves the prefix it
 produced, and the host reassembles the single `results.qpa` every consumer
-reads. The progress watchdog is CPU-aware: a case that produces no QPA output
+reads. A segment counts as delivered only once its compressed stream has been
+measured back against the range it was meant to hold and the host has
+acknowledged it; a segment that could not be produced keeps its bytes pending
+for the next attempt, and the guest's `summary.txt` is transported last whatever
+happened before it. A receipt-backed summary states `qpa_transfer`, with
+`qpa_missing_bytes` when that is not `complete`, and only `complete` is
+accepted: a run that lost results says so rather than reporting a short one.
+Zero-length artifacts are refused, so a guest that runs out of room cannot frame
+one. The progress watchdog is CPU-aware: a case that produces no QPA output
 for `--console-stall-timeout` seconds while its `glcts` processes also burn no
 CPU is abandoned, while a case that is silent but computing survives until
 `--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
@@ -550,6 +589,25 @@ console and artifact transport both stop advancing. Kernel stall diagnostics --
 RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
 are not console progress for that bound, because a wedged kernel reprints them
 on its own timer and would otherwise hold the bound off indefinitely.
+dEQP ends its whole session at the first `ResourceError`, and offers no way to
+carry on, so every case after one used to go unrun: one such case once cost a
+device fraction 196,227 of its 216,952 cases. The guest therefore runs the
+remainder of the order it already enumerated in a fresh CTS process, up to
+eight processes for one shard and all of them inside the shard's single
+deadline. Nothing is re-run and nothing is invented: each process appends its
+own session document to the same transported stream, `summary.txt` states
+`cts_sessions` and `cts_cases_run`, and the host still requires the union of
+the results to be the enumerated selection, in its order, with each case
+present exactly once.
+
+Fraction 03 uses 1280 MiB and one planned CTS process restart immediately
+before `dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array.huge.width_height_layers.r8g8b8a8_unorm`.
+After the prefix process exits, the guest waits 20 seconds before starting
+the suffix. The boundary uses the same continuation path as a `ResourceError`:
+it preserves
+the enumerated order and the eight-process limit, so the normal two-process run
+retains six recovery sessions.
+
 An emulator exit -- an abandoned case, a host fault, a
 signal -- aborts the session rather than producing a result: the host invents
 no status for the case that was in flight, keeps the last `Test case` name the

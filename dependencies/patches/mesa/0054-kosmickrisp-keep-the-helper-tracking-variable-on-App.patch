@@ -1,7 +1,7 @@
-From 3f9b8d86aee1569280d01032c3acfb55bd809d9e Mon Sep 17 00:00:00 2001
+From de581492b49f1c5d073703afbca444eb2a689b84 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:59:32 +0900
-Subject: [PATCH 54/95] kosmickrisp: keep the helper tracking variable on
+Subject: [PATCH 054/107] kosmickrisp: keep the helper tracking variable on
  Apple7 and Apple8
 
 KK_WORKAROUND_4 replaces simd_is_helper_thread() with a variable the shader
@@ -42,7 +42,7 @@ colour is exact; it reads 1/4881/4881/8881 without the workaround and
  create mode 100644 src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index ea56c611..8d672860 100644
+index ea56c61..8d67286 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -445,9 +445,17 @@ as a non-helper thread, even after ``discard_fragment()`` is called. The
@@ -64,7 +64,7 @@ index ea56c611..8d672860 100644
  KK_WORKAROUND_3
  ---------------
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index fe6f29da..a3751869 100644
+index fe6f29d..a375186 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -242,10 +242,16 @@ kk_parse_device_environment_options(struct kk_device *dev)
@@ -88,7 +88,7 @@ index fe6f29da..a3751869 100644
  }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3e9a1881..e6e18405 100644
+index 3e9a188..e6e1840 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -521,6 +521,20 @@ if with_tests
@@ -114,7 +114,7 @@ index 3e9a1881..e6e18405 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh
 new file mode 100755
-index 00000000..74c8f585
+index 0000000..74c8f58
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -127,7 +127,7 @@ index 00000000..74c8f585
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag
 new file mode 100644
-index 00000000..a078add2
+index 0000000..a078add
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag
 @@ -0,0 +1,57 @@
@@ -190,7 +190,7 @@ index 00000000..a078add2
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag.h b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag.h
 new file mode 100644
-index 00000000..b8366e7b
+index 0000000..b8366e7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.frag.h
 @@ -0,0 +1,147 @@
@@ -343,7 +343,7 @@ index 00000000..b8366e7b
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert
 new file mode 100644
-index 00000000..872c7024
+index 0000000..872c702
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert
 @@ -0,0 +1,11 @@
@@ -360,7 +360,7 @@ index 00000000..872c7024
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert.h b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert.h
 new file mode 100644
-index 00000000..44526345
+index 0000000..4452634
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/helper.vert.h
 @@ -0,0 +1,53 @@
@@ -419,7 +419,7 @@ index 00000000..44526345
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp b/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 new file mode 100644
-index 00000000..7fc17911
+index 0000000..7fc1791
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 @@ -0,0 +1,549 @@

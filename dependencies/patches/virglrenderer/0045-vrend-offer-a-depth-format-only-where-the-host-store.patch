@@ -1,7 +1,7 @@
-From 575aa69a724fae1210e6cc9bf6a0deca47337cbf Mon Sep 17 00:00:00 2001
+From 7e10ef8cc30c79aec6648036b7b7d3d79e842f77 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 18:15:14 +0900
-Subject: [PATCH 45/48] vrend: offer a depth format only where the host stores
+Subject: [PATCH 45/50] vrend: offer a depth format only where the host stores
  it
 
 A sized depth internal format is a request, not a promise. glTexImage2D with

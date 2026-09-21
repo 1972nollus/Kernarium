@@ -1,7 +1,7 @@
-From ba7fba5d90d18335eae5f2db1b1ae288d2217c21 Mon Sep 17 00:00:00 2001
+From 1678586d9d119a0299bfa45fa22c3ee0945ae2a4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:19:59 +0900
-Subject: [PATCH 58/95] kosmickrisp: blend with Metal's own state where Metal
+Subject: [PATCH 058/107] kosmickrisp: blend with Metal's own state where Metal
  can express it
 
 KosmicKrisp lowered every blend into the fragment shader, which made the
@@ -112,7 +112,7 @@ no slower and is the better default for a monolithic pipeline as well.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
 
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.h b/src/kosmickrisp/bridge/mtl_compiler.h
-index b433ac9b..6fa72ada 100644
+index b433ac9..6fa72ad 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.h
 +++ b/src/kosmickrisp/bridge/mtl_compiler.h
 @@ -50,6 +50,20 @@ void mtl_render_pipeline_descriptor_set_color_attachment_format(
@@ -137,7 +137,7 @@ index b433ac9b..6fa72ada 100644
     mtl_render_pipeline_descriptor *descriptor, uint32_t sample_count);
  
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
-index 87e93c0a..6730f8af 100644
+index 87e93c0..6730f8a 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.m
 +++ b/src/kosmickrisp/bridge/mtl_compiler.m
 @@ -158,6 +158,41 @@
@@ -183,7 +183,7 @@ index 87e93c0a..6730f8af 100644
  mtl_render_pipeline_descriptor_set_raster_sample_count(mtl_render_pipeline_descriptor *descriptor,
                                                         uint32_t sample_count)
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
-index 1d6ea718..eecbcde7 100644
+index 1d6ea71..eecbcde 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.h
 +++ b/src/kosmickrisp/bridge/mtl_encoder.h
 @@ -101,6 +101,12 @@ void mtl_set_visibility_result_mode(mtl_render_encoder *encoder,
@@ -200,7 +200,7 @@ index 1d6ea718..eecbcde7 100644
                          float slope_scale, float clamp);
  
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
-index 5e0c19fd..e1e6a46d 100644
+index 5e0c19f..e1e6a46 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.m
 +++ b/src/kosmickrisp/bridge/mtl_encoder.m
 @@ -357,6 +357,16 @@
@@ -221,7 +221,7 @@ index 5e0c19fd..e1e6a46d 100644
  mtl_set_depth_bias(mtl_render_encoder *encoder, float depth_bias,
                     float slope_scale, float clamp)
 diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
-index f60ad272..7ee56bf4 100644
+index f60ad27..7ee56bf 100644
 --- a/src/kosmickrisp/bridge/mtl_types.h
 +++ b/src/kosmickrisp/bridge/mtl_types.h
 @@ -229,6 +229,47 @@ enum mtl_visibility_result_mode {
@@ -273,7 +273,7 @@ index f60ad272..7ee56bf4 100644
     MTL_DEPTH_CLIP_MODE_CLIP = 0,
     MTL_DEPTH_CLIP_MODE_CLAMP = 1,
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_compiler.c b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
-index c8b1a1be..6dd3cbae 100644
+index c8b1a1b..6dd3cba 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 @@ -79,6 +79,23 @@ mtl_render_pipeline_descriptor_set_raster_sample_count(
@@ -301,7 +301,7 @@ index c8b1a1be..6dd3cbae 100644
  mtl_render_pipeline_descriptor_set_alpha_to_coverage(
     mtl_render_pipeline_descriptor *descriptor, bool enabled)
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_encoder.c b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
-index 108d2e6b..ad18d56a 100644
+index 108d2e6..ad18d56 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 @@ -178,6 +178,12 @@ mtl_set_visibility_result_mode(mtl_render_encoder *encoder,
@@ -318,7 +318,7 @@ index 108d2e6b..ad18d56a 100644
  mtl_set_depth_bias(mtl_render_encoder *encoder, float depth_bias,
                     float slope_scale, float clamp)
 diff --git a/src/kosmickrisp/bridge/vk_to_mtl_map.c b/src/kosmickrisp/bridge/vk_to_mtl_map.c
-index cc7cfc49..c49bfa62 100644
+index cc7cfc4..c49bfa6 100644
 --- a/src/kosmickrisp/bridge/vk_to_mtl_map.c
 +++ b/src/kosmickrisp/bridge/vk_to_mtl_map.c
 @@ -184,6 +184,79 @@ vk_sampler_mipmap_mode_to_mtl_sampler_mip_filter(enum VkSamplerMipmapMode mode)
@@ -402,7 +402,7 @@ index cc7cfc49..c49bfa62 100644
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op)
  {
 diff --git a/src/kosmickrisp/bridge/vk_to_mtl_map.h b/src/kosmickrisp/bridge/vk_to_mtl_map.h
-index fa4b9cde..8319e2d1 100644
+index fa4b9cd..8319e2d 100644
 --- a/src/kosmickrisp/bridge/vk_to_mtl_map.h
 +++ b/src/kosmickrisp/bridge/vk_to_mtl_map.h
 @@ -6,6 +6,8 @@
@@ -452,7 +452,7 @@ index fa4b9cde..8319e2d1 100644
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index b8be0edd..939f9f1a 100644
+index b8be0ed..939f9f1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1719,14 +1719,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -486,7 +486,7 @@ index b8be0edd..939f9f1a 100644
  
     if (IS_DIRTY(CB_LOGIC_OP)) {
 diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
-index 375698e4..9dd178a1 100644
+index 375698e..9dd178a 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.c
 +++ b/src/kosmickrisp/vulkan/kk_debug.c
 @@ -12,6 +12,7 @@ const struct debug_named_value flags[] = {
@@ -498,7 +498,7 @@ index 375698e4..9dd178a1 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
-index 178dcc89..e5664b76 100644
+index 178dcc8..e5664b7 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.h
 +++ b/src/kosmickrisp/vulkan/kk_debug.h
 @@ -14,6 +14,11 @@ enum kk_debug {
@@ -514,7 +514,7 @@ index 178dcc89..e5664b76 100644
  
  extern enum kk_debug kk_mesa_debug_flags;
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
-index fe1de5ed..9a3f458f 100644
+index fe1de5e..9a3f458 100644
 --- a/src/kosmickrisp/vulkan/kk_gpl.h
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
 @@ -6,6 +6,7 @@
@@ -526,7 +526,7 @@ index fe1de5ed..9a3f458f 100644
  #include "kk_logic_op.h"
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 0d5609f9..ec175936 100644
+index 0d5609f..ec17593 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -615,6 +615,142 @@ kk_nir_remove_undeclared_fs_output(nir_builder *b,
@@ -820,7 +820,7 @@ index 0d5609f9..ec175936 100644
  
     if (vs->info.vs.view_mask) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 86f08e23..1f624b6b 100644
+index 86f08e2..1f624b6 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -119,6 +119,20 @@ struct kk_shader_info {
@@ -845,7 +845,7 @@ index 86f08e23..1f624b6b 100644
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c3e61b50..811555f5 100644
+index c3e61b5..811555f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -535,6 +535,30 @@ if with_tests
@@ -881,7 +881,7 @@ index c3e61b50..811555f5 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp b/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp
 new file mode 100644
-index 00000000..0ce2b7bd
+index 0000000..0ce2b7b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp
 @@ -0,0 +1,411 @@
@@ -1298,7 +1298,7 @@ index 00000000..0ce2b7bd
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag
 new file mode 100644
-index 00000000..9edcd8e9
+index 0000000..9edcd8e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag
 @@ -0,0 +1,9 @@
@@ -1313,7 +1313,7 @@ index 00000000..9edcd8e9
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag.h b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag.h
 new file mode 100644
-index 00000000..42b755bb
+index 0000000..42b755b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag.h
 @@ -0,0 +1,26 @@
@@ -1345,7 +1345,7 @@ index 00000000..42b755bb
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert
 new file mode 100644
-index 00000000..d24859a2
+index 0000000..d24859a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert
 @@ -0,0 +1,7 @@
@@ -1358,7 +1358,7 @@ index 00000000..d24859a2
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert.h b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert.h
 new file mode 100644
-index 00000000..cfd5e55f
+index 0000000..cfd5e55
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert.h
 @@ -0,0 +1,54 @@
@@ -1418,7 +1418,7 @@ index 00000000..cfd5e55f
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag
 new file mode 100644
-index 00000000..6f0cd838
+index 0000000..6f0cd83
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag
 @@ -0,0 +1,13 @@
@@ -1437,7 +1437,7 @@ index 00000000..6f0cd838
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag.h b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag.h
 new file mode 100644
-index 00000000..9308cf8a
+index 0000000..9308cf8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend_dual.frag.h
 @@ -0,0 +1,35 @@
@@ -1478,7 +1478,7 @@ index 00000000..9308cf8a
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh
 new file mode 100755
-index 00000000..c16500ee
+index 0000000..c16500e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -1491,7 +1491,7 @@ index 00000000..c16500ee
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
 new file mode 100644
-index 00000000..3fc30861
+index 0000000..3fc3086
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
 @@ -0,0 +1,803 @@

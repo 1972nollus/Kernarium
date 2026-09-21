@@ -38,4 +38,29 @@ enum class OverdueFenceAction {
         : OverdueFenceAction::releaseOrdering;
 }
 
+/* How many fences in a row one ring may complete without the renderer before
+ * the ring is no longer carrying a stuck submission but is simply not
+ * retiring anything.
+ *
+ * The escape above pays two windows for each fence, so it answers a workload
+ * that wedges once. A ring that needs it again for the fence after, and the
+ * one after that, has had six windows and three ordering releases without the
+ * renderer moving, and nothing about the fourth fence is different. Waiting
+ * for it buys the same nothing at the same price, for as long as the guest
+ * keeps submitting: a Vulkan CTS fraction spent 2,700 seconds paying thirty
+ * per test case and said nothing at all.
+ *
+ * Three is the smallest count that cannot be reached by one wedged submission
+ * and the ordering release meant to free it. */
+inline constexpr unsigned maximumRingEscapes = 3;
+
+/* Whether a ring has stopped retiring rather than stumbled over one fence.
+ * A ring that dies is reported once and then costs nothing per fence; any
+ * retirement the renderer does make clears the count and revives it. */
+[[nodiscard]] constexpr bool ringHasStoppedRetiring(
+    unsigned consecutiveEscapes) noexcept
+{
+    return consecutiveEscapes >= maximumRingEscapes;
+}
+
 } // namespace uml::gpu

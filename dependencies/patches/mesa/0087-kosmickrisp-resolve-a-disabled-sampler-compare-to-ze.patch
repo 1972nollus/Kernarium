@@ -1,7 +1,7 @@
-From 398077e6ad7b4254fd963b6cb58577a9e4840acb Mon Sep 17 00:00:00 2001
+From 6307578373f0096745b5366153eda313ffe3ce54 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:44:03 +0900
-Subject: [PATCH 87/95] kosmickrisp: resolve a disabled sampler compare to
+Subject: [PATCH 087/107] kosmickrisp: resolve a disabled sampler compare to
  zero, not one
 
 A depth-compare instruction issued against a sampler whose compare is
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_sampler.c b/src/kosmickrisp/vulkan/kk_sampler.c
-index 40bc4d65..f1404cbb 100644
+index 40bc4d6..f1404cb 100644
 --- a/src/kosmickrisp/vulkan/kk_sampler.c
 +++ b/src/kosmickrisp/vulkan/kk_sampler.c
 @@ -65,10 +65,17 @@ pack_sampler_info(const struct VkSamplerCreateInfo *sampler_info,

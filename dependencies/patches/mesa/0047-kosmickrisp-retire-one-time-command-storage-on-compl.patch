@@ -1,7 +1,7 @@
-From 5344d8a45fad1d330815d8628064abc9b49ea581 Mon Sep 17 00:00:00 2001
+From 21f6d389aac8d3770092c376c8fd161ab46a0202 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 03:03:14 +0900
-Subject: [PATCH 47/95] kosmickrisp: retire one-time command storage on
+Subject: [PATCH 047/107] kosmickrisp: retire one-time command storage on
  completion
 
 Transfer native command buffers and allocators to a completion-owned batch for one-time Vulkan submissions. Keep separate submitter and callback references so early feedback cannot release commit input storage.
@@ -16,7 +16,7 @@ Retain native queues until completion callbacks finish and guard asynchronous de
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_completion.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 52f85b40..c4c41aea 100644
+index 52f85b4..c4c41ae 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -21,38 +21,101 @@
@@ -216,7 +216,7 @@ index 52f85b40..c4c41aea 100644
                                            dev->residency_set.handle);
     mtl_release(queue->mtl_handle);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 98535222..f35020cb 100644
+index 9853522..f35020c 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
 @@ -13,11 +13,31 @@
@@ -252,7 +252,7 @@ index 98535222..f35020cb 100644
  
  static inline struct kk_device *
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 61429f11..028739b9 100644
+index 61429f1..028739b 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -507,6 +507,28 @@ if with_tests
@@ -286,7 +286,7 @@ index 61429f11..028739b9 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_completion.m b/src/kosmickrisp/vulkan/tests/test_command_completion.m
 new file mode 100644
-index 00000000..bc5b601a
+index 0000000..bc5b601
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_command_completion.m
 @@ -0,0 +1,254 @@

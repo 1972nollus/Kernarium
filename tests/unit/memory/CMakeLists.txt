@@ -44,6 +44,30 @@ uml_add_unit_test(NAME memory-execution-gate-profile
     COMMAND uml_execution_gate_profile_tests)
 add_dependencies(unit-test-binaries uml_execution_gate_profile_tests)
 
+if(TARGET uml_native_mmu_test_variant)
+    add_executable(uml_native_window_reservation_tests
+        native_window_reservation_tests.cpp)
+    target_link_libraries(uml_native_window_reservation_tests PRIVATE
+        UML::MemoryTestComponent)
+    # The native-window placement helper is shared with the ARM64 white-box
+    # MMU tests and has no architecture content of its own.
+    target_include_directories(uml_native_window_reservation_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_native_window_reservation_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_native_window_reservation_tests PRIVATE
+        -Wall -Wextra -Werror)
+    # The test asserts where the host places allocations, which a concurrent
+    # VM-heavy test can perturb.
+    uml_add_unit_test(NAME memory-native-window-reservation
+        COMMAND uml_native_window_reservation_tests)
+    set_tests_properties(memory-native-window-reservation PROPERTIES
+        RUN_SERIAL TRUE)
+    add_dependencies(unit-test-binaries uml_native_window_reservation_tests)
+endif()
+
 add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
 target_link_libraries(uml_shared_backing_view_tests PRIVATE
     UML::MemorySharedBacking)

@@ -137,9 +137,10 @@ mapping in bounded descriptor batches, and a request-stream lock serializes the
 backend-request IRQ against the synchronous reply-wait drain so two vCPUs
 cannot split one framed request. Virtio-GPU host-visible blobs use the same
 16 KiB granularity without a private userspace ioctl or a bridge ABI change.
-This transport has no Android product: the ACK line does not negotiate or
-reserve the aperture, so it and its mapping-capacity policy apply only to the
-mainline Linux desktop guest.
+The ACK line carries the same shared-memory transport, aperture geometry, and
+mapping-capacity policy for its Venus Vulkan HAL. The two maintained kernel
+lines adapt the topic to their own source histories while preserving the same
+host-visible Virtio-GPU contract.
 
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service

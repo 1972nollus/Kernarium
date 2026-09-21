@@ -1,7 +1,7 @@
-From 262dcb83e105a38a2f32b474290d0052523c0c98 Mon Sep 17 00:00:00 2001
+From b5bcbc5a6c86e6732f6268b2f4ff83ba771c6ab0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:51:51 +0900
-Subject: [PATCH 06/95] kosmickrisp: report complete Metal diagnostics
+Subject: [PATCH 006/107] kosmickrisp: report complete Metal diagnostics
 
 ---
  src/kosmickrisp/vulkan/kk_debug.c  |  1 +
@@ -11,7 +11,7 @@ Subject: [PATCH 06/95] kosmickrisp: report complete Metal diagnostics
  4 files changed, 32 insertions(+), 3 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
-index 616c5648..375698e4 100644
+index 616c564..375698e 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.c
 +++ b/src/kosmickrisp/vulkan/kk_debug.c
 @@ -11,6 +11,7 @@ const struct debug_named_value flags[] = {
@@ -23,7 +23,7 @@ index 616c5648..375698e4 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
-index 4a418ecc..178dcc89 100644
+index 4a418ec..178dcc8 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.h
 +++ b/src/kosmickrisp/vulkan/kk_debug.h
 @@ -12,6 +12,8 @@ enum kk_debug {
@@ -36,7 +36,7 @@ index 4a418ecc..178dcc89 100644
  
  extern enum kk_debug kk_mesa_debug_flags;
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 28577a5e..c9d180dc 100644
+index 28577a5..c9d180d 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -8,6 +8,7 @@
@@ -96,7 +96,7 @@ index 28577a5e..c9d180dc 100644
     queue->vk.driver_submit = kk_queue_submit;
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 463c743c..9c2fe2b6 100644
+index 463c743..9c2fe2b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -31,6 +31,8 @@

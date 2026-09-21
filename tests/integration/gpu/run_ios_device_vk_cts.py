@@ -28,6 +28,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -41,10 +42,46 @@ BUNDLE_ID = "com.imxieyi.Kernarium"
 # file name inside its own Documents directory.
 DEFAULT_ROOTFS_FILENAME = "rootfs-vulkan-venus.ext4"
 PROGRESS_INTERVAL = 60
+# The guest kernel's reaper names what it killed. A fraction whose CTS process
+# is gone will never reach its final frame, and the guest has been observed to
+# stop printing entirely at that moment, so waiting out the stall guard costs
+# half an hour and yields nothing the console did not already hold.
+GUEST_OOM_KILL = re.compile(
+    r"Out of memory: Killed process \d+ \(([^)]+)\)"
+)
+# What the guest's own exit trap needs to transport its last QPA segment and
+# its summary, when it still can.
+OOM_GRACE_SECONDS = 180
+# A backend that abandons its connection says so and never serves that device
+# again. The guest driver discovers it one warning per interrupt instead, which
+# has produced a 139 MB console and a run that had to be ended by hand, so stop
+# reading shortly after the line appears rather than at the stall guard.
+LOST_VHOST_USER = re.compile(r"^.*vhost-user connection failed: .*$", re.M)
+LOST_TRANSPORT_GRACE_SECONDS = 60
 
 
 def fail(message: str) -> None:
     raise cts.CampaignError(message)
+
+
+def apply_campaign_profile(
+    options: argparse.Namespace,
+) -> vulkan.AppleMustpassProfile | None:
+    """Set the baked memory or reject an explicitly mismatched launch."""
+
+    profile = vulkan.apple_mustpass_profile_for_campaign(options.campaign)
+    if profile is None:
+        if options.memory_mib is None:
+            options.memory_mib = vulkan.APPLE_MUSTPASS_GUEST_MEMORY_MIB
+        return None
+    if options.memory_mib is None:
+        options.memory_mib = profile.guest_memory_mib
+    elif options.memory_mib != profile.guest_memory_mib:
+        fail(
+            f"{profile.identifier} is baked for "
+            f"{profile.guest_memory_mib} MiB, not {options.memory_mib} MiB"
+        )
+    return profile
 
 
 def device_command(*arguments: str) -> list[str]:
@@ -119,12 +156,133 @@ def stop_console(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
-def run_campaign(options: argparse.Namespace, log: Path) -> str:
+def device_mustpass_selection(
+    campaign: str,
+) -> vulkan.ReceiptSelection | None:
+    """Resolve a baked device mustpass identifier to its released fraction."""
+
+    for index in range(vulkan.APPLE_MUSTPASS_FRACTIONS):
+        if campaign == vulkan.apple_mustpass_campaign(index):
+            return vulkan.resolve_receipt_selection(
+                "current-must-pass",
+                (),
+                None,
+                vulkan.Fraction(index, vulkan.APPLE_MUSTPASS_FRACTIONS),
+            )
+    return None
+
+
+def validate_device_mustpass_attempt(
+    campaign: str,
+    transcript: str,
+    artifacts: dict[str, bytes],
+) -> dict[str, object]:
+    """Validate complete device coverage independently of case verdicts.
+
+    A returned result proves the QPA contains the exact post-exclusion case
+    union once, its transfer lost no bytes, and every status belongs to the
+    receipt's fail-closed oracle.  ``accepted_statuses`` is separate because a
+    complete campaign may contain real CTS failures and still be resumable as
+    finished coverage.
+    """
+
+    selection = device_mustpass_selection(campaign)
+    if selection is None:
+        fail(f"not a Vulkan device mustpass campaign: {campaign}")
+    receipt = vulkan.receipt_contract.validate_receipt(vulkan.RECEIPT_PATH)
+    result = vulkan.validate_receipt_attempt(
+        receipt,
+        selection,
+        transcript,
+        artifacts,
+        device_exclusions=vulkan.DEVICE_EXCLUSIONS,
+        headless_wsi=True,
+    )
+    return {
+        **result,
+        "traversal_complete": True,
+        "accepted_statuses": bool(result["qualification"]),
+    }
+
+
+def validate_non_mustpass_report(
+    artifacts: dict[str, bytes],
+    oom_report: str | None = None,
+    rejected: Sequence[str] = (),
+    transport_report: str | None = None,
+) -> dict[str, str]:
+    """Fail closed on generic device evidence without claiming coverage.
+
+    Historical smoke summaries do not all carry the newer transfer fields, so
+    their absence remains valid.  When the guest does state a transfer result,
+    however, it must describe a lossless QPA that the host actually received.
+    A delivered QPA is also authoritative enough to reject an exit status that
+    contradicts the released status oracle.
+    """
+
+    payload = artifacts.get("summary.txt")
+    if payload is None:
+        fail("the campaign delivered no summary")
+    summary = vulkan._summary(payload)
+    if oom_report is not None:
+        fail("the guest kernel killed the CTS process")
+    if transport_report is not None:
+        fail("the Vulkan transport was lost")
+    if rejected:
+        fail(
+            "the host rejected transported artifacts: "
+            + ",".join(sorted(rejected))
+        )
+
+    transfer = summary.get("qpa_transfer")
+    missing = summary.get("qpa_missing_bytes")
+    if transfer is None:
+        if missing is not None:
+            fail("device QPA missing-byte count has no transfer state")
+    elif transfer == "complete":
+        if missing is not None:
+            fail("complete device QPA transfer reports missing bytes")
+    elif transfer == "recovered":
+        if missing != "0":
+            fail("recovered device QPA transfer still misses bytes")
+    else:
+        fail("device QPA transfer is incomplete")
+
+    qpa = artifacts.get("results.qpa")
+    if transfer is not None and qpa is None:
+        fail("device QPA transfer has no host artifact")
+    if qpa is not None:
+        results = cts.parse_qpa(cts.decode_qpa(qpa))
+        receipt = vulkan.receipt_contract.validate_receipt(
+            vulkan.RECEIPT_PATH
+        )
+        nonaccepted = vulkan.classify_released_results(
+            results, receipt["runner_oracle"]
+        )
+        cts_rc = summary.get("cts_rc")
+        if (bool(nonaccepted) and cts_rc != "1") or (
+            not nonaccepted and cts_rc != "0"
+        ):
+            fail("CTS exit status disagrees with its delivered QPA")
+    return summary
+
+
+def run_campaign(
+    options: argparse.Namespace, log: Path
+) -> tuple[str, str | None, str | None]:
     """Hold the console until the campaign's last frame or the deadline.
 
-    The wait is bounded twice: an overall deadline, and a stall deadline that
-    only the console growing resets. A device that wedges with the screen on
-    would otherwise hold this lane for as long as the battery lasts.
+    The wait is bounded four times: an overall deadline, a stall deadline that
+    only the console growing resets, and a short grace after either of the two
+    events that end a fraction's useful output — the guest kernel reporting an
+    out-of-memory kill, or a vhost-user backend abandoning its connection. A
+    device that wedges with the screen on would otherwise hold this lane for as
+    long as the battery lasts; a guest whose CTS process the reaper took would
+    hold it for the whole stall guard; and a guest whose GPU transport died
+    keeps the console growing with one driver warning per interrupt, so the
+    stall guard never fires at all.
+
+    Returns the transcript, the reaper's own line, and the backend's own line.
     """
     command = device_command(
         "device", "process", "launch", "--device", options.device,
@@ -134,6 +292,9 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
     stall_deadline = time.monotonic() + options.stall_timeout
     next_update = time.monotonic() + PROGRESS_INTERVAL
     observed = 0
+    grace_deadline: float | None = None
+    oom_report: str | None = None
+    transport_report: str | None = None
     with log.open("wb") as output:
         process = subprocess.Popen(
             command,
@@ -147,7 +308,7 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
                     encoding="utf-8", errors="replace"
                 )
                 if cts.FINAL_ARTIFACT_FRAME in transcript:
-                    return transcript
+                    return transcript, oom_report, transport_report
                 exited = process.poll() is not None
                 now = time.monotonic()
                 size = log.stat().st_size
@@ -155,12 +316,38 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
                     observed = size
                     stall_deadline = now + options.stall_timeout
                 if exited:
-                    return transcript
+                    return transcript, oom_report, transport_report
+                if grace_deadline is None:
+                    found = GUEST_OOM_KILL.search(transcript)
+                    if found is not None:
+                        oom_report = found.group(0)
+                        grace_deadline = now + OOM_GRACE_SECONDS
+                        print(
+                            f"the guest kernel killed {found.group(1)} out of "
+                            f"memory; giving it {OOM_GRACE_SECONDS}s to "
+                            "transport what it has",
+                            flush=True,
+                        )
+                if grace_deadline is None:
+                    found = LOST_VHOST_USER.search(transcript)
+                    if found is not None:
+                        transport_report = found.group(0).strip()
+                        grace_deadline = now + LOST_TRANSPORT_GRACE_SECONDS
+                        print(
+                            "a vhost-user backend abandoned its connection; "
+                            f"giving the guest {LOST_TRANSPORT_GRACE_SECONDS}s "
+                            f"to transport what it has: {transport_report}",
+                            flush=True,
+                        )
                 if now >= deadline:
                     fail(
                         f"the campaign exceeded {options.timeout} seconds; "
                         f"see {log}"
                     )
+                if grace_deadline is not None and now >= grace_deadline:
+                    # Not a failure of this lane: the executed prefix is in the
+                    # transcript and the caller decodes and reports it.
+                    return transcript, oom_report, transport_report
                 if now >= stall_deadline:
                     fail(
                         "the console stopped growing for "
@@ -178,32 +365,95 @@ def run_campaign(options: argparse.Namespace, log: Path) -> str:
             stop_console(process)
 
 
-def report(artifacts: dict[str, bytes], transcript: str) -> int:
+def report(
+    artifacts: dict[str, bytes],
+    transcript: str,
+    oom_report: str | None = None,
+    rejected: Sequence[str] = (),
+    transport_report: str | None = None,
+    campaign: str | None = None,
+) -> int:
     """Judge the attempt by its summary, not by what the console says.
 
     The application echoes the generated guest launcher before running it, and
     that script carries its own ``UML_VK_CTS_ERROR`` strings inside ``||``
     clauses, so searching the transcript for the marker reports a failure on
     every successful run. ``summary.txt`` is the guest's own verdict.
+
+    A run the guest's reaper ended has no summary, so the executed prefix's own
+    status counts are printed either way: they are the only verdicts it has.
     """
 
     print("---- campaign summary ----")
     print("artifacts: " + (", ".join(sorted(artifacts)) or "none"))
+    summary: dict[str, str] = {}
     payload = artifacts.get("summary.txt")
     if payload is None:
         print("the campaign delivered no summary")
-        print("--------------------------")
-        return 1
-    summary: dict[str, str] = {}
-    for line in payload.decode("utf-8", errors="replace").splitlines():
-        key, separator, value = line.partition("=")
-        if separator:
-            summary[key] = value
-    for key in ("mode", "expected_case_count", "cts_rc", "formal_conformance"):
-        if key in summary:
-            print(f"{key}={summary[key]}")
+    else:
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                summary[key] = value
+        for key in (
+            "mode",
+            "fraction",
+            "expected_case_count",
+            *sorted(key for key in summary if key.startswith("device_")),
+            "cts_rc",
+            # A fraction that could not transport every QPA byte it produced
+            # reports that here rather than in the size of its results.
+            "qpa_transfer",
+            "qpa_missing_bytes",
+            "formal_conformance",
+        ):
+            if key in summary:
+                print(f"{key}={summary[key]}")
+    skipped = artifacts.get("skipped.txt")
+    if skipped is not None:
+        # Each row is "<reason>\t<case>": the reason the device left it out.
+        reasons = Counter(
+            line.partition("\t")[0]
+            for line in skipped.decode("utf-8", errors="replace").splitlines()
+            if line
+        )
+        print(f"skipped_for_a_device_limit={sum(reasons.values())}")
+        for reason, count in sorted(reasons.items()):
+            print(f"skipped_{reason}={count}")
+    validation: dict[str, object] | None = None
+    validation_error: str | None = None
+    selection = device_mustpass_selection(campaign) if campaign else None
+    if selection is not None:
+        try:
+            if oom_report is not None:
+                fail("the guest kernel killed the CTS process")
+            if transport_report is not None:
+                fail("the Vulkan transport was lost")
+            if rejected:
+                fail(
+                    "the host rejected transported artifacts: "
+                    + ",".join(sorted(rejected))
+                )
+            validation = validate_device_mustpass_attempt(
+                campaign or "", transcript, artifacts
+            )
+        except cts.CampaignError as error:
+            validation_error = str(error)
+    else:
+        try:
+            validate_non_mustpass_report(
+                artifacts,
+                oom_report,
+                rejected,
+                transport_report,
+            )
+        except cts.CampaignError as error:
+            validation_error = str(error)
     qpa = artifacts.get("results.qpa")
-    if qpa is not None:
+    if validation is not None:
+        for status, count in validation["status_counts"].items():
+            print(f"{status}={count}")
+    elif qpa is not None:
         statuses = Counter(
             match.decode("ascii")
             for match in re.findall(
@@ -212,7 +462,27 @@ def report(artifacts: dict[str, bytes], transcript: str) -> int:
         )
         for status, count in sorted(statuses.items()):
             print(f"{status}={count}")
-    failed = summary.get("cts_rc") != "0"
+    if oom_report is not None:
+        print(f"guest_out_of_memory={oom_report}")
+    if transport_report is not None:
+        # The guest lost a device from this line onwards, so every case after
+        # it is unjudged rather than passing.
+        print(f"lost_vhost_user_transport={transport_report}")
+    if rejected:
+        # A frame group the host could not accept: results the guest framed and
+        # this run does not hold. Named so the loss is not read as a short run.
+        print("undecodable_artifacts=" + ",".join(sorted(rejected)))
+    if validation_error is not None:
+        print(f"campaign_evidence_error={validation_error}")
+    if selection is not None:
+        complete = validation is not None
+        accepted = bool(validation and validation["accepted_statuses"])
+        failed = not accepted
+        print("vulkan_campaign_complete=" + ("true" if complete else "false"))
+        print("vulkan_statuses_accepted=" + ("true" if accepted else "false"))
+    else:
+        accepted = summary.get("cts_rc") == "0"
+        failed = validation_error is not None or not accepted
     print("vulkan_campaign_failed=" + ("true" if failed else "false"))
     print("--------------------------")
     return 1 if failed else 0
@@ -237,7 +507,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--rootfs-filename", default=DEFAULT_ROOTFS_FILENAME)
     parser.add_argument("--cpus", type=int, default=4)
-    parser.add_argument("--memory-mib", type=int, default=1536)
+    parser.add_argument("--memory-mib", type=int)
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
     parser.add_argument("--timeout", type=int, default=86400)
@@ -246,7 +516,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--artifact-root", type=Path,
                         default=DEFAULT_ARTIFACT_ROOT)
     options = parser.parse_args(argv)
-    if options.cpus < 1 or options.memory_mib < 512:
+    if options.cpus < 1 or (
+        options.memory_mib is not None and options.memory_mib < 512
+    ):
         parser.error("guest CPU and memory settings are invalid")
     if options.timeout < 1 or options.stall_timeout < 1:
         parser.error("timeouts must be positive")
@@ -263,6 +535,7 @@ def main(argv: list[str] | None = None) -> int:
             f"no Vulkan campaign {options.campaign}; the application carries "
             + ", ".join(carried)
         )
+    apply_campaign_profile(options)
     if options.artifact_root.exists():
         fail(f"artifact directory already exists: {options.artifact_root}")
     options.artifact_root.mkdir(parents=True)
@@ -277,12 +550,22 @@ def main(argv: list[str] | None = None) -> int:
 
     log = options.artifact_root / "console.log"
     started = time.monotonic()
-    transcript = run_campaign(options, log)
+    transcript, oom_report, transport_report = run_campaign(options, log)
     print(f"console closed after {time.monotonic() - started:.0f}s: {log}")
-    artifacts = cts.decode_artifacts(transcript, partial=True)
+    rejected: list[str] = []
+    artifacts = cts.decode_artifacts(
+        transcript, partial=True, rejected=rejected
+    )
     cts.write_artifacts(artifacts, options.artifact_root / "artifacts")
     print(f"artifacts: {options.artifact_root / 'artifacts'}")
-    return report(artifacts, transcript)
+    return report(
+        artifacts,
+        transcript,
+        oom_report,
+        rejected,
+        transport_report,
+        campaign=options.campaign,
+    )
 
 
 if __name__ == "__main__":

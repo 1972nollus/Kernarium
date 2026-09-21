@@ -1,8 +1,8 @@
-From 786159076ef1907c3b0ba02eb31ad6970b422272 Mon Sep 17 00:00:00 2001
+From 4e5e4288931da3203b5074a3ec9d20022082b5ff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 05:11:39 +0900
-Subject: [PATCH 65/95] mesa: treat RGB9_E5 as the floating-point read type it
- is
+Subject: [PATCH 065/107] mesa: treat RGB9_E5 as the floating-point read type
+ it is
 
 glReadPixels with GL_UNSIGNED_INT_5_9_9_9_REV packs floating-point
 values, exactly like GL_UNSIGNED_INT_10F_11F_11F_REV, but only the
@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 2 deletions(-)
 
 diff --git a/src/mesa/main/readpix.c b/src/mesa/main/readpix.c
-index 8aa55aa3..582969a6 100644
+index 8aa55aa..582969a 100644
 --- a/src/mesa/main/readpix.c
 +++ b/src/mesa/main/readpix.c
 @@ -121,7 +121,8 @@ _mesa_get_readpixels_transfer_ops(const struct gl_context *ctx,

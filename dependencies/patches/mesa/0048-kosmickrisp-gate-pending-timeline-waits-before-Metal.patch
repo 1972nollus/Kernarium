@@ -1,7 +1,7 @@
-From 496997989e37b124dc2743ea8dd4df4ddde12ee7 Mon Sep 17 00:00:00 2001
+From 1901550f9e0a6208b1ee7fd3140ce730b765d44f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
-Subject: [PATCH 48/95] kosmickrisp: gate pending timeline waits before Metal
+Subject: [PATCH 048/107] kosmickrisp: gate pending timeline waits before Metal
  submission
 
 Use on-demand common submission for unsatisfied timeline waits so Metal cannot retire a native event wait before the host signals it. Move reusable binary payloads correctly and stop the worker before device resource destruction.
@@ -26,7 +26,7 @@ Keep absolute CPU wait deadlines while observing device loss, wake queue drains 
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 09c0985e..fe6f29da 100644
+index 09c0985..fe6f29d 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -298,6 +298,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -69,7 +69,7 @@ index 09c0985e..fe6f29da 100644
     assert(list_is_empty(&dev->address_space.allocations));
     simple_mtx_destroy(&dev->address_space.mutex);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 28294b60..acd2bc3a 100644
+index 28294b6..acd2bc3 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -1188,6 +1188,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
@@ -82,7 +82,7 @@ index 28294b60..acd2bc3a 100644
     pdev->sync_types[st_idx++] = &kk_sync_type;
     pdev->sync_types[st_idx++] = &pdev->sync_binary_type.sync;
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index c4c41aea..e4ad0842 100644
+index c4c41ae..e4ad084 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -217,6 +217,9 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
@@ -112,7 +112,7 @@ index c4c41aea..e4ad0842 100644
 -   vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index f44200c3..4f03bf30 100644
+index f44200c..4f03bf3 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -7,6 +7,11 @@
@@ -306,7 +306,7 @@ index f44200c3..4f03bf30 100644
     .finish = kk_timeline_finish,
     .signal = kk_timeline_signal,
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index da4f1499..a045d8ae 100644
+index da4f149..a045d8a 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
 @@ -16,8 +16,23 @@ struct kk_queue;
@@ -334,7 +334,7 @@ index da4f1499..a045d8ae 100644
 +
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 028739b9..e8d9a723 100644
+index 028739b..e8d9a72 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -507,6 +507,81 @@ if with_tests
@@ -421,7 +421,7 @@ index 028739b9..e8d9a723 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 new file mode 100644
-index 00000000..8998f9a9
+index 0000000..8998f9a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 @@ -0,0 +1,348 @@
@@ -775,7 +775,7 @@ index 00000000..8998f9a9
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
 new file mode 100644
-index 00000000..e808a617
+index 0000000..e808a61
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
 @@ -0,0 +1,365 @@
@@ -1146,7 +1146,7 @@ index 00000000..e808a617
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 new file mode 100644
-index 00000000..7b8dd8bc
+index 0000000..7b8dd8b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 @@ -0,0 +1,182 @@
@@ -1333,7 +1333,7 @@ index 00000000..7b8dd8bc
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_queue.c b/src/vulkan/runtime/vk_queue.c
-index b6b8ba7e..65c03393 100644
+index b6b8ba7..65c0339 100644
 --- a/src/vulkan/runtime/vk_queue.c
 +++ b/src/vulkan/runtime/vk_queue.c
 @@ -729,6 +729,18 @@ done:

@@ -44,6 +44,7 @@ void failAfterAllocations(std::size_t count) noexcept;
 void clearAllocationFailure() noexcept;
 
 void runVhostUserMessageTests();
+void runVhostUserDescriptorCeilingTests();
 void runVhostUserServerTests(const char* executable);
 [[noreturn]] void runVhostUserServerChild(std::string_view mode);
 void runVhostUserProtocolTests();

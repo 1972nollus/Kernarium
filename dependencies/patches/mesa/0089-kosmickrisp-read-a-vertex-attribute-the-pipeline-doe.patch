@@ -1,8 +1,8 @@
-From b2a304ba86b6ba559ab63b8dfe07eda44a1b724d Mon Sep 17 00:00:00 2001
+From f0dd331cd37a4b31dfb7a8e9ff2a893bd198c1ff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 09:52:56 +0900
-Subject: [PATCH 89/95] kosmickrisp: read a vertex attribute the pipeline does
- not describe
+Subject: [PATCH 089/107] kosmickrisp: read a vertex attribute the pipeline
+ does not describe
 
 A vertex shader may declare an input that the pipeline's vertex-input
 state leaves undescribed. Vulkan does not make that an error: the values
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_unbound_vertex_attribute.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
-index 1217364b..fee8437f 100644
+index 1217364..fee8437 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.c
 @@ -146,6 +146,77 @@ load_unaligned_components(nir_builder *b, nir_def *base,
@@ -127,7 +127,7 @@ index 1217364b..fee8437f 100644
  pass(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
-index 7cb1ed3d..ee5af352 100644
+index 7cb1ed3..ee5af35 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_vbo.h
 @@ -38,6 +38,8 @@ struct kk_attribute {
@@ -140,7 +140,7 @@ index 7cb1ed3d..ee5af352 100644
  
  unsigned kk_vbo_interchange_alignment(enum pipe_format format);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index bb548fa9..98e76fc2 100644
+index bb548fa..98e76fc 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1675,6 +1675,18 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
@@ -163,7 +163,7 @@ index bb548fa9..98e76fc2 100644
         * inputs since we read vertex attributes from UBOs. */
        if (!emulated_vs &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c66f257a..52f73685 100644
+index c66f257..52f7368 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -1033,6 +1033,26 @@ if with_tests
@@ -195,7 +195,7 @@ index c66f257a..52f73685 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_unbound_vertex_attribute.c b/src/kosmickrisp/vulkan/tests/test_unbound_vertex_attribute.c
 new file mode 100644
-index 00000000..14107118
+index 0000000..1410711
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_unbound_vertex_attribute.c
 @@ -0,0 +1,148 @@

@@ -1,8 +1,8 @@
-From acfeb8ae50124dc873ee146cff8e31dec9b537b1 Mon Sep 17 00:00:00 2001
+From 3fd16fc70e7e032bf1cc99450b320b73af5bc64c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 02:12:09 +0900
-Subject: [PATCH 71/95] vulkan/wsi: only ask for immediate present where Metal
- offers it
+Subject: [PATCH 071/107] vulkan/wsi: only ask for immediate present where
+ Metal offers it
 
 CAMetalLayer.displaySyncEnabled is macOS-only; every other Apple platform
 composites on the display refresh boundary and the property does not exist,
@@ -14,7 +14,7 @@ setter so both paths stay in one place.
  1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_metal_layer.m b/src/vulkan/wsi/wsi_common_metal_layer.m
-index 67c3e7ff..57c9c83b 100644
+index 67c3e7f..57c9c83 100644
 --- a/src/vulkan/wsi/wsi_common_metal_layer.m
 +++ b/src/vulkan/wsi/wsi_common_metal_layer.m
 @@ -6,6 +6,8 @@

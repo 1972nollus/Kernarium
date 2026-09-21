@@ -1,7 +1,7 @@
-From 8dd0f319a916e1d4fff5fd45c02125957551e9dc Mon Sep 17 00:00:00 2001
+From 429e895410008edd05484d64ad73db0c490d08b7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 14:50:52 +0900
-Subject: [PATCH 53/95] kosmickrisp: present a single-invocation subgroup
+Subject: [PATCH 053/107] kosmickrisp: present a single-invocation subgroup
  outside the SIMD stages
 
 Metal declares the SIMD-group attributes and the SIMD- and quad-group
@@ -37,7 +37,7 @@ Covered by kosmickrisp_subgroup_stages.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_subgroup_stages.c
 
 diff --git a/src/kosmickrisp/compiler/msl_nir_lower_subgroups.c b/src/kosmickrisp/compiler/msl_nir_lower_subgroups.c
-index 87a46649..01bfbe41 100644
+index 87a4664..01bfbe4 100644
 --- a/src/kosmickrisp/compiler/msl_nir_lower_subgroups.c
 +++ b/src/kosmickrisp/compiler/msl_nir_lower_subgroups.c
 @@ -51,11 +51,132 @@ lower_bool_ops(nir_builder *b, nir_intrinsic_instr *intrin, void *_unused)
@@ -187,7 +187,7 @@ index 87a46649..01bfbe41 100644
              nir_metadata_control_flow, NULL);
  }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index bf22976b..3e9a1881 100644
+index bf22976..3e9a188 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -941,6 +941,20 @@ if with_tests
@@ -213,7 +213,7 @@ index bf22976b..3e9a1881 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_subgroup_stages.c b/src/kosmickrisp/vulkan/tests/test_subgroup_stages.c
 new file mode 100644
-index 00000000..e8d38bd1
+index 0000000..e8d38bd
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_subgroup_stages.c
 @@ -0,0 +1,211 @@

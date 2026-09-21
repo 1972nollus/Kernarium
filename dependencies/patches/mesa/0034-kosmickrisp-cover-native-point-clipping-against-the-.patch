@@ -1,7 +1,7 @@
-From 5e8dd66ca2f6a2982d55dac9ff2f460c638d5059 Mon Sep 17 00:00:00 2001
+From 60dadd1fa8567d0654aa20f67104d37c5d68ccd9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 03:21:00 +0900
-Subject: [PATCH 34/95] kosmickrisp: cover native point clipping against the
+Subject: [PATCH 034/107] kosmickrisp: cover native point clipping against the
  view volume
 
 Metal keeps a point whose centre leaves the view volume as long as the
@@ -34,7 +34,7 @@ vertex stage and through a point-emitting geometry stage.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 183fd30b..57c6c79b 100644
+index 183fd30..57c6c79 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -270,6 +270,20 @@ if with_tests
@@ -60,7 +60,7 @@ index 183fd30b..57c6c79b 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
 new file mode 100755
-index 00000000..ce3afbe6
+index 0000000..ce3afbe
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -73,7 +73,7 @@ index 00000000..ce3afbe6
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
 new file mode 100644
-index 00000000..80f7f93a
+index 0000000..80f7f93
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
 @@ -0,0 +1,7 @@
@@ -86,7 +86,7 @@ index 00000000..80f7f93a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
 new file mode 100644
-index 00000000..50544d69
+index 0000000..50544d6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
 @@ -0,0 +1,20 @@
@@ -112,7 +112,7 @@ index 00000000..50544d69
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom
 new file mode 100644
-index 00000000..ef84c776
+index 0000000..ef84c77
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom
 @@ -0,0 +1,23 @@
@@ -141,7 +141,7 @@ index 00000000..ef84c776
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom.h b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom.h
 new file mode 100644
-index 00000000..3da54e8d
+index 0000000..3da54e8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.geom.h
 @@ -0,0 +1,57 @@
@@ -204,7 +204,7 @@ index 00000000..3da54e8d
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert
 new file mode 100644
-index 00000000..2dc14ac1
+index 0000000..2dc14ac
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert
 @@ -0,0 +1,15 @@
@@ -225,7 +225,7 @@ index 00000000..2dc14ac1
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert.h b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert.h
 new file mode 100644
-index 00000000..cc8b0828
+index 0000000..cc8b082
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.vert.h
 @@ -0,0 +1,38 @@
@@ -269,7 +269,7 @@ index 00000000..cc8b0828
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp b/src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp
 new file mode 100644
-index 00000000..59503ec8
+index 0000000..59503ec
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp
 @@ -0,0 +1,481 @@

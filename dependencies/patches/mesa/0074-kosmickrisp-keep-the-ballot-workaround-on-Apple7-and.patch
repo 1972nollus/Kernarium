@@ -1,7 +1,7 @@
-From 308b578a04b62ddb43cc2d5143a5f8c8b609cc22 Mon Sep 17 00:00:00 2001
+From c4de0af47978d04668bf88b527463d43aaff2d57 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:05:49 +0900
-Subject: [PATCH 74/95] kosmickrisp: keep the ballot workaround on Apple7 and
+Subject: [PATCH 074/107] kosmickrisp: keep the ballot workaround on Apple7 and
  Apple8
 
 KK_WORKAROUND_3 routes every ballot and vote through simd_or, because Metal's
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 16 insertions(+), 5 deletions(-)
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 8d672860..ef37fc4c 100644
+index 8d67286..ef37fc4 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -508,10 +508,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
@@ -58,7 +58,7 @@ index 8d672860..ef37fc4c 100644
  KK_WORKAROUND_2
  ---------------
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index f4c61695..4a8f20b4 100644
+index f4c6169..4a8f20b 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -245,15 +245,17 @@ kk_parse_device_environment_options(struct kk_device *dev)

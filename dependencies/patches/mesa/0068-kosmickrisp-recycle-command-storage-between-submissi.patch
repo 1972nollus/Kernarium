@@ -1,7 +1,7 @@
-From 901d92a86db62810cf8dacc357cbf0c07666f167 Mon Sep 17 00:00:00 2001
+From 905dfe5933ee7569ab6503993688b85a46510a26 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:35:16 +0900
-Subject: [PATCH 68/95] kosmickrisp: recycle command storage between
+Subject: [PATCH 068/107] kosmickrisp: recycle command storage between
  submissions
 
 A Metal command allocator owns the storage its encoders record into. Creating
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  5 files changed, 202 insertions(+), 17 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 11fc8968..23b1a175 100644
+index 11fc896..23b1a17 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -99,7 +99,7 @@ index 11fc8968..23b1a175 100644
           kk_reset_cmd_buffer(&cmd->vk,
                               VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index a3751869..f4c61695 100644
+index a375186..f4c6169 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -17,6 +17,8 @@
@@ -222,7 +222,7 @@ index a3751869..f4c61695 100644
     assert(list_is_empty(&dev->address_space.allocations));
     simple_mtx_destroy(&dev->address_space.mutex);
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index af6992bd..16ec133e 100644
+index af6992b..16ec133 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -81,6 +81,39 @@ struct kk_precompiled_cache {
@@ -276,7 +276,7 @@ index af6992bd..16ec133e 100644
     struct kk_queue queue;
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index e4ad0842..f7f30265 100644
+index e4ad084..f7f3026 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -69,6 +69,8 @@ struct kk_completed_recording {
@@ -312,7 +312,7 @@ index e4ad0842..f7f30265 100644
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
  
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_completion.m b/src/kosmickrisp/vulkan/tests/test_command_completion.m
-index bc5b601a..64fe5be5 100644
+index bc5b601..64fe5be 100644
 --- a/src/kosmickrisp/vulkan/tests/test_command_completion.m
 +++ b/src/kosmickrisp/vulkan/tests/test_command_completion.m
 @@ -41,29 +41,67 @@

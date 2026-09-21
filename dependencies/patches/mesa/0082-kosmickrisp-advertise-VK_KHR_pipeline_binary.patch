@@ -1,7 +1,7 @@
-From 4d69c0c2599578c442c26bbc7da9b23f6ef9cfb1 Mon Sep 17 00:00:00 2001
+From d3f1b59804d15c77e8f17531291ebee22f7b996e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:18:29 +0900
-Subject: [PATCH 82/95] kosmickrisp: advertise VK_KHR_pipeline_binary
+Subject: [PATCH 082/107] kosmickrisp: advertise VK_KHR_pipeline_binary
 
 VP_ANDROID_17_requirements makes this extension mandatory. It lets an
 application take the compiled form of a pipeline out of the implementation,
@@ -33,7 +33,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 813ef0d9..0099ae11 100644
+index 813ef0d..0099ae1 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -122,6 +122,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

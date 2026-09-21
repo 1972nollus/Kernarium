@@ -1,7 +1,7 @@
-From 8350ebc3b3bd29e376996832c8160e10ada1cf25 Mon Sep 17 00:00:00 2001
+From 914bde2d39030e23dfec671b651c478116b9cc0d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 04:52:53 +0900
-Subject: [PATCH 51/95] kosmickrisp: restart the render encoder for layered
+Subject: [PATCH 051/107] kosmickrisp: restart the render encoder for layered
  draws
 
 A Metal render command encoder that has already run one draw drops most of
@@ -92,7 +92,7 @@ misrouted multiview clear without the recorded amplification mapping.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_multiview_clear_attachments.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 4e1a6c00..ea56c611 100644
+index 4e1a6c0..ea56c61 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,71 @@ info on what was updated.
@@ -168,7 +168,7 @@ index 4e1a6c00..ea56c611 100644
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 5d025ea6..98444414 100644
+index 5d025ea..9844441 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -305,14 +305,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
@@ -226,7 +226,7 @@ index 5d025ea6..98444414 100644
  cs_get_render(struct kk_cmd_buffer *cmd)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 101f364d..877307ea 100644
+index 101f364..877307e 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -207,6 +207,17 @@ struct kk_graphics_state {
@@ -258,7 +258,7 @@ index 101f364d..877307ea 100644
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 48a76984..e7c666bf 100644
+index 48a7698..e7c666b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -354,6 +354,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -314,7 +314,7 @@ index 48a76984..e7c666bf 100644
        if (data.index.el_size_B) {
           struct kk_addr_range index_range =
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_meta.c b/src/kosmickrisp/vulkan/kk_cmd_meta.c
-index 30c4e4a8..11ceccbd 100644
+index 30c4e4a..11ceccb 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_meta.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_meta.c
 @@ -298,7 +298,11 @@ kk_CmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t attachmentCount,
@@ -340,7 +340,7 @@ index 30c4e4a8..11ceccbd 100644
  
  void
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 909edb08..9e57f0c2 100644
+index 909edb0..9e57f0c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -274,6 +274,34 @@ if with_tests
@@ -380,7 +380,7 @@ index 909edb08..9e57f0c2 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh
 new file mode 100755
-index 00000000..ac0d4bfd
+index 0000000..ac0d4bf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -393,7 +393,7 @@ index 00000000..ac0d4bfd
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag
 new file mode 100644
-index 00000000..76fb4ad0
+index 0000000..76fb4ad
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag
 @@ -0,0 +1,9 @@
@@ -408,7 +408,7 @@ index 00000000..76fb4ad0
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag.h b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag.h
 new file mode 100644
-index 00000000..8d6cffae
+index 0000000..8d6cffa
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.frag.h
 @@ -0,0 +1,29 @@
@@ -443,7 +443,7 @@ index 00000000..8d6cffae
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert
 new file mode 100644
-index 00000000..f20b80b1
+index 0000000..f20b80b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert
 @@ -0,0 +1,24 @@
@@ -473,7 +473,7 @@ index 00000000..f20b80b1
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert.h b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert.h
 new file mode 100644
-index 00000000..afb9aab6
+index 0000000..afb9aab
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/points.vert.h
 @@ -0,0 +1,72 @@
@@ -551,7 +551,7 @@ index 00000000..afb9aab6
 +0x0000003d,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh
 new file mode 100755
-index 00000000..6c7f9a12
+index 0000000..6c7f9a1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -564,7 +564,7 @@ index 00000000..6c7f9a12
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag
 new file mode 100644
-index 00000000..7c68ed2d
+index 0000000..7c68ed2
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag
 @@ -0,0 +1,7 @@
@@ -577,7 +577,7 @@ index 00000000..7c68ed2d
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag.h b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag.h
 new file mode 100644
-index 00000000..50544d69
+index 0000000..50544d6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.frag.h
 @@ -0,0 +1,20 @@
@@ -603,7 +603,7 @@ index 00000000..50544d69
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert
 new file mode 100644
-index 00000000..df60a8a0
+index 0000000..df60a8a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert
 @@ -0,0 +1,16 @@
@@ -625,7 +625,7 @@ index 00000000..df60a8a0
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert.h b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert.h
 new file mode 100644
-index 00000000..e8270da2
+index 0000000..e8270da
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/quad.vert.h
 @@ -0,0 +1,57 @@
@@ -688,7 +688,7 @@ index 00000000..e8270da2
 +0x00000028,0x0000002e,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
 new file mode 100644
-index 00000000..49abc983
+index 0000000..49abc98
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
 @@ -0,0 +1,448 @@
@@ -1142,7 +1142,7 @@ index 00000000..49abc983
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_multiview_clear_attachments.cpp b/src/kosmickrisp/vulkan/tests/test_multiview_clear_attachments.cpp
 new file mode 100644
-index 00000000..7c81b169
+index 0000000..7c81b16
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_multiview_clear_attachments.cpp
 @@ -0,0 +1,450 @@

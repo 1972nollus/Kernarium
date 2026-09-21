@@ -1,7 +1,7 @@
-From 4e0a715a1a16ddeb093293a6614f103e0f9e3ff6 Mon Sep 17 00:00:00 2001
+From c514cf9f79eb0139be16fef3dfa47b5ae2374239 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:15:23 +0900
-Subject: [PATCH 86/95] zink: do not answer a query from the fast path that
+Subject: [PATCH 086/107] zink: do not answer a query from the fast path that
  skips its fixups
 
 zink_get_query_result() has a non-blocking shortcut that reads one Vulkan
@@ -31,7 +31,7 @@ poll counter had reached the threshold before the batch completed.
  1 file changed, 29 insertions(+), 3 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_query.c b/src/gallium/drivers/zink/zink_query.c
-index e02eb56c..14db030d 100644
+index e02eb56..14db030 100644
 --- a/src/gallium/drivers/zink/zink_query.c
 +++ b/src/gallium/drivers/zink/zink_query.c
 @@ -104,6 +104,23 @@ get_num_starts(struct zink_query *q)

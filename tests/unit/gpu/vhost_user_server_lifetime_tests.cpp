@@ -593,6 +593,53 @@ void anOverdueFenceEscapesOrderingBeforeItIsRetired()
     }
 }
 
+/* One wedged submission costs its ring two windows and one report. A ring that
+ * needs that again, and again, is not carrying a stuck submission: the
+ * renderer has stopped answering for it, and every further fence buys the same
+ * nothing at the same price. A Vulkan CTS fraction paid thirty seconds per
+ * test case for 2,700 seconds and said nothing beyond the per-fence pair, so
+ * what has to be watched is the ring's count, not the fence. */
+void aRingThatStopsRetiringIsCountedAndRevivable()
+{
+    require(!ringHasStoppedRetiring(0));
+    require(!ringHasStoppedRetiring(maximumRingEscapes - 1));
+    require(ringHasStoppedRetiring(maximumRingEscapes));
+    require(ringHasStoppedRetiring(maximumRingEscapes + 1));
+
+    /* One wedged submission can never reach the count on its own: the escape
+     * spends both of its windows on that one fence and retires it once. */
+    require(maximumRingEscapes > 1);
+
+    /* Model exactly what the drain loop keeps: every renderer-less retirement
+     * raises the count, the ring is reported once as it crosses, and a ring
+     * already known dead is neither counted again nor reported again. */
+    unsigned consecutive = 0;
+    unsigned reports = 0;
+    const auto retiredWithoutTheRenderer = [&] {
+        if (ringHasStoppedRetiring(consecutive))
+            return;
+        ++consecutive;
+        if (ringHasStoppedRetiring(consecutive))
+            ++reports;
+    };
+    for (unsigned escape = 0; escape < maximumRingEscapes * 4; ++escape)
+        retiredWithoutTheRenderer();
+    require(consecutive == maximumRingEscapes);
+    require(reports == 1);
+
+    /* A retirement the renderer does make clears the count, and the ring pays
+     * the whole escape again before it can be called dead a second time. */
+    consecutive = 0;
+    require(!ringHasStoppedRetiring(consecutive));
+    for (unsigned escape = 0; escape + 1 < maximumRingEscapes; ++escape)
+        retiredWithoutTheRenderer();
+    require(!ringHasStoppedRetiring(consecutive));
+    require(reports == 1);
+    retiredWithoutTheRenderer();
+    require(ringHasStoppedRetiring(consecutive));
+    require(reports == 2);
+}
+
 void runVhostUserServerTests(const char* executable)
 {
     // Metal's compiler service is not a supported post-fork initialization
@@ -618,6 +665,7 @@ void runVhostUserServerTests(const char* executable)
     standaloneRunCanBeRetriedWithoutLeaking();
     standaloneRunDoesNotReplaceExistingPath();
     anOverdueFenceEscapesOrderingBeforeItIsRetired();
+    aRingThatStopsRetiringIsCountedAndRevivable();
 }
 
 } // namespace uml::gpu::testing

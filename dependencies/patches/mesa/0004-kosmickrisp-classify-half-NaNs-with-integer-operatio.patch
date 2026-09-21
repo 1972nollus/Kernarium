@@ -1,7 +1,8 @@
-From 7769606e5575fd6c4041736a529bc952d41182c1 Mon Sep 17 00:00:00 2001
+From 361f39d24408e849e265885bfbc344e5e1cb68e5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:33:07 +0900
-Subject: [PATCH 04/95] kosmickrisp: classify half NaNs with integer operations
+Subject: [PATCH 004/107] kosmickrisp: classify half NaNs with integer
+ operations
 
 ---
  src/kosmickrisp/compiler/msl_type_inference.c |  6 +--
@@ -9,7 +10,7 @@ Subject: [PATCH 04/95] kosmickrisp: classify half NaNs with integer operations
  2 files changed, 38 insertions(+), 12 deletions(-)
 
 diff --git a/src/kosmickrisp/compiler/msl_type_inference.c b/src/kosmickrisp/compiler/msl_type_inference.c
-index 11b78d14..a65587e0 100644
+index 11b78d1..a65587e 100644
 --- a/src/kosmickrisp/compiler/msl_type_inference.c
 +++ b/src/kosmickrisp/compiler/msl_type_inference.c
 @@ -753,11 +753,11 @@ emit_src_component(struct nir_to_msl_ctx *ctx, nir_src *src, unsigned comp)
@@ -28,7 +29,7 @@ index 11b78d14..a65587e0 100644
           /* Building the types explicitly is required since the MSL compiler is
            * too dumb to understand that "max(as_type<int>(t53), -2147483648)" is
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 305f6ef5..975c7237 100644
+index 305f6ef..975c723 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -245,6 +245,34 @@ alu_funclike_precise(struct nir_to_msl_ctx *ctx, nir_alu_instr *instr,

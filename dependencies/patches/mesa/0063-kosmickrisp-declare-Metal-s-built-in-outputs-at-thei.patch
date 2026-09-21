@@ -1,8 +1,8 @@
-From a0157cfb463645261a986702d4a2a2b2b64da1ca Mon Sep 17 00:00:00 2001
+From aedc712c7e6be991cf456c260e13d38146815701 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:01:21 +0900
-Subject: [PATCH 63/95] kosmickrisp: declare Metal's built-in outputs at their
- fixed shape
+Subject: [PATCH 063/107] kosmickrisp: declare Metal's built-in outputs at
+ their fixed shape
 
 The MSL translator sizes each output struct member from the components
 the shader happens to store, but Metal fixes the type of the slots it
@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 61 insertions(+)
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index a5ac417b..0a7295b6 100644
+index a5ac417..0a7295b 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -473,6 +473,50 @@ msl_fs_varying_components(nir_shader *shader)

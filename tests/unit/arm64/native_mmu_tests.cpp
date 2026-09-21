@@ -453,8 +453,8 @@ void test_prot_none_shadow_flush_and_release()
 		"PROT_NONE sole-quarter unmap failed");
 	require(space->mapping_count_for_testing() == initial_mappings &&
 		space->materialized_slot_count_for_testing() == initial_slots &&
-		!uml::testing::vm_address_is_mapped(
-			reinterpret_cast<void *>(address)),
+		uml::testing::released_into_native_window(
+			address, guest_page_size),
 		"PROT_NONE all-absent unmap retained its host slot");
 
 	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
@@ -494,8 +494,8 @@ void test_prot_none_shadow_flush_and_release()
 		guest_page_size) == 0 &&
 		space->mapping_count_for_testing() == initial_mappings &&
 		space->materialized_slot_count_for_testing() == initial_slots &&
-		!uml::testing::vm_address_is_mapped(
-			reinterpret_cast<void *>(address)),
+		uml::testing::released_into_native_window(
+			address, guest_page_size),
 		"PROT_NONE flush-error fixture retained its host slot");
 }
 

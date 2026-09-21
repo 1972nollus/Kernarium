@@ -1,8 +1,8 @@
-From a3ed5e2eb2cad3faa2705e2000905d14f752e8c5 Mon Sep 17 00:00:00 2001
+From e7063446cf48aad86b0ea1227788730ef34dbbc0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 11:37:45 +0900
-Subject: [PATCH 39/95] kosmickrisp: cover emulated border colours in the Meson
- suite
+Subject: [PATCH 039/107] kosmickrisp: cover emulated border colours in the
+ Meson suite
 
 The custom border emulation reconstructs a Vulkan border colour from two
 Metal samples, and a depth-compare sample additionally reconstructs the
@@ -25,7 +25,7 @@ border-colour topic itself.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7a105242..3f76669c 100644
+index 7a10524..3f76669 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -580,6 +580,28 @@ if with_tests
@@ -59,7 +59,7 @@ index 7a105242..3f76669c 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 new file mode 100644
-index 00000000..79f37341
+index 0000000..79f3734
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 @@ -0,0 +1,286 @@

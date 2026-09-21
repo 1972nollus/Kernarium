@@ -254,9 +254,14 @@ def vulkan_mustpass_setup(
     The smoke campaign above proves the stack; this is the same guest launcher
     over a released fraction instead of the mandatory list. Only the ext4
     derivative carries the released caselists, so the EROFS image refuses it.
+
+    A device campaign is the one lane whose guest memory is fixed by the
+    platform's jetsam budget, so it is the only lane that applies the driver's
+    device-memory exclusions. The guest transports the excluded names.
     """
 
-    identifier = driver.apple_mustpass_campaign(index)
+    profile = driver.apple_mustpass_profile(index)
+    identifier = profile.identifier
     selection = driver.resolve_receipt_selection(
         "current-must-pass",
         (),
@@ -270,6 +275,7 @@ def vulkan_mustpass_setup(
         timeout=driver.APPLE_MUSTPASS_TIMEOUT,
         progress_timeout=driver.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
         receipt_path=receipt_path,
+        device_exclusions=driver.DEVICE_EXCLUSIONS,
     ).rstrip()
     service = """[Unit]
 Description=Darwin UML receipt-backed Vulkan CTS mustpass fraction
@@ -470,7 +476,9 @@ def generate_header(
                         "raw-string delimiter collision for Vulkan mustpass "
                         f"fraction {fraction}"
                     )
-            identifier = vulkan_driver.apple_mustpass_campaign(fraction)
+            identifier = vulkan_driver.apple_mustpass_profile(
+                fraction
+            ).identifier
             rows.append(
                 "    Campaign {"
                 f"{json.dumps(identifier)}, "

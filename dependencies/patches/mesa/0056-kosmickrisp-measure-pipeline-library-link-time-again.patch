@@ -1,8 +1,8 @@
-From bb7124ab59fdd847aa13953d8918402ffa117ff9 Mon Sep 17 00:00:00 2001
+From 9b3dbf55547c62e88e8e2579aa68a7a7fbe3e8e4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 15:34:12 +0900
-Subject: [PATCH 56/95] kosmickrisp: measure pipeline library link time against
- fast linking
+Subject: [PATCH 056/107] kosmickrisp: measure pipeline library link time
+ against fast linking
 
 VK_EXT_graphics_pipeline_library expects a link that omits
 VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT to be cheap next to building
@@ -57,7 +57,7 @@ requirement the day the answer becomes true.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5d3c216f..b3538413 100644
+index 5d3c216..b353841 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -521,6 +521,20 @@ if with_tests
@@ -83,7 +83,7 @@ index 5d3c216f..b3538413 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
 new file mode 100755
-index 00000000..d142b71b
+index 0000000..d142b71
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -96,7 +96,7 @@ index 00000000..d142b71b
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag
 new file mode 100644
-index 00000000..70a7aa9e
+index 0000000..70a7aa9
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag
 @@ -0,0 +1,7 @@
@@ -109,7 +109,7 @@ index 00000000..70a7aa9e
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag.h b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag.h
 new file mode 100644
-index 00000000..aa7d28bc
+index 0000000..aa7d28b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag.h
 @@ -0,0 +1,26 @@
@@ -141,7 +141,7 @@ index 00000000..aa7d28bc
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert
 new file mode 100644
-index 00000000..286d17fc
+index 0000000..286d17f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert
 @@ -0,0 +1,11 @@
@@ -158,7 +158,7 @@ index 00000000..286d17fc
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert.h b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert.h
 new file mode 100644
-index 00000000..e23bbc37
+index 0000000..e23bbc3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.vert.h
 @@ -0,0 +1,72 @@
@@ -236,7 +236,7 @@ index 00000000..e23bbc37
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 new file mode 100644
-index 00000000..7d857970
+index 0000000..7d85797
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 @@ -0,0 +1,398 @@

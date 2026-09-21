@@ -1084,8 +1084,14 @@ registered_module=KHR-GLES3
         )
         self.assertEqual(cts.parse_qpa(terminated), {first: "Crash"})
 
-        with self.assertRaisesRegex(cts.CampaignError, "truncated"):
+        with self.assertRaisesRegex(cts.CampaignError, "no complete session"):
             cts.parse_qpa(qpa(qpa_result(first)).replace("#endSession\n", ""))
+        # A guest that continued its caselist in a fresh CTS session transports
+        # one document per session, read as one ordered result stream.
+        self.assertEqual(
+            cts.parse_qpa(qpa(qpa_result(first)) + qpa(qpa_result(second))),
+            {first: "Pass", second: "Pass"},
+        )
         with self.assertRaisesRegex(cts.CampaignError, "incomplete QPA"):
             cts.validate_qpa_union(qpa(qpa_result(first)), [first, second])
         with self.assertRaisesRegex(cts.CampaignError, "case order"):
@@ -2168,6 +2174,14 @@ native_display_cleanup
                 venus_generated,
             )
             self.assertIn("formal_conformance=false", venus_generated)
+            self.assertIn("vulkan-mustpass-03of16-v4", venus_generated)
+            self.assertNotIn("vulkan-mustpass-03of16-v3", venus_generated)
+            self.assertIn(
+                "pipeline.fast_linked_library.render_to_image.core.2d_array."
+                "huge.width_height_layers.r8g8b8a8_unorm",
+                venus_generated,
+            )
+            self.assertIn("sleep 20", venus_generated)
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
         shards = cts.load_apple_matrix_shards()

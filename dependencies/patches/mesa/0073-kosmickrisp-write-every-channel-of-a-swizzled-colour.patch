@@ -1,7 +1,7 @@
-From ed4c98586cf60343853c845971f7836c409c22dc Mon Sep 17 00:00:00 2001
+From 7e72b4fa893f153fddb9402284863a0fc8e86178 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:11:34 +0900
-Subject: [PATCH 73/95] kosmickrisp: write every channel of a swizzled colour
+Subject: [PATCH 073/107] kosmickrisp: write every channel of a swizzled colour
  attachment
 
 Metal refuses a swizzled view of a renderable texture, so a colour format
@@ -34,7 +34,7 @@ it, and cover every channel count and both channel orders.
 
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_fragment_output_swizzle.c b/src/kosmickrisp/vulkan/kk_nir_lower_fragment_output_swizzle.c
 new file mode 100644
-index 00000000..a99be204
+index 0000000..a99be20
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_fragment_output_swizzle.c
 @@ -0,0 +1,125 @@
@@ -164,7 +164,7 @@ index 00000000..a99be204
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index dc510a81..b81512ce 100644
+index dc510a8..b81512c 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -296,57 +296,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
@@ -236,7 +236,7 @@ index dc510a81..b81512ce 100644
     NIR_PASS(_, nir, msl_nir_fs_io_types);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2d6510a8..ae5f1af9 100644
+index 2d6510a..ae5f1af 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -279,6 +279,10 @@ bool kk_nir_lower_null_images(nir_shader *nir);
@@ -251,7 +251,7 @@ index 2d6510a8..ae5f1af9 100644
  
  bool kk_nir_lower_vs_multiview(nir_shader *nir, uint32_t view_mask);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index afa9cd5b..36a6d15f 100644
+index afa9cd5..36a6d15 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -98,6 +98,7 @@ kk_files = files(
@@ -291,7 +291,7 @@ index afa9cd5b..36a6d15f 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c b/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c
 new file mode 100644
-index 00000000..2cff3789
+index 0000000..2cff378
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_fragment_output_swizzle.c
 @@ -0,0 +1,160 @@

@@ -1,7 +1,7 @@
-From 3c1a970118396e9ce78b0b09a2fcd376752a97ca Mon Sep 17 00:00:00 2001
+From 1be453e2b14d9211e2f5e77c76908225ce16e596 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:33:54 +0900
-Subject: [PATCH 75/95] kosmickrisp: advertise VK_KHR_shader_quad_control
+Subject: [PATCH 075/107] kosmickrisp: advertise VK_KHR_shader_quad_control
 
 The Android 17 Vulkan requirements profile (VP_ANDROID_17_requirements)
 lists VK_KHR_shader_quad_control among its mandatory extensions, and both
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index aee0b305..2435ede4 100644
+index aee0b30..2435ede 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -148,6 +148,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

@@ -1,7 +1,7 @@
 From 479964418c99c4b4318cf792a9d9e5bb41992164 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 09:14:08 +0900
-Subject: [PATCH 32/32] uml: replay user mappings concurrently
+Subject: [PATCH 32/34] uml: replay user mappings concurrently
 
 Threads of one process replayed their page-table changes to the Darwin
 software MMU one at a time, behind a sleeping per-mm turnstile taken with

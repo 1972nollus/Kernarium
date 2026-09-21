@@ -1,7 +1,7 @@
-From 1b56680161e94f81c65aadff9e403c89feb16718 Mon Sep 17 00:00:00 2001
+From f1b7cae646bf60771b022ba7bacf9bc2ed8f8eeb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 19:01:17 +0900
-Subject: [PATCH 57/95] kosmickrisp: carry an authored primitive ID as a user
+Subject: [PATCH 057/107] kosmickrisp: carry an authored primitive ID as a user
  varying
 
 Metal's [[primitive_id]] is an unsigned value the rasterizer hands to the
@@ -64,7 +64,7 @@ polygon mode cases fail with the Metal error before this change.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index b3f40aab..8cee64ab 100644
+index b3f40aa..8cee64a 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -62,7 +62,15 @@ static const struct {
@@ -85,7 +85,7 @@ index b3f40aab..8cee64ab 100644
     [VARYING_SLOT_VIEWPORT] = {"viewport_array_index"},
     [VARYING_SLOT_CLIP_DIST0] = {"clip_0", .user = true, .scalarized = true},
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b3538413..c3e61b50 100644
+index b353841..c3e61b5 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -563,6 +563,20 @@ if with_tests
@@ -111,7 +111,7 @@ index b3538413..c3e61b50 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom
 new file mode 100644
-index 00000000..4111e7f7
+index 0000000..4111e7f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom
 @@ -0,0 +1,17 @@
@@ -134,7 +134,7 @@ index 00000000..4111e7f7
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom.h b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom.h
 new file mode 100644
-index 00000000..4752f915
+index 0000000..4752f91
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom.h
 @@ -0,0 +1,102 @@
@@ -242,7 +242,7 @@ index 00000000..4752f915
 +0x000100db,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
 new file mode 100755
-index 00000000..3c17b60b
+index 0000000..3c17b60
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -255,7 +255,7 @@ index 00000000..3c17b60b
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag
 new file mode 100644
-index 00000000..5ea2f682
+index 0000000..5ea2f68
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag
 @@ -0,0 +1,7 @@
@@ -268,7 +268,7 @@ index 00000000..5ea2f682
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag.h b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag.h
 new file mode 100644
-index 00000000..9302384a
+index 0000000..9302384
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green.frag.h
 @@ -0,0 +1,27 @@
@@ -301,7 +301,7 @@ index 00000000..9302384a
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag
 new file mode 100644
-index 00000000..31be2aba
+index 0000000..31be2ab
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag
 @@ -0,0 +1,9 @@
@@ -316,7 +316,7 @@ index 00000000..31be2aba
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag.h b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag.h
 new file mode 100644
-index 00000000..b1cafa4c
+index 0000000..b1cafa4
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/green_if_id.frag.h
 @@ -0,0 +1,43 @@
@@ -365,7 +365,7 @@ index 00000000..b1cafa4c
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert
 new file mode 100644
-index 00000000..7604daaa
+index 0000000..7604daa
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert
 @@ -0,0 +1,7 @@
@@ -378,7 +378,7 @@ index 00000000..7604daaa
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert.h b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert.h
 new file mode 100644
-index 00000000..ad4b2b08
+index 0000000..ad4b2b0
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/passthrough.vert.h
 @@ -0,0 +1,49 @@
@@ -433,7 +433,7 @@ index 00000000..ad4b2b08
 +0x00000012,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp b/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 new file mode 100644
-index 00000000..031f97d4
+index 0000000..031f97d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 @@ -0,0 +1,638 @@

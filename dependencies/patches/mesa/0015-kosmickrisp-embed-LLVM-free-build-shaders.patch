@@ -1,7 +1,7 @@
-From 3a35a3c51e1d4359e20fb2c37008d80b8226cd91 Mon Sep 17 00:00:00 2001
+From 0106f50f5eaa2d9ac3d8acef5d5ffdcdc127381d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 17:14:49 +0900
-Subject: [PATCH 15/95] kosmickrisp: embed LLVM-free build shaders
+Subject: [PATCH 015/107] kosmickrisp: embed LLVM-free build shaders
 
 ---
  meson.build                       |   1 -
@@ -15,7 +15,7 @@ Subject: [PATCH 15/95] kosmickrisp: embed LLVM-free build shaders
  create mode 100644 src/poly/cl/libpoly.spv
 
 diff --git a/meson.build b/meson.build
-index d6e3a8be..0b9b3b62 100644
+index d6e3a8b..0b9b3b6 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -959,7 +959,6 @@ with_driver_using_cl = [
@@ -27,7 +27,7 @@ index d6e3a8be..0b9b3b62 100644
  
  if get_option('mesa-clc') == 'system'
 diff --git a/src/compiler/spirv/meson.build b/src/compiler/spirv/meson.build
-index b49d3af6..83e72020 100644
+index b49d3af..83e7202 100644
 --- a/src/compiler/spirv/meson.build
 +++ b/src/compiler/spirv/meson.build
 @@ -79,6 +79,7 @@ spirv2nir = executable(
@@ -2377,7 +2377,7 @@ literal 0
 HcmV?d00001
 
 diff --git a/src/kosmickrisp/libkk/meson.build b/src/kosmickrisp/libkk/meson.build
-index 04e17525..ff7ec272 100644
+index 04e1752..ff7ec27 100644
 --- a/src/kosmickrisp/libkk/meson.build
 +++ b/src/kosmickrisp/libkk/meson.build
 @@ -10,22 +10,10 @@ libkk_shader_files = files(
@@ -2857,7 +2857,7 @@ literal 0
 HcmV?d00001
 
 diff --git a/src/poly/cl/meson.build b/src/poly/cl/meson.build
-index 286dcf1c..ab45f4bb 100644
+index 286dcf1..ab45f4b 100644
 --- a/src/poly/cl/meson.build
 +++ b/src/poly/cl/meson.build
 @@ -7,21 +7,9 @@ libpoly_shader_files = files(

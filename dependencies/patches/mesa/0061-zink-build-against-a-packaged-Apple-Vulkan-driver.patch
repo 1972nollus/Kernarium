@@ -1,7 +1,7 @@
-From 5d468755fc0d5d7154d5c720fa3a86f4a437602d Mon Sep 17 00:00:00 2001
+From df6733cabd34636b6fc23392655c08005ac045f2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:11:01 +0900
-Subject: [PATCH 61/95] zink: build against a packaged Apple Vulkan driver
+Subject: [PATCH 061/107] zink: build against a packaged Apple Vulkan driver
 
 An Apple host that packages one in-process Vulkan driver has no MoltenVK SDK
 and no Vulkan loader, so zink could neither configure nor find an entry point
@@ -25,7 +25,7 @@ as optional rather than refusing to create the instance without it.
  6 files changed, 53 insertions(+), 13 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index 0b9b3b62..ab0f8005 100644
+index 0b9b3b6..ab0f800 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -101,6 +101,7 @@ cpp_args = []
@@ -37,7 +37,7 @@ index 0b9b3b62..ab0f8005 100644
  with_tests = get_option('build-tests')
  with_glcpp_tests = get_option('enable-glcpp-tests')
 diff --git a/meson.options b/meson.options
-index 93a60e30..aa6a114a 100644
+index 93a60e3..aa6a114 100644
 --- a/meson.options
 +++ b/meson.options
 @@ -314,6 +314,16 @@ option(
@@ -58,7 +58,7 @@ index 93a60e30..aa6a114a 100644
    'vulkan-layers',
    type : 'array',
 diff --git a/src/gallium/drivers/zink/meson.build b/src/gallium/drivers/zink/meson.build
-index 073f0a4b..e42275e8 100644
+index 073f0a4..e42275e 100644
 --- a/src/gallium/drivers/zink/meson.build
 +++ b/src/gallium/drivers/zink/meson.build
 @@ -60,7 +60,9 @@ zink_link_args = []
@@ -99,7 +99,7 @@ index 073f0a4b..e42275e8 100644
    endif
  
 diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
-index 234d0ec0..79dee0f1 100755
+index 234d0ec..79dee0f 100755
 --- a/src/gallium/drivers/zink/zink_instance.py
 +++ b/src/gallium/drivers/zink/zink_instance.py
 @@ -80,11 +80,11 @@ header_code = """
@@ -139,7 +139,7 @@ index 234d0ec0..79dee0f1 100755
             mesa_loge("ZINK: vkEnumerateInstanceLayerProperties failed");
      } else {
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index c37fa55f..206cc119 100644
+index c37fa55..206cc11 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -60,11 +60,11 @@
@@ -157,7 +157,7 @@ index c37fa55f..206cc119 100644
  #define ZINK_EXTERNAL_MEMORY_HANDLE 999
  
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index 97bea040..f2197a33 100644
+index 97bea04..f2197a3 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -80,14 +80,14 @@ bool zink_tracing = false;
