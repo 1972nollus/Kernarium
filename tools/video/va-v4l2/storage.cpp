@@ -38,6 +38,9 @@ struct Gbm {
     std::uint32_t (*boGetOffset)(void*, int) {};
     int (*boGetPlaneCount)(void*) {};
     std::uint64_t (*boGetModifier)(void*) {};
+    void* (*boMap)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+                   std::uint32_t*, void**) {};
+    void (*boUnmap)(void*, void*) {};
     int drm {-1};
 };
 
@@ -72,6 +75,10 @@ Gbm& gbm()
         instance.boGetOffset = reinterpret_cast<std::uint32_t (*)(void*, int)>(symbol(instance.library, "gbm_bo_get_offset"));
         instance.boGetPlaneCount = reinterpret_cast<int (*)(void*)>(symbol(instance.library, "gbm_bo_get_plane_count"));
         instance.boGetModifier = reinterpret_cast<std::uint64_t (*)(void*)>(symbol(instance.library, "gbm_bo_get_modifier"));
+        instance.boMap = reinterpret_cast<void* (*)(void*, std::uint32_t, std::uint32_t, std::uint32_t,
+                                                    std::uint32_t, std::uint32_t, std::uint32_t*, void**)>(
+            symbol(instance.library, "gbm_bo_map"));
+        instance.boUnmap = reinterpret_cast<void (*)(void*, void*)>(symbol(instance.library, "gbm_bo_unmap"));
         if (!instance.createDevice || !instance.boCreate || !instance.boGetFd || !instance.boGetStrideForPlane ||
             !instance.boGetOffset || !instance.boGetPlaneCount) return;
         if (const int client = clientDrm(); client >= 0) {
@@ -272,6 +279,8 @@ std::unique_ptr<PixelBuffer> PixelBuffer::allocate(std::uint32_t fourcc, unsigne
                         buffer->planes_ = 0;
                     }
                     if (buffer->planes_) {
+                        buffer->boWidth_ = requestWidth;
+                        buffer->boHeight_ = requestHeight;
                         if (loader.boGetModifier) buffer->modifier_ = loader.boGetModifier(bo);
                         buffer->fd_ = loader.boGetFd(bo);
                         buffer->identity_ = identityOf(buffer->fd_);
@@ -339,7 +348,8 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
 
 PixelBuffer::~PixelBuffer()
 {
-    if (map_) munmap(map_, size_);
+    if (map_ && boMapping_) gbm().boUnmap(bo_, boMapping_);
+    else if (map_) munmap(map_, size_);
     if (bo_) gbm().boDestroy(bo_);
     if (fd_ >= 0) ::close(fd_);
 }
@@ -353,6 +363,21 @@ int PixelBuffer::exportDescriptor() const
 std::uint8_t* PixelBuffer::map()
 {
     if (map_) return map_;
+    if (bo_ && boWidth_ && boHeight_) {
+        auto& loader = gbm();
+        if (loader.boMap && loader.boUnmap) {
+            std::uint32_t stride = 0;
+            void* handle = nullptr;
+            // GBM_BO_TRANSFER_READ_WRITE
+            void* address = loader.boMap(bo_, 0, 0, boWidth_, boHeight_, 3u, &stride, &handle);
+            if (address && address != MAP_FAILED && stride == pitch_[0]) {
+                boMapping_ = handle;
+                map_ = static_cast<std::uint8_t*>(address);
+                return map_;
+            }
+            if (address && address != MAP_FAILED) loader.boUnmap(bo_, handle);
+        }
+    }
     if (fd_ < 0 || !size_) return nullptr;
     void* address = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
     if (address == MAP_FAILED) return nullptr;

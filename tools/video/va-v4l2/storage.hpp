@@ -69,6 +69,11 @@ private:
     int fd_ {-1};
     std::uint8_t* map_ {};
     void* bo_ {};
+    // A GBM buffer is mapped through GBM itself: the descriptor it exports
+    // need not be writable, and mapping that descriptor then fails.
+    void* boMapping_ {};
+    unsigned boWidth_ {};
+    unsigned boHeight_ {};
 };
 
 // Chooses the backing store once per process: UML_VA_V4L2_SURFACES is
