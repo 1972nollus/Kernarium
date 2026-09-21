@@ -116,6 +116,18 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
 Both binaries are Linux guest programs; the unit test also runs on any Linux
 build host.
 
+Any VA-API client works, because the driver implements the public interface and
+nothing else. An FFmpeg configured for this one job needs no codec closure:
+
+```sh
+./configure --disable-everything --enable-vaapi --enable-decoder=vp9 \
+  --enable-hwaccel=vp9_vaapi --enable-parser=vp9 --enable-demuxer=ivf \
+  --enable-filter=hwdownload --enable-filter=format --enable-filter=scale \
+  --enable-encoder=rawvideo --enable-muxer=rawvideo --enable-ffmpeg
+ffmpeg -hwaccel vaapi -hwaccel_output_format vaapi -i movie.ivf \
+  -vf hwdownload,format=nv12 -f rawvideo -pix_fmt yuv420p - | md5sum
+```
+
 `--vpp` additionally converts every decoded frame to ARGB through a
 `VAProfileNone` video-processing context, and `--export` exports a decoded
 surface as `DRM_PRIME_2`, re-imports the descriptor and compares the pixels.
