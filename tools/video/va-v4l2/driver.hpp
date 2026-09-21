@@ -144,6 +144,8 @@ public:
     // buffer is not already current. A client that only ever uses the video
     // processing path never pays for this.
     void materialise(Surface& surface);
+    // Reports the first decoded picture as the device delivered it.
+    void reportPicture(const DecodedPicture& picture, bool packed);
     // The decoded format to ask a new decode session for: packed RGB when the
     // device offers it and the policy wants it, otherwise zero for NV12.
     std::uint32_t preferredCapture();
@@ -164,6 +166,7 @@ private:
     bool captureProbed_ {};
     bool rgbOffered_ {};
     bool importCapture_ {};
+    bool reportedPicture_ {};
 };
 
 }

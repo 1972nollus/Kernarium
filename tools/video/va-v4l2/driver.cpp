@@ -167,6 +167,48 @@ std::shared_ptr<PixelBuffer> Driver::knownBuffer(std::uint64_t identity)
     return buffer;
 }
 
+void Driver::reportPicture(const DecodedPicture& picture, bool packed)
+{
+    // The picture exactly as the capture queue delivered it, before this
+    // driver has touched a byte of it: the only place where a colour question
+    // can be settled between the device and everything above it.
+    if (reportedPicture_ || !picture.plane[0] || !picture.width || !picture.height) return;
+    reportedPicture_ = true;
+    char message[256] {};
+    if (packed) {
+        double sum[3] {};
+        for (unsigned row = 0; row < picture.height; ++row) {
+            const std::uint8_t* line = picture.plane[0] + std::size_t(row) * picture.pitch[0];
+            for (unsigned column = 0; column < picture.width; ++column) {
+                sum[0] += line[std::size_t(column) * 4 + 0];
+                sum[1] += line[std::size_t(column) * 4 + 1];
+                sum[2] += line[std::size_t(column) * 4 + 2];
+            }
+        }
+        const double samples = double(picture.width) * double(picture.height);
+        std::snprintf(message, sizeof(message),
+                      "captured packed frame means B %.3f G %.3f R %.3f", sum[0] / samples,
+                      sum[1] / samples, sum[2] / samples);
+    } else {
+        double luma = 0;
+        for (unsigned row = 0; row < picture.height; ++row) {
+            const std::uint8_t* line = picture.plane[0] + std::size_t(row) * picture.pitch[0];
+            for (unsigned column = 0; column < picture.width; ++column) luma += line[column];
+        }
+        std::snprintf(message, sizeof(message), "captured NV12 frame mean Y %.3f",
+                      luma / (double(picture.width) * double(picture.height)));
+    }
+    note(message);
+    if (const char* path = std::getenv("UML_VA_V4L2_DUMP"); path && *path) {
+        if (std::FILE* file = std::fopen(path, "wbe")) {
+            for (unsigned row = 0; row < picture.height; ++row)
+                std::fwrite(picture.plane[0] + std::size_t(row) * picture.pitch[0], 1,
+                            std::size_t(picture.width) * (packed ? 4u : 1u), file);
+            std::fclose(file);
+        }
+    }
+}
+
 void Driver::harvest(Context& context, std::chrono::milliseconds wait)
 {
     if (!context.decoder) return;
@@ -184,6 +226,7 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
             Surface* target = surface(found->second);
             context.awaiting.erase(found);
             const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
+            if (!picture.error) reportPicture(picture, packed);
             if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && packed &&
                 picture.planes >= 1 && !picture.error) {
                 // The host already converted, so keep the picture packed and
