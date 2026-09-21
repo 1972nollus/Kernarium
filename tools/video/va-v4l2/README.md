@@ -133,6 +133,9 @@ converts never pays for that.
 | `UML_VA_V4L2_RGB` | `auto` (default), `off` or `force`, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
+| `UML_VA_V4L2_REPORT` | how many captured pictures to report to the log, exactly as the capture queue delivered them (default one) |
+| `UML_VA_V4L2_DUMP` | a file to write one captured picture to, before any conversion or blit |
+| `UML_VA_V4L2_DUMP_FRAME` | which captured picture that is, counted from the first (default zero) |
 
 The DRM file descriptor a client passes to `vaGetDisplayDRM` is ignored: this
 driver talks to the video decoder whatever device the display names.
