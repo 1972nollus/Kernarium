@@ -144,8 +144,22 @@ sudo -n install -m 0755 "$work/splash-build/kernarium-screen" "$root/usr/local/l
 sudo -n install -d "$root/opt/uml-wine-smoke"
 sudo -n install -m 0755 "$work/"*-exit-*.exe "$root/opt/uml-wine-smoke/"
 if [ -n "$vulkan_root" ]; then
-	sudo -n python3 -B "$here/install-vulkan.py" --source "$vulkan_root" \
-		--receipt "$vulkan_receipt" --root "$root"
+	# Two receipts name the same runtime: the receipt-gated CTS image the
+	# sealer emits, and the relocatable per-architecture runtime
+	# stage-runtime.py emits. Each has its own importer; the receipt says
+	# which one it is.
+	artifact=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("artifact", ""))' "$vulkan_receipt")
+	case "$artifact" in
+	uml-vulkan-rootfs)
+		sudo -n python3 -B "$here/install-vulkan.py" --source "$vulkan_root" \
+			--receipt "$vulkan_receipt" --root "$root" ;;
+	uml-vulkan-guest-runtime)
+		sudo -n python3 -B "$repository/tools/rootfs/vulkan/install-runtime.py" \
+			--architecture arm64 --source "$vulkan_root" \
+			--receipt "$vulkan_receipt" --root "$root" ;;
+	*)
+		printf '%s\n' "unknown Vulkan receipt artifact: $artifact" >&2; exit 2 ;;
+	esac
 fi
 # Keep versioned package and client seeds in the immutable image. Only the
 # image-owned init copies them to a new data partition, never on an update.

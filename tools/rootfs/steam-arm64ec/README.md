@@ -42,11 +42,16 @@ tools/rootfs/steam-arm64ec/build.sh --inputs /work/steam-inputs \
   --output /work/steam-arm64ec-gaming.erofs
 ```
 
-For the Vulkan variant, add `--vulkan-root /work/vulkan/stage/rootfs-kosmickrisp`
-and `--vulkan-receipt /work/vulkan/output-kosmickrisp/rootfs-vulkan-venus.receipt.json`
-to the image build. These inputs are read-only; only the runtime is imported,
-without the CTS payload. Use fresh prepared inputs when the Debian package
-closure changes.
+For the Vulkan variant, add `--vulkan-root` and `--vulkan-receipt` to the image
+build. They accept either runtime the maintained Vulkan guest publishes, and
+the receipt's own artifact identity selects its importer: the receipt-gated CTS
+image (`/work/vulkan/stage/rootfs-kosmickrisp` with
+`rootfs-vulkan-venus.receipt.json`), whose runtime is imported without the CTS
+payload, or the relocatable per-architecture runtime `stage-runtime.py`
+produces with its own receipt. Both inputs are read-only, both record what they
+installed in the image, and the audit and provenance read whichever record the
+image carries. Use fresh prepared inputs when the Debian package closure
+changes.
 
 Build work and output paths must be absent. Preparation reuses verified
 inputs. `dependencies/prepare.sh --product steam-arm64ec-rootfs --root

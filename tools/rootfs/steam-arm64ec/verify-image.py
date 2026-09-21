@@ -140,8 +140,13 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
             raise RuntimeError(f"desktop environment was installed: {executable}")
     if not list((root / "usr/share/vulkan/icd.d").glob("*.json")):
         raise RuntimeError("Mesa Vulkan ICDs are absent")
-    graphics = root / "usr/share/uml-steam/vulkan-runtime.json"
-    if graphics.is_file():
+    # The sealed CTS image and the relocatable runtime record what they
+    # installed in their own file; audit whichever this image carries.
+    graphics = next((path for path in
+                     (root / "usr/share/uml-steam/vulkan-runtime.json",
+                      root / "usr/share/uml-vulkan/guest-runtime.json")
+                     if path.is_file()), None)
+    if graphics is not None:
         recorded = json.loads(graphics.read_text())
         for record in recorded["installed_files"]:
             path = root / record["path"].lstrip("/")
