@@ -172,8 +172,13 @@ void Driver::reportPicture(const DecodedPicture& picture, bool packed)
     // The picture exactly as the capture queue delivered it, before this
     // driver has touched a byte of it: the only place where a colour question
     // can be settled between the device and everything above it.
-    if (reportedPicture_ || !picture.plane[0] || !picture.width || !picture.height) return;
-    reportedPicture_ = true;
+    if (!picture.plane[0] || !picture.width || !picture.height) return;
+    if (reportLimit_ < 0) {
+        const char* wanted = std::getenv("UML_VA_V4L2_REPORT");
+        reportLimit_ = wanted && *wanted ? std::atoi(wanted) : 1;
+    }
+    if (reportedPictures_ >= reportLimit_) return;
+    const int index = reportedPictures_++;
     char message[256] {};
     if (packed) {
         double sum[3] {};
@@ -186,24 +191,37 @@ void Driver::reportPicture(const DecodedPicture& picture, bool packed)
             }
         }
         const double samples = double(picture.width) * double(picture.height);
+        const double blue = sum[0] / samples;
+        const double green = sum[1] / samples;
+        const double red = sum[2] / samples;
+        // The studio-swing BT.709 luma the same picture would carry as NV12,
+        // so a packed and an NV12 run can be compared frame by frame.
+        const double luma = 16.0 + (0.2126 * red + 0.7152 * green + 0.0722 * blue) * 219.0 / 255.0;
         std::snprintf(message, sizeof(message),
-                      "captured packed frame means B %.3f G %.3f R %.3f", sum[0] / samples,
-                      sum[1] / samples, sum[2] / samples);
+                      "captured packed frame %d means B %.3f G %.3f R %.3f luma %.3f", index,
+                      blue, green, red, luma);
     } else {
         double luma = 0;
         for (unsigned row = 0; row < picture.height; ++row) {
             const std::uint8_t* line = picture.plane[0] + std::size_t(row) * picture.pitch[0];
             for (unsigned column = 0; column < picture.width; ++column) luma += line[column];
         }
-        std::snprintf(message, sizeof(message), "captured NV12 frame mean Y %.3f",
+        std::snprintf(message, sizeof(message), "captured NV12 frame %d mean Y %.3f", index,
                       luma / (double(picture.width) * double(picture.height)));
     }
     note(message);
-    if (const char* path = std::getenv("UML_VA_V4L2_DUMP"); path && *path) {
+    const char* wantedFrame = std::getenv("UML_VA_V4L2_DUMP_FRAME");
+    if (const char* path = std::getenv("UML_VA_V4L2_DUMP");
+        path && *path && index == (wantedFrame && *wantedFrame ? std::atoi(wantedFrame) : 0)) {
         if (std::FILE* file = std::fopen(path, "wbe")) {
             for (unsigned row = 0; row < picture.height; ++row)
                 std::fwrite(picture.plane[0] + std::size_t(row) * picture.pitch[0], 1,
                             std::size_t(picture.width) * (packed ? 4u : 1u), file);
+            // A planar picture is written whole, so a reader can convert it.
+            if (!packed && picture.planes > 1 && picture.plane[1])
+                for (unsigned row = 0; row < (picture.height + 1) / 2; ++row)
+                    std::fwrite(picture.plane[1] + std::size_t(row) * picture.pitch[1], 1,
+                                picture.width, file);
             std::fclose(file);
         }
     }

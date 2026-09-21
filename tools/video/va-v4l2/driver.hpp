@@ -166,7 +166,8 @@ private:
     bool captureProbed_ {};
     bool rgbOffered_ {};
     bool importCapture_ {};
-    bool reportedPicture_ {};
+    int reportedPictures_ {};
+    int reportLimit_ {-1};
 };
 
 }
