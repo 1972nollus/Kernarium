@@ -261,6 +261,15 @@ between two code pages pays one per store; a JIT patching two call sites, a
 code copy crossing a page and a relocating loader each pay one per page they
 touch.
 
+A store translation settles both questions while it resolves the address --
+whether this page owes a record, and whether the store may skip the
+publication call altogether -- because reading the context after the guest
+store costs a memory-disambiguation stall. Only the common answer stays in the
+hot instruction stream: `write_code` is none, pending or published and only
+pending is work, so its low bit answers for it and joins the TLB entry's
+cached-code bit in a single test, while the arm that takes a record for a page
+some executor holds a translation of sits in the cold section.
+
 The writer's order is the contract, and it is the order
 [Keeping a cached translation](#keeping-a-cached-translation) reads in reverse:
 the bytes are stored, then the page stamp moves, then the code-change sequence

@@ -327,36 +327,60 @@ NAME(uml_x86_64_gadget_\name):
 	b .Lx86_tlb_done\@
 .Lx86_tlb_hit\@:
 	.if \access == 1
-	/* A page some executor holds a translation of. A publication covers its
-	 * whole page, so this store owes a record unless this program has already
-	 * published this very page; a store to any other page owes its own,
-	 * because the page stamp another vCPU validates against moves only with a
-	 * publication. The page this program last published answers that on its
-	 * own: it holds an impossible page until the first publication and again
-	 * whenever a followed link retires this program's publications, which is
-	 * exactly when `write_code` says nothing is owed.
-	 */
-	tbz x12, #1, .Lx86_tlb_write_code_ready\@
-	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
-	cmp x9, x14
-	b.eq .Lx86_tlb_write_code_ready\@
-	mov w14, #UML_X86_64_WRITE_CODE_PENDING
-	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-.Lx86_tlb_write_code_ready\@:
 	/* Reading the context after the guest store costs a memory-disambiguation
 	 * stall, and calling out to publication costs far more. Publication has
 	 * work only when a publish is still pending or this page holds cached
-	 * code, and neither depends on what the store writes, so settle it here.
+	 * code, and neither depends on what the store writes, so both are settled
+	 * here. `write_code` is none, pending or published and only pending is
+	 * work, so its low bit answers for it and joins the entry's cached-code
+	 * bit in one test; the tag's own bits are clear on a hit, because the
+	 * compare above proved the tag is a page-aligned address once they are
+	 * removed.
 	 */
-	tbnz x12, #2, .Lx86_store_publishes\@
 	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cmp w14, #UML_X86_64_WRITE_CODE_PENDING
-	b.eq .Lx86_store_publishes\@
+	tbz x12, #1, .Lx86_tlb_write_code_ready\@
+	/* A test-and-branch reaches 32 KiB and the cold section is a bank away,
+	 * so the rare arm is entered through an unconditional branch. */
+	b .Lx86_tlb_write_code_owed\@
+.Lx86_tlb_write_code_ready\@:
+	orr w14, w14, w12, lsr #2
+	tbnz w14, #0, .Lx86_store_publishes\@
 	orr x23, x23, #(1 << 60)
 .Lx86_store_publishes\@:
 	.endif
 	add x7, x13, x7
 .Lx86_tlb_done\@:
+	.if \access == 1
+	/* A store to a page some executor holds a translation of is the rare one,
+	 * and settling it needs a second context field, so it leaves the hot
+	 * stream: a bank of thousands of write translations otherwise fetches
+	 * this arm on every store that will never take it.
+	 *
+	 * A publication covers a whole page, so such a store owes a record unless
+	 * this program has already published this very page; a store to any other
+	 * page owes its own, because the page stamp another vCPU validates
+	 * against moves only with a publication. The page this program last
+	 * published answers that on its own: it holds an impossible page until
+	 * the first publication and again whenever a followed link retires this
+	 * program's publications, which is exactly when `write_code` says nothing
+	 * is owed.
+	 */
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+.Lx86_tlb_write_code_owed\@:
+	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
+	eor x14, x9, x14
+	cbz x14, .Lx86_tlb_write_code_kept\@
+	mov w14, #UML_X86_64_WRITE_CODE_PENDING
+	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+.Lx86_tlb_write_code_kept\@:
+	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
+	b .Lx86_tlb_write_code_ready\@
+	.popsection
+	.endif
 .endm
 
 /* x86 LOCK-prefixed read-modify-write.

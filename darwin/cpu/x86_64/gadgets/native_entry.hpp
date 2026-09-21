@@ -92,6 +92,10 @@ static_assert(offsetof(NativeExecutionContext, fault) ==
 	UML_X86_64_CONTEXT_FAULT_ADDRESS);
 static_assert(offsetof(NativeExecutionContext, write_code) ==
 	UML_X86_64_CONTEXT_WRITE_CODE);
+/* A store translation asks whether a publication is still owed by testing this
+ * field's low bit, so only the pending state may carry it. */
+static_assert((UML_X86_64_WRITE_CODE_PENDING & 1U) == 1U &&
+	(UML_X86_64_WRITE_CODE_PUBLISHED & 1U) == 0U);
 static_assert(offsetof(NativeExecutionContext, unaligned_exclusives) ==
 	UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES);
 static_assert(offsetof(NativeExecutionContext, split_lock) ==
