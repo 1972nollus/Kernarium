@@ -1,7 +1,7 @@
-From 1008191a78af2a60c6231bc47b27b9641670befa Mon Sep 17 00:00:00 2001
+From 6b4b00a3c88eb5c35710d4ab4fac7a5db02f20ba Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:29:50 +0900
-Subject: [PATCH 38/48] venus: serve VK_EXT_primitive_restart_index
+Subject: [PATCH 38/49] venus: serve VK_EXT_primitive_restart_index
 
 The uprevved protocol assigns vkCmdSetPrimitiveRestartIndexEXT a command ID
 and encodes the extension's capability structure, and the host driver this
