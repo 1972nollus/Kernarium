@@ -263,6 +263,7 @@ void codecLevelControls()
  * is asked for and to name what each stream actually decoded when it is.
  */
 void sharedMemoryCapture(); // exercised again below, with the log on
+void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width, std::uint32_t height);
 
 void activityLog()
 {
@@ -291,7 +292,7 @@ void activityLog()
      * client is told apart from a device that stops filling one. They are
      * appended, so the older prefix above still matches. */
     require(text.find("output=64x64 capture=guest-pages queued=3 distinct=1 "
-                      "requeued=2 pending_at_close=0") != std::string::npos,
+                      "requeued=2 pending_at_close=0 raw=nv12 converted=0") != std::string::npos,
         "the video activity log omits the capture-queue facts");
 
     ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
@@ -309,6 +310,22 @@ void activityLog()
         "a shared-memory capture buffer is not named as one");
     require(line.find("queued=2 distinct=1 requeued=1") != std::string::npos,
         "the video activity log does not count a re-queued capture buffer");
+
+    /* Which capture format a client negotiated, and how many of its frames the
+     * device had to repack itself, separate a decoder that hands the client its
+     * own layout from one whose every frame costs a per-pixel conversion. */
+    for (const bool decoderPacks : {true, false}) {
+        ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
+        packedCapture(16384u, decoderPacks, 64, 64);
+        ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+        std::ostringstream packed;
+        packed << std::ifstream(path).rdbuf();
+        const auto packedText = packed.str();
+        std::filesystem::remove(path);
+        require(packedText.find(decoderPacks ? "raw=bgra8888 converted=0"
+                                             : "raw=bgra8888 converted=1") != std::string::npos,
+            "the video activity log miscounts device-side packing");
+    }
 }
 
 /* A capture buffer may be a host-visible blob: the guest names an offset in

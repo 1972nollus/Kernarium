@@ -172,18 +172,21 @@ public:
                 std::uint64_t packetBytes, std::uint64_t frames,
                 std::uint32_t width, std::uint32_t height, const char* capture,
                 std::uint64_t queuedBuffers, std::uint64_t distinctBuffers,
-                std::uint64_t requeuedBuffers, std::size_t pending)
+                std::uint64_t requeuedBuffers, std::size_t pending, const char* raw,
+                std::uint64_t converted)
     {
         if (file_ == nullptr) return;
         std::fprintf(file_,
             "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u"
-            " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu\n",
+            " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu"
+            " raw=%s converted=%llu\n",
             elapsed(), stream, reason, static_cast<unsigned long long>(packets),
             static_cast<unsigned long long>(packetBytes),
             static_cast<unsigned long long>(frames), width, height, capture,
             static_cast<unsigned long long>(queuedBuffers),
             static_cast<unsigned long long>(distinctBuffers),
-            static_cast<unsigned long long>(requeuedBuffers), pending);
+            static_cast<unsigned long long>(requeuedBuffers), pending, raw,
+            static_cast<unsigned long long>(converted));
         std::fflush(file_);
     }
 
@@ -259,6 +262,7 @@ public:
         std::uint64_t packets {};
         std::uint64_t packetBytes {};
         std::uint64_t delivered {};
+        std::uint64_t converted {};
         std::uint64_t captureQueued {};
         std::uint64_t captureRequeued {};
         std::unordered_set<std::uint32_t> captureBuffers;
@@ -282,6 +286,17 @@ public:
 
     ~Implementation() { closeAll("shutdown"); }
 
+    static const char* rawName(std::uint32_t format) noexcept
+    {
+        switch (format) {
+        case VIRTIO_VIDEO_FORMAT_NV12: return "nv12";
+        case VIRTIO_VIDEO_FORMAT_YUV420: return "yuv420";
+        case VIRTIO_VIDEO_FORMAT_BGRA8888: return "bgra8888";
+        case VIRTIO_VIDEO_FORMAT_P010: return "p010";
+        }
+        return "unknown";
+    }
+
     void record(std::uint32_t id, const Stream& stream, const char* reason) noexcept
     {
         const char* capture = stream.captureShared
@@ -290,7 +305,8 @@ public:
         log.closed(id, reason, stream.packets, stream.packetBytes, stream.delivered,
                    stream.output.frame_width, stream.output.frame_height, capture,
                    stream.captureQueued, stream.captureBuffers.size(),
-                   stream.captureRequeued, stream.outputs.size());
+                   stream.captureRequeued, stream.outputs.size(),
+                   rawName(stream.output.format), stream.converted);
     }
 
     void closeAll(const char* reason) noexcept
@@ -404,8 +420,9 @@ public:
             ++stream.delivered;
             std::vector<std::vector<std::uint8_t>> planes;
             if (stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
-                planes.push_back(frame.layout == uml::platform::VideoPixelLayout::packedBgra
-                    ? std::move(frame.pixels) : packBgra(frame));
+                const bool packed = frame.layout == uml::platform::VideoPixelLayout::packedBgra;
+                if (!packed) ++stream.converted;
+                planes.push_back(packed ? std::move(frame.pixels) : packBgra(frame));
             } else if (frame.layout == uml::platform::VideoPixelLayout::packedBgra) {
                 planes.emplace_back(); // a packed frame cannot answer a planar format
             } else if (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) {
