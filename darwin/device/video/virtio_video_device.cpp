@@ -265,11 +265,21 @@ public:
         bool filled {}; // a frame has been written into it at least once
     };
     struct Output { std::uint64_t request; std::uint32_t resource; };
+    /* An encoded packet the device has taken from the guest but not given to
+     * the decoder, because the frames already decoded have nowhere to go. */
+    struct Held {
+        std::uint64_t request;
+        std::uint32_t resource;
+        std::uint64_t timestamp;
+        std::uint32_t size;
+        std::vector<std::uint8_t> packet;
+    };
     struct Stream {
         std::uint32_t coded {};
         std::uint32_t profile {};
         virtio_video_params input {};
         virtio_video_params output {};
+        std::deque<Held> held;
         bool sourceKnown {};
         bool draining {};
         bool eosSent {};
@@ -398,7 +408,16 @@ public:
         return offset == data.size();
     }
 
-    void collect(std::uint32_t id, Stream& stream)
+    /* How many decoded frames the device keeps before it stops taking encoded
+     * packets. A decoder in hardware cannot decode a picture without a free
+     * capture buffer, and its client feels that as its input buffers not
+     * coming back; this device decodes whenever it is asked, so it has to
+     * withhold the input buffer itself. Without that the frames pile up
+     * against a client that consumes them at its display rate, and the pile
+     * used to end in an error the client reports as EIO on both queues. */
+    static constexpr std::size_t framesInFlight = 8;
+
+    void refreshFormat(std::uint32_t id, Stream& stream)
     {
         const auto format = stream.decoder->format();
         /* Packed capture has left the YCbCr domain, so the stream's bit depth
@@ -415,11 +434,50 @@ public:
             stream.sourceKnown = true;
             event(id, VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED);
         }
-        for (auto& frame : stream.decoder->takeFrames()) {
-            if (stream.frames.size() >= 32) throw std::runtime_error("video stream output queue is full");
-            stream.frames.push_back(std::move(frame));
+    }
+
+    void collect(std::uint32_t id, Stream& stream)
+    {
+        refreshFormat(id, stream);
+        for (auto& frame : stream.decoder->takeFrames()) stream.frames.push_back(std::move(frame));
+        drive(id, stream);
+    }
+
+    /* Deliver what the client has room for, and let in as much of the input it
+     * offered as the frames already decoded leave room for. Each pass consumes
+     * one held packet, so this ends. */
+    void drive(std::uint32_t id, Stream& stream)
+    {
+        for (;;) {
+            pump(id, stream);
+            if (stream.held.empty() || stream.frames.size() >= framesInFlight) return;
+            auto held = std::move(stream.held.front());
+            stream.held.pop_front();
+            const auto found = stream.resources.find(
+                resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, held.resource));
+            if (found != stream.resources.end()) found->second.queued = false;
+            stream.decoder->submit(held.packet, held.timestamp);
+            ++stream.packets;
+            stream.packetBytes += held.size;
+            auto result = load<virtio_video_resource_queue_resp>(queued(id, held.timestamp, 0));
+            result.data_sizes[0] = held.size;
+            completions.push_back({held.request, bytes(result)});
+            refreshFormat(id, stream);
+            for (auto& frame : stream.decoder->takeFrames()) stream.frames.push_back(std::move(frame));
         }
-        pump(id, stream);
+    }
+
+    /* A queue that stops returns every buffer it holds, the encoded ones
+     * included, or the client waits for input buffers that never come back. */
+    void cancelHeld(std::uint32_t id, Stream& stream)
+    {
+        for (const auto& held : stream.held) {
+            completions.push_back({held.request, queued(id, held.timestamp, VIRTIO_VIDEO_DEQUEUE_FLAG_ERR)});
+            const auto found = stream.resources.find(
+                resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, held.resource));
+            if (found != stream.resources.end()) found->second.queued = false;
+        }
+        stream.held.clear();
     }
 
     void pump(std::uint32_t id, Stream& stream)
@@ -527,6 +585,7 @@ public:
         switch (header.type) {
         case VIRTIO_VIDEO_CMD_STREAM_DESTROY:
             cancelOutputs(id, stream);
+            cancelHeld(id, stream);
             record(id, stream, "destroy");
             streams.erase(found);
             return done(reply(id));
@@ -637,6 +696,15 @@ public:
                 std::vector<std::uint8_t> packet(q.data_sizes[0]);
                 if (!transfer(resource->second.planes[0], packet, false)) throw std::invalid_argument("short encoded video resource");
                 stream.draining = stream.eosSent = false;
+                /* Order is the client's, so a packet waits behind one that is
+                 * already waiting even if room appeared meanwhile. */
+                if (!stream.held.empty() || stream.frames.size() >= framesInFlight) {
+                    if (stream.held.size() >= 128) throw std::invalid_argument("video input queue is full");
+                    resource->second.queued = true;
+                    stream.held.push_back({requestId, q.resource_id, q.timestamp,
+                                           q.data_sizes[0], std::move(packet)});
+                    return {VhostUserQueueAction::defer, {}};
+                }
                 stream.decoder->submit(packet, q.timestamp);
                 ++stream.packets;
                 stream.packetBytes += q.data_sizes[0];
@@ -654,7 +722,7 @@ public:
                     (segment.shared ? stream.captureShared : stream.captureGuestPages) = true;
             resource->second.queued = true;
             stream.outputs.push_back({requestId, q.resource_id});
-            pump(id, stream);
+            drive(id, stream);
             return {VhostUserQueueAction::defer, {}};
         }
         case VIRTIO_VIDEO_CMD_STREAM_DRAIN:
@@ -670,7 +738,12 @@ public:
             else {
                 const auto cap = std::find_if(capabilities.begin(), capabilities.end(),
                     [&stream](const auto& c) { return wireCodec(c.codec) == stream.coded; });
+                cancelHeld(id, stream);
                 stream.decoder = factory(cap->codec);
+                /* A new decoder knows nothing of the format already
+                 * negotiated, and would hand back planar pictures for a
+                 * packed capture queue until the device converted each one. */
+                stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
                 stream.frames.clear();
                 stream.sourceKnown = stream.draining = stream.eosSent = false;
             }
@@ -764,6 +837,7 @@ VhostUserQueueResult VirtioVideoDevice::processQueue(std::uint32_t index, std::u
         const auto found = impl.streams.find(header.stream_id);
         if (found != impl.streams.end()) {
             impl.cancelOutputs(header.stream_id, found->second);
+            impl.cancelHeld(header.stream_id, found->second);
             impl.event(header.stream_id, VIRTIO_VIDEO_EVENT_ERROR);
         }
         if (header.type == VIRTIO_VIDEO_CMD_RESOURCE_QUEUE)
