@@ -280,6 +280,13 @@ public:
         virtio_video_params input {};
         virtio_video_params output {};
         std::deque<Held> held;
+        /* Whether the client has said what it wants from the capture queue,
+         * by naming a format or by starting the queue with the one it was
+         * given. Before that the decoder is left planar: a picture decoded
+         * packed cannot answer a planar format, and a stateful client cannot
+         * name its format until the source change, which only a decoded
+         * picture raises. */
+        bool captureSettled {};
         bool sourceKnown {};
         bool draining {};
         bool eosSent {};
@@ -572,9 +579,8 @@ public:
             stream.profile = wireProfile(cap->profile);
             stream.decoder = factory(cap->codec);
             stream.input = params(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, q.coded_format, 128, 128);
-            const auto raw = defaultCapture(cap->bitDepth);
-            stream.decoder->requestOutputLayout(captureLayout(raw));
-            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, 128, 128);
+            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
+                                   defaultCapture(cap->bitDepth), 128, 128);
             streams.emplace(id, std::move(stream));
             log.opened(id, codecName(cap->codec), profileName(cap->profile));
             return done(reply(id));
@@ -610,10 +616,9 @@ public:
                     stream.decoder = factory(cap->codec);
                     stream.coded = p.format;
                     stream.profile = wireProfile(cap->profile);
-                    const auto raw = defaultCapture(cap->bitDepth);
-                    stream.decoder->requestOutputLayout(captureLayout(raw));
-                    stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw,
-                        p.frame_width, p.frame_height);
+                    stream.captureSettled = false;
+                    stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
+                        defaultCapture(cap->bitDepth), p.frame_width, p.frame_height);
                 }
                 stream.input = params(p.queue_type, p.format, p.frame_width, p.frame_height);
             } else {
@@ -629,6 +634,7 @@ public:
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
                 stream.decoder->requestOutputLayout(packed ? uml::platform::VideoPixelLayout::packedBgra
                                                            : uml::platform::VideoPixelLayout::planarYuv);
+                stream.captureSettled = true;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
             }
             return done(reply(id));
@@ -714,6 +720,14 @@ public:
                 return done(bytes(result));
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
+            /* Starting the capture queue settles the format as surely as
+             * naming one: a client that keeps what it was given gets the
+             * packed layout from here on, and the pictures decoded before
+             * this are planar, which either format can answer. */
+            if (!stream.captureSettled) {
+                stream.captureSettled = true;
+                stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
+            }
             ++stream.captureQueued;
             stream.captureBuffers.insert(q.resource_id);
             if (resource->second.filled) ++stream.captureRequeued;
@@ -742,8 +756,11 @@ public:
                 stream.decoder = factory(cap->codec);
                 /* A new decoder knows nothing of the format already
                  * negotiated, and would hand back planar pictures for a
-                 * packed capture queue until the device converted each one. */
-                stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
+                 * packed capture queue until the device converted each one.
+                 * Before the format is settled it stays planar, which is the
+                 * layout a client that has not chosen yet can still use. */
+                if (stream.captureSettled)
+                    stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
                 stream.frames.clear();
                 stream.sourceKnown = stream.draining = stream.eosSent = false;
             }
