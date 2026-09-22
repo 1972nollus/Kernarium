@@ -95,11 +95,14 @@ void Driver::probeCodecs()
     codecs_.push_back(vp9);
 }
 
-// A packed decode is only worth having when the host's conversion is the one a
-// client would have done itself. The device's packed output currently leaves
-// the studio-swing range unapplied, so the automatic policy holds it back until
-// `v4l2-dmabuf` announces a range-correct, late-negotiation-safe format.
-constexpr bool kPackedDecodeTrusted = false;
+// A packed decode only pays when the decoder writes into the client's own
+// buffer. A packed picture is 9.2 MB against NV12's 3.5 MB, and carrying that
+// through a guest costs more than the conversion it saves: 20 frames of
+// 1920x1200 took 7.5 s packed against 2.1 s planar with the capture queue on
+// MMAP. The device offers V4L2_MEMORY_DMABUF capture and the picture it
+// produces is correct; what is missing is this driver queueing the surfaces'
+// own descriptors, so the automatic policy waits for that.
+constexpr bool kCaptureIntoClientBuffers = false;
 
 void Driver::probeCapture()
 {
@@ -116,8 +119,7 @@ std::uint32_t Driver::preferredCapture()
 {
     if (rgbPolicy_ == RgbCapture::off) return 0;
     probeCapture();
-    if (rgbPolicy_ == RgbCapture::automatic && !kPackedDecodeTrusted) return 0;
-    if (!useRgbCapture(rgbPolicy_, rgbOffered_, importCapture_)) return 0;
+    if (!useRgbCapture(rgbPolicy_, rgbOffered_, importCapture_ && kCaptureIntoClientBuffers)) return 0;
     // The device writes B, G, R, A in memory, which is what VA-API calls
     // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
     return V4L2_PIX_FMT_ABGR32;
