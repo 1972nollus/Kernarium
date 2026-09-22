@@ -23,3 +23,11 @@ uml_add_tooling_test(
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     LABELS performance
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME steam-boot-bench-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/steam_boot_bench_tests.py
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS performance;steam
+    TIMEOUT 60)

@@ -260,6 +260,7 @@ network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	too
 jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
 gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
 performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
+steam-boot-bench-contract	tests/tooling/performance/steam_boot_bench_tests.py	tooling	retained
 arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
 arm64-instruction-corpus-freshness	tests/tooling/arm64/test_arm64_instruction_corpus.py	tooling	retained
 arm64-jit-gpr-link-profile-codegen	tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp	unit	conditional
