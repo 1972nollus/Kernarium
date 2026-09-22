@@ -185,6 +185,14 @@ the seed copy, a network-bound download, or Steam's own install.
 `results.json` without running anything. See `--help` for guest topology,
 timeout, and poll options.
 
+A run that reaches Big Picture has its 32 GiB user-data disk deleted afterwards.
+A run that does not is kept: the guest journal and Steam's own logs live on that
+disk, and deleting it is what makes such a failure unclassifiable once the guest
+is gone. The kept path is printed to the run log and recorded as
+`userdata_image` in `run.json` and in the campaign's `results.json`.
+`--discard-failed-disks` deletes it anyway, for a long unattended campaign on a
+full volume; `--keep-disks` keeps every run's disk, successful ones included.
+
 The harness never modifies an image. Phase times therefore come from records an
 unmodified appliance already keeps — systemd's monotonic unit timestamps, the
 storage stage's progress file, and Steam's `bootstrap_log.txt` — read once per

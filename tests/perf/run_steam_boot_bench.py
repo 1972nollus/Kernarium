@@ -700,10 +700,21 @@ def one_run(image: dict[str, object], options: argparse.Namespace,
         print(f"    {name} run {index} FAILED: {run['error']}", flush=True)
     finally:
         run["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        (directory / "run.json").write_text(json.dumps(run, indent=2) + "\n")
-        if not options.keep_disks:
+        # A run that did not reach Big Picture is the only evidence of why.
+        # The guest journal and Steam's own logs live on the user-data disk,
+        # so keep it: deleting it is what makes such a failure unclassifiable
+        # afterwards. A successful run's disk carries nothing worth 32 GiB.
+        keep = options.keep_disks or (
+            run.get("status") != "ok" and not options.discard_failed_disks)
+        if keep:
+            run["userdata_image"] = str(userdata)
+            if run.get("status") != "ok":
+                print(f"    {name} run {index}: user-data disk kept for "
+                      f"diagnosis at {userdata}", flush=True)
+        else:
             userdata.unlink(missing_ok=True)
             pathlib.Path(str(userdata) + ".lock").unlink(missing_ok=True)
+        (directory / "run.json").write_text(json.dumps(run, indent=2) + "\n")
     return run
 
 
@@ -886,7 +897,11 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=2,
                         help="retries for a classified boot flake (default: 2)")
     parser.add_argument("--keep-disks", action="store_true",
-                        help="retain each run's user-data disk for inspection")
+                        help="retain every run's user-data disk for inspection")
+    parser.add_argument("--discard-failed-disks", action="store_true",
+                        help="delete a failed run's user-data disk too; the "
+                             "default keeps it, because it carries the guest "
+                             "journal that explains the failure")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the schedule and the first command line")
     return parser.parse_args(argv)
