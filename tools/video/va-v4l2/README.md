@@ -103,15 +103,17 @@ copy of what the host already produced.
 | `auto` (default) | packed RGB when the decoded picture also reaches the client without a guest-side copy, otherwise NV12 |
 
 `auto` decides once, at initialisation, from what the device offers and
-whether its capture queue imports dma-bufs - not from what a client has done
-so far - so the first decode session of a boot gets the same answer as every
-later one.
+whether this driver can have the decoder write into the client's own buffer -
+not from what a client has done so far - so the first decode session of a boot
+gets the same answer as every later one. Today it cannot, so `auto` decodes to
+NV12.
 
-The copy is why `auto` waits for an importing capture queue: a packed frame is
-2.6 times the bytes of NV12, and in a guest, moving it costs about what
-converting it costs. Measured on one 1920x1200 frame: 164 ms to convert NV12,
-187 ms to copy the packed frame the device produced. Packed decode pays when
-the decoder writes into the client's own buffer and nothing is copied at all.
+The copy is why: a packed frame is 2.6 times the bytes of NV12, and in a guest
+moving it costs more than converting it. Measured on one 1920x1200 frame,
+164 ms to convert NV12 against 187 ms to copy the packed frame; over 20 frames
+of a real stream, 2.1 s planar against 7.5 s packed. Packed decode pays when
+the capture queue takes the surfaces' own descriptors and nothing is copied at
+all.
 
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the
