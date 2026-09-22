@@ -262,6 +262,8 @@ void codecLevelControls()
  * decode from a silent software fallback, so it has to stay silent unless it
  * is asked for and to name what each stream actually decoded when it is.
  */
+void sharedMemoryCapture(); // exercised again below, with the log on
+
 void activityLog()
 {
     const auto path = std::filesystem::temp_directory_path() /
@@ -284,6 +286,29 @@ void activityLog()
         "the video activity log omits the stream a guest opened");
     require(text.find("stream=7 close=destroy packets=1 bytes=5 frames=1 output=64x64") != std::string::npos,
         "the video activity log omits what the stream decoded");
+    /* The capture fields say where a client's capture memory lives and
+     * whether it ever gives a filled buffer back, which is how a starved
+     * client is told apart from a device that stops filling one. They are
+     * appended, so the older prefix above still matches. */
+    require(text.find("output=64x64 capture=guest-pages queued=3 distinct=1 "
+                      "requeued=2 pending_at_close=0") != std::string::npos,
+        "the video activity log omits the capture-queue facts");
+
+    ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
+    sharedMemoryCapture();
+    ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+    std::ostringstream shared;
+    shared << std::ifstream(path).rdbuf();
+    const auto sharedText = shared.str();
+    std::filesystem::remove(path);
+    const auto closeLine = sharedText.find("stream=3 close=");
+    require(closeLine != std::string::npos,
+        "the video activity log omits a shared-memory stream");
+    const auto line = sharedText.substr(closeLine, sharedText.find('\n', closeLine) - closeLine);
+    require(line.find("capture=shm-region") != std::string::npos,
+        "a shared-memory capture buffer is not named as one");
+    require(line.find("queued=2 distinct=1 requeued=1") != std::string::npos,
+        "the video activity log does not count a re-queued capture buffer");
 }
 
 /* A capture buffer may be a host-visible blob: the guest names an offset in

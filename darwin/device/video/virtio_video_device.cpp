@@ -11,6 +11,7 @@
 #include <deque>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace uml::video {
 namespace {
@@ -161,16 +162,28 @@ public:
             elapsed(), stream, codec, profile);
         std::fflush(file_);
     }
+    /* The capture fields are appended, so a reader that only knows the older
+     * line keeps working. They answer, without any tool inside the guest,
+     * where a client's capture memory lives and whether it ever gives a
+     * filled buffer back: a client that queues each buffer once and stops has
+     * starved its own pool, while re-queues that stop being filled are the
+     * device's or the driver's fault. */
     void closed(std::uint32_t stream, const char* reason, std::uint64_t packets,
                 std::uint64_t packetBytes, std::uint64_t frames,
-                std::uint32_t width, std::uint32_t height)
+                std::uint32_t width, std::uint32_t height, const char* capture,
+                std::uint64_t queuedBuffers, std::uint64_t distinctBuffers,
+                std::uint64_t requeuedBuffers, std::size_t pending)
     {
         if (file_ == nullptr) return;
         std::fprintf(file_,
-            "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u\n",
+            "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u"
+            " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu\n",
             elapsed(), stream, reason, static_cast<unsigned long long>(packets),
             static_cast<unsigned long long>(packetBytes),
-            static_cast<unsigned long long>(frames), width, height);
+            static_cast<unsigned long long>(frames), width, height, capture,
+            static_cast<unsigned long long>(queuedBuffers),
+            static_cast<unsigned long long>(distinctBuffers),
+            static_cast<unsigned long long>(requeuedBuffers), pending);
         std::fflush(file_);
     }
 
@@ -229,7 +242,11 @@ public:
         bool shared {};
         std::uint8_t region {};
     };
-    struct Resource { std::vector<std::vector<Segment>> planes; bool queued {}; };
+    struct Resource {
+        std::vector<std::vector<Segment>> planes;
+        bool queued {};
+        bool filled {}; // a frame has been written into it at least once
+    };
     struct Output { std::uint64_t request; std::uint32_t resource; };
     struct Stream {
         std::uint32_t coded {};
@@ -242,6 +259,11 @@ public:
         std::uint64_t packets {};
         std::uint64_t packetBytes {};
         std::uint64_t delivered {};
+        std::uint64_t captureQueued {};
+        std::uint64_t captureRequeued {};
+        std::unordered_set<std::uint32_t> captureBuffers;
+        bool captureShared {};
+        bool captureGuestPages {};
         std::unique_ptr<uml::platform::VideoDecoder> decoder;
         std::unordered_map<std::uint64_t, Resource> resources;
         std::deque<Output> outputs;
@@ -262,8 +284,13 @@ public:
 
     void record(std::uint32_t id, const Stream& stream, const char* reason) noexcept
     {
+        const char* capture = stream.captureShared
+            ? (stream.captureGuestPages ? "mixed" : "shm-region")
+            : (stream.captureGuestPages ? "guest-pages" : "none");
         log.closed(id, reason, stream.packets, stream.packetBytes, stream.delivered,
-                   stream.output.frame_width, stream.output.frame_height);
+                   stream.output.frame_width, stream.output.frame_height, capture,
+                   stream.captureQueued, stream.captureBuffers.size(),
+                   stream.captureRequeued, stream.outputs.size());
     }
 
     void closeAll(const char* reason) noexcept
@@ -399,6 +426,7 @@ public:
             bool good = resource.planes.size() == planes.size() && !planes.empty();
             for (std::size_t i = 0; good && i < planes.size(); ++i)
                 good = !planes[i].empty() && transfer(resource.planes[i], planes[i], true);
+            if (good) resource.filled = true;
             completions.push_back({output.request, queued(id, frame.timestamp,
                 good ? 0 : VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, good ? &stream.output : nullptr)});
         }
@@ -578,6 +606,12 @@ public:
                 return done(bytes(result));
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
+            ++stream.captureQueued;
+            stream.captureBuffers.insert(q.resource_id);
+            if (resource->second.filled) ++stream.captureRequeued;
+            for (const auto& plane : resource->second.planes)
+                for (const auto& segment : plane)
+                    (segment.shared ? stream.captureShared : stream.captureGuestPages) = true;
             resource->second.queued = true;
             stream.outputs.push_back({requestId, q.resource_id});
             pump(id, stream);
