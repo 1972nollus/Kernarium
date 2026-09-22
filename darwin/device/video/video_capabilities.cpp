@@ -82,9 +82,17 @@ std::vector<std::uint8_t> capabilityResponse(
     /* Packed BGRA is decoded to by the host, so it is offered for every
      * stream regardless of the coded bit depth. A client that can only draw
      * through a 32-bit RGB surface would otherwise convert each frame itself
-     * on the guest processor. */
-    std::vector<std::uint32_t> raw {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420,
-                                    VIRTIO_VIDEO_FORMAT_BGRA8888};
+     * on the guest processor.
+     *
+     * It is offered first because the head of this list is the format a client
+     * that never negotiates one receives, and because the host packs it in
+     * hardware at no more cost than a planar frame. A client whose renderer
+     * needs a single renderable plane - which is every GL client - then finds
+     * the device already producing what it draws, instead of picking a packed
+     * format and being handed planar data. A client that wants planar frames
+     * asks for them, and the ones below are unchanged. */
+    std::vector<std::uint32_t> raw {VIRTIO_VIDEO_FORMAT_BGRA8888, VIRTIO_VIDEO_FORMAT_NV12,
+                                    VIRTIO_VIDEO_FORMAT_YUV420};
     if (tenBit) raw.push_back(VIRTIO_VIDEO_FORMAT_P010);
     const auto& formats = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? coded : raw;
     virtio_video_query_capability_resp header {};

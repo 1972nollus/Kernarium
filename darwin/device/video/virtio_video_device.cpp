@@ -93,6 +93,20 @@ std::vector<std::uint8_t> reply(std::uint32_t stream, std::uint32_t type = VIRTI
 {
     return bytes(virtio_video_cmd_hdr{type, stream});
 }
+/* The capture format a stream has before its client negotiates one. It is the
+ * head of the raw list `capabilityResponse()` publishes: packed BGRA for an
+ * 8-bit stream, which the host produces in hardware and a GL client can draw
+ * without converting, and P010 for a 10-bit one, which packed BGRA cannot
+ * carry. */
+std::uint32_t defaultCapture(unsigned bitDepth) noexcept
+{
+    return bitDepth == 10 ? VIRTIO_VIDEO_FORMAT_P010 : VIRTIO_VIDEO_FORMAT_BGRA8888;
+}
+uml::platform::VideoPixelLayout captureLayout(std::uint32_t format) noexcept
+{
+    return format == VIRTIO_VIDEO_FORMAT_BGRA8888 ? uml::platform::VideoPixelLayout::packedBgra
+                                                  : uml::platform::VideoPixelLayout::planarYuv;
+}
 bool validQueue(std::uint32_t queue)
 {
     return queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT || queue == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
@@ -500,7 +514,9 @@ public:
             stream.profile = wireProfile(cap->profile);
             stream.decoder = factory(cap->codec);
             stream.input = params(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, q.coded_format, 128, 128);
-            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, VIRTIO_VIDEO_FORMAT_NV12, 128, 128);
+            const auto raw = defaultCapture(cap->bitDepth);
+            stream.decoder->requestOutputLayout(captureLayout(raw));
+            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, 128, 128);
             streams.emplace(id, std::move(stream));
             log.opened(id, codecName(cap->codec), profileName(cap->profile));
             return done(reply(id));
@@ -535,8 +551,9 @@ public:
                     stream.decoder = factory(cap->codec);
                     stream.coded = p.format;
                     stream.profile = wireProfile(cap->profile);
-                    stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
-                        cap->bitDepth == 10 ? VIRTIO_VIDEO_FORMAT_P010 : VIRTIO_VIDEO_FORMAT_NV12,
+                    const auto raw = defaultCapture(cap->bitDepth);
+                    stream.decoder->requestOutputLayout(captureLayout(raw));
+                    stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw,
                         p.frame_width, p.frame_height);
                 }
                 stream.input = params(p.queue_type, p.format, p.frame_width, p.frame_height);

@@ -718,8 +718,10 @@ void lateNegotiation(std::size_t page)
     require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
 
-    // Three pictures: the one decoded before the request, one the decoder is
-    // still deferring, and one it has adopted the layout for.
+    /* Three pictures. The device asks for the packed layout as soon as the
+     * stream exists, so a decoder that defers has adopted it by the second
+     * picture; the first one is still planar and is converted here, which is
+     * what a client that negotiates late must never see. */
     for (unsigned round = 0; round < 3; ++round) {
         std::memset(memory.data() + base, 0xcc, 64 * 64 * 4);
         virtio_video_resource_queue capture {};
@@ -742,10 +744,10 @@ void lateNegotiation(std::size_t page)
                 const auto* got = memory.data() + base + (std::size_t(row) * 64 + column) * 4;
                 std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
                                             std::uint8_t(row + column), 0xff};
-                if (round != 2) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
+                if (round == 0) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
                 require(got[3] == 0xff, "a late-negotiated frame lost its alpha");
                 for (unsigned channel = 0; channel < 3; ++channel)
-                    require(std::abs(int(got[channel]) - int(expected[channel])) <= (round == 2 ? 0 : 1),
+                    require(std::abs(int(got[channel]) - int(expected[channel])) <= (round == 0 ? 1 : 0),
                             "a late-negotiated frame has the wrong pixels");
             }
     }
@@ -788,6 +790,38 @@ void capabilityMasks()
     const auto coded = formats(VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
     const auto raw = formats(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT);
     require(coded.size() == 2 && raw.size() == 4, "capability lists changed shape");
+
+    /* A client that enumerates the capture list and never negotiates receives
+     * the first entry, so the head of that list and the format a fresh stream
+     * reports have to be the same thing: the packed format every renderer can
+     * draw. A client that picks by preference and a client that picks nothing
+     * then agree, instead of one of them being handed planar data it did not
+     * ask for. */
+    require(raw.front().first == VIRTIO_VIDEO_FORMAT_BGRA8888,
+            "the capture list does not offer the packed format first");
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 11};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_VP9;
+    {
+        std::vector<std::uint8_t> request;
+        append(request, create);
+        require(read<virtio_video_cmd_hdr>(
+                    device.processQueue(0, next++, request, 16384).response).type
+                == VIRTIO_VIDEO_RESP_OK_NODATA, "stream create failed");
+    }
+    virtio_video_get_params get {};
+    get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 11};
+    get.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    {
+        std::vector<std::uint8_t> request;
+        append(request, get);
+        const auto params = read<virtio_video_get_params_resp>(
+            device.processQueue(0, next++, request, 16384).response).params;
+        require(params.format == raw.front().first,
+                "a fresh stream's capture format is not the first one advertised");
+        require(params.num_planes == 1 && params.plane_formats[0].stride == 128 * 4,
+                "the default capture format is not a single packed plane");
+    }
 
     auto selected = [](const auto& list, std::uint64_t mask) {
         std::vector<std::uint32_t> chosen;
