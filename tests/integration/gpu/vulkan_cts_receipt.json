@@ -30,7 +30,7 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source27-20260919-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/vm/uml-source28-20260923-v1/build/VK-GL-CTS-1.4.6.2",
       "--target",
       "deqp-vk"
     ],
@@ -38,9 +38,9 @@
       "cmake",
       "--fresh",
       "-S",
-      "/home/vm/uml-source27-20260919-v1/sources/VK-GL-CTS",
+      "/home/vm/uml-source28-20260923-v1/sources/VK-GL-CTS",
       "-B",
-      "/home/vm/uml-source27-20260919-v1/build/VK-GL-CTS-1.4.6.2",
+      "/home/vm/uml-source28-20260923-v1/build/VK-GL-CTS-1.4.6.2",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -106,7 +106,7 @@
     "filesystem": "ext4",
     "filesystem_uuid": "2240061a-2b64-4626-b8bf-dd0f9993a4a9",
     "read_only": true,
-    "sha256": "42b90213a7cd4b6d3e458a5218c1f35b7cfa482638951436113233e781f90a30",
+    "sha256": "afa2e5c80f1d741f5b208a9cbf0679d197987a6c5b2640ddcd5e954d58c5ff34",
     "size": 8589934592
   },
   "exclusions": [
@@ -139,8 +139,8 @@
   ],
   "guest_receipt": {
     "path": "/usr/share/uml-vulkan/rootfs-build-receipt.json",
-    "sha256": "04d4c0e2ae6d94ca7e55a5cd0fa7ef73822a3a7a7485bb80195c167f90af7e54",
-    "size": 102150
+    "sha256": "5f7bed672fa2c2308aa5a58bae8c97794c9f6110347bec8f136987792eeb8a2e",
+    "size": 103530
   },
   "install_closure": [
     {
@@ -437,8 +437,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "834845d838216df72538718894aa99c1b08abfcc68ba5781e73dc3a8fbc0468b",
-        "size": 24244840
+        "sha256": "5924e1b9943de19c774481bfec06ae9ffb690c513c17d04875aaa045ec26d714",
+        "size": 24310768
       },
       "needed": "libgallium-26.2.1.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so"
@@ -627,8 +627,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "834845d838216df72538718894aa99c1b08abfcc68ba5781e73dc3a8fbc0468b",
-        "size": 24244840
+        "sha256": "5924e1b9943de19c774481bfec06ae9ffb690c513c17d04875aaa045ec26d714",
+        "size": 24310768
       },
       "needed": "libgallium-26.2.1.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so"
@@ -877,8 +877,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "834845d838216df72538718894aa99c1b08abfcc68ba5781e73dc3a8fbc0468b",
-        "size": 24244840
+        "sha256": "5924e1b9943de19c774481bfec06ae9ffb690c513c17d04875aaa045ec26d714",
+        "size": 24310768
       },
       "needed": "libgallium-26.2.1.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so"
@@ -1549,19 +1549,19 @@
     "base_tree": "a41b271df29845735895fd23bfcef54076ec4515",
     "build_targets": [
       "env",
-      "DESTDIR=/home/vm/uml-source27-20260919-v1/stage/mesa",
+      "DESTDIR=/home/vm/uml-source28-20260923-v1/stage/mesa",
       "meson",
       "install",
       "-C",
-      "/home/vm/uml-source27-20260919-v1/build/mesa",
+      "/home/vm/uml-source28-20260923-v1/build/mesa",
       "--tags",
       "runtime"
     ],
     "configure_argv": [
       "meson",
       "setup",
-      "/home/vm/uml-source27-20260919-v1/build/mesa",
-      "/home/vm/uml-source27-20260919-v1/sources/mesa",
+      "/home/vm/uml-source28-20260923-v1/build/mesa",
+      "/home/vm/uml-source28-20260923-v1/sources/mesa",
       "--wrap-mode=nofallback",
       "--prefix=/usr",
       "--libdir=lib/aarch64-linux-gnu",
@@ -1591,7 +1591,7 @@
       "-Dxmlconfig=enabled",
       "-Dshader-cache=enabled",
       "-Dzstd=enabled",
-      "-Dvenus-protocol-dir=/home/vm/uml-source27-20260919-v1/build/venus-protocol"
+      "-Dvenus-protocol-dir=/home/vm/uml-source28-20260923-v1/build/venus-protocol"
     ],
     "files": [
       {
@@ -1601,7 +1601,7 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
-        "sha256": "40dee29d6c3ee7deaa6ad2c9e12d94b4d657c088aaa25b42d13f59c012cc9dfa",
+        "sha256": "480f76f131e6c65303a595d8254eda269f07aa62f5fb5d9754172fa7a932d8ac",
         "size": 149976
       },
       {
@@ -1616,8 +1616,8 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
-        "sha256": "834845d838216df72538718894aa99c1b08abfcc68ba5781e73dc3a8fbc0468b",
-        "size": 24244840
+        "sha256": "5924e1b9943de19c774481bfec06ae9ffb690c513c17d04875aaa045ec26d714",
+        "size": 24310768
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
@@ -1626,7 +1626,7 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-        "sha256": "5b9deb8d1ab8d7cefaa8766d6e516de09701da480c55274c8406df53b7205e11",
+        "sha256": "edf195f5ac49a2cff889ac67d442157d89998e92254f84169fc098cbcd84f99b",
         "size": 2154072
       },
       {
@@ -1661,175 +1661,203 @@
       }
     ],
     "install_prefix": "/usr",
-    "patched_tree": "dffd92480a3b7777d5de5f2915d85ddadd42409b",
+    "patched_tree": "99bb2adc315eb12d02c791cbfd8e22afc43a4c2d",
     "patches": [
       {
         "order": 1,
         "patch": "0001-venus-observe-pipeline-creation-results.patch",
-        "sha256": "35a68736c132f2a0c481c26fd622f847b6aa214b743f5841b9421d99e452ea41",
+        "sha256": "58499d455118e2ace5d3fb84c495166ff639192f02934b3b3c948ecdcb339ddf",
         "stable_patch_id": "09fbb0b6c3a7c407e6913977b52158ef9f78ab1e",
         "subject": "venus: observe pipeline creation results"
       },
       {
         "order": 2,
         "patch": "0002-venus-size-a-host-image-copy-from-a-describable-form.patch",
-        "sha256": "3f3526b22f679f221305904afdd9d6ae6759e705f1675733ef16e04260e48272",
+        "sha256": "86d32b8fd216b25577ec3288664816d7a2ca84220dcdf0cdaf114f64eea8920a",
         "stable_patch_id": "2bdfbe66c3d8e453ae1f742d8f388078bd437f03",
         "subject": "venus: size a host image copy from a describable format"
       },
       {
         "order": 3,
         "patch": "0003-venus-stop-advertising-DRM-display-acquisition.patch",
-        "sha256": "7f1508b2ac1fd1d8ab0950ecceed7d3f12de331aa0a95ba621d1487997bbda66",
+        "sha256": "835b708a2ffa6b548e03b7cdf4117c9f20ea760593ad3d9ca08c0435d2b78842",
         "stable_patch_id": "531ad5aa9083942e485ffaa778c92794555c8013",
         "subject": "venus: stop advertising DRM display acquisition"
       },
       {
         "order": 4,
         "patch": "0004-venus-preserve-renderer-conformance-version.patch",
-        "sha256": "7efc0b73a74561222798c193a6a6e314de84672b6d6762734159c3eaee060158",
+        "sha256": "caafc58aa5b1752f9f82a844d729aa249c0ddaa897713dfb7182c0f1438325b3",
         "stable_patch_id": "75d0014ec339aeba1e3c475c60a2131a3b0a6b9c",
         "subject": "venus: preserve renderer conformance version"
       },
       {
         "order": 5,
         "patch": "0005-venus-expose-host-backed-guest-memory-fds.patch",
-        "sha256": "474f7f314fe9d1c06352aa37b2bed9ae42d414aa1cd5c067d9c2e628a9a3b62e",
+        "sha256": "6271cc51ea9dbdc4565ac8c5193f6d8b4901b24c1edf15ba74951b264d79bd1f",
         "stable_patch_id": "711ec19d680e2afdb105f6127aa1c46e1ac99061",
         "subject": "venus: expose host-backed guest memory fds"
       },
       {
         "order": 6,
         "patch": "0006-zink-support-Venus-implicit-native-dma-bufs.patch",
-        "sha256": "9f17f5a01db1561f079141fe62daf849d558e1ce4eb3b4e50aac257ac6d89868",
+        "sha256": "daa4a69956ee9df4681c68f9666c71bed5e6e109c5a230e93495d92a404cdb31",
         "stable_patch_id": "c3095d3276ad839a815857e058d26fe0a48ed50d",
         "subject": "zink: support Venus implicit native dma-bufs"
       },
       {
         "order": 7,
         "patch": "0007-venus-consume-paired-protocol-headers-from-an-explic.patch",
-        "sha256": "0043a63f716a91caa475d1b30145f46e42721de15661f9505200a25b656bebb7",
+        "sha256": "40f24e24aacd1c02126f16c888e7a52e9d85760503faa563fa363e59facc02ba",
         "stable_patch_id": "527ef85dd7e56ba4e2067431d597e504439be4a1",
         "subject": "venus: consume paired protocol headers from an explicit build directory"
       },
       {
         "order": 8,
         "patch": "0008-venus-forward-device-address-and-maintenance-command.patch",
-        "sha256": "a214d7631bf26fd15fec76328a891df6ff524db5eb6690402e920ed4b36f439c",
+        "sha256": "5176878eb04fe2365166fe7055969931223517c884fd59bce709f241515433c0",
         "stable_patch_id": "a7cc8a3fcab739ee6f9f17cef5dec4f87de14349",
         "subject": "venus: forward device address and maintenance commands"
       },
       {
         "order": 9,
         "patch": "0009-gallium-preserve-integer-blit-output-types-in-NIR.patch",
-        "sha256": "2b026217ec8c5315a40759c2708bd2aa578bb3faf508960473e2cedd3cdbe2d5",
+        "sha256": "0819265e4ba0ee05704ea9b54285300a8cd92cc44968134af1b9bcf33c5b0da4",
         "stable_patch_id": "f745f4673d3af8867f17935118831fd5d5e42c95",
         "subject": "gallium: preserve integer blit output types in NIR"
       },
       {
         "order": 10,
         "patch": "0010-mesa-st-store-integer-pixel-transfers-without-a-blit.patch",
-        "sha256": "edbb6c8ee1f5423d8d8c4b234ba0489dafd77b14e38d05466fb38505076d2a82",
+        "sha256": "61e6eb01e13b1f1f445ce4b06ccbe1adb11fcc5ed19f3537d0c4abea60ff961d",
         "stable_patch_id": "f3a8d18a722d1fc20eb451f6aa8a3e4d1bb33954",
         "subject": "mesa/st: store integer pixel transfers without a blit"
       },
       {
         "order": 11,
         "patch": "0011-gallium-return-NULL-for-failed-threaded-buffer-maps.patch",
-        "sha256": "5ec65a592fda0b5caa6614e6a4e634ca3700b89db887cacf87d719bda6cf7b51",
+        "sha256": "4efc161ada3151de3eef344273906e143c3811f5964480790a81f94a7099aa87",
         "stable_patch_id": "ca5f653cb19aacfd9cacfcdffe81a3cc40d9c8c4",
         "subject": "gallium: return NULL for failed threaded buffer maps"
       },
       {
         "order": 12,
         "patch": "0012-mesa-st-delete-only-a-pixel-transfer-specialization-.patch",
-        "sha256": "c430fc9772d9b0822696fe0722829d96d91fe1cf684c9f1e2fb825c2c8c013a5",
+        "sha256": "488e834ef117da714e8f606e6dfc0f4639faeff1f1a0aad1141c6216b6901c5b",
         "stable_patch_id": "b74662d5150704e3af15e6890df0be57956f315f",
         "subject": "mesa/st: delete only a pixel-transfer specialization that was compiled"
       },
       {
         "order": 13,
         "patch": "0013-vulkan-wsi-x11-bound-the-swapchain-event-wait.patch",
-        "sha256": "c4163bd5113995974d66b8aefca9a51fbc18b21b1730b2036bf9a020db8f2e27",
+        "sha256": "226a8d1456f1d44aa968db21ecc3fdb998a3224ea416b5a8c857e9a4f680f34f",
         "stable_patch_id": "602418d83354cebfa8a3a02e141fe1fd85f1f5e0",
         "subject": "vulkan/wsi/x11: bound the swapchain event wait"
       },
       {
         "order": 14,
         "patch": "0014-vulkan-wsi-wayland-bound-the-waits-a-compositor-need.patch",
-        "sha256": "2e36266332ca9e98401e464e70661f29357aa861ec2fb239e44fb5801cbc05b4",
+        "sha256": "65aebb6849da2729d939cedd4abe5864bc71f1c32f65d0f6ce2025ecca426061",
         "stable_patch_id": "83ae9afad0133d5363a88b8c77d9a3b39d658a21",
         "subject": "vulkan/wsi/wayland: bound the waits a compositor need not end"
       },
       {
         "order": 15,
         "patch": "0015-venus-serve-reference-counted-layouts-from-the-calle.patch",
-        "sha256": "fb5b4fd65f8630597d46731e694b7ad73c3d0a41d92b256decbf8762c53047fd",
+        "sha256": "3d6e196d979737e5ca360cf511b9ccf1ad889c9d2a2f91afdfbcd26d07177d19",
         "stable_patch_id": "f609a767a8cfb3acc13b4f8532e0c1907dd0fbf1",
         "subject": "venus: serve reference-counted layouts from the caller's allocator"
       },
       {
         "order": 16,
         "patch": "0016-virgl-answer-the-reset-query-a-robust-context-owes.patch",
-        "sha256": "68a410f5e92f66f6ade02d101126593dff5d8e505ba91c69255d58d2072aeb17",
+        "sha256": "95d38eff9f1f75a1c0e7679bfa9627fa35000bfe434a19743ae12424f9a855aa",
         "stable_patch_id": "3399af1d11962442f65e3aef4894394735593ef7",
         "subject": "virgl: answer the reset query a robust context owes"
       },
       {
         "order": 17,
         "patch": "0017-nir-index-the-split-64-bit-vec3-vec4-arrays-by-leaf-.patch",
-        "sha256": "3da9f062278418ee8c1245fb25f4c886a1e5f1fa8c1ef449b779f4d806a6d255",
+        "sha256": "e787767350d4dc99b547ac89fe5d480f5d8ec7a78693c6d7ef5a93d5cad485b2",
         "stable_patch_id": "7143b78b4e448c4b1a8165c2331f53320923a103",
         "subject": "nir: index the split 64-bit vec3/vec4 arrays by leaf element"
       },
       {
         "order": 18,
         "patch": "0018-venus-pass-through-the-extensions-the-uprevved-proto.patch",
-        "sha256": "d8a06247f505f91a8cced8b25f922f07cf4323e5ea2d0cf4066c72fcb1c14751",
+        "sha256": "5646038546dc67c84dd719cb0e858092e2ffbdb0ab6d96c46a1ee2eadbdf6fcd",
         "stable_patch_id": "262df91a56be8433870cb623370929ef1bebe248",
         "subject": "venus: pass through the extensions the uprevved protocol reaches"
       },
       {
         "order": 19,
         "patch": "0019-venus-pass-through-VK_EXT_primitive_restart_index.patch",
-        "sha256": "de3ea31123cde81c7db827fe3652f9939d84660f702f772159d303732fe07eec",
+        "sha256": "1c86e5600a48611e8bb7608cd4f4e5b0285adf667f52195cfe24c7b9e925e712",
         "stable_patch_id": "acf51b6e8026bf234a9950545c4f26d59b729f77",
         "subject": "venus: pass through VK_EXT_primitive_restart_index"
       },
       {
         "order": 20,
         "patch": "0020-venus-pass-through-image-compression-control-and-the.patch",
-        "sha256": "b852310894c78ba54ba37a0c6fe8b166797e88b4789ed5a89f0de9ec3cf35bd0",
+        "sha256": "cf7b3587f2133ce76dbc8b02dc41bc2735ff651ed518f4ec280c0c7fd84f7782",
         "stable_patch_id": "8a3452aeaae723b8a573a75c7a618a35b975118b",
         "subject": "venus: pass through image compression control and the address binding report"
       },
       {
         "order": 21,
         "patch": "0021-venus-pass-through-VK_KHR_pipeline_binary.patch",
-        "sha256": "1c0eca9ae21dc55a4f8b1157a1ca4b977c26e6bd4d28789568c7d39f6fac08b6",
+        "sha256": "d842226363050cb7581427c1eae61d307cf10384687ad8275b98008a3cc3491c",
         "stable_patch_id": "eb7e3f92a43b1dee222f2957146211eb629702d0",
         "subject": "venus: pass through VK_KHR_pipeline_binary"
       },
       {
         "order": 22,
         "patch": "0022-zink-publish-a-batch-s-id-before-clearing-its-unflus.patch",
-        "sha256": "3e2cbca03567c74e3f6de563941f90d64d09e8530d764f78f02740b75e77c1f0",
+        "sha256": "175e56f36f456ee4dbd787905e169cf4a59f40b995afcb5d0d091b3131fead84",
         "stable_patch_id": "a11651ce1c9673a9612ca95769bdcb7b931a6d55",
         "subject": "zink: publish a batch's id before clearing its unflushed flag"
       },
       {
         "order": 23,
         "patch": "0023-venus-support-hardware-buffers-over-a-host-allocatio.patch",
-        "sha256": "ff8fa0bdc17df6aeff68b81ac173aed57533b453af82879a0cd2953d2c7b9ad1",
+        "sha256": "007c3a5c7a111548910a2e9eb4992c03972d90994bc18b37579059f7aba63e62",
         "stable_patch_id": "c2b9e34fea735792c88cc25083673ca906f1a062",
         "subject": "venus: support hardware buffers over a host-allocation blob"
       },
       {
         "order": 24,
         "patch": "0024-venus-give-a-legacy-private-WSI-scanout-the-native-h.patch",
-        "sha256": "b4380c4a225f2f78fe55842633bd8bf900944401c199438ede83fe33b6bfd136",
+        "sha256": "857c97632ef9980ed5615c7a7aa719c2b68e8124207919b811b4e2f90b3c0ad4",
         "stable_patch_id": "c85c1813843c670d742340c946889ba581dd3cc5",
         "subject": "venus: give a legacy private WSI scanout the native heap identity"
+      },
+      {
+        "order": 25,
+        "patch": "0025-zink-give-a-shareable-image-a-layout-the-renderer-ca.patch",
+        "sha256": "94de26528accb9a38c40833ffa27358d9e0052e4843be3719ad343e838c9ca67",
+        "stable_patch_id": "144ce64c0e7fa5bba95df66fdbd43d95958db1d3",
+        "subject": "zink: give a shareable image a layout the renderer can share"
+      },
+      {
+        "order": 26,
+        "patch": "0026-gbm-allocate-a-planar-buffer.patch",
+        "sha256": "8eddb96198b760b21195ee2fa66fdd05d77a94c9e18c857aa3bfc0462f2c9b0d",
+        "stable_patch_id": "9d91a33a0f5f0b03b5e701d260ad240bf2dbe7ae",
+        "subject": "gbm: allocate a planar buffer"
+      },
+      {
+        "order": 27,
+        "patch": "0027-zink-keep-a-shared-planar-image-in-one-allocation.patch",
+        "sha256": "dcc9b547f385351c59de9381621f7d841cece1edefd7872e082291ebdce8535f",
+        "stable_patch_id": "0026436870cc94b41ad0ead1c49fd58075ac0edb",
+        "subject": "zink: keep a shared planar image in one allocation"
+      },
+      {
+        "order": 28,
+        "patch": "0028-gallium-dri-allocate-a-planar-image-as-the-planes-it.patch",
+        "sha256": "90035218e9d7f6ec5a2d08db89c79c672d6857f0e808b3141308f1c60673e8dd",
+        "stable_patch_id": "98c0eb976f7833d7f3e39bdc1335f422e598f5c5",
+        "subject": "gallium/dri: allocate a planar image as the planes it is made of"
       }
     ],
     "portability_driver": false,
@@ -2355,10 +2383,10 @@
       "configure_argv": [
         "meson",
         "setup",
-        "/home/vm/uml-source27-20260919-v1/build/venus-protocol",
-        "/home/vm/uml-source27-20260919-v1/sources/venus-protocol",
+        "/home/vm/uml-source28-20260923-v1/build/venus-protocol",
+        "/home/vm/uml-source28-20260923-v1/sources/venus-protocol",
         "--wrap-mode=nofallback",
-        "-Dvulkan-headers-dir=/home/vm/uml-source27-20260919-v1/sources/Vulkan-Headers"
+        "-Dvulkan-headers-dir=/home/vm/uml-source28-20260923-v1/sources/Vulkan-Headers"
       ],
       "driver_headers": {
         "vn_protocol_driver.h": "f6a5522530a059ce1f93c738463bf9552c7e58411ee1b89eff2decbce94a48e1",
@@ -2493,20 +2521,20 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source27-20260919-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source28-20260923-v1/build/Vulkan-Headers",
       "--target",
       "install"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source27-20260919-v1/sources/Vulkan-Headers",
+      "/home/vm/uml-source28-20260923-v1/sources/Vulkan-Headers",
       "-B",
-      "/home/vm/uml-source27-20260919-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source28-20260923-v1/build/Vulkan-Headers",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
-      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source27-20260919-v1/stage/vulkan-headers"
+      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source28-20260923-v1/stage/vulkan-headers"
     ],
     "installed_in_guest": false,
     "patched": false,
@@ -2522,14 +2550,14 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source27-20260919-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source28-20260923-v1/build/Vulkan-Loader"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source27-20260919-v1/sources/Vulkan-Loader",
+      "/home/vm/uml-source28-20260923-v1/sources/Vulkan-Loader",
       "-B",
-      "/home/vm/uml-source27-20260919-v1/build/Vulkan-Loader",
+      "/home/vm/uml-source28-20260923-v1/build/Vulkan-Loader",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -2537,14 +2565,14 @@
       "-DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu",
       "-DUPDATE_DEPS=OFF",
       "-DBUILD_TESTS=OFF",
-      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source27-20260919-v1/stage/vulkan-headers"
+      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source28-20260923-v1/stage/vulkan-headers"
     ],
     "install_argv": [
       "env",
-      "DESTDIR=/home/vm/uml-source27-20260919-v1/stage/vulkan-loader",
+      "DESTDIR=/home/vm/uml-source28-20260923-v1/stage/vulkan-loader",
       "cmake",
       "--install",
-      "/home/vm/uml-source27-20260919-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source28-20260923-v1/build/Vulkan-Loader"
     ],
     "install_prefix": "/usr",
     "patched": false,
