@@ -79,6 +79,13 @@ public:
     explicit Decoder(bool ten, bool packs = false, bool defers = false,
                      std::uint32_t width = 64, std::uint32_t height = 64)
         : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height) {}
+    /* Reads what the packet declares and decodes nothing, so a caller can
+     * report the picture size before it has to choose an output layout. */
+    void inspect(std::span<const std::uint8_t> packet) override
+    {
+        require(packet.size() == 5 && packet[0] == 1 && packet[4] == 5, "scatter input changed");
+        format_ = {width_, height_, ten_ ? 10u : 8u};
+    }
     void submit(std::span<const std::uint8_t> packet, std::uint64_t timestamp) override
     {
         require(packet.size() == 5 && packet[0] == 1 && packet[4] == 5, "scatter input changed");
@@ -86,10 +93,13 @@ public:
         DecodedVideoFrame frame;
         frame.format = format_;
         frame.timestamp = timestamp;
-        // A deferring decoder keeps its layout until a later picture, which is
-        // what a real one does in the middle of a group of pictures.
-        if (defers_ && layout_ != adopted_) { ++deferred_; if (deferred_ > 1) adopted_ = layout_; }
+        /* A deferring decoder keeps its layout until a later picture, which is
+         * what a real one does in the middle of a group of pictures. Before
+         * any picture there is no group to be in the middle of, so a layout
+         * asked for then takes effect on the first one. */
+        if (defers_ && pictures_ && layout_ != adopted_) { ++deferred_; if (deferred_ > 1) adopted_ = layout_; }
         else adopted_ = layout_;
+        ++pictures_;
         if (packs_ && adopted_ == VideoPixelLayout::packedBgra) {
             frame.layout = VideoPixelLayout::packedBgra;
             frame.format.bitDepth = 8;
@@ -127,6 +137,7 @@ private:
     bool packs_ {};
     bool defers_ {};
     unsigned deferred_ {};
+    unsigned pictures_ {};
     std::uint32_t width_ {64};
     std::uint32_t height_ {64};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
@@ -264,6 +275,7 @@ void codecLevelControls()
  */
 void sharedMemoryCapture(); // exercised again below, with the log on
 void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width, std::uint32_t height);
+void packedDefaultThroughStreamon(std::size_t page);
 
 void activityLog()
 {
@@ -327,6 +339,24 @@ void activityLog()
                                              : "raw=bgra8888 converted=1") != std::string::npos,
             "the video activity log miscounts device-side packing");
     }
+
+    /* Chromium's order, where the client never names a capture format and
+     * simply starts the queue: the log has to show the packed format it was
+     * given and no conversion at all, because the device held the encoded
+     * packets until that silence became a choice. This is the number the
+     * guest proof reads out of a real session. */
+    ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
+    packedDefaultThroughStreamon(16384u);
+    ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+    std::ostringstream streamon;
+    streamon << std::ifstream(path).rdbuf();
+    const auto streamonText = streamon.str();
+    std::filesystem::remove(path);
+    require(streamonText.find("stream=8 close=destroy packets=2 bytes=10 frames=2 output=64x64")
+            != std::string::npos,
+        "the video activity log omits what a client that never chose a format decoded");
+    require(streamonText.find("raw=bgra8888 converted=0") != std::string::npos,
+        "a client that never chose a capture format still cost a device-side conversion");
 
     /* A guest driver creates its stream when the device node is opened, before
      * the client has chosen a codec, and switches the codec with SET_PARAMS. The
@@ -650,11 +680,11 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
     device.reset();
 }
 
-/* The stateful-decoder order a V4L2 client actually uses: the capture format
- * is chosen only after the decoder has reported the stream's size, so the
- * first frames are already decoded when the request arrives. Every frame must
- * still reach the client in the negotiated format, whether the decoder adopted
- * the layout or the device converted for it. */
+/* A client that changes its capture format after frames have already been
+ * delivered: it settles on planar, decodes, and only then asks for packed.
+ * The decoder is in the middle of a group of pictures by then and cannot
+ * change layout there, so every frame must still reach the client packed,
+ * whether the decoder adopted the layout or the device converted for it. */
 void lateNegotiation(std::size_t page)
 {
     std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
@@ -696,7 +726,18 @@ void lateNegotiation(std::size_t page)
     require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
 
-    // Decode before any capture format is chosen; this raises the source change.
+    /* Settle on planar first, so that pictures are delivered before the
+     * client changes its mind. Until a format is settled the device holds the
+     * encoded packets rather than decoding them into a layout nobody asked
+     * for, which is what keeps the ordinary path free of conversion. */
+    virtio_video_set_params planar {};
+    planar.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 5};
+    planar.params.queue_type = output;
+    planar.params.format = VIRTIO_VIDEO_FORMAT_NV12;
+    planar.params.frame_width = planar.params.frame_height = 64;
+    ok(planar);
+
+    // Decoding raises the source change.
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 5; packet.queue_type = input; packet.resource_id = 1;
@@ -719,8 +760,8 @@ void lateNegotiation(std::size_t page)
             == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
 
     /* Three pictures: the one decoded before the request, one the decoder is
-     * still deferring, and one it has adopted the layout for. The device asks
-     * for the packed layout only once the client has named it, so a deferring
+     * still deferring, and one it has adopted the layout for. The request
+     * reaches the decoder in the middle of a group of pictures, so a deferring
      * decoder is still planar for the first two and the device converts them. */
     for (unsigned round = 0; round < 3; ++round) {
         std::memset(memory.data() + base, 0xcc, 64 * 64 * 4);
@@ -755,13 +796,12 @@ void lateNegotiation(std::size_t page)
     device.reset();
 }
 
-/* A stateful client cannot name its capture format until the source change,
- * and only a decoded picture raises that. So the picture decoded before the
- * client has chosen must be in a layout either format can answer: a packed one
- * cannot become planar without round-tripping the colour, and a device that
- * decoded it packed can only fail the buffer. This is the mirror of
- * lateNegotiation(): there the client chooses packed late, here it chooses
- * planar late, and both have to work whatever the default is. */
+/* A stateful client cannot name its capture format until the source change.
+ * The device therefore reports the size from the packet's headers and holds
+ * the packet, so the client's choice is known before anything is decoded and
+ * the planar format it names is the layout its first picture already has.
+ * Nothing is converted and nothing is round-tripped through another colour
+ * space, so the samples the client reads are the decoder's own. */
 void planarAfterSourceChange(std::size_t page)
 {
     std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
@@ -804,14 +844,22 @@ void planarAfterSourceChange(std::size_t page)
     require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
 
-    // The client's first act: decode, which is what raises the source change.
+    /* The client's first act: queue a packet. Its headers say how big the
+     * picture is, which is what raises the source change; the packet itself
+     * waits, because the capture format is still the client's to choose. */
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 6; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 21;
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    const auto packetRequest = next;
+    require(command(packet).action == VhostUserQueueAction::defer,
+            "the packet was decoded before the client chose a capture format");
     VhostUserQueueCompletion completion;
     require(device.takeQueueCompletion(completion) && completion.requestId == 901, "missing source event");
+    require(read<virtio_video_event>(completion.response).event_type ==
+            VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED, "incorrect source event");
+    require(!device.takeQueueCompletion(completion),
+            "an encoded buffer came back before the capture format settled");
 
     // Only now can it choose, and it chooses the planar format.
     virtio_video_set_params set {};
@@ -825,6 +873,13 @@ void planarAfterSourceChange(std::size_t page)
     require(read<virtio_video_cmd_hdr>(attach(output, 2,
                 {{{base, std::uint32_t(luma), {}}}, {{base + luma, std::uint32_t(chroma), {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "planar output attach failed");
+
+    /* Naming the format releases what was held, so the picture is decoded
+     * into the layout the client just named. */
+    require(device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
+            "settling the capture format did not release the held packet");
+    require(read<virtio_video_resource_queue_resp>(completion.response).flags == 0,
+            "the released encoded buffer came back failed");
 
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
@@ -845,16 +900,18 @@ void planarAfterSourceChange(std::size_t page)
     device.reset();
 }
 
-/* The other order: a client that never names a format and simply starts the
+/* Chromium's order: a client that never names a format and simply starts the
  * capture queue with the packed one it was given. Starting the queue settles
- * the choice, so the picture already decoded is converted once and every
- * picture after the next random access point arrives packed by the decoder -
- * which the pixels prove, because a converted frame cannot be exact through a
- * BT.601 round trip and a hardware-packed one is. */
+ * the choice, and because nothing has been decoded yet the decoder takes the
+ * packed layout for its very first picture - even this decoder, which like the
+ * hardware can only change layout at a random access point. Every frame is
+ * therefore packed by the decoder and none is converted by the device, which
+ * the pixels prove: a converted frame cannot be exact through a BT.601 round
+ * trip and a hardware-packed one is. */
 void packedDefaultThroughStreamon(std::size_t page)
 {
     std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true); });
+    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true, true); });
     const std::size_t plane = 64 * 64 * 4;
     std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
     device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
@@ -906,12 +963,15 @@ void packedDefaultThroughStreamon(std::size_t page)
     packet.data_sizes[0] = 5;
     VhostUserQueueCompletion completion;
     for (unsigned round = 0; round < 2; ++round) {
+        std::uint64_t packetRequest = 0;
         if (round == 0) {
-            // Decode before the queue starts: this is the picture no client
-            // can have chosen a format for.
+            /* Queue a packet before the capture queue starts. Its headers say
+             * how big the picture is; the packet itself waits, because the
+             * client's silence is not yet a choice. */
             packet.timestamp = 31;
-            require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
-                    "decode input failed");
+            packetRequest = next;
+            require(command(packet).action == VhostUserQueueAction::defer,
+                    "the packet was decoded before the capture queue started");
         }
         std::memset(memory.data() + base, 0xcc, plane);
         virtio_video_resource_queue capture {};
@@ -924,6 +984,12 @@ void packedDefaultThroughStreamon(std::size_t page)
             require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
                     "later decode failed");
         }
+        if (round == 0) {
+            require(device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
+                    "starting the capture queue did not release the held packet");
+            require(read<virtio_video_resource_queue_resp>(completion.response).flags == 0,
+                    "the released encoded buffer came back failed");
+        }
         require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
                 "missing capture completion");
         const auto result = read<virtio_video_resource_queue_resp>(completion.response);
@@ -932,14 +998,12 @@ void packedDefaultThroughStreamon(std::size_t page)
         for (unsigned row = 0; row < 64; ++row)
             for (unsigned column = 0; column < 64; ++column) {
                 const auto* got = memory.data() + base + (std::size_t(row) * 64 + column) * 4;
-                std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
-                                            std::uint8_t(row + column), 0xff};
-                if (round == 0) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
+                const std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
+                                                  std::uint8_t(row + column), 0xff};
                 require(got[3] == 0xff, "a packed frame lost its alpha");
                 for (unsigned channel = 0; channel < 3; ++channel)
-                    require(std::abs(int(got[channel]) - int(expected[channel])) <= (round ? 0 : 1),
-                            round ? "a picture after the queue started was not packed by the decoder"
-                                  : "the transitional picture was not converted");
+                    require(got[channel] == expected[channel],
+                            "a picture was converted by the device instead of packed by the decoder");
             }
     }
     ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 8}});
@@ -951,6 +1015,122 @@ void packedDefaultThroughStreamon(std::size_t page)
  * The device must answer that by keeping the encoded buffer instead of
  * failing the command: a failure here reaches the client as EIO on both
  * queues and ends playback. */
+/* The wait for a capture format is bounded. A client that queues encoded data
+ * and never says what it wants must not be waited on forever, so at the bound
+ * the device stops waiting and decodes what it holds, in the planar layout
+ * nobody overrode, rather than failing the stream. (The byte bound is the same
+ * rule for a client whose packets are large rather than many; this decoder
+ * only accepts a five-byte packet, so the packet bound is the one a test can
+ * reach.) */
+void unsettledHoldIsBounded(std::size_t page)
+{
+    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
+    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true); });
+    const std::size_t plane = 64 * 64 * 4;
+    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
+    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
+        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
+        return std::span(memory).subspan(offset, size);
+    });
+    std::uint64_t next = 1;
+    auto command = [&](const auto& value) {
+        std::vector<std::uint8_t> request;
+        append(request, value);
+        return device.processQueue(0, next++, request, 16384);
+    };
+    auto ok = [&](const auto& value) {
+        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+                "command failed");
+    };
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 9};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+    ok(create);
+    require(device.processQueue(1, 950, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 9, queue, id});
+        for (const auto& plane : planes) {
+            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
+            for (const auto& segment : plane) append(request, segment);
+        }
+        return device.processQueue(0, next++, request, 16384);
+    };
+    memory[page - 2] = 1; memory[page - 1] = 2;
+    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
+    /* One encoded buffer more than the device will hold unanswered, each with
+     * its own identifier because a held one stays queued. */
+    const unsigned packets = 33;
+    for (unsigned id = 1; id <= packets; ++id)
+        require(read<virtio_video_cmd_hdr>(
+                    attach(input, id, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+                == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+    require(read<virtio_video_cmd_hdr>(attach(output, 100, {{{3 * page, std::uint32_t(plane), {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+
+    // Never name a format, never start the capture queue: only queue input.
+    std::deque<std::uint64_t> waiting;
+    for (unsigned id = 1; id <= packets; ++id) {
+        virtio_video_resource_queue packet {};
+        packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+        packet.stream_id = 9; packet.queue_type = input; packet.resource_id = id;
+        packet.data_sizes[0] = 5; packet.timestamp = 200 + id;
+        const auto request = next;
+        const auto result = command(packet);
+        if (result.action == VhostUserQueueAction::defer) waiting.push_back(request);
+        else {
+            const auto answer = read<virtio_video_resource_queue_resp>(result.response);
+            require(answer.hdr.type == VIRTIO_VIDEO_RESP_OK_RESOURCE_QUEUE && answer.flags == 0,
+                    "an encoded buffer failed instead of being decoded");
+        }
+    }
+    VhostUserQueueCompletion completion;
+    unsigned released = 0;
+    while (device.takeQueueCompletion(completion)) {
+        if (completion.requestId == 950) {
+            require(read<virtio_video_event>(completion.response).event_type ==
+                    VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED, "incorrect source event");
+            continue;
+        }
+        require(!waiting.empty() && completion.requestId == waiting.front(),
+                "an encoded buffer came back out of order");
+        waiting.pop_front();
+        ++released;
+        require(read<virtio_video_resource_queue_resp>(completion.response).flags == 0,
+                "a released encoded buffer came back failed");
+    }
+    require(released > 0, "the device waited for a capture format that was never going to come");
+
+    /* The stream is still usable: the client can still take frames, and every
+     * buffer it gave comes back. */
+    while (!waiting.empty()) {
+        virtio_video_resource_queue capture {};
+        capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
+        capture.stream_id = 9; capture.queue_type = output; capture.resource_id = 100;
+        const auto captureRequest = next;
+        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        bool frame = false;
+        while (device.takeQueueCompletion(completion)) {
+            if (completion.requestId == captureRequest) {
+                frame = true;
+                const auto result = read<virtio_video_resource_queue_resp>(completion.response);
+                require(result.flags == 0, "a frame was failed after the bounded wait");
+                require(result.data_sizes[0] == plane, "the frame has the wrong size");
+            } else {
+                require(!waiting.empty() && completion.requestId == waiting.front(),
+                        "an encoded buffer came back out of order");
+                waiting.pop_front();
+            }
+        }
+        require(frame, "a returned capture buffer produced no frame");
+    }
+    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
+    device.reset();
+}
+
 void inputBackpressure(std::size_t page)
 {
     std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
@@ -977,6 +1157,14 @@ void inputBackpressure(std::size_t page)
     create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 4};
     create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
     ok(create);
+    /* Choose the capture format up front, so the only thing that can hold an
+     * encoded buffer here is the frame queue filling up. */
+    virtio_video_set_params chosen {};
+    chosen.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 4};
+    chosen.params.queue_type = output;
+    chosen.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
+    chosen.params.frame_width = chosen.params.frame_height = 64;
+    ok(chosen);
     auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
         std::vector<std::uint8_t> request;
         append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 4, queue, id});
@@ -1164,6 +1352,7 @@ int main()
             packedCapture(16384u, decoderPacks, 1920, 1200);
         for (const auto page : {4096u, 16384u}) lateNegotiation(page);
         for (const auto page : {4096u, 16384u}) inputBackpressure(page);
+        for (const auto page : {4096u, 16384u}) unsettledHoldIsBounded(page);
         for (const auto page : {4096u, 16384u}) planarAfterSourceChange(page);
         for (const auto page : {4096u, 16384u}) packedDefaultThroughStreamon(page);
         for (const auto page : {4096u, 16384u})

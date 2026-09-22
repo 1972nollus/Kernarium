@@ -67,6 +67,15 @@ public:
     virtual ~VideoDecoder() = default;
     virtual void submit(std::span<const std::uint8_t> bytes,
                         std::uint64_t timestamp) = 0;
+    // Reads a packet's headers so that `format()` describes the stream, and
+    // decodes nothing. A caller that must report the picture size before its
+    // client can choose an output layout inspects the packet, reports the
+    // size, and submits the same packet once the layout is chosen, so the
+    // first picture it decodes already carries that layout. Inspecting a
+    // packet and later submitting it has the same effect as submitting it
+    // alone, and a packet whose headers are incomplete leaves the format as
+    // it was.
+    virtual void inspect(std::span<const std::uint8_t> bytes) = 0;
     virtual void drain() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;

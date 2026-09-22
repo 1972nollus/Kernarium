@@ -31,16 +31,27 @@ which costs far more than decoding it. Selecting it makes the host decoder
 produce the packed samples itself, so no processor in the path converts a
 frame.
 
-A client negotiates its capture format only after the source-change event, so
-the first pictures of a stream are already decoded when the request arrives,
-and a decoder cannot change a running session's output layout without
-discarding the reference frames the next picture needs. The decoder therefore
-adopts a requested layout at the next random access point and states the layout
-each frame actually carries; the device converts the frames that still arrive
-planar. The conversion uses the matrix and range the frame reports, which the
-decoder reads back from the surface the hardware produced rather than inferring
-again, so a converted frame and a packed one are the same picture and a stream
-does not change appearance when the client negotiates part way through.
+A client negotiates its capture format only after the source-change event, and
+a decoder cannot change a running session's output layout without discarding
+the reference frames the next picture needs. So that the choice still reaches
+the decoder before its first picture, the device reads each packet's headers
+without decoding it, reports the size that raises the source change, and holds
+the packet until the client has chosen - by naming a capture format or by
+starting the capture queue with the one it was given. The held packets are then
+decoded from the stream's own random access point, in the chosen layout, so an
+ordinary session converts nothing. That wait is bounded by a packet count and a
+byte count; reaching either means the client is never going to choose, and the
+device decodes what it holds in the planar layout nobody overrode rather than
+stalling the stream.
+
+A client that changes its capture format after frames have already been
+delivered is asking mid-stream, where the decoder can only adopt the layout at
+the next random access point. It states the layout each frame actually carries,
+and the device converts the frames that still arrive planar. The conversion
+uses the matrix and range the frame reports, which the decoder reads back from
+the surface the hardware produced rather than inferring again, so a converted
+frame and a packed one are the same picture and a stream does not change
+appearance when the client negotiates part way through.
 
 A capture buffer may also be a host-visible Virtio-GPU blob, which has no
 guest-physical address because it lives in the vhost-user shared-memory region

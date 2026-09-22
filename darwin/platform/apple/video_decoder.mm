@@ -254,6 +254,56 @@ public:
 
     void submit(std::span<const std::uint8_t> bytes, std::uint64_t timestamp) override
     {
+        const auto packet = prepare(bytes);
+        if (packet.empty()) return;
+        if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
+        decode(packet, timestamp);
+    }
+
+    /* Everything `submit` does before the picture reaches the hardware:
+     * parse the packet's headers, adopt what they declare, and build or
+     * rebuild the decompression session when that changed or when a random
+     * access point lets the requested layout take effect for free. A caller
+     * that needs the picture size before it can choose a layout runs this
+     * alone, then submits the same packet, which repeats the parse without
+     * repeating its effect. */
+    void inspect(std::span<const std::uint8_t> bytes) override { prepare(bytes); }
+
+    void drain() override
+    {
+        if (!session_.get()) return;
+        checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
+        checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
+        checkCallback();
+    }
+    std::vector<DecodedVideoFrame> takeFrames() override
+    {
+        std::lock_guard lock(mutex_);
+        std::vector<DecodedVideoFrame> result;
+        result.swap(frames_);
+        return result;
+    }
+    VideoFormat format() const noexcept override { return format_; }
+
+    /* A client negotiates its capture layout only after the decoder has seen
+     * the stream's headers, which is the middle of a group of pictures. A
+     * decompression session cannot change its output layout, and restarting
+     * one there throws away the reference frames the next picture needs, which
+     * the hardware reports as kVTVideoDecoderBadDataErr. The request is
+     * therefore recorded and applied at the next random access point, where a
+     * restart costs nothing; until then the decoder keeps producing its
+     * current layout and the caller converts, which every frame states. */
+    void requestOutputLayout(VideoPixelLayout layout) override
+    {
+        if (layout == layout_) return;
+        layout_ = layout;
+        if (!description_.get()) return;
+        if (!session_.get()) configure();
+    }
+
+private:
+    std::vector<std::uint8_t> prepare(std::span<const std::uint8_t> bytes)
+    {
         if (bytes.empty() || bytes.size() > 8 * 1024 * 1024)
             throw std::runtime_error("video packet size is outside the decoder limit");
         std::vector<std::uint8_t> packet;
@@ -314,9 +364,11 @@ public:
         }
         if (changed || !description_.get() || (randomAccess && layout_ != sessionLayout_))
             configure();
-        if (packet.empty()) return;
-        if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
+        return packet;
+    }
 
+    void decode(const std::vector<std::uint8_t>& packet, std::uint64_t timestamp)
+    {
         CFObject<CMBlockBufferRef> block;
         checked(CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, nullptr, packet.size(),
             kCFAllocatorDefault, nullptr, 0, packet.size(), 0, block.address()), "allocate video packet");
@@ -334,39 +386,6 @@ public:
         checkCallback();
     }
 
-    void drain() override
-    {
-        if (!session_.get()) return;
-        checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
-        checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
-        checkCallback();
-    }
-    std::vector<DecodedVideoFrame> takeFrames() override
-    {
-        std::lock_guard lock(mutex_);
-        std::vector<DecodedVideoFrame> result;
-        result.swap(frames_);
-        return result;
-    }
-    VideoFormat format() const noexcept override { return format_; }
-
-    /* A client negotiates its capture layout only after the decoder has seen
-     * the stream's headers, which is the middle of a group of pictures. A
-     * decompression session cannot change its output layout, and restarting
-     * one there throws away the reference frames the next picture needs, which
-     * the hardware reports as kVTVideoDecoderBadDataErr. The request is
-     * therefore recorded and applied at the next random access point, where a
-     * restart costs nothing; until then the decoder keeps producing its
-     * current layout and the caller converts, which every frame states. */
-    void requestOutputLayout(VideoPixelLayout layout) override
-    {
-        if (layout == layout_) return;
-        layout_ = layout;
-        if (!description_.get()) return;
-        if (!session_.get()) configure();
-    }
-
-private:
     void configure()
     {
         if (codec_ != VideoCodec::jpeg && codec_ != VideoCodec::vp9) {

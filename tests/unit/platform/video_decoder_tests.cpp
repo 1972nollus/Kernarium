@@ -173,6 +173,29 @@ int main()
             require(frames[0].layout == VideoPixelLayout::planarYuv,
                     "a frame decoded before the request changed layout");
         }
+        /* The order the device uses so that nothing has to be converted: read
+         * the size out of the packet's headers, report it to the client, and
+         * submit the same packet once the client has chosen a layout. Because
+         * no picture has been decoded yet, the first one already carries that
+         * layout, even though the request would otherwise have to wait for a
+         * random access point. */
+        for (const auto& cap : capabilities) {
+            const char* name = names[unsigned(cap.profile)];
+            const auto encoded = read(std::string(name) + ".bin");
+            auto decoder = makeVideoDecoder(cap.codec);
+            decoder->inspect(encoded);
+            require(decoder->format().width == 128 && decoder->format().height == 96,
+                    "inspecting a packet did not report the stream size");
+            require(decoder->takeFrames().empty(), "inspecting a packet decoded it");
+            decoder->requestOutputLayout(VideoPixelLayout::packedBgra);
+            decoder->submit(encoded, 7);
+            decoder->drain();
+            auto frames = decoder->takeFrames();
+            require(frames.size() == 1, "an inspected packet did not decode exactly once");
+            require(frames[0].timestamp == 7, "an inspected packet changed its timestamp");
+            require(frames[0].layout == VideoPixelLayout::packedBgra,
+                    "the first picture after an inspected packet was not packed");
+        }
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;
         try { decoder->submit({}, 0); } catch (const std::runtime_error&) { rejected = true; }
