@@ -215,7 +215,8 @@ class SteamGuest:
     def __init__(self, emulator: pathlib.Path, rootfs: pathlib.Path,
                  userdata: pathlib.Path, memory: str, cpus: int,
                  engine: str, init: str, extra: list[str],
-                 transcript_path: pathlib.Path) -> None:
+                 transcript_path: pathlib.Path,
+                 activity_log: pathlib.Path | None = None) -> None:
         self._argv = [
             str(emulator), f"--execution-engine={engine}", "--audio", "--video",
             "--gpu-display=vnc", "--gpu-vnc-port=0",
@@ -227,6 +228,16 @@ class SteamGuest:
         ]
         self._transcript_path = transcript_path
         self._transcript = bytearray()
+        # Gamescope needs Venus, so the experimental Vulkan path is on by
+        # default; an explicit setting in the caller's environment still wins,
+        # which is how a non-Vulkan control is measured. The video device
+        # writes its activity log once, when a stream closes, so naming a
+        # per-boot file records what each boot decoded without costing timing.
+        # A caller that already named one is collecting across boots on
+        # purpose, so leave theirs alone.
+        environment = {"UML_GPU_EXPERIMENTAL_VULKAN": "1", **os.environ}
+        if activity_log is not None and "UML_VIDEO_ACTIVITY_LOG" not in os.environ:
+            environment["UML_VIDEO_ACTIVITY_LOG"] = str(activity_log)
         master, slave = pty.openpty()
         self._master = master
         os.set_blocking(master, False)
@@ -235,10 +246,7 @@ class SteamGuest:
             self.started_realtime = time.time()
             self._process = subprocess.Popen(
                 self._argv,
-                # Gamescope needs Venus, so the experimental Vulkan path is on
-                # by default; an explicit setting in the caller's environment
-                # still wins, which is how a non-Vulkan control is measured.
-                env={"UML_GPU_EXPERIMENTAL_VULKAN": "1", **os.environ},
+                env=environment,
                 stdin=subprocess.PIPE, stdout=slave, stderr=slave,
                 close_fds=True)
         except BaseException:
@@ -565,14 +573,16 @@ def one_boot(image: dict[str, object], userdata: pathlib.Path,
     """Time one boot, appending its record to ``collected`` even on failure."""
     timeout = (options.first_boot_timeout if label == "first"
                else options.second_boot_timeout)
+    activity_log = transcript.with_name(f"{label}-video-activity.log")
     guest = SteamGuest(
         pathlib.Path(str(image["emulator"])), pathlib.Path(str(image["rootfs"])),
         userdata, options.memory, options.cpus, options.engine, options.init,
-        list(image["extra"]), transcript)
+        list(image["extra"]), transcript, activity_log)
     record: dict[str, object] = {
         "boot": label,
         "command_line": guest.command_line,
         "emulator_pid": guest.process_id,
+        "video_activity_log": str(activity_log),
     }
     try:
         anchored_at = guest.login(options.login_timeout)
