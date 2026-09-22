@@ -164,9 +164,18 @@ void decode(const char* device, const std::string& directory, const char* name, 
     input.fmt.pix_mp.pixelformat = coded;
     input.fmt.pix_mp.num_planes = 1;
     input.fmt.pix_mp.plane_fmt[0].sizeimage = packet.size();
-    v4l2_format codedCandidate = input;
+    /* A client asks what it would get by naming only the format and the
+     * picture, the way Chromium's V4L2 decoder builds a candidate: the plane
+     * layout is what it expects the call to fill in. */
+    v4l2_format codedCandidate {};
+    codedCandidate.type = output;
+    codedCandidate.fmt.pix_mp.width = 128; codedCandidate.fmt.pix_mp.height = 96;
+    codedCandidate.fmt.pix_mp.pixelformat = coded;
     call(fd, VIDIOC_TRY_FMT, &codedCandidate, "TRY_FMT coded");
     require(codedCandidate.fmt.pix_mp.pixelformat == coded, "TRY_FMT substituted the coded format");
+    require(codedCandidate.fmt.pix_mp.num_planes == 1, "TRY_FMT coded is not a single buffer");
+    require(codedCandidate.fmt.pix_mp.plane_fmt[0].sizeimage >= packet.size(),
+            "TRY_FMT coded buffer is shorter than the packet");
     call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
     require(input.fmt.pix_mp.pixelformat == coded, "coded format was substituted");
     auto inputs = allocate(fd, output, 2);
@@ -193,11 +202,40 @@ void decode(const char* device, const std::string& directory, const char* name, 
     format.fmt.pix_mp.pixelformat = raw;
     /* A client filters its candidates with TRY_FMT and drops the ones it
      * fails, so the call has to answer before the format is set. */
-    v4l2_format candidate = format;
+    v4l2_format candidate {};
+    candidate.type = capture;
+    candidate.fmt.pix_mp.width = format.fmt.pix_mp.width;
+    candidate.fmt.pix_mp.height = format.fmt.pix_mp.height;
+    candidate.fmt.pix_mp.pixelformat = raw;
     call(fd, VIDIOC_TRY_FMT, &candidate, "TRY_FMT capture");
     require(candidate.fmt.pix_mp.pixelformat == raw, "TRY_FMT substituted the raw format");
     call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
     require(format.fmt.pix_mp.pixelformat == raw, "raw format was substituted");
+    /* TRY_FMT has to predict what S_FMT produces, planes included: a client
+     * that compares the two, as Chromium's V4L2 decoder does, rejects a
+     * capture format whose plane count or stride appears only once it is set. */
+    require(candidate.fmt.pix_mp.num_planes == format.fmt.pix_mp.num_planes,
+            "TRY_FMT and S_FMT disagree on the plane count");
+    for (unsigned i = 0; i < format.fmt.pix_mp.num_planes; ++i) {
+        require(candidate.fmt.pix_mp.plane_fmt[i].bytesperline ==
+                    format.fmt.pix_mp.plane_fmt[i].bytesperline,
+                "TRY_FMT and S_FMT disagree on a plane stride");
+        require(candidate.fmt.pix_mp.plane_fmt[i].sizeimage ==
+                    format.fmt.pix_mp.plane_fmt[i].sizeimage,
+                "TRY_FMT and S_FMT disagree on a plane size");
+    }
+    /* The stride reported for the capture format is the one its rows are
+     * written with. A consumer that steps a packed mapping by the planar
+     * luma stride instead reads every row from the wrong sample, so the
+     * reported value has to name the packed pitch. */
+    const auto& negotiated = format.fmt.pix_mp;
+    const std::uint32_t sampleBytes = raw == V4L2_PIX_FMT_ABGR32 ? 4u
+        : raw == V4L2_PIX_FMT_P010 ? 2u : 1u;
+    require(negotiated.plane_fmt[0].bytesperline == negotiated.width * sampleBytes,
+            "capture stride is not the packed pitch of its format");
+    require(negotiated.plane_fmt[0].sizeimage >=
+                negotiated.plane_fmt[0].bytesperline * negotiated.height,
+            "capture plane is shorter than the rows it reports");
     auto outputs = allocate(fd, capture, 4);
     Primes primes;
     if (memory == V4L2_MEMORY_DMABUF) {
@@ -313,6 +351,150 @@ void decode(const char* device, const std::string& directory, const char* name, 
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
 }
 }
+/* A client that renders what it decodes keeps its pictures in a pool and hands
+ * the same descriptors back to the capture queue as they are released, so each
+ * buffer is queued once per pass around that pool. This drives exactly that: a
+ * ring of imported descriptors, every one queued again as soon as it is
+ * dequeued, for many more pictures than the ring holds. A defect that appears
+ * only on a buffer's second use stops the run after one pass, which is what a
+ * client that decodes a handful of pictures and then gives up looks like from
+ * the outside. */
+void ringCycle(const char* device, const std::string& directory, const char* name,
+               unsigned coded, unsigned raw, unsigned ring, unsigned pictures)
+{
+    const auto packet = read(directory + "/" + name + ".bin");
+    Device owner(device);
+    const int fd = owner.fd;
+    const auto output = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+    const auto capture = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+    call(fd, VIDIOC_SUBSCRIBE_EVENT, &subscription, "SUBSCRIBE_EVENT");
+
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = packet.size();
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
+    auto inputs = allocate(fd, output, 4);
+    require(inputs[0][0].length >= packet.size(), "coded buffer too short");
+    auto type = output;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON output");
+
+    const auto feed = [&](unsigned index, unsigned sequence) {
+        std::memcpy(inputs[index][0].data, packet.data(), packet.size());
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = index;
+        buffer.length = inputs[index].size(); buffer.m.planes = planes;
+        buffer.timestamp.tv_sec = 7; buffer.timestamp.tv_usec = sequence;
+        planes[0].length = inputs[index][0].length;
+        planes[0].bytesused = packet.size();
+        call(fd, VIDIOC_QBUF, &buffer, "QBUF coded");
+    };
+
+    unsigned sequence = 0;
+    feed(0, ++sequence);
+    unsigned free_inputs = unsigned(inputs.size()) - 1;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    bool source = false;
+    while (!source && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLPRI, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll source change failed");
+        v4l2_event event {};
+        if (ioctl(fd, VIDIOC_DQEVENT, &event) == 0)
+            source = event.type == V4L2_EVENT_SOURCE_CHANGE;
+        else require(errno == EAGAIN, "DQEVENT failed");
+    }
+    require(source, "decoder source-change timeout");
+
+    v4l2_format format {};
+    format.type = capture;
+    call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
+    format.fmt.pix_mp.pixelformat = raw;
+    call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
+    /* The descriptors stand in for a client's own: exported once, then the
+     * queue owns none of the memory it writes into. */
+    auto maps = allocate(fd, capture, ring);
+    auto primes = exportAndRelease(fd, capture, maps);
+    maps.clear();
+    release(fd, capture);
+    const unsigned slots = import(fd, capture, unsigned(primes.size()));
+    require(slots == primes.size(), "imported buffer count differs");
+    for (unsigned i = 0; i < primes.size(); ++i) queueImported(fd, capture, i, primes[i]);
+    type = capture;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON capture");
+
+    std::vector<unsigned> uses(primes.size(), 0);
+    unsigned produced = 0, reused = 0;
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
+    while (produced < pictures && std::chrono::steady_clock::now() < deadline) {
+        while (free_inputs && sequence < pictures + slots) {
+            feed(unsigned(sequence % inputs.size()), ++sequence);
+            --free_inputs;
+        }
+        pollfd p {fd, POLLIN | POLLOUT, 0};
+        if (poll(&p, 1, 200) < 0 && errno != EINTR) throw std::runtime_error("poll ring failed");
+        for (;;) {
+            v4l2_plane planes[VIDEO_MAX_PLANES] {};
+            v4l2_buffer buffer {};
+            buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP;
+            buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+            if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+                require(errno == EAGAIN, "DQBUF coded failed");
+                break;
+            }
+            ++free_inputs;
+        }
+        for (;;) {
+            v4l2_plane planes[VIDEO_MAX_PLANES] {};
+            v4l2_buffer buffer {};
+            buffer.type = capture; buffer.memory = V4L2_MEMORY_DMABUF;
+            buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+            if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+                require(errno == EAGAIN, "DQBUF capture failed");
+                break;
+            }
+            require(buffer.index < primes.size(), "capture index outside the ring");
+            if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
+                std::printf("RING-FAIL %s ring=%u picture=%u slot=%u uses=%u error-flagged\n",
+                            name, ring, produced, buffer.index, uses[buffer.index]);
+                std::fflush(stdout);
+                require(false, "capture buffer came back error-flagged");
+            }
+            require(planes[0].bytesused > 0, "capture buffer came back empty");
+            ++produced;
+            if (uses[buffer.index]) ++reused;
+            ++uses[buffer.index];
+            /* The same descriptor, on the same slot, exactly as a pool hands
+             * a released picture back. */
+            errno = 0;
+            v4l2_plane again[VIDEO_MAX_PLANES] {};
+            v4l2_buffer requeue {};
+            requeue.type = capture; requeue.memory = V4L2_MEMORY_DMABUF;
+            requeue.index = buffer.index;
+            requeue.length = primes[buffer.index].size(); requeue.m.planes = again;
+            for (unsigned i = 0; i < primes[buffer.index].size(); ++i) {
+                again[i].m.fd = primes[buffer.index][i].fd;
+                again[i].length = primes[buffer.index][i].length;
+            }
+            if (ioctl(fd, VIDIOC_QBUF, &requeue) < 0) {
+                std::printf("RING-FAIL %s ring=%u picture=%u slot=%u uses=%u requeue-errno=%d (%s)\n",
+                            name, ring, produced, buffer.index, uses[buffer.index],
+                            errno, std::strerror(errno));
+                std::fflush(stdout);
+                require(false, "re-queueing an imported capture buffer failed");
+            }
+        }
+    }
+    require(produced >= pictures, "the capture ring stopped producing pictures");
+    std::printf("PASS ring %s raw=%08x ring=%u pictures=%u reused=%u\n", name, raw, ring,
+                produced, reused);
+    std::fflush(stdout);
+}
+
 int main(int argc, char** argv)
 {
     try {
@@ -365,6 +547,23 @@ int main(int argc, char** argv)
                 planar = planar || fmt.pixelformat == V4L2_PIX_FMT_NV12M;
             }
             require(planar, "the capture list does not name the planar format");
+        }
+        /* The pattern a rendering client produces: a small ring of imported
+         * descriptors carried through many more pictures than it holds, so
+         * every buffer is used several times. It runs before the rest because
+         * a ring that stops after one pass is the failure a client sees. */
+        for (unsigned index = 0;; ++index) {
+            v4l2_fmtdesc fmt {};
+            fmt.type = output; fmt.index = index;
+            if (ioctl(capabilities.fd, VIDIOC_ENUM_FMT, &fmt) < 0) {
+                require(errno == EINVAL, "ENUM_FMT failed"); break;
+            }
+            if (fmt.pixelformat != V4L2_PIX_FMT_VP9) continue;
+            ringCycle(device, argv[1], "vp9-profile0", fmt.pixelformat,
+                      V4L2_PIX_FMT_NV12M, 8, 40);
+            ringCycle(device, argv[1], "vp9-profile0", fmt.pixelformat,
+                      V4L2_PIX_FMT_ABGR32, 8, 40);
+            break;
         }
         unsigned tested = 0;
         for (unsigned index = 0;; ++index) {

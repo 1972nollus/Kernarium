@@ -1,4 +1,4 @@
-From 0363641e98453b35aca1166995a8e84035edcb60 Mon Sep 17 00:00:00 2001
+From 78a86b3111dfb7c7df3949644cb13e069cabd32c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 11:28:39 +0000
 Subject: [PATCH 42/45] UML-DARWIN-LOCAL: media: add the shared Virtio video
@@ -22,13 +22,13 @@ Change-Id: I7bcd52774ff2241bc917359b3fb64c7ea66826f2
  drivers/media/virtio/README                 |   11 +
  drivers/media/virtio/virtio_video.h         |  449 ++++++
  drivers/media/virtio/virtio_video_caps.c    |  466 ++++++
- drivers/media/virtio/virtio_video_dec.c     |  470 ++++++
- drivers/media/virtio/virtio_video_device.c  | 1453 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_dec.c     |  479 ++++++
+ drivers/media/virtio/virtio_video_device.c  | 1477 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  240 +++
  drivers/media/virtio/virtio_video_helpers.c |  308 ++++
- drivers/media/virtio/virtio_video_vq.c      |  981 +++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      |  981 ++++++++++++
  include/uapi/linux/virtio_video.h           |  539 +++++++
- 13 files changed, 4935 insertions(+)
+ 13 files changed, 4968 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -1036,10 +1036,10 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2225ecc19deea498f5db224f9dbbb29b91a179d
+index 0000000000000000000000000000000000000000..8e27ea42bd2e512f8ab8a1eaec311b34784d7953
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,479 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Decoder for virtio video device.
 + *
@@ -1410,8 +1410,17 @@ index 0000000000000000000000000000000000000000..e2225ecc19deea498f5db224f9dbbb29
 +				    struct v4l2_format *f)
 +{
 +	struct virtio_video_stream *stream = file2stream(file);
++	struct video_format_frame *current_frame = stream->current_frame;
++	int ret;
 +
-+	return virtio_video_try_fmt(stream, f);
++	/* Resolving a format for S_FMT settles the frame size the stream will
++	 * use. A client only asking what it would get must leave the stream
++	 * where it found it.
++	 */
++	ret = virtio_video_try_fmt(stream, f);
++	stream->current_frame = current_frame;
++
++	return ret;
 +}
 +
 +static int virtio_video_dec_s_selection(struct file *file, void *fh,
@@ -1512,10 +1521,10 @@ index 0000000000000000000000000000000000000000..e2225ecc19deea498f5db224f9dbbb29
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ceb9696a92a200f9d145b5de5c3759ddf9e7681a
+index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad0e3339e4
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1453 @@
+@@ -0,0 +1,1477 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1538,6 +1547,7 @@ index 0000000000000000000000000000000000000000..ceb9696a92a200f9d145b5de5c3759dd
 +#include <linux/dma-buf.h>
 +#include <linux/version.h>
 +#include <linux/virtio_dma_buf.h>
++#include <media/v4l2-common.h>
 +#include <media/v4l2-event.h>
 +#include <media/v4l2-ioctl.h>
 +#include <media/videobuf2-dma-sg.h>
@@ -2386,6 +2396,29 @@ index 0000000000000000000000000000000000000000..ceb9696a92a200f9d145b5de5c3759dd
 +			pix_mp->height = ALIGN(pix_mp->height,
 +					       frame->height.step);
 +		stream->current_frame = frm;
++	}
++
++	/*
++	 * A resolved format has to come back with the plane layout S_FMT would
++	 * produce. A client that filters its candidates with TRY_FMT, as
++	 * Chromium's V4L2 decoder does, drops a capture format whose plane
++	 * count disagrees with the one G_FMT reports for it. The device
++	 * negotiates the tight layouts the V4L2 core computes, so the core's
++	 * own table answers without a round trip to it; a format the table
++	 * does not describe keeps the plane count the stream carries. A coded
++	 * format has no plane layout and stays the single buffer the input
++	 * queue accepts.
++	 */
++	if (V4L2_TYPE_IS_OUTPUT(f->type)) {
++		u32 packet = stream->in_info.plane_format[0].plane_size;
++
++		pix_mp->num_planes = 1;
++		pix_mp->plane_fmt[0].bytesperline = 0;
++		if (pix_mp->plane_fmt[0].sizeimage < packet)
++			pix_mp->plane_fmt[0].sizeimage = packet;
++	} else if (v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
++				       pix_mp->width, pix_mp->height) < 0) {
++		pix_mp->num_planes = stream->out_info.num_planes;
 +	}
 +
 +	return 0;

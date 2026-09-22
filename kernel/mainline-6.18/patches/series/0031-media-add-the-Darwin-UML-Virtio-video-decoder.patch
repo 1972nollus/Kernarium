@@ -1,4 +1,4 @@
-From 6073a6a59553f9c89865ca510b838ac2e3e61e38 Mon Sep 17 00:00:00 2001
+From aa4065b8e2a8954db5e6514b8121a4bc8166449f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 20:12:50 +0900
 Subject: [PATCH 31/33] media: add the Darwin UML Virtio video decoder
@@ -21,13 +21,13 @@ that share one dma-buf follow one another at their negotiated sizes.
  drivers/media/virtio/README                 |   11 +
  drivers/media/virtio/virtio_video.h         |  449 ++++++
  drivers/media/virtio/virtio_video_caps.c    |  466 ++++++
- drivers/media/virtio/virtio_video_dec.c     |  470 ++++++
- drivers/media/virtio/virtio_video_device.c  | 1452 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_dec.c     |  479 ++++++
+ drivers/media/virtio/virtio_video_device.c  | 1476 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  240 +++
  drivers/media/virtio/virtio_video_helpers.c |  308 ++++
- drivers/media/virtio/virtio_video_vq.c      |  981 +++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      |  981 ++++++++++++
  include/uapi/linux/virtio_video.h           |  539 +++++++
- 13 files changed, 4934 insertions(+)
+ 13 files changed, 4967 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -1035,10 +1035,10 @@ index 000000000..b64b5a910
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 000000000..e2225ecc1
+index 000000000..8e27ea42b
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,479 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Decoder for virtio video device.
 + *
@@ -1409,8 +1409,17 @@ index 000000000..e2225ecc1
 +				    struct v4l2_format *f)
 +{
 +	struct virtio_video_stream *stream = file2stream(file);
++	struct video_format_frame *current_frame = stream->current_frame;
++	int ret;
 +
-+	return virtio_video_try_fmt(stream, f);
++	/* Resolving a format for S_FMT settles the frame size the stream will
++	 * use. A client only asking what it would get must leave the stream
++	 * where it found it.
++	 */
++	ret = virtio_video_try_fmt(stream, f);
++	stream->current_frame = current_frame;
++
++	return ret;
 +}
 +
 +static int virtio_video_dec_s_selection(struct file *file, void *fh,
@@ -1511,10 +1520,10 @@ index 000000000..e2225ecc1
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 000000000..ddca36cba
+index 000000000..b6510bd49
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1452 @@
+@@ -0,0 +1,1476 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1537,6 +1546,7 @@ index 000000000..ddca36cba
 +#include <linux/dma-buf.h>
 +#include <linux/version.h>
 +#include <linux/virtio_dma_buf.h>
++#include <media/v4l2-common.h>
 +#include <media/v4l2-event.h>
 +#include <media/v4l2-ioctl.h>
 +#include <media/videobuf2-dma-sg.h>
@@ -2384,6 +2394,29 @@ index 000000000..ddca36cba
 +			pix_mp->height = ALIGN(pix_mp->height,
 +					       frame->height.step);
 +		stream->current_frame = frm;
++	}
++
++	/*
++	 * A resolved format has to come back with the plane layout S_FMT would
++	 * produce. A client that filters its candidates with TRY_FMT, as
++	 * Chromium's V4L2 decoder does, drops a capture format whose plane
++	 * count disagrees with the one G_FMT reports for it. The device
++	 * negotiates the tight layouts the V4L2 core computes, so the core's
++	 * own table answers without a round trip to it; a format the table
++	 * does not describe keeps the plane count the stream carries. A coded
++	 * format has no plane layout and stays the single buffer the input
++	 * queue accepts.
++	 */
++	if (V4L2_TYPE_IS_OUTPUT(f->type)) {
++		u32 packet = stream->in_info.plane_format[0].plane_size;
++
++		pix_mp->num_planes = 1;
++		pix_mp->plane_fmt[0].bytesperline = 0;
++		if (pix_mp->plane_fmt[0].sizeimage < packet)
++			pix_mp->plane_fmt[0].sizeimage = packet;
++	} else if (v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
++				       pix_mp->width, pix_mp->height) < 0) {
++		pix_mp->num_planes = stream->out_info.num_planes;
 +	}
 +
 +	return 0;
