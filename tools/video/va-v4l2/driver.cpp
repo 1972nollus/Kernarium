@@ -68,6 +68,7 @@ Driver::Driver(VADriverContextP context) : driverContext_(context)
     // an exported handle is a dma-buf at all, so it belongs in the log.
     note((std::string("surfaces ") + storageName(selectedStorage()) + " (" + storageReason() + ")").c_str());
     rgbPolicy_ = rgbCaptureRequest(std::getenv("UML_VA_V4L2_RGB"));
+    capturePolicy_ = captureMemoryRequest(std::getenv("UML_VA_V4L2_CAPTURE"));
     probeCodecs();
 }
 
@@ -95,31 +96,56 @@ void Driver::probeCodecs()
     codecs_.push_back(vp9);
 }
 
-// A packed decode only pays when the decoder writes into the client's own
-// buffer. A packed picture is 9.2 MB against NV12's 3.5 MB, and carrying that
-// through a guest costs more than the conversion it saves: 20 frames of
-// 1920x1200 took 7.5 s packed against 2.1 s planar with the capture queue on
-// MMAP. The device offers V4L2_MEMORY_DMABUF capture and the picture it
-// produces is correct; what is missing is this driver queueing the surfaces'
-// own descriptors, so the automatic policy waits for that.
-constexpr bool kCaptureIntoClientBuffers = false;
-
 void Driver::probeCapture()
 {
     if (captureProbed_) return;
     captureProbed_ = true;
     rgbOffered_ = decoderOffersCapture(device_, V4L2_PIX_FMT_ABGR32);
-    // Both halves are settled here, at initialisation, so that the first
-    // decode session of a boot - which is the one that plays a startup movie -
-    // gets the same answer as every later one.
-    importCapture_ = decoderImportsCapture(device_);
+    // Everything a decode session needs to know is settled here, at
+    // initialisation, so that the first session of a boot - which is the one
+    // that plays a startup movie - gets the same answer as every later one.
+    importNv12_ = importPacked_ = false;
+    if (capturePolicy_ == CaptureMemory::device) return;
+    if (capturePolicy_ == CaptureMemory::lend) { importNv12_ = importPacked_ = true; return; }
+    // Probe with a buffer of the kind the surfaces are really made of, so the
+    // answer is about this graphics stack and not only about the device, and
+    // in each decoded format, because a queue that takes a one-plane buffer
+    // can still refuse a two-plane one.
+    importNv12_ = probeImport(VA_FOURCC_NV12, V4L2_PIX_FMT_NV12M, 2);
+    importPacked_ = rgbOffered_ && probeImport(VA_FOURCC_ARGB, V4L2_PIX_FMT_ABGR32, 1);
+}
+
+bool Driver::probeImport(std::uint32_t fourcc, std::uint32_t pixelFormat, unsigned planes)
+{
+    constexpr unsigned kProbeWidth = 64;
+    constexpr unsigned kProbeHeight = 64;
+    std::string error;
+    auto probe = PixelBuffer::allocate(fourcc, kProbeWidth, kProbeHeight, error);
+    if (!probe || probe->kind() != StorageKind::gbm || probe->descriptor() < 0) return false;
+    if (probe->planes() < planes) return false;
+    CaptureTarget sample {};
+    sample.planes = planes;
+    for (unsigned plane = 0; plane < planes; ++plane) {
+        sample.fd[plane] = probe->descriptor();
+        sample.offset[plane] = probe->offset(plane);
+        sample.pitch[plane] = probe->pitch(plane);
+        const std::size_t next = plane + 1 < planes ? probe->offset(plane + 1) : probe->size();
+        sample.length[plane] = next > probe->offset(plane) ? next - probe->offset(plane) : 0;
+    }
+    return decoderImportsCapture(device_, sample, kProbeWidth, kProbeHeight, pixelFormat);
+}
+
+bool Driver::importsCapture(std::uint32_t captureFourcc)
+{
+    probeCapture();
+    return captureFourcc == V4L2_PIX_FMT_ABGR32 ? importPacked_ : importNv12_;
 }
 
 std::uint32_t Driver::preferredCapture()
 {
     if (rgbPolicy_ == RgbCapture::off) return 0;
     probeCapture();
-    if (!useRgbCapture(rgbPolicy_, rgbOffered_, importCapture_ && kCaptureIntoClientBuffers)) return 0;
+    if (!useRgbCapture(rgbPolicy_, rgbOffered_)) return 0;
     // The device writes B, G, R, A in memory, which is what VA-API calls
     // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
     return V4L2_PIX_FMT_ABGR32;
@@ -174,17 +200,40 @@ std::shared_ptr<PixelBuffer> Driver::knownBuffer(std::uint64_t identity)
     return buffer;
 }
 
+bool Driver::wantsReport()
+{
+    if (reportLimit_ < 0) {
+        const char* wanted = std::getenv("UML_VA_V4L2_REPORT");
+        reportLimit_ = wanted && *wanted ? std::atoi(wanted) : 1;
+    }
+    return reportedPictures_ < reportLimit_;
+}
+
+void Driver::reportLent(PixelBuffer& buffer, bool packed)
+{
+    // A lent buffer is the picture, so it is read where it lies rather than
+    // through the capture queue's own mapping, which an imported queue has not
+    // got.
+    std::uint8_t* data = buffer.map();
+    if (!data) return;
+    DecodedPicture picture {};
+    picture.width = buffer.width();
+    picture.height = buffer.height();
+    picture.planes = buffer.planes();
+    for (unsigned plane = 0; plane < picture.planes && plane < 3; ++plane) {
+        picture.plane[plane] = data + buffer.offset(plane);
+        picture.pitch[plane] = buffer.pitch(plane);
+    }
+    reportPicture(picture, packed);
+}
+
 void Driver::reportPicture(const DecodedPicture& picture, bool packed)
 {
     // The picture exactly as the capture queue delivered it, before this
     // driver has touched a byte of it: the only place where a colour question
     // can be settled between the device and everything above it.
     if (!picture.plane[0] || !picture.width || !picture.height) return;
-    if (reportLimit_ < 0) {
-        const char* wanted = std::getenv("UML_VA_V4L2_REPORT");
-        reportLimit_ = wanted && *wanted ? std::atoi(wanted) : 1;
-    }
-    if (reportedPictures_ >= reportLimit_) return;
+    if (!wantsReport()) return;
     const int index = reportedPictures_++;
     char message[256] {};
     if (packed) {
@@ -234,13 +283,109 @@ void Driver::reportPicture(const DecodedPicture& picture, bool packed)
     }
 }
 
+std::shared_ptr<PixelBuffer> Driver::captureBuffer(Context& context)
+{
+    if (!context.decoder) return nullptr;
+    const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
+    const std::uint32_t fourcc = packed ? VA_FOURCC_ARGB : VA_FOURCC_NV12;
+    const unsigned width = context.decoder->width();
+    const unsigned height = context.decoder->height();
+    if (auto reused = takeReusable(context.captureSpare, fourcc, width, height)) return reused;
+    std::string error;
+    auto buffer = PixelBuffer::allocate(fourcc, width, height, error);
+    if (!buffer) { if (!error.empty()) note(error.c_str()); return nullptr; }
+    // The decoder writes into it directly, so the device's own row length has
+    // to be the one this buffer has.
+    if (buffer->kind() != StorageKind::gbm || buffer->descriptor() < 0) return nullptr;
+    for (unsigned plane = 0; plane < context.decoder->capturePlaneCount(); ++plane)
+        if (buffer->pitch(plane) != context.decoder->capturePitch(plane)) return nullptr;
+    return buffer;
+}
+
+void Driver::recycleCapture(Context& context, std::shared_ptr<PixelBuffer> buffer)
+{
+    returnToPool(context.captureSpare, std::move(buffer));
+}
+
+bool Driver::provideCapture(Context& context, unsigned index, CaptureTarget& target, bool fresh)
+{
+    if (!context.decoder) return false;
+    // A new queue - the first one, or the one a source change builds - starts
+    // by taking back every buffer the old queue held. Refilling a single slot
+    // of a live queue must leave the others exactly where they are.
+    if (fresh) {
+        for (auto& slot : context.captureSlot) recycleCapture(context, std::move(slot));
+        context.captureSlot.clear();
+    }
+    auto buffer = captureBuffer(context);
+    if (!buffer) return false;
+    const unsigned planes = context.decoder->capturePlaneCount();
+    if (!planes || planes > 3) return false;
+    target.planes = planes;
+    std::size_t laid = 0;
+    for (unsigned plane = 0; plane < planes; ++plane) {
+        target.fd[plane] = buffer->descriptor();
+        target.offset[plane] = buffer->offset(plane);
+        target.pitch[plane] = buffer->pitch(plane);
+        const std::size_t wanted = context.decoder->capturePlaneSize(plane);
+        const std::size_t available = buffer->size() > buffer->offset(plane)
+            ? buffer->size() - buffer->offset(plane) : 0;
+        if (wanted > available) return false;
+        // One object carries every plane, and a queue that takes it puts the
+        // planes where its own negotiated sizes say. A buffer laid out any
+        // other way would have its chroma written over its luma.
+        if (buffer->offset(plane) != laid) return false;
+        laid += wanted;
+        target.length[plane] = wanted ? wanted : available;
+    }
+    if (context.captureSlot.size() <= index) context.captureSlot.resize(index + 1);
+    context.captureSlot[index] = std::move(buffer);
+    return true;
+}
+
+bool Driver::fillFromLent(Surface& target, PixelBuffer& lent, bool packed)
+{
+    // A surface whose own memory a client already holds cannot be pointed at
+    // the buffer the decoder wrote: the picture has to arrive in the memory
+    // the client is looking at.
+    const std::uint8_t* from = lent.map();
+    if (!from) return false;
+    const Region region {0, 0, std::min(target.width, lent.width()),
+                         std::min(target.height, lent.height())};
+    if (packed) {
+        std::string error;
+        if (!target.shadow)
+            target.shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, target.width, target.height, error);
+        std::uint8_t* to = target.shadow ? target.shadow->map() : nullptr;
+        if (!to) { if (!error.empty()) note(error.c_str()); return false; }
+        copyPacked32(ConstPlaneView {from + lent.offset(0), lent.pitch(0)}, region,
+                     PlaneView {to + target.shadow->offset(0), target.shadow->pitch(0)}, region);
+        target.nativeValid = false;
+        return true;
+    }
+    if (!target.buffer || lent.planes() < 2) return false;
+    std::uint8_t* to = target.buffer->map();
+    if (!to) return false;
+    const ConstPlaneView in[2] {{from + lent.offset(0), lent.pitch(0)},
+                                {from + lent.offset(1), lent.pitch(1)}};
+    const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
+                            {to + target.buffer->offset(1), target.buffer->pitch(1)}};
+    copyNv12(in, out, region.width, region.height);
+    target.nativeValid = true;
+    return true;
+}
+
 void Driver::harvest(Context& context, std::chrono::milliseconds wait)
 {
     if (!context.decoder) return;
     if (context.reportLayout && !context.decoder->captureLayout().empty()) {
         context.reportLayout = false;
         const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
-        note(((packed ? "decoded packed RGB " : "decoded NV12 ") + context.decoder->captureLayout()).c_str());
+        note(((packed ? "decoded packed RGB " : "decoded NV12 ") + context.decoder->captureLayout() +
+              (context.decoder->importsCapture()
+                   ? std::string(" into lent buffers")
+                   : " into device buffers (" + (context.decoder->importFailure().empty()
+                       ? std::string("not offered") : context.decoder->importFailure()) + ")")).c_str());
     }
     DecodedPicture picture {};
     std::string error;
@@ -252,7 +397,37 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
             context.awaiting.erase(found);
             const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
             if (!picture.error) reportPicture(picture, packed);
-            if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && packed &&
+            if (picture.imported) {
+                // The device wrote the picture into a buffer this driver lent
+                // it, so the surface only has to take the buffer over. The one
+                // it was holding goes back to the pool, and the slot gets
+                // another before it is queued again.
+                auto lent = picture.index < context.captureSlot.size()
+                    ? context.captureSlot[picture.index] : nullptr;
+                if (target && lent && !picture.error) {
+                    bool ready = true;
+                    // The surface can only take the buffer over when the
+                    // buffer really holds the surface: a decode session at a
+                    // coded size larger than the surface asked for hands back
+                    // a picture that has to be copied into it instead.
+                    const bool fits = lent->width() >= target->width && lent->height() >= target->height;
+                    if (target->exported || !fits) {
+                        ready = fillFromLent(*target, *lent, packed);
+                    } else if (packed) {
+                        recycleCapture(context, std::move(target->shadow));
+                        target->shadow = lent;
+                        target->nativeValid = false;
+                    } else {
+                        recycleCapture(context, std::move(target->buffer));
+                        target->buffer = lent;
+                        target->nativeValid = true;
+                    }
+                    if (wantsReport()) reportLent(*lent, packed);
+                    target->state = ready ? Surface::State::ready : Surface::State::failed;
+                } else if (target) {
+                    target->state = Surface::State::failed;
+                }
+            } else if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && packed &&
                 picture.planes >= 1 && !picture.error) {
                 // The host already converted, so keep the picture packed and
                 // leave the NV12 buffer stale until somebody asks for it.
@@ -293,7 +468,17 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                 target->state = Surface::State::failed;
             }
         }
-        context.decoder->release(picture.index);
+        if (picture.imported) {
+            CaptureTarget next {};
+            std::string requeue;
+            if (!provideCapture(context, picture.index, next, false) ||
+                !context.decoder->release(picture.index, next, requeue)) {
+                context.failure = requeue.empty() ? "no buffer to lend the decoder" : requeue;
+                note(context.failure.c_str());
+            }
+        } else {
+            context.decoder->release(picture.index);
+        }
         picture = {};
     }
     if (!error.empty()) {
@@ -814,6 +999,18 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         context->decoder = V4l2Decoder::open(driver.device(), codec->v4l2Format, unsigned(width),
                                              unsigned(height), driver.preferredCapture(), error);
         if (!context->decoder) { driver.note(error.c_str()); return VA_STATUS_ERROR_ALLOCATION_FAILED; }
+        // Lend the decoder this driver's own buffers, so that the device
+        // writes each picture where the client will read it. Only where a
+        // buffer of this kind was shown to be importable: a queue that refuses
+        // one falls back to buffers the device allocates, and asking it every
+        // session only fills the log.
+        if (driver.importsCapture(context->decoder->captureFormat())) {
+            Context* raw = context.get();
+            context->decoder->setCaptureSource(
+                [&driver, raw](unsigned index, bool fresh, CaptureTarget& target) {
+                    return driver.provideCapture(*raw, index, target, fresh);
+                });
+        }
         // The decoded format is only settled when the decoder has parsed the
         // stream, so it is reported with the layout at the first picture.
         context->reportLayout = true;
@@ -1149,6 +1346,8 @@ VAStatus deriveImage(VADriverContextP ctx, VASurfaceID id, VAImage* out)
     buffer->elements = 1;
     buffer->external = data;
     buffer->externalSize = surface->buffer->size();
+    buffer->pin = surface->buffer;
+    surface->exported = true;
     const auto bufferId = driver.nextBuffer++;
     driver.buffers.emplace(bufferId, std::move(buffer));
     image.buf = bufferId;
@@ -1303,6 +1502,7 @@ VAStatus exportSurfaceHandle(VADriverContextP ctx, VASurfaceID id, uint32_t memo
     driver.materialise(*surface);
     const int fd = surface->buffer->exportDescriptor();
     if (fd < 0) return VA_STATUS_ERROR_OPERATION_FAILED;
+    surface->exported = true;
     auto* descriptor = static_cast<VADRMPRIMESurfaceDescriptor*>(out);
     std::memset(descriptor, 0, sizeof(*descriptor));
     descriptor->fourcc = surface->fourcc;

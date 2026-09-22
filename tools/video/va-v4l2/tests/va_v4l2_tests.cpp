@@ -267,20 +267,64 @@ void testCapturePolicy()
     check(uml::va::rgbCaptureRequest("nonsense") == RgbCapture::automatic,
           "an unrecognised request leaves the policy automatic");
 
-    check(!uml::va::useRgbCapture(RgbCapture::force, false, true),
+    check(!uml::va::useRgbCapture(RgbCapture::force, false),
           "a device that does not offer packed RGB is never asked for it");
-    check(!uml::va::useRgbCapture(RgbCapture::off, true, true),
-          "off never asks for packed RGB");
-    check(uml::va::useRgbCapture(RgbCapture::force, true, false),
-          "force asks for packed RGB even where it has to be copied out");
-    check(!uml::va::useRgbCapture(RgbCapture::automatic, true, false),
-          "automatic keeps NV12 while the picture still has to be copied out");
-    check(uml::va::useRgbCapture(RgbCapture::automatic, true, true),
-          "automatic asks for packed RGB when the copy goes away");
+    check(!uml::va::useRgbCapture(RgbCapture::off, true), "off never asks for packed RGB");
+    check(uml::va::useRgbCapture(RgbCapture::force, true), "force asks for packed RGB");
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, true),
+          "automatic keeps NV12, which the whole stream measures faster even with nothing copied");
+
+    using uml::va::CaptureMemory;
+    check(uml::va::captureMemoryRequest(nullptr) == CaptureMemory::automatic,
+          "an unset capture request leaves the choice to the probe");
+    check(uml::va::captureMemoryRequest("") == CaptureMemory::automatic,
+          "an empty capture request leaves the choice to the probe");
+    check(uml::va::captureMemoryRequest("device") == CaptureMemory::device,
+          "a capture request can leave the decoder its own buffers");
+    check(uml::va::captureMemoryRequest("lend") == CaptureMemory::lend,
+          "a capture request can lend the decoder this driver's buffers");
+    check(uml::va::captureMemoryRequest("nonsense") == CaptureMemory::automatic,
+          "an unrecognised capture request leaves the choice to the probe");
 }
 
 // A planar surface is carried by one packed buffer, because a client that
 // imports it may only be handed one object.
+void testCapturePool()
+{
+    // The pool behind the decoder's imported capture queue: a buffer goes back
+    // when the surface that showed its picture lets go, and never before.
+    std::vector<std::shared_ptr<uml::va::PixelBuffer>> pool;
+    check(!uml::va::takeReusable(pool, VA_FOURCC_NV12, 64, 64), "an empty pool hands out nothing");
+
+    std::string error;
+    std::shared_ptr<uml::va::PixelBuffer> first = uml::va::PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
+    check(first != nullptr, "the pool's buffers can be allocated");
+    auto* firstAddress = first.get();
+    uml::va::returnToPool(pool, first);  // a copy: the caller keeps its own
+    check(pool.size() == 1, "a returned buffer is kept");
+    check(first != nullptr, "returning a buffer by value leaves the caller's copy alone");
+
+    // The caller still holds `first`, which is exactly the case of a surface
+    // still showing the picture: the pool must not hand it out.
+    check(!uml::va::takeReusable(pool, VA_FOURCC_NV12, 64, 64),
+          "a buffer something else still refers to is not reused");
+    first.reset();
+    check(!uml::va::takeReusable(pool, VA_FOURCC_NV12, 32, 32), "a buffer of another size is not reused");
+    check(!uml::va::takeReusable(pool, VA_FOURCC_ARGB, 64, 64), "a buffer of another format is not reused");
+    auto again = uml::va::takeReusable(pool, VA_FOURCC_NV12, 64, 64);
+    check(again.get() == firstAddress, "a buffer nothing refers to comes back");
+    check(!uml::va::takeReusable(pool, VA_FOURCC_NV12, 64, 64), "a buffer is only handed out once");
+
+    // A returned buffer reuses an empty slot before the pool grows.
+    uml::va::returnToPool(pool, std::move(again));
+    check(pool.size() == 1, "an empty slot is refilled before the pool grows");
+    for (int index = 0; index < 4; ++index) {
+        std::shared_ptr<uml::va::PixelBuffer> extra = uml::va::PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
+        uml::va::returnToPool(pool, std::move(extra), 3);
+    }
+    check(pool.size() == 3, "the pool is bounded");
+}
+
 void testPlanarCarrier()
 {
     unsigned carrierWidth = 0;
@@ -363,6 +407,7 @@ int main()
     testLayout();
     testMemoryStorage();
     testCapturePolicy();
+    testCapturePool();
     testPlanarCarrier();
     testArgbToNv12();
     if (failures) {

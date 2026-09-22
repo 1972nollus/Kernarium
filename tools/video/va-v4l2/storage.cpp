@@ -200,6 +200,28 @@ void selectStorage(const char* request)
 
 const char* storageReason() noexcept { return reason(); }
 
+std::shared_ptr<PixelBuffer> takeReusable(std::vector<std::shared_ptr<PixelBuffer>>& pool,
+                                          std::uint32_t fourcc, unsigned width, unsigned height)
+{
+    for (auto& spare : pool) {
+        if (!spare || spare.use_count() != 1) continue;
+        if (spare->fourcc() != fourcc || spare->width() != width || spare->height() != height) continue;
+        auto taken = spare;
+        spare.reset();
+        return taken;
+    }
+    return nullptr;
+}
+
+void returnToPool(std::vector<std::shared_ptr<PixelBuffer>>& pool, std::shared_ptr<PixelBuffer> buffer,
+                  std::size_t limit)
+{
+    if (!buffer) return;
+    for (auto& spare : pool)
+        if (!spare) { spare = std::move(buffer); return; }
+    if (pool.size() < limit) pool.push_back(std::move(buffer));
+}
+
 void useClientDrmDescriptor(int fd)
 {
     if (fd >= 0) clientDrm() = fd;

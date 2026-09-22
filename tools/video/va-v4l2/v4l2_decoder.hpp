@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -22,7 +23,27 @@ struct DecodedPicture {
     std::size_t pitch[3] {};
     std::size_t bytes[3] {};
     bool error {};
+    // True when the picture was written into a buffer the caller lent the
+    // decoder, so its pixels are already where the caller wants them and
+    // `plane` is null.
+    bool imported {};
 };
+
+// A buffer the caller lends the decoder to write one picture into. The
+// descriptors stay owned by the caller: the decoder only queues them.
+struct CaptureTarget {
+    int fd[3] {-1, -1, -1};
+    std::size_t offset[3] {};
+    std::size_t length[3] {};
+    std::size_t pitch[3] {};
+    unsigned planes {};
+};
+
+// Hands the decoder a buffer for capture slot `index`. `fresh` marks the first
+// slot of a queue the decoder is building, so the caller can take back what it
+// lent the previous one. Returning false makes the session fall back to
+// buffers the device allocates itself.
+using CaptureSource = std::function<bool(unsigned index, bool fresh, CaptureTarget& target)>;
 
 // One stateful V4L2 memory-to-memory decode session: a device node, an OUTPUT
 // queue of compressed packets and a CAPTURE queue of decoded pictures. All
@@ -49,8 +70,25 @@ public:
     // error: a packet may legitimately produce no picture.
     bool collect(DecodedPicture& picture, std::chrono::milliseconds wait, std::string& error);
 
-    // Returns a collected picture's buffer to the CAPTURE queue.
+    // Returns a collected picture's buffer to the CAPTURE queue. A queue that
+    // imports the caller's buffers takes a descriptor back, which need not be
+    // the one the picture arrived in: the caller keeps that one for as long as
+    // something is still looking at the picture.
     void release(unsigned index);
+    bool release(unsigned index, const CaptureTarget& target, std::string& error);
+
+    // Lends the decoder the caller's own buffers, when the device's capture
+    // queue accepts them. Set before the first packet; the session falls back
+    // to device-allocated buffers whenever the queue or the caller declines.
+    void setCaptureSource(CaptureSource source) { captureSource_ = std::move(source); }
+    bool importsCapture() const noexcept { return captureImports_; }
+    // Why a capture queue is not importing, when it was asked to.
+    const std::string& importFailure() const noexcept { return importFailure_; }
+    // What a lent buffer has to look like: the device's own plane count, bytes
+    // per row and size for the decoded format it settled on.
+    unsigned capturePlaneCount() const noexcept { return capturePlanes_; }
+    std::size_t capturePitch(unsigned plane) const noexcept { return capturePitch_[plane]; }
+    std::size_t capturePlaneSize(unsigned plane) const noexcept { return captureSize_[plane]; }
 
     // Ends the current sequence so that every pending picture is emitted, then
     // starts a new one. Pictures are delivered through collect() as usual.
@@ -84,6 +122,8 @@ private:
     void unmap(std::vector<Buffer>& buffers);
     bool reclaimOutput(std::string& error);
     bool queueCapture(unsigned index, std::string& error);
+    bool queueImported(unsigned index, const CaptureTarget& target, std::string& error);
+    bool importCapture(std::string& error);
     bool pendingSourceChange(std::string& error);
 
     int fd_ {-1};
@@ -97,6 +137,10 @@ private:
     // width only for a format of one byte per sample: a packed format carries
     // four, and stepping a row by the width then shears the picture.
     unsigned capturePitch_[4] {};
+    std::size_t captureSize_[4] {};
+    CaptureSource captureSource_;
+    bool captureImports_ {};
+    std::string importFailure_;
     std::vector<Buffer> output_;
     std::vector<Buffer> capture_;
     bool outputStreaming_ {};
@@ -108,26 +152,38 @@ private:
 // falling back to a scan for a stateful decoder that accepts `codedFormat`.
 std::string findDecoderDevice(std::uint32_t codedFormat);
 
-// Whether to ask the decoder for packed RGB rather than NV12. `off` never
-// does; `force` does whenever the device offers it; `automatic` does only when
-// the picture would also reach the client without a guest-side copy, because a
-// packed frame is 2.6 times the bytes of NV12 and moving it costs more than
-// the conversion it saves (measured: 187 ms against 164 ms for 1920x1200).
+// Whether to ask the decoder for packed RGB rather than NV12. `off` and
+// `automatic` never do; `force` does whenever the device offers it.
 enum class RgbCapture { off, automatic, force };
 
 // Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
 RgbCapture rgbCaptureRequest(const char* request) noexcept;
 
 // The decision itself, made once at initialisation so that the first decode
-// session of a boot gets the same answer as every later one. `zeroCopy` says
-// the decoded picture lands in the client's own buffer instead of being copied
-// out of an MMAP capture queue.
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool zeroCopy) noexcept;
+// session of a boot gets the same answer as every later one. `automatic`
+// keeps NV12: a packed frame is 2.6 times the bytes, and carrying it through
+// the device costs far more than the conversion it saves, even when nothing
+// in the guest copies it (measured over a whole 392-frame 1920x1200 stream
+// with a video-processing blit in front of every frame: 158 s planar into the
+// decoder's own buffers against 241 s packed into lent ones, with the blit
+// itself costing the same 56 s either way, because a blit is bound by writing
+// its 9.2 MB result and not by the arithmetic).
+bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept;
 
-// Whether the decoder's CAPTURE queue accepts imported dma-buf memory, which
-// is what makes a packed decode worth asking for: the picture then lands in
-// the client's own buffer instead of being copied out of an MMAP queue.
-bool decoderImportsCapture(const std::string& device);
+// Whether to lend the decoder the driver's own surfaces for its decoded
+// pictures. `automatic` does whenever a surface of the kind this graphics
+// stack makes is one the capture queue accepts; `device` always leaves the
+// decoder its own buffers, and `lend` tries regardless of the probe.
+enum class CaptureMemory { automatic, lend, device };
+
+// Parses UML_VA_V4L2_CAPTURE. An unset or unrecognised request is `automatic`.
+CaptureMemory captureMemoryRequest(const char* request) noexcept;
+
+// Whether the decoder's CAPTURE queue accepts a buffer of this shape as
+// imported dma-buf memory: the picture then lands in the client's own buffer
+// instead of being copied out of an MMAP queue.
+bool decoderImportsCapture(const std::string& device, const CaptureTarget& sample,
+                           unsigned width, unsigned height, std::uint32_t fourcc);
 
 // Whether the device can deliver decoded pictures in `fourcc`. A device that
 // does not enumerate it makes the RGB decode path unavailable, and the driver
