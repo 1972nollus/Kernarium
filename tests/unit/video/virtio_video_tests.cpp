@@ -39,17 +39,50 @@ template<class T> T read(std::span<const std::uint8_t> data)
     std::memcpy(&result, data.data(), sizeof(result));
     return result;
 }
+/* Neighbouring samples differ along both axes, so a plane copied with the
+ * wrong stride cannot reproduce the picture: every destination row would hold
+ * a window that starts at the wrong sample. A flat fill survives any stride
+ * error, which is why the fixtures below never use one. */
+std::uint8_t patternLuma(std::uint32_t row, std::uint32_t column) noexcept
+{
+    return std::uint8_t(0x20 + (row * 5u + column * 3u) % 0xc0u);
+}
+/* The same pattern addressed by byte offset in a 64x64 luma plane, where a
+ * ten-bit sample repeats its value in both of its bytes. */
+std::uint8_t patternLumaByte(std::size_t index, bool ten) noexcept
+{
+    const auto sample = index / (ten ? 2u : 1u);
+    return patternLuma(std::uint32_t(sample / 64), std::uint32_t(sample % 64));
+}
+
+/* The BT.601 limited-range conversion a device performs for a client that
+ * asked for packed pixels, written independently of the device's own loop so
+ * that a test sees placement and colour separately. */
+void convertBt601Limited(std::uint8_t y, std::uint8_t cb, std::uint8_t cr, std::uint8_t* out)
+{
+    const double kr = 0.299, kb = 0.114, kg = 1.0 - kr - kb;
+    const double chroma = 255.0 / 224.0;
+    const double luma = (255.0 / 219.0) * (double(y) - 16.0);
+    const double u = double(cb) - 128.0, v = double(cr) - 128.0;
+    const auto byte = [](double value) { return std::uint8_t(std::clamp(value, 0.0, 255.0) + 0.5); };
+    out[0] = byte(luma + chroma * 2.0 * (1.0 - kb) * u);
+    out[1] = byte(luma - chroma * 2.0 * kb * (1.0 - kb) / kg * u
+                       - chroma * 2.0 * kr * (1.0 - kr) / kg * v);
+    out[2] = byte(luma + chroma * 2.0 * (1.0 - kr) * v);
+}
+
 /* `packs` distinguishes a decoder that produces packed frames itself, as the
  * Apple hardware does, from one that only ever produces its planar output and
  * leaves the device to convert. */
 class Decoder final : public VideoDecoder {
 public:
-    explicit Decoder(bool ten, bool packs = false, bool defers = false)
-        : ten_(ten), packs_(packs), defers_(defers) {}
+    explicit Decoder(bool ten, bool packs = false, bool defers = false,
+                     std::uint32_t width = 64, std::uint32_t height = 64)
+        : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height) {}
     void submit(std::span<const std::uint8_t> packet, std::uint64_t timestamp) override
     {
         require(packet.size() == 5 && packet[0] == 1 && packet[4] == 5, "scatter input changed");
-        format_ = {64, 64, ten_ ? 10u : 8u};
+        format_ = {width_, height_, ten_ ? 10u : 8u};
         DecodedVideoFrame frame;
         frame.format = format_;
         frame.timestamp = timestamp;
@@ -60,15 +93,27 @@ public:
         if (packs_ && adopted_ == VideoPixelLayout::packedBgra) {
             frame.layout = VideoPixelLayout::packedBgra;
             frame.format.bitDepth = 8;
-            frame.pixels.resize(64 * 64 * 4);
-            for (std::size_t i = 0; i < frame.pixels.size(); i += 4) {
-                frame.pixels[i] = 0x10; frame.pixels[i + 1] = 0x20;
-                frame.pixels[i + 2] = 0x30; frame.pixels[i + 3] = 0xff;
-            }
+            /* Every pixel differs from its neighbours in both directions, so
+             * a row written at the wrong offset cannot go unnoticed. A flat
+             * colour would survive any stride error. */
+            frame.pixels.resize(std::size_t(width_) * height_ * 4);
+            for (unsigned row = 0; row < height_; ++row)
+                for (unsigned column = 0; column < width_; ++column) {
+                    auto* out = frame.pixels.data() + (std::size_t(row) * width_ + column) * 4;
+                    out[0] = std::uint8_t(row); out[1] = std::uint8_t(column);
+                    out[2] = std::uint8_t(row + column); out[3] = 0xff;
+                }
         } else {
             frame.color = {VideoColorMatrix::bt601, false};
-            frame.luma.resize(4096 * (ten_ ? 2 : 1), 0x39);
-            frame.chroma.resize(2048 * (ten_ ? 2 : 1));
+            const std::size_t step = ten_ ? 2 : 1;
+            frame.luma.resize(std::size_t(width_) * height_ * step);
+            for (std::uint32_t row = 0; row < height_; ++row)
+                for (std::uint32_t column = 0; column < width_; ++column) {
+                    auto* out = frame.luma.data() + (std::size_t(row) * width_ + column) * step;
+                    for (std::size_t byte = 0; byte < step; ++byte) out[byte] = patternLuma(row, column);
+                }
+            // Flat chroma keeps the converted colour a function of luma alone.
+            frame.chroma.resize(std::size_t(width_) * ((height_ + 1) / 2) * step);
             for (std::size_t i = 0; i < frame.chroma.size(); ++i) frame.chroma[i] = i % 2 ? 0x91 : 0x27;
         }
         frames_.push_back(std::move(frame));
@@ -82,6 +127,8 @@ private:
     bool packs_ {};
     bool defers_ {};
     unsigned deferred_ {};
+    std::uint32_t width_ {64};
+    std::uint32_t height_ {64};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     VideoPixelLayout adopted_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
@@ -159,7 +206,8 @@ void exercise(unsigned format, std::size_t page)
     require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
     const auto result = read<virtio_video_resource_queue_resp>(completion.response);
     require(result.flags == 0 && result.timestamp == packet.timestamp && result.data_sizes[0] == sizes[0], "incorrect frame completion");
-    require(memory[3 * page] == 0x39 && memory[3 * page + 4095] == 0x39, "luma changed");
+    require(memory[3 * page] == patternLumaByte(0, ten) &&
+            memory[3 * page + 4095] == patternLumaByte(4095, ten), "luma changed");
     const auto chroma = ten ? 3 * page + 8192 : 4 * page;
     require(memory[chroma] == 0x27, "chroma changed");
     require(memory[chroma + 1] == (format == VIRTIO_VIDEO_FORMAT_YUV420 ? 0x27 : 0x91), "chroma layout changed");
@@ -369,7 +417,8 @@ void sharedMemoryCapture()
     bool written = false;
     require(regions->resolve(regionId, regionOffset, 4096 + 2048,
         [&](std::span<std::uint8_t> frame) {
-            written = frame[0] == 0x39 && frame[4095] == 0x39 && frame[4096] == 0x27 &&
+            written = frame[0] == patternLumaByte(0, false) &&
+                frame[4095] == patternLumaByte(4095, false) && frame[4096] == 0x27 &&
                 frame[4097] == 0x91;
         }), "the published range could not be resolved");
     require(written, "the decoded frame did not reach the shared-memory range");
@@ -398,11 +447,15 @@ void sharedMemoryCapture()
  * capture. The frames the decoder produces packed arrive unchanged; a frame it
  * produced planar before the negotiation is converted by the device, so the
  * client never sees the format it did not ask for. */
-void packedCapture(std::size_t page, bool decoderPacks)
+void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64,
+                   std::uint32_t height = 64)
 {
     std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [decoderPacks](auto) { return std::make_unique<Decoder>(false, decoderPacks); });
-    std::vector<std::uint8_t> memory(8 * page, 0xcc);
+    VirtioVideoDevice device(caps, [&](auto) {
+        return std::make_unique<Decoder>(false, decoderPacks, false, width, height);
+    });
+    const std::size_t plane = std::size_t(width) * height * 4;
+    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
     device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
         if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
         return std::span(memory).subspan(offset, size);
@@ -451,7 +504,7 @@ void packedCapture(std::size_t page, bool decoderPacks)
     set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 7};
     set.params.queue_type = output;
     set.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
-    set.params.frame_width = set.params.frame_height = 64;
+    set.params.frame_width = width; set.params.frame_height = height;
     ok(set);
     virtio_video_get_params get {};
     get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 7};
@@ -459,8 +512,8 @@ void packedCapture(std::size_t page, bool decoderPacks)
     const auto negotiated = read<virtio_video_get_params_resp>(command(get).response).params;
     require(negotiated.format == VIRTIO_VIDEO_FORMAT_BGRA8888, "packed capture was substituted");
     require(negotiated.num_planes == 1, "packed capture is not a single plane");
-    require(negotiated.plane_formats[0].stride == 64 * 4, "packed capture stride differs");
-    require(negotiated.plane_formats[0].plane_size == 64 * 64 * 4, "packed capture plane size differs");
+    require(negotiated.plane_formats[0].stride == width * 4, "packed capture stride differs");
+    require(negotiated.plane_formats[0].plane_size == plane, "packed capture plane size differs");
 
     auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
         std::vector<std::uint8_t> request;
@@ -475,7 +528,7 @@ void packedCapture(std::size_t page, bool decoderPacks)
     memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
     require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
     const std::uint64_t base = 3 * page;
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
+    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, std::uint32_t(plane), {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     capture.stream_id = 7; capture.queue_type = output; capture.resource_id = 2;
@@ -490,15 +543,25 @@ void packedCapture(std::size_t page, bool decoderPacks)
     require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
     const auto result = read<virtio_video_resource_queue_resp>(completion.response);
     require(result.flags == 0 && result.timestamp == packet.timestamp, "packed frame was not delivered");
-    require(result.data_sizes[0] == 64 * 64 * 4, "packed frame size differs");
-    /* BT.601 limited range for a frame this small, matching what the platform
-     * decoder infers from an unspecified color attachment. */
-    const std::uint8_t expected[4] = {decoderPacks ? std::uint8_t(0x10) : std::uint8_t(0),
-                                      decoderPacks ? std::uint8_t(0x20) : std::uint8_t(69),
-                                      decoderPacks ? std::uint8_t(0x30) : std::uint8_t(75), 0xff};
-    for (std::size_t pixel : {std::size_t(0), std::size_t(64 * 64 - 1)})
-        for (unsigned channel = 0; channel < 4; ++channel)
-            require(memory[base + pixel * 4 + channel] == expected[channel], "packed pixels differ");
+    require(result.data_sizes[0] == plane, "packed frame size differs");
+    /* BT.601 limited range, matching what the platform decoder infers from an
+     * unspecified color attachment. */
+    /* Every row, not a corner and not the first quarter: a destination row
+     * written at the wrong offset holds a window of the picture that starts at
+     * the wrong sample, which only a per-row comparison sees. */
+    for (unsigned row = 0; row < height; ++row)
+        for (unsigned column = 0; column < width; ++column) {
+            const auto* got = memory.data() + base + (std::size_t(row) * width + column) * 4;
+            std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
+                                        std::uint8_t(row + column), 0xff};
+            if (!decoderPacks) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
+            require(got[3] == 0xff, "packed alpha differs");
+            // A rounding step apart is the most two correct conversions differ.
+            const int slack = decoderPacks ? 0 : 1;
+            for (unsigned channel = 0; channel < 3; ++channel)
+                require(std::abs(int(got[channel]) - int(expected[channel])) <= slack,
+                        "packed pixels differ");
+        }
     ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
     device.reset();
 }
@@ -573,8 +636,6 @@ void lateNegotiation(std::size_t page)
 
     // Three pictures: the one decoded before the request, one the decoder is
     // still deferring, and one it has adopted the layout for.
-    const std::uint8_t converted[4] = {0, 69, 75, 0xff};
-    const std::uint8_t adopted[4] = {0x10, 0x20, 0x30, 0xff};
     for (unsigned round = 0; round < 3; ++round) {
         std::memset(memory.data() + base, 0xcc, 64 * 64 * 4);
         virtio_video_resource_queue capture {};
@@ -592,11 +653,17 @@ void lateNegotiation(std::size_t page)
         const auto result = read<virtio_video_resource_queue_resp>(completion.response);
         require(result.flags == 0, "late negotiation failed a capture buffer");
         require(result.data_sizes[0] == 64 * 64 * 4, "packed frame size differs");
-        const auto* expected = round == 2 ? adopted : converted;
-        for (std::size_t pixel : {std::size_t(0), std::size_t(64 * 64 - 1)})
-            for (unsigned channel = 0; channel < 4; ++channel)
-                require(memory[base + pixel * 4 + channel] == expected[channel],
-                        "a late-negotiated frame has the wrong pixels");
+        for (unsigned row = 0; row < 64; ++row)
+            for (unsigned column = 0; column < 64; ++column) {
+                const auto* got = memory.data() + base + (std::size_t(row) * 64 + column) * 4;
+                std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
+                                            std::uint8_t(row + column), 0xff};
+                if (round != 2) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
+                require(got[3] == 0xff, "a late-negotiated frame lost its alpha");
+                for (unsigned channel = 0; channel < 3; ++channel)
+                    require(std::abs(int(got[channel]) - int(expected[channel])) <= (round == 2 ? 0 : 1),
+                            "a late-negotiated frame has the wrong pixels");
+            }
     }
     ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 5}});
     device.reset();
@@ -678,6 +745,9 @@ int main()
         for (const auto page : {4096u, 16384u})
             for (const bool decoderPacks : {true, false})
                 packedCapture(page, decoderPacks);
+        // The geometry a browser actually decodes, where a stride error shows.
+        for (const bool decoderPacks : {true, false})
+            packedCapture(16384u, decoderPacks, 1920, 1200);
         for (const auto page : {4096u, 16384u}) lateNegotiation(page);
         for (const auto page : {4096u, 16384u})
             for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
