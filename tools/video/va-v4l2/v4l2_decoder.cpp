@@ -73,31 +73,19 @@ RgbCapture rgbCaptureRequest(const char* request) noexcept
     return RgbCapture::automatic;
 }
 
-bool useRgbCapture(RgbCapture policy, bool deviceOffers, bool zeroCopy) noexcept
+CaptureMemory captureMemoryRequest(const char* request) noexcept
 {
-    if (!deviceOffers) return false;
-    switch (policy) {
-    case RgbCapture::off: return false;
-    case RgbCapture::force: return true;
-    case RgbCapture::automatic: return zeroCopy;
-    }
-    return false;
+    if (!request || !*request) return CaptureMemory::automatic;
+    const std::string wanted = request;
+    if (wanted == "device" || wanted == "mmap" || wanted == "off" || wanted == "0")
+        return CaptureMemory::device;
+    if (wanted == "lend" || wanted == "dmabuf" || wanted == "1") return CaptureMemory::lend;
+    return CaptureMemory::automatic;
 }
 
-bool decoderImportsCapture(const std::string& device)
+bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept
 {
-    if (device.empty()) return false;
-    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) return false;
-    // Asking for no buffers is the harmless way to learn whether a memory type
-    // is supported at all: an unsupported one is refused outright.
-    v4l2_requestbuffers request {};
-    request.type = kCapture;
-    request.memory = V4L2_MEMORY_DMABUF;
-    request.count = 0;
-    const bool supported = call(fd, VIDIOC_REQBUFS, &request) >= 0;
-    ::close(fd);
-    return supported;
+    return deviceOffers && policy != RgbCapture::off;
 }
 
 bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc)
@@ -317,14 +305,23 @@ bool V4l2Decoder::setupCapture(std::string& error)
         const unsigned reported = plane < capturePlanes_
             ? format.fmt.pix_mp.plane_fmt[plane].bytesperline : 0;
         capturePitch_[plane] = reported ? reported : width_;
+        captureSize_[plane] = plane < capturePlanes_ ? format.fmt.pix_mp.plane_fmt[plane].sizeimage : 0;
     }
     layout_ = std::to_string(width_) + "x" + std::to_string(height_) + " planes " +
               std::to_string(capturePlanes_) + " pitch " +
               std::to_string(format.fmt.pix_mp.plane_fmt[0].bytesperline) + " size " +
               std::to_string(format.fmt.pix_mp.plane_fmt[0].sizeimage);
-    if (!allocate(kCapture, kCaptureBuffers, capture_, error)) return false;
-    for (unsigned index = 0; index < capture_.size(); ++index)
-        if (!queueCapture(index, error)) return false;
+    captureImports_ = false;
+    if (captureSource_) {
+        std::string why;
+        if (importCapture(why)) captureImports_ = true;
+        else if (!why.empty()) importFailure_ = why;
+    }
+    if (!captureImports_) {
+        if (!allocate(kCapture, kCaptureBuffers, capture_, error)) return false;
+        for (unsigned index = 0; index < capture_.size(); ++index)
+            if (!queueCapture(index, error)) return false;
+    }
     auto type = unsigned(kCapture);
     if (call(fd_, VIDIOC_STREAMON, &type) < 0) { error = reason("start the decoded queue"); return false; }
     captureStreaming_ = true;
@@ -337,13 +334,72 @@ bool V4l2Decoder::teardownCapture(std::string& error)
     auto type = unsigned(kCapture);
     if (call(fd_, VIDIOC_STREAMOFF, &type) < 0) { error = reason("stop the decoded queue"); return false; }
     captureStreaming_ = false;
-    unmap(capture_);
+    if (!captureImports_) unmap(capture_);
+    capture_.clear();
     v4l2_requestbuffers request {};
     request.type = kCapture;
-    request.memory = V4L2_MEMORY_MMAP;
+    request.memory = captureImports_ ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP;
     request.count = 0;
     call(fd_, VIDIOC_REQBUFS, &request);
+    captureImports_ = false;
     return true;
+}
+
+bool V4l2Decoder::importCapture(std::string& error)
+{
+    // A queue that takes the caller's own buffers lets the device write each
+    // picture where the client will read it, so nothing is copied in the guest.
+    v4l2_requestbuffers request {};
+    request.type = kCapture;
+    request.memory = V4L2_MEMORY_DMABUF;
+    request.count = kCaptureBuffers;
+    if (call(fd_, VIDIOC_REQBUFS, &request) < 0) { error = reason("request imported buffers"); return false; }
+    if (!request.count || request.count > 32) { error = "unusable imported buffer count"; return false; }
+    capture_.assign(request.count, Buffer {});
+    for (auto& buffer : capture_) buffer.count = capturePlanes_;
+    for (unsigned index = 0; index < capture_.size(); ++index) {
+        CaptureTarget target {};
+        if (!captureSource_(index, index == 0, target) || !queueImported(index, target, error)) {
+            // Hand the queue back whole rather than half-filled.
+            v4l2_requestbuffers release {};
+            release.type = kCapture;
+            release.memory = V4L2_MEMORY_DMABUF;
+            release.count = 0;
+            call(fd_, VIDIOC_REQBUFS, &release);
+            capture_.clear();
+            if (error.empty()) error = "no buffer to lend the decoder";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool V4l2Decoder::queueImported(unsigned index, const CaptureTarget& target, std::string& error)
+{
+    if (index >= capture_.size()) { error = "decoded buffer index out of range"; return false; }
+    if (!target.planes || target.planes < capturePlanes_) { error = "lent buffer has too few planes"; return false; }
+    v4l2_plane planes[VIDEO_MAX_PLANES] {};
+    v4l2_buffer request {};
+    request.type = kCapture;
+    request.memory = V4L2_MEMORY_DMABUF;
+    request.index = index;
+    request.length = capturePlanes_;
+    request.m.planes = planes;
+    for (unsigned plane = 0; plane < capturePlanes_; ++plane) {
+        planes[plane].m.fd = target.fd[plane];
+        planes[plane].data_offset = unsigned(target.offset[plane]);
+        planes[plane].length = unsigned(target.length[plane]);
+    }
+    if (call(fd_, VIDIOC_QBUF, &request) < 0) { error = reason("lend the decoder a buffer"); return false; }
+    capture_[index].queued = true;
+    return true;
+}
+
+bool V4l2Decoder::release(unsigned index, const CaptureTarget& target, std::string& error)
+{
+    if (index >= capture_.size()) { error = "decoded buffer index out of range"; return false; }
+    capture_[index].queued = false;
+    return queueImported(index, target, error);
 }
 
 bool V4l2Decoder::queueCapture(unsigned index, std::string& error)
@@ -442,7 +498,7 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
         v4l2_plane planes[VIDEO_MAX_PLANES] {};
         v4l2_buffer buffer {};
         buffer.type = kCapture;
-        buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.memory = captureImports_ ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP;
         buffer.length = VIDEO_MAX_PLANES;
         buffer.m.planes = planes;
         if (call(fd_, VIDIOC_DQBUF, &buffer) == 0) {
@@ -450,16 +506,29 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
             capture_[buffer.index].queued = false;
             const bool last = (buffer.flags & V4L2_BUF_FLAG_LAST) != 0;
             if (last) sawEos_ = true;
-            if (last && !planes[0].bytesused) { queueCapture(buffer.index, error); continue; }
+            if (last && !planes[0].bytesused) {
+                // An empty last buffer carries no picture: give it straight
+                // back, lending another one when the queue imports.
+                if (captureImports_) {
+                    CaptureTarget target {};
+                    if (captureSource_ && captureSource_(buffer.index, false, target))
+                        queueImported(buffer.index, target, error);
+                } else {
+                    queueCapture(buffer.index, error);
+                }
+                continue;
+            }
             picture = {};
             picture.timestamp = toNanoseconds(buffer.timestamp);
             picture.index = buffer.index;
             picture.width = width_;
             picture.height = height_;
-            picture.planes = capture_[buffer.index].count;
+            picture.planes = captureImports_ ? capturePlanes_ : capture_[buffer.index].count;
+            picture.imported = captureImports_;
             picture.error = (buffer.flags & V4L2_BUF_FLAG_ERROR) != 0;
             for (unsigned plane = 0; plane < picture.planes; ++plane) {
-                picture.plane[plane] = capture_[buffer.index].planes[plane].data + planes[plane].data_offset;
+                picture.plane[plane] = capture_[buffer.index].planes[plane].data
+                    ? capture_[buffer.index].planes[plane].data + planes[plane].data_offset : nullptr;
                 picture.bytes[plane] = planes[plane].bytesused > planes[plane].data_offset
                     ? planes[plane].bytesused - planes[plane].data_offset
                     : 0;
@@ -484,6 +553,13 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
 void V4l2Decoder::release(unsigned index)
 {
     std::string ignored;
+    if (captureImports_) {
+        // A queue that imports needs a buffer with the descriptor, so a caller
+        // that asks for a plain release gets the one it lent before.
+        CaptureTarget target {};
+        if (captureSource_ && captureSource_(index, false, target)) queueImported(index, target, ignored);
+        return;
+    }
     queueCapture(index, ignored);
 }
 

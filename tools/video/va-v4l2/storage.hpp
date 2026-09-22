@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace uml::va {
 
@@ -36,6 +37,9 @@ public:
     // A descriptor the caller owns and must close, or -1 when this buffer
     // cannot be shared.
     int exportDescriptor() const;
+    // The buffer's own descriptor, which it keeps: for lending the buffer to
+    // something that only queues it, such as a V4L2 capture queue.
+    int descriptor() const noexcept { return fd_; }
     // The CPU mapping, created on demand. Null when the buffer cannot be mapped.
     std::uint8_t* map();
     const std::uint8_t* map() const { return const_cast<PixelBuffer*>(this)->map(); }
@@ -91,6 +95,18 @@ const char* storageReason() noexcept;
 // GBM device is made from it when there is one. Must be called before the
 // first allocation.
 void useClientDrmDescriptor(int fd);
+
+// Takes a buffer the pool can hand out again: one of the right shape that
+// nothing but the pool still refers to. A surface still showing a picture, or
+// an image derived from it, keeps a reference of its own, so a buffer in use
+// is never handed out twice. Returns null when the pool has nothing suitable.
+std::shared_ptr<PixelBuffer> takeReusable(std::vector<std::shared_ptr<PixelBuffer>>& pool,
+                                          std::uint32_t fourcc, unsigned width, unsigned height);
+
+// Puts a buffer back, reusing an empty slot when there is one. The pool is
+// bounded: beyond `limit` buffers the oldest surplus is simply dropped.
+void returnToPool(std::vector<std::shared_ptr<PixelBuffer>>& pool, std::shared_ptr<PixelBuffer> buffer,
+                  std::size_t limit = 32);
 
 // A planar surface is allocated as one single-plane buffer that carries every
 // plane, because a client that imports it may only be handed one object.

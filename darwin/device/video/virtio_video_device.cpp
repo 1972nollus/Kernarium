@@ -280,13 +280,19 @@ public:
         virtio_video_params input {};
         virtio_video_params output {};
         std::deque<Held> held;
+        std::uint64_t heldBytes {};
         /* Whether the client has said what it wants from the capture queue,
          * by naming a format or by starting the queue with the one it was
-         * given. Before that the decoder is left planar: a picture decoded
-         * packed cannot answer a planar format, and a stateful client cannot
-         * name its format until the source change, which only a decoded
-         * picture raises. */
+         * given. Until it has, the decoder is left planar, because a picture
+         * decoded packed cannot answer a planar format. */
         bool captureSettled {};
+        /* Whether encoded packets are waiting for that answer. A stateful
+         * client cannot name a capture format before the device reports the
+         * picture size, so the device reads the size out of the packets'
+         * headers and decodes none of them until the client has chosen. The
+         * first picture it then decodes already carries the chosen layout,
+         * which is what keeps the host from converting every frame. */
+        bool captureDeferred {true};
         bool sourceKnown {};
         bool draining {};
         bool eosSent {};
@@ -423,6 +429,17 @@ public:
      * against a client that consumes them at its display rate, and the pile
      * used to end in an error the client reports as EIO on both queues. */
     static constexpr std::size_t framesInFlight = 8;
+    /* What a stream may hold while it waits for the client to choose a
+     * capture format. This is not backpressure and no client needs it to be
+     * generous: a stateful client chooses as soon as the source change tells
+     * it the size, which is within the first few packets. Reaching either
+     * bound means the client is never going to choose, so the wait ends and
+     * the packets are decoded rather than the stream stalling. */
+    static constexpr std::size_t unsettledPacketLimit = 32;
+    static constexpr std::uint64_t unsettledByteLimit = 16 * 1024 * 1024;
+    // What it may hold once it is running, which is backpressure and is
+    // bounded only by what the guest can have attached.
+    static constexpr std::size_t heldPacketLimit = 128;
 
     void refreshFormat(std::uint32_t id, Stream& stream)
     {
@@ -460,6 +477,7 @@ public:
             if (stream.held.empty() || stream.frames.size() >= framesInFlight) return;
             auto held = std::move(stream.held.front());
             stream.held.pop_front();
+            stream.heldBytes -= held.size;
             const auto found = stream.resources.find(
                 resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, held.resource));
             if (found != stream.resources.end()) found->second.queued = false;
@@ -485,12 +503,14 @@ public:
             if (found != stream.resources.end()) found->second.queued = false;
         }
         stream.held.clear();
+        stream.heldBytes = 0;
     }
 
     void pump(std::uint32_t id, Stream& stream)
     {
         while (!stream.outputs.empty()) {
-            if (stream.frames.empty() && (!stream.draining || stream.eosSent)) break;
+            if (stream.frames.empty() &&
+                (!stream.draining || stream.eosSent || !stream.held.empty())) break;
             const auto output = stream.outputs.front();
             stream.outputs.pop_front();
             auto& resource = stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, output.resource));
@@ -617,6 +637,7 @@ public:
                     stream.coded = p.format;
                     stream.profile = wireProfile(cap->profile);
                     stream.captureSettled = false;
+                    stream.captureDeferred = true;
                     stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
                         defaultCapture(cap->bitDepth), p.frame_width, p.frame_height);
                 }
@@ -635,7 +656,9 @@ public:
                 stream.decoder->requestOutputLayout(packed ? uml::platform::VideoPixelLayout::packedBgra
                                                            : uml::platform::VideoPixelLayout::planarYuv);
                 stream.captureSettled = true;
+                stream.captureDeferred = false;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
+                drive(id, stream);
             }
             return done(reply(id));
         }
@@ -702,13 +725,33 @@ public:
                 std::vector<std::uint8_t> packet(q.data_sizes[0]);
                 if (!transfer(resource->second.planes[0], packet, false)) throw std::invalid_argument("short encoded video resource");
                 stream.draining = stream.eosSent = false;
+                /* A client that has queued this much encoded data without
+                 * saying what it wants from the capture queue is not going to
+                 * say. Stop waiting and decode what is held, in the planar
+                 * layout it has not overridden, which is the one a client that
+                 * chooses later can still be served from. */
+                if (stream.captureDeferred && (stream.held.size() >= unsettledPacketLimit ||
+                                               stream.heldBytes >= unsettledByteLimit)) {
+                    stream.captureDeferred = false;
+                    drive(id, stream);
+                }
                 /* Order is the client's, so a packet waits behind one that is
                  * already waiting even if room appeared meanwhile. */
-                if (!stream.held.empty() || stream.frames.size() >= framesInFlight) {
-                    if (stream.held.size() >= 128) throw std::invalid_argument("video input queue is full");
+                if (stream.captureDeferred || !stream.held.empty() ||
+                    stream.frames.size() >= framesInFlight) {
+                    if (stream.held.size() >= heldPacketLimit)
+                        throw std::invalid_argument("video input queue is full");
                     resource->second.queued = true;
+                    stream.heldBytes += q.data_sizes[0];
                     stream.held.push_back({requestId, q.resource_id, q.timestamp,
                                            q.data_sizes[0], std::move(packet)});
+                    /* Reading the packet's headers reports the picture size
+                     * without decoding it, which is the answer the client is
+                     * waiting for before it can choose its capture format. */
+                    if (stream.captureDeferred) {
+                        stream.decoder->inspect(stream.held.back().packet);
+                        refreshFormat(id, stream);
+                    }
                     return {VhostUserQueueAction::defer, {}};
                 }
                 stream.decoder->submit(packet, q.timestamp);
@@ -721,11 +764,12 @@ public:
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
             /* Starting the capture queue settles the format as surely as
-             * naming one: a client that keeps what it was given gets the
-             * packed layout from here on, and the pictures decoded before
-             * this are planar, which either format can answer. */
+             * naming one: a client that keeps what it was given has chosen the
+             * format it was given. Nothing has been decoded yet, so the layout
+             * takes effect on the very first picture. */
             if (!stream.captureSettled) {
                 stream.captureSettled = true;
+                stream.captureDeferred = false;
                 stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
             }
             ++stream.captureQueued;
@@ -740,6 +784,11 @@ public:
             return {VhostUserQueueAction::defer, {}};
         }
         case VIRTIO_VIDEO_CMD_STREAM_DRAIN:
+            /* Nothing further is coming, so nothing is still waiting for a
+             * capture format: decode what is held before draining, or the end
+             * of stream would be reported ahead of the pictures. */
+            stream.captureDeferred = false;
+            drive(id, stream);
             stream.decoder->drain();
             stream.draining = true;
             collect(id, stream);

@@ -46,6 +46,9 @@ struct Buffer {
     // copy, so the buffer points at it rather than owning it.
     std::uint8_t* external {};
     std::size_t externalSize {};
+    // Keeps the surface allocation an image was derived from alive, because a
+    // surface that decodes again may be handed a different buffer.
+    std::shared_ptr<PixelBuffer> pin;
     std::uint8_t* data() { return external ? external : owned.data(); }
 };
 
@@ -59,6 +62,11 @@ struct Surface {
     // NV12 buffer above is filled only if a client really asks for NV12.
     std::shared_ptr<PixelBuffer> shadow;
     bool nativeValid {true};
+    // Set once a client has been given this surface's own memory - a dma-buf
+    // descriptor or a derived image. The memory is then the surface's
+    // identity, so a later picture has to be copied into it rather than the
+    // surface being pointed at a different buffer.
+    bool exported {};
     enum class State { idle, pending, ready, failed };
     State state {State::idle};
     std::uint64_t sequence {};
@@ -85,6 +93,11 @@ struct Context {
     VASurfaceID slot[8] {};
     std::unordered_map<std::uint64_t, VASurfaceID> awaiting;
     std::string failure;
+    // The buffers lent to the decoder's capture queue, one for each slot, and
+    // the ones it has handed back. A buffer is free again when nothing but the
+    // pool refers to it.
+    std::vector<std::shared_ptr<PixelBuffer>> captureSlot;
+    std::vector<std::shared_ptr<PixelBuffer>> captureSpare;
     // Video processing only.
     VAProcPipelineParameterBuffer pipeline {};
     bool havePipeline {};
@@ -138,6 +151,16 @@ public:
     VAStatus submitFrame(Context& context, VASurfaceID id, Surface& target);
     VAStatus waitFor(Surface& surface, std::chrono::milliseconds wait);
     void harvest(Context& context, std::chrono::milliseconds wait);
+    // Lends the decoder a buffer for one capture slot, and keeps a pool of the
+    // ones it has given back.
+    // `fresh` starts a new queue: the buffers lent to the old one go back to
+    // the pool first. Refilling one slot of a live queue never does that.
+    bool provideCapture(Context& context, unsigned index, CaptureTarget& target, bool fresh);
+    std::shared_ptr<PixelBuffer> captureBuffer(Context& context);
+    void recycleCapture(Context& context, std::shared_ptr<PixelBuffer> buffer);
+    // Copies a lent buffer's picture into a surface that has to keep its own
+    // memory, because a client already holds it.
+    bool fillFromLent(Surface& target, PixelBuffer& lent, bool packed);
     VAStatus process(Context& context, Surface& target);
 
     // Fills a surface's NV12 buffer from its RGB shadow, if it has one and the
@@ -146,9 +169,15 @@ public:
     void materialise(Surface& surface);
     // Reports the first decoded picture as the device delivered it.
     void reportPicture(const DecodedPicture& picture, bool packed);
+    // The same, for a picture the device wrote straight into a lent buffer.
+    void reportLent(PixelBuffer& buffer, bool packed);
+    bool wantsReport();
     // The decoded format to ask a new decode session for: packed RGB when the
     // device offers it and the policy wants it, otherwise zero for NV12.
     std::uint32_t preferredCapture();
+    // Whether to offer the decoder this driver's own buffers for its capture
+    // queue. The queue itself decides whether to take them.
+    bool importsCapture();
 
     void note(const char* message) const;
 
@@ -162,10 +191,11 @@ private:
     std::vector<CodecSupport> codecs_;
     std::string device_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};
+    CaptureMemory capturePolicy_ {CaptureMemory::automatic};
     // Probed once at initialisation, because each probe opens the device node.
     bool captureProbed_ {};
     bool rgbOffered_ {};
-    bool importCapture_ {};
+    bool lendCapture_ {};
     int reportedPictures_ {};
     int reportLimit_ {-1};
 };
