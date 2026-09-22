@@ -313,6 +313,11 @@ bool V4l2Decoder::setupCapture(std::string& error)
     width_ = format.fmt.pix_mp.width;
     height_ = format.fmt.pix_mp.height;
     capturePlanes_ = format.fmt.pix_mp.num_planes;
+    for (unsigned plane = 0; plane < 4; ++plane) {
+        const unsigned reported = plane < capturePlanes_
+            ? format.fmt.pix_mp.plane_fmt[plane].bytesperline : 0;
+        capturePitch_[plane] = reported ? reported : width_;
+    }
     layout_ = std::to_string(width_) + "x" + std::to_string(height_) + " planes " +
               std::to_string(capturePlanes_) + " pitch " +
               std::to_string(format.fmt.pix_mp.plane_fmt[0].bytesperline) + " size " +
@@ -458,7 +463,7 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
                 picture.bytes[plane] = planes[plane].bytesused > planes[plane].data_offset
                     ? planes[plane].bytesused - planes[plane].data_offset
                     : 0;
-                picture.pitch[plane] = width_;
+                picture.pitch[plane] = capturePitch_[plane];
             }
             return true;
         }

@@ -93,6 +93,10 @@ private:
     unsigned width_ {};
     unsigned height_ {};
     unsigned capturePlanes_ {};
+    // The device's own bytes per row for each decoded plane. It is the picture
+    // width only for a format of one byte per sample: a packed format carries
+    // four, and stepping a row by the width then shears the picture.
+    unsigned capturePitch_[4] {};
     std::vector<Buffer> output_;
     std::vector<Buffer> capture_;
     bool outputStreaming_ {};
