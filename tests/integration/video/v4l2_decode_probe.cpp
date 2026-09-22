@@ -429,6 +429,7 @@ void ringCycle(const char* device, const std::string& directory, const char* nam
 
     std::vector<unsigned> uses(primes.size(), 0);
     unsigned produced = 0, reused = 0;
+    const auto started = std::chrono::steady_clock::now();
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
     while (produced < pictures && std::chrono::steady_clock::now() < deadline) {
         while (free_inputs && sequence < pictures + slots) {
@@ -490,8 +491,11 @@ void ringCycle(const char* device, const std::string& directory, const char* nam
         }
     }
     require(produced >= pictures, "the capture ring stopped producing pictures");
-    std::printf("PASS ring %s raw=%08x ring=%u pictures=%u reused=%u\n", name, raw, ring,
-                produced, reused);
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    std::printf("PASS ring %s raw=%08x ring=%u pictures=%u reused=%u seconds=%.3f rate=%.1f\n",
+                name, raw, ring, produced, reused, elapsed,
+                elapsed > 0 ? produced / elapsed : 0.0);
     std::fflush(stdout);
 }
 
