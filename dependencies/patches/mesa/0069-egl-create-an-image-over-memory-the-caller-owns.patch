@@ -1,7 +1,7 @@
-From f039cf9d4deda512b870d416cdb881507d3e599b Mon Sep 17 00:00:00 2001
+From 0524b9203ba3b1a00016cf6dcc72c20ba420dcb7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 04:34:25 +0900
-Subject: [PATCH 69/97] egl: create an image over memory the caller owns
+Subject: [PATCH 069/109] egl: create an image over memory the caller owns
 
 The Apple GPU host runs vrend on Mesa's Zink driver, where the only way to
 alias memory the caller already owns is GL_AMD_pinned_memory, which aliases it
@@ -44,7 +44,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  8 files changed, 197 insertions(+), 1 deletion(-)
 
 diff --git a/include/EGL/eglmesaext.h b/include/EGL/eglmesaext.h
-index f0395a8a..f446bfc3 100644
+index f0395a8..f446bfc 100644
 --- a/include/EGL/eglmesaext.h
 +++ b/include/EGL/eglmesaext.h
 @@ -42,6 +42,15 @@ typedef EGLBoolean (EGLAPIENTRYP PFNEGLSWAPBUFFERSREGIONNOK) (EGLDisplay dpy, EG
@@ -64,7 +64,7 @@ index f0395a8a..f446bfc3 100644
  #define EGL_MESA_drm_image_formats 1
  #define EGL_DRM_BUFFER_FORMAT_ARGB2101010_MESA  0x3290
 diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
-index edee4ffc..2cc09746 100644
+index edee4ff..2cc0974 100644
 --- a/src/egl/drivers/dri2/egl_dri2.c
 +++ b/src/egl/drivers/dri2/egl_dri2.c
 @@ -721,6 +721,10 @@ dri2_setup_screen(_EGLDisplay *disp)
@@ -136,7 +136,7 @@ index edee4ffc..2cc09746 100644
     case EGL_LINUX_DMA_BUF_EXT:
        return dri2_create_image_dma_buf(disp, ctx, buffer, attr_list);
 diff --git a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
-index fb5a8b6f..15bc27f0 100644
+index fb5a8b6..15bc27f 100644
 --- a/src/egl/main/eglapi.c
 +++ b/src/egl/main/eglapi.c
 @@ -593,6 +593,7 @@ _eglCreateExtensionsString(_EGLDisplay *disp)
@@ -158,7 +158,7 @@ index fb5a8b6f..15bc27f0 100644
  
     egl_relax (disp, context ? &context->Resource : NULL) {
 diff --git a/src/egl/main/egldisplay.h b/src/egl/main/egldisplay.h
-index 6178140e..d081422d 100644
+index 6178140..d081422 100644
 --- a/src/egl/main/egldisplay.h
 +++ b/src/egl/main/egldisplay.h
 @@ -146,6 +146,7 @@ struct _egl_extensions {
@@ -170,7 +170,7 @@ index 6178140e..d081422d 100644
     EGLBoolean MESA_x11_native_visual_id;
  
 diff --git a/src/egl/main/eglimage.c b/src/egl/main/eglimage.c
-index 4ff1f964..f0cca485 100644
+index 4ff1f96..f0cca48 100644
 --- a/src/egl/main/eglimage.c
 +++ b/src/egl/main/eglimage.c
 @@ -243,6 +243,44 @@ _eglParseEXTImageDmaBufImportModifiersAttribs(_EGLImageAttribs *attrs,
@@ -232,7 +232,7 @@ index 4ff1f964..f0cca485 100644
     }
  
 diff --git a/src/egl/main/eglimage.h b/src/egl/main/eglimage.h
-index 9eae218f..1001d28f 100644
+index 9eae218..1001d28 100644
 --- a/src/egl/main/eglimage.h
 +++ b/src/egl/main/eglimage.h
 @@ -69,6 +69,10 @@ struct _egl_image_attribs {
@@ -247,7 +247,7 @@ index 9eae218f..1001d28f 100644
     EGLBoolean ProtectedContent;
  };
 diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
-index 292757a2..ed4025b7 100644
+index 292757a..ed4025b 100644
 --- a/src/gallium/frontends/dri/dri2.c
 +++ b/src/gallium/frontends/dri/dri2.c
 @@ -1038,6 +1038,90 @@ dri_create_image(struct dri_screen *screen,
@@ -342,7 +342,7 @@ index 292757a2..ed4025b7 100644
  dri2_query_image_common(struct dri_image *image, int attrib, int *value)
  {
 diff --git a/src/gallium/frontends/dri/dri_util.h b/src/gallium/frontends/dri/dri_util.h
-index 96713679..7fbeb03c 100644
+index 9671367..7fbeb03 100644
 --- a/src/gallium/frontends/dri/dri_util.h
 +++ b/src/gallium/frontends/dri/dri_util.h
 @@ -294,6 +294,11 @@ dri_create_image_with_modifiers(struct dri_screen *screen,

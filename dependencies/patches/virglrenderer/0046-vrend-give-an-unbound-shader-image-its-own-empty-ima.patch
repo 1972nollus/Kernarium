@@ -1,7 +1,7 @@
-From 3c565db88df777123ea67055b195268433a13a71 Mon Sep 17 00:00:00 2001
+From ec63d4ebb166237435163ebd41254d77ab2490ab Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:43:43 +0900
-Subject: [PATCH 46/49] vrend: give an unbound shader image its own empty image
+Subject: [PATCH 46/51] vrend: give an unbound shader image its own empty image
  unit
 
 A shader image that carries no bound resource has to read as zero, and

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
+#include <mutex>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -555,13 +556,20 @@ public:
             }
             const auto requestHeader =
                 loadUnaligned<protocol::GpuControlHeader>(request.data());
+            /* A ring that has stopped retiring has already been given the
+             * full escape three times over and reported once. Keep polling
+             * the renderer for it, so any retirement it does make revives
+             * the ring, but stop buying it windows it has never used. */
+            const bool deadRing = ringHasStoppedRetiring(
+                escapesForRing(*result.fence).consecutive);
+            const auto now = std::chrono::steady_clock::now();
             pendingFences_.push_back(PendingFence {
                 .requestId = requestId,
                 .requestHeader = requestHeader,
                 .response = std::move(result.response),
                 .fence = *result.fence,
-                .deadline = std::chrono::steady_clock::now() +
-                    maximumFenceWait,
+                .deadline = deadRing ? now : now + maximumFenceWait,
+                .orderingReleased = deadRing,
             });
             return {.action = uml::virtio::VhostUserQueueAction::defer};
         }
@@ -578,6 +586,7 @@ public:
         cancelFenceTimer();
         pendingFences_.clear();
         fenceOrderingRelaxed_ = false;
+        ringEscapes_.clear();
         readyFences_.clear();
         gpu_.reset();
         configChangePending_ = false;
@@ -680,6 +689,9 @@ public:
             auto& pending = pendingFences_[index];
             const int status = gpu_.contextFenceStatus(pending.fence);
             if (status == EBUSY) {
+                auto& escapes = escapesForRing(pending.fence);
+                const bool stopped =
+                    ringHasStoppedRetiring(escapes.consecutive);
                 const auto action = classifyOverdueFence(
                     now, pending.deadline, pending.orderingReleased);
                 if (action == OverdueFenceAction::wait) {
@@ -694,9 +706,25 @@ public:
                     ++index;
                     continue;
                 }
-                reportOverdueFence(pending, "retiring without the renderer");
+                if (!stopped) {
+                    reportOverdueFence(pending, "retiring without the renderer");
+                    ++escapes.consecutive;
+                    if (ringHasStoppedRetiring(escapes.consecutive))
+                        reportRingStoppedRetiring(pending.fence);
+                }
             } else if (status != 0) {
                 throw std::runtime_error("reading GPU fence status failed");
+            } else {
+                auto& escapes = escapesForRing(pending.fence);
+                if (ringHasStoppedRetiring(escapes.consecutive)) {
+                    std::fprintf(
+                        stderr,
+                        "GPU ring retired a fence again: context=%u ring=%u: "
+                        "the renderer is answering for it once more\n",
+                        pending.fence.contextId,
+                        pending.fence.ringIndex);
+                }
+                escapes.consecutive = 0;
             }
             if (readyFences_.size() == protocol::maximumVirtqueueSize)
                 throw std::runtime_error("GPU fence completion overflow");
@@ -889,7 +917,25 @@ private:
         std::vector<std::uint8_t> response;
     };
 
-    static constexpr auto maximumFenceWait = std::chrono::seconds(60);
+    /* How many fences in a row this ring has completed without the renderer.
+     * A ring is few per connection: one per Venus guest queue, and one for
+     * every Virgl context. */
+    struct RingEscapes {
+        std::uint32_t contextId {};
+        std::uint32_t ringIndex {};
+        unsigned consecutive {};
+    };
+
+    /* One window of the two-stage escape below. A renderer fence covers a
+     * single Virgl submission, which takes milliseconds; a host that kills a
+     * GPU workload for running too long kills it in well under a second. So
+     * this bounds a fence that is stuck, not one that is slow, and the only
+     * thing a longer window buys is a longer stall. It costs two windows to
+     * clear each stuck fence, and a Vulkan CTS group whose shaders exceed the
+     * device's command-buffer limit produced fourteen of them in twelve
+     * cases. Fifteen seconds still leaves three orders of magnitude over a
+     * real submission. */
+    static constexpr auto maximumFenceWait = std::chrono::seconds(15);
     static constexpr std::uintptr_t fenceTimerIdentifier = 1;
     static constexpr std::intptr_t fencePollMicroseconds = 100;
 
@@ -931,6 +977,44 @@ private:
             pending.fence.ringIndex,
             pending.requestHeader.type,
             action);
+    }
+
+    /* Said once, when the ring crosses from one stuck submission into not
+     * retiring at all, and said in full: the pairs above name a fence, and a
+     * reader counting them has no way to learn that the guest is now being
+     * told work completed that the renderer never did. */
+    void reportRingStoppedRetiring(
+        const VirtioGpuDevice::DeferredFence& fence) const noexcept
+    {
+        std::fprintf(
+            stderr,
+            "GPU ring stopped retiring: context=%u ring=%u completed %u "
+            "fences in a row without the renderer. The renderer is not "
+            "answering for this ring, so results the guest reads back from it "
+            "cannot be trusted; later fences on it complete immediately and "
+            "are not reported again\n",
+            fence.contextId,
+            fence.ringIndex,
+            maximumRingEscapes);
+    }
+
+    [[nodiscard]] RingEscapes& escapesForRing(
+        const VirtioGpuDevice::DeferredFence& fence)
+    {
+        const auto existing = std::find_if(
+            ringEscapes_.begin(),
+            ringEscapes_.end(),
+            [&fence](const RingEscapes& escapes) {
+                return escapes.contextId == fence.contextId &&
+                    escapes.ringIndex == fence.ringIndex;
+            });
+        if (existing != ringEscapes_.end())
+            return *existing;
+        ringEscapes_.push_back(RingEscapes {
+            .contextId = fence.contextId,
+            .ringIndex = fence.ringIndex,
+        });
+        return ringEscapes_.back();
     }
 
     void armFenceTimer()
@@ -978,6 +1062,7 @@ private:
     UniqueDescriptor eventQueue_;
     std::vector<PendingFence> pendingFences_;
     std::vector<ReadyFence> readyFences_;
+    std::vector<RingEscapes> ringEscapes_;
     /* Set when an overdue fence releases queue ordering, and cleared once
      * every pending fence has retired. */
     bool fenceOrderingRelaxed_ {};
@@ -2293,6 +2378,22 @@ void VhostUserServer::serveConnection(
     const std::atomic_bool& stopRequested)
 {
     UniqueDescriptor ownedConnection {connection};
+    /* Every arriving descriptor is installed in this process's file table, and
+     * a backend that publishes a shared-memory region hands the guest one more
+     * for every host-visible blob it maps. Take the ceiling the host is willing
+     * to give before the first connection serves a request; the platform
+     * default is an application's, not a machine's.
+     */
+    static std::once_flag descriptorCeilingOnce;
+    std::call_once(descriptorCeilingOnce, [] {
+        (void)raiseDescriptorCeiling();
+        // A plain flush: this note must never be able to fail a connection.
+        std::fprintf(
+            stdout,
+            "vhost-user transport: %s\n",
+            describeDescriptorCeiling().c_str());
+        (void)std::fflush(stdout);
+    });
     struct StopRegistration final {
         const std::atomic_bool*& slot;
         uml::virtio::VhostUserDevice& device;
@@ -2404,9 +2505,15 @@ void VhostUserServer::serveConnection(
         // Normal cooperative shutdown while a peer is not draining output.
     } catch (const std::exception& error) {
         std::fprintf(
-            stderr, "vhost-user connection failed: %s\n", error.what());
+            stderr,
+            "%s vhost-user connection failed: %s\n",
+            device_->name(),
+            error.what());
     } catch (...) {
-        std::fputs("vhost-user connection failed: unknown host error\n", stderr);
+        std::fprintf(
+            stderr,
+            "%s vhost-user connection failed: unknown host error\n",
+            device_->name());
     }
     ownedConnection.reset();
     resetConnection();

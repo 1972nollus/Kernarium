@@ -123,12 +123,25 @@ on iOS does not, and Metal answers such a descriptor by aborting the process
 rather than failing the call, so a driver cannot recover from having offered
 one. KosmicKrisp therefore asks the device once and reports those three layouts
 as unsupported where it says no, which removes them from the Vulkan format
-features and so from the GL formats Virgl advertises above them. Every Apple
-silicon Mac supports BC, so macOS is unaffected.
+features and so from the GL formats Virgl advertises above them. The Vulkan
+`textureCompressionBC` feature answers from that same question: a driver that
+claims the feature while denying all sixteen BC formats fails
+`dEQP-VK.api.info.format_properties.compressed_formats` on the disagreement
+alone. Every Apple silicon Mac supports BC, so macOS is unaffected.
 
 That version is the profile the guest reports, not a conformance result. Guest
 Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
 own conformance standing is whatever its recorded campaigns show.
+
+A point is clipped against user clip and cull distances and against the depth
+planes, never against the view-volume side planes, which is what KosmicKrisp
+reports as `VK_POINT_CLIPPING_BEHAVIOR_USER_CLIP_PLANES_ONLY`. A wide point
+whose centre sits just outside a viewport edge therefore still rasterizes the
+part that reaches the viewport, as the conformance reference rasterizer and
+OpenGL require; clipping such a centre instead made Zink's wide points vanish
+at an edge. The hardware keeps its own guard band around the volume, measured
+at 1.5 in normalized device coordinates on every viewport size and whatever
+the point size, and drops a point whose centre leaves it.
 
 The boundary that fixes this ladder has two sides. Guest userspace is an
 external input: the Mesa, libdrm, WSI, CTS executables and desktop packages
@@ -210,6 +223,58 @@ receipt-bound guest CTS campaigns described in
 its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
 passes.
+
+### Guest memory boundary
+
+A guest application drives this renderer, so every layer that writes through an
+address derived from guest state bounds that write itself. No guest can make
+the host write outside the memory it gave the host, whatever the GPU does.
+
+Only a resource's attached backing reaches guest RAM: a blob resource carries
+no guest pages, and the device translates a backing entry only as a whole range
+inside one negotiated memory region. A control-queue reply is clamped to the
+writable descriptors the guest supplied. A Venus reply stream ends where the
+window the guest declared through `vkSetReplyCommandStreamMESA` ends rather
+than where the shared-memory resource holding it ends, so an oversized reply
+marks the context fatal instead of running on through whatever else the guest
+keeps in that resource.
+
+In the driver, a transform feedback store is bounded by the buffer range bound
+for it. A capture store's address is derived from the bound buffer's capacity,
+the byte counter the application supplies through a counter buffer, and the
+output layout, and the counter survives across draws, so every term of that
+derivation is application state. Each store recomputes its own extent and drops
+a write that would leave the bound range.
+
+### Host-visible memory is bounded by the blob aperture
+
+Host-visible Vulkan memory never becomes guest pages. The renderer allocates it
+as host shared memory and the device maps it into the guest's blob aperture,
+which is one fixed guest-physical region of
+`protocol::hostVisibleSharedMemoryRegionSize`. That constant and the kernel's
+`UML_VHOST_USER_SHMEM_SIZE` are one value, because `uml_vhost_user_shmem_claim`
+refuses a region of any other size; changing it is a change to both maintained
+kernel lines as well as to the host.
+
+The aperture, not host memory, is therefore what bounds host-visible Vulkan
+memory, and the renderer advertises it that way: the synthesized host-visible
+memory type gets its own heap whose size is the aperture, the same split a
+discrete GPU makes between its VRAM and the visible window into it. Heap
+budgets the host driver reports are mapped onto those heaps and bounded by
+them. Without that split a guest sizes its largest host-visible mapping from
+the host's whole system memory and asks for a mapping the aperture can never
+place.
+
+The peak the aperture must hold is larger than the mapping itself. The guest's
+blob allocator releases an aperture node only after the host has retired the
+resource, which takes one transport round trip, so a guest that allocates,
+maps and frees in a loop keeps the previous node resident while the next one is
+placed: two nodes concurrently on an idle host, and more where the host's
+retirement lags further behind. An aperture that cannot place the next node
+fails the blob at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, which a
+conformance run reports as a session-ending `ResourceError`. A host-visible
+heap of one aperture therefore leaves a mapping of a quarter of it usable with
+room to spare.
 
 ### Android guest requirements
 
@@ -352,6 +417,15 @@ that a binary loaded back into a pipeline names its entry in the driver's
 internal shader cache by those bytes, so a pipeline created later from the
 same state without binaries compiles again instead of finding it.
 
+`vkGetPipelineBinaryDataKHR` answers a buffer too small for the binary with
+`VK_ERROR_NOT_ENOUGH_SPACE_KHR`, the size the caller needs, and no data, which
+makes it the one command in the protocol whose in-out data size can come back
+larger than it went in. A reply's blob is measured by the size the driver
+reports, while the room for it was reserved from the size the guest offered,
+so the renderer drops the blob from such a reply: the guest learns the size it
+needs and reads nothing into a buffer that could not have held it. Every other
+blob a reply carries takes its size by value or can only shrink it.
+
 `vkGetPipelineKeyKHR` names the pipeline it should key through
 `VkPipelineCreateInfoKHR::pNext`, and `vk.xml` gives that chain no member,
 because each structure a caller chains there is a pipeline create info in its
@@ -364,6 +438,298 @@ chain would be dropped along with the create info's own extensions. The
 renderer still refuses a request that arrives with an empty chain, which the
 specification gives a caller no way to make and which the host driver would
 read without checking.
+
+### A wide buffer load covers at most sixteen bytes
+
+Apple's GPU backend compiler cannot be trusted with a shader that loads a
+vector wider than sixteen bytes. A four-component 64-bit load - the only
+32-byte access the driver has reason to emit - can end the Metal compiler
+service with `unable to legalize instruction` on the `<4 x s64>` value the
+load produces, not in every shader that has one, and `vkCreateGraphicsPipelines` answers `VK_ERROR_INVALID_SHADER_NV`
+after Metal has retried the crash. This is a compiler limit rather than a
+device one: it reproduces on an Apple7 Mac and on the Apple8 device alike, and
+the matching 32-byte store compiles on both.
+
+The driver emits such a load as two wide halves instead. Each half keeps the
+alignment NIR proved, so the access costs two rather than the eight a packed
+four-component 64-bit vector would, and nothing narrower changes.
+
+### Apple8 (A15) device behaviour
+
+The physical iOS device the Vulkan route has been exercised on is an iPad
+mini 6: an A15, Metal family Apple8, 4 GiB, under iOS 27. It differs from the
+Apple silicon Macs the same stack runs on -- the one these comparisons were
+made against reports Metal family Apple7 -- in ways that change results rather
+than only speed. Each item below either names the behaviour that answers it or
+stands as a limitation; none of them has been observed on a Mac, and none has
+yet been checked on another iOS device.
+
+Only two of the Metal capability answers differ between that Mac and this
+device, and the driver takes both from the device rather than assuming:
+`supportsBCTextureCompression` and `supports32BitFloatFiltering` are false here
+and true there. Every other capability the driver could key on -- 32-bit MSAA,
+query texture LOD, pull-model interpolation, shader barycentrics, programmable
+sample positions, raster order groups, read-write texture tier, argument buffer
+tier, the supported texture sample counts and vertex amplification counts --
+answers the same on both. The device's ceilings are of course smaller:
+`maxBufferLength` is 2 GiB against 38.9 GiB, and the recommended working set
+2.67 GiB against 51.8 GiB.
+
+#### A GPU fault is reported as a timeout
+
+An Apple8 GPU under iOS 27 reports a GPU fault as a timeout. The report carries
+`MTLCommandBufferErrorTimeout` (or `MTL4CommandQueueErrorTimeout` on the queue
+the driver uses) with Metal's placeholder end timestamp, while the per-encoder
+execution status that only the classic `MTLCommandBuffer` error options expose
+names the encoder `MTLCommandEncoderErrorStateFaulted`. Metal 4 has no
+equivalent of that status, so the driver's own queue cannot tell the two apart.
+A "timeout" on this device is therefore a label, not a diagnosis, and must not
+be read as evidence that a shader ran too long. There is no command-buffer
+duration limit anywhere near the affected work: renders of 84 ms and 178 ms
+complete without error, while a submission that faults is reported 13-18 ms
+after its commit call, far short of the work it was given.
+
+The timestamps on a failed commit do not measure execution either. A fault
+carries the placeholder end, which the driver prints as
+`gpu_end_s=6148826548.220315` and describes as a submission the GPU started
+and never reported finishing; a refusal by a dead queue carries an equal or
+microseconds-apart start and end. Timeouts that host contention causes on
+macOS are a different event: they carry a real interval and leave a working
+queue behind.
+
+#### A faulted command queue never works again
+
+An `MTL4CommandQueue` that has killed one submission admits every later commit
+and reports it failed within 0.1 ms, still labelled a timeout, for as long as
+the queue object exists; a classic queue answers the same way with an
+access-revoked code. Nothing in Metal resets a queue. Left alone, one fault
+turned roughly the remaining ninety percent of a mustpass fraction into
+failures, about 14,600 reports across tests that cost nothing.
+
+The driver retires a queue a failure has killed and commits to a replacement
+on the queue's own submit thread, once Metal has reported every submission the
+retired queue was given, so no submission is split across the two and
+single-queue ordering holds. A fault now costs the results of its own
+submission and nothing else: the device is not lost, and the same fraction
+carries one report per faulting case. A storm of timeout reports across cheap
+tests means a dead queue is still in use, not that the tests are expensive.
+
+#### A killed submission takes its signals and query results with it
+
+A queue that kills a submission also discards the queue-level event signal
+ordered behind it and the signals of the other work it kills, and it reports
+only the submission that faulted. The shared event stops below its value, the
+Vulkan fence or timeline semaphore never signals, and every waiter blocks
+forever, in the host process and, through Venus, in the guest. An availability
+write for a query is lost the same way.
+
+The driver records every signal against the submission serial it sits behind
+and completes what a failure destroyed: everything at or below a reported
+failure, everything before a later completion once the queue has failed,
+everything outstanding once Metal has reported as many submissions as were
+made, and, for a queue that stops reporting altogether, whatever a waiter has
+been owed for ten seconds. A query availability wait on a queue that has failed
+is bounded rather than polled forever. Behind both, the renderer bounds a stuck
+fence at fifteen seconds per stage, releasing queue ordering first and retiring
+the fence without the renderer second, so a loss no layer explains cannot
+wedge a guest for longer than that.
+
+#### Fragment-stage store work faults the GPU
+
+A render pass whose fragment shader performs enough `device` store work faults.
+A native Metal program in the driver's process renders 8200 loop iterations per
+fragment over 256x256 in 84 ms, and in 178 ms when each invocation stores to a
+distinct address, without error. Removing the store alone takes the same shader
+from 84 ms to 1 ms and it never faults, and spreading the stores over distinct
+addresses moves the fault threshold from 12288 to 16384 iterations, so what the
+fault tracks is the fragment stage's store work rather than elapsed time. The
+same program runs 32768 iterations on that Mac without faulting.
+
+Nothing in the driver removes it. The stores belong to the application, the
+fragment invocation count is the render area, the render pass tile size
+(`tileWidth`/`tileHeight`, whose default for a single 8-bit colour attachment
+is 32x32, with 16x16 the only other size the device accepts) changes nothing on
+the device, and splitting the render area with a scissor helps unreliably.
+Fifteen of the 552 `dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
+`clamp_frag` and fourteen of the sixteen
+`bit_field_insert_offset{8,16,32,64}_count{8,16,32,64}_frag` - because dEQP has
+every one of 65,536 fragment invocations write every element of the output
+buffer on each of 5120 or 8200 loop trips. dEQP reports each as
+`Upper left corner mismatch`, since a killed draw leaves the clear colour, never
+as a timeout. Their `vert`, `tessc`, `tesse`, `geom` and `comp` variants run
+the same loop a handful of times and pass, and which of the cases nearest the
+threshold fault varies from run to run. The `vec4.u64` group loses the same
+cases for the same reason, `clamp_frag` and twelve of its `bit_field_insert`
+cases in a full mustpass run, and the threshold is near enough for a narrow
+type to cross it as well: `vec4.i8.clamp_frag` failed once in that run.
+
+Two driver changes lower the per-iteration work and so moved several sibling
+cases under the threshold; they are mitigations, not a fix. Descriptor loads
+are emitted in MSL's `constant` address space, where the compiler can hoist
+them out of a loop that also stores, and buffer accesses use MSL's unpacked
+vector types where NIR proves the alignment. The `constant` address space is a
+small uniform-access path on this GPU, not a free read-only annotation:
+streaming a 262 KiB input buffer through it made the same cases fault more
+often. The rejected levers are recorded in
+[`optimization-history.md`](optimization-history.md).
+
+#### An out-of-bounds texture atomic faults the GPU
+
+Metal carries `robustImageAccess2` semantics for a texture read and a texture
+write by itself: a read outside the texture returns zero and a write outside it
+is discarded. A texture atomic is not covered. An atomic whose coordinate, array
+index or cube face lies outside the texture reaches memory the texture does not
+own, and on this device that access never completes: the submission is killed and
+reported as a timeout, which is a label rather than a diagnosis as above. An
+out-of-range texture read or write in the same shader, in the same numbers, is
+harmless, and so is the atomic itself on a Mac.
+
+`dEQP-VK.robustness.robustness2` stands on this wherever a format-qualified
+`r32i`/`r32ui` storage image takes an `imageAtomicAdd` at a deliberately out of
+range coordinate from a render stage; those cases issue thousands of them per
+fragment or vertex in a loop the shader does not unroll. A kill does not always
+land on the submission whose verdict it decides, so the group reports fewer
+failures than kills and which cases fail varies from run to run.
+
+The driver rejects the coordinate before the atomic issues. KosmicKrisp runs
+`nir_lower_robust_access` over image atomics alone, ahead of descriptor lowering,
+so the comparison is made in the Vulkan coordinate space against the size the
+image deref still names, before the cube and 1D rewrites fold a face or layer
+into Metal's coordinate. Reads, writes and buffer accesses keep the robustness
+they already had, so nothing else gains a bounds test. A twelve-case device rig
+covering every layered and flat storage-image atomic in the group goes from seven
+or eight kills a run to none, and `dEQP-VK.image.atomic_operations`, which
+validates the in-bounds result of an atomic on every view type, is unchanged.
+
+#### Render-stage 3D texture sampling faults the GPU
+
+A draw whose vertex or fragment shader samples a 3D floating-point texture often
+enough faults, the way fragment-stage store work does above. Every access
+involved is ordinary and in range, so this is a work limit and not a robustness
+problem.
+
+Two `dEQP-VK.robustness.image_robustness` cases stand on it,
+`push.notemplate.r32f.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.3d.frag`
+and its `vert` sibling. Their shader samples a 5x11x6 `R32_SFLOAT` `sampler3D`
+nine times on each of the 2,101 trips of a loop it is told not to unroll, about
+19,000 samples per invocation. The `comp` sibling issues the identical Metal
+shader from a dispatch and never faults.
+
+What it is not. Holding every one of those sample coordinates inside [0,1] in
+the driver leaves the fault exactly where it was, and so do bounds-checking the
+shader's deliberately out-of-range `texelFetch`, replacing its explicit gradient
+with an explicit level, forcing every sampler to point sampling, and forcing
+clamp to edge in place of the test's clamp-to-border sampler. Discarding the
+samples removes the fault; discarding the fetches does not. Nothing out of
+bounds is involved, and the driver has no coordinate to reject.
+
+What it tracks is how much 3D sampling the render stage does. Keeping only the
+first N samples of each trip and discarding the rest moves it: nine and eight
+kill two submissions a run, six is marginal (two, none and one kill over three
+runs), five and below never kill. The same shader over 21 trips is clean, as is
+a `texture3d<int>` or `texture3d<uint>` at nine samples a trip and a
+`texture2d<float>` at six. Serialising the samples into a dependency chain makes
+it much worse -- ten kills a run, and then every 3D-sampling draw in the rig
+faults -- so it is not a limit on requests in flight.
+
+Nothing in the driver removes it. The neighbouring
+`dEQP-VK.robustness.robustness2` case uses the same image and the same sampler
+with a strictly larger shader -- three extra out-of-range-LOD `texelFetch`es per
+trip around the same nine samples -- and stays under the threshold in every run;
+that spacing is the margin a driver would have to buy back, and there is no
+per-sample work left in the generated MSL to remove. Both cases pass on a Mac,
+where the whole `image_robustness` and `robustness2` family is clean.
+
+The limit is not confined to 3D textures. The `2d_array` siblings of the same
+test,
+`{bind,push}.notemplate.{r32f,rgba32f}.dontunroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.2d_array.{frag,vert}`
+and their pipeline-library variants, run the same loop over a layered image. In
+a full mustpass run five of the twelve `rgba32f` render-stage cases of
+`pipeline_robustness` fail, each with two submissions killed, and so do the
+`bind` `r32f` `frag` and `vert` cases, while every `1d` and `2d` sibling passes.
+
+#### A long run of small render passes faults the GPU
+
+A process that has already pushed a few thousand small render passes through
+the device starts having single submissions killed, reported as the timeout
+above. `dEQP-VK.pipeline.*.render_to_image.core.{1d_array,2d_array}.huge.layers`
+stands on it: each of those cases renders one layer at a time into a 256-layer
+image, so it records 256 single-layer render passes of 44x23 (or 54x1), one
+draw each, into a single command buffer; the driver gives every render encoder
+its own `MTLCommandBuffer`, so one queue submit commits 257 of them. Fraction 05
+lost seven of those cases to six kills. A fourteen-case device rig covering the
+family reproduces it at nought to seven kills a run, and the kill always lands
+on the submission carrying the render passes, never on anything else.
+
+What it is not. Not the size of one Metal kick: committing the same command
+buffers in bounded batches changes nothing, and at one command buffer per
+commit a submission carrying a single 44x23 render pass is still killed. Not
+memory: the device's residency set holds ten or eleven allocations totalling
+1-5 MiB and Metal reports 22-29 MiB allocated, against a 2.8 GiB working-set
+budget. Not API misuse: with Metal API validation enabled the run reports no
+validation error and the kills continue. Not the pipeline construction type:
+`monolithic`, `pipeline_library` and `fast_linked_library` of the same case
+produce byte-identical work, 256 passes and 257 command buffers each, and which
+of them fails changes from run to run. Not fragment or tile work:
+`cube_array.huge.layers` does the most of both, 252 passes of 35x35, and has
+never failed in any run. Not the per-device geometry heap: raising it to
+256 MiB leaves the kills where they were.
+
+What it tracks is how much the process has already done. The four failing
+`2d_array` cases, run as the entire workload, pass in four consecutive runs
+with no kill at all; the same four fail whenever the five neighbouring cases
+have run before them in the same process, and the first run after the device
+has been idle is usually clean as well. Which submission the kill lands on is
+random -- the 65th and the 190th of 257 in one arm. Nothing in the driver has
+been found that removes it, and the whole family is clean on an Apple silicon
+Mac.
+
+#### Memory budget
+
+iOS ends the app at a physical footprint of about 3007 MB on this device. With
+a 1536 MiB guest the host side plateaus near 2673 MB, and the
+`render_to_image` cases with huge attachments add a transient of about 650 MB
+of `IOAccelerator` memory for a fraction of a second, so guest RAM cannot be
+raised to make room for a workload. Two consequences follow.
+
+The per-device geometry heap is 16 MiB rather than a fixed 128 MiB, because a
+Venus host pays it once per guest `VkDevice`. The heaviest command buffer in the
+CTS tessellation, geometry, draw and rasterization groups asks it for
+1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` raises it without a rebuild. An undersized
+heap produces wrong results rather than a diagnosable failure, because the
+overflow report is a shader-side `printf` and `abort()` that reaches neither
+Metal nor the host log, so a smaller size is validated only by a conformance
+run.
+
+An uninterrupted released mustpass fraction runs about 200,000 cases in one
+`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that traversal.
+The cost is in two parts, both measured on
+macOS at the same guest profile. A baseline that grows: the process holds 134 MiB
+before its first case, from the released case hierarchy the enumeration builds,
+reaches about 560 MiB within the first 15,000 cases, and about 1.1 GB by 88
+percent of the fraction. And a per-group transient on top of it: fraction 00's
+380 `dEQP-VK.reconvergence` cases all pass in a fresh process, but their peak
+resident size is 665 MiB, because those tests simulate each subgroup's control
+flow on the CPU. The guest reaper takes `deqp-vk` where the two meet. Raising
+guest RAM is not available, and a 1024 MiB guest is killed earlier still.
+
+Two further consequences. The already-transported `results.qpa` stays in the
+guest's `/run` tmpfs, which is guest RAM: 271 MiB, 18 percent of the guest, by
+the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
+with it, so the guest prints no further progress line and sends no artifact
+frames: the run goes silent rather than reporting a stall, and its verdicts
+survive only as the result frames already on the console. The device lane ends a
+run within three minutes of the reaper's own line rather than waiting out its
+stall guard, and writes whatever the console carried.
+
+A baked device campaign therefore leaves the groups it cannot hold out of the
+fraction, which is why the campaign names carry a generation suffix. The guest
+drops them from the list it enumerated and transports exactly which cases and
+under which reason, so an excluded case is a case not run, never a pass and
+never a failure, and the same selection can be run on a device with more memory.
+Each baked profile also fixes guest memory and any planned CTS process
+boundary. The contract is in [`testing.md`](testing.md); the reasoned exclusion
+list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 
 ### Experimental host memory
 

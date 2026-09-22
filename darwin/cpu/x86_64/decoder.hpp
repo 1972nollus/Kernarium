@@ -4,8 +4,10 @@
 #include "cpu_state.hpp"
 #include "memory/guest_address_space.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace uml::cpu::x86_64 {
 
@@ -251,18 +253,54 @@ struct DecodeResult final {
  * that reaches it. */
 inline constexpr std::size_t maximum_instruction_bytes = 15;
 
+/* Guest bytes a decode has already fetched. A caller decoding a run of
+ * instructions hands the same window to each of them, so a block is fetched
+ * once per window rather than once per instruction. The window never spans a
+ * guest page, which is what keeps it unable to fault for a page the decode has
+ * not reached; it is refilled from the address a decode wants whenever that
+ * address is not already in it, so a caller may hand a stale one to any
+ * address. */
+struct FetchWindow final {
+	static constexpr std::size_t capacity = 128;
+
+	std::uint64_t address{};
+	std::uint32_t filled{};
+	std::array<std::byte, capacity> bytes{};
+};
+
 /* `consumed`, when it is not null, must address at least
  * `maximum_instruction_bytes` writable bytes and receives every byte this call
  * read from guest memory, in the order it read them. On a decoded result the
  * first `instruction.length` of them are exactly the instruction's encoding,
- * because the length is the reader's position. A caller that keeps a
+ * because the length is the reader's position; bytes past it were fetched with
+ * the same window and belong to no instruction. A caller that keeps a
  * translation saves those bytes rather than reading the instruction stream a
  * second time: a second read can see another vCPU's store that the decode did
  * not, and nothing downstream could tell the two apart afterwards.
+ *
+ * The reader fetches in windows bounded by the guest page rather than one byte
+ * per call, so an instruction is normally one observation of guest memory
+ * instead of up to fifteen, and never fewer pages than it reaches. `window`,
+ * when it is given, is reused across calls, so a block's bytes are fetched
+ * once for the run of instructions that fits in it -- the same single
+ * observation, made earlier.
  */
 [[nodiscard]] DecodeResult decode(
 	::uml::memory::GuestAddressSpace &memory, std::uint64_t rip,
 	ExecutionMode mode = ExecutionMode::long64,
-	std::byte *consumed = nullptr) noexcept;
+	std::byte *consumed = nullptr, FetchWindow *window = nullptr) noexcept;
+
+/* Decode one instruction out of bytes the caller already read, `code`
+ * beginning at the instruction's first byte. Those bytes stand in for the
+ * window a fetch would fill, so this decode reads guest memory not at all and
+ * cannot fault against it: a translation handed its own saved source decodes
+ * exactly the instruction it was built from, whatever has happened to that
+ * memory since. `rip` names where the instruction sits, which is what a
+ * shortfall is reported against; an encoding that reaches past the bytes it
+ * was given reports a fetch fault there, the same answer the same shortfall
+ * gets from guest memory.
+ */
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> code,
+	std::uint64_t rip, ExecutionMode mode = ExecutionMode::long64) noexcept;
 
 } // namespace uml::cpu::x86_64

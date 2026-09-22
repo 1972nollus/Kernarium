@@ -1,7 +1,7 @@
-From 09613a62c0ee3f8e20c1aa97e0da0e9b0e2400c5 Mon Sep 17 00:00:00 2001
+From 9786fb3eb93a956822cb1d5f6371be7ff82f4e80 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 22:44:01 +0900
-Subject: [PATCH 84/97] zink: keep a queued barrier's resource alive until it
+Subject: [PATCH 084/109] zink: keep a queued barrier's resource alive until it
  is emitted
 
 ctx->need_barriers[] holds bare struct zink_resource pointers, but every
@@ -40,7 +40,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 112 insertions(+), 20 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 57eb289e..b9eeb6d2 100644
+index 57eb289..b9eeb6d 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -939,7 +939,7 @@ zink_end_batch(struct zink_context *ctx)
@@ -53,7 +53,7 @@ index 57eb289e..b9eeb6d2 100644
  
        for (; res; res = zink_resource(res->base.b.next)) {
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 18e14539..a70a7540 100644
+index 18e1453..a70a754 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -97,6 +97,8 @@ check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res
@@ -279,7 +279,7 @@ index 18e14539..a70a7540 100644
           break;
     }
 diff --git a/src/gallium/drivers/zink/zink_context.h b/src/gallium/drivers/zink/zink_context.h
-index c4ef260f..eb40023d 100644
+index c4ef260..eb40023 100644
 --- a/src/gallium/drivers/zink/zink_context.h
 +++ b/src/gallium/drivers/zink/zink_context.h
 @@ -224,6 +224,12 @@ zink_init_grid_functions(struct zink_context *ctx);
@@ -296,7 +296,7 @@ index c4ef260f..eb40023d 100644
  zink_update_barriers(struct zink_context *ctx, bool is_compute,
                       struct pipe_resource *index, struct pipe_resource *indirect, struct pipe_resource *indirect_draw_count);
 diff --git a/src/gallium/drivers/zink/zink_synchronization.cpp b/src/gallium/drivers/zink/zink_synchronization.cpp
-index 6f266027..6cb46b9a 100644
+index 6f26602..6cb46b9 100644
 --- a/src/gallium/drivers/zink/zink_synchronization.cpp
 +++ b/src/gallium/drivers/zink/zink_synchronization.cpp
 @@ -104,11 +104,11 @@ resource_check_defer_buffer_barrier(struct zink_context *ctx, struct zink_resour

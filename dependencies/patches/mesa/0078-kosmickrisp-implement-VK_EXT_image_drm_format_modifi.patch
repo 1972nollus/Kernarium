@@ -1,7 +1,8 @@
-From cc03351af02516595caa07a48e2718445672c8d3 Mon Sep 17 00:00:00 2001
+From 70b7730f84a3364bac6f7d41940a626668e7548c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:24:15 +0900
-Subject: [PATCH 78/97] kosmickrisp: implement VK_EXT_image_drm_format_modifier
+Subject: [PATCH 078/109] kosmickrisp: implement
+ VK_EXT_image_drm_format_modifier
 
 The Android 2025 baseline that VP_ANDROID_17_requirements inherits makes this
 extension mandatory, and the guest Venus driver uses it as the other of the two
@@ -57,7 +58,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_linear_layout.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_format.c b/src/kosmickrisp/vulkan/kk_format.c
-index 6512a40d..08eeba36 100644
+index 6512a40..08eeba3 100644
 --- a/src/kosmickrisp/vulkan/kk_format.c
 +++ b/src/kosmickrisp/vulkan/kk_format.c
 @@ -16,6 +16,9 @@
@@ -141,7 +142,7 @@ index 6512a40d..08eeba36 100644
           vk_debug_ignored_stype(ext->sType);
           break;
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 0bc236ea..b2d12e26 100644
+index 0bc236e..b2d12e2 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -7,6 +7,8 @@
@@ -373,7 +374,7 @@ index 0bc236ea..b2d12e26 100644
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
-index 33afaa67..8f4e3b4e 100644
+index 33afaa6..8f4e3b4 100644
 --- a/src/kosmickrisp/vulkan/kk_image.h
 +++ b/src/kosmickrisp/vulkan/kk_image.h
 @@ -52,6 +52,14 @@ struct kk_image {
@@ -392,7 +393,7 @@ index 33afaa67..8f4e3b4e 100644
  
  #define kk_foreach_slice(ndx, image, subresource_member)                       \
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
-index b7467202..707e9efd 100644
+index b746720..707e9ef 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.c
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.c
 @@ -9,6 +9,7 @@
@@ -420,7 +421,7 @@ index b7467202..707e9efd 100644
     } else {
 diff --git a/src/kosmickrisp/vulkan/kk_linear_layout.h b/src/kosmickrisp/vulkan/kk_linear_layout.h
 new file mode 100644
-index 00000000..3e3033f8
+index 0000000..3e3033f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_linear_layout.h
 @@ -0,0 +1,67 @@
@@ -492,7 +493,7 @@ index 00000000..3e3033f8
 +
 +#endif /* KK_LINEAR_LAYOUT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0d716fc1..ce2b4046 100644
+index 0d716fc..ce2b404 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -504,7 +505,7 @@ index 0d716fc1..ce2b4046 100644
        .EXT_load_store_op_none = true,
        .EXT_memory_budget = true,
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 36a6d15f..31202fb9 100644
+index 36a6d15..31202fb 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -843,6 +843,16 @@ if with_tests
@@ -526,7 +527,7 @@ index 36a6d15f..31202fb9 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_linear_layout.c b/src/kosmickrisp/vulkan/tests/test_linear_layout.c
 new file mode 100644
-index 00000000..7e2bfa65
+index 0000000..7e2bfa6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_linear_layout.c
 @@ -0,0 +1,92 @@

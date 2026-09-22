@@ -1,8 +1,8 @@
-From 4488cf39199b07c31204be9300c32f3e4e5893e6 Mon Sep 17 00:00:00 2001
+From b3dae2a2aaeb05d83282f2743c059cc70f09e31c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 14:58:02 +0900
-Subject: [PATCH 95/97] kosmickrisp: declare the primitive ID varying unsigned
- at both ends
+Subject: [PATCH 107/109] kosmickrisp: declare the primitive ID varying
+ unsigned at both ends
 
 An authored primitive ID crosses the Metal vertex/fragment interface as a user
 varying, and the type each end declares for it came from whatever its shader
@@ -36,7 +36,7 @@ It fails on the primitive ID before this change.
  2 files changed, 140 insertions(+), 19 deletions(-)
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index 0a7295b6..861f1fb3 100644
+index 0a7295b..861f1fb 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -244,31 +244,41 @@ fs_input_no_interpolant(struct nir_to_msl_ctx *ctx, uint64_t location)
@@ -122,7 +122,7 @@ index 0a7295b6..861f1fb3 100644
  
  void
 diff --git a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
-index 0f65860e..f8d557ed 100644
+index 0f65860..f8d557e 100644
 --- a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 +++ b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 @@ -175,11 +175,108 @@ scan_msl(const char *msl, struct scan *scan)

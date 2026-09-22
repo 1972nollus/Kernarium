@@ -1,14 +1,14 @@
-From 9423f72ad05bcbfd37810b32109c6f7401c3d6c0 Mon Sep 17 00:00:00 2001
+From 5a0832b6489ab587b993f9ae565a47dc858c7f50 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 02/97] kosmickrisp: reject unusable image memory
+Subject: [PATCH 002/109] kosmickrisp: reject unusable image memory
 
 ---
  src/kosmickrisp/vulkan/kk_image.c | 20 +++++++++++++++++++-
  1 file changed, 19 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 5f9b7877..5b4dd8f4 100644
+index 5f9b787..5b4dd8f 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -855,12 +855,21 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,

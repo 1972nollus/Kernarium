@@ -74,6 +74,15 @@ MappedBacking::MappedBacking(
 	SharedBackingView mapping, std::size_t size) noexcept
 	: mapping_(std::move(mapping)), size_(size)
 {
+	const auto pages = size_ / page_size + 1U;
+	const auto roots = (pages + code_index_leaf_pages - 1U) /
+		code_index_leaf_pages;
+	/* One pointer per leaf, eight kilobytes for a gibibyte of backing. A
+	 * backing that cannot afford it keeps the locked lookup. */
+	code_index_.reset(new (std::nothrow)
+		std::atomic<CodeIndexLeaf *>[roots]{});
+	if (code_index_)
+		code_index_pages_ = roots * code_index_leaf_pages;
 }
 
 MappedBacking::~MappedBacking()
@@ -131,22 +140,48 @@ bool MappedBacking::store_allocation_tag(
 void *MappedBacking::code_page_handle(std::uint64_t offset) noexcept
 {
 	const auto page = offset / page_size;
-	CodePage *code_page = nullptr;
-	{
-		std::shared_lock lock{code_pages_mutex_};
-		const auto found = code_pages_.find(page);
-		if (found != code_pages_.end())
-			code_page = found->second.get();
+	/* A record is created once and never destroyed or moved, so a published
+	 * index entry stays true for the backing's lifetime and the repeat ask --
+	 * every revalidation of every cached translation on the page -- answers
+	 * with two acquiring loads instead of a reader-writer lock whose unlock
+	 * signals a condition variable. */
+	if (code_index_ && page < code_index_pages_) {
+		auto *leaf = code_index_[page / code_index_leaf_pages].load(
+			std::memory_order_acquire);
+		if (leaf != nullptr) {
+			auto *found = (*leaf)[page % code_index_leaf_pages].load(
+				std::memory_order_acquire);
+			if (found != nullptr)
+				return found;
+		}
 	}
-	if (code_page != nullptr)
-		return code_page;
+	return install_code_page(page);
+}
+
+void *MappedBacking::install_code_page(std::uint64_t page) noexcept
+{
 	try {
-		std::lock_guard lock{code_pages_mutex_};
+		const std::lock_guard lock{code_pages_mutex_};
 		auto &slot = code_pages_[page];
 		if (!slot)
 			slot = std::make_unique<CodePage>();
-		return slot.get();
+		auto *handle = slot.get();
+		if (!code_index_ || page >= code_index_pages_)
+			return handle;
+		auto &root = code_index_[page / code_index_leaf_pages];
+		auto *leaf = root.load(std::memory_order_relaxed);
+		if (leaf == nullptr) {
+			auto owned = std::make_unique<CodeIndexLeaf>();
+			leaf = owned.get();
+			code_index_leaves_.push_back(std::move(owned));
+			root.store(leaf, std::memory_order_release);
+		}
+		(*leaf)[page % code_index_leaf_pages].store(
+			handle, std::memory_order_release);
+		return handle;
 	} catch (...) {
+		/* Without the index every ask takes this lock, which is the
+		 * behaviour this replaces. */
 		return nullptr;
 	}
 }

@@ -1,7 +1,7 @@
-From 58df5bb0fae3e2f60bcff553633d01b013eee0ab Mon Sep 17 00:00:00 2001
+From d93fc50736f60e6b7663eab45889f375b0a83f04 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 23:05:13 +0900
-Subject: [PATCH 97/97] kosmickrisp: lay a multi-plane image out for sharing
+Subject: [PATCH 109/109] kosmickrisp: lay a multi-plane image out for sharing
 
 A video frame crosses this driver as a multi-plane image under
 DRM_FORMAT_MOD_LINEAR: its planes sit in one allocation, each at its own
@@ -37,7 +37,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 85 insertions(+), 70 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index ca26fbf1..9c2fcf0a 100644
+index ca26fbf..9c2fcf0 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -631,6 +631,25 @@ kk_GetPhysicalDeviceSparseImageFormatProperties2(
@@ -287,7 +287,7 @@ index ca26fbf1..9c2fcf0a 100644
              return result;
        }
 diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
-index 9b9e9280..0a9f8d3d 100644
+index 9b9e928..0a9f8d3 100644
 --- a/src/kosmickrisp/vulkan/kk_image.h
 +++ b/src/kosmickrisp/vulkan/kk_image.h
 @@ -32,6 +32,11 @@ uint32_t kk_image_max_dimension(const struct kk_physical_device *pdev,

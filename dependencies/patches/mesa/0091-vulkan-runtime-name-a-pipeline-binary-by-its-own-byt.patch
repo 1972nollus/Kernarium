@@ -1,7 +1,8 @@
-From cfa7e33c889cb49086c76e11b78e7856b0116852 Mon Sep 17 00:00:00 2001
+From a1639dcb5e6c22b78b119eb14f6fcad0332ab078 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 20:17:12 +0900
-Subject: [PATCH 91/97] vulkan/runtime: name a pipeline binary by its own bytes
+Subject: [PATCH 091/109] vulkan/runtime: name a pipeline binary by its own
+ bytes
 
 A pipeline binary's key is the name an application stores its bytes under and
 hands back later, so binaries holding the same bytes have to share one key.
@@ -40,7 +41,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 32 insertions(+), 6 deletions(-)
 
 diff --git a/src/vulkan/runtime/vk_pipeline.c b/src/vulkan/runtime/vk_pipeline.c
-index 6b51eb64..367b9691 100644
+index 6b51eb6..367b969 100644
 --- a/src/vulkan/runtime/vk_pipeline.c
 +++ b/src/vulkan/runtime/vk_pipeline.c
 @@ -4082,6 +4082,32 @@ vk_common_CmdSetRayTracingPipelineStackSizeKHR(

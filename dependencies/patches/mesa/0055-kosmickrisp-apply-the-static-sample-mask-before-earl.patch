@@ -1,8 +1,8 @@
-From 5914cda74fcb8574276a4e6a65e4aa8f0d1f739f Mon Sep 17 00:00:00 2001
+From 3c1042ca6ded56e5fad5a2cbbfd9673b4de50e15 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 15:34:12 +0900
-Subject: [PATCH 55/97] kosmickrisp: apply the static sample mask before early
- sample counting
+Subject: [PATCH 055/109] kosmickrisp: apply the static sample mask before
+ early sample counting
 
 Vulkan performs the sample mask test before the early depth and stencil
 tests and before occlusion sample counting, so an occlusion query over a
@@ -81,7 +81,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  create mode 100644 src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 877307ea..80895d13 100644
+index 877307e..80895d1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -54,6 +54,13 @@ struct kk_root_descriptor_table {
@@ -99,7 +99,7 @@ index 877307ea..80895d13 100644
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e7c666bf..b8be0edd 100644
+index e7c666b..b8be0ed 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1765,8 +1765,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -147,7 +147,7 @@ index e7c666bf..b8be0edd 100644
        kk_cmd_buffer_flush_push_descriptors(cmd, desc);
  
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
-index de3e4d71..fe1de5ed 100644
+index de3e4d7..fe1de5e 100644
 --- a/src/kosmickrisp/vulkan/kk_gpl.h
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
 @@ -53,6 +53,34 @@ kk_graphics_state_has_static_depth_stencil(
@@ -186,7 +186,7 @@ index de3e4d71..fe1de5ed 100644
   * is cached device-wide under this key, so it must describe every attachment
   * the compiled Metal pipeline and its depth-stencil state are built from.
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index acd2bc3a..d4eeed93 100644
+index acd2bc3..d4eeed9 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -807,7 +807,11 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
@@ -203,7 +203,7 @@ index acd2bc3a..d4eeed93 100644
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a58ffe54..0d5609f9 100644
+index a58ffe5..0d5609f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -752,6 +752,71 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
@@ -320,7 +320,7 @@ index a58ffe54..0d5609f9 100644
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index de64dbe3..86f08e23 100644
+index de64dbe..86f08e2 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -125,6 +125,9 @@ struct kk_shader_info {
@@ -344,7 +344,7 @@ index de64dbe3..86f08e23 100644
  
        struct {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e6e18405..5d3c216f 100644
+index e6e1840..5d3c216 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -521,6 +521,20 @@ if with_tests
@@ -370,7 +370,7 @@ index e6e18405..5d3c216f 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
 new file mode 100644
-index 00000000..188aedfa
+index 0000000..188aedf
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
 @@ -0,0 +1,11 @@
@@ -387,7 +387,7 @@ index 00000000..188aedfa
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
 new file mode 100644
-index 00000000..b5a1f53e
+index 0000000..b5a1f53
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
 @@ -0,0 +1,59 @@
@@ -452,7 +452,7 @@ index 00000000..b5a1f53e
 +0x0000002a,0x00000028,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
 new file mode 100644
-index 00000000..3d9d5339
+index 0000000..3d9d533
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
 @@ -0,0 +1,11 @@
@@ -469,7 +469,7 @@ index 00000000..3d9d5339
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag.h b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag.h
 new file mode 100644
-index 00000000..0dab30cb
+index 0000000..0dab30c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag.h
 @@ -0,0 +1,31 @@
@@ -506,7 +506,7 @@ index 00000000..0dab30cb
 +0x00000012,0x00000015,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag
 new file mode 100644
-index 00000000..62ba92ba
+index 0000000..62ba92b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag
 @@ -0,0 +1,9 @@
@@ -521,7 +521,7 @@ index 00000000..62ba92ba
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag.h b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag.h
 new file mode 100644
-index 00000000..61b6933d
+index 0000000..61b6933
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_late.frag.h
 @@ -0,0 +1,32 @@
@@ -559,7 +559,7 @@ index 00000000..61b6933d
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag
 new file mode 100644
-index 00000000..287a3f79
+index 0000000..287a3f7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag
 @@ -0,0 +1,7 @@
@@ -572,7 +572,7 @@ index 00000000..287a3f79
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag.h b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag.h
 new file mode 100644
-index 00000000..8589eacd
+index 0000000..8589eac
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_plain.frag.h
 @@ -0,0 +1,19 @@
@@ -597,7 +597,7 @@ index 00000000..8589eacd
 +0x00000009,0x0000000c,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
 new file mode 100755
-index 00000000..643eb9f4
+index 0000000..643eb9f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -610,7 +610,7 @@ index 00000000..643eb9f4
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp b/src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp
 new file mode 100644
-index 00000000..42707615
+index 0000000..4270761
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp
 @@ -0,0 +1,449 @@

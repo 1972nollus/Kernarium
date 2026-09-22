@@ -1,7 +1,7 @@
-From 34bb02990aab145a728ff64ccc4fb1bd29937b03 Mon Sep 17 00:00:00 2001
+From 2caa08ab210038f5c2746096dd53820180e9bcbd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:14:52 +0900
-Subject: [PATCH 77/97] kosmickrisp: advertise VK_EXT_queue_family_foreign
+Subject: [PATCH 077/109] kosmickrisp: advertise VK_EXT_queue_family_foreign
 
 The Android 2025 baseline that VP_ANDROID_17_requirements inherits makes this
 extension mandatory, and the guest Venus driver additionally uses it as one of
@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 1 insertion(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 2404c1a4..0d716fc1 100644
+index 2404c1a..0d716fc 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -192,6 +192,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

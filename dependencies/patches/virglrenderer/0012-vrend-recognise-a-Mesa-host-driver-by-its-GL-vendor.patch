@@ -1,7 +1,7 @@
-From a7242f9655353fbdee861de0b97c07ac2b89492d Mon Sep 17 00:00:00 2001
+From 65c5ce21f0af518c7985a98572cb46c2766be8de Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:59:06 +0900
-Subject: [PATCH 12/49] vrend: recognise a Mesa host driver by its GL vendor
+Subject: [PATCH 12/51] vrend: recognise a Mesa host driver by its GL vendor
 
 The buffer-storage capability is gated on inferring the host's map cache
 type, and that inference tests the GL renderer string for "Mesa". Only

@@ -1,7 +1,7 @@
-From d479190331ea1978976db8c09ca4749d4bbe8969 Mon Sep 17 00:00:00 2001
+From 28dd47fc695fb5f27aa87966126426b70df321a6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 21:34:01 +0900
-Subject: [PATCH 09/97] kosmickrisp: avoid pinning residency per submit
+Subject: [PATCH 009/109] kosmickrisp: avoid pinning residency per submit
 
 ---
  src/kosmickrisp/vulkan/kk_buffer_view.c | 11 ++++++++++-
@@ -10,7 +10,7 @@ Subject: [PATCH 09/97] kosmickrisp: avoid pinning residency per submit
  3 files changed, 37 insertions(+), 2 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 70ff32ca..7363e8ff 100644
+index 70ff32c..7363e8f 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -109,6 +109,11 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
@@ -38,7 +38,7 @@ index 70ff32ca..7363e8ff 100644
     vk_buffer_view_destroy(&dev->vk, pAllocator, &view->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 216faeda..8361e4f5 100644
+index 216faed..8361e4f 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -463,11 +463,33 @@ kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
@@ -77,7 +77,7 @@ index 216faeda..8361e4f5 100644
     simple_mtx_unlock(&dev->residency_set.mutex);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index be4f3e7b..cb6aa034 100644
+index be4f3e7..cb6aa03 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -126,6 +126,10 @@ void kk_device_add_buffer_to_residency_set(struct kk_device *dev,

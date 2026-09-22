@@ -1,7 +1,7 @@
-From 16b76bb779171539eaa3080731cab8b3550156b5 Mon Sep 17 00:00:00 2001
+From 04a2343fc93b4a2b3815cb7f826a691f8820f1d0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 00:41:11 +0900
-Subject: [PATCH 30/49] venus: advertise only what the pinned protocol defines
+Subject: [PATCH 30/51] venus: advertise only what the pinned protocol defines
 
 The renderer's extension table and command dispatch are written against the
 venus-protocol revision the renderer was developed on. This project pins one

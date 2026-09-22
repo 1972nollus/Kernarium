@@ -1,7 +1,7 @@
-From 90ff688b84317749c60c15cef9af35dee58afd9d Mon Sep 17 00:00:00 2001
+From c35d2fe84f3cb25b9670356716d69475726d7041 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 12:21:15 +0900
-Subject: [PATCH 93/97] kosmickrisp: filter 32-bit float textures only where
+Subject: [PATCH 093/109] kosmickrisp: filter 32-bit float textures only where
  Metal can
 
 The format table names every pixel format Metal can filter, but filtering a
@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  5 files changed, 37 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/bridge/mtl_device.h b/src/kosmickrisp/bridge/mtl_device.h
-index f8946db6..1f0205ff 100644
+index f8946db..1f0205f 100644
 --- a/src/kosmickrisp/bridge/mtl_device.h
 +++ b/src/kosmickrisp/bridge/mtl_device.h
 @@ -33,6 +33,9 @@ bool mtl_device_supports_sample_count(mtl_device *dev, uint32_t sample_count);
@@ -45,7 +45,7 @@ index f8946db6..1f0205ff 100644
  uint32_t mtl_device_max_threadgroup_memory_length(mtl_device *dev);
  uint64_t mtl_device_max_buffer_length(mtl_device *dev);
 diff --git a/src/kosmickrisp/bridge/mtl_device.m b/src/kosmickrisp/bridge/mtl_device.m
-index c0897a55..52a8e8ca 100644
+index c0897a5..52a8e8c 100644
 --- a/src/kosmickrisp/bridge/mtl_device.m
 +++ b/src/kosmickrisp/bridge/mtl_device.m
 @@ -132,6 +132,15 @@
@@ -65,7 +65,7 @@ index c0897a55..52a8e8ca 100644
  mtl_device_max_threads_per_threadgroup(mtl_device *dev)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 51736a6f..58bc24e9 100644
+index 51736a6..58bc24e 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -33,6 +33,19 @@ static void kk_image_report_address_binding(struct kk_device *dev,
@@ -106,7 +106,7 @@ index 51736a6f..58bc24e9 100644
        features |=
           VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT; // TODO_KOSMICKRISP
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 909e14fa..33a9322d 100644
+index 909e14f..33a9322 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -1151,6 +1151,8 @@ get_metal_limits(struct kk_physical_device *pdev)
@@ -119,7 +119,7 @@ index 909e14fa..33a9322d 100644
     pdev->supported_sample_counts = VK_SAMPLE_COUNT_1_BIT;
     for (uint32_t sample_count = VK_SAMPLE_COUNT_2_BIT;
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.h b/src/kosmickrisp/vulkan/kk_physical_device.h
-index 8ba1c224..135850ac 100644
+index 8ba1c22..135850a 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.h
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.h
 @@ -41,6 +41,7 @@ struct kk_device_info {

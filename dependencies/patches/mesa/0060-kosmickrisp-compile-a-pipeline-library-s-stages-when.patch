@@ -1,7 +1,7 @@
-From fc629cadc5c9a494682b33ad03d04b92aa7d8091 Mon Sep 17 00:00:00 2001
+From b5f4ad061093c2552b3219db0aa6eb73c58787b6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 20:36:41 +0900
-Subject: [PATCH 60/97] kosmickrisp: compile a pipeline library's stages when
+Subject: [PATCH 060/109] kosmickrisp: compile a pipeline library's stages when
  it is created
 
 VK_EXT_graphics_pipeline_library promises that linking libraries is cheap
@@ -81,7 +81,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag.h
 
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.h b/src/kosmickrisp/bridge/mtl_compiler.h
-index 23238140..3b645509 100644
+index 2323814..3b64550 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.h
 +++ b/src/kosmickrisp/bridge/mtl_compiler.h
 @@ -91,9 +91,11 @@ void mtl_render_pipeline_descriptor_set_rasterization_enabled(
@@ -99,7 +99,7 @@ index 23238140..3b645509 100644
  
  #endif /* MTL_COMPILER_H */
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
-index def3b7f6..f0279d86 100644
+index def3b7f..f0279d8 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.m
 +++ b/src/kosmickrisp/bridge/mtl_compiler.m
 @@ -281,7 +281,8 @@
@@ -122,7 +122,7 @@ index def3b7f6..f0279d86 100644
        }
  
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_compiler.c b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
-index debb4d75..4e5b3411 100644
+index debb4d7..4e5b341 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 @@ -137,7 +137,7 @@ mtl_render_pipeline_descriptor_set_max_vertex_amplification_count(
@@ -135,7 +135,7 @@ index debb4d75..4e5b3411 100644
     return NULL;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index 053e458d..af6992bd 100644
+index 053e458..af6992b 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -109,6 +109,12 @@ struct kk_device {
@@ -152,7 +152,7 @@ index 053e458d..af6992bd 100644
     struct kk_queue queue;
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index d4eeed93..aee0b305 100644
+index d4eeed9..aee0b30 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -796,10 +796,12 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
@@ -172,7 +172,7 @@ index d4eeed93..aee0b305 100644
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index b2787b43..dc510a81 100644
+index b2787b4..dc510a8 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1500,6 +1500,9 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
@@ -996,7 +996,7 @@ index b2787b43..dc510a81 100644
  
     if (result != VK_SUCCESS)
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 749204dd..2d6510a8 100644
+index 749204d..2d6510a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -233,6 +233,12 @@ struct kk_shader {
@@ -1013,7 +1013,7 @@ index 749204dd..2d6510a8 100644
     struct msl_compile_data transform_feedback_pre_gs_msl;
     struct msl_compile_data line_raster_materialize_msl;
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
-index d142b71b..96775849 100755
+index d142b71..9677584 100755
 --- a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
 @@ -2,6 +2,7 @@
@@ -1027,7 +1027,7 @@ index d142b71b..96775849 100755
  done
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert
 new file mode 100644
-index 00000000..785bc92d
+index 0000000..785bc92
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert
 @@ -0,0 +1,10 @@
@@ -1043,7 +1043,7 @@ index 00000000..785bc92d
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert.h b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert.h
 new file mode 100644
-index 00000000..03fe7b0c
+index 0000000..03fe7b0
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying.vert.h
 @@ -0,0 +1,64 @@
@@ -1113,7 +1113,7 @@ index 00000000..03fe7b0c
 +0x0000002d,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag
 new file mode 100644
-index 00000000..82addc5f
+index 0000000..82addc5
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag
 @@ -0,0 +1,9 @@
@@ -1128,7 +1128,7 @@ index 00000000..82addc5f
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag.h b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag.h
 new file mode 100644
-index 00000000..36f61075
+index 0000000..36f6107
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_narrow.frag.h
 @@ -0,0 +1,27 @@
@@ -1161,7 +1161,7 @@ index 00000000..36f61075
 +0x00000009,0x00000012,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag
 new file mode 100644
-index 00000000..1eaf6748
+index 0000000..1eaf674
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag
 @@ -0,0 +1,8 @@
@@ -1175,7 +1175,7 @@ index 00000000..1eaf6748
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag.h b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag.h
 new file mode 100644
-index 00000000..542d4894
+index 0000000..542d489
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl_varying_wide.frag.h
 @@ -0,0 +1,26 @@
@@ -1206,7 +1206,7 @@ index 00000000..542d4894
 +0x00000011,0x00000012,0x0000000f,0x0003003e,
 +0x00000009,0x00000013,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
-index 7d857970..aff0c55f 100644
+index 7d85797..aff0c55 100644
 --- a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 @@ -12,17 +12,20 @@

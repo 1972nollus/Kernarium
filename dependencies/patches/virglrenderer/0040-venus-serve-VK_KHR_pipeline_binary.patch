@@ -1,7 +1,7 @@
-From 608deaa8f1ee3ada6522562a89f56974fb9ed711 Mon Sep 17 00:00:00 2001
+From 86a8901fc7cecb6ca0dbdbc443f2d21f0a9d25c3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:29:09 +0900
-Subject: [PATCH 40/49] venus: serve VK_KHR_pipeline_binary
+Subject: [PATCH 40/51] venus: serve VK_KHR_pipeline_binary
 
 The local protocol series gives the extension's five commands their command
 ids and codecs, so the renderer can now dispatch them. Four are plain
@@ -28,15 +28,27 @@ names no pipeline, so an empty request is one no renderer may forward. The
 protocol now carries the chain, so this guards against a guest that sends
 something the specification forbids rather than against the transport.
 
+vkGetPipelineBinaryDataKHR drops the blob from a reply whose data size grew
+across the call. Every other command that returns a blob beside an in-out size
+can only shrink it, so the codec measures the reply's blob by the size the
+driver reports and reserves room for it from the size the guest offered. This
+command breaks that: a buffer too small for the binary is answered with
+VK_ERROR_NOT_ENOUGH_SPACE_KHR, the size the caller needs, and no data at all.
+Encoding a blob of the grown size then writes past the reply region the guest
+reserved, and the guest decodes a blob longer than its own reply stream, which
+aborts the process. A reply that carries no blob is what the specification
+describes and what the existing codec already reads, so the guest learns the
+size it needs and its buffer is left alone.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/venus/vkr_common.c   |   1 +
  src/venus/vkr_common.h   |   3 +
  src/venus/vkr_context.c  |   1 +
  src/venus/vkr_device.c   |   3 +
- src/venus/vkr_pipeline.c | 157 +++++++++++++++++++++++++++++++++++++++
+ src/venus/vkr_pipeline.c | 173 +++++++++++++++++++++++++++++++++++++++
  src/venus/vkr_pipeline.h |  10 +++
- 6 files changed, 175 insertions(+)
+ 6 files changed, 191 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
 index 7d6fb0f..d84de61 100644
@@ -98,10 +110,10 @@ index c2870a0..3dce07d 100644
           vkr_log("Unhandled vkr_object(%p) with VkObjectType(%u)", obj,
                   (uint32_t)obj->type);
 diff --git a/src/venus/vkr_pipeline.c b/src/venus/vkr_pipeline.c
-index d0d6f83..3bec56b 100644
+index d0d6f83..2de45df 100644
 --- a/src/venus/vkr_pipeline.c
 +++ b/src/venus/vkr_pipeline.c
-@@ -199,6 +199,147 @@ vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR(
+@@ -199,6 +199,163 @@ vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR(
                                                          args->group, args->groupShader);
  }
  
@@ -227,11 +239,27 @@ index d0d6f83..3bec56b 100644
 +   struct vkr_device *dev = vkr_device_from_handle(args->device);
 +   struct vn_device_proc_table *vk = &dev->proc_table;
 +
++   /* The data size is in-out, and this is the one command whose out value can
++    * exceed the in value: a buffer smaller than the binary is answered with
++    * VK_ERROR_NOT_ENOUGH_SPACE_KHR, the size the caller needs, and no data.
++    * The reply's blob is measured by the size the driver reports, while the
++    * room for it was reserved from the size the driver was offered, so a grown
++    * size describes a blob neither side has: it runs past the reply region the
++    * guest set and past the guest's own buffer.  The specification writes no
++    * data in that case, so the reply carries no blob and the guest reads only
++    * the size it asked for.
++    */
++   const size_t offered =
++      args->pPipelineBinaryDataSize ? *args->pPipelineBinaryDataSize : 0;
++
 +   vn_replace_vkGetPipelineBinaryDataKHR_args_handle(args);
 +   args->ret = vk->GetPipelineBinaryDataKHR(args->device, args->pInfo,
 +                                            args->pPipelineBinaryKey,
 +                                            args->pPipelineBinaryDataSize,
 +                                            args->pPipelineBinaryData);
++
++   if (args->pPipelineBinaryData && *args->pPipelineBinaryDataSize > offered)
++      args->pPipelineBinaryData = NULL;
 +}
 +
 +static void
@@ -249,7 +277,7 @@ index d0d6f83..3bec56b 100644
  void
  vkr_context_init_shader_module_dispatch(struct vkr_context *ctx)
  {
-@@ -247,3 +388,19 @@ vkr_context_init_pipeline_dispatch(struct vkr_context *ctx)
+@@ -247,3 +404,19 @@ vkr_context_init_pipeline_dispatch(struct vkr_context *ctx)
     dispatch->dispatch_vkGetRayTracingShaderGroupStackSizeKHR =
        vkr_dispatch_vkGetRayTracingShaderGroupStackSizeKHR;
  }

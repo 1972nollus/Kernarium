@@ -1,7 +1,7 @@
-From d3655c09367e4e0043b5da52b9dca920853cfff4 Mon Sep 17 00:00:00 2001
+From cac716adae23ebee85d9f60f473dfd4b69e132c8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 23:55:37 +0900
-Subject: [PATCH 42/49] u_thread: leave the synchronous fault signals unblocked
+Subject: [PATCH 42/51] u_thread: leave the synchronous fault signals unblocked
  on driver threads
 
 u_thread_create() blocks every signal but SIGSYS on the calling thread around

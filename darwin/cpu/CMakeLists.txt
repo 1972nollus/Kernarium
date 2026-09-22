@@ -10,10 +10,53 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::JitProfileConfiguration)
 target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
-set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
+# A private cache holds one translation per slot, so the slot count is the
+# working set an executor can keep. Counted on Geekbench 6 Clang, the workload
+# with the largest code footprint, one executor reaches about 194,000 distinct
+# x86 blocks and 134,000 arm64 blocks, against 65,536 slots: the cache runs at
+# 100% occupancy, 89% of translations are of a block that executor had already
+# translated and lost, and address-space retirement causes none of them. The
+# slot count, not residency or validation, is what bounds Clang.
+#
+# Capacity is not free in the same currency on both engines. An arm64 slot is
+# 56 bytes and an x86 slot 256, so the same count costs 4.6x more on the engine
+# whose working set is larger. macOS can spend it and iOS cannot: the iOS app
+# runs under a jetsam limit with a 2048 MiB guest default, and one executor per
+# host core would pay for it several times over. The compatibility default
+# therefore stays where it was measured to be affordable.
+if(UML_APPLE_PLATFORM STREQUAL "macos")
+    set(_uml_gadget_cache_slots_default "262144")
+else()
+    set(_uml_gadget_cache_slots_default "65536")
+endif()
+set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}" CACHE STRING
     "Slots in each ISA's private gadget cache; power of two, at least 1024")
+unset(_uml_gadget_cache_slots_default)
+if(NOT UML_GADGET_CACHE_SLOTS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR
+        "UML_GADGET_CACHE_SLOTS must be a positive integer")
+endif()
+math(EXPR _uml_gadget_cache_slots_invalid
+    "${UML_GADGET_CACHE_SLOTS} & (${UML_GADGET_CACHE_SLOTS} - 1)")
+if(UML_GADGET_CACHE_SLOTS LESS 1024 OR
+   NOT _uml_gadget_cache_slots_invalid EQUAL 0)
+    message(FATAL_ERROR
+        "UML_GADGET_CACHE_SLOTS must be a power of two of at least 1024, "
+        "not ${UML_GADGET_CACHE_SLOTS}")
+endif()
+unset(_uml_gadget_cache_slots_invalid)
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
+
+# Default-off: the census walks every cache slot when an executor is destroyed
+# and writes its measured footprint plus one record per resident translation,
+# which is how duplication between executors and between address spaces is
+# measured rather than estimated. Both engines report it, so the option is
+# declared with the shared cache geometry above rather than beside the arm64
+# translation diagnostics below.
+option(UML_GADGET_CACHE_CENSUS
+    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
+    OFF)
 
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
 # The fixed x86 Linux slice and the ARM64EC Wine service both use a 4 KiB guest
@@ -39,6 +82,7 @@ if(UML_BUILD_X86_64_GUEST)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
+        UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
         UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
@@ -101,14 +145,6 @@ option(UML_GADGET_DEPENDENCY_COVERAGE
 # which is what a static host-instruction cost per entry must be weighted by.
 option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
-    OFF)
-
-# Also default-off: the census walks every cache slot when the last executor
-# of a run is destroyed and writes one record per resident translation, which
-# is how duplication between executors and between address spaces is measured
-# rather than estimated.
-option(UML_GADGET_CACHE_CENSUS
-    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
     OFF)
 
 option(UML_GADGET_SCALAR_FORWARDING

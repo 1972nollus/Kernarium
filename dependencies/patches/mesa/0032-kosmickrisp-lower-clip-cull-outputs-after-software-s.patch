@@ -1,7 +1,7 @@
-From b09806e911fd3ec01e97be47e41f0daf591bb1eb Mon Sep 17 00:00:00 2001
+From 50a42b76092178d8c36f74fcaf8f7d282d6bb475 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:45:53 +0900
-Subject: [PATCH 32/97] kosmickrisp: lower clip/cull outputs after software
+Subject: [PATCH 032/109] kosmickrisp: lower clip/cull outputs after software
  stages
 
 Keep compact clip/cull varyings intact while materializing software vertex and tessellation stages. Raster-only clip-distance intrinsics otherwise become invalid compute outputs, while separated cull varyings no longer match the raw transform-feedback interface.
@@ -25,7 +25,7 @@ Lower the final Metal vertex/fragment interface only after software-stage conver
  create mode 100644 src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 1a6b9715..dc95620a 100644
+index 1a6b971..dc95620 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1176,10 +1176,6 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
@@ -57,7 +57,7 @@ index 1a6b9715..dc95620a 100644
  
     msl_optimize_nir(nir);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3b062b2f..057e3546 100644
+index 3b062b2..057e354 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -308,6 +308,20 @@ if with_tests
@@ -83,7 +83,7 @@ index 3b062b2f..057e3546 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_transform_feedback_builtins.cpp b/src/kosmickrisp/vulkan/tests/test_transform_feedback_builtins.cpp
 new file mode 100644
-index 00000000..dcb08a5b
+index 0000000..dcb08a5
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_transform_feedback_builtins.cpp
 @@ -0,0 +1,333 @@
@@ -422,7 +422,7 @@ index 00000000..dcb08a5b
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-0.vert.h b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-0.vert.h
 new file mode 100644
-index 00000000..892ed3cc
+index 0000000..892ed3c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-0.vert.h
 @@ -0,0 +1,59 @@
@@ -487,7 +487,7 @@ index 00000000..892ed3cc
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-1.vert.h b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-1.vert.h
 new file mode 100644
-index 00000000..7e905c4a
+index 0000000..7e905c4
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-1.vert.h
 @@ -0,0 +1,59 @@
@@ -552,7 +552,7 @@ index 00000000..7e905c4a
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-2.vert.h b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-2.vert.h
 new file mode 100644
-index 00000000..c3490e31
+index 0000000..c3490e3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins-2.vert.h
 @@ -0,0 +1,77 @@
@@ -635,7 +635,7 @@ index 00000000..c3490e31
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins.vert b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins.vert
 new file mode 100644
-index 00000000..e5998903
+index 0000000..e599890
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/builtins.vert
 @@ -0,0 +1,34 @@
@@ -675,7 +675,7 @@ index 00000000..e5998903
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh
 new file mode 100644
-index 00000000..20f17a65
+index 0000000..20f17a6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh
 @@ -0,0 +1,8 @@

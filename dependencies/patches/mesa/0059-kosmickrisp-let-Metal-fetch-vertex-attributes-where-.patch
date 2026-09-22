@@ -1,7 +1,7 @@
-From 6281f782eecccf97217af0e107f02d058f94bde4 Mon Sep 17 00:00:00 2001
+From 14c6481b5d30b075dc12afbf5516f13994167e15 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 18:41:01 +0900
-Subject: [PATCH 59/97] kosmickrisp: let Metal fetch vertex attributes where
+Subject: [PATCH 059/109] kosmickrisp: let Metal fetch vertex attributes where
  Metal can express them
 
 kk_lower_vs_vbo bakes the vertex-input state into the vertex shader: every
@@ -168,7 +168,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.h b/src/kosmickrisp/bridge/mtl_compiler.h
-index 6fa72ada..23238140 100644
+index 6fa72ad..2323814 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.h
 +++ b/src/kosmickrisp/bridge/mtl_compiler.h
 @@ -50,6 +50,18 @@ void mtl_render_pipeline_descriptor_set_color_attachment_format(
@@ -191,7 +191,7 @@ index 6fa72ada..23238140 100644
   * blend state Metal cannot express keeps kk_lower_fs_blend instead, so the
   * factors and operations reaching here are always ones Metal has. */
 diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
-index 6730f8af..def3b7f6 100644
+index 6730f8a..def3b7f 100644
 --- a/src/kosmickrisp/bridge/mtl_compiler.m
 +++ b/src/kosmickrisp/bridge/mtl_compiler.m
 @@ -158,6 +158,42 @@
@@ -238,7 +238,7 @@ index 6730f8af..def3b7f6 100644
  mtl_render_pipeline_descriptor_set_blend(mtl_render_pipeline_descriptor *descriptor,
                                           uint8_t index,
 diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
-index 7ee56bf4..838e17e3 100644
+index 7ee56bf..838e17e 100644
 --- a/src/kosmickrisp/bridge/mtl_types.h
 +++ b/src/kosmickrisp/bridge/mtl_types.h
 @@ -229,6 +229,72 @@ enum mtl_visibility_result_mode {
@@ -315,7 +315,7 @@ index 7ee56bf4..838e17e3 100644
   * advanced blend operation, so a pipeline that asks for either keeps the
   * shader-lowered blend path instead. */
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_compiler.c b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
-index 6dd3cbae..debb4d75 100644
+index 6dd3cba..debb4d7 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_compiler.c
 @@ -79,6 +79,20 @@ mtl_render_pipeline_descriptor_set_raster_sample_count(
@@ -340,7 +340,7 @@ index 6dd3cbae..debb4d75 100644
  mtl_render_pipeline_descriptor_set_blend(
     mtl_render_pipeline_descriptor *descriptor, uint8_t index, bool enabled,
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index 8cee64ab..a5ac417b 100644
+index 8cee64a..a5ac417 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -272,6 +272,33 @@ fs_input_no_interpolant(struct nir_to_msl_ctx *ctx, uint64_t location)
@@ -412,7 +412,7 @@ index 8cee64ab..a5ac417b 100644
     else
        return ctx->inputs_info[location].num_components;
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index d679a62a..b1208f34 100644
+index d679a62..b1208f3 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -197,6 +197,12 @@ static void
@@ -429,7 +429,7 @@ index d679a62a..b1208f34 100644
        P_IND(ctx, "FragmentIn in [[stage_in]],\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 98444414..11fc8968 100644
+index 9844441..11fc896 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -142,7 +142,17 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
@@ -452,7 +452,7 @@ index 98444414..11fc8968 100644
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 939f9f1a..4f867705 100644
+index 939f9f1..4f86770 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1749,8 +1749,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -486,7 +486,7 @@ index 939f9f1a..4f867705 100644
  
     if (desc->root_dirty)
 diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
-index 9dd178a1..65ab0425 100644
+index 9dd178a..65ab042 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.c
 +++ b/src/kosmickrisp/vulkan/kk_debug.c
 @@ -13,6 +13,7 @@ const struct debug_named_value flags[] = {
@@ -498,7 +498,7 @@ index 9dd178a1..65ab0425 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
-index e5664b76..cb572c11 100644
+index e5664b7..cb572c1 100644
 --- a/src/kosmickrisp/vulkan/kk_debug.h
 +++ b/src/kosmickrisp/vulkan/kk_debug.h
 @@ -19,6 +19,10 @@ enum kk_debug {
@@ -513,7 +513,7 @@ index e5664b76..cb572c11 100644
  
  extern enum kk_debug kk_mesa_debug_flags;
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
-index 9a3f458f..7fd01045 100644
+index 9a3f458..7fd0104 100644
 --- a/src/kosmickrisp/vulkan/kk_gpl.h
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
 @@ -10,6 +10,9 @@
@@ -527,7 +527,7 @@ index 9a3f458f..7fd01045 100644
  
  #include <string.h>
 diff --git a/src/kosmickrisp/vulkan/kk_private.h b/src/kosmickrisp/vulkan/kk_private.h
-index a31eadde..4e246852 100644
+index a31eadd..4e24685 100644
 --- a/src/kosmickrisp/vulkan/kk_private.h
 +++ b/src/kosmickrisp/vulkan/kk_private.h
 @@ -15,6 +15,27 @@
@@ -559,7 +559,7 @@ index a31eadde..4e246852 100644
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ec175936..b2787b43 100644
+index ec17593..b2787b4 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -384,6 +384,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
@@ -940,7 +940,7 @@ index ec175936..b2787b43 100644
      * in the array so need to check them all, not just first
      * color_attachment_count entries.
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 1f624b6b..749204dd 100644
+index 1f624b6..749204d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -9,6 +9,7 @@
@@ -978,7 +978,7 @@ index 1f624b6b..749204dd 100644
            * accepted the pipeline's colour blend state and the fragment shader
            * therefore kept its stores instead of carrying a lowered blend. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 811555f5..afa9cd5b 100644
+index 811555f..afa9cd5 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -545,6 +545,15 @@ if with_tests
@@ -1020,7 +1020,7 @@ index 811555f5..afa9cd5b 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/bench_vertex_fetch_path.cpp b/src/kosmickrisp/vulkan/tests/bench_vertex_fetch_path.cpp
 new file mode 100644
-index 00000000..a4f51f21
+index 0000000..a4f51f2
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/bench_vertex_fetch_path.cpp
 @@ -0,0 +1,603 @@
@@ -1629,7 +1629,7 @@ index 00000000..a4f51f21
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag
 new file mode 100644
-index 00000000..15c2046a
+index 0000000..15c2046
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag
 @@ -0,0 +1,7 @@
@@ -1642,7 +1642,7 @@ index 00000000..15c2046a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag.h
 new file mode 100644
-index 00000000..e32b9654
+index 0000000..e32b965
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.frag.h
 @@ -0,0 +1,22 @@
@@ -1670,7 +1670,7 @@ index 00000000..e32b9654
 +0x0000000e,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert
 new file mode 100644
-index 00000000..7c0ecf13
+index 0000000..7c0ecf1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert
 @@ -0,0 +1,17 @@
@@ -1693,7 +1693,7 @@ index 00000000..7c0ecf13
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert.h
 new file mode 100644
-index 00000000..a0afe85e
+index 0000000..a0afe85
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch.vert.h
 @@ -0,0 +1,80 @@
@@ -1779,7 +1779,7 @@ index 00000000..a0afe85e
 +0x00000036,0x0000003f,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert
 new file mode 100644
-index 00000000..bbd3040a
+index 0000000..bbd3040
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert
 @@ -0,0 +1,17 @@
@@ -1802,7 +1802,7 @@ index 00000000..bbd3040a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert.h
 new file mode 100644
-index 00000000..296ba02b
+index 0000000..296ba02
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_instanced.vert.h
 @@ -0,0 +1,85 @@
@@ -1893,7 +1893,7 @@ index 00000000..296ba02b
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert
 new file mode 100644
-index 00000000..55307f55
+index 0000000..55307f5
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert
 @@ -0,0 +1,21 @@
@@ -1920,7 +1920,7 @@ index 00000000..55307f55
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert.h
 new file mode 100644
-index 00000000..a8b510fc
+index 0000000..a8b510f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/bench_fetch_wide.vert.h
 @@ -0,0 +1,107 @@
@@ -2033,7 +2033,7 @@ index 00000000..a8b510fc
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag
 new file mode 100644
-index 00000000..8e12858a
+index 0000000..8e12858
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag
 @@ -0,0 +1,7 @@
@@ -2046,7 +2046,7 @@ index 00000000..8e12858a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag.h
 new file mode 100644
-index 00000000..50544d69
+index 0000000..50544d6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag.h
 @@ -0,0 +1,20 @@
@@ -2072,7 +2072,7 @@ index 00000000..50544d69
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert
 new file mode 100644
-index 00000000..b4779809
+index 0000000..b477980
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert
 @@ -0,0 +1,18 @@
@@ -2096,7 +2096,7 @@ index 00000000..b4779809
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert.h
 new file mode 100644
-index 00000000..15da8896
+index 0000000..15da889
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert.h
 @@ -0,0 +1,78 @@
@@ -2180,7 +2180,7 @@ index 00000000..15da8896
 +0x00000036,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert
 new file mode 100644
-index 00000000..31703b3f
+index 0000000..31703b3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert
 @@ -0,0 +1,15 @@
@@ -2201,7 +2201,7 @@ index 00000000..31703b3f
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h
 new file mode 100644
-index 00000000..fd6ea962
+index 0000000..fd6ea96
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_high_location.vert.h
 @@ -0,0 +1,76 @@
@@ -2283,7 +2283,7 @@ index 00000000..fd6ea962
 +0x00000028,0x00000037,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert
 new file mode 100644
-index 00000000..76575497
+index 0000000..7657549
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert
 @@ -0,0 +1,16 @@
@@ -2305,7 +2305,7 @@ index 00000000..76575497
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert.h b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert.h
 new file mode 100644
-index 00000000..3978fd74
+index 0000000..3978fd7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch_single.vert.h
 @@ -0,0 +1,76 @@
@@ -2387,7 +2387,7 @@ index 00000000..3978fd74
 +0x00000028,0x00000037,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
 new file mode 100755
-index 00000000..5a8a2175
+index 0000000..5a8a217
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
 @@ -0,0 +1,9 @@
@@ -2402,7 +2402,7 @@ index 00000000..5a8a2175
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 new file mode 100644
-index 00000000..869c35a0
+index 0000000..869c35a
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 @@ -0,0 +1,1059 @@

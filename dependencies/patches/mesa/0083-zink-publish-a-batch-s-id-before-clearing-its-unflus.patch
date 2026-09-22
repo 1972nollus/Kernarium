@@ -1,7 +1,7 @@
-From a13abe52f47dea5649e19ce9b0a3391589feacda Mon Sep 17 00:00:00 2001
+From 15057f14254d4d3708ba4b3b1594ab9e034bef0b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 16:08:25 +0900
-Subject: [PATCH 83/97] zink: publish a batch's id before clearing its
+Subject: [PATCH 083/109] zink: publish a batch's id before clearing its
  unflushed flag
 
 A buffer read map waits for the batch that last wrote the buffer, and it
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index c615d47e..57eb289e 100644
+index c615d47..57eb289 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -654,7 +654,8 @@ submit_queue(void *data, void *gdata, int thread_index)
@@ -57,7 +57,7 @@ index c615d47e..57eb289e 100644
  
  static void
 diff --git a/src/gallium/drivers/zink/zink_batch.h b/src/gallium/drivers/zink/zink_batch.h
-index d582d294..027536d6 100644
+index d582d29..027536d 100644
 --- a/src/gallium/drivers/zink/zink_batch.h
 +++ b/src/gallium/drivers/zink/zink_batch.h
 @@ -28,6 +28,7 @@

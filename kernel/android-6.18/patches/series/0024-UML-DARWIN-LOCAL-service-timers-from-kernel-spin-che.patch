@@ -1,7 +1,7 @@
 From 93d1e69ba4cde7b4df488d4f2a2ecd525028c042 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 04:11:17 +0000
-Subject: [PATCH 24/46] UML-DARWIN-LOCAL: service timers from kernel spin
+Subject: [PATCH 24/48] UML-DARWIN-LOCAL: service timers from kernel spin
  checkpoints
 
 Change-Id: Ib011cee9d37ffccef57cc6b86b2ee77df023dc28

@@ -1,7 +1,7 @@
-From 60addc3265a15b45667b1b35e2ffec574df9e12b Mon Sep 17 00:00:00 2001
+From d731923edbe24cd8372a33f002296521b85b4636 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 20:46:45 +0900
-Subject: [PATCH 41/49] vrend: share an exported texture through host memory
+Subject: [PATCH 41/51] vrend: share an exported texture through host memory
 
 A Venus context can only import a resource the render server can receive:
 a dma-buf, or a shared-memory segment. An Apple host has neither GBM nor

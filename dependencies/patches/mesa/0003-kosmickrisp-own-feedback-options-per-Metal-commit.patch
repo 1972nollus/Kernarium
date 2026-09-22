@@ -1,7 +1,7 @@
-From dd8d4c437c108f4106ddbb8a7eec909fa3cc0a53 Mon Sep 17 00:00:00 2001
+From aaab62e7060b5233800cc86a225a9aea25899caf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:12:40 +0900
-Subject: [PATCH 03/97] kosmickrisp: own feedback options per Metal commit
+Subject: [PATCH 003/109] kosmickrisp: own feedback options per Metal commit
 
 ---
  src/kosmickrisp/vulkan/kk_queue.c | 20 ++++++++++++++------
@@ -9,7 +9,7 @@ Subject: [PATCH 03/97] kosmickrisp: own feedback options per Metal commit
  2 files changed, 15 insertions(+), 7 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 313a85af..28577a5e 100644
+index 313a85a..28577a5 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -83,10 +83,19 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
@@ -54,7 +54,7 @@ index 313a85af..28577a5e 100644
     vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index a7f19ef4..98535222 100644
+index a7f19ef..9853522 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
 @@ -17,7 +17,7 @@

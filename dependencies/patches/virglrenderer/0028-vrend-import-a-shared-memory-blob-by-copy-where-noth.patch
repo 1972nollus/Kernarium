@@ -1,7 +1,7 @@
-From f3ae1f8f2949b6790af31a028fc7f89c29d1302e Mon Sep 17 00:00:00 2001
+From e60f907ffda3ef3f95a59d45df43cec5f11fc0e6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 21:26:15 +0900
-Subject: [PATCH 28/49] vrend: import a shared-memory blob by copy where
+Subject: [PATCH 28/51] vrend: import a shared-memory blob by copy where
  nothing can alias it
 
 A Venus context exports a Vulkan swapchain image as a shared-memory blob, and

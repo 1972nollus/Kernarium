@@ -1,7 +1,7 @@
-From 8d38a941aae28e0fceb547cc3bad913febca9889 Mon Sep 17 00:00:00 2001
+From e4749e6bd29e0ab35d98127dac65fe1c2dffc33f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 22:58:59 +0900
-Subject: [PATCH 36/97] kosmickrisp: read every merged clip/cull fragment
+Subject: [PATCH 036/109] kosmickrisp: read every merged clip/cull fragment
  element
 
 A fragment shader reads gl_ClipDistance and gl_CullDistance through the one
@@ -22,7 +22,7 @@ varying names for every split of the eight combined distances.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_clip_cull_distance_io.c
 
 diff --git a/src/kosmickrisp/compiler/msl_nir_lower_common.c b/src/kosmickrisp/compiler/msl_nir_lower_common.c
-index 8699eada..2c837a01 100644
+index 8699ead..2c837a0 100644
 --- a/src/kosmickrisp/compiler/msl_nir_lower_common.c
 +++ b/src/kosmickrisp/compiler/msl_nir_lower_common.c
 @@ -552,13 +552,19 @@ msl_nir_lower_cull_distance_fs(nir_shader *s, unsigned nr_distances)
@@ -68,7 +68,7 @@ index 8699eada..2c837a01 100644
     NIR_PASS(_, nir, nir_separate_merged_clip_cull_io);
     if (nir->info.stage == MESA_SHADER_FRAGMENT)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 57c6c79b..ded0dbf7 100644
+index 57c6c79..ded0dbf 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -582,6 +582,20 @@ if with_tests
@@ -94,7 +94,7 @@ index 57c6c79b..ded0dbf7 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_clip_cull_distance_io.c b/src/kosmickrisp/vulkan/tests/test_clip_cull_distance_io.c
 new file mode 100644
-index 00000000..f2444c3c
+index 0000000..f2444c3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_clip_cull_distance_io.c
 @@ -0,0 +1,211 @@

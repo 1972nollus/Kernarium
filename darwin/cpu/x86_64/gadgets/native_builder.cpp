@@ -909,14 +909,23 @@ struct EncodedMemory final {
 		static_cast<unsigned>(memory.index * sizeof(std::uint64_t));
 	const auto scale_shift = std::countr_zero(
 		static_cast<unsigned>(memory.scale));
+	const auto segment = apply_segment ? memory.segment : Segment::none;
+	/* Nothing follows the sum of base, scaled index and displacement: no
+	 * truncation to a narrow address space and no segment base to add. The
+	 * gadget takes that as permission to stop there, so it is set only when
+	 * every one of the three is absent.
+	 */
+	const auto plain = segment == Segment::none && !memory.address_32 &&
+		!memory.address_16;
 	std::uintptr_t descriptor = value_offset |
 		(static_cast<std::uintptr_t>(base) << 16U) |
 		(static_cast<std::uintptr_t>(index) << 32U) |
 		(static_cast<std::uintptr_t>(scale_shift) << 48U) |
-		(static_cast<std::uintptr_t>(apply_segment ? memory.segment :
-			Segment::none) << 50U) |
+		(static_cast<std::uintptr_t>(segment) << 50U) |
 		(static_cast<std::uintptr_t>(memory.address_32) << 52U) |
 		(static_cast<std::uintptr_t>(memory.address_16) << 53U) |
+		(static_cast<std::uintptr_t>(plain) <<
+			UML_X86_64_MEMORY_PLAIN_ADDRESS) |
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
 	constexpr auto absent_registers =
@@ -7086,12 +7095,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 
 } // namespace
 
-std::vector<std::uintptr_t> build_native_stream(
+void append_native_stream(std::vector<std::uintptr_t> &stream,
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, ProgramLinkResolver links)
 {
-	std::vector<std::uintptr_t> stream;
-	stream.reserve(gadgets.size() * 3U + 2U);
+	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
 	FlagState state{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
@@ -7115,10 +7123,18 @@ std::vector<std::uintptr_t> build_native_stream(
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_block_exit_linked));
 		stream.push_back(reinterpret_cast<std::uintptr_t>(link));
-		return stream;
+		return;
 	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
 	stream.push_back(next);
+}
+
+std::vector<std::uintptr_t> build_native_stream(
+	std::span<const Gadget> gadgets, std::uint64_t final_rip,
+	ExecutionMode mode, ProgramLinkResolver links)
+{
+	std::vector<std::uintptr_t> stream;
+	append_native_stream(stream, gadgets, final_rip, mode, links);
 	return stream;
 }
 

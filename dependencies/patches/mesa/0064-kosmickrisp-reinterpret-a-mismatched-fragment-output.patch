@@ -1,8 +1,8 @@
-From 5cf2ac66e134376f17a0240816596d5002168cb6 Mon Sep 17 00:00:00 2001
+From 3751abc9388edbd5aa8536f0ea054e2864ef989d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 02:36:58 +0900
-Subject: [PATCH 64/97] kosmickrisp: reinterpret a mismatched fragment output,
- do not convert it
+Subject: [PATCH 064/109] kosmickrisp: reinterpret a mismatched fragment
+ output, do not convert it
 
 A fragment output whose numeric type disagrees with its colour attachment
 cannot come from a SPIR-V module that declares them consistently, because
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 48 deletions(-)
 
 diff --git a/src/kosmickrisp/compiler/msl_nir_lower_common.c b/src/kosmickrisp/compiler/msl_nir_lower_common.c
-index d3b0aaff..d6186ee7 100644
+index d3b0aaf..d6186ee 100644
 --- a/src/kosmickrisp/compiler/msl_nir_lower_common.c
 +++ b/src/kosmickrisp/compiler/msl_nir_lower_common.c
 @@ -41,6 +41,17 @@ msl_nir_fs_remove_depth_write(nir_builder *b, nir_intrinsic_instr *intrin,

@@ -1,7 +1,7 @@
-From 309821c1c856812b881c1248bf6acf00bb674b94 Mon Sep 17 00:00:00 2001
+From b966ab06ff12d48df3dfdccaa179cae187e56a6f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:09 +0900
-Subject: [PATCH 16/97] kosmickrisp: export native Metal textures
+Subject: [PATCH 016/109] kosmickrisp: export native Metal textures
 
 ---
  src/kosmickrisp/vulkan/kk_image.c           | 30 +++++++++++++++++++++
@@ -9,7 +9,7 @@ Subject: [PATCH 16/97] kosmickrisp: export native Metal textures
  2 files changed, 31 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 5b4dd8f4..53888598 100644
+index 5b4dd8f..5388859 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -21,6 +21,8 @@
@@ -57,7 +57,7 @@ index 5b4dd8f4..53888598 100644
  kk_GetImageOpaqueCaptureDescriptorDataEXT(
     VkDevice _device, const VkImageCaptureDescriptorDataInfoEXT *pInfo,
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 29838898..b268e555 100644
+index 2983889..b268e55 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -170,6 +170,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

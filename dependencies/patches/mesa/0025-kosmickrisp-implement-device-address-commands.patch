@@ -1,7 +1,7 @@
-From 769614053693049e1f02d9e18c470505e336e113 Mon Sep 17 00:00:00 2001
+From a6729b55b28bfacea6751e648db2eba634676f13 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 04:14:50 +0900
-Subject: [PATCH 25/97] kosmickrisp: implement device address commands
+Subject: [PATCH 025/109] kosmickrisp: implement device address commands
 
 ---
  src/gallium/drivers/zink/zink_context.c       |  18 +-
@@ -30,7 +30,7 @@ Subject: [PATCH 25/97] kosmickrisp: implement device address commands
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index e1781507..363dbf8f 100644
+index e178150..363dbf8 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -1613,10 +1613,10 @@ zink_bind_vertex_buffers(struct zink_context *ctx, const struct pipe_vertex_buff
@@ -69,7 +69,7 @@ index e1781507..363dbf8f 100644
              dac_vbs[i].addressFlags &= ~VK_ADDRESS_COMMAND_FULLY_BOUND_BIT_KHR;
           else
 diff --git a/src/gallium/drivers/zink/zink_context.h b/src/gallium/drivers/zink/zink_context.h
-index 4945d2cc..c4ef260f 100644
+index 4945d2c..c4ef260 100644
 --- a/src/gallium/drivers/zink/zink_context.h
 +++ b/src/gallium/drivers/zink/zink_context.h
 @@ -242,7 +242,7 @@ zink_bind_vertex_buffers_dynamic(struct zink_context *ctx, const struct pipe_ver
@@ -82,7 +82,7 @@ index 4945d2cc..c4ef260f 100644
  #ifdef __cplusplus
  }
 diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
-index 5cdb36e9..43979ac1 100644
+index 5cdb36e..43979ac 100644
 --- a/src/gallium/drivers/zink/zink_draw.cpp
 +++ b/src/gallium/drivers/zink/zink_draw.cpp
 @@ -722,7 +722,11 @@ zink_draw(struct pipe_context *pctx,
@@ -99,7 +99,7 @@ index 5cdb36e9..43979ac1 100644
               DYNAMIC_STATE == ZINK_NO_DYNAMIC_STATE || !ctx->gfx_pipeline_state.uses_dynamic_stride)
              zink_bind_vertex_buffers(ctx, ctx->vertex_buffers);
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index c11c6a2c..97bea040 100644
+index c11c6a2..97bea04 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -3189,7 +3189,7 @@ init_driver_workarounds(struct zink_screen *screen)
@@ -112,7 +112,7 @@ index c11c6a2c..97bea040 100644
  
     if (!screen->resizable_bar)
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
-index 23efebf7..1d6ea718 100644
+index 23efebf..1d6ea71 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.h
 +++ b/src/kosmickrisp/bridge/mtl_encoder.h
 @@ -38,6 +38,9 @@ void mtl_copy_from_buffer_to_buffer(mtl_compute_encoder *encoder,
@@ -126,7 +126,7 @@ index 23efebf7..1d6ea718 100644
                                       struct mtl_buffer_image_copy *data);
  
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
-index a8c7e74e..5e0c19fd 100644
+index a8c7e74..5e0c19f 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.m
 +++ b/src/kosmickrisp/bridge/mtl_encoder.m
 @@ -104,6 +104,17 @@
@@ -148,7 +148,7 @@ index a8c7e74e..5e0c19fd 100644
  mtl_copy_from_buffer_to_texture(mtl_compute_encoder *encoder,
                                  struct mtl_buffer_image_copy *data)
 diff --git a/src/kosmickrisp/bridge/stubs/mtl_encoder.c b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
-index b984fd54..108d2e6b 100644
+index b984fd5..108d2e6 100644
 --- a/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 +++ b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
 @@ -57,6 +57,12 @@ mtl_copy_from_buffer_to_buffer(mtl_compute_encoder *encoder,
@@ -165,7 +165,7 @@ index b984fd54..108d2e6b 100644
  mtl_copy_from_buffer_to_texture(mtl_compute_encoder *encoder,
                                  struct mtl_buffer_image_copy *data)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 737a004d..a4d3adf7 100644
+index 737a004..a4d3adf 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -10,6 +10,7 @@
@@ -225,7 +225,7 @@ index 737a004d..a4d3adf7 100644
      * barrier. This requires to read directly from the framebuffer which
      * requires not reading input attachments as textures.
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 67b5d26d..45366615 100644
+index 67b5d26..4536661 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -27,6 +27,7 @@
@@ -254,7 +254,7 @@ index 67b5d26d..45366615 100644
                                     VkPipelineBindPoint bind_point);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_copy.c b/src/kosmickrisp/vulkan/kk_cmd_copy.c
-index a5fcf376..7d1f6cd8 100644
+index a5fcf37..7d1f6cd 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_copy.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_copy.c
 @@ -10,6 +10,7 @@
@@ -465,7 +465,7 @@ index a5fcf376..7d1f6cd8 100644
   * buffer offset for subsequent copies. */
  static size_t
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 9b3be74c..d0433630 100644
+index 9b3be74..d043363 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -3025,6 +3025,7 @@ kk_begin_end_transform_feedback(
@@ -493,7 +493,7 @@ index 9b3be74c..d0433630 100644
        kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4);
     if (!indirect.gpu)
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index a7e75231..09c0985e 100644
+index a7e7523..09c0985 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -321,6 +321,9 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -524,7 +524,7 @@ index a7e75231..09c0985e 100644
     simple_mtx_destroy(&dev->residency_set.mutex);
  
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index d00c2a4d..053e458d 100644
+index d00c2a4..053e458 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -19,6 +19,7 @@
@@ -561,7 +561,7 @@ index d00c2a4d..053e458d 100644
     /* Complete native pipelines assembled from reusable GPL subsets. */
 diff --git a/src/kosmickrisp/vulkan/kk_device_address.h b/src/kosmickrisp/vulkan/kk_device_address.h
 new file mode 100644
-index 00000000..67f6f4b3
+index 0000000..67f6f4b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_device_address.h
 @@ -0,0 +1,28 @@
@@ -594,7 +594,7 @@ index 00000000..67f6f4b3
 +
 +#endif /* KK_DEVICE_ADDRESS_H */
 diff --git a/src/kosmickrisp/vulkan/kk_device_memory.c b/src/kosmickrisp/vulkan/kk_device_memory.c
-index 0e11cc24..a52d7737 100644
+index 0e11cc2..a52d773 100644
 --- a/src/kosmickrisp/vulkan/kk_device_memory.c
 +++ b/src/kosmickrisp/vulkan/kk_device_memory.c
 @@ -147,6 +147,10 @@ kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
@@ -652,7 +652,7 @@ index 0e11cc24..a52d7737 100644
  kk_MapMemory2KHR(VkDevice device, const VkMemoryMapInfoKHR *pMemoryMapInfo,
                   void **ppData)
 diff --git a/src/kosmickrisp/vulkan/kk_device_memory.h b/src/kosmickrisp/vulkan/kk_device_memory.h
-index 6aff54bb..3fd99f4e 100644
+index 6aff54b..3fd99f4 100644
 --- a/src/kosmickrisp/vulkan/kk_device_memory.h
 +++ b/src/kosmickrisp/vulkan/kk_device_memory.h
 @@ -11,6 +11,7 @@
@@ -683,7 +683,7 @@ index 6aff54bb..3fd99f4e 100644
                                 VK_OBJECT_TYPE_DEVICE_MEMORY)
  
 diff --git a/src/kosmickrisp/vulkan/kk_event.c b/src/kosmickrisp/vulkan/kk_event.c
-index 3e6db313..88ba3f81 100644
+index 3e6db31..88ba3f8 100644
 --- a/src/kosmickrisp/vulkan/kk_event.c
 +++ b/src/kosmickrisp/vulkan/kk_event.c
 @@ -95,6 +95,7 @@ kk_CmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent _event,
@@ -711,7 +711,7 @@ index 3e6db313..88ba3f81 100644
 +      kk_CmdPipelineBarrier2(commandBuffer, &pDependencyInfos[i]);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index cb59b6d1..f61a7b6e 100644
+index cb59b6d..f61a7b6 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -139,6 +139,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -733,7 +733,7 @@ index cb59b6d1..f61a7b6e 100644
        .customBorderColors = true,
        .customBorderColorWithoutFormat = true,
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index fa93d36a..b30e07c7 100644
+index fa93d36..b30e07c 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -13,6 +13,7 @@
@@ -824,7 +824,7 @@ index fa93d36a..b30e07c7 100644
 +                                  queryResultFlags);
 +}
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 63bf44e9..3976d33a 100644
+index 63bf44e..3976d33 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -73,6 +73,7 @@ kk_files = files(
@@ -855,7 +855,7 @@ index 63bf44e9..3976d33a 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_device_address.c b/src/kosmickrisp/vulkan/tests/test_device_address.c
 new file mode 100644
-index 00000000..e741bc67
+index 0000000..e741bc6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_device_address.c
 @@ -0,0 +1,47 @@

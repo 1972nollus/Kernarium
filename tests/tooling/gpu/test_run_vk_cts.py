@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import argparse
 import base64
 import contextlib
 import gzip
@@ -12,15 +13,18 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_cts as cts  # noqa: E402
+import run_ios_device_vk_cts as device  # noqa: E402
 
 
 def qpa_result(case: str, status: str = "Pass", identity: str = "") -> str:
@@ -94,6 +98,78 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.selection = cts.resolve_selection(
             self.identity, "smoke", (), None, cts.Fraction(0, 1)
         )
+
+    def _device_fraction_artifacts(
+        self, status: str = "Fail", *, fraction: int = 0
+    ) -> tuple[tuple[str, ...], dict[str, bytes]]:
+        profile = cts.apple_mustpass_profile(fraction)
+        cases = (
+            "dEQP-VK.info.build",
+            "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+            profile.restart_before or "dEQP-VK.api.version_check.entry_points",
+            "dEQP-VK.wsi.xlib.synthetic",
+        )
+        selected = (cases[0], cases[2], cases[3])
+        receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
+        artifacts = {
+            "renderer.txt": (
+                "x11_server=xorg\n"
+                "x11_dri3=1\n"
+                "x11_present=1\n"
+                "x11_glamor=1\n"
+                "x11_connected=1\n"
+                "x11_drm_fd=1\n"
+                "x11_blanking=off\n"
+                "wayland_server=kwin-x11\n"
+                "wayland_lockscreen=off\n"
+                "device=/dev/dri/card0\n"
+                "device=/dev/dri/renderD128\n"
+                "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
+                f"receipt_sha256={receipt_digest}\n"
+                "vulkan_loader="
+                f"{self.receipt['vulkan_loader']['runtime']['path']}\n"
+                "vulkan_loader_sha256="
+                f"{self.receipt['vulkan_loader']['runtime']['sha256']}\n"
+                '"library_path": "libvulkan_virtio.so"\n'
+            ).encode(),
+            "selected.txt": "".join(
+                f"{case}\n" for case in selected
+            ).encode(),
+            "expected.txt": "".join(
+                f"{case}\n" for case in cases
+            ).encode(),
+            "skipped.txt": (
+                f"guest-memory\t{cases[1]}\n"
+            ).encode(),
+            "results.qpa": qpa(
+                qpa_result(
+                    selected[0], identity="deviceName = Virtio GPU Venus"
+                ),
+                qpa_result(selected[1], status=status),
+                qpa_result(selected[2], status="NotSupported"),
+            ).encode(),
+            # Historical v3 attempts omitted counters. The v4 profile must
+            # account for its planned restart and every selected case.
+            "summary.txt": (
+                f"cts_rc={'0' if status != 'Fail' else '1'}\n"
+                "mode=current-must-pass\n"
+                f"expected_case_count={len(selected)}\n"
+                f"fraction={fraction},16\n"
+                "device_excluded=1\n"
+                "device_excluded_guest_memory=1\n"
+                "device_exclusion_guest_memory=dEQP-VK.reconvergence.\n"
+                f"device_memory_mib={profile.guest_memory_mib}\n"
+                "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
+                f"receipt_sha256={receipt_digest}\n"
+                "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
+            ).encode(),
+        }
+        if profile.restart_before is not None:
+            artifacts["summary.txt"] += (
+                f"cts_sessions=2\ncts_cases_run={len(selected)}\n"
+            ).encode()
+        return selected, artifacts
 
     def test_frozen_identity_and_physical_hold_are_exact(self) -> None:
         campaigns = cts.load_campaigns()
@@ -264,8 +340,17 @@ class VulkanCtsToolingTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(cts.CampaignError, "duplicate"):
             cts.common.parse_qpa(qpa(qpa_result(cases[0]), qpa_result(cases[0])))
-        with self.assertRaisesRegex(cts.CampaignError, "truncated"):
+        with self.assertRaisesRegex(cts.CampaignError, "no complete session"):
             cts.common.parse_qpa(ordered.removesuffix("#endSession\n"))
+        # A guest whose CTS session ended early continues the same traversal in
+        # a fresh session, so the transported QPA is a sequence of documents.
+        continued = ordered.removesuffix("#endSession\n") + qpa(
+            qpa_result(self.identity["mandatory_cases"][2])
+        )
+        self.assertEqual(
+            list(cts.common.parse_qpa(continued)),
+            list(self.identity["mandatory_cases"][:3]),
+        )
 
     def test_capability_inventory_requires_operation_proof(self) -> None:
         inventory = {
@@ -354,9 +439,12 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "cts_rc=0\n"
                 "mode=smoke\n"
                 f"expected_case_count={len(selection.expected_cases)}\n"
+                "cts_sessions=1\n"
+                f"cts_cases_run={len(selection.expected_cases)}\n"
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
                 "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
             ).encode(),
         }
         transcript = (
@@ -428,10 +516,13 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 "cts_rc=1\n"
                 "mode=current-must-pass\n"
                 f"expected_case_count={len(cases)}\n"
+                "cts_sessions=2\n"
+                f"cts_cases_run={len(cases)}\n"
                 "fraction=3,16\n"
                 "forced_driver_file=/usr/share/vulkan/icd.d/virtio_icd.json\n"
                 f"receipt_sha256={receipt_digest}\n"
                 "formal_conformance=false\n"
+                "qpa_transfer=complete\n"
             ).encode(),
         }
         result = cts.validate_receipt_attempt(receipt, selection, "", artifacts)
@@ -680,9 +771,33 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn('runuser -u uml -- env', launcher)
         self.assertIn('> "$cts_output" 2>&1 &', launcher)
         self.assertIn(
-            "UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|case=%s",
+            "UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s"
+            "|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s"
+            "|output_free_kb=%s|case=%s",
             launcher,
         )
+        # The growing QPA lives in the guest's own tmpfs, and a fraction that
+        # runs it out of room loses results no host evidence can recover, so
+        # the room left there is reported alongside the memory -- and the CTS
+        # process's own output, which no lane transports, gives way first.
+        self.assertIn('df -kP "$output"', launcher)
+        self.assertIn('[ "$output_free_kb" -lt 65536 ]', launcher)
+        relaxed = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            page_size=16384,
+            timeout=900,
+            progress_timeout=600,
+            relax_diagnostics=True,
+        )
+        # The watch reads that output by offset, so the two never coexist.
+        self.assertNotIn('[ "$output_free_kb" -lt 65536 ]', relaxed)
+        self.assertIn("relax_offset", relaxed)
+        # The guest reaper leaves no other record of how close a fraction was,
+        # so the progress line carries the CTS process's resident and peak size.
+        self.assertIn("cts_process_field VmRSS", launcher)
+        self.assertIn("cts_process_field VmHWM", launcher)
+        self.assertIn('[ "$entry_comm" = deqp-vk ]', launcher)
         self.assertIn('tail -c 1048576 "$qpa"', launcher)
         self.assertIn('[ "$stalled_seconds" -ge "$progress_timeout" ]', launcher)
         self.assertIn("progress_timeout=600", launcher)
@@ -930,6 +1045,764 @@ class VulkanCtsToolingTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_device_exclusions_carry_a_cause_and_spare_the_mandatory_list(
+        self,
+    ) -> None:
+        self.assertEqual(
+            cts.validate_device_exclusions(cts.DEVICE_EXCLUSIONS),
+            cts.DEVICE_EXCLUSIONS,
+        )
+        cases = (
+            "dEQP-VK.api.smoke.create_sampler",
+            "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+            "dEQP-VK.reconvergence_other.case",
+            "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated.not_enough_space",
+        )
+        # A group prefix takes a whole subtree; an exact name takes one case.
+        exclusions = (
+            *cts.DEVICE_EXCLUSIONS,
+            cts.DeviceExclusion(
+                "aborts-deqp",
+                (
+                    "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated."
+                    "not_enough_space",
+                ),
+            ),
+        )
+        selected, skipped = cts.device_exclusion_partition(cases, exclusions)
+        self.assertEqual(
+            selected,
+            (
+                "dEQP-VK.api.smoke.create_sampler",
+                "dEQP-VK.reconvergence_other.case",
+            ),
+        )
+        self.assertEqual(
+            skipped,
+            {
+                "guest-memory": (
+                    "dEQP-VK.reconvergence.maximal.compute.nesting4.0.1",
+                ),
+                "aborts-deqp": (
+                    "dEQP-VK.pipeline.monolithic.pipeline_binary.dedicated."
+                    "not_enough_space",
+                ),
+            },
+        )
+        # No exclusion means no partition, so every other lane is untouched.
+        self.assertEqual(cts.device_exclusion_partition(cases, ()), (cases, {}))
+        for rejected in (
+            cts.DeviceExclusion("Guest Memory", ("dEQP-VK.reconvergence.",)),
+            cts.DeviceExclusion("guest-memory", ()),
+            cts.DeviceExclusion("guest-memory", ("reconvergence.",)),
+            cts.DeviceExclusion("guest-memory", ("dEQP-VK.",)),
+        ):
+            with self.subTest(exclusion=rejected):
+                with self.assertRaises(cts.CampaignError):
+                    cts.validate_device_exclusions((rejected,))
+        with self.assertRaisesRegex(cts.CampaignError, "repeats"):
+            cts.validate_device_exclusions(
+                (*cts.DEVICE_EXCLUSIONS, *cts.DEVICE_EXCLUSIONS)
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "mandatory case"):
+            cts.validate_device_exclusions(
+                (cts.DeviceExclusion("guest-memory", ("dEQP-VK.info.",)),)
+            )
+
+    def test_only_a_device_campaign_excludes_and_it_transports_the_skip_list(
+        self,
+    ) -> None:
+        selection = cts.resolve_receipt_selection(
+            "current-must-pass", (), None, cts.Fraction(0, 16)
+        )
+        arguments = {
+            "page_size": 16384,
+            "timeout": cts.APPLE_MUSTPASS_TIMEOUT,
+            "progress_timeout": cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+        }
+        plain = cts.build_receipt_guest_launcher(
+            self.receipt, selection, **arguments
+        )
+        excluded = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            **arguments,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+        # The macOS lanes get exactly the script they had: dEQP applies the
+        # released fraction filter to both the enumeration and the run, and
+        # nothing is skipped.
+        self.assertEqual(plain.count("--deqp-fraction=0,16"), 2)
+        self.assertNotIn("skipped", plain)
+        self.assertNotIn("device_excluded", plain)
+        self.assertNotIn("device_memory_mib", plain)
+        # The device campaign enumerates the fraction and then runs an explicit
+        # subset of it, so the filter must not run a second time over that.
+        self.assertEqual(excluded.count("--deqp-fraction=0,16"), 1)
+        self.assertEqual(
+            excluded.count("--deqp-fraction-mandatory-caselist-file"), 1
+        )
+        execution = cts.receipt_deqp_arguments(
+            self.receipt, selection, "/run/uml-vk-cts", preselected=True
+        )
+        self.assertNotIn("--deqp-fraction=0,16", execution)
+        self.assertIn(
+            "--deqp-caselist-file=/run/uml-vk-cts/selected.txt", execution
+        )
+        every = " ".join(
+            "-e '" + cts._exclusion_expression(pattern) + "'"
+            for exclusion in cts.DEVICE_EXCLUSIONS
+            for pattern in exclusion.patterns
+        )
+        self.assertIn(
+            f'grep -v {every} "$expected" > "$selected"', excluded
+        )
+        for exclusion in cts.DEVICE_EXCLUSIONS:
+            patterns = " ".join(
+                "-e '" + cts._exclusion_expression(pattern) + "'"
+                for pattern in exclusion.patterns
+            )
+            # Every skipped case carries its own cause, so the list says why.
+            self.assertIn(
+                f'grep {patterns} "$expected" | awk -v reason='
+                f"{exclusion.reason} "
+                '\'{ print reason "\\t" $0 }\' >> "$skipped"',
+                excluded,
+            )
+            self.assertIn(f"device_excluded_{exclusion.row}=%s", excluded)
+            self.assertIn(
+                f"device_exclusion_{exclusion.row}=%s\\n' "
+                + " ".join(exclusion.patterns),
+                excluded,
+            )
+        self.assertIn("renderer.txt selected.txt expected.txt skipped.txt", excluded)
+        self.assertIn("device_excluded=%s", excluded)
+        self.assertIn(
+            f"device_memory_mib=%s\\n' {cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB}",
+            excluded,
+        )
+        # The reported case count is what the guest will actually run, taken
+        # once before any continuation rewrites the remaining selection.
+        self.assertIn("expected_case_count=%s", excluded)
+        self.assertIn("' \"${selected_count:-0}\" >> \"$summary\"", excluded)
+        self.assertIn('selected_count=$(wc -l < "$run_list" | tr -d \' \')', excluded)
+        self.assertIn("skipped.txt", cts.common.ALLOWED_ARTIFACTS)
+        for script in (plain, excluded):
+            syntax = subprocess.run(
+                ["sh", "-n"], input=script, text=True, capture_output=True,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        # A selection the exclusion cannot be reasoned about is refused rather
+        # than silently ignored.
+        family = cts.resolve_receipt_selection(
+            "exact-family", (), "dEQP-VK.info", cts.Fraction(0, 1)
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "enumerated released"):
+            cts.build_receipt_guest_launcher(
+                self.receipt,
+                family,
+                **arguments,
+                device_exclusions=cts.DEVICE_EXCLUSIONS,
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "resumed shard"):
+            cts.build_receipt_guest_launcher(
+                self.receipt,
+                selection,
+                **arguments,
+                resume_after=10,
+                device_exclusions=cts.DEVICE_EXCLUSIONS,
+            )
+
+    def test_device_completion_is_independent_of_case_failures(self) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        _, artifacts = self._device_fraction_artifacts()
+        result = device.validate_device_mustpass_attempt(
+            campaign, "", artifacts
+        )
+        self.assertTrue(result["traversal_complete"])
+        self.assertFalse(result["accepted_statuses"])
+        self.assertEqual(result["rejected_status_count"], 1)
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(artifacts, "", campaign=campaign)
+        self.assertEqual(status, 1)
+        text = printed.getvalue()
+        self.assertIn("vulkan_campaign_complete=true", text)
+        self.assertIn("vulkan_statuses_accepted=false", text)
+        self.assertIn("vulkan_campaign_failed=true", text)
+
+        _, accepted = self._device_fraction_artifacts("NotSupported")
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = device.report(accepted, "", campaign=campaign)
+        self.assertEqual(status, 0)
+
+    def test_headless_wsi_surface_independent_results_keep_their_verdicts(
+        self,
+    ) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        for platform in ("xlib", "wayland", "xcb", "headless", "direct"):
+            for leaf in (
+                "query_devgroup_present_capabilities", "destroy_null_handle"
+            ):
+                for status in ("Pass", "Fail"):
+                    case = f"dEQP-VK.wsi.{platform}.surface.{leaf}"
+                    with self.subTest(case=case, status=status):
+                        selected, artifacts = self._device_fraction_artifacts(
+                            status
+                        )
+                        artifacts = {
+                            name: payload.replace(
+                                selected[-1].encode(), case.encode()
+                            )
+                            for name, payload in artifacts.items()
+                        }
+                        artifacts["results.qpa"] = artifacts[
+                            "results.qpa"
+                        ].replace(
+                            b'StatusCode="NotSupported"',
+                            f'StatusCode="{status}"'.encode(),
+                        )
+                        result = device.validate_device_mustpass_attempt(
+                            campaign, "", artifacts
+                        )
+                        self.assertTrue(result["traversal_complete"])
+                        self.assertEqual(
+                            result["rejected_status_count"],
+                            2 if status == "Fail" else 0,
+                        )
+                        self.assertEqual(
+                            result["accepted_statuses"], status == "Pass"
+                        )
+
+        for leaf in (
+            "query_capabilities", "query_formats", "create",
+            "query_devgroup_present_capabilities_extra",
+            "destroy_null_handle_extra",
+        ):
+            with self.subTest(rejected_leaf=leaf), self.assertRaisesRegex(
+                cts.CampaignError, "headless Vulkan WSI"
+            ):
+                cts.validate_headless_wsi_results(
+                    {f"dEQP-VK.wsi.headless.surface.{leaf}": "Pass"}
+                )
+
+    def test_device_completion_rejects_missing_duplicate_or_lost_results(
+        self,
+    ) -> None:
+        campaign = cts.apple_mustpass_campaign(0)
+        selected, artifacts = self._device_fraction_artifacts()
+
+        missing = dict(artifacts)
+        missing["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            )
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "missing"):
+            device.validate_device_mustpass_attempt(campaign, "", missing)
+
+        duplicate = dict(artifacts)
+        duplicate["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            ),
+            qpa_result(selected[0], status="Fail"),
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "duplicate QPA case"):
+            device.validate_device_mustpass_attempt(campaign, "", duplicate)
+
+        reordered = dict(artifacts)
+        reordered["results.qpa"] = qpa(
+            qpa_result(
+                selected[0], identity="deviceName = Virtio GPU Venus"
+            ),
+            qpa_result(selected[2], status="NotSupported"),
+            qpa_result(selected[1], status="Fail"),
+        ).encode()
+        with self.assertRaisesRegex(cts.CampaignError, "order"):
+            device.validate_device_mustpass_attempt(campaign, "", reordered)
+
+        presented = dict(artifacts)
+        presented["results.qpa"] = presented["results.qpa"].replace(
+            b'StatusCode="NotSupported"', b'StatusCode="Pass"'
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "headless Vulkan WSI"):
+            device.validate_device_mustpass_attempt(campaign, "", presented)
+
+        lost = dict(artifacts)
+        lost["summary.txt"] = lost["summary.txt"].replace(
+            b"qpa_transfer=complete\n",
+            b"qpa_transfer=failed\nqpa_missing_bytes=16\n",
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "transfer is incomplete"):
+            device.validate_device_mustpass_attempt(campaign, "", lost)
+
+        recovered = dict(artifacts)
+        recovered["summary.txt"] = recovered["summary.txt"].replace(
+            b"qpa_transfer=complete\n",
+            b"qpa_transfer=recovered\nqpa_missing_bytes=0\n",
+        )
+        result = device.validate_device_mustpass_attempt(
+            campaign, "", recovered
+        )
+        self.assertTrue(result["traversal_complete"])
+
+        still_missing = dict(recovered)
+        still_missing["summary.txt"] = still_missing["summary.txt"].replace(
+            b"qpa_missing_bytes=0", b"qpa_missing_bytes=1"
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "still misses bytes"):
+            device.validate_device_mustpass_attempt(
+                campaign, "", still_missing
+            )
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(
+                artifacts,
+                "",
+                rejected=("results.qpa.0001",),
+                campaign=campaign,
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("vulkan_campaign_complete=false", printed.getvalue())
+
+    def test_non_mustpass_report_fails_closed_on_delivered_evidence(
+        self,
+    ) -> None:
+        campaign = cts.APPLE_RECEIPT_SMOKE_CAMPAIGN
+
+        def reported(
+            artifacts: dict[str, bytes],
+            *,
+            oom_report: str | None = None,
+        ) -> tuple[int, str]:
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                status = device.report(
+                    artifacts,
+                    "",
+                    oom_report=oom_report,
+                    campaign=campaign,
+                )
+            text = printed.getvalue()
+            self.assertNotIn("vulkan_campaign_complete=", text)
+            self.assertNotIn("vulkan_statuses_accepted=", text)
+            return status, text
+
+        # Older smoke summaries did not state transfer diagnostics.  Their
+        # shape remains valid, without gaining a mustpass completion marker.
+        historical = {"summary.txt": b"cts_rc=0\nmode=smoke\n"}
+        status, _ = reported(historical)
+        self.assertEqual(status, 0)
+
+        malformed = {
+            "summary.txt": b"cts_rc=1\ncts_rc=0\nmode=smoke\n"
+        }
+        status, text = reported(malformed)
+        self.assertEqual(status, 1)
+        self.assertIn("Vulkan CTS summary is malformed", text)
+
+        qpa_payload = qpa(
+            qpa_result("dEQP-VK.info.build")
+        ).encode()
+        recovered = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\n"
+                b"qpa_transfer=recovered\nqpa_missing_bytes=0\n"
+            ),
+            "results.qpa": qpa_payload,
+        }
+        status, _ = reported(recovered)
+        self.assertEqual(status, 0)
+
+        invalid_transfers = (
+            b"qpa_transfer=failed\nqpa_missing_bytes=64\n",
+            b"qpa_transfer=recovered\nqpa_missing_bytes=1\n",
+            b"qpa_transfer=complete\nqpa_missing_bytes=0\n",
+            b"qpa_missing_bytes=0\n",
+        )
+        for transfer in invalid_transfers:
+            with self.subTest(transfer=transfer):
+                status, text = reported(
+                    {
+                        "summary.txt": (
+                            b"cts_rc=0\nmode=smoke\n" + transfer
+                        ),
+                        "results.qpa": qpa_payload,
+                    }
+                )
+                self.assertEqual(status, 1)
+                self.assertIn("campaign_evidence_error=", text)
+
+        killed = (
+            "Out of memory: Killed process 1604 (deqp-vk) "
+            "total-vm:2793424kB"
+        )
+        status, text = reported(historical, oom_report=killed)
+        self.assertEqual(status, 1)
+        self.assertIn("guest_out_of_memory=", text)
+
+        nonaccepted = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\nqpa_transfer=complete\n"
+            ),
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.info.build", status="Fail")
+            ).encode(),
+        }
+        status, text = reported(nonaccepted)
+        self.assertEqual(status, 1)
+        self.assertIn(
+            "CTS exit status disagrees with its delivered QPA", text
+        )
+
+        unknown_status = {
+            "summary.txt": (
+                b"cts_rc=0\nmode=smoke\nqpa_transfer=complete\n"
+            ),
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.info.build", status="UnknownResult")
+            ).encode(),
+        }
+        status, text = reported(unknown_status)
+        self.assertEqual(status, 1)
+        self.assertIn("released Vulkan CTS returned unknown status", text)
+
+    def test_fraction03_profile_plans_one_exact_process_boundary(self) -> None:
+        profile = cts.apple_mustpass_profile(3)
+        selection = cts.resolve_receipt_selection(
+            "current-must-pass", (), None, cts.Fraction(3, 16)
+        )
+        launcher = cts.build_receipt_guest_launcher(
+            self.receipt,
+            selection,
+            page_size=16384,
+            timeout=cts.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+
+        self.assertEqual(profile.guest_memory_mib, 1280)
+        self.assertEqual(profile.restart_settle_seconds, 20)
+        self.assertIn(profile.restart_before, launcher)
+        self.assertIn("device_memory_mib=%s\\n' 1280", launcher)
+        self.assertIn(
+            'head -n "$planned_prefix_count" "$selected" > "$continuation"',
+            launcher,
+        )
+        self.assertIn(
+            'selected_count=$(wc -l < "$selected" | tr -d \' \')',
+            launcher,
+        )
+        self.assertIn(
+            '[ "$cts_cases" -eq "$planned_prefix_count" ]', launcher
+        )
+        self.assertIn(
+            'tail -n +$((planned_prefix_count + 1)) "$selected"', launcher
+        )
+        self.assertEqual(launcher.count("sleep 20"), 1)
+        self.assertIn('[ "$cts_sessions" -lt 8 ] || break', launcher)
+        self.assertIn(
+            'if [ "$cts_sessions" -eq 1 ] || [ "$status" -eq 0 ]; then\n'
+            '        status=$session_status\n'
+            '    fi',
+            launcher,
+        )
+        # Syntax checking does not execute the generated retirement delay.
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        # Exercise the generated shell with an early ResourceError-sized
+        # prefix. The first continuation retains the unfinished planned
+        # prefix; reaching the cumulative boundary then selects the suffix
+        # beginning with the boundary case, exactly once and in order.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selected = root / "selected.txt"
+            continuation = root / "continue.txt"
+            state = root / "state.txt"
+            cases = (
+                "dEQP-VK.fixture.first",
+                "dEQP-VK.fixture.second",
+                profile.restart_before,
+                "dEQP-VK.fixture.last",
+            )
+            selected.write_text(
+                "".join(f"{case}\n" for case in cases), encoding="utf-8"
+            )
+            setup_start = launcher.index("restart_matches=$(grep")
+            setup_end = launcher.index(': > "$cts_output"', setup_start)
+            setup = launcher[setup_start:setup_end]
+            shell = subprocess.run(
+                ["sh"],
+                input=(
+                    "set -eu\n"
+                    "chown() { :; }\n"
+                    f"selected={shlex.quote(str(selected))}\n"
+                    f"continuation={shlex.quote(str(continuation))}\n"
+                    + setup
+                ),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(shell.returncode, 0, shell.stderr)
+            self.assertEqual(
+                continuation.read_text(encoding="utf-8").splitlines(),
+                list(cases[:2]),
+            )
+
+            transition_start = launcher.index("    planned_restart=0\n")
+            transition_end = launcher.index(
+                '    [ -s "$run_list" ]', transition_start
+            )
+            transition = launcher[transition_start:transition_end]
+
+            def run_transition(cts_cases: int) -> tuple[int, int]:
+                command = (
+                    "set -eu\n"
+                    "chown() { :; }\n"
+                    f"selected={shlex.quote(str(selected))}\n"
+                    f"continuation={shlex.quote(str(continuation))}\n"
+                    f"state={shlex.quote(str(state))}\n"
+                    'run_list="$continuation"\n'
+                    "session_cases=1\n"
+                    f"cts_cases={cts_cases}\n"
+                    "planned_prefix_count=2\n"
+                    "planned_restart_pending=1\n"
+                    "while :; do\n"
+                    + transition
+                    + 'printf \'%s %s\\n\' "$planned_restart_pending" '
+                    '"$planned_restart" > "$state"\n'
+                    "break\n"
+                    "done\n"
+                )
+                result = subprocess.run(
+                    ["sh"], input=command, text=True, capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                pending, planned = state.read_text(encoding="utf-8").split()
+                return int(pending), int(planned)
+
+            self.assertEqual(run_transition(1), (1, 0))
+            self.assertEqual(
+                continuation.read_text(encoding="utf-8").splitlines(),
+                [cases[1]],
+            )
+            self.assertEqual(run_transition(2), (0, 1))
+            suffix = continuation.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(suffix, list(cases[2:]))
+            self.assertEqual([cases[0], cases[1], *suffix], list(cases))
+
+        ordinary = cts.build_receipt_guest_launcher(
+            self.receipt,
+            cts.resolve_receipt_selection(
+                "current-must-pass", (), None, cts.Fraction(2, 16)
+            ),
+            page_size=16384,
+            timeout=cts.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+        self.assertNotIn("planned restart before", ordinary)
+        self.assertNotIn("sleep 20", ordinary)
+
+    def test_device_cli_enforces_the_baked_memory_before_launch(self) -> None:
+        fraction03 = cts.apple_mustpass_profile(3)
+        options = argparse.Namespace(
+            campaign=fraction03.identifier, memory_mib=None
+        )
+        self.assertEqual(device.apply_campaign_profile(options), fraction03)
+        self.assertEqual(options.memory_mib, 1280)
+
+        wrong = argparse.Namespace(
+            campaign=fraction03.identifier, memory_mib=1536
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "baked for 1280 MiB"):
+            device.apply_campaign_profile(wrong)
+
+        ordinary = cts.apple_mustpass_profile(2)
+        options = argparse.Namespace(
+            campaign=ordinary.identifier, memory_mib=None
+        )
+        self.assertEqual(device.apply_campaign_profile(options), ordinary)
+        self.assertEqual(options.memory_mib, 1536)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_root = Path(temporary) / "must-not-exist"
+            arguments = (
+                "--device", "fixture",
+                "--campaign", fraction03.identifier,
+                "--memory-mib", "1536",
+                "--artifact-root", str(artifact_root),
+            )
+            with mock.patch.object(device.sys, "platform", "darwin"), \
+                 mock.patch.object(device, "run_campaign") as run, \
+                 self.assertRaisesRegex(
+                     cts.CampaignError, "baked for 1280 MiB"
+                 ):
+                device.main(list(arguments))
+            run.assert_not_called()
+            self.assertFalse(artifact_root.exists())
+
+    def test_device_summary_must_match_the_baked_memory_profile(self) -> None:
+        profile = cts.apple_mustpass_profile(3)
+        _, artifacts = self._device_fraction_artifacts("Pass", fraction=3)
+        result = device.validate_device_mustpass_attempt(
+            profile.identifier, "", artifacts
+        )
+        self.assertTrue(result["traversal_complete"])
+        self.assertTrue(result["accepted_statuses"])
+
+        for old, new, error in (
+            (b"device_memory_mib=1280", b"device_memory_mib=1536", "summary"),
+            (b"cts_sessions=2\ncts_cases_run=3\n", b"", "session count"),
+            (b"cts_sessions=2", b"cts_sessions=1", "session count"),
+            (b"cts_sessions=2", b"cts_sessions=9", "session count"),
+            (b"cts_cases_run=3", b"cts_cases_run=2", "complete selection"),
+        ):
+            with self.subTest(mutation=new):
+                changed = dict(artifacts)
+                changed["summary.txt"] = artifacts["summary.txt"].replace(
+                    old, new
+                )
+                with self.assertRaisesRegex(cts.CampaignError, error):
+                    device.validate_device_mustpass_attempt(
+                        profile.identifier, "", changed
+                    )
+
+    def test_a_guest_memory_kill_ends_the_device_wait_and_still_reports(
+        self,
+    ) -> None:
+        reaper = (
+            "[ 6741.320880] Out of memory: Killed process 1604 (deqp-vk) "
+            "total-vm:2793424kB, anon-rss:1164432kB, file-rss:384kB\n"
+        )
+        for killed, expected in ((reaper, True), ("", False)):
+            with self.subTest(killed=bool(killed)):
+                elapsed, report = self._device_wait(killed)
+                if expected:
+                    self.assertIsNotNone(report)
+                    self.assertIn("deqp-vk", report)
+                    # Promptly, not after the stall guard.
+                    self.assertLessEqual(elapsed, device.OOM_GRACE_SECONDS + 30)
+                else:
+                    self.assertIsNone(report)
+                    self.assertGreaterEqual(elapsed, 1800)
+        # A killed run has no summary, so its executed prefix's own verdicts and
+        # the reaper's line are what the report carries.
+        artifacts = {
+            "results.qpa": qpa(
+                qpa_result("dEQP-VK.api.smoke.create_sampler"),
+                qpa_result("dEQP-VK.api.smoke.create_shader", "Fail"),
+            ).encode(),
+            "skipped.txt": (
+                b"guest-memory\tdEQP-VK.reconvergence.maximal.compute"
+                b".nesting4.0.1\n"
+            ),
+        }
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = device.report(artifacts, "", reaper.strip())
+        self.assertEqual(status, 1)
+        text = printed.getvalue()
+        self.assertIn("the campaign delivered no summary", text)
+        self.assertIn("Pass=1", text)
+        self.assertIn("Fail=1", text)
+        self.assertIn("skipped_for_a_device_limit=1", text)
+        self.assertIn("skipped_guest-memory=1", text)
+        self.assertIn("guest_out_of_memory=", text)
+        self.assertNotIn("vulkan_campaign_complete=", text)
+        self.assertNotIn("vulkan_statuses_accepted=", text)
+
+    def _device_wait(self, killed: str) -> tuple[float, str | None]:
+        """Drive the device console wait over a scripted transcript."""
+
+        clock = {"now": 0.0}
+
+        class Console:
+            def __init__(self, *_arguments, stdout=None, **_keywords) -> None:
+                self.returncode = None
+                stdout.write(b"Kernarium Vulkan CTS mustpass campaign enabled\n")
+                if killed:
+                    stdout.write(killed.encode())
+                stdout.flush()
+
+            def poll(self) -> None:
+                return None
+
+            def send_signal(self, _number: int) -> None:
+                self.returncode = 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.returncode = 0
+                return 0
+
+        options = argparse.Namespace(
+            device="fixture",
+            campaign=cts.apple_mustpass_campaign(0),
+            rootfs_filename="rootfs-vulkan-venus.ext4",
+            engine="gadgets",
+            memory_mib=cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB,
+            cpus=1,
+            timeout=28200,
+            stall_timeout=1800,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "console.log"
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(device.subprocess, "Popen", Console)
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        device.time, "monotonic", lambda: clock["now"]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        device.time,
+                        "sleep",
+                        lambda seconds: clock.__setitem__(
+                            "now", clock["now"] + seconds
+                        ),
+                    )
+                )
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                try:
+                    _, report, _ = device.run_campaign(options, log)
+                except cts.common.CampaignError as error:
+                    self.assertIn("stopped growing", str(error))
+                    report = None
+        return clock["now"], report
+
+    def test_the_baked_campaign_generation_is_part_of_its_identity(self) -> None:
+        names = cts.apple_campaigns()
+        self.assertEqual(len(names), cts.APPLE_MUSTPASS_FRACTIONS + 2)
+        for index in range(cts.APPLE_MUSTPASS_FRACTIONS):
+            version = 4 if index == 3 else 3
+            self.assertEqual(
+                cts.apple_mustpass_campaign(index),
+                f"vulkan-mustpass-{index:02d}of16-v{version}",
+            )
+        self.assertIsNone(
+            cts.apple_mustpass_profile_for_campaign(
+                "vulkan-mustpass-03of16-v3"
+            )
+        )
+        with self.assertRaises(cts.CampaignError):
+            cts.apple_mustpass_campaign(cts.APPLE_MUSTPASS_FRACTIONS)
 
 
 if __name__ == "__main__":

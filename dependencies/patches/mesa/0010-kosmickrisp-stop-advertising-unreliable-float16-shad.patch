@@ -1,7 +1,7 @@
-From d645f9838276678367354bb693ab30dec0212cfb Mon Sep 17 00:00:00 2001
+From 7627c9541818e87e5ea673796a24f6f9ee8f8a23 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 22:30:46 +0900
-Subject: [PATCH 10/97] kosmickrisp: stop advertising unreliable float16
+Subject: [PATCH 010/109] kosmickrisp: stop advertising unreliable float16
  shaders
 
 ---
@@ -9,7 +9,7 @@ Subject: [PATCH 10/97] kosmickrisp: stop advertising unreliable float16
  1 file changed, 7 insertions(+), 4 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 227273d1..51714d10 100644
+index 227273d..51714d1 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -278,7 +278,10 @@ kk_get_device_features(

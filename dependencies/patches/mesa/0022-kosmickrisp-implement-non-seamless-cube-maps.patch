@@ -1,7 +1,7 @@
-From 4453b0684e3639cb515e4d5b2a016f3bffb01403 Mon Sep 17 00:00:00 2001
+From de9b5229e81254d843e3a8ab87a557b1d3df79fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 01:28:14 +0900
-Subject: [PATCH 22/97] kosmickrisp: implement non-seamless cube maps
+Subject: [PATCH 022/109] kosmickrisp: implement non-seamless cube maps
 
 ---
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |   3 +
@@ -16,7 +16,7 @@ Subject: [PATCH 22/97] kosmickrisp: implement non-seamless cube maps
  9 files changed, 443 insertions(+), 12 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index ae9d752c..50045f7f 100644
+index ae9d752..50045f7 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -77,6 +77,8 @@ get_sampled_image_view_desc(VkDescriptorType descriptor_type,
@@ -37,7 +37,7 @@ index ae9d752c..50045f7f 100644
  
        if (sampler->has_border) {
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9c2620f7..9b4a16df 100644
+index 9c2620f..9b4a16d 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -28,7 +28,10 @@ struct kk_sampled_image_descriptor {
@@ -53,7 +53,7 @@ index 9c2620f7..9b4a16df 100644
  
  static_assert(sizeof(struct kk_sampled_image_descriptor) == 64,
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index 8d1786f8..9e601ea3 100644
+index 8d1786f..9e601ea 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
 @@ -181,6 +181,22 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
@@ -90,7 +90,7 @@ index 8d1786f8..9e601ea3 100644
           mtl_release(view->planes[plane].mtl_handle_storage);
  
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.h b/src/kosmickrisp/vulkan/kk_image_view.h
-index e9927f93..3c4447d2 100644
+index e9927f9..3c4447d 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.h
 +++ b/src/kosmickrisp/vulkan/kk_image_view.h
 @@ -28,6 +28,9 @@ struct kk_image_view {
@@ -112,7 +112,7 @@ index e9927f93..3c4447d2 100644
        uint64_t input_gpu_resource_id;
     } planes[3];
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index af7c0cea..df16b9e6 100644
+index af7c0ce..df16b9e 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -10,6 +10,7 @@
@@ -316,7 +316,7 @@ index af7c0cea..df16b9e6 100644
  
     assert(set_layout_count <= KK_MAX_SETS);
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_textures.c b/src/kosmickrisp/vulkan/kk_nir_lower_textures.c
-index 4e77b4de..5ecfc974 100644
+index 4e77b4d..5ecfc97 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_textures.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_textures.c
 @@ -17,6 +17,276 @@
@@ -607,7 +607,7 @@ index 4e77b4de..5ecfc974 100644
        nir_foreach_block_safe(block, impl) {
           nir_builder b = nir_builder_create(impl);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index a12cc830..9b5aa165 100644
+index a12cc83..9b5aa16 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -629,7 +629,7 @@ index a12cc830..9b5aa165 100644
        .primitiveRestartIndex = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index d23acd5a..7f0ff51e 100644
+index d23acd5..7f0ff51 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -896,7 +896,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
@@ -652,7 +652,7 @@ index d23acd5a..7f0ff51e 100644
  
        kk_gs_to_compute(main, 64);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index ef0c4563..0d758794 100644
+index ef0c456..0d75879 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -25,6 +25,8 @@ struct kk_cmd_buffer;

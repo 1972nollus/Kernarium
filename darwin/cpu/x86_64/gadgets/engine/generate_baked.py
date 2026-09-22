@@ -147,27 +147,46 @@ def translate(o, write, size, record_stack=False):
     o.emit(f'{hit}:')
     if write:
         ready, publishes = o.label('wcready'), o.label('publishes')
-        # A publication covers its whole page, so a store to a page some
-        # executor has translated owes a record unless this program has
-        # already published that very page. The page it last published answers
-        # that alone -- it is an impossible page until the first publication
-        # and again once a followed link settles them -- which keeps this
-        # decision the same length in a bank this size.
-        o.emit(f'\ttbz x12, #1, {ready}')
-        o.emit('\tldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]')
-        o.emit('\teor x14, x9, x14')
-        o.emit(f'\tcbz x14, {ready}')
-        o.emit('\tmov w14, #UML_X86_64_WRITE_CODE_PENDING')
-        o.emit('\tstrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit(f'{ready}:')
-        o.emit(f'\ttbnz x12, #2, {publishes}')
+        owed, kept = o.label('wcowed'), o.label('wckept')
+        # Publication has work only when a publish is still pending or this
+        # page holds cached code. `write_code` is none, pending or published
+        # and only pending is work, so its low bit answers for it and joins
+        # the entry's cached-code bit in one test.
         o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit('\tsub w14, w14, #UML_X86_64_WRITE_CODE_PENDING')
-        o.emit(f'\tcbz w14, {publishes}')
+        # A test-and-branch reaches 32 KiB and the cold section is a whole
+        # bank away, so the rare arm is entered through a local branch.
+        o.emit(f'\ttbz x12, #1, {ready}')
+        o.emit(f'\tb {owed}')
+        o.emit(f'{ready}:')
+        o.emit('\torr w14, w14, w12, lsr #2')
+        o.emit(f'\ttbnz w14, #0, {publishes}')
         o.emit('\torr x23, x23, #(1 << 60)')
         o.emit(f'{publishes}:')
     o.emit('\tadd x7, x13, x7')
     o.emit(f'{done}:')
+    if write:
+        # A publication covers its whole page, so a store to a page some
+        # executor has translated owes a record unless this program has
+        # already published that very page. The page it last published answers
+        # that alone -- it is an impossible page until the first publication
+        # and again once a followed link settles them. It is also the rare
+        # case, and a bank this size fetches whatever sits in the hot stream
+        # on every store, so the arm goes to the cold section.
+        o.emit('#if __APPLE__')
+        o.emit('\t.pushsection __TEXT,__gadget_cold,regular,pure_instructions')
+        o.emit('#else')
+        o.emit('\t.pushsection .text.gadget_cold,"ax"')
+        o.emit('#endif')
+        o.emit(f'{owed}:')
+        o.emit('\tldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]')
+        o.emit('\teor x14, x9, x14')
+        o.emit(f'\tcbz x14, {kept}')
+        o.emit('\tmov w14, #UML_X86_64_WRITE_CODE_PENDING')
+        o.emit('\tstrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
+        o.emit(f'{kept}:')
+        o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
+        o.emit(f'\tb {ready}')
+        o.emit('\t.popsection')
 
 
 def finish_store(o, size, check=None):

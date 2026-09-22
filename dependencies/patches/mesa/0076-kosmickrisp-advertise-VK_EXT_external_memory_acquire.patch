@@ -1,7 +1,7 @@
-From 408a95a35745a35b42936ecc4aee0116c8f37cae Mon Sep 17 00:00:00 2001
+From 9035d781b9a665959a521a256cf9e8dadebc6114 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 10:34:12 +0900
-Subject: [PATCH 76/97] kosmickrisp: advertise
+Subject: [PATCH 076/109] kosmickrisp: advertise
  VK_EXT_external_memory_acquire_unmodified
 
 VP_ANDROID_17_requirements makes this extension mandatory. It depends
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 1 insertion(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 2435ede4..2404c1a4 100644
+index 2435ede..2404c1a 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -174,6 +174,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

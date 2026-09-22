@@ -1,8 +1,8 @@
-From baaa3a2b351d9df0086c33492f10d5f3126f8d1a Mon Sep 17 00:00:00 2001
+From fdca5dd1a418516d9954855043f026844613d58b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 22:09:54 +0900
-Subject: [PATCH 92/97] kosmickrisp: keep a terminated invocation's quad in its
- subgroup
+Subject: [PATCH 092/109] kosmickrisp: keep a terminated invocation's quad in
+ its subgroup
 
 A fragment shader that declares RequireFullQuadsKHR keeps every invocation of
 a quad, helper invocations included, active for the whole shader, so the
@@ -56,7 +56,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_terminate_full_quads.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index ef37fc4c..3a740860 100644
+index ef37fc4..3a74086 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,49 @@ info on what was updated.
@@ -110,7 +110,7 @@ index ef37fc4c..3a740860 100644
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index b1208f34..85eee5f4 100644
+index b1208f3..85eee5f 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -258,6 +258,37 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
@@ -171,7 +171,7 @@ index b1208f34..85eee5f4 100644
        P_IND(ctx, "}\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 52f73685..3c0e2891 100644
+index 52f7368..3c0e289 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -611,6 +611,20 @@ if with_tests
@@ -197,7 +197,7 @@ index 52f73685..3c0e2891 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh
 new file mode 100755
-index 00000000..850fde73
+index 0000000..850fde7
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh
 @@ -0,0 +1,7 @@
@@ -210,7 +210,7 @@ index 00000000..850fde73
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag
 new file mode 100644
-index 00000000..aef91b8a
+index 0000000..aef91b8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag
 @@ -0,0 +1,40 @@
@@ -256,7 +256,7 @@ index 00000000..aef91b8a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag.h b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag.h
 new file mode 100644
-index 00000000..9ebcaf86
+index 0000000..9ebcaf8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.frag.h
 @@ -0,0 +1,72 @@
@@ -334,7 +334,7 @@ index 00000000..9ebcaf86
 +0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert
 new file mode 100644
-index 00000000..533ec162
+index 0000000..533ec16
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert
 @@ -0,0 +1,14 @@
@@ -354,7 +354,7 @@ index 00000000..533ec162
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert.h b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert.h
 new file mode 100644
-index 00000000..567cb321
+index 0000000..567cb32
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/terminate.vert.h
 @@ -0,0 +1,56 @@
@@ -416,7 +416,7 @@ index 00000000..567cb321
 +0x00000027,0x00000025,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_terminate_full_quads.cpp b/src/kosmickrisp/vulkan/tests/test_terminate_full_quads.cpp
 new file mode 100644
-index 00000000..ad47cdb6
+index 0000000..ad47cdb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_terminate_full_quads.cpp
 @@ -0,0 +1,490 @@

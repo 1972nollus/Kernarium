@@ -1,7 +1,7 @@
-From 179ef475c6b3c19bb1cedcc14a0dde0100d55109 Mon Sep 17 00:00:00 2001
+From 09fa36533f20c2c997e931ee0695b53eec431296 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 14:51:41 +0900
-Subject: [PATCH 40/97] kosmickrisp: declare MSL temporaries without a dead
+Subject: [PATCH 040/109] kosmickrisp: declare MSL temporaries without a dead
  store
 
 MSL has no SSA form, so nir_to_msl declares every value at function scope
@@ -34,7 +34,7 @@ the test read back zeroes and reported an invalid result.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index c16c4e9f..92be4b42 100644
+index c16c4e9..92be4b4 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -2513,6 +2513,14 @@ msl_gather_info(struct nir_to_msl_ctx *ctx, struct nir_to_msl_options *options)
@@ -65,7 +65,7 @@ index c16c4e9f..92be4b42 100644
        }
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3f76669c..89f4d771 100644
+index 3f76669..89f4d77 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -658,6 +658,20 @@ if with_tests
@@ -91,7 +91,7 @@ index 3f76669c..89f4d771 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 new file mode 100644
-index 00000000..0f65860e
+index 0000000..0f65860
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 @@ -0,0 +1,223 @@

@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -111,34 +112,90 @@ struct ProgramLinkResolver final {
 		void *, std::uint64_t, ExecutionMode){};
 };
 
+/* A translation is built with two allocations, each at exactly the size the
+ * block turned out to need: the native stream the engine runs, and the guest
+ * bytes the decoder read. Its decoded instructions are not among them -- they
+ * are what those bytes decode to, and the only thing that ever asks for them
+ * again is a budget-limited replay, which decodes them back out of the source.
+ * A block that one replay has ended inside keeps what that decode produced,
+ * and nothing else does. Keeping the streams in their own allocations is what
+ * keeps them near each other in the allocator, which the workloads with the
+ * widest code notice. */
 class Program final {
 public:
 	Program() = default;
+	/* `source` is the guest bytes the decoder read for `gadgets`, which is
+	 * what the block is validated against and what a budget-limited replay
+	 * decodes back out of. Every program carries its own, so it is named
+	 * rather than defaulted. */
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
-		std::vector<Gadget> gadgets, ProgramLinkResolver links = {});
+		std::span<const Gadget> gadgets,
+		std::span<const std::byte> source,
+		ProgramLinkResolver links = {});
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
-	[[nodiscard]] std::span<const Gadget> stream() const noexcept
-	{
-		return gadgets_;
-	}
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return native_stream_;
+		return {reinterpret_cast<const std::uintptr_t *>(words_storage_.get()),
+			words_};
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
-		return gadgets_.size();
+		return instructions_;
+	}
+	/* Whether the block ends at an instruction that transfers control. A
+	 * block that does not is left by falling off its end, which is what the
+	 * cache's successor chain needs to know; the program answers it from a
+	 * flag rather than from decoded instructions it no longer carries. */
+	[[nodiscard]] bool terminal() const noexcept { return terminal_; }
+	/* The guest bytes the decoder read for this block. A cached translation
+	 * and the source that stands for it are one object as well as one
+	 * observation, and the block's instructions are recoverable from it
+	 * without reading guest memory again. */
+	[[nodiscard]] std::span<const std::byte> source() const noexcept
+	{
+		return {source_storage_.get(), source_};
+	}
+	/* This block's decoded instructions, for the budget-limited replay that
+	 * is the only caller. The first one decodes them out of the saved source
+	 * -- the same bytes the build read, so the block recovers as itself
+	 * whatever the guest has done to that memory since -- and the program
+	 * keeps them, because a block that one dispatch ended inside is a block
+	 * dispatches end inside: about a tenth of the blocks a workload
+	 * translates are ever replayed, and each of those tens of times. An
+	 * empty result means the decode or its storage failed and the caller has
+	 * nothing to run.
+	 *
+	 * A program belongs to the cache of one executor, which is one vCPU
+	 * thread, and this is that thread's own lazy work. */
+	[[nodiscard]] std::span<const Gadget> replay_instructions() const noexcept;
+	/* What those instructions cost while they are resident, which is nothing
+	 * until a replay has asked for them. */
+	[[nodiscard]] std::size_t replay_bytes() const noexcept
+	{
+		return decoded_ == nullptr ? 0 :
+			std::size_t{instructions_} * sizeof(Gadget);
 	}
 
 private:
 	ExecutionMode mode_{ExecutionMode::long64};
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
-	std::vector<Gadget> gadgets_;
-	std::vector<std::uintptr_t> native_stream_;
+	/* The words the engine runs, alone. Holding them in one allocation with
+	 * the cold data behind them put every hot stream a cold kilobyte or two
+	 * away from the next and cost the workloads with the widest code. */
+	std::unique_ptr<std::byte[]> words_storage_;
+	/* The guest bytes the decoder read, untouched while the block runs. */
+	std::unique_ptr<std::byte[]> source_storage_;
+	/* What one budget-limited replay decoded, kept for the next one. Null
+	 * until a replay asks, which most blocks never do. */
+	mutable std::unique_ptr<std::byte[]> decoded_;
+	std::uint32_t words_{};
+	std::uint32_t instructions_{};
+	std::uint32_t source_{};
+	bool terminal_{};
 };
 
 enum class BuildStatus : std::uint8_t {
@@ -152,11 +209,6 @@ struct BuildResult final {
 	BuildStatus status{BuildStatus::illegal_instruction};
 	Program program{};
 	std::uint64_t fault_address{};
-	/* `source` received every byte of every instruction this block kept, so
-	 * its first `program.byte_count()` bytes are what the decoder read. A
-	 * build given no room, or one whose block outgrew it, clears this and
-	 * the block cannot be cached. */
-	bool source_recorded{};
 };
 
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
@@ -164,14 +216,14 @@ struct BuildResult final {
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions = 64) noexcept;
-/* `source`, when it is not empty, receives the bytes the decoder read for the
- * instructions this block keeps, in address order. Saving those rather than
- * reading the block again is what makes a cached program and its saved source
- * one observation of guest memory instead of two. */
+/* Every program carries the bytes the decoder read for the instructions the
+ * block kept, in address order. Saving those rather than reading the block
+ * again is what makes a program and its saved source one observation of guest
+ * memory instead of two, and it is also the block's instructions: anything
+ * that needs them decodes them back. */
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
-	std::size_t maximum_instructions, ProgramLinkResolver links,
-	std::span<std::byte> source = {}) noexcept;
+	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept;
 
 struct ExecuteResult final {
 	::uml::cpu::EngineEvent event{::uml::cpu::EngineEvent::fatal};

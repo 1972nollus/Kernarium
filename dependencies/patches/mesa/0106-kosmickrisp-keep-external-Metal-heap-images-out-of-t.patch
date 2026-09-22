@@ -1,8 +1,8 @@
-From cc2e0919d5975e1fd6c007dc98886e91eb30695a Mon Sep 17 00:00:00 2001
+From 1177aa201577df54252982effce5e4c5d638f08a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 12:19:57 +0900
-Subject: [PATCH 94/97] kosmickrisp: keep external Metal heap images out of the
- optimized layout
+Subject: [PATCH 106/109] kosmickrisp: keep external Metal heap images out of
+ the optimized layout
 
 Metal's lossless texture compression is a property of how a texture is
 created: allowGPUOptimizedContents lets the driver keep compression metadata
@@ -27,7 +27,7 @@ so the layout it reports as identical is the one the image will really get.
  3 files changed, 19 insertions(+), 5 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 58bc24e9..75b4fc71 100644
+index 58bc24e..75b4fc7 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -590,10 +590,12 @@ kk_GetPhysicalDeviceImageFormatProperties2(
@@ -46,7 +46,7 @@ index 58bc24e9..75b4fc71 100644
              with_host_transfer == without_host_transfer;
           host_props->identicalMemoryLayout = host_props->optimalDeviceAccess;
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
-index 707e9efd..0e473577 100644
+index 707e9ef..0e47357 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.c
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.c
 @@ -79,8 +79,18 @@ vk_image_usage_flags_to_mtl_texture_usage(VkImageUsageFlags usage_flags,
@@ -80,7 +80,7 @@ index 707e9efd..0e473577 100644
        image->usage, image->create_flags, supported_format->atomic);
     layout->create_flags = image->create_flags;
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.h b/src/kosmickrisp/vulkan/kk_image_layout.h
-index c8776dd8..ecfcfef1 100644
+index c8776dd..ecfcfef 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.h
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.h
 @@ -227,7 +227,8 @@ kk_get_level_size_B(const struct kk_image_layout *layout, unsigned level)

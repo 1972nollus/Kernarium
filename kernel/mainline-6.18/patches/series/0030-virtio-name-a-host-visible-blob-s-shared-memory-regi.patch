@@ -1,7 +1,7 @@
 From 8950700ebca31901e774715029eceed8924076f0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 09:06:53 +0900
-Subject: [PATCH 30/34] virtio: name a host-visible blob's shared-memory region
+Subject: [PATCH 30/36] virtio: name a host-visible blob's shared-memory region
 
 A host-visible Virtio-GPU blob lives in the device's shared-memory region
 rather than in guest pages, so a guest driver that imports its dma-buf has

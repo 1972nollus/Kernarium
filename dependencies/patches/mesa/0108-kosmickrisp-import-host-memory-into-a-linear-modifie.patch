@@ -1,8 +1,8 @@
-From 78aaec5c75c4ece29ffc2e867bbbf60691df6d1d Mon Sep 17 00:00:00 2001
+From efb1327b1a2c6b6dafc8d247132506d9687cc3db Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 09:07:17 +0900
-Subject: [PATCH 96/97] kosmickrisp: import host memory into a linear modifier
- image
+Subject: [PATCH 108/109] kosmickrisp: import host memory into a linear
+ modifier image
 
 Imported host memory becomes a MTLBuffer and never a MTLHeap, so an image over
 it has to be a texture over a buffer: a linear layout. The image format query
@@ -30,7 +30,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 75b4fc71..ca26fbf1 100644
+index 75b4fc7..ca26fbf 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -497,7 +497,13 @@ kk_GetPhysicalDeviceImageFormatProperties2(

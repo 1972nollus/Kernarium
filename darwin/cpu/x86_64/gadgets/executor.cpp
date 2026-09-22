@@ -9,8 +9,15 @@
 
 #include <algorithm>
 #include <array>
+#if UML_GADGET_CACHE_CENSUS
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <memory>
+#if UML_GADGET_CACHE_CENSUS
+#include <mutex>
+#endif
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -462,7 +469,6 @@ private:
 		std::optional<Program> program;
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
-		std::vector<std::byte> source;
 		std::array<PageLink, 2> page_links{};
 	};
 
@@ -741,7 +747,7 @@ public:
 	void cancel_selection() noexcept { preceding_ = nullptr; }
 
 	[[nodiscard]] const Program &store(Program &&program,
-		std::vector<std::byte> &&source, std::uint64_t changes,
+		std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
 	{
 		(void)link(program.address(), program.execution_mode());
@@ -784,16 +790,13 @@ public:
 		slot.epoch = 0;
 		successors = {};
 		slot.program.emplace(std::move(program));
-		slot.source = std::move(source);
 		slot.generation = current_generation_;
 		slot.address = slot.program->address();
 		slot.validated_changes = changes;
 		slot.code_stamps = code_stamps;
 		slot.instruction_limit = instruction_limit;
 		slot.mode = slot.program->execution_mode();
-		const auto stream = slot.program->stream();
-		slot.terminal = !stream.empty() &&
-			stream.back().instruction.terminal();
+		slot.terminal = slot.program->terminal();
 		/* Epoch is the validity marker and is written only after the slot is
 		 * complete. */
 		slot.epoch = epoch_;
@@ -802,7 +805,6 @@ public:
 		} catch (...) {
 			slot.epoch = 0;
 			slot.program.reset();
-			slot.source.clear();
 			throw;
 		}
 		activate_link(slot);
@@ -815,9 +817,167 @@ public:
 		return generations_.size();
 	}
 
+#if UML_GADGET_CACHE_CENSUS
+	/* What this cache costs, in bytes it actually holds rather than in the
+	 * capacity it was configured with. The slab array is the only part that
+	 * exists whether or not its ways are occupied; everything else is
+	 * proportional to what the workload translated. */
+	struct Footprint final {
+		std::size_t slabs, streams, decoded, links, indirect, targets;
+		[[nodiscard]] std::size_t total() const noexcept
+		{
+			return slabs + streams + decoded + links + indirect +
+				targets;
+		}
+	};
+
+	[[nodiscard]] Footprint footprint() const noexcept
+	{
+		std::size_t slabs = 0;
+		std::size_t streams = 0;
+		std::size_t decoded = 0;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			slabs += sizeof(Slab);
+			for (const auto &slot : slab->slots) {
+				if (!resident(slot))
+					continue;
+				/* A translation is the native stream and the
+				 * saved source; a block some replay has ended
+				 * inside also holds what that replay
+				 * decoded. */
+				const auto &program = *slot.program;
+				streams += program.native_stream().size_bytes() +
+					program.source().size();
+				decoded += program.replay_bytes();
+			}
+		}
+		std::size_t links = 0;
+		std::size_t indirect = 0;
+		std::size_t targets = 0;
+		for (const auto &[generation, state] : generations_) {
+			for (const auto &mode : state.links)
+				links += map_bytes(mode);
+			links += state.slots.capacity() *
+					sizeof(std::uint32_t) +
+				map_bytes(state.code_pages);
+			for (const auto &mode : state.indirect)
+				indirect += map_bytes(mode);
+			for (const auto &live : state.live_indirect)
+				indirect += live.capacity() *
+					sizeof(IndirectLink *);
+			for (const auto &table : state.target_links)
+				if (table)
+					targets += sizeof(TargetLinkTable);
+		}
+		return {
+			.slabs = slabs,
+			.streams = streams,
+			.decoded = decoded,
+			.links = links,
+			.indirect = indirect,
+			.targets = targets,
+		};
+	}
+
+	[[nodiscard]] std::size_t occupancy() const noexcept
+	{
+		std::size_t occupied = 0;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots)
+				if (resident(slot))
+					++occupied;
+		}
+		return occupied;
+	}
+
+	/* Write what this cache holds, so duplication can be counted instead of
+	 * estimated. The record format is the arm64 executor's, so one analyzer
+	 * reads either engine's capture.
+	 *
+	 * A translation is identified by the guest bytes it consumed, not by the
+	 * stream it produced: two executors translating the same code emit the
+	 * same gadgets but embed pointers to their own link records, so only the
+	 * source identifies the work. The stream length goes out with it because
+	 * it decides what a body costs.
+	 */
+	void census(std::FILE *out) const noexcept
+	{
+		const auto parts = footprint();
+		/* sizeof(Slot) is reported because the slab total covers the
+		 * successor sets as well as the tags, and only the slot size
+		 * separates them. */
+		std::fprintf(out,
+			"E %p generations=%zu occupancy=%zu slot_bytes=%zu "
+			"slabs=%zu streams=%zu decoded=%zu links=%zu "
+			"indirect=%zu targets=%zu total=%zu\n",
+			static_cast<const void *>(this), resident_generations(),
+			occupancy(), sizeof(Slot), parts.slabs, parts.streams,
+			parts.decoded, parts.links, parts.indirect,
+			parts.targets, parts.total());
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots) {
+				if (!resident(slot))
+					continue;
+				const auto &program = *slot.program;
+				const auto source = program.source();
+				/* The same bytes decoded in the other
+				 * execution mode are a different translation,
+				 * so the mode seeds the digest. */
+				std::uint64_t digest = 0xcbf29ce484222325ULL ^
+					mode_index(slot.mode);
+				for (const auto byte : source)
+					digest = (digest ^
+							 static_cast<
+								 std::uint8_t>(
+								 byte)) *
+						0x100000001b3ULL;
+				std::fprintf(out,
+					"P %llu 0x%llx %zu %zu %zu 0x%llx\n",
+					static_cast<unsigned long long>(
+						slot.generation),
+					static_cast<unsigned long long>(
+						slot.address),
+					program.instruction_count(),
+					program.native_stream().size(),
+					source.size(),
+					static_cast<unsigned long long>(
+						digest));
+			}
+		}
+	}
+#endif
+
 private:
 	static constexpr std::uint64_t code_page_mask =
 		~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+
+#if UML_GADGET_CACHE_CENSUS
+	/* A slot holds a translation only while its epoch is the live one; the
+	 * epoch is written last, so nothing else has to be cleared to retire
+	 * one. */
+	[[nodiscard]] bool resident(const Slot &slot) const noexcept
+	{
+		return slot.epoch == epoch_ && slot.program.has_value();
+	}
+
+	/* libc++ keeps one heap node per element -- the value, a next pointer
+	 * and the cached hash -- plus one pointer per bucket. Exact for the
+	 * value, close enough for the node. */
+	template <typename Map>
+	[[nodiscard]] static std::size_t map_bytes(const Map &map) noexcept
+	{
+		constexpr std::size_t node = 2 * sizeof(void *);
+		return map.size() *
+			(sizeof(typename Map::value_type) + node) +
+			map.bucket_count() * sizeof(void *);
+	}
+#endif
 
 	struct ProgramPages final {
 		std::array<std::uint64_t, 2> pages{};
@@ -1249,7 +1409,6 @@ private:
 		deactivate(slot);
 		slot.epoch = 0;
 		slot.program.reset();
-		slot.source.clear();
 		slot.validated_changes = 0;
 		slot.code_stamps = {};
 		slot.terminal = false;
@@ -1261,9 +1420,11 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.program || slot.source.empty() ||
-			slot.source.size() != slot.program->byte_count() ||
-			slot.source.size() > maximum_cached_source_bytes) {
+		if (!slot.program || slot.program->source().empty() ||
+			slot.program->source().size() !=
+				slot.program->byte_count() ||
+			slot.program->source().size() >
+				maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
 			return false;
@@ -1328,7 +1489,7 @@ private:
 		}
 
 		switch (compare_program_source(
-			memory, *slot.program, slot.source)) {
+			memory, *slot.program, slot.program->source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
 			discard(slot);
@@ -1363,6 +1524,23 @@ private:
 	void *code_change_context_{};
 };
 
+#if UML_GADGET_CACHE_CENSUS
+void dump_cache_census(const ProgramCache &programs) noexcept
+{
+	const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
+	if (path == nullptr || *path == '\0')
+		return;
+	/* Appended, because every executor of the run reports its own cache and
+	 * the union across them is the measurement. */
+	static std::mutex census_mutex;
+	const std::lock_guard guard{census_mutex};
+	if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
+		programs.census(out);
+		std::fclose(out);
+	}
+}
+#endif
+
 } // namespace
 
 struct Executor::Storage final {
@@ -1372,6 +1550,12 @@ struct Executor::Storage final {
 	 * executor's own destructor. */
 	~Storage()
 	{
+#if UML_GADGET_CACHE_CENSUS
+		/* Before the cache is emptied, and here rather than in the
+		 * executor's own destructor so that a move-assigned executor
+		 * reports the storage it drops. */
+		dump_cache_census(programs);
+#endif
 		programs.invalidate();
 		registries.drop_all();
 	}
@@ -1654,12 +1838,7 @@ ProgramSelection Executor::select_program(
 	 * ahead of the read or moves the stamp this reads. */
 	const auto held_stamps = capture_held_code_stamps(
 		memory, hold.pages(), storage_->execution_context);
-	/* The decoder's own bytes, which become the slot's saved source. A block
-	 * this long cannot be cached anyway, so the bound is the cache's. */
-	std::array<std::byte, maximum_cached_source_bytes> decoded_source;
-	auto built = build(memory, address, mode, maximum_instructions, links,
-		storage_->cache_ready ? std::span{decoded_source} :
-			std::span<std::byte>{});
+	auto built = build(memory, address, mode, maximum_instructions, links);
 	if (built.status != BuildStatus::built) {
 		storage_->programs.cancel_selection();
 		return {
@@ -1680,8 +1859,7 @@ ProgramSelection Executor::select_program(
 			.cache_hit = false,
 		};
 	};
-	if (!storage_->cache_ready || !built.source_recorded ||
-		built.program.byte_count() == 0 ||
+	if (!storage_->cache_ready || built.program.byte_count() == 0 ||
 		built.program.byte_count() > maximum_cached_source_bytes)
 		return use_transient();
 	const auto code_stamps = program_code_stamps_from_hold(
@@ -1690,11 +1868,8 @@ ProgramSelection Executor::select_program(
 		return use_transient();
 
 	try {
-		const auto recorded = std::span{decoded_source}.first(
-			built.program.byte_count());
-		std::vector<std::byte> source(recorded.begin(), recorded.end());
 		const auto &stored = storage_->programs.store(
-			std::move(built.program), std::move(source),
+			std::move(built.program),
 			storage_->code_changes, maximum_instructions, *code_stamps);
 		return {
 			.status = BuildStatus::built,

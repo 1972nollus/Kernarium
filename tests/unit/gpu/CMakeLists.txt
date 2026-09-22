@@ -488,6 +488,25 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
+    # Its own executable: the descriptor ceiling is process state, and filling
+    # the file table would decide the outcome of anything sharing the process.
+    add_executable(uml_gpu_transport_ceiling_tests
+        gpu_allocation_failure.cpp
+        vhost_user_descriptor_ceiling_test_main.cpp
+        vhost_user_descriptor_ceiling_tests.cpp)
+    target_link_libraries(uml_gpu_transport_ceiling_tests PRIVATE
+        uml_gpu_transport_wire)
+    target_include_directories(uml_gpu_transport_ceiling_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(uml_gpu_transport_ceiling_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_transport_ceiling_tests PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    uml_add_unit_test(NAME gpu-transport-descriptor-ceiling
+        COMMAND uml_gpu_transport_ceiling_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu)
+
     add_library(uml_gpu_service_test_variant STATIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp
         in_process_service_testing.cpp)

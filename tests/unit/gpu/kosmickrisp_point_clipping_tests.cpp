@@ -77,9 +77,13 @@ std::string verify_properties()
     aggregate.pointClippingBehavior = VK_POINT_CLIPPING_BEHAVIOR_MAX_ENUM;
     properties.pNext = &aggregate;
     query(devices.front(), &properties);
-    require(dedicated.pointClippingBehavior == VK_POINT_CLIPPING_BEHAVIOR_ALL_CLIP_PLANES &&
-                aggregate.pointClippingBehavior == VK_POINT_CLIPPING_BEHAVIOR_ALL_CLIP_PLANES,
-            "both property spellings must report ALL_CLIP_PLANES");
+    // Metal keeps a point whose centre leaves the view volume as long as the
+    // point's size still reaches the viewport, which is the rule the
+    // conformance reference rasterizer and OpenGL apply, so the provider clips
+    // a point against user planes and the depth planes only.
+    require(dedicated.pointClippingBehavior == VK_POINT_CLIPPING_BEHAVIOR_USER_CLIP_PLANES_ONLY &&
+                aggregate.pointClippingBehavior == VK_POINT_CLIPPING_BEHAVIOR_USER_CLIP_PLANES_ONLY,
+            "both property spellings must report USER_CLIP_PLANES_ONLY");
     auto features = structure<VkPhysicalDeviceFeatures2>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
     auto depth = structure<VkPhysicalDeviceDepthClipEnableFeaturesEXT>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT);
     features.pNext = &depth;
@@ -131,6 +135,11 @@ std::vector<Case> cases()
     result.push_back({"inside_w2", {0, 0, 1, 2}});
     result.push_back({"on_near_plane", {0, 0, 0, 1}});
     result.push_back({"on_far_plane", {0, 0, 1, 1}});
+    // A point is not clipped against the view-volume side planes: a centre
+    // just outside one still rasterizes the part of the point that reaches the
+    // viewport. Only the guard band the hardware keeps around the volume -
+    // measured at 1.5 in normalized device coordinates on every viewport size,
+    // whatever the point size - drops such a point entirely.
     const std::array<const char *, 4> planes{"left", "right", "bottom", "top"};
     for (unsigned index = 0; index < planes.size(); ++index) {
         const float sign = index % 2 == 0 ? -1.0f : 1.0f;
@@ -138,13 +147,10 @@ std::vector<Case> cases()
             Case value{std::string(planes[index]) + (magnitude < 1 ? "_inside" :
                 magnitude == 1 ? "_on_plane" : "_outside_overlap")};
             value.position[index / 2] = sign * magnitude;
-            value.visible = magnitude <= 1;
             result.push_back(value);
         }
     }
-    Case scaled{"left_outside_w2", {-2.25f, 0, 1, 2}};
-    scaled.visible = false;
-    result.push_back(scaled);
+    result.push_back(Case{"left_outside_w2", {-2.25f, 0, 1, 2}});
     for (bool far : {false, true}) {
         for (bool clip : {false, true}) {
             for (bool clamp : {false, true}) {
@@ -184,9 +190,10 @@ std::vector<Case> cases()
         Case outside = none;
         outside.name = std::string("no_user_") + planes[index];
         outside.position[index / 2] = index % 2 == 0 ? -1.125f : 1.125f;
-        outside.visible = false;
         result.push_back(outside);
     }
+    // Past the guard band the largest point the device advertises still
+    // disappears, so the rule is a bound on the centre, not on the footprint.
     none.name = "no_user_far_corner_large_footprint";
     none.position = {-2, -2, 0.5f, 1};
     none.size = 511;
@@ -195,6 +202,7 @@ std::vector<Case> cases()
     none.name = "no_user_xy_depth_clip0_clamp1";
     none.position = {-1.125f, 0, -0.25f, 1};
     none.size = 48;
+    none.visible = true;
     none.depth_clip = false;
     none.depth_clamp = true;
     result.push_back(none);
@@ -215,7 +223,7 @@ std::vector<Case> cases()
     result.push_back(eight);
     eight.name = "eight_planes_xy_outside";
     eight.position[0] = -1.125f;
-    eight.visible = false;
+    eight.visible = true;
     eight.clip_distance = 1;
     result.push_back(eight);
     for (bool cull : {false, true}) {
@@ -225,7 +233,7 @@ std::vector<Case> cases()
             value.cull = cull;
             value.clip_planes = cull ? 0 : 1;
             value.preclip = !cull;
-            value.visible = condition == 0;
+            value.visible = condition != 2;
             if (condition == 1)
                 value.position[0] = -1.125f;
             if (condition == 2)
@@ -241,7 +249,7 @@ std::vector<Case> cases()
             value.partial_branch = branch;
             value.position = {condition == 1 ? 2.25f : 1.5f, 0, 1, 2};
             value.upstream_position = value.position;
-            value.visible = condition == 0;
+            value.visible = condition != 2;
             value.clip_distance = value.upstream_clip = condition == 2 ? -1 : 1;
             result.push_back(value);
         }

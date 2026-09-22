@@ -287,10 +287,19 @@ A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
 cache still held when the run ended. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to a
 path; each executor appends its measured footprint and one record per resident
 translation, naming the address space, guest PC, stream length and a digest of
-the guest words the translation consumed. Summarize a capture with
+the guest code the translation consumed. Summarize a capture with
 `analyze_gadget_cache_census.py --help`.
 
-Identity is the consumed guest words, not the produced stream, because two
+Both gadget engines report in the same record format, so a private cache costs
+measured bytes rather than an estimate on either. The footprint is the
+committed slabs, every resident translation's own allocations, the link and
+indirect records, and the per-address-space indexes the cache owns; a field an
+engine has no counterpart for is simply absent from its records. Only arm64
+owns a stream lookup index and counts the lookups against it, and only x86-64
+owns a target link table per address space and reports the slot size it was
+compiled with.
+
+Identity is the consumed guest code, not the produced stream, because two
 executors translating the same code embed pointers to their own link records.
 That is what lets the report separate duplication between executors sharing an
 address space from the same code translated again for another address space.

@@ -1,7 +1,7 @@
-From f2d19ff78c4653d35554a6f9e96be77c54cf0be2 Mon Sep 17 00:00:00 2001
+From 7544f05d7e87f2485f1608ff4bfe5992bfa714c5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:12:45 +0900
-Subject: [PATCH 81/97] kosmickrisp: implement
+Subject: [PATCH 081/109] kosmickrisp: implement
  VK_EXT_device_address_binding_report
 
 VP_ANDROID_17_requirements makes this extension mandatory. It asks an
@@ -30,7 +30,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 55 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer.c b/src/kosmickrisp/vulkan/kk_buffer.c
-index f119907d..2a53a8e6 100644
+index f119907..2a53a8e 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer.c
 @@ -13,6 +13,8 @@
@@ -66,7 +66,7 @@ index f119907d..2a53a8e6 100644
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_device_memory.c b/src/kosmickrisp/vulkan/kk_device_memory.c
-index a52d7737..f504640d 100644
+index a52d773..f504640 100644
 --- a/src/kosmickrisp/vulkan/kk_device_memory.c
 +++ b/src/kosmickrisp/vulkan/kk_device_memory.c
 @@ -18,6 +18,8 @@
@@ -101,7 +101,7 @@ index a52d7737..f504640d 100644
  
     vk_device_memory_destroy(&dev->vk, pAllocator, &mem->vk);
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 54321d3a..54965017 100644
+index 54321d3..5496501 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -25,6 +25,12 @@
@@ -163,7 +163,7 @@ index 54321d3a..54965017 100644
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index cb199e69..813ef0d9 100644
+index cb199e6..813ef0d 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

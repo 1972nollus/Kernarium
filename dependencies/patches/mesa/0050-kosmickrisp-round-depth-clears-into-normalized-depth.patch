@@ -1,7 +1,7 @@
-From 1c487848ecfe87224e75c2cca9c92f9652677e29 Mon Sep 17 00:00:00 2001
+From 29fb007f3854acbdba5a6ab15f36233062ee0a5d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:35:49 +0900
-Subject: [PATCH 50/97] kosmickrisp: round depth clears into normalized depth
+Subject: [PATCH 050/109] kosmickrisp: round depth clears into normalized depth
  formats
 
 Round a render pass clear depth to the attachment's representable value
@@ -27,7 +27,7 @@ unaffected and keep their exact value.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 34d0df11..48a76984 100644
+index 34d0df1..48a7698 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -24,6 +24,8 @@

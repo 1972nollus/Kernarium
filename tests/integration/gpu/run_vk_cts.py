@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import subprocess
@@ -96,17 +96,213 @@ APPLE_MUSTPASS_FRACTIONS = 16
 # the progress guard is what actually ends a wedged run.
 APPLE_MUSTPASS_TIMEOUT = 86400
 APPLE_MUSTPASS_PROGRESS_TIMEOUT = 1800
+# Guest memory the ordinary baked device campaigns are sized for. The
+# application's ceiling is the platform jetsam budget, not a choice: raising
+# it trades the guest reaper for the host one. Fraction 03 has a narrower
+# profile below because its large render-to-image transition reaches the host
+# budget before it reaches the guest budget.
+APPLE_MUSTPASS_GUEST_MEMORY_MIB = 1536
+APPLE_MUSTPASS_FRACTION03_GUEST_MEMORY_MIB = 1280
+APPLE_MUSTPASS_FRACTION03_RESTART_BEFORE = (
+    "dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array."
+    "huge.width_height_layers.r8g8b8a8_unorm"
+)
+APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS = 20
+# dEQP ends its whole session at the first ResourceError, so one such case
+# otherwise costs a fraction every case after it. The guest continues the
+# remainder in a fresh process, at most this many processes in all.
+VULKAN_CTS_SESSION_LIMIT = 8
+CONTINUATION_CASELIST = "continue.txt"
+EXCLUSION_REASON = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
+
+
+@dataclass(frozen=True)
+class DeviceExclusion:
+    """Cases a baked device campaign does not run, and why.
+
+    ``patterns`` are group prefixes, written with a trailing dot, or exact case
+    names. ``reason`` is the cause, not the cases: it names what the device
+    cannot do, so a later run on hardware without that limit can select the
+    same cases back from the run's own ``skipped.txt``.
+    """
+
+    reason: str
+    patterns: tuple[str, ...]
+
+    def matches(self, case: str) -> bool:
+        return any(
+            case.startswith(pattern)
+            if pattern.endswith(".")
+            else case == pattern
+            for pattern in self.patterns
+        )
+
+    @property
+    def row(self) -> str:
+        """The reason as it appears in a summary row name."""
+
+        return self.reason.replace("-", "_")
+
+
+@dataclass(frozen=True)
+class AppleMustpassProfile:
+    """The immutable launch contract for one baked device fraction."""
+
+    index: int
+    identifier: str
+    guest_memory_mib: int
+    restart_before: str | None = None
+    restart_settle_seconds: int = 0
+
+
+# What a baked device campaign leaves out, by cause. Nothing here is a verdict:
+# an excluded case is neither a pass nor a failure, the guest transports exactly
+# which cases it left out and under which reason, and only the baked device
+# campaigns exclude anything at all -- every macOS lane runs the released
+# selection unchanged.
+#
+# guest-memory: ``dEQP-VK.reconvergence`` simulates each subgroup's control flow
+# on the CPU. Measured on macOS at the device's own guest profile, fraction 00's
+# 380 reconvergence cases all pass in a fresh process and cost 665 MiB of peak
+# resident size; that peak is additive with the 1.1 GiB the process has already
+# grown to by the time a fraction reaches them, and 1536 MiB cannot hold both.
+DEVICE_EXCLUSIONS: tuple[DeviceExclusion, ...] = (
+    DeviceExclusion("guest-memory", ("dEQP-VK.reconvergence.",)),
+)
+
+
+def apple_mustpass_profile(index: int) -> AppleMustpassProfile:
+    """Return the baked identity, memory, and process plan for a fraction.
+
+    The version is part of the selection's identity: ``v2`` is the first
+    generation that applies ``DEVICE_EXCLUSIONS``, and ``v3`` the first that
+    continues a fraction whose CTS session ended before the traversal did.
+    Fraction 03's ``v4`` profile is the first to use 1280 MiB and one planned
+    CTS restart before its large render-to-image block.
+    """
+
+    if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
+        raise CampaignError(f"Vulkan mustpass fraction out of range: {index}")
+    version = 4 if index == 3 else 3
+    return AppleMustpassProfile(
+        index=index,
+        identifier=(
+            f"vulkan-mustpass-{index:02d}"
+            f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v{version}"
+        ),
+        guest_memory_mib=(
+            APPLE_MUSTPASS_FRACTION03_GUEST_MEMORY_MIB
+            if index == 3
+            else APPLE_MUSTPASS_GUEST_MEMORY_MIB
+        ),
+        restart_before=(
+            APPLE_MUSTPASS_FRACTION03_RESTART_BEFORE
+            if index == 3
+            else None
+        ),
+        restart_settle_seconds=(
+            APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS
+            if index == 3
+            else 0
+        ),
+    )
 
 
 def apple_mustpass_campaign(index: int) -> str:
     """Name the campaign that runs fraction ``index`` of the released list."""
 
-    if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
-        raise CampaignError(f"Vulkan mustpass fraction out of range: {index}")
-    return (
-        f"vulkan-mustpass-{index:02d}"
-        f"of{APPLE_MUSTPASS_FRACTIONS:02d}-v1"
+    return apple_mustpass_profile(index).identifier
+
+
+def apple_mustpass_profile_for_campaign(
+    identifier: str,
+) -> AppleMustpassProfile | None:
+    """Resolve a baked mustpass identifier without accepting stale versions."""
+
+    for index in range(APPLE_MUSTPASS_FRACTIONS):
+        profile = apple_mustpass_profile(index)
+        if identifier == profile.identifier:
+            return profile
+    return None
+
+
+def device_exclusion_partition(
+    cases: Sequence[str],
+    exclusions: Sequence[DeviceExclusion] = DEVICE_EXCLUSIONS,
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Split a case list into what a device campaign runs and what it skips.
+
+    The skipped cases are grouped by reason, in the order the exclusions are
+    declared, and the first matching reason owns a case.
+    """
+
+    selected: list[str] = []
+    skipped: dict[str, list[str]] = {
+        exclusion.reason: [] for exclusion in exclusions
+    }
+    for case in cases:
+        for exclusion in exclusions:
+            if exclusion.matches(case):
+                skipped[exclusion.reason].append(case)
+                break
+        else:
+            selected.append(case)
+    return tuple(selected), {
+        reason: tuple(cases) for reason, cases in skipped.items()
+    }
+
+
+def validate_device_exclusions(
+    exclusions: Sequence[DeviceExclusion],
+) -> tuple[DeviceExclusion, ...]:
+    """Check that every exclusion names a cause, cases, and no mandatory case."""
+
+    seen: set[str] = set()
+    for exclusion in exclusions:
+        if EXCLUSION_REASON.fullmatch(exclusion.reason) is None:
+            raise CampaignError(
+                f"a device exclusion reason is not a cause: {exclusion.reason}"
+            )
+        if exclusion.reason in seen:
+            raise CampaignError(
+                f"a device exclusion reason repeats: {exclusion.reason}"
+            )
+        seen.add(exclusion.reason)
+        if not exclusion.patterns:
+            raise CampaignError(
+                f"device exclusion {exclusion.reason} names no cases"
+            )
+        for pattern in exclusion.patterns:
+            if not pattern.startswith("dEQP-VK."):
+                raise CampaignError(
+                    f"a device exclusion must name dEQP-VK cases: {pattern}"
+                )
+            # A pattern names at least one group below the module, so no
+            # exclusion can be written that takes the whole suite.
+            if (
+                not pattern[len("dEQP-VK.") :].rstrip(".")
+                or CASE_NAME.fullmatch(pattern.rstrip(".")) is None
+            ):
+                raise CampaignError(
+                    f"a device exclusion is not a case or group: {pattern}"
+                )
+    _, mandatory = device_exclusion_partition(
+        receipt_mandatory_cases(), exclusions
     )
+    for reason, cases in mandatory.items():
+        if cases:
+            raise CampaignError(
+                f"device exclusion {reason} covers the mandatory case "
+                f"{cases[0]}"
+            )
+    return tuple(exclusions)
+
+
+def _exclusion_expression(pattern: str) -> str:
+    """Return the anchored basic regular expression matching one pattern."""
+
+    escaped = pattern.replace(".", "[.]")
+    return f"^{escaped}" if pattern.endswith(".") else f"^{escaped}$"
 
 
 def apple_campaigns() -> tuple[str, ...]:
@@ -220,6 +416,30 @@ def validate_wsi_operation(
     if not reference_passes & incremental_passes:
         raise CampaignError(
             "Vulkan WSI selection lacks a matching reference/incremental Pass pair"
+        )
+
+
+def validate_headless_wsi_results(results: dict[str, str]) -> None:
+    """Require the headless device lane to reject every WSI-dependent case."""
+
+    # These two leaves use device-group queries or VK_NULL_HANDLE; neither
+    # creates a native window or a live VkSurfaceKHR. Their verdicts still go
+    # through the same released CTS status oracle as every other result.
+    without_surface = re.compile(
+        r"dEQP-VK\.wsi\.[^.]+\.surface\."
+        r"(?:query_devgroup_present_capabilities|destroy_null_handle)\Z"
+    )
+    unexpected = [
+        (case, status)
+        for case, status in results.items()
+        if case_needs_wsi(case)
+        and without_surface.fullmatch(case) is None
+        and status != "NotSupported"
+    ]
+    if unexpected:
+        case, status = unexpected[0]
+        raise CampaignError(
+            f"headless Vulkan WSI case returned {case}={status}"
         )
 
 
@@ -582,16 +802,19 @@ def receipt_deqp_arguments(
     output: str,
     *,
     resume_after: int = 0,
+    preselected: bool = False,
+    caselist: str = "selected.txt",
 ) -> tuple[str, ...]:
     install = receipt["cts"]["install_prefix"]
     arguments = [
         receipt["cts"]["executable"]["path"],
-        f"--deqp-caselist-file={output}/selected.txt",
+        f"--deqp-caselist-file={output}/{caselist}",
         f"--deqp-archive-dir={install}",
     ]
     # A resumed session executes an explicit suffix of the fraction the guest
-    # already enumerated, so the released fraction filter must not run again.
-    if selection.generated_expected and not resume_after:
+    # already enumerated, and a device-memory selection an explicit subset of
+    # it, so in both cases the released fraction filter must not run again.
+    if selection.generated_expected and not resume_after and not preselected:
         arguments.extend(
             (
                 f"--deqp-fraction={selection.fraction.argument()}",
@@ -870,6 +1093,11 @@ def build_guest_launcher(
         + ' >> "$summary"'
         for index, row in enumerate(required_transcript)
     )
+    transport_functions = common.artifact_transport_program(
+        error_prefix="UML_VK_CTS_ERROR:",
+        base64_line_length=ARTIFACT_BASE64_LINE_LENGTH,
+        missing_source_status=1,
+    )
     return f"""#!/bin/sh
 set -eu
 output=/run/uml-vk-cts
@@ -879,6 +1107,7 @@ renderer="$output/renderer.txt"
 summary="$output/summary.txt"
 channel={shlex.quote(common.VIRTIO_SERIAL_GUEST_DEVICE)}
 channel_ready=0
+artifact_framed=0
 status=1
 
 prepare_channel()
@@ -904,36 +1133,13 @@ emit_frame()
     [ "$actual_ack" = "$expected_ack" ]
 }}
 
-emit_artifact()
-{{
-    name="$1"
-    source="$2"
-    [ -f "$source" ] || return 1
-    compressed="$output/$name.gz"
-    encoded="$compressed.b64"
-    gzip -c "$source" > "$compressed"
-    base64 -w {ARTIFACT_BASE64_LINE_LENGTH} "$compressed" > "$encoded"
-    size=$(wc -c < "$compressed" | tr -d ' ')
-    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
-    chunks=$(wc -l < "$encoded" | tr -d ' ')
-    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
-        "$name" "$size" "$digest")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
-    index=0
-    while IFS= read -r chunk; do
-        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
-            "$name" "$index" "$chunk")
-        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
-        index=$((index + 1))
-    done < "$encoded"
-    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
-    rm -f "$compressed" "$encoded"
-}}
-
+{transport_functions}
 finish()
 {{
     trap - EXIT HUP INT TERM
+    # The exit path never stops early: it is the only place the host's final
+    # frame can come from.
+    set +e
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'mode=%s\n' {shlex.quote(selection.mode)} >> "$summary"
     printf 'expected_case_count=%s\n' {len(selection.expected_cases)} >> "$summary"
@@ -941,10 +1147,12 @@ finish()
     {required_rows}
     transfer=0
     prepare_channel || transfer=1
-    for name in renderer.txt selected.txt results.qpa summary.txt; do
-        [ "$transfer" -eq 0 ] || break
+    for name in renderer.txt selected.txt results.qpa; do
         emit_artifact "$name" "$output/$name" || transfer=1
     done
+    # Sent last, and never withheld because an earlier artifact failed:
+    # the host's wait ends on this frame.
+    emit_artifact summary.txt "$summary" || transfer=1
     if [ "$channel_ready" -eq 1 ]; then
         exec 3>&-
     fi
@@ -1046,9 +1254,34 @@ def build_receipt_guest_launcher(
     checkpoint_bytes: int = common.QPA_CHECKPOINT_BYTES,
     progress_interval: int = 15,
     relax_diagnostics: bool = False,
+    device_exclusions: Sequence[DeviceExclusion] = (),
 ) -> str:
     if resume_after < 0 or checkpoint_bytes < 1 or progress_interval < 1:
         raise CampaignError("Vulkan shard resumption inputs are invalid")
+    exclusions = validate_device_exclusions(device_exclusions)
+    device_profile: AppleMustpassProfile | None = None
+    # A fraction whose first session ends early is continued in fresh dEQP
+    # processes. The bound is on sessions, not on time: the whole run shares
+    # one deadline, so a continuation can only use what the first left.
+    continuation_limit = VULKAN_CTS_SESSION_LIMIT
+    if exclusions and not selection.generated_expected:
+        raise CampaignError(
+            "device exclusions apply to an enumerated released fraction"
+        )
+    if exclusions and resume_after:
+        raise CampaignError(
+            "a device exclusion and a resumed shard are not combined"
+        )
+    if exclusions:
+        if selection.fraction.count != APPLE_MUSTPASS_FRACTIONS:
+            raise CampaignError(
+                "a baked device profile requires the native 16-way fraction"
+            )
+        device_profile = apple_mustpass_profile(selection.fraction.index)
+        if bool(device_profile.restart_before) != bool(
+            device_profile.restart_settle_seconds
+        ):
+            raise CampaignError("a planned device restart profile is invalid")
     # Venus reports a stuck wait on the CTS process's own stderr, which is
     # redirected into a guest file and never leaves the guest. Surfacing it
     # names what the guest is waiting on at the moment a shard stalls, which
@@ -1069,16 +1302,120 @@ def build_receipt_guest_launcher(
     fi
 """ if relax_diagnostics else ""
     relax_state = "relax_offset=0\n" if relax_diagnostics else ""
+    # Measured on the device: a mustpass fraction's results reach ~217 MB and
+    # the CTS process's own output another ~90 MB, in a tmpfs that starts the
+    # run with ~257 MB free. That output is the only thing here nobody reads --
+    # no lane transports it -- so it is what gives way, rather than the results.
+    # The watch above is its one reader, and reads it by offset, so the two are
+    # not generated together.
+    spare_cts_output = "" if relax_diagnostics else """    if [ "$output_free_kb" -lt 65536 ]; then
+        : > "$cts_output"
+        echo 'UML_VK_CTS_NOTE: released the CTS output to keep room for results'
+    fi
+"""
     output = "/run/uml-vk-cts"
     icd_path = "/usr/share/vulkan/icd.d/virtio_icd.json"
     library_path = "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
     cts = receipt["cts"]
     loader_runtime = receipt["vulkan_loader"]["runtime"]
     arguments = receipt_deqp_arguments(
-        receipt, selection, output, resume_after=resume_after
+        receipt,
+        selection,
+        output,
+        resume_after=resume_after,
+        preselected=bool(exclusions),
     )
-    separator = " " + chr(92) + "\n    "
+    separator = " " + chr(92) + "\n        "
     quoted_command = separator.join(shlex.quote(argument) for argument in arguments)
+    # A continuation runs an explicit remainder of the traversal the guest has
+    # already enumerated, so the released fraction's own filter must not run
+    # again over it.
+    continuation_command = separator.join(
+        shlex.quote(argument)
+        for argument in receipt_deqp_arguments(
+            receipt,
+            selection,
+            output,
+            preselected=True,
+            caselist=CONTINUATION_CASELIST,
+        )
+    )
+    planned_restart_setup = ""
+    planned_restart_state = ""
+    first_session_condition = '[ "$cts_sessions" -eq 1 ]'
+    continuation_selection = """    tail -n +$((session_cases + 1)) "$run_list" > "$continuation.next" || break
+    mv "$continuation.next" "$continuation" || break
+    chown uml:uml "$continuation"
+    run_list="$continuation"
+"""
+    continuation_note = (
+        "    printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\n' "
+        '        "$((selected_count - cts_cases))"\n'
+    )
+    # The file whose order the guest's results follow. Only a released
+    # fraction that dEQP itself filters leaves that order in the enumerated
+    # list rather than in the selection handed to it.
+    run_list = (
+        '"$expected"'
+        if selection.generated_expected and not exclusions and not resume_after
+        else '"$selected"'
+    )
+    selected_count_source = '"$run_list"'
+    if device_profile is not None and device_profile.restart_before is not None:
+        restart_case = shlex.quote(device_profile.restart_before)
+        planned_restart_state = """planned_restart_pending=1
+planned_prefix_count=0
+"""
+        first_session_condition += ' && [ "$planned_restart_pending" -eq 0 ]'
+        run_list = '"$continuation"'
+        selected_count_source = '"$selected"'
+        planned_restart_setup = f"""restart_matches=$(grep -n -F -x -- {restart_case} "$selected" || :)
+restart_match_count=$(printf '%s\n' "$restart_matches" | grep -c . || :)
+[ "$restart_match_count" -eq 1 ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart case is not unique in the selection'
+    exit 1
+}}
+restart_line=${{restart_matches%%:*}}
+[ "$restart_line" -gt 1 ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart has no preceding cases'
+    exit 1
+}}
+planned_prefix_count=$((restart_line - 1))
+head -n "$planned_prefix_count" "$selected" > "$continuation"
+chown uml:uml "$continuation"
+[ -s "$continuation" ] || {{
+    echo 'UML_VK_CTS_ERROR: planned restart prefix is empty'
+    exit 1
+}}
+"""
+        continuation_selection = """    planned_restart=0
+    if [ "$planned_restart_pending" -eq 1 ]; then
+        [ "$cts_cases" -le "$planned_prefix_count" ] || break
+    fi
+    if [ "$planned_restart_pending" -eq 1 ] && \\
+       [ "$cts_cases" -eq "$planned_prefix_count" ]; then
+        tail -n +$((planned_prefix_count + 1)) "$selected" \\
+            > "$continuation.next" || break
+        planned_restart_pending=0
+        planned_restart=1
+    else
+        tail -n +$((session_cases + 1)) "$run_list" \\
+            > "$continuation.next" || break
+    fi
+    mv "$continuation.next" "$continuation" || break
+    chown uml:uml "$continuation"
+    run_list="$continuation"
+"""
+        continuation_note = f"""    if [ "$planned_restart" -eq 1 ]; then
+        sleep {device_profile.restart_settle_seconds}
+        printf 'UML_VK_CTS_NOTE: planned restart before %s; continuing %s cases\\n' \\
+            {restart_case} \\
+            "$((selected_count - cts_cases))"
+    else
+        printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\\n' \\
+            "$((selected_count - cts_cases))"
+    fi
+"""
     if selection.generated_expected:
         selected_setup = (
             "cp "
@@ -1118,17 +1455,64 @@ chown uml:uml \"$selected\"
     exit 1
 }}
 """
-        expected_count = '$(wc -l < "$expected" | tr -d \' \')'
-        if resume_after:
-            expected_count = (
-                f'$(( {expected_count} - {resume_after} ))'
-            )
+        # The count is a snapshot of what this guest set out to run, taken
+        # before any continuation rewrites the remaining selection.
+        expected_count = '"${selected_count:-0}"'
         prerun_artifact_names = "renderer.txt selected.txt expected.txt"
         fraction_summary = (
             "    printf 'fraction=%s\\n' "
             + shlex.quote(selection.fraction.argument())
             + ' >> "$summary"\n'
         )
+        if exclusions:
+            # The enumerated fraction is split here rather than filtered by
+            # dEQP, so the guest runs exactly the remainder and keeps the
+            # excluded names against their reason. An empty skip list is a
+            # normal outcome for a fraction no exclusion reaches.
+            every = " ".join(
+                "-e " + shlex.quote(_exclusion_expression(pattern))
+                for exclusion in exclusions
+                for pattern in exclusion.patterns
+            )
+            expected_setup += f"""grep -v {every} \"$expected\" > \"$selected\" || :
+chown uml:uml \"$selected\"
+[ -s \"$selected\" ] || {{
+    echo 'UML_VK_CTS_ERROR: device exclusions selected no cases'
+    exit 1
+}}
+"""
+            for exclusion in exclusions:
+                patterns = " ".join(
+                    "-e " + shlex.quote(_exclusion_expression(pattern))
+                    for pattern in exclusion.patterns
+                )
+                expected_setup += (
+                    f"grep {patterns} \"$expected\" | "
+                    f"awk -v reason={shlex.quote(exclusion.reason)} "
+                    "'{ print reason \"\\t\" $0 }' >> \"$skipped\" || :\n"
+                    f"skipped_{exclusion.row}=$(grep -c {patterns} "
+                    "\"$expected\" || :)\n"
+                )
+            expected_setup += 'chown uml:uml "$skipped"\n'
+            expected_count = '"${selected_count:-0}"'
+            prerun_artifact_names += " skipped.txt"
+            fraction_summary += (
+                "    printf 'device_excluded=%s\\n' "
+                '"$(wc -l < "$skipped" | tr -d \' \')" >> "$summary"\n'
+            )
+            for exclusion in exclusions:
+                fraction_summary += (
+                    f"    printf 'device_excluded_{exclusion.row}=%s\\n' "
+                    f'"${{skipped_{exclusion.row}}}" >> "$summary"\n'
+                    f"    printf 'device_exclusion_{exclusion.row}=%s\\n' "
+                    + shlex.quote(" ".join(exclusion.patterns))
+                    + ' >> "$summary"\n'
+                )
+            fraction_summary += (
+                "    printf 'device_memory_mib=%s\\n' "
+                f"{device_profile.guest_memory_mib}"
+                ' >> "$summary"\n'
+            )
     else:
         selected_b64 = base64.b64encode(
             "".join(f"{case}\n" for case in selection.source_cases).encode()
@@ -1145,9 +1529,9 @@ chown uml:uml \"$selected\"
                 'mv "$selected.resume" "$selected"\n'
                 'chown uml:uml "$selected"\n'
             )
-        expected_count = str(len(selection.expected_cases) - resume_after)
-        if int(expected_count) < 1:
+        if len(selection.expected_cases) - resume_after < 1:
             raise CampaignError("shard resumption selects no remaining cases")
+        expected_count = '"${selected_count:-0}"'
         prerun_artifact_names = "renderer.txt selected.txt"
         fraction_summary = ""
     verified_files = (
@@ -1171,6 +1555,19 @@ chown uml:uml \"$selected\"
         for row in verified_files
     )
     receipt_digest = _sha256_file(receipt_path)
+    # The skip list and its per-reason counts exist from the first line, so the
+    # exit trap can report them even when the enumeration itself failed.
+    skipped_state = (
+        'skipped="$output/skipped.txt"\n'
+        + "".join(f"skipped_{item.row}=0\n" for item in exclusions)
+        if exclusions
+        else ""
+    )
+    skipped_creation = (
+        ': > "$skipped"\nchown uml:uml "$skipped"\n' if exclusions else ""
+    )
+    # Linux truncates a thread name to fifteen characters plus its terminator.
+    cts_comm = PurePosixPath(cts["executable"]["path"]).name[:15]
     use_wayland = use_wsi and receipt_selection_uses_wayland(selection)
     wsi_setup = common.native_x11_setup(wayland=use_wayland) if use_wsi else ""
     wsi_environment = ""
@@ -1192,12 +1589,20 @@ chown uml:uml \"$selected\"
         poweroff = (
             "    systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1\n"
         )
+    transport_functions = common.artifact_transport_program(
+        error_prefix="UML_VK_CTS_ERROR:",
+        base64_line_length=ARTIFACT_BASE64_LINE_LENGTH,
+        missing_source_status=1,
+    )
+    checkpoint_function = common.qpa_checkpoint_program()
+    continuation_caselist = CONTINUATION_CASELIST
     return f"""#!/bin/sh
 set -eu
 output={output}
 selected="$output/selected.txt"
 expected="$output/expected.txt"
-qpa="$output/results.qpa"
+continuation="$output/{continuation_caselist}"
+{skipped_state}qpa="$output/results.qpa"
 renderer="$output/renderer.txt"
 summary="$output/summary.txt"
 cts_output="$output/cts-output.txt"
@@ -1207,11 +1612,16 @@ checkpoint_bytes={checkpoint_bytes}
 progress_timeout={progress_timeout}
 progress_interval={progress_interval}
 prerun_emitted=0
+artifact_framed=0
 {relax_state}qpa_offset=0
 qpa_segments=0
+checkpoint_failures=0
 progress_timed_out=0
 status=1
-
+cts_sessions=0
+cts_cases=0
+selected_count=0
+{planned_restart_state}
 prepare_channel()
 {{
     [ "$channel_ready" -eq 0 ] || return 0
@@ -1235,58 +1645,8 @@ emit_frame()
     [ "$actual_ack" = "$expected_ack" ]
 }}
 
-emit_artifact()
-{{
-    name="$1"
-    source="$2"
-    [ -f "$source" ] || return 1
-    compressed="$output/$name.gz"
-    encoded="$compressed.b64"
-    gzip -c "$source" > "$compressed"
-    base64 -w {ARTIFACT_BASE64_LINE_LENGTH} "$compressed" > "$encoded"
-    size=$(wc -c < "$compressed" | tr -d ' ')
-    digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
-    chunks=$(wc -l < "$encoded" | tr -d ' ')
-    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
-        "$name" "$size" "$digest")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
-    index=0
-    while IFS= read -r chunk; do
-        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
-            "$name" "$index" "$chunk")
-        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
-        index=$((index + 1))
-    done < "$encoded"
-    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
-    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
-    rm -f "$compressed" "$encoded"
-}}
-
-flush_qpa()
-{{
-    force="$1"
-    [ -f "$qpa" ] || return 0
-    qpa_size=$(wc -c < "$qpa" | tr -d ' ')
-    qpa_delta=$((qpa_size - qpa_offset))
-    if [ "$qpa_delta" -le 0 ]; then
-        if [ "$force" -ne 1 ] || [ "$qpa_segments" -ne 0 ]; then
-            return 0
-        fi
-        qpa_delta=0
-    fi
-    segment=$(printf 'results.qpa.%04d' "$qpa_segments")
-    if [ "$qpa_delta" -eq 0 ]; then
-        : > "$output/$segment"
-    else
-        tail -c +$((qpa_offset + 1)) "$qpa" | head -c "$qpa_delta" \
-            > "$output/$segment"
-    fi
-    emit_artifact "$segment" "$output/$segment" || return 1
-    rm -f "$output/$segment"
-    qpa_offset=$qpa_size
-    qpa_segments=$((qpa_segments + 1))
-}}
-
+{transport_functions}
+{checkpoint_function}
 emit_prerun()
 {{
     [ "$prerun_emitted" -eq 0 ] || return 0
@@ -1296,27 +1656,98 @@ emit_prerun()
     prerun_emitted=1
 }}
 
+# The CTS process is a grandchild of this script through runuser and timeout,
+# so its resident size is found by name.  A guest killed by the out-of-memory
+# reaper leaves no other evidence of how close it was: the progress line is
+# the only memory reading the device lane can ever see.
+find_cts_process()
+{{
+    if [ -n "$cts_process" ] && [ -r "/proc/$cts_process/status" ]; then
+        return 0
+    fi
+    cts_process=
+    for entry in /proc/[0-9]*; do
+        [ -r "$entry/comm" ] || continue
+        read -r entry_comm < "$entry/comm" 2>/dev/null || continue
+        [ "$entry_comm" = {shlex.quote(cts_comm)} ] || continue
+        cts_process=${{entry#/proc/}}
+        return 0
+    done
+    return 0
+}}
+
+cts_process_field()
+{{
+    field_value=
+    if [ -n "$cts_process" ]; then
+        field_value=$(sed -n \
+            "s/^$1:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" \
+            "/proc/$cts_process/status" 2>/dev/null)
+    fi
+    [ -n "$field_value" ] || field_value=0
+    printf '%s' "$field_value"
+}}
+
 finish()
 {{
     trap - EXIT HUP INT TERM
+    # Nothing below may stop the exit path early. This is the only place the
+    # host's final frame can come from, and errexit here once turned a single
+    # failed write on a full guest filesystem into a fraction that ran every
+    # case and delivered no summary at all.
+    set +e
+    transfer=0
+    qpa_transfer=unsent
+    prepare_channel || transfer=1
+    if [ "$channel_ready" -eq 1 ]; then
+        emit_prerun || transfer=1
+        if flush_qpa 1; then
+            qpa_transfer=complete
+        elif [ "$artifact_framed" -eq 0 ]; then
+            # Nothing of that segment reached the host, so its name is still
+            # free. The growing QPA and the CTS process's own output share the
+            # guest's tmpfs and that output is never transported: release it
+            # and ask for the remaining results once more.
+            : > "$cts_output" 2>/dev/null
+            if flush_qpa 1; then
+                qpa_transfer=recovered
+            else
+                qpa_transfer=failed
+            fi
+        else
+            qpa_transfer=failed
+        fi
+    fi
+    qpa_missing=0
+    if [ -f "$qpa" ]; then
+        qpa_missing=$(($(wc -c < "$qpa" | tr -d ' ') - qpa_offset))
+        [ "$qpa_missing" -ge 0 ] || qpa_missing=0
+    fi
+    case "$qpa_transfer" in
+    complete|recovered) ;;
+    *) transfer=1 ;;
+    esac
+    # Every transported segment is on the host and nothing in the guest reads
+    # these again: release the space the summary needs before writing it.
+    : > "$cts_output" 2>/dev/null
+    : > "$qpa" 2>/dev/null
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'mode=%s\n' {shlex.quote(selection.mode)} >> "$summary"
     printf 'expected_case_count=%s\n' {expected_count} >> "$summary"
+    printf 'cts_sessions=%s\n' "${{cts_sessions:-0}}" >> "$summary"
+    printf 'cts_cases_run=%s\n' "${{cts_cases:-0}}" >> "$summary"
 {fraction_summary}    printf 'forced_driver_file=%s\n' {shlex.quote(icd_path)} >> "$summary"
     printf 'receipt_sha256=%s\n' {shlex.quote(receipt_digest)} >> "$summary"
     printf 'formal_conformance=false\n' >> "$summary"
-    transfer=0
-    prepare_channel || transfer=1
-    if [ "$transfer" -eq 0 ]; then
-        emit_prerun || transfer=1
+    printf 'qpa_transfer=%s\n' "$qpa_transfer" >> "$summary"
+    if [ "$qpa_transfer" != complete ]; then
+        printf 'qpa_missing_bytes=%s\n' "$qpa_missing" >> "$summary"
     fi
-    if [ "$transfer" -eq 0 ]; then
-        flush_qpa 1 || transfer=1
-    fi
-    if [ "$transfer" -eq 0 ]; then
-        emit_artifact summary.txt "$summary" || transfer=1
-    fi
+    # Sent last, and never withheld because a segment failed: a fraction
+    # that lost results says so in its own verdict rather than ending in
+    # silence.
     if [ "$channel_ready" -eq 1 ]; then
+        emit_artifact summary.txt "$summary" || transfer=1
         exec 3>&-
     fi
     [ "$transfer" -eq 0 ] || echo 'UML_VK_CTS_ERROR: artifact transfer failed'
@@ -1328,7 +1759,7 @@ install -d -m 0755 -o uml -g uml "$output"
 {selected_setup}
 : > "$qpa"
 chown uml:uml "$qpa"
-actual_page_size=$(getconf PAGESIZE)
+{skipped_creation}actual_page_size=$(getconf PAGESIZE)
 [ "$actual_page_size" -eq {page_size} ] || {{
     echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {page_size}"
     exit 1
@@ -1358,7 +1789,7 @@ verify_file()
 {verification_rows}
 
 {wsi_setup}
-{expected_setup}
+{expected_setup}{planned_restart_setup}
 : > "$cts_output"
 chown uml:uml "$cts_output"
 cd {shlex.quote(cts['install_prefix'])}
@@ -1371,15 +1802,35 @@ emit_prerun || {{
     exit 1
 }}
 
+run_list={run_list}
+selected_count=$(wc -l < {selected_count_source} | tr -d ' ')
+[ "$selected_count" -gt 0 ] || {{
+    echo 'UML_VK_CTS_ERROR: the guest selection is empty'
+    exit 1
+}}
 set +e
-runuser -u uml -- env \
-    HOME=/home/uml \
-{wsi_environment}    VK_DRIVER_FILES={shlex.quote(icd_path)} \
-    timeout --signal=TERM --kill-after=30 {timeout} \
-    {quoted_command} > "$cts_output" 2>&1 &
+deadline=$(( $(date +%s) + {timeout} ))
+while :; do
+    session_timeout=$(( deadline - $(date +%s) ))
+    [ "$session_timeout" -gt 0 ] || break
+    cts_sessions=$((cts_sessions + 1))
+    if {first_session_condition}; then
+        runuser -u uml -- env \
+            HOME=/home/uml \
+{wsi_environment}            VK_DRIVER_FILES={shlex.quote(icd_path)} \
+            timeout --signal=TERM --kill-after=30 "$session_timeout" \
+            {quoted_command} >> "$cts_output" 2>&1 &
+    else
+        runuser -u uml -- env \
+            HOME=/home/uml \
+{wsi_environment}            VK_DRIVER_FILES={shlex.quote(icd_path)} \
+            timeout --signal=TERM --kill-after=30 "$session_timeout" \
+            {continuation_command} >> "$cts_output" 2>&1 &
+    fi
 cts_pid=$!
 last_qpa_size=0
 stalled_seconds=0
+cts_process=
 while kill -0 "$cts_pid" 2>/dev/null; do
     sleep "$progress_interval"
     current_qpa_size=$(wc -c < "$qpa" | tr -d ' ')
@@ -1391,13 +1842,33 @@ while kill -0 "$cts_pid" 2>/dev/null; do
     else
         stalled_seconds=$((stalled_seconds + progress_interval))
     fi
-    printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|case=%s\n' \
-        "$current_qpa_size" "$stalled_seconds" "$current_case"
-{relax_watch}    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ]; then
-        flush_qpa 0 || {{
-            echo 'UML_VK_CTS_ERROR: artifact transfer failed'
-            break
-        }}
+    find_cts_process
+    cts_rss_kb=$(cts_process_field VmRSS)
+    cts_peak_kb=$(cts_process_field VmHWM)
+    mem_available_kb=$(sed -n \
+        's/^MemAvailable:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' /proc/meminfo)
+    [ -n "$mem_available_kb" ] || mem_available_kb=0
+    # The whole growing QPA lives in the guest's own tmpfs, so the room left
+    # there is a run-ending limit of its own and nothing outside the guest can
+    # see it.
+    output_free_kb=$(df -kP "$output" 2>/dev/null | awk 'NR==2 {{print $4}}')
+    [ -n "$output_free_kb" ] || output_free_kb=0
+    printf 'UML_VK_CTS_PROGRESS|qpa_bytes=%s|stalled_seconds=%s|cts_rss_kb=%s|cts_peak_kb=%s|mem_available_kb=%s|output_free_kb=%s|case=%s\n' \
+        "$current_qpa_size" "$stalled_seconds" "$cts_rss_kb" \
+        "$cts_peak_kb" "$mem_available_kb" "$output_free_kb" "$current_case"
+{relax_watch}{spare_cts_output}    # A checkpoint that fails before it frames anything keeps its bytes
+    # pending, so the loop stays up and the next one carries them. One that
+    # fails with frames already sent is done for: the host cannot be given
+    # that name twice, so nothing further is attempted for it.
+    if [ $((current_qpa_size - qpa_offset)) -ge "$checkpoint_bytes" ] && \
+       [ "$checkpoint_failures" -lt 3 ]; then
+        if flush_qpa 0; then
+            checkpoint_failures=0
+        else
+            checkpoint_failures=$((checkpoint_failures + 1))
+            [ "$artifact_framed" -eq 0 ] || checkpoint_failures=3
+            echo 'UML_VK_CTS_ERROR: QPA checkpoint transfer failed'
+        fi
     fi
     if [ "$progress_timeout" -gt 0 ] && \
        [ "$stalled_seconds" -ge "$progress_timeout" ]; then
@@ -1408,12 +1879,38 @@ while kill -0 "$cts_pid" 2>/dev/null; do
         break
     fi
 done
-if [ "$progress_timed_out" -eq 1 ]; then
-    status=124
-else
-    wait "$cts_pid"
-    status=$?
-fi
+    if [ "$progress_timed_out" -eq 1 ]; then
+        session_status=124
+    else
+        wait "$cts_pid"
+        session_status=$?
+    fi
+    session_cases=$(grep -c '^#endTestCaseResult' "$qpa")
+    [ -n "$session_cases" ] || session_cases=0
+    cts_cases=$((cts_cases + session_cases))
+    # The first non-zero status owns the fraction, so a continuation that runs
+    # clean never hides the session that did not.
+    if [ "$cts_sessions" -eq 1 ] || [ "$status" -eq 0 ]; then
+        status=$session_status
+    fi
+    [ "$progress_timed_out" -eq 0 ] || break
+    [ "$cts_cases" -lt "$selected_count" ] || break
+    [ "$cts_sessions" -lt {continuation_limit} ] || break
+    # A session that transported no new result cannot be continued past
+    # whatever stopped it, so the shard ends rather than looping on it.
+    [ "$session_cases" -gt 0 ] || break
+    # dEQP ends its whole session at a resource error, so every case after one
+    # goes unrun. Send this session's results, release its log, and run the
+    # remainder of the same traversal in a fresh process: nothing is re-run,
+    # nothing is invented, and the host receives one ordered result stream.
+    flush_qpa 0
+    qpa_size_now=$(wc -c < "$qpa" | tr -d ' ')
+    [ "$qpa_offset" -eq "$qpa_size_now" ] || break
+{continuation_selection}    [ -s "$run_list" ] || break
+    : > "$qpa"
+    chown uml:uml "$qpa"
+    qpa_offset=0
+{continuation_note}done
 set -e
 printf 'UML_VK_CTS_STATUS|rc=%s\n' "$status"
 exit "$status"
@@ -1658,26 +2155,64 @@ def validate_receipt_attempt(
     artifacts: dict[str, bytes],
     *,
     session_count: int = 1,
+    device_exclusions: Sequence[DeviceExclusion] = (),
+    headless_wsi: bool = False,
 ) -> dict[str, Any]:
     if session_count < 1:
         raise CampaignError("a shard needs at least one guest session")
+    exclusions = validate_device_exclusions(device_exclusions)
+    if exclusions and not selection.generated_expected:
+        raise CampaignError(
+            "device exclusions require an enumerated released fraction"
+        )
+    device_profile: AppleMustpassProfile | None = None
+    if exclusions:
+        if selection.fraction.count != APPLE_MUSTPASS_FRACTIONS:
+            raise CampaignError(
+                "a baked device profile requires the native 16-way fraction"
+            )
+        device_profile = apple_mustpass_profile(selection.fraction.index)
     required = {"renderer.txt", "selected.txt", "results.qpa", "summary.txt"}
     if selection.generated_expected:
         required.add("expected.txt")
+    if exclusions:
+        required.add("skipped.txt")
     if set(artifacts) != required:
         raise CampaignError("receipt-backed Vulkan CTS artifact set is incomplete")
     selected_payload = artifacts["selected.txt"]
     if selection.generated_expected:
-        selected_contract = receipt["mustpass"]["top_level"]
-        if (
-            len(selected_payload) != selected_contract["size"]
-            or hashlib.sha256(selected_payload).hexdigest()
-            != selected_contract["sha256"]
-        ):
-            raise CampaignError("receipt-backed top-level CTS selection drifted")
-        expected_cases = _parse_case_artifact(
+        enumerated_cases = _parse_case_artifact(
             artifacts["expected.txt"], "receipt-backed enumerated fraction"
         )
+        if exclusions:
+            expected_cases, skipped = device_exclusion_partition(
+                enumerated_cases, exclusions
+            )
+            expected_selected = "".join(
+                f"{case}\n" for case in expected_cases
+            ).encode()
+            if selected_payload != expected_selected:
+                raise CampaignError(
+                    "device CTS selection does not match its exclusions"
+                )
+            expected_skipped = "".join(
+                f"{reason}\t{case}\n"
+                for reason, cases in skipped.items()
+                for case in cases
+            ).encode()
+            if artifacts["skipped.txt"] != expected_skipped:
+                raise CampaignError("device CTS exclusion report drifted")
+        else:
+            selected_contract = receipt["mustpass"]["top_level"]
+            if (
+                len(selected_payload) != selected_contract["size"]
+                or hashlib.sha256(selected_payload).hexdigest()
+                != selected_contract["sha256"]
+            ):
+                raise CampaignError(
+                    "receipt-backed top-level CTS selection drifted"
+                )
+            expected_cases = enumerated_cases
     else:
         selected = selected_payload.decode("utf-8", errors="strict")
         expected_selected = "".join(
@@ -1695,6 +2230,26 @@ def validate_receipt_attempt(
         "receipt_sha256": receipt_digest,
         "formal_conformance": "false",
     }
+    if exclusions:
+        expected_summary["device_excluded"] = str(
+            sum(len(cases) for cases in skipped.values())
+        )
+        for exclusion in exclusions:
+            cases = skipped[exclusion.reason]
+            expected_summary[f"device_excluded_{exclusion.row}"] = str(
+                len(cases)
+            )
+            expected_summary[f"device_exclusion_{exclusion.row}"] = " ".join(
+                exclusion.patterns
+            )
+        expected_summary["device_memory_mib"] = str(
+            device_profile.guest_memory_mib
+        )
+    else:
+        # The guest states whether every QPA byte it produced reached the host.
+        # Anything but a complete transfer means results were lost, which no
+        # attempt may be accepted with, however the cases themselves went.
+        expected_summary["qpa_transfer"] = "complete"
     if selection.generated_expected:
         expected_summary["fraction"] = selection.fraction.argument()
     if session_count > 1:
@@ -1703,6 +2258,58 @@ def validate_receipt_attempt(
         expected_summary["provenance"] = "host-merged"
         expected_summary["sessions"] = str(session_count)
     cts_rc = summary.pop("cts_rc", None)
+    # dEQP ends its whole session at a resource error, so a guest continues
+    # the remainder of the same ordered caselist in a fresh CTS process. How
+    # many processes that took, and how many cases they produced, is evidence
+    # about this guest rather than a fixed expectation: the union against the
+    # enumerated fraction is what decides completeness, and a shard the host
+    # resumed carries only its last guest's counters here.
+    cts_sessions = summary.pop("cts_sessions", None)
+    cts_cases_run = summary.pop("cts_cases_run", None)
+    # Device campaigns recorded before these diagnostic counters were added are
+    # still complete when their QPA proves the exact selected union. The v4
+    # profile requires counters and at least two sessions for its planned
+    # restart. A single device launch must account for every selected case.
+    minimum_sessions = (
+        2 if device_profile is not None and device_profile.restart_before else 1
+    )
+    if (cts_sessions is None) != (cts_cases_run is None):
+        raise CampaignError("receipt-backed CTS guest counters are incomplete")
+    if cts_sessions is None:
+        if not exclusions or minimum_sessions > 1:
+            raise CampaignError(
+                "receipt-backed CTS states no guest session count"
+            )
+    else:
+        if not cts_sessions.isdigit() or not (
+            minimum_sessions <= int(cts_sessions) <= VULKAN_CTS_SESSION_LIMIT
+        ):
+            raise CampaignError(
+                "receipt-backed CTS states no guest session count"
+            )
+        if not cts_cases_run.isdigit() or not (
+            0 < int(cts_cases_run) <= len(expected_cases)
+        ):
+            raise CampaignError("receipt-backed CTS states no guest case count")
+        if exclusions and int(cts_cases_run) != len(expected_cases):
+            raise CampaignError(
+                "device CTS guest case count is not the complete selection"
+            )
+    if exclusions:
+        transfer = summary.pop("qpa_transfer", None)
+        missing = summary.pop("qpa_missing_bytes", None)
+        if transfer == "complete":
+            if missing is not None:
+                raise CampaignError(
+                    "complete device QPA transfer reports missing bytes"
+                )
+        elif transfer == "recovered":
+            if missing != "0":
+                raise CampaignError(
+                    "recovered device QPA transfer still misses bytes"
+                )
+        else:
+            raise CampaignError("device QPA transfer is incomplete")
     allowed_return_codes = (
         {"0", "1"} if selection.generated_expected else {"0"}
     )
@@ -1754,7 +2361,10 @@ def validate_receipt_attempt(
         )
     if FORBIDDEN_SOFTWARE_ICD.search(renderer):
         raise CampaignError("receipt-backed renderer evidence selected a software ICD")
-    validate_wsi_operation(selection, results, renderer)
+    if headless_wsi:
+        validate_headless_wsi_results(results)
+    else:
+        validate_wsi_operation(selection, results, renderer)
     if not selection.generated_expected:
         return {
             "outcome": "receipt-backed-cts",

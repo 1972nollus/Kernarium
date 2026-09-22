@@ -1,7 +1,7 @@
-From 5fb2d6a89540fdd7d03c05571c971e96f653c7c7 Mon Sep 17 00:00:00 2001
+From d7637eaaa9d924be09ea5e2f17ccd577bf1eb6f6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:23:49 +0900
-Subject: [PATCH 10/49] venus: transport native device-address commands and
+Subject: [PATCH 10/51] venus: transport native device-address commands and
  maintenance
 
 ---
@@ -552,7 +552,7 @@ index bdd2ab8..c2870a0 100644
  #include "vkr_command_buffer.h"
  #include "vkr_context.h"
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index 67f83f9..7af0a20 100644
+index 980b687..fe75431 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -8,7 +8,7 @@

@@ -190,7 +190,8 @@ if(TARGET uml_slirp_forward_tests)
 endif()
 if(UML_BUILD_UNIT_TESTS AND TARGET uml_gpu_service)
     list(APPEND _uml_required_conditional_tests
-        gpu-transport-wire-ownership)
+        gpu-transport-wire-ownership
+        gpu-transport-descriptor-ceiling)
 endif()
 if(TARGET uml_gpu_service_fd_tests)
     list(APPEND _uml_required_conditional_tests gpu-service-fd-ownership)

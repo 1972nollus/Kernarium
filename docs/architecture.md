@@ -60,11 +60,55 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
+The window is a reservation, and it never returns address space to the process
+while the VM lives. It is created once as a single `PROT_NONE MAP_NORESERVE`
+anonymous mapping, guest pages are mapped over it with `MAP_FIXED`, and
+releasing one hands its range back to that reservation instead of unmapping it:
+one mapping call, no committed pages, and the replacement is atomic. `munmap`
+would delete the reservation along with the mapping and leave a free gap inside
+the window. Darwin's allocation hint follows the most recently freed range, so
+on iOS - where the host chooses the window's address and it therefore sits in
+the band the system allocators draw from - such a gap is not merely available to
+an unrelated `mmap(NULL)` or `mach_vm_allocate(ANYWHERE)` but preferred by it.
+Either party then destroys the other in silence: the guest's next `MAP_FIXED`
+replaces the new owner's memory and still reports success, and that owner's own
+release removes live guest mappings the guest never asked to drop. The window's
+map entries are bounded by its geometry rather than by how often the guest maps,
+because re-mapping a released range replaces its entry instead of adding one.
+Domain retirement follows the same rule: it ends one address space, not the
+process, and a later one maps the same window.
+
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
 Physical iOS wires all guest-allocatable pages before publishing them, while
-macOS and Simulator retain demand allocation.
+macOS and Simulator retain demand allocation. Wiring is a compression-avoidance
+property, not a mapping one: a refused wiring keeps the mapping it was asked to
+pin, because a caller told the mapping failed drops its record of a mapping the
+host still serves, and a host mapping no page table names outlives everything
+that could have removed it.
+
+A host mapping call that fails says so. The kernel distinguishes an exhausted
+host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
+codes both arrive as that, and the first such failures are reported on the run's
+own console rather than behind a trace variable. Without both, an exhausted host
+reaches the guest as page tables describing memory that is not there, with
+nothing in the run saying why.
+
+A kernel-range flush completes or the kernel stops. `flush_cache_vmap()` and
+`flush_cache_vunmap()` are both `flush_tlb_kernel_range()` on this port, so
+every vmalloc map and unmap is one such call and its result is never discarded:
+a transient host failure is retried a bounded number of times, and a persistent
+one panics. A flush requested from inside the walker that already owns the
+kernel turnstile is recorded and drained by that walker before it releases
+ownership, so it is deferred but never dropped. A guest returning from
+`flush_tlb_kernel_range()` may therefore assume the host agrees with `init_mm`'s
+page tables over that range. The unmap side needs this most:
+`__purge_vmap_area_lazy()` releases those addresses for reuse immediately
+afterwards, and nothing ever faults on a mapping that should not exist, so a
+dropped unmap leaves the host serving a freed page with no fault to repair it.
+A failed kernel map unmaps its own address for the same reason, degrading to
+"not mapped", which the fault path does repair.
 
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
@@ -275,6 +319,52 @@ own vhost-user connection and requires no GPU context. The
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
+The transport also owns this process's open-descriptor ceiling, and raises it
+to whatever the host permits before the first connection serves a request. A
+backend that publishes a shared-memory region hands the guest one descriptor
+for every host-visible blob it maps, the guest holds each one for as long as
+that mapping lives, and the transport is an in-process socketpair, so guest and
+backend draw on a single file table bounded only by the region's mapping count.
+Darwin refuses to install an arriving `SCM_RIGHTS` once that table is full and
+reports the refusal as `EMSGSIZE` on the read, which the transport reports as
+the descriptor exhaustion it is rather than as an over-long message.
+
+A lost backend retires the device rather than being warned about. A virtqueue
+call or kick descriptor, or the backend request stream, that reports end of
+file or an error which is not a would-block means the backend is gone: the
+guest stops that interrupt source at once, reports it once per queue naming the
+device, and hands the device to the connection-broken path, which breaks its
+virtqueues and unregisters it so that pending and later requests fail instead
+of waiting for completions that cannot arrive. Stopping the source cannot wait
+for that teardown, because a host read registration is level triggered and a
+descriptor at end of file stays readable: its handler would otherwise be
+re-entered until it consumed a whole vCPU, which no amount of disabling the
+interrupt line prevents. A would-block still ends an ordinary pass, so a
+healthy device and a spurious wake are unaffected.
+
+In-band notifications are always negotiated, so a queue is kicked by a
+synchronous request on the control socket rather than through a kick
+descriptor, and the backend answers a kick only after it has run that queue.
+The guest endpoint of that socket is therefore blocking and the guest imposes
+no deadline on the answer: a kick behind a long submission is waited out, for
+as long as the submission takes. That is what makes every failure of the round
+trip a real one, because `virtqueue_notify()` latches a virtqueue broken
+permanently and irreversibly as soon as a notification reports failure, and no
+driver can undo it. A backend that answers late is healthy; a backend whose
+answer never comes, or comes malformed, is gone: the guest reports the failed
+round trip once, naming the queue and the error, and retires the device by the
+same path as a lost descriptor, so a failed kick never leaves a silently broken
+virtqueue behind.
+
+Retiring the device is where the guest's recovery ends. virtio-gpu has no
+broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
+submitter already parked waiting for control-queue space is not woken, and
+`drm_dev_unplug()` blocks behind it because that wait sits inside the section
+the unplug synchronises against. In practice a lost GPU backend retires the
+device and the guest's Vulkan client is killed within seconds, but a client
+that happens to be waiting on a full control queue stays blocked until Mesa's
+own ring timeout, on the order of fifteen minutes.
+
 The Apple graphics path is:
 
 ```text
@@ -286,6 +376,12 @@ GPU commands and rendering stay off the UI thread. The shared presentation
 layer keeps the newest frame and at most one command buffer in flight. A
 backpressured presentation may drop a superseded frame; only unsupported
 resource shapes use CPU readback. See [`graphics.md`](graphics.md).
+
+A guest drives the renderer, so no host write into guest memory is sized by
+the renderer alone: the device bounds a translated guest range to one
+negotiated memory region, clamps a reply to the writable descriptors the guest
+supplied, and the renderer ends a Venus reply stream at the window the guest
+declared rather than at the resource holding it.
 
 The separately configured macOS Vulkan experiment adds an independent route:
 

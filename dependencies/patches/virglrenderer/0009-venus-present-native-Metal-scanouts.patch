@@ -1,14 +1,14 @@
-From 3bef4b91e45d5bbdd29b4a612abd489dec87ea46 Mon Sep 17 00:00:00 2001
+From f857ee2802876b4daa2b5011549f298be283e0a9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:14 +0900
-Subject: [PATCH 09/49] venus: present native Metal scanouts
+Subject: [PATCH 09/51] venus: present native Metal scanouts
 
 ---
  src/venus/vkr_device.c          |  17 ++++
- src/venus/vkr_device.h          |   1 +
+ src/venus/vkr_device.h          |   6 ++
  src/venus/vkr_device_memory.c   | 126 ++++++++++++++++++++-----
  src/venus/vkr_device_memory.h   |   4 +
- src/venus/vkr_image.c           | 122 +++++++++++++++++++++++-
+ src/venus/vkr_image.c           | 150 ++++++++++++++++++++++++++++-
  src/venus/vkr_image.h           |   2 +
  src/venus/vkr_physical_device.c |   3 +
  src/venus/vkr_physical_device.h |   1 +
@@ -16,7 +16,7 @@ Subject: [PATCH 09/49] venus: present native Metal scanouts
  src/virgl_resource.h            |  16 ++++
  src/virglrenderer.c             |  57 +++++++++++
  src/virglrenderer.h             |  54 ++++++++++-
- 12 files changed, 541 insertions(+), 24 deletions(-)
+ 12 files changed, 574 insertions(+), 24 deletions(-)
 
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
 index 59c7795..bdd2ab8 100644
@@ -61,14 +61,19 @@ index 59c7795..bdd2ab8 100644
  
     args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index fcf875c..67f83f9 100644
+index fcf875c..980b687 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
-@@ -30,6 +30,7 @@ struct vkr_device {
+@@ -30,6 +30,12 @@ struct vkr_device {
     PFN_vkGetMemoryHostPointerPropertiesEXT GetMemoryHostPointerPropertiesEXT;
     PFN_vkGetMemoryMetalHandlePropertiesEXT GetMemoryMetalHandlePropertiesEXT;
     PFN_vkGetMemoryMetalHandleEXT GetMemoryMetalHandleEXT;
 +   PFN_vkExportMetalObjectsEXT ExportMetalObjectsEXT;
++
++   /* Whether this device has already reported a native scanout publication
++    * failure.  Repeating one would flood the console the guest shares.
++    */
++   bool metal_scanout_failure_reported;
  };
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
@@ -297,10 +302,10 @@ index e25198b..02e2ebf 100644
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index d1222ad..cf78cc9 100644
+index d1222ad..1e76f17 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -6,13 +6,95 @@
+@@ -6,13 +6,123 @@
  #include "vkr_image.h"
  
  #include "vkr_image_gen.h"
@@ -333,6 +338,21 @@ index d1222ad..cf78cc9 100644
 +          (create_info->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 +}
 +
++/* A bind that cannot publish its native texture repeats as often as the guest
++ * binds one, and the renderer's stderr shares the guest console with whatever
++ * the guest is writing.  Each device therefore reports the first publication
++ * failure with its own reason and stays quiet about the rest.
++ */
++static bool
++vkr_image_first_scanout_failure(struct vkr_device *dev)
++{
++   if (dev->metal_scanout_failure_reported)
++      return false;
++
++   dev->metal_scanout_failure_reported = true;
++   return true;
++}
++
 +static void
 +vkr_image_publish_metal_texture(struct vkr_device *dev,
 +                                const struct vkr_image *image,
@@ -341,10 +361,21 @@ index d1222ad..cf78cc9 100644
 +{
 +   if (!image->export_metal_texture)
 +      return;
-+   if (!mem->native_resource_id &&
-+       !vkr_device_memory_prepare_metal_heap_export(mem)) {
-+      vkr_log("failed to prepare Metal heap for scanout texture");
-+      return;
++
++   if (!mem->native_resource_id) {
++      /* Optimal color targets are marked exportable up front, but only an
++       * allocation the guest asked to export as an MTLHeap owns one.  An
++       * ordinary render target on ordinary device memory is the designed
++       * outcome of that marking, not a failure, and it is the common case:
++       * a conformance run binds one for every test.
++       */
++      if (!mem->metal_heap_exportable)
++         return;
++      if (!vkr_device_memory_prepare_metal_heap_export(mem)) {
++         if (vkr_image_first_scanout_failure(dev))
++            vkr_log("failed to prepare Metal heap for scanout texture");
++         return;
++      }
 +   }
 +
 +   VkExportMetalTextureInfoEXT texture_info = {
@@ -358,15 +389,17 @@ index d1222ad..cf78cc9 100644
 +   };
 +   dev->ExportMetalObjectsEXT(dev->base.handle.device, &objects_info);
 +   if (!texture_info.mtlTexture) {
-+      vkr_log("native scanout texture export returned null for %ux%u",
-+              image->extent.width, image->extent.height);
++      if (vkr_image_first_scanout_failure(dev))
++         vkr_log("native scanout texture export returned null for %ux%u",
++                 image->extent.width, image->extent.height);
 +      return;
 +   }
 +
 +   if (!virgl_resource_native_set_metal_texture(
 +          mem->native_resource_id, texture_info.mtlTexture, memory_offset,
 +          image->extent.width, image->extent.height)) {
-+      vkr_log("failed to publish Metal scanout texture");
++      if (vkr_image_first_scanout_failure(dev))
++         vkr_log("failed to publish Metal scanout texture");
 +   }
 +}
 +
@@ -396,7 +429,7 @@ index d1222ad..cf78cc9 100644
     /* XXX If VkExternalMemoryImageCreateInfo is chained by the app, all is
      * good.  If it is not chained, we might still bind an external memory to
      * the image, because vkr_dispatch_vkAllocateMemory makes any HOST_VISIBLE
-@@ -33,8 +115,11 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+@@ -33,8 +143,11 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
      */
  
     struct vkr_image *image = vkr_image_create_and_add(dispatch->data, args);
@@ -409,7 +442,7 @@ index d1222ad..cf78cc9 100644
  }
  
  static void
-@@ -113,12 +198,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
+@@ -113,12 +226,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
  {
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
@@ -434,7 +467,7 @@ index d1222ad..cf78cc9 100644
  static void
  vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
                                  struct vn_command_vkBindImageMemory2 *args)
-@@ -126,8 +223,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+@@ -126,8 +251,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  

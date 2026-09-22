@@ -5,19 +5,43 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
 
 namespace uml::cpu::x86_64 {
 namespace {
 
+/* Bytes are fetched in windows rather than one at a time, because every fetch
+ * translates the guest address again; a caller decoding a block hands the same
+ * window to each of its instructions, so the block costs about one fetch. The
+ * window stops at the guest page, so it can only fault for a page the decode
+ * has already reached: an instruction that ends before an unmapped page still
+ * decodes, and a fetch that does fault faults at exactly the byte the decoder
+ * wanted. Bytes past an instruction's end are fetched and discarded, so what
+ * the caller keeps is still only what the decode read. */
 class ByteReader final {
 public:
 	ByteReader(::uml::memory::GuestAddressSpace &memory,
 		std::uint64_t address, ExecutionMode mode,
-		std::byte *consumed) noexcept
-		: memory_{memory}, address_{normalize_instruction_pointer(mode, address)},
-		  mode_{mode}, consumed_{consumed}
+		std::byte *consumed, FetchWindow &window) noexcept
+		: memory_{&memory},
+		  address_{normalize_instruction_pointer(mode, address)},
+		  mode_{mode}, consumed_{consumed}, window_{window}
 	{}
+
+	/* Read the caller's own bytes instead of guest memory. They stand in for
+	 * the window's contents, so the reader works exactly as it does over a
+	 * fetched window and an instruction decodes the same wherever it sits;
+	 * what it cannot do is fetch. */
+	ByteReader(std::span<const std::byte> code, std::uint64_t address,
+		ExecutionMode mode, FetchWindow &window) noexcept
+		: address_{normalize_instruction_pointer(mode, address)},
+		  mode_{mode}, window_{window}, code_{code}
+	{
+		/* An empty window is refilled before its first byte is read,
+		 * which is where the caller's bytes enter it. */
+		window_.filled = 0;
+	}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
@@ -26,17 +50,19 @@ public:
 				mode_, address_, position_);
 			return false;
 		}
-		std::byte byte{};
-		const auto fetch_address = advance_instruction_pointer(
+		const auto address = advance_instruction_pointer(
 			mode_, address_, position_);
-		if (!memory_.fetch(fetch_address, std::span{&byte, 1})) {
-			fault_address_ = fetch_address;
-			return false;
+		auto offset = address - window_.address;
+		if (offset >= window_.filled) {
+			if (!fill(address))
+				return false;
+			offset = 0;
 		}
+		const auto byte = window_.bytes[static_cast<std::size_t>(offset)];
 		value = std::to_integer<std::uint8_t>(byte);
-		/* Hand the caller the byte this decode actually saw. Reading the
-		 * instruction stream again later would be a second, separate
-		 * observation of guest memory. */
+		/* Hand the caller the byte this decode used. Reading the instruction
+		 * stream again later would be a second, separate observation of guest
+		 * memory. */
 		if (consumed_ != nullptr)
 			consumed_[position_] = byte;
 		++position_;
@@ -65,10 +91,54 @@ public:
 private:
 	static constexpr std::uint8_t maximum_instruction_bytes =
 		static_cast<std::uint8_t>(::uml::cpu::x86_64::maximum_instruction_bytes);
-	::uml::memory::GuestAddressSpace &memory_;
+	static constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
+
+	[[nodiscard]] bool fill(std::uint64_t address)
+	{
+		/* A partial fetch leaves the window's contents unknown, and its
+		 * address would then stand for bytes it does not hold. */
+		window_.filled = 0;
+		if (memory_ == nullptr) {
+			/* The caller's own bytes, which are addressed by the
+			 * reader's position rather than by a guest address, so
+			 * an encoding that crosses a 32-bit wrap refills here
+			 * and keeps reading them in order. Running out of them
+			 * is the same shortfall a fetch reports, at the byte
+			 * the decode wanted. */
+			if (position_ >= code_.size()) {
+				fault_address_ = address;
+				return false;
+			}
+			const auto count = static_cast<std::uint32_t>(
+				std::min<std::size_t>(FetchWindow::capacity,
+					code_.size() - position_));
+			std::memcpy(window_.bytes.data(),
+				code_.data() + position_, count);
+			window_.address = address;
+			window_.filled = count;
+			return true;
+		}
+		const auto count = static_cast<std::uint32_t>(
+			std::min<std::uint64_t>(FetchWindow::capacity,
+				page_size - (address & (page_size - 1U))));
+		if (!memory_->fetch(address,
+			    std::span{window_.bytes.data(), count})) {
+			fault_address_ = address;
+			return false;
+		}
+		window_.address = address;
+		window_.filled = count;
+		return true;
+	}
+
+	/* Null exactly when this reader was given its own bytes, which is what
+	 * `fill` then refills the window from. */
+	::uml::memory::GuestAddressSpace *memory_{};
 	std::uint64_t address_;
 	ExecutionMode mode_;
-	std::byte *consumed_;
+	std::byte *consumed_{};
+	FetchWindow &window_;
+	std::span<const std::byte> code_{};
 	std::uint64_t fault_address_{};
 	std::uint8_t position_{};
 };
@@ -160,9 +230,15 @@ struct Prefixes final {
 class InstructionDecoder final {
 public:
 	InstructionDecoder(::uml::memory::GuestAddressSpace &memory,
-		std::uint64_t rip, ExecutionMode mode,
-		std::byte *consumed) noexcept
-		: reader_{memory, rip, mode, consumed}, prefixes_{.mode = mode}
+		std::uint64_t rip, ExecutionMode mode, std::byte *consumed,
+		FetchWindow &window) noexcept
+		: reader_{memory, rip, mode, consumed, window},
+		  prefixes_{.mode = mode}
+	{}
+
+	InstructionDecoder(std::span<const std::byte> code, std::uint64_t rip,
+		ExecutionMode mode, FetchWindow &window) noexcept
+		: reader_{code, rip, mode, window}, prefixes_{.mode = mode}
 	{}
 
 	[[nodiscard]] DecodeResult run()
@@ -3104,10 +3180,27 @@ bool Instruction::terminal() const noexcept
 }
 
 DecodeResult decode(::uml::memory::GuestAddressSpace &memory,
-	std::uint64_t rip, ExecutionMode mode, std::byte *consumed) noexcept
+	std::uint64_t rip, ExecutionMode mode, std::byte *consumed,
+	FetchWindow *window) noexcept
 {
 	try {
-		return InstructionDecoder{memory, rip, mode, consumed}.run();
+		FetchWindow own;
+		return InstructionDecoder{memory, rip, mode, consumed,
+			window != nullptr ? *window : own}.run();
+	} catch (...) {
+		return {DecodeStatus::fetch_fault, {},
+			normalize_instruction_pointer(mode, rip)};
+	}
+}
+
+DecodeResult decode(std::span<const std::byte> code, std::uint64_t rip,
+	ExecutionMode mode) noexcept
+{
+	try {
+		/* The window is the reader's own, and what fills it is `code`
+		 * rather than a fetch. */
+		FetchWindow own;
+		return InstructionDecoder{code, rip, mode, own}.run();
 	} catch (...) {
 		return {DecodeStatus::fetch_fault, {},
 			normalize_instruction_pointer(mode, rip)};

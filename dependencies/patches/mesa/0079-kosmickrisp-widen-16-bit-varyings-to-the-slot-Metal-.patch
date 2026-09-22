@@ -1,7 +1,7 @@
-From 672ed770b95ca6233f851a80903abaf2414cae20 Mon Sep 17 00:00:00 2001
+From 1f9588cb3f901e827ac91a3ff81ff3aaeca1601e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 11:45:56 +0900
-Subject: [PATCH 79/97] kosmickrisp: widen 16-bit varyings to the slot Metal
+Subject: [PATCH 079/109] kosmickrisp: widen 16-bit varyings to the slot Metal
  carries
 
 storageInputOutput16 was withheld with a note that
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
 
 diff --git a/src/kosmickrisp/compiler/msl_nir_lower_common.c b/src/kosmickrisp/compiler/msl_nir_lower_common.c
-index d6186ee7..2659f06e 100644
+index d6186ee..2659f06 100644
 --- a/src/kosmickrisp/compiler/msl_nir_lower_common.c
 +++ b/src/kosmickrisp/compiler/msl_nir_lower_common.c
 @@ -620,6 +620,109 @@ msl_nir_lower_cull_distance_fs(nir_shader *s, unsigned nr_distances)
@@ -159,7 +159,7 @@ index d6186ee7..2659f06e 100644
  static bool
  scalarize_clip_cull_distance_filter(const nir_intrinsic_instr *intrin,
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.h b/src/kosmickrisp/compiler/nir_to_msl.h
-index a983cade..5c7792db 100644
+index a983cad..5c7792d 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.h
 +++ b/src/kosmickrisp/compiler/nir_to_msl.h
 @@ -80,6 +80,7 @@ bool msl_nir_fake_guard_for_discards(struct nir_shader *nir);
@@ -171,7 +171,7 @@ index a983cade..5c7792db 100644
  
  bool msl_gather_uses_per_draw_data(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index ce2b4046..5749fb5e 100644
+index ce2b404..5749fb5 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -269,11 +269,10 @@ kk_get_device_features(
@@ -191,7 +191,7 @@ index ce2b4046..5749fb5e 100644
        .uniformAndStorageBuffer16BitAccess = true,
        .variablePointers = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index b81512ce..bb548fa9 100644
+index b81512c..bb548fa 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -5263,6 +5263,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
@@ -211,7 +211,7 @@ index b81512ce..bb548fa9 100644
      * path, link only the application pre-raster chain now; linking an
      * unmatched internal line input to the old final stage would discard it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 31202fb9..c66f257a 100644
+index 31202fb..c66f257 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -1047,6 +1047,20 @@ if with_tests
@@ -237,7 +237,7 @@ index 31202fb9..c66f257a 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c b/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
 new file mode 100644
-index 00000000..40657bb5
+index 0000000..40657bb
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
 @@ -0,0 +1,304 @@

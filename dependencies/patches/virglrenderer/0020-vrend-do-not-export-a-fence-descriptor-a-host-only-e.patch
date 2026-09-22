@@ -1,7 +1,7 @@
-From 660f65d140dcfd8431ffea3d4713a2bb277d6e0a Mon Sep 17 00:00:00 2001
+From eea8418b97a5280be7822a99892dd5942fe1207d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 22:19:52 +0900
-Subject: [PATCH 20/49] vrend: do not export a fence descriptor a host only
+Subject: [PATCH 20/51] vrend: do not export a fence descriptor a host only
  emulates
 
 Creating an EGL native fence makes the GL driver submit a command buffer

@@ -964,6 +964,57 @@ static void uml_static_code_page_stamps_follow_physical_aliases()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* Aliases share a record; different backing pages must not. The index that
+ * answers the repeated ask without a lock is two levels deep, so a page in the
+ * second leaf and a page in the first have to keep records of their own, and
+ * invalidating either must leave the other's version alone.
+ */
+static void uml_static_code_pages_are_distinct_across_the_index()
+{
+	constexpr unsigned long generation = 132;
+	constexpr std::uint64_t base = 0x3'c000;
+	/* One page past the first index leaf, which covers 512 backing pages. */
+	constexpr std::uint64_t distant_page = 512;
+	constexpr std::size_t pages = distant_page + 1U;
+	TemporaryBacking backing{pages * DARWIN_UML_GUEST_PAGE_SIZE};
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	const std::uint64_t offsets[] = {
+		0, DARWIN_UML_GUEST_PAGE_SIZE,
+		distant_page * DARWIN_UML_GUEST_PAGE_SIZE};
+	void *handles[3] = {};
+	darwin_uml_static_code_page_stamp stamps[3]{};
+	for (std::size_t index = 0; index < 3; ++index) {
+		const auto address = base + index * DARWIN_UML_GUEST_PAGE_SIZE;
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(address), backing.fd(),
+			offsets[index], DARWIN_UML_GUEST_PAGE_SIZE,
+			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
+		require(darwin_uml_static_vm_code_page(generation, address,
+			&handles[index], &stamps[index]) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+	}
+	require(handles[0] != handles[1] && handles[1] != handles[2] &&
+		handles[0] != handles[2]);
+	require(stamps[0].identity != stamps[1].identity &&
+		stamps[1].identity != stamps[2].identity &&
+		stamps[0].identity != stamps[2].identity);
+
+	darwin_uml_static_vm_invalidate_code_page(handles[2]);
+	for (std::size_t index = 0; index < 3; ++index) {
+		darwin_uml_static_code_page_stamp observed{};
+		/* The second ask is the one the index answers. */
+		void *again = nullptr;
+		require(darwin_uml_static_vm_code_page(generation,
+			base + index * DARWIN_UML_GUEST_PAGE_SIZE, &again,
+			&observed) == DARWIN_UML_STATIC_TRANSLATED);
+		require(again == handles[index]);
+		require(observed.identity == stamps[index].identity);
+		require(observed.version == stamps[index].version +
+			(index == 2 ? 1U : 0U));
+	}
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 static void uml_static_thread_local_generations()
 {
 	constexpr unsigned long first_generation = 101;
@@ -1323,6 +1374,7 @@ int main()
 	uml_static_mapping_change_ranges();
 	uml_static_partial_uaccess_copy_preserves_sibling_writes();
 	uml_static_code_page_stamps_follow_physical_aliases();
+	uml_static_code_pages_are_distinct_across_the_index();
 	uml_static_thread_local_generations();
 	uml_static_concurrent_translation_readers();
 	uml_static_tlb_shootdown_quiesces_execution();

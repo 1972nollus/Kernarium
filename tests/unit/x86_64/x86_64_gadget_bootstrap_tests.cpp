@@ -230,12 +230,16 @@ public:
 		deferred_bytes_.assign(bytes.begin(), bytes.end());
 	}
 	/* A guest write by another vCPU that lands while this block is being
-	 * decoded: it is applied immediately after the decoder has read
+	 * decoded: it is applied immediately after the fetch that starts at
 	 * `trigger`, so the decoded stream predates it and everything the
 	 * translation reads afterwards -- the source bytes it saves above all --
-	 * does not. It fires once, and the numbered stamp query it happens to
-	 * fall between is not part of the arrangement, so the same arming means
-	 * the same interleaving however many stamps a translation takes.
+	 * does not. `trigger` is a fetch address, and the decoder fetches an
+	 * instruction's bytes in one page-bounded window, so it is the address
+	 * the instruction covering the raced byte begins at, or the page
+	 * boundary the window refills at. It fires once, and the numbered stamp
+	 * query it happens to fall between is not part of the arrangement, so
+	 * the same arming means the same interleaving however many stamps a
+	 * translation takes.
 	 *
 	 * `publishes` false stores the bytes without moving the page stamp,
 	 * which is where a real writer is between its store and its call into
@@ -916,8 +920,9 @@ read_moving_code_sequences(void *opaque) noexcept
 		sequences.code_changes, &sequences, read_test_code_sequences);
 
 	/* Another vCPU rewrites the immediate just after the decoder has read
-	 * it, while this translation is still being built. */
-	memory.write_after_fetching(1, 1, {0x02});
+	 * it -- the window fetched at 0 carries it -- while this translation is
+	 * still being built. */
+	memory.write_after_fetching(0, 1, {0x02});
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	if (!expect(racing.program != nullptr && !racing.cache_hit,
@@ -1022,7 +1027,7 @@ read_moving_code_sequences(void *opaque) noexcept
 
 	/* The store alone: the writer has not reached its page stamp yet, so
 	 * nothing this translation can read afterwards has moved. */
-	memory.write_after_fetching(1, 1, {0x02}, false);
+	memory.write_after_fetching(0, 1, {0x02}, false);
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	if (!expect(racing.program != nullptr && !racing.cache_hit,
@@ -1095,7 +1100,7 @@ read_moving_code_sequences(void *opaque) noexcept
 			 * block starting here could have reached it, but which its
 			 * seven bytes never touch. */
 			memory.write_after_fetching(
-				item.address + 1U, 4096 + 64U, {0x11});
+				item.address, 4096 + 64U, {0x11});
 		}
 		const auto cold = executor.select_program(
 			memory, item.address, ExecutionMode::long64);
@@ -1116,6 +1121,67 @@ read_moving_code_sequences(void *opaque) noexcept
 	}
 	return expect(executor.cache_diagnostics().validation_stamp_hits != 0,
 		"an undisturbed translation never recorded a usable page stamp");
+}
+
+/* The decoder fetches an instruction's bytes in one window and the window
+ * stops at the guest page, so it can only fault for a page the instruction has
+ * already reached. An instruction ending inside the last mapped page still
+ * decodes, and one that runs past it reports the fault at the first byte the
+ * decoder could not read rather than at the address its window began at.
+ */
+[[nodiscard]] bool a_decode_at_a_page_edge_faults_where_it_stopped()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t edge = 16384;
+	TestMemory memory;
+	/* SYSCALL ending exactly on the last mapped byte. */
+	memory.load(edge - 2U, {0x0f, 0x05});
+	const auto ending = gadgets::build(memory, edge - 2U);
+	if (!expect(ending.status == gadgets::BuildStatus::built &&
+		ending.program.instruction_count() == 1,
+		"an instruction ending on the last mapped byte did not decode"))
+		return false;
+	/* MOV EAX, imm32 whose immediate runs into the unmapped page. */
+	memory.load(edge - 2U, {0xb8, 0x01});
+	const auto crossing = gadgets::build(memory, edge - 2U);
+	return expect(crossing.status == gadgets::BuildStatus::fetch_fault,
+		"an instruction running past the last mapped page decoded") &&
+		expect(crossing.fault_address == edge,
+			"a fetch fault was not reported at the first byte the "
+			"decoder could not read");
+}
+
+/* One fetch window serves a run of instructions, and a block can outrun it.
+ * Every instruction after a refill has to decode from the bytes at its own
+ * address, so a window that forgets where it starts, or one that is refilled
+ * from the wrong address, shows up as the wrong immediate here.
+ */
+[[nodiscard]] bool a_block_longer_than_the_fetch_window_decodes()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr unsigned count = 40;
+	TestMemory memory;
+	std::array<std::byte, count * 5U + 2U> code{};
+	for (unsigned index = 0; index < count; ++index) {
+		/* MOV EAX, index + 1 */
+		code[index * 5U] = std::byte{0xb8};
+		code[index * 5U + 1U] =
+			static_cast<std::byte>(index + 1U);
+	}
+	code[count * 5U] = std::byte{0x0f};
+	code[count * 5U + 1U] = std::byte{0x05};
+	memory.fill(0, code);
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == count + 1U,
+		"a block longer than one fetch window did not decode whole"))
+		return false;
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 64);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == count,
+		"a block decoded across a window refill did not run its own "
+		"instructions");
 }
 
 [[nodiscard]] bool cache_retires_the_oldest_generation()
@@ -1637,14 +1703,192 @@ read_test_sequences(void *context) noexcept
 		built.program.instruction_count() == 1,
 		"short allocation-regression block did not build"))
 		return false;
-	/* Allow allocator rounding, but not a maximum-size decoder reservation.
-	 * Inspect the actual allocation rather than an implementation counter. */
-	return expect(malloc_size(built.program.stream().data()) <=
-		2 * sizeof(gadgets::Gadget),
-		"short cached block retained the decoder's spare capacity") &&
+	/* Allow allocator rounding and its smallest bucket, but not a
+	 * maximum-size decoder reservation, and nothing outside the two
+	 * allocations a translation is: the native stream, and the guest bytes
+	 * the decoder read. Inspect the actual allocations rather than an
+	 * implementation counter. */
+	return expect(built.program.source().size() == 2,
+		"short cached block did not save its own two bytes") &&
+		expect(built.program.replay_bytes() == 0,
+			"a translation nothing replayed carries decoded "
+			"instructions") &&
 		expect(malloc_size(built.program.native_stream().data()) <=
 			2 * built.program.native_stream().size_bytes(),
-			"short cached block retained excess native stream capacity");
+			"short cached block retained excess native stream capacity") &&
+		expect(malloc_size(built.program.source().data()) <=
+			2 * built.program.source().size() + 32,
+			"short cached block retained the decoder's spare capacity");
+}
+
+/* What a block keeps, and when. A translation is built with its native stream
+ * and its saved source and nothing else; the first budget-limited replay
+ * decodes the block out of that source and the block keeps the result, because
+ * the dispatches that end inside a block keep ending inside it.
+ */
+[[nodiscard]] bool a_replay_keeps_what_it_decoded()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 5 &&
+		built.program.replay_bytes() == 0,
+		"a fresh translation did not build empty of decoded "
+		"instructions"))
+		return false;
+	/* A block entered with the budget to finish it never asks. */
+	CpuState whole{};
+	const auto ran = gadgets::execute(built.program, whole, memory, 5);
+	if (!expect(ran.event == uml::cpu::EngineEvent::system_call &&
+		built.program.replay_bytes() == 0,
+		"a block that ran to its end decoded itself again"))
+		return false;
+	const auto kept = 5 * sizeof(gadgets::Gadget);
+	CpuState cpu{};
+	const auto first = gadgets::execute(built.program, cpu, memory, 2);
+	if (!expect(first.event == uml::cpu::EngineEvent::continued &&
+		first.instruction_budget_exhausted && cpu.rip == 10 &&
+		cpu.gpr(Register::rax) == 2,
+		"a first replay did not stop at its budget") ||
+		!expect(built.program.replay_bytes() == kept,
+			"a replayed block did not keep what it decoded"))
+		return false;
+	CpuState second{};
+	const auto again = gadgets::execute(built.program, second, memory, 3);
+	return expect(again.event == uml::cpu::EngineEvent::continued &&
+		again.instruction_budget_exhausted && second.rip == 14 &&
+		second.gpr(Register::rax) == 4,
+		"a second replay did not read the kept instructions") &&
+		expect(built.program.replay_bytes() == kept,
+			"a second replay decoded the block again");
+}
+
+/* What a budget shorter than the block replays, against the block itself. A
+ * translation keeps no decoded instructions, so the replay decodes them back
+ * out of the bytes the build saved, and what it must reproduce is every
+ * instruction boundary of the original block. */
+[[nodiscard]] bool budget_limited_replay_matches_the_whole_block()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* Seven instructions of four different lengths, so a replay that
+	 * mistakes one boundary lands on a different instruction. */
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x04,                   // add rax, 4
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 7 &&
+		built.program.byte_count() == 26 &&
+		built.program.source().size() == 26,
+		"mixed-length replay block did not build") ||
+		!expect(built.program.terminal(),
+			"a block ending at SYSCALL is not terminal"))
+		return false;
+	static constexpr std::uint64_t boundaries[] = {0, 7, 10, 14, 17, 20, 24};
+	static constexpr std::uint64_t reached[] = {1, 2, 4, 8, 9, 13};
+	for (std::size_t budget = 1; budget < 7; ++budget) {
+		CpuState cpu{};
+		const auto result = gadgets::execute(
+			built.program, cpu, memory, budget);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.instruction_budget_exhausted &&
+			result.retired_instructions == budget,
+			"a budget-limited replay did not stop at its budget") ||
+			!expect(cpu.rip == boundaries[budget] &&
+				cpu.gpr(Register::rax) == reached[budget - 1],
+				"a budget-limited replay lost an instruction "
+				"boundary"))
+			return false;
+	}
+	const auto cut = gadgets::build(memory, 0, ExecutionMode::long64, 3);
+	return expect(cut.status == gadgets::BuildStatus::built &&
+		cut.program.instruction_count() == 3 && !cut.program.terminal(),
+		"a block cut at its instruction limit reported itself terminal");
+}
+
+/* A replay decodes the bytes its block was built from, not the bytes at its
+ * address now. Guest memory is free to change under a translation -- deciding
+ * whether a cached one survives that is the validation's job -- and a block
+ * already entered has to finish as itself. */
+[[nodiscard]] bool budget_limited_replay_ignores_rewritten_guest_code()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x83, 0xc0, 0x02,                   // add rax, 2
+		0x48, 0x01, 0xc0,                         // add rax, rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 5,
+		"replay-source block did not build"))
+		return false;
+	/* Six DEC RAX in place of the block. A replay reading guest memory
+	 * decodes those instead, and both the register it leaves and the RIP it
+	 * stops at say which bytes it read. */
+	memory.load(0, {
+		0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8,
+		0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8, 0x48, 0xff, 0xc8,
+	});
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 3);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 3 &&
+		result.instruction_budget_exhausted,
+		"replay after a code rewrite did not stop at its budget") &&
+		expect(cpu.rip == 14 && cpu.gpr(Register::rax) == 4,
+			"a replay decoded the guest's newer bytes");
+}
+
+/* A fault inside a replayed prefix reports exactly what the same fault in the
+ * whole block reports: the faulting instruction's own RIP, nothing retired for
+ * it, and the prefix before it retired. */
+[[nodiscard]] bool budget_limited_replay_faults_where_the_block_does()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0x8b, 0x1b,                         // mov rbx, [rbx]
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x48, 0xff, 0xc0,                         // inc rax
+		0x0f, 0x05,                               // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+		built.program.instruction_count() == 6,
+		"faulting replay block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rbx) = 16383;
+	const auto result = gadgets::execute(built.program, cpu, memory, 4);
+	return expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+		result.fault.address == 16383 &&
+		result.fault.access == uml::memory::MemoryAccess::read,
+		"a replayed prefix lost its precise fault") &&
+		expect(result.retired_instructions == 2 && cpu.rip == 10 &&
+			cpu.gpr(Register::rax) == 2,
+			"a replayed prefix did not stop at the faulting "
+			"instruction");
 }
 
 [[nodiscard]] bool executable_store_publishes_code_change()
@@ -5012,6 +5256,115 @@ private:
 			"RSQRTSS of a negative value did not return the x86 indefinite NaN");
 }
 
+/* A packed-integer register form leaves its result in v4, and in v5 with it at
+ * 256 bits, and bit 62 of the next gadget's descriptor takes its left operand
+ * from there instead of reading the state slot back. The bit is only sound
+ * while the producer really is the gadget immediately before: anything between
+ * the two withdraws it, and a block that begins at the consumer -- which is
+ * what a fault between the two leaves behind, because the handler returns to
+ * the consumer and the engine translates a fresh block there -- must forward
+ * nothing, since v4 then holds whatever last ran.
+ */
+[[nodiscard]] bool vector_integer_forwards_only_from_the_gadget_before()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uintptr_t forward_left = std::uintptr_t{1} << 62U;
+	const auto seed = [](CpuState &cpu, std::size_t index,
+		std::uint32_t base) noexcept {
+		for (std::size_t position = 0; position < 8U; ++position) {
+			const auto value = static_cast<std::uint32_t>(
+				base + position * 0x11U);
+			std::memcpy(cpu.vectors[index].data() + position * 4U,
+				&value, sizeof(value));
+		}
+	};
+	const auto lane = [](const CpuState &cpu, std::size_t index,
+		std::size_t position) noexcept {
+		std::uint32_t value{};
+		std::memcpy(&value, cpu.vectors[index].data() + position * 4U,
+			sizeof(value));
+		return value;
+	};
+	/* Subtraction tells the two operands apart, and the lanes differ so that
+	 * a path taking v4 where it owes v5 shows up.
+	 */
+	const auto run = [&](std::initializer_list<std::uint8_t> code,
+		std::uint64_t entry, std::size_t instructions, CpuState &cpu,
+		std::uintptr_t &consumer) {
+		TestMemory memory;
+		memory.load(0, code);
+		const auto built = gadgets::build(memory, entry);
+		if (built.status != gadgets::BuildStatus::built)
+			return false;
+		const auto stream = built.program.native_stream();
+		const std::size_t descriptor = entry == 0 ? 3U : 1U;
+		consumer = stream.size() > descriptor ? stream[descriptor] : 0U;
+		cpu.rip = entry;
+		seed(cpu, 1, 0x0100'0000);
+		seed(cpu, 2, 0x0002'0000);
+		seed(cpu, 3, 0x0033'0000);
+		seed(cpu, 4, 0x4000'0000);
+		seed(cpu, 5, 0x0000'0500);
+		const auto result = gadgets::execute(built.program, cpu, memory,
+			instructions);
+		return result.event == uml::cpu::EngineEvent::system_call;
+	};
+
+	CpuState adjacent{};
+	std::uintptr_t adjacent_descriptor{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
+			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
+			0x0f, 0x05,             // syscall
+		}, 0, 3, adjacent, adjacent_descriptor),
+		"forwarded left operand did not reach SYSCALL"))
+		return false;
+	if (!expect((adjacent_descriptor & forward_left) != 0,
+			"a consumer of the gadget before it did not forward its left "
+			"operand") ||
+		!expect(lane(adjacent, 0, 0) == 0x0102'0000U - 0x4000'0000U &&
+			lane(adjacent, 0, 7) == (0x0102'0000U + 14U * 0x11U) -
+				(0x4000'0000U + 7U * 0x11U),
+			"a forwarded left operand produced the wrong difference"))
+		return false;
+
+	/* VMOVDQA ymm3,ymm5 between the two: the consumer must read the slot the
+	 * move has just written, not the registers the producer left.
+	 */
+	CpuState withdrawn{};
+	std::uintptr_t ignored{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
+			0xc5, 0xfd, 0x6f, 0xdd, // vmovdqa ymm3,ymm5
+			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
+			0x0f, 0x05,             // syscall
+		}, 0, 4, withdrawn, ignored),
+		"withdrawn forwarding did not reach SYSCALL"))
+		return false;
+	if (!expect(lane(withdrawn, 0, 0) == 0x0000'0500U - 0x4000'0000U &&
+			lane(withdrawn, 0, 7) == (0x0000'0500U + 7U * 0x11U) -
+				(0x4000'0000U + 7U * 0x11U),
+			"a move between producer and consumer did not withdraw the "
+			"forwarded registers"))
+		return false;
+
+	/* The same two instructions, entered at the consumer. */
+	CpuState resumed{};
+	std::uintptr_t first_descriptor{};
+	if (!expect(run({
+			0xc5, 0xf5, 0xfe, 0xda,
+			0xc5, 0xe5, 0xfa, 0xc4,
+			0x0f, 0x05,
+		}, 4, 2, resumed, first_descriptor),
+		"a block entered at the consumer did not reach SYSCALL"))
+		return false;
+	return expect((first_descriptor & forward_left) == 0,
+			"the first gadget of a block forwarded an operand") &&
+		expect(lane(resumed, 0, 0) == 0x0033'0000U - 0x4000'0000U,
+			"a block entered at the consumer did not read its operand from "
+			"the state");
+}
+
 /* The gadget a block selects for its first instruction. */
 [[nodiscard]] std::uintptr_t first_native_entry(
 	std::initializer_list<std::uint8_t> code)
@@ -5717,6 +6070,8 @@ int main()
 		a_write_racing_a_second_page_does_not_survive() &&
 		a_write_stamped_after_a_first_translation_does_not_survive() &&
 		an_undisturbed_first_translation_is_still_cached() &&
+		a_decode_at_a_page_edge_faults_where_it_stopped() &&
+		a_block_longer_than_the_fetch_window_decodes() &&
 		cache_retires_the_oldest_generation() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&
@@ -5725,6 +6080,10 @@ int main()
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		short_blocks_retain_only_their_translated_storage() &&
+		a_replay_keeps_what_it_decoded() &&
+		budget_limited_replay_matches_the_whole_block() &&
+		budget_limited_replay_ignores_rewritten_guest_code() &&
+		budget_limited_replay_faults_where_the_block_does() &&
 		executable_store_publishes_code_change() &&
 		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&
@@ -5776,6 +6135,7 @@ int main()
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&
 		a_call_out_between_vector_gadgets_keeps_the_result() &&
+		vector_integer_forwards_only_from_the_gadget_before() &&
 		a_lane_extract_store_keeps_the_lane_across_a_miss() &&
 		a_lane_extract_store_keeps_the_lane_across_a_page() &&
 		a_masked_store_keeps_the_unselected_bytes_across_a_miss() &&

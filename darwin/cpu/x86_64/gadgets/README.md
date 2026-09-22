@@ -39,6 +39,19 @@ prefix, and the ordinary bank for everything else. `UML_X86_64_GADGET_BAKED=0`
 in the environment keeps the ordinary bank for every instruction, for
 comparison.
 
+The ordinary bank's memory descriptor resolves base, index, scale, segment and
+address size with no branch on which of them are present, which means the
+common long-mode address still pays for a segment base it adds as zero. That
+addition is not free: the selected base is reached through a computed address
+rather than a constant offset from the CPU state, a form the host cannot
+disambiguate against the CPU-state stores every gadget makes, and it is the
+most expensive instruction of the generic address path. The builder therefore
+proves the absence of all three from the operand and sets one descriptor bit
+(`UML_X86_64_MEMORY_PLAIN_ADDRESS`), on which the gadget stops once base,
+scaled index and displacement are summed. The bit is only ever an optimization:
+a descriptor that leaves it clear takes the general tail and resolves the same
+address.
+
 ## Host-flag fusion
 
 A producer that computes with a flag-setting host instruction leaves NZCV
@@ -130,6 +143,23 @@ into the same stream, so not taking the branch costs one dispatch where it
 used to cost a link follow, and the taken edge keeps its link. A build with no
 link resolver -- the budget-limited replay of a cached block -- keeps the
 terminal form instead and leaves the translated tail unreachable.
+
+A dispatch whose remaining budget is shorter than the block replays it: the
+block's first few instructions are assembled into a stream of their own, which
+ends where the budget does. What that replay decodes from is the block's saved
+source, not guest memory, so it recovers exactly the instructions the block was
+built from however the guest's own bytes have moved since. A translation is
+therefore built with no decoded instructions in it at all.
+
+A replay is not rare. It happens once for each dispatch that runs out of
+budget inside a block, which on the compiler workload is one block entry in
+sixteen, so decoding the block again on every one of them costs about two
+percent of the guest. It is also concentrated: about a tenth of the blocks a
+workload translates are ever replayed, and each of those is replayed about
+twenty times. So the first replay of a block keeps what it decoded, in a third
+allocation that only such a block has, and every later replay of it reads that
+instead. A block no dispatch ever ends inside -- nine in ten of them -- never
+pays for the decoded form at all.
 
 The retirement counter carries the dispatch's instruction budget as a negative
 bias, so an edge that follows a link tests the sign of one addition instead of
@@ -263,6 +293,15 @@ between two code pages pays one per store; a JIT patching two call sites, a
 code copy crossing a page and a relocating loader each pay one per page they
 touch.
 
+A store translation settles both questions while it resolves the address --
+whether this page owes a record, and whether the store may skip the
+publication call altogether -- because reading the context after the guest
+store costs a memory-disambiguation stall. Only the common answer stays in the
+hot instruction stream: `write_code` is none, pending or published and only
+pending is work, so its low bit answers for it and joins the TLB entry's
+cached-code bit in a single test, while the arm that takes a record for a page
+some executor holds a translation of sits in the cold section.
+
 The writer's order is the contract, and it is the order
 [Keeping a cached translation](#keeping-a-cached-translation) reads in reverse:
 the bytes are stored, then the page stamp moves, then the code-change sequence
@@ -303,8 +342,8 @@ ordinary validation: it moves the page's stamp, after its bytes and before the
 sequence that brings this vCPU back, and the comparison that follows puts the
 decoder's own bytes against guest memory. A page the block could have spanned
 but did not is never consulted, so a hot data page next to a text page costs
-its neighbour nothing, and a block whose source could not be recorded is used
-once and not cached.
+its neighbour nothing, and a block longer than the cache's own length limit is
+used once and not cached.
 
 The address space's code-change sequence says when to revalidate, not whether
 a program survives the revalidation. A publication that touched a program moved
@@ -323,3 +362,13 @@ x86 cross-modifying-code protocol requires an executing processor to look. A
 moved mapping sequence or a raised execution interrupt still abandons the
 validation: those say the memory being read through is being replaced, or that
 this vCPU has been asked to leave, and no page stamp describes either.
+
+## Measuring what the cache costs
+
+A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
+private cache still held at teardown: the committed slabs, each resident
+translation's own storage -- its native stream and saved source, and the
+decoded instructions only a replayed block holds -- the link and indirect
+records, and the target link table each address space owns. The record format is the arm64 engine's,
+so one analyzer reads a capture from either. See
+[`tests/perf/README.md`](../../../../tests/perf/README.md).

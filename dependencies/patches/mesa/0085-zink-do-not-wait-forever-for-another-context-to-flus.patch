@@ -1,7 +1,8 @@
-From 4f990fea90d0558f590ae7738ded69457472a1e2 Mon Sep 17 00:00:00 2001
+From 40b78d7d064d70f027a1e597e7b1ba7f346f0356 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 15:37:29 +0900
-Subject: [PATCH 85/97] zink: do not wait forever for another context to flush
+Subject: [PATCH 085/109] zink: do not wait forever for another context to
+ flush
 
 A read map that finds the resource's last write recorded on a batch state
 belonging to a different context waits for that batch to be submitted, and
@@ -37,7 +38,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index b9eeb6d2..f73dc23a 100644
+index b9eeb6d..f73dc23 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -8,6 +8,8 @@

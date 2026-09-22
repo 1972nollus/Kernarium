@@ -15,12 +15,15 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
+#include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 
 namespace uml::gpu {
 #if UML_GPU_STOP_WAIT_TESTING
@@ -79,6 +82,29 @@ constexpr std::size_t maximumControlDescriptors =
 void adoptReceivedDescriptors(
     msghdr& header,
     ReceivedDescriptors& destination);
+
+/* A recvmsg on a Unix socket that cannot install the descriptors its message
+ * carries fails with one of these, and with none of them for a message that
+ * carries no descriptors. Darwin answers EMSGSIZE when the process's file
+ * table holds no free slot at all and EMFILE when a slot exists above the
+ * ceiling but allocating it would cross that ceiling, which is the same
+ * exhaustion seen from a table that grew before the ceiling was lowered.
+ * ENFILE is the machine's table rather than this process's.
+ */
+[[nodiscard]] bool descriptorTableIsFull(int error) noexcept
+{
+    return error == EMSGSIZE || error == EMFILE || error == ENFILE;
+}
+
+/* Say what that means, because "Message too long" reads as a protocol fault
+ * and sends the reader after a defect that is not there.
+ */
+[[nodiscard]] std::string describeDescriptorRefusal()
+{
+    return "vhost-user read failed: the host file table is full, so the "
+        "descriptors this message carries could not be installed (" +
+        describeDescriptorCeiling() + ")";
+}
 
 [[nodiscard]] bool waitForInput(
     int descriptor,
@@ -156,6 +182,8 @@ bool receiveExact(
                 continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
+            if (descriptorTableIsFull(errno))
+                throw std::runtime_error(describeDescriptorRefusal());
             throw std::runtime_error(
                 "vhost-user read failed: " +
                 std::string(std::strerror(errno)));
@@ -220,6 +248,89 @@ void adoptReceivedDescriptors(
 }
 
 } // namespace
+
+namespace {
+
+/* The kernel's per-process descriptor cap, or zero when the host will not say.
+ * A soft limit above it buys nothing and hides the number that decides.
+ */
+[[nodiscard]] std::uint64_t perProcessDescriptorCap() noexcept
+{
+    int cap = 0;
+    std::size_t size = sizeof(cap);
+    if (::sysctlbyname("kern.maxfilesperproc", &cap, &size, nullptr, 0) != 0)
+        return 0;
+    return cap > 0 ? static_cast<std::uint64_t>(cap) : 0;
+}
+
+} // namespace
+
+DescriptorCeiling descriptorCeiling() noexcept
+{
+    rlimit limit {};
+    if (::getrlimit(RLIMIT_NOFILE, &limit) != 0)
+        return {};
+    return {
+        .soft = static_cast<std::uint64_t>(limit.rlim_cur),
+        .hard = static_cast<std::uint64_t>(limit.rlim_max),
+        .perProcess = perProcessDescriptorCap(),
+    };
+}
+
+std::string describeDescriptorCeiling()
+{
+    const auto ceiling = descriptorCeiling();
+    const auto name = [](std::uint64_t value) {
+        if (value == 0)
+            return std::string("unknown");
+        return value == static_cast<std::uint64_t>(RLIM_INFINITY)
+            ? std::string("unlimited")
+            : std::to_string(value);
+    };
+    return "open-descriptor ceiling " + std::to_string(ceiling.effective()) +
+        " (soft " + name(ceiling.soft) + ", hard " + name(ceiling.hard) +
+        ", per-process " + name(ceiling.perProcess) + ")";
+}
+
+std::uint64_t raiseDescriptorCeiling() noexcept
+{
+    rlimit limit {};
+    if (::getrlimit(RLIMIT_NOFILE, &limit) != 0)
+        return 0;
+
+    /* A process never gets more descriptors than kern.maxfilesperproc,
+     * whatever its hard ceiling says, and a hard ceiling is usually unlimited.
+     * Ask for the smaller of the two so the ceiling this reports is the number
+     * that actually decides, not one no open() will ever reach.
+     */
+    rlim_t wanted = limit.rlim_max;
+    const auto cap = perProcessDescriptorCap();
+    if (cap != 0 && static_cast<rlim_t>(cap) < wanted)
+        wanted = static_cast<rlim_t>(cap);
+    if (limit.rlim_cur >= wanted)
+        return static_cast<std::uint64_t>(limit.rlim_cur);
+
+    rlimit raised = limit;
+    raised.rlim_cur = wanted;
+    if (::setrlimit(RLIMIT_NOFILE, &raised) == 0)
+        return static_cast<std::uint64_t>(wanted);
+
+    /* A host may refuse the whole of what it advertises while granting part of
+     * it. Keep the largest accepted value; the loop halves the untried range
+     * on every step, so it ends after at most one step per bit of the ceiling.
+     */
+    rlim_t accepted = limit.rlim_cur;
+    rlim_t refused = wanted;
+    while (refused - accepted > 1) {
+        const rlim_t candidate = accepted + (refused - accepted) / 2;
+        raised.rlim_cur = candidate;
+        if (::setrlimit(RLIMIT_NOFILE, &raised) == 0)
+            accepted = candidate;
+        else
+            refused = candidate;
+    }
+    return static_cast<std::uint64_t>(accepted);
+}
 
 bool receiveVhostUserMessage(
     int socket,
