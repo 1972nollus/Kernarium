@@ -175,7 +175,7 @@ class ImageAudit(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "does not select"):
             image.inventory(self.root)
 
-    def test_web_helper_hook_drops_only_the_kopper_override(self) -> None:
+    def test_web_helper_hook_drops_kopper_and_selects_flat_decoders(self) -> None:
         # Run the shipped hook's own logic with the real taskset replaced by a
         # stub, because the tooling host has none.
         with tempfile.TemporaryDirectory() as temporary:
@@ -197,8 +197,13 @@ class ImageAudit(unittest.TestCase):
                     **os.environ, "LIBGL_KOPPER_DISABLE": "true",
                     "STEAM_COMPAT_CLIENT_INSTALL_PATH": "/home/uml/kept"})
             self.assertEqual(result.returncode, 0, result.stderr)
+            # The client's own command line is passed through untouched; the
+            # hook drops the kopper override and appends the decoder selection
+            # last, because the last --enable-features on the line wins.
             self.assertEqual(result.stdout.splitlines(), [
-                "0x7c /path/to/steamwebhelper -nocrashdialog",
+                "0x7c /path/to/steamwebhelper -nocrashdialog "
+                "--enable-features=PlatformHEVCDecoderSupport,"
+                "V4L2FlatStatefulVideoDecoder,V4L2FlatVideoDecoder",
                 "kopper=unset",
                 "keep=/home/uml/kept",
             ])
