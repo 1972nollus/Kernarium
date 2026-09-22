@@ -298,16 +298,23 @@ int main(int argc, char** argv)
 
             if (!header.showFrame) continue;
             if (!check(vaSyncSurface(display, target), "vaSyncSurface")) return 1;
-            VAImage image {};
-            if (!check(vaDeriveImage(display, target, &image), "vaDeriveImage")) return 1;
-            void* address = nullptr;
-            if (!check(vaMapBuffer(display, image.buf, &address), "vaMapBuffer")) return 1;
-            if (!writeI420(output, static_cast<const std::uint8_t*>(address), image, header.width, header.height)) {
-                std::fprintf(stderr, "cannot write the decoded frame\n");
-                return 1;
+            // A browser under OpenGL never reads the decoded surface: it blits
+            // it and reads the result. Reading it here as well would make the
+            // driver produce both formats for every frame, which is a client
+            // this measures nothing about.
+            if (!videoProcess) {
+                VAImage image {};
+                if (!check(vaDeriveImage(display, target, &image), "vaDeriveImage")) return 1;
+                void* address = nullptr;
+                if (!check(vaMapBuffer(display, image.buf, &address), "vaMapBuffer")) return 1;
+                if (!writeI420(output, static_cast<const std::uint8_t*>(address), image, header.width,
+                               header.height)) {
+                    std::fprintf(stderr, "cannot write the decoded frame\n");
+                    return 1;
+                }
+                vaUnmapBuffer(display, image.buf);
+                vaDestroyImage(display, image.image_id);
             }
-            vaUnmapBuffer(display, image.buf);
-            vaDestroyImage(display, image.image_id);
 
             if (videoProcess) {
                 VAProcPipelineParameterBuffer pipeline {};

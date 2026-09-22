@@ -85,60 +85,7 @@ CaptureMemory captureMemoryRequest(const char* request) noexcept
 
 bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept
 {
-    if (!deviceOffers) return false;
-    return policy == RgbCapture::force;
-}
-
-bool decoderImportsCapture(const std::string& device, const CaptureTarget& sample,
-                           unsigned width, unsigned height, std::uint32_t fourcc)
-{
-    if (device.empty()) return false;
-    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) return false;
-    bool supported = false;
-    v4l2_requestbuffers request {};
-    request.type = kCapture;
-    request.memory = V4L2_MEMORY_DMABUF;
-    request.count = 0;
-    // Accepting the memory type says nothing about accepting a buffer: the
-    // kernel maps an imported one through its queue's own memory operations,
-    // and a buffer with no pages of its own - a host-visible blob - is refused
-    // there, long before the device sees it. So queue a real one and find out.
-    if (call(fd, VIDIOC_REQBUFS, &request) >= 0 && sample.planes && fourcc) {
-        v4l2_format format {};
-        format.type = kCapture;
-        format.fmt.pix_mp.width = width;
-        format.fmt.pix_mp.height = height;
-        format.fmt.pix_mp.pixelformat = fourcc;
-        format.fmt.pix_mp.num_planes = sample.planes;
-        format.fmt.pix_mp.field = V4L2_FIELD_NONE;
-        for (unsigned plane = 0; plane < sample.planes; ++plane) {
-            format.fmt.pix_mp.plane_fmt[plane].bytesperline = unsigned(sample.pitch[plane]);
-            format.fmt.pix_mp.plane_fmt[plane].sizeimage = unsigned(sample.length[plane]);
-        }
-        if (call(fd, VIDIOC_S_FMT, &format) >= 0) {
-            request.count = 1;
-            if (call(fd, VIDIOC_REQBUFS, &request) >= 0 && request.count) {
-                v4l2_plane planes[VIDEO_MAX_PLANES] {};
-                v4l2_buffer buffer {};
-                buffer.type = kCapture;
-                buffer.memory = V4L2_MEMORY_DMABUF;
-                buffer.index = 0;
-                buffer.length = sample.planes;
-                buffer.m.planes = planes;
-                for (unsigned plane = 0; plane < sample.planes; ++plane) {
-                    planes[plane].m.fd = sample.fd[plane];
-                    planes[plane].data_offset = unsigned(sample.offset[plane]);
-                    planes[plane].length = unsigned(sample.length[plane]);
-                }
-                supported = call(fd, VIDIOC_QBUF, &buffer) >= 0;
-            }
-            request.count = 0;
-            call(fd, VIDIOC_REQBUFS, &request);
-        }
-    }
-    ::close(fd);
-    return supported;
+    return deviceOffers && policy != RgbCapture::off;
 }
 
 bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc)

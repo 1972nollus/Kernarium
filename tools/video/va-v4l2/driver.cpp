@@ -104,41 +104,18 @@ void Driver::probeCapture()
     // Everything a decode session needs to know is settled here, at
     // initialisation, so that the first session of a boot - which is the one
     // that plays a startup movie - gets the same answer as every later one.
-    importNv12_ = importPacked_ = false;
-    if (capturePolicy_ == CaptureMemory::device) return;
-    if (capturePolicy_ == CaptureMemory::lend) { importNv12_ = importPacked_ = true; return; }
-    // Probe with a buffer of the kind the surfaces are really made of, so the
-    // answer is about this graphics stack and not only about the device, and
-    // in each decoded format, because a queue that takes a one-plane buffer
-    // can still refuse a two-plane one.
-    importNv12_ = probeImport(VA_FOURCC_NV12, V4L2_PIX_FMT_NV12M, 2);
-    importPacked_ = rgbOffered_ && probeImport(VA_FOURCC_ARGB, V4L2_PIX_FMT_ABGR32, 1);
+    // Whether a queue takes one of this driver's buffers is not a question a
+    // synthetic probe can answer: the queue negotiates its own geometry, and
+    // only the real one knows what it will accept. So the decision is made by
+    // lending the real queue a real buffer, and a queue that refuses falls
+    // back to the buffers the device allocates, once, with the reason logged.
+    lendCapture_ = capturePolicy_ != CaptureMemory::device && selectedStorage() == StorageKind::gbm;
 }
 
-bool Driver::probeImport(std::uint32_t fourcc, std::uint32_t pixelFormat, unsigned planes)
-{
-    constexpr unsigned kProbeWidth = 64;
-    constexpr unsigned kProbeHeight = 64;
-    std::string error;
-    auto probe = PixelBuffer::allocate(fourcc, kProbeWidth, kProbeHeight, error);
-    if (!probe || probe->kind() != StorageKind::gbm || probe->descriptor() < 0) return false;
-    if (probe->planes() < planes) return false;
-    CaptureTarget sample {};
-    sample.planes = planes;
-    for (unsigned plane = 0; plane < planes; ++plane) {
-        sample.fd[plane] = probe->descriptor();
-        sample.offset[plane] = probe->offset(plane);
-        sample.pitch[plane] = probe->pitch(plane);
-        const std::size_t next = plane + 1 < planes ? probe->offset(plane + 1) : probe->size();
-        sample.length[plane] = next > probe->offset(plane) ? next - probe->offset(plane) : 0;
-    }
-    return decoderImportsCapture(device_, sample, kProbeWidth, kProbeHeight, pixelFormat);
-}
-
-bool Driver::importsCapture(std::uint32_t captureFourcc)
+bool Driver::importsCapture()
 {
     probeCapture();
-    return captureFourcc == V4L2_PIX_FMT_ABGR32 ? importPacked_ : importNv12_;
+    return lendCapture_;
 }
 
 std::uint32_t Driver::preferredCapture()
@@ -1004,7 +981,7 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         // buffer of this kind was shown to be importable: a queue that refuses
         // one falls back to buffers the device allocates, and asking it every
         // session only fills the log.
-        if (driver.importsCapture(context->decoder->captureFormat())) {
+        if (driver.importsCapture()) {
             Context* raw = context.get();
             context->decoder->setCaptureSource(
                 [&driver, raw](unsigned index, bool fresh, CaptureTarget& target) {

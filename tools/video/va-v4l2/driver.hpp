@@ -175,10 +175,9 @@ public:
     // The decoded format to ask a new decode session for: packed RGB when the
     // device offers it and the policy wants it, otherwise zero for NV12.
     std::uint32_t preferredCapture();
-    // Whether a surface of this driver's own making, in the format a decode
-    // session settled on, can be lent to the decoder's capture queue. Probed
-    // once at initialisation, because each probe opens the device node.
-    bool importsCapture(std::uint32_t captureFourcc);
+    // Whether to offer the decoder this driver's own buffers for its capture
+    // queue. The queue itself decides whether to take them.
+    bool importsCapture();
 
     void note(const char* message) const;
 
@@ -186,9 +185,6 @@ private:
     void probeCodecs();
     // Learns once what the decoder's capture queue can do.
     void probeCapture();
-    // Lends the capture queue one real buffer of this shape, to learn whether
-    // it takes one at all.
-    bool probeImport(std::uint32_t fourcc, std::uint32_t pixelFormat, unsigned planes);
 
     std::mutex lock_;
     VADriverContextP driverContext_;
@@ -199,8 +195,7 @@ private:
     // Probed once at initialisation, because each probe opens the device node.
     bool captureProbed_ {};
     bool rgbOffered_ {};
-    bool importNv12_ {};
-    bool importPacked_ {};
+    bool lendCapture_ {};
     int reportedPictures_ {};
     int reportLimit_ {-1};
 };

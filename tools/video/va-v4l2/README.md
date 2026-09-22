@@ -91,31 +91,39 @@ the descriptor names both planes inside it at their offsets.
 
 A browser converts every decoded frame to RGB before it can draw it, and under
 OpenGL it asks this driver to do it through a video-processing blit. The device
-can decode straight to packed RGB, which turns that blit into a copy of what
-the host already produced.
+can decode straight to packed RGB, and then that blit is a copy of what the
+host already produced.
 
 | condition | decoded format |
 | --- | --- |
 | the device does not enumerate `AR24` on its CAPTURE queue | NV12, always |
 | `UML_VA_V4L2_RGB=off` | NV12 |
-| `UML_VA_V4L2_RGB=force` | packed RGB |
-| `auto` (default) | NV12 |
+| `auto` (default) or `force` | packed RGB |
 
-It does not pay, and the reason is worth recording because it is not the
-obvious one. A packed frame is 2.6 times the bytes of NV12, and carrying it
-out of the device costs far more than the colour conversion it saves. Over a
-whole 392-frame 1920x1200 stream with a video-processing blit in front of
-every frame, the decode session took 158 s in NV12 against 241 s packed, in
-both orders - and the blits cost the same 56 s either way, because a guest
-pass over 2.3 million pixels costs what it costs whatever it computes, so
-turning the conversion into a copy saves nothing. That holds even with the
-decoder writing packed pictures into this driver's own surfaces, so that
-nothing in the guest copies them at all.
+It is the single largest thing in the guest-side video path. Measured over a
+whole 392-frame 1920x1200 stream, blitting every frame the way a browser
+under OpenGL does:
 
-So `auto` keeps NV12 and `force` stays for anyone re-measuring on a device
-whose transport is cheaper. The decision is made once, at initialisation, from
-what the device offers rather than from what a client has done so far, so the
-first decode session of a boot gets the same answer as every later one.
+| decoded format | whole stream | per blit |
+| --- | --- | --- |
+| NV12, converted in the guest | 128.2 s | 156 ms |
+| packed `AR24`, copied | 74.8 s | 1 ms |
+
+The conversion is a scalar pass over 2.3 million pixels at about 21 Mpx/s; the
+copy is a row `memcpy` at about 21 GB/s. Carrying 2.6 times the bytes out of
+the device costs about 6 ms a frame, which is nothing beside the 155 ms it
+saves.
+
+The cost is the arithmetic, not the memory: a 9.2 MB `memcpy` in this guest
+runs at 36-41 GB/s whether it touches anonymous memory, a `gbm_bo_map`ped
+buffer or a V4L2 `MMAP` capture plane, all within 10% of each other.
+
+The decision is made once, at initialisation, from what the device offers
+rather than from what a client has done so far, so the first decode session of
+a boot gets the same answer as every later one. A client that reads NV12 back
+rather than blitting pays the conversion in the other direction, and the round
+trip is not bit exact, so `UML_VA_V4L2_RGB=off` stays for a client that wants
+the device's own planes.
 
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the
@@ -132,15 +140,18 @@ client, and the guest never copies the picture at all.
 | --- | --- |
 | `device` | the decoder's own buffers, mapped and copied out. Always available |
 | `lend` | this driver's surfaces, falling back to `device` for any queue that refuses one |
-| `auto` (default) | `lend` when a surface of the kind this graphics stack makes was accepted by a real queue at initialisation, otherwise `device` |
+| `auto` (default) | `lend` wherever the surfaces are dma-bufs at all, which is to say GBM |
 
-Whether a queue takes a buffer is settled by lending it one, not by asking
+Whether a queue takes a buffer is settled by offering it one, not by asking
 whether it supports the memory type: a queue accepts `V4L2_MEMORY_DMABUF` and
 then refuses the buffer, because it maps an imported one through its own
 memory operations and a buffer with no pages of its own - a host-visible blob,
 which is what a virtualised graphics stack hands out - has nothing there to
-map. So the probe does `S_FMT`, `REQBUFS` and a real `QBUF` on a real surface,
-once, at initialisation.
+map. Nor can a synthetic queue answer for the real one, since a queue
+negotiates its own geometry. So the real queue is offered a real surface as
+it is built, and one that refuses gets the device's own buffers instead, with
+the reason recorded once: `into device buffers (lend the decoder a buffer:
+Invalid argument)`.
 
 The driver holds one buffer per capture slot and a pool of the ones the
 decoder has given back. A surface that shows a picture takes its buffer over;
@@ -156,14 +167,19 @@ the memory type the queue really had, then the new format and a queue built
 from scratch. The first slot of a new queue takes back everything the old one
 held, so nothing is leaked and nothing is lent twice.
 
-Only a capture format of one plane can be lent today. `NV12M` is two planes
-and the device offers nothing single-planar for it, so the one object that
-carries both planes is refused (`lend the decoder a buffer: Invalid argument`)
-and an NV12 decode - which is what `auto` chooses - keeps the decoder's own
-buffers and copies each picture out. Packed RGB is one plane and is lent
-whole, which is how this path is exercised today. When the capture queue
-learns to take one object carrying both NV12 planes, the probe finds it and
-that copy goes away with no other change.
+Only a capture format of one plane can be lent today. `AR24` is one plane and
+is lent whole, which is the default path. `NV12M` is two planes and the device
+offers nothing single-planar for it, so the one object that carries both
+planes is refused (`lend the decoder a buffer: Invalid argument`) and an NV12
+decode keeps the decoder's own buffers. When the capture queue learns to take
+one object carrying both planes, the probe finds it and that copy goes away
+with no other change.
+
+What it is worth is one copy a frame and no more: over the same 392-frame
+stream, 74.81 s lending the queue this driver's surfaces against 74.57 s
+letting it keep its own, because copying 9.2 MB out of a capture buffer is a
+row `memcpy` costing about 0.4 ms beside 190 ms a frame of decoding. It is
+here because the copy is real and avoidable, not because it is fast.
 
 The surface's own format stays NV12: the packed picture lives in a shadow
 buffer, and `vaDeriveImage`, `vaGetImage` and `vaExportSurfaceHandle` convert

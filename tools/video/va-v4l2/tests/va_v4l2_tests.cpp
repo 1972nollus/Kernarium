@@ -271,8 +271,8 @@ void testCapturePolicy()
           "a device that does not offer packed RGB is never asked for it");
     check(!uml::va::useRgbCapture(RgbCapture::off, true), "off never asks for packed RGB");
     check(uml::va::useRgbCapture(RgbCapture::force, true), "force asks for packed RGB");
-    check(!uml::va::useRgbCapture(RgbCapture::automatic, true),
-          "automatic keeps NV12, which the whole stream measures faster even with nothing copied");
+    check(uml::va::useRgbCapture(RgbCapture::automatic, true),
+          "automatic asks for packed RGB, which makes a browser's mandatory blit a copy");
 
     using uml::va::CaptureMemory;
     check(uml::va::captureMemoryRequest(nullptr) == CaptureMemory::automatic,

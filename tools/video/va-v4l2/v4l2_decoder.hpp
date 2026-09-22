@@ -152,22 +152,21 @@ private:
 // falling back to a scan for a stateful decoder that accepts `codedFormat`.
 std::string findDecoderDevice(std::uint32_t codedFormat);
 
-// Whether to ask the decoder for packed RGB rather than NV12. `off` and
-// `automatic` never do; `force` does whenever the device offers it.
+// Whether to ask the decoder for packed RGB rather than NV12. `off` never
+// does; `automatic` and `force` do whenever the device offers it.
 enum class RgbCapture { off, automatic, force };
 
 // Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
 RgbCapture rgbCaptureRequest(const char* request) noexcept;
 
 // The decision itself, made once at initialisation so that the first decode
-// session of a boot gets the same answer as every later one. `automatic`
-// keeps NV12: a packed frame is 2.6 times the bytes, and carrying it through
-// the device costs far more than the conversion it saves, even when nothing
-// in the guest copies it (measured over a whole 392-frame 1920x1200 stream
-// with a video-processing blit in front of every frame: 158 s planar into the
-// decoder's own buffers against 241 s packed into lent ones, with the blit
-// itself costing the same 56 s either way, because a blit is bound by writing
-// its 9.2 MB result and not by the arithmetic).
+// session of a boot gets the same answer as every later one. Asking for
+// packed RGB is what makes a browser's mandatory blit cheap: measured over a
+// whole 392-frame 1920x1200 stream, 156 ms a frame converting NV12 against
+// 1 ms copying what the host already packed, and 128.2 s against 74.8 s for
+// the stream. Carrying 2.6 times the bytes costs about 6 ms a frame, which is
+// nothing beside that. A client that reads NV12 back pays the conversion the
+// other way, so `off` stays for one that wants the device's own planes.
 bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept;
 
 // Whether to lend the decoder the driver's own surfaces for its decoded
@@ -178,12 +177,6 @@ enum class CaptureMemory { automatic, lend, device };
 
 // Parses UML_VA_V4L2_CAPTURE. An unset or unrecognised request is `automatic`.
 CaptureMemory captureMemoryRequest(const char* request) noexcept;
-
-// Whether the decoder's CAPTURE queue accepts a buffer of this shape as
-// imported dma-buf memory: the picture then lands in the client's own buffer
-// instead of being copied out of an MMAP queue.
-bool decoderImportsCapture(const std::string& device, const CaptureTarget& sample,
-                           unsigned width, unsigned height, std::uint32_t fourcc);
 
 // Whether the device can deliver decoded pictures in `fourcc`. A device that
 // does not enumerate it makes the RGB decode path unavailable, and the driver
