@@ -19,3 +19,8 @@ include/uapi/linux/virtio_video.h	uml-devices	carry-locally	Paired host and kern
 drivers/gpu/drm/virtio/virtgpu_prime.c	uml-devices	carry-locally	The exported blob must name the shared-memory region a second virtio device resolves.
 drivers/virtio/virtio_dma_buf.c	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.
 include/linux/virtio_dma_buf.h	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.
+drivers/gpu/drm/virtio/virtgpu_host_blob.c	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+include/linux/virtio_gpu_host_blob.h	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/gpu/drm/virtio/Makefile	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/gpu/drm/virtio/virtgpu_drv.h	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/gpu/drm/virtio/virtgpu_kms.c	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.

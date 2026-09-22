@@ -1,8 +1,9 @@
-From 78a86b3111dfb7c7df3949644cb13e069cabd32c Mon Sep 17 00:00:00 2001
+From be2ee3d4772fef7681065add2c82e897e88c18d8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Tue, 8 Sep 2026 11:28:39 +0000
-Subject: [PATCH 42/45] UML-DARWIN-LOCAL: media: add the shared Virtio video
- decoder
+Date: Tue, 8 Sep 2026 20:12:50 +0900
+Subject: [PATCH 32/34] media: add the Darwin UML Virtio video decoder
+
+The stateful V4L2 decoder for the Darwin host's Virtio video device.
 
 A buffer queued as V4L2_MEMORY_DMABUF is described by the imported dma-buf's
 own scatter list, whose entries may have no struct page, so its mapped DMA
@@ -12,27 +13,27 @@ region, the resource entry carries that region's ID and the plane's offset
 inside it, which the negotiated VIRTIO_VIDEO_F_RESOURCE_SHM_REGION feature
 permits. V4L2 carries no per-plane offset on a capture buffer, so planes
 that share one dma-buf follow one another at their negotiated sizes.
-
-Change-Id: I7bcd52774ff2241bc917359b3fb64c7ea66826f2
 ---
  drivers/media/Kconfig                       |    2 +
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
- drivers/media/virtio/Makefile               |    5 +
+ drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  449 ++++++
+ drivers/media/virtio/virtio_video.h         |  456 ++++++
+ drivers/media/virtio/virtio_video_blob.c    |  157 ++
  drivers/media/virtio/virtio_video_caps.c    |  466 ++++++
- drivers/media/virtio/virtio_video_dec.c     |  479 ++++++
- drivers/media/virtio/virtio_video_device.c  | 1477 +++++++++++++++++++
- drivers/media/virtio/virtio_video_driver.c  |  240 +++
+ drivers/media/virtio/virtio_video_dec.c     |  485 ++++++
+ drivers/media/virtio/virtio_video_device.c  | 1534 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_driver.c  |  242 +++
  drivers/media/virtio/virtio_video_helpers.c |  308 ++++
  drivers/media/virtio/virtio_video_vq.c      |  981 ++++++++++++
  include/uapi/linux/virtio_video.h           |  539 +++++++
- 13 files changed, 4968 insertions(+)
+ 14 files changed, 5198 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
  create mode 100644 drivers/media/virtio/virtio_video.h
+ create mode 100644 drivers/media/virtio/virtio_video_blob.c
  create mode 100644 drivers/media/virtio/virtio_video_caps.c
  create mode 100644 drivers/media/virtio/virtio_video_dec.c
  create mode 100644 drivers/media/virtio/virtio_video_device.c
@@ -42,7 +43,7 @@ Change-Id: I7bcd52774ff2241bc917359b3fb64c7ea66826f2
  create mode 100644 include/uapi/linux/virtio_video.h
 
 diff --git a/drivers/media/Kconfig b/drivers/media/Kconfig
-index d251201fc4b4f61f698aac178575970d610b47eb..2e6ba9422dd099c541d2e97d25404dbc145675b7 100644
+index 6abc9302c..3d5a3e690 100644
 --- a/drivers/media/Kconfig
 +++ b/drivers/media/Kconfig
 @@ -22,6 +22,8 @@ menuconfig MEDIA_SUPPORT
@@ -55,7 +56,7 @@ index d251201fc4b4f61f698aac178575970d610b47eb..2e6ba9422dd099c541d2e97d25404dbc
  	bool "Filter media drivers"
  	default y if !EXPERT
 diff --git a/drivers/media/Makefile b/drivers/media/Makefile
-index 20fac24e4f0f13134c12cd859141c8b0387030fa..6ceee069df591706e479f974155397541cec7805 100644
+index 20fac24e4..6ceee069d 100644
 --- a/drivers/media/Makefile
 +++ b/drivers/media/Makefile
 @@ -32,3 +32,5 @@ obj-$(CONFIG_CEC_CORE) += cec/
@@ -66,7 +67,7 @@ index 20fac24e4f0f13134c12cd859141c8b0387030fa..6ceee069df591706e479f97415539754
 +obj-$(CONFIG_VIRTIO_VIDEO) += virtio/
 diff --git a/drivers/media/virtio/Kconfig b/drivers/media/virtio/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ea4e1aeccf8dd5d535146436185c75a415e0aef
+index 000000000..2ea4e1aec
 --- /dev/null
 +++ b/drivers/media/virtio/Kconfig
 @@ -0,0 +1,9 @@
@@ -81,18 +82,19 @@ index 0000000000000000000000000000000000000000..2ea4e1aeccf8dd5d535146436185c75a
 +	  Stateful V4L2 decoding through the Virtio video queues.
 diff --git a/drivers/media/virtio/Makefile b/drivers/media/virtio/Makefile
 new file mode 100644
-index 0000000000000000000000000000000000000000..f70c4b64819e24810083c73774cb71db367bc08a
+index 000000000..674cca853
 --- /dev/null
 +++ b/drivers/media/virtio/Makefile
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,6 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +obj-$(CONFIG_VIRTIO_VIDEO) += virtio-video.o
 +virtio-video-y := virtio_video_driver.o virtio_video_vq.o \
 +	virtio_video_device.o virtio_video_dec.o \
-+	virtio_video_caps.o virtio_video_helpers.o
++	virtio_video_caps.o virtio_video_helpers.o \
++	virtio_video_blob.o
 diff --git a/drivers/media/virtio/README b/drivers/media/virtio/README
 new file mode 100644
-index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950c84c0a7f
+index 000000000..90e8a3531
 --- /dev/null
 +++ b/drivers/media/virtio/README
 @@ -0,0 +1,11 @@
@@ -109,10 +111,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..709317cca34c30fd9454cd876e891b735620f047
+index 000000000..32fd5d87f
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,456 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -356,6 +358,13 @@ index 0000000000000000000000000000000000000000..709317cca34c30fd9454cd876e891b73
 +		return 0;
 +}
 +
++/* virtio_video_blob.c */
++extern struct vb2_mem_ops virtio_video_blob_memops;
++void virtio_video_blob_init_memops(void);
++bool virtio_video_blob_capture(struct virtio_video_device *vvd);
++int virtio_video_blob_region(struct vb2_buffer *vb, unsigned int plane,
++			     u8 *region_id, u64 *offset, u64 *size);
++
 +static inline const struct vb2_mem_ops *
 +virtio_video_mem_ops(struct virtio_video_device *vvd)
 +{
@@ -562,9 +571,172 @@ index 0000000000000000000000000000000000000000..709317cca34c30fd9454cd876e891b73
 +				     struct virtio_video_stream *stream);
 +
 +#endif /* _VIRTIO_VIDEO_H */
+diff --git a/drivers/media/virtio/virtio_video_blob.c b/drivers/media/virtio/virtio_video_blob.c
+new file mode 100644
+index 000000000..98fbb3c33
+--- /dev/null
++++ b/drivers/media/virtio/virtio_video_blob.c
+@@ -0,0 +1,157 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Capture buffers a renderer can import.
++ *
++ * A client that decodes into a buffer it then renders from asks for MMAP
++ * buffers and exports them, because that is what the V4L2 stateful decoder
++ * interface offers it. Guest pages cannot answer that: the renderer imports
++ * host memory, so a buffer made of guest pages is rejected at import and the
++ * client falls back to a copy. These buffers are host-visible Virtio-GPU
++ * blobs instead, so the same allocation is what the decoder fills, what the
++ * client maps, and what the renderer imports.
++ *
++ * Without a Virtio-GPU device able to allocate them the queue keeps its
++ * ordinary allocator, and the capture path behaves exactly as before.
++ */
++#include <linux/dma-buf.h>
++#include <linux/module.h>
++#include <linux/refcount.h>
++#include <linux/slab.h>
++#include <linux/virtio_gpu_host_blob.h>
++
++#include <media/videobuf2-dma-sg.h>
++
++#include "virtio_video.h"
++
++struct virtio_video_blob_buffer {
++	struct virtio_gpu_host_blob *blob;
++	unsigned long size;
++};
++
++static void *virtio_video_blob_alloc(struct vb2_buffer *vb, struct device *dev,
++				     unsigned long size)
++{
++	struct virtio_video_blob_buffer *buffer;
++
++	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
++	if (!buffer)
++		return ERR_PTR(-ENOMEM);
++
++	buffer->blob = virtio_gpu_host_blob_create(size);
++	if (IS_ERR(buffer->blob)) {
++		void *err = ERR_CAST(buffer->blob);
++
++		kfree(buffer);
++		return err;
++	}
++
++	buffer->size = size;
++
++	return buffer;
++}
++
++static void virtio_video_blob_put(void *buf_priv)
++{
++	struct virtio_video_blob_buffer *buffer = buf_priv;
++
++	if (!buffer)
++		return;
++
++	virtio_gpu_host_blob_destroy(buffer->blob);
++	kfree(buffer);
++}
++
++static int virtio_video_blob_mmap(void *buf_priv, struct vm_area_struct *vma)
++{
++	struct virtio_video_blob_buffer *buffer = buf_priv;
++
++	if (!buffer)
++		return -EINVAL;
++
++	return virtio_gpu_host_blob_mmap(buffer->blob, vma);
++}
++
++/*
++ * The exported descriptor is the blob's own, so an importer resolves it to the
++ * memory the host already owns rather than to anything this driver copies.
++ */
++static struct dma_buf *virtio_video_blob_get_dmabuf(struct vb2_buffer *vb,
++						    void *buf_priv,
++						    unsigned long flags)
++{
++	struct virtio_video_blob_buffer *buffer = buf_priv;
++	struct dma_buf *dbuf;
++
++	if (!buffer)
++		return NULL;
++
++	dbuf = virtio_gpu_host_blob_export(buffer->blob, flags);
++
++	return IS_ERR(dbuf) ? NULL : dbuf;
++}
++
++static unsigned int virtio_video_blob_num_users(void *buf_priv)
++{
++	struct virtio_video_blob_buffer *buffer = buf_priv;
++
++	return buffer ? virtio_gpu_host_blob_users(buffer->blob) : 0;
++}
++
++static void *virtio_video_blob_cookie(struct vb2_buffer *vb, void *buf_priv)
++{
++	return buf_priv;
++}
++
++/*
++ * Imported buffers keep the scatter-list implementation: their memory belongs
++ * to whoever exported it and nothing here allocates it. Only the allocating
++ * half of the contract is replaced, which is why the table is built from that
++ * implementation rather than written out.
++ *
++ * Cache maintenance is dropped with it. A host-visible blob is not guest RAM:
++ * the host reaches it through its own mapping, and this host's transport
++ * copies an imported guest-page buffer through that same mapping, so there is
++ * no device writing behind the guest's back for a sync to order against.
++ */
++struct vb2_mem_ops virtio_video_blob_memops;
++static bool virtio_video_blob_memops_ready;
++
++void virtio_video_blob_init_memops(void)
++{
++	if (virtio_video_blob_memops_ready)
++		return;
++	virtio_video_blob_memops_ready = true;
++	virtio_video_blob_memops = vb2_dma_sg_memops;
++	virtio_video_blob_memops.alloc = virtio_video_blob_alloc;
++	virtio_video_blob_memops.put = virtio_video_blob_put;
++	virtio_video_blob_memops.mmap = virtio_video_blob_mmap;
++	virtio_video_blob_memops.get_dmabuf = virtio_video_blob_get_dmabuf;
++	virtio_video_blob_memops.num_users = virtio_video_blob_num_users;
++	virtio_video_blob_memops.cookie = virtio_video_blob_cookie;
++	virtio_video_blob_memops.vaddr = NULL;
++	virtio_video_blob_memops.prepare = NULL;
++	virtio_video_blob_memops.finish = NULL;
++	virtio_video_blob_memops.get_userptr = NULL;
++	virtio_video_blob_memops.put_userptr = NULL;
++}
++
++bool virtio_video_blob_capture(struct virtio_video_device *vvd)
++{
++	/*
++	 * The host resolves such a buffer by its shared-memory region, so a
++	 * device that cannot be told about one keeps guest pages.
++	 */
++	return vvd->supp_shm_region && virtio_gpu_host_blob_available();
++}
++
++int virtio_video_blob_region(struct vb2_buffer *vb, unsigned int plane,
++			     u8 *region_id, u64 *offset, u64 *size)
++{
++	struct virtio_video_blob_buffer *buffer = vb2_plane_cookie(vb, plane);
++
++	if (!buffer)
++		return -ENODEV;
++
++	return virtio_gpu_host_blob_region(buffer->blob, region_id, offset,
++					   size);
++}
 diff --git a/drivers/media/virtio/virtio_video_caps.c b/drivers/media/virtio/virtio_video_caps.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f68fee1cf
+index 000000000..b64b5a910
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_caps.c
 @@ -0,0 +1,466 @@
@@ -1036,10 +1208,10 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8e27ea42bd2e512f8ab8a1eaec311b34784d7953
+index 000000000..8bfd2706d
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,485 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Decoder for virtio video device.
 + *
@@ -1224,7 +1396,13 @@ index 0000000000000000000000000000000000000000..8e27ea42bd2e512f8ab8a1eaec311b34
 +	dst_vq->drv_priv = stream;
 +	dst_vq->buf_struct_size = sizeof(struct virtio_video_buffer);
 +	dst_vq->ops = &virtio_video_dec_qops;
-+	dst_vq->mem_ops = virtio_video_mem_ops(vvd);
++	/*
++	 * A capture buffer is what a client renders from, so it is allocated
++	 * where a renderer can import it whenever this device and this host
++	 * can name such memory to each other.
++	 */
++	dst_vq->mem_ops = virtio_video_blob_capture(vvd) ?
++		&virtio_video_blob_memops : virtio_video_mem_ops(vvd);
 +	dst_vq->min_queued_buffers = stream->out_info.min_buffers;
 +	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 +	dst_vq->lock = &stream->vq_mutex;
@@ -1521,10 +1699,10 @@ index 0000000000000000000000000000000000000000..8e27ea42bd2e512f8ab8a1eaec311b34
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad0e3339e4
+index 000000000..23014affe
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1477 @@
+@@ -0,0 +1,1534 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1755,15 +1933,14 @@ index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad
 +	u64 offset, region_offset, region_size;
 +	u64 length = vb->planes[plane].min_length;
 +	u8 region_id;
-+	int ret;
 +
 +	if (!dbuf)
 +		return -ENODEV;
 +
-+	ret = virtio_dma_buf_get_shm_region(dbuf, &region_id, &region_offset,
-+					    &region_size);
-+	if (ret)
-+		return ret;
++	/* Anything that does not name a region is described by addresses. */
++	if (virtio_dma_buf_get_shm_region(dbuf, &region_id, &region_offset,
++					  &region_size))
++		return -ENODEV;
 +
 +	if (!vvd->supp_shm_region) {
 +		v4l2_err(&vvd->v4l2_dev,
@@ -1778,6 +1955,45 @@ index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad
 +		return -EINVAL;
 +
 +	sgl->entries[0].addr = cpu_to_le64(region_offset + offset);
++	sgl->entries[0].length = cpu_to_le32(length);
++	sgl->entries[0].flags =
++		cpu_to_le32(VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION |
++			    ((u32)region_id <<
++			     VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT));
++	sgl->num_entries = cpu_to_le32(1);
++	*size = VIRTIO_VIDEO_RESOURCE_SG_SIZE(1);
++
++	return 0;
++}
++
++/*
++ * A buffer this driver allocated as a host-visible blob is named the same way
++ * an imported one is: by its shared-memory region and its offset in it. The
++ * blob is one allocation per plane, so the plane starts where the blob does.
++ */
++static int build_virtio_video_sglist_blob(struct virtio_video_device *vvd,
++					  struct virtio_video_resource_sg_list *sgl,
++					  struct vb2_buffer *vb,
++					  unsigned int plane, unsigned int *size)
++{
++	u64 region_offset, region_size;
++	u64 length = vb->planes[plane].min_length;
++	u8 region_id;
++	int ret;
++
++	if (!vvd->supp_shm_region)
++		return -ENOTTY;
++
++	ret = virtio_video_blob_region(vb, plane, &region_id, &region_offset,
++				       &region_size);
++	if (ret)
++		return ret;
++
++	if (!length || length > region_size || length > U32_MAX ||
++	    region_offset > U64_MAX - region_size)
++		return -EINVAL;
++
++	sgl->entries[0].addr = cpu_to_le64(region_offset);
 +	sgl->entries[0].length = cpu_to_le32(length);
 +	sgl->entries[0].flags =
 +		cpu_to_le32(VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION |
@@ -1892,7 +2108,26 @@ index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad
 +	struct virtio_video_buffer *virtio_vb = to_virtio_vb(vb);
 +	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
 +
-+	if (vb->memory == VB2_MEMORY_DMABUF) {
++	if (vb->memory != VB2_MEMORY_DMABUF &&
++	    vq->mem_ops == &virtio_video_blob_memops) {
++		buf_size = vb->num_planes * VIRTIO_VIDEO_RESOURCE_SG_SIZE(1);
++
++		buf = kcalloc(1, buf_size, GFP_KERNEL);
++		if (!buf)
++			return -ENOMEM;
++
++		for (i = 0; i < vb->num_planes; i++) {
++			sg_list = buf + offset;
++			ret = build_virtio_video_sglist_blob(vvd, sg_list, vb,
++							     i, &used);
++			if (ret) {
++				kfree(buf);
++				return ret;
++			}
++			offset += used;
++		}
++		buf_size = offset;
++	} else if (vb->memory == VB2_MEMORY_DMABUF) {
 +		buf_size = virtio_video_sglist_capacity(vb, vvd);
 +
 +		buf = kcalloc(1, buf_size, GFP_KERNEL);
@@ -3004,10 +3239,10 @@ index 0000000000000000000000000000000000000000..8ba90700711284fbaf82f2b6a537a1ad
 +}
 diff --git a/drivers/media/virtio/virtio_video_driver.c b/drivers/media/virtio/virtio_video_driver.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b303bda5a646fa6c2cf4edc2677a1f4ff5a27969
+index 000000000..79d2c8f5a
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_driver.c
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,242 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3105,6 +3340,8 @@ index 0000000000000000000000000000000000000000..b303bda5a646fa6c2cf4edc2677a1f4f
 +
 +	if (virtio_has_feature(vdev, VIRTIO_VIDEO_F_RESOURCE_NON_CONTIG))
 +		vvd->supp_non_contig = true;
++
++	virtio_video_blob_init_memops();
 +
 +	if (virtio_has_feature(vdev, VIRTIO_VIDEO_F_RESOURCE_SHM_REGION))
 +		vvd->supp_shm_region = true;
@@ -3250,7 +3487,7 @@ index 0000000000000000000000000000000000000000..b303bda5a646fa6c2cf4edc2677a1f4f
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1900b8797fee4c0d85ffa098ab62a8e72c5d6025
+index 000000000..1900b8797
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
 @@ -0,0 +1,308 @@
@@ -3564,7 +3801,7 @@ index 0000000000000000000000000000000000000000..1900b8797fee4c0d85ffa098ab62a8e7
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685d97f1042
+index 000000000..abbabfafb
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
 @@ -0,0 +1,981 @@
@@ -4551,7 +4788,7 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd55dbf239c
+index 000000000..6a66a95f3
 --- /dev/null
 +++ b/include/uapi/linux/virtio_video.h
 @@ -0,0 +1,539 @@

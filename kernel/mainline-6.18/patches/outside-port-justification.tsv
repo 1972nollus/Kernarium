@@ -12,19 +12,25 @@ scripts/Makefile.vmlinux	darwin-host-build	carry-locally	0011	carry-locally	Use 
 scripts/link-vmlinux.sh	darwin-host-build	carry-locally	0011	carry-locally	Avoid Linux-only linker options when the kernel host is Darwin.
 scripts/mod/file2alias.c	darwin-host-build	carry-locally	0011	carry-locally	Temporarily rename Linux's device-table uuid_t while Darwin system headers expose their own type.
 security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	0013	drop-locally-if-contained	Independent connected-stream sendmsg socket lookup correction exercised by SMP UML; keep it isolated so this local line can drop it when contained.
-drivers/media/Kconfig	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/Makefile	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/Kconfig	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/Makefile	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/README	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video.h	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_caps.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_dec.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_device.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_driver.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_helpers.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-drivers/media/virtio/virtio_video_vq.c	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
-include/uapi/linux/virtio_video.h	uml-devices	carry-locally	0031	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/Kconfig	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/Makefile	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/Kconfig	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/Makefile	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/README	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video.h	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_caps.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_dec.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_device.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_driver.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_helpers.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/media/virtio/virtio_video_vq.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+include/uapi/linux/virtio_video.h	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
 drivers/gpu/drm/virtio/virtgpu_prime.c	uml-devices	carry-locally	0030	carry-locally	A virtio device whose guest imports another virtio device's host-visible dma-buf must name the shared-memory region that backs it, because such a buffer has no guest-physical address to describe.
 drivers/virtio/virtio_dma_buf.c	uml-devices	carry-locally	0030	carry-locally	A virtio device whose guest imports another virtio device's host-visible dma-buf must name the shared-memory region that backs it, because such a buffer has no guest-physical address to describe.
 include/linux/virtio_dma_buf.h	uml-devices	carry-locally	0030	carry-locally	A virtio device whose guest imports another virtio device's host-visible dma-buf must name the shared-memory region that backs it, because such a buffer has no guest-physical address to describe.
+drivers/gpu/drm/virtio/virtgpu_host_blob.c	uml-devices	carry-locally	0031	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+include/linux/virtio_gpu_host_blob.h	uml-devices	carry-locally	0031	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/media/virtio/virtio_video_blob.c	uml-devices	carry-locally	0032	carry-locally	Shared Virtio V4L2 decoder and Linux media registration for every maintained guest profile.
+drivers/gpu/drm/virtio/Makefile	uml-devices	carry-locally	0031	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/gpu/drm/virtio/virtgpu_drv.h	uml-devices	carry-locally	0031	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
+drivers/gpu/drm/virtio/virtgpu_kms.c	uml-devices	carry-locally	0031	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
