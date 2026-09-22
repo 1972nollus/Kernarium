@@ -173,20 +173,20 @@ public:
                 std::uint32_t width, std::uint32_t height, const char* capture,
                 std::uint64_t queuedBuffers, std::uint64_t distinctBuffers,
                 std::uint64_t requeuedBuffers, std::size_t pending, const char* raw,
-                std::uint64_t converted)
+                std::uint64_t converted, const char* codec)
     {
         if (file_ == nullptr) return;
         std::fprintf(file_,
             "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u"
             " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu"
-            " raw=%s converted=%llu\n",
+            " raw=%s converted=%llu coded=%s\n",
             elapsed(), stream, reason, static_cast<unsigned long long>(packets),
             static_cast<unsigned long long>(packetBytes),
             static_cast<unsigned long long>(frames), width, height, capture,
             static_cast<unsigned long long>(queuedBuffers),
             static_cast<unsigned long long>(distinctBuffers),
             static_cast<unsigned long long>(requeuedBuffers), pending, raw,
-            static_cast<unsigned long long>(converted));
+            static_cast<unsigned long long>(converted), codec);
         std::fflush(file_);
     }
 
@@ -302,11 +302,17 @@ public:
         const char* capture = stream.captureShared
             ? (stream.captureGuestPages ? "mixed" : "shm-region")
             : (stream.captureGuestPages ? "guest-pages" : "none");
+        /* A guest driver creates its stream before the client has chosen a
+         * codec and changes it with SET_PARAMS, so the codec on the open line
+         * is not always the one that decoded. */
+        const auto cap = std::find_if(capabilities.begin(), capabilities.end(),
+            [&stream](const auto& c) { return wireCodec(c.codec) == stream.coded; });
         log.closed(id, reason, stream.packets, stream.packetBytes, stream.delivered,
                    stream.output.frame_width, stream.output.frame_height, capture,
                    stream.captureQueued, stream.captureBuffers.size(),
                    stream.captureRequeued, stream.outputs.size(),
-                   rawName(stream.output.format), stream.converted);
+                   rawName(stream.output.format), stream.converted,
+                   cap == capabilities.end() ? "unknown" : codecName(cap->codec));
     }
 
     void closeAll(const char* reason) noexcept

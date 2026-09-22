@@ -292,7 +292,8 @@ void activityLog()
      * client is told apart from a device that stops filling one. They are
      * appended, so the older prefix above still matches. */
     require(text.find("output=64x64 capture=guest-pages queued=3 distinct=1 "
-                      "requeued=2 pending_at_close=0 raw=nv12 converted=0") != std::string::npos,
+                      "requeued=2 pending_at_close=0 raw=nv12 converted=0 coded=h264")
+            != std::string::npos,
         "the video activity log omits the capture-queue facts");
 
     ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
@@ -326,6 +327,47 @@ void activityLog()
                                              : "raw=bgra8888 converted=1") != std::string::npos,
             "the video activity log miscounts device-side packing");
     }
+
+    /* A guest driver creates its stream when the device node is opened, before
+     * the client has chosen a codec, and switches the codec with SET_PARAMS. The
+     * open line therefore names the codec the driver created with, and only the
+     * close line can name the one that decoded. */
+    std::vector<VideoDecodeCapability> both {
+        {VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8},
+        {VideoCodec::vp9, VideoProfile::vp9Profile0, 4096, 2304, 0, 8}};
+    ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
+    {
+        VirtioVideoDevice device(both, [](auto) { return std::make_unique<Decoder>(false); });
+        std::uint64_t next = 1;
+        auto send = [&](const auto& value) {
+            std::vector<std::uint8_t> request;
+            append(request, value);
+            auto result = device.processQueue(0, next++, request, 16384);
+            require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+                    "a codec switch command failed");
+        };
+        virtio_video_stream_create create {};
+        create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 9};
+        create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+        send(create);
+        virtio_video_set_params set {};
+        set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 9};
+        set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+        set.params.format = VIRTIO_VIDEO_FORMAT_VP9;
+        set.params.frame_width = 1920; set.params.frame_height = 1200;
+        send(set);
+        send(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
+    }
+    ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
+    std::ostringstream switched;
+    switched << std::ifstream(path).rdbuf();
+    const auto switchedText = switched.str();
+    std::filesystem::remove(path);
+    require(switchedText.find("stream=9 open codec=h264") != std::string::npos,
+        "the open line does not name the codec the stream was created with");
+    require(switchedText.find("stream=9 close=destroy") != std::string::npos &&
+            switchedText.find("coded=vp9") != std::string::npos,
+        "the close line does not name the codec that decoded");
 }
 
 /* A capture buffer may be a host-visible blob: the guest names an offset in
