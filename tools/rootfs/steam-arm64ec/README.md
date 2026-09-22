@@ -137,6 +137,18 @@ package when one differs, so its launcher is never edited; the image prepends
 there removes the variable before running the real one. The x86-64 client
 installs no such launcher and needs no correction.
 
+The same hook selects Chromium's flat V4L2 decoders
+(`--enable-features=PlatformHEVCDecoderSupport,V4L2FlatStatefulVideoDecoder,V4L2FlatVideoDecoder`).
+The client's default Linux V4L2 path lets the decoder driver allocate the
+capture buffers and exports them, and nothing in this stack can import such a
+buffer, so the startup movie decodes in hardware but no frame reaches the
+screen and the video element is dropped after a fraction of a second. The flat
+decoders take their frames from the frame pool instead and hand them to the
+driver, which is the direction this stack already supports: the movie then
+plays hardware-decoded on screen. Both features are required - either alone
+leaves the old path in place - and the client's own `--enable-features` is
+repeated because the last occurrence on the command line wins.
+
 The Kernarium splash appears on the boot framebuffer while storage is checked
 and the seed is copied. Gamescope then displays a matching installation screen
 with actual Steam download bytes and extraction/verification stages. Steam's

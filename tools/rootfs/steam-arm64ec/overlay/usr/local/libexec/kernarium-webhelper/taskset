@@ -6,6 +6,17 @@
 # Picture window would deliver no frame at all. The client verifies the sizes
 # of its installed files, so its launcher must not be edited; taskset is the
 # only program that launcher resolves through PATH.
+#
+# The same hook selects Chromium's flat V4L2 decoders. Its default Linux V4L2
+# path lets the driver allocate the capture buffers, exports them and never
+# imports them again: the startup movie then decodes but no frame reaches the
+# screen, and the element is dropped after a fraction of a second. The flat
+# decoders take their frames from the frame pool and hand them to the driver,
+# so the buffers are ones this stack can already draw from. Both features are
+# needed - either alone leaves the old path in place - and the client's own
+# --enable-features has to be repeated here because the last one on the
+# command line wins.
 set -eu
 unset LIBGL_KOPPER_DISABLE
-exec /usr/bin/taskset "$@"
+exec /usr/bin/taskset "$@" \
+    --enable-features=PlatformHEVCDecoderSupport,V4L2FlatStatefulVideoDecoder,V4L2FlatVideoDecoder
