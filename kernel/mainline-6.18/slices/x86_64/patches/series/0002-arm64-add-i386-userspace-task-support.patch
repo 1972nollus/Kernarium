@@ -1,7 +1,7 @@
-From 14b3126c76456a5c07948f0e71fc0ca50647a6ec Mon Sep 17 00:00:00 2001
+From a3bfb7ca5312e40bb249b9b3dd23b978057b5e48 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
-Subject: [PATCH 2/3] arm64: add i386 userspace task support
+Subject: [PATCH 2/4] arm64: add i386 userspace task support
 
 Add the complete i386 process ABI to the dedicated x86-family UML slice: ELF loading, task and register mode, signal frames, TLS, ptrace register layout, restart handling, and compat structure translation.
 
@@ -141,10 +141,10 @@ index eaf07b7cd..ea7f7cb33 100644
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 695f610fa..085774d07 100644
+index 57b834791..61a22bf85 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
-@@ -32,18 +32,96 @@
+@@ -32,9 +32,14 @@
  #define ELF_HWCAP2 0
  #define ELF_EXEC_PAGESIZE PAGE_SIZE
  #define ELF_ET_DYN_BASE (TASK_SIZE * 2 / 3)
@@ -159,8 +159,9 @@ index 695f610fa..085774d07 100644
 +	 (header)->e_ident[EI_CLASS] == ELFCLASS64 && \
 +	 (header)->e_ident[EI_DATA] == ELFDATA2LSB)
  
- #define ELF_PLAT_INIT(regs, load_address) do { \
- 	UPT_X86_64(&(regs)->regs, UML_X86_64_RDX) = 0; \
+ /* x86-64 starts a task with the flat 64-bit code and stack selectors; the
+  * data selectors stay null as flush_thread() left them.
+@@ -46,9 +51,82 @@
  } while (0)
  
  #define SET_PERSONALITY(executable) do { \
@@ -577,7 +578,7 @@ index a4767ee81..03612f211 100644
  	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index 41fcf8089..877a2b790 100644
+index e9f2fa316..0f2372349 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -71,6 +71,7 @@ struct uml_pt_regs {
@@ -585,10 +586,10 @@ index 41fcf8089..877a2b790 100644
  #define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
  #define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
 +#define UML_X86_32_TASK_MODE (1UL << 33)
+ /* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
+ #define UML_X86_64_TSC_SIGSEGV (1UL << 34)
  
- static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
- {
-@@ -80,6 +81,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
+@@ -82,6 +83,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
  #define UPT_X86_64_COMPAT_SYSCALL(regs) \
  	upt_x86_64_compat_syscall(regs)
  
@@ -1844,10 +1845,10 @@ index 000000000..f98f94221
 +	return copy_to_user(user_desc, &info, sizeof(info)) ? -EFAULT : 0;
 +}
 diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
-index 13b9fa093..fb04c6427 100644
+index cf93d90d1..0a47c2a37 100644
 --- a/arch/arm64/um/x86_64_syscalls.c
 +++ b/arch/arm64/um/x86_64_syscalls.c
-@@ -16,288 +16,7 @@
+@@ -20,288 +20,7 @@
  #include <asm/ptrace.h>
  #include <asm/syscall.h>
  #include <asm/unistd.h>
@@ -2137,7 +2138,7 @@ index 13b9fa093..fb04c6427 100644
  
  struct uml_x86_64_epoll_event {
  	__u32 events;
-@@ -306,42 +25,6 @@ struct uml_x86_64_epoll_event {
+@@ -310,42 +29,6 @@ struct uml_x86_64_epoll_event {
  
  static_assert(sizeof(struct uml_x86_64_epoll_event) == 12);
  
@@ -2180,7 +2181,7 @@ index 13b9fa093..fb04c6427 100644
  unsigned int uml_x86_64_epoll_event_size(void)
  {
  	return sizeof(struct uml_x86_64_epoll_event);
-@@ -363,28 +46,47 @@ uml_x86_64_epoll_put_uevent(__poll_t revents, __u64 data,
+@@ -367,28 +50,47 @@ uml_x86_64_epoll_put_uevent(__poll_t revents, __u64 data,
  	return (struct epoll_event __user *)(x86_event + 1);
  }
  
@@ -2196,11 +2197,11 @@ index 13b9fa093..fb04c6427 100644
  	struct epoll_event event = { };
 -	int operation = UPT_SYSCALL_ARG2(regs);
 +	int op = operation;
-+
-+	(void)unused4;
-+	(void)unused5;
  
 -	if (ep_op_has_event(operation)) {
++	(void)unused4;
++	(void)unused5;
++
 +	if (ep_op_has_event(op)) {
  		if (copy_from_user(&user_event,
 -				   (const void __user *)UPT_SYSCALL_ARG4(regs),
@@ -2234,7 +2235,7 @@ index 13b9fa093..fb04c6427 100644
  struct uml_x86_64_stat {
  	__u64 dev;
  	__u64 ino;
-@@ -495,7 +197,7 @@ static long uml_x86_64_pause(void)
+@@ -499,7 +201,7 @@ static long uml_x86_64_pause(void)
  static long uml_x86_64_openat(int dfd, const char __user *path,
  			      unsigned long x86_flags, umode_t mode)
  {
@@ -2243,7 +2244,7 @@ index 13b9fa093..fb04c6427 100644
  
  	return sys_openat(dfd, path, flags, mode);
  }
-@@ -507,10 +209,10 @@ static long uml_x86_64_fcntl(struct uml_pt_regs *regs)
+@@ -511,10 +213,10 @@ static long uml_x86_64_fcntl(struct uml_pt_regs *regs)
  	long result;
  
  	if (command == F_SETFL)
@@ -2256,7 +2257,7 @@ index 13b9fa093..fb04c6427 100644
  	return result;
  }
  
-@@ -531,7 +233,7 @@ static long uml_x86_64_openat2(struct uml_pt_regs *regs)
+@@ -535,7 +237,7 @@ static long uml_x86_64_openat2(struct uml_pt_regs *regs)
  	error = copy_struct_from_user(&how, sizeof(how), user_how, size);
  	if (error)
  		return error;
@@ -2265,7 +2266,7 @@ index 13b9fa093..fb04c6427 100644
  	audit_openat2_how(&how);
  	if (!(how.flags & O_PATH) && force_o_largefile())
  		how.flags |= O_LARGEFILE;
-@@ -542,7 +244,7 @@ static long uml_x86_64_openat2(struct uml_pt_regs *regs)
+@@ -546,7 +248,7 @@ static long uml_x86_64_openat2(struct uml_pt_regs *regs)
  static long uml_x86_64_open_by_handle_at(struct uml_pt_regs *regs)
  {
  	unsigned int x86_flags = UPT_SYSCALL_ARG3(regs);
@@ -2274,7 +2275,7 @@ index 13b9fa093..fb04c6427 100644
  
  	return sys_open_by_handle_at(UPT_SYSCALL_ARG1(regs),
  		(struct file_handle __user *)UPT_SYSCALL_ARG2(regs), flags);
-@@ -551,7 +253,7 @@ static long uml_x86_64_open_by_handle_at(struct uml_pt_regs *regs)
+@@ -555,7 +257,7 @@ static long uml_x86_64_open_by_handle_at(struct uml_pt_regs *regs)
  static long uml_x86_64_pipe2(struct uml_pt_regs *regs)
  {
  	unsigned int x86_flags = UPT_SYSCALL_ARG2(regs);
@@ -2283,7 +2284,7 @@ index 13b9fa093..fb04c6427 100644
  
  	return sys_pipe2((int __user *)UPT_SYSCALL_ARG1(regs), flags);
  }
-@@ -559,7 +261,7 @@ static long uml_x86_64_pipe2(struct uml_pt_regs *regs)
+@@ -563,7 +265,7 @@ static long uml_x86_64_pipe2(struct uml_pt_regs *regs)
  static long uml_x86_64_fanotify_init(struct uml_pt_regs *regs)
  {
  	unsigned int x86_flags = UPT_SYSCALL_ARG2(regs);
@@ -2292,7 +2293,7 @@ index 13b9fa093..fb04c6427 100644
  
  	return sys_fanotify_init(UPT_SYSCALL_ARG1(regs), flags);
  }
-@@ -567,7 +269,7 @@ static long uml_x86_64_fanotify_init(struct uml_pt_regs *regs)
+@@ -571,7 +273,7 @@ static long uml_x86_64_fanotify_init(struct uml_pt_regs *regs)
  static long uml_x86_64_mq_open(struct uml_pt_regs *regs)
  {
  	unsigned int x86_flags = UPT_SYSCALL_ARG2(regs);
@@ -2301,7 +2302,7 @@ index 13b9fa093..fb04c6427 100644
  
  	return sys_mq_open((const char __user *)UPT_SYSCALL_ARG1(regs), flags,
  		UPT_SYSCALL_ARG3(regs),
-@@ -759,117 +461,11 @@ int uml_x86_64_special_syscall(struct uml_pt_regs *regs, long *result)
+@@ -906,117 +608,11 @@ int uml_x86_64_special_syscall(struct uml_pt_regs *regs, long *result)
  	return 1;
  }
  
@@ -3075,7 +3076,7 @@ index ef849ea26..465b8a2c7 100644
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index f9b93955b..7a4f04a4e 100644
+index 38bde60dd..92c403020 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -450,6 +450,10 @@ void userspace(struct uml_pt_regs *registers)

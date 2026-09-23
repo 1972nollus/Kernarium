@@ -160,7 +160,9 @@ guest task creation does not create host threads. CPU hotplug reuses carriers,
 and shutdown returns to a native carrier stack before thread teardown.
 
 Carriers are named `uml-vcpu-N-carrier`. The kernels use a 100 Hz tick with
-`NO_HZ_IDLE`. Darwin
+`NO_HZ_IDLE` and high-resolution timers: the one-shot clock event records a
+per-CPU deadline that idle carriers wait on and busy carriers poll, so an
+hrtimer expires at its own deadline rather than on the next tick. Darwin
 signals wake carriers but do not execute Linux IPIs asynchronously; IRQ-enabled
 spin checkpoints service pending IPIs.
 

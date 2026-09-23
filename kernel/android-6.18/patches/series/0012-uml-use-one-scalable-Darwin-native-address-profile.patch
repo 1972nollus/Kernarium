@@ -1,7 +1,7 @@
-From fd900f3d3b424c010721df7b31c6ea25fd87a38b Mon Sep 17 00:00:00 2001
+From 268552d0ae740ebaf880ecaf10eeaa7433b94c67 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 23:44:10 +0900
-Subject: [PATCH 12/48] uml: use one scalable Darwin native address profile
+Subject: [PATCH 12/49] uml: use one scalable Darwin native address profile
 
 All Apple products should exercise one sparse software guest address contract
 instead of allowing macOS to hide bugs behind a different kernel image or
@@ -235,7 +235,7 @@ index 0000000000000000000000000000000000000000..09169ea2f067c57656239bda81f4bfe2
 +
 +#endif
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 1c8cd2c41d8a57acc9fb5bfecc96d5b2cdcbcdd9..8b6366d7a20b14c691457697c5226039275f4783 100644
+index 1e6194ce52e3e8face711622b7b81a0c30b78c6a..31575c43f7e1ffdcfb7070ced4b346324b1d4274 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -18,6 +18,7 @@
@@ -246,7 +246,7 @@ index 1c8cd2c41d8a57acc9fb5bfecc96d5b2cdcbcdd9..8b6366d7a20b14c691457697c5226039
  extern int darwin_uml_vm_retry_fault(unsigned long address, int execute,
  				     int write);
  #endif
-@@ -380,7 +381,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -395,7 +396,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		show_regs(container_of(regs, struct pt_regs, regs));
  		panic("Segfault with no mm");
  	}

@@ -189,6 +189,10 @@ CONFIG_HZ=100
 # CONFIG_HZ_PERIODIC is not set
 CONFIG_NO_HZ_IDLE=y
 # CONFIG_NO_HZ_FULL is not set
+# Timers still expire at their own deadlines between ticks.  The Darwin clock
+# event is one-shot for NO_HZ_IDLE already, so arming it for an hrtimer only
+# records a deadline that idle carriers wait on and busy ones poll.
+CONFIG_HIGH_RES_TIMERS=y
 CONFIG_CHECKPOINT_RESTORE=y
 # CONFIG_EXPERT makes NAMESPACES a visible prompt whose default becomes n
 # (init/Kconfig: `default !EXPERT`), so it must be requested explicitly.  Every

@@ -1,7 +1,7 @@
-From e7e3a201fd5c5a078c0fe4461410ba90a27eca94 Mon Sep 17 00:00:00 2001
+From a09252be151a3943b7ff4e550edf812a57b3f29d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:25 +0900
-Subject: [PATCH 15/36] uml: use one scalable Darwin native address profile
+Subject: [PATCH 15/37] uml: use one scalable Darwin native address profile
 
 Use one sparse Apple guest address contract, size the native hole from configured RAM, give auxiliary mappings a RAM-sized allowance within the supported bounds, and let vmalloc consume that whole window.
 ---
@@ -225,7 +225,7 @@ index 000000000..09169ea2f
 +
 +#endif
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 1c8cd2c41..8b6366d7a 100644
+index 1e6194ce5..31575c43f 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -18,6 +18,7 @@
@@ -236,7 +236,7 @@ index 1c8cd2c41..8b6366d7a 100644
  extern int darwin_uml_vm_retry_fault(unsigned long address, int execute,
  				     int write);
  #endif
-@@ -380,7 +381,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -395,7 +396,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		show_regs(container_of(regs, struct pt_regs, regs));
  		panic("Segfault with no mm");
  	}

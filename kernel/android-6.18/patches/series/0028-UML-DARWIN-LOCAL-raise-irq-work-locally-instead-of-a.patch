@@ -1,7 +1,7 @@
-From 329ca58cdfd3721a8bcbd1e241a5980c7558b949 Mon Sep 17 00:00:00 2001
+From ab3a3d01f4287d379cd73d083a11baa5cd30c404 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
-Subject: [PATCH 28/48] UML-DARWIN-LOCAL: raise irq work locally instead of at
+Subject: [PATCH 28/49] UML-DARWIN-LOCAL: raise irq work locally instead of at
  the tick
 
 UML never implemented arch_irq_work_raise(), so the generic weak stub left
@@ -187,12 +187,12 @@ index cf3b990e097423aa6e78991b88f3e43b2cc0a96e..614f086a760a421d8f258f4827e82c87
  {
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 1f1209910aa4aea0d11a2c4f774cf978342cb2f5..fcc40b47109f6de2cffb81c25ea98aebed2b583d 100644
+index 01b84a0bf5d27e896acceceb1e6b4d79b6015423..391cbe2ca5ff9afc491d9745d0ada901cf0011da 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -257,6 +257,14 @@ void os_idle_sleep(void)
- 					(sizeof(read_fds.fds_bits[0]) * 8));
- 		wake_fd = ipi_fd > stop_fd ? ipi_fd : stop_fd;
+@@ -316,6 +316,14 @@ void os_idle_sleep(void)
+ 		if (deadline_fd > wake_fd)
+ 			wake_fd = deadline_fd;
  		darwin_ipi_idle_begin();
 +		/* A vector pending here has no wake edge of its own; see
 +		 * darwin_ipi_idle_pending().  Drain it below rather than sleep on it.

@@ -7,10 +7,11 @@ arch/arm64/um/asm/ptrace.h	0001,0002	Topic 0001 defines the fixed x86 register b
 arch/arm64/um/asm/syscall.h	0001,0002	Topic 0001 declares x86-64 syscall translation, while topic 0002 adds i386 audit identity, generated dispatch tables, and the syscall-user-dispatch sigreturn hook.
 arch/arm64/um/asm/user.h	0001,0002	Topic 0001 defines the x86-64 ptrace layout, while topic 0002 adds the matching i386 register layout.
 arch/arm64/um/mmap.c	0001,0002	Topic 0001 implements x86-64 mapping flags, while topic 0002 constrains compat mappings to the i386 address ceiling.
-arch/arm64/um/ptrace.c	0001,0002	Topic 0001 exposes x86-64 regsets, while topic 0002 adds the i386 general-register view.
+arch/arm64/um/ptrace.c	0001,0002,0004	Topic 0001 exposes x86-64 regsets, topic 0002 adds the i386 general-register view, and topic 0004 replaces inherited arm64 ptrace layouts with x86 ones.
 arch/arm64/um/shared/sysdep/ptrace.h	0001,0002	Topic 0001 defines x86 register and int80 state, while topic 0002 adds the persistent compat-task bridge marker.
-arch/arm64/um/signal.c	0001,0002	Topic 0001 implements the x86-64 signal ABI, while topic 0002 adds i386 frames, floating-point state, and signal-return paths.
+arch/arm64/um/signal.c	0001,0002,0004	Topic 0001 implements the x86-64 signal ABI, topic 0002 adds i386 frames, floating-point state, and signal-return paths, and topic 0004 shares the XSAVE conversion with ptrace.
 arch/arm64/um/tls.c	0001,0002	Topic 0001 owns x86-64 TLS state, while topic 0002 applies the i386 task-mode defaults needed by set_thread_area.
 arch/arm64/um/x86_64_syscalls.c	0001,0002	Topic 0001 implements x86-64 syscall translation, while topic 0002 replaces its provisional number map with generated dispatch and retains ABI-specific adapters.
+arch/um/kernel/ptrace.c	0002,0004	Topic 0002 adapts generic ptrace to compat tasks, while topic 0004 routes x86-64 PTRACE_GETREGS and SETREGS to the slice's x86 layouts.
 arch/um/kernel/skas/syscall.c	0001,0002	Topic 0001 dispatches the fixed x86-64 ABI, while topic 0002 separates true i386 int80 calls and applies syscall-user-dispatch before both complete generated tables.
 arch/um/os-Darwin/skas/process.c	0001,0002	Topic 0001 transports fixed x86 task state, while topic 0002 publishes the persistent compat decoding mode to the host bridge.

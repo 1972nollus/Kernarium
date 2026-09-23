@@ -1,7 +1,7 @@
-From dd322b2029b1abd71528d83287a1453cfdd12a99 Mon Sep 17 00:00:00 2001
+From 3b45239b733403e9017816ef76dc528ffc48468a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 01:55:46 +0900
-Subject: [PATCH 1/3] arm64: add a dedicated x86-64 userspace UML slice
+Subject: [PATCH 1/4] arm64: add a dedicated x86-64 userspace UML slice
 
 Keep the UML kernel and kernel-mode execution arm64 while making the
 dedicated 4 KiB Darwin compatibility slice accept only EM_X86_64
@@ -19,30 +19,32 @@ adapters remain rejected.
 
 Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 ---
- arch/arm64/um/Kconfig                 |   9 +
- arch/arm64/um/Makefile                |   4 +-
- arch/arm64/um/asm/elf.h               |  61 +-
- arch/arm64/um/asm/mman.h              |   5 +
- arch/arm64/um/asm/processor.h         |   5 +-
- arch/arm64/um/asm/ptrace.h            |   4 +-
- arch/arm64/um/asm/syscall.h           |  12 +-
- arch/arm64/um/asm/user.h              |  29 +-
- arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 108 ++-
- arch/arm64/um/shared/sysdep/ptrace.h  | 138 +++-
- arch/arm64/um/signal.c                | 540 ++++++++++++---
- arch/arm64/um/tls.c                   |   3 +-
- arch/arm64/um/x86_64_syscalls.c       | 913 ++++++++++++++++++++++++++
- arch/um/include/asm/pgtable.h         |   5 +
- arch/um/include/asm/syscall-generic.h |   2 +-
- arch/um/kernel/process.c              |   2 +-
- arch/um/kernel/skas/syscall.c         |  23 +-
- arch/um/os-Darwin/skas/process.c      |  71 +-
- fs/eventpoll.c                        |   2 +-
- fs/open.c                             |   4 +-
- include/linux/eventpoll.h             |  24 +
- include/linux/fs.h                    |   2 +
- 23 files changed, 1916 insertions(+), 178 deletions(-)
+ arch/arm64/um/Kconfig                 |    9 +
+ arch/arm64/um/Makefile                |    4 +-
+ arch/arm64/um/asm/elf.h               |   66 +-
+ arch/arm64/um/asm/mman.h              |    5 +
+ arch/arm64/um/asm/processor.h         |   13 +-
+ arch/arm64/um/asm/ptrace.h            |    4 +-
+ arch/arm64/um/asm/syscall.h           |   12 +-
+ arch/arm64/um/asm/user.h              |   29 +-
+ arch/arm64/um/mmap.c                  |  128 +++
+ arch/arm64/um/ptrace.c                |  108 ++-
+ arch/arm64/um/shared/sysdep/ptrace.h  |  140 +++-
+ arch/arm64/um/signal.c                |  540 ++++++++++--
+ arch/arm64/um/tls.c                   |    3 +-
+ arch/arm64/um/x86_64_syscalls.c       | 1088 +++++++++++++++++++++++++
+ arch/um/include/asm/pgtable.h         |    5 +
+ arch/um/include/asm/syscall-generic.h |    2 +-
+ arch/um/kernel/exec.c                 |    5 +
+ arch/um/kernel/process.c              |    2 +-
+ arch/um/kernel/skas/syscall.c         |   23 +-
+ arch/um/kernel/trap.c                 |    3 +
+ arch/um/os-Darwin/skas/process.c      |   84 +-
+ fs/eventpoll.c                        |    2 +-
+ fs/open.c                             |    4 +-
+ include/linux/eventpoll.h             |   24 +
+ include/linux/fs.h                    |    2 +
+ 25 files changed, 2127 insertions(+), 178 deletions(-)
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
 
@@ -82,10 +84,10 @@ index b3bbae6cd..eaf07b7cd 100644
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 42959d6df..695f610fa 100644
+index 42959d6df..57b834791 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
-@@ -22,31 +22,22 @@
+@@ -22,31 +22,27 @@
  
  #define ELF_CLASS ELFCLASS64
  #define ELF_DATA ELFDATA2LSB
@@ -119,13 +121,18 @@ index 42959d6df..695f610fa 100644
 -#define elf_check_arch(header) ((header)->e_machine == EM_AARCH64)
 +#define elf_check_arch(header) ((header)->e_machine == EM_X86_64)
  
++/* x86-64 starts a task with the flat 64-bit code and stack selectors; the
++ * data selectors stay null as flush_thread() left them.
++ */
  #define ELF_PLAT_INIT(regs, load_address) do { \
 -	PT_REGS_X((regs), 0) = 0; \
 +	UPT_X86_64(&(regs)->regs, UML_X86_64_RDX) = 0; \
++	upt_x86_64_set_segment_selector(&(regs)->regs, 1, 0x33); \
++	upt_x86_64_set_segment_selector(&(regs)->regs, 2, 0x2b); \
  } while (0)
  
  #define SET_PERSONALITY(executable) do { \
-@@ -54,7 +45,7 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
+@@ -54,7 +50,7 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
  } while (0)
  
  typedef unsigned long elf_greg_t;
@@ -134,7 +141,7 @@ index 42959d6df..695f610fa 100644
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
  
  struct uml_arm64_fpsimd_state {
-@@ -65,12 +56,34 @@ struct uml_arm64_fpsimd_state {
+@@ -65,12 +61,34 @@ struct uml_arm64_fpsimd_state {
  typedef struct uml_arm64_fpsimd_state elf_fpregset_t;
  
  #define ELF_CORE_COPY_REGS(destination, source) do { \
@@ -192,7 +199,7 @@ index 2a075458f..f188b1fb4 100644
  
  #ifdef UML_HOST_DARWIN
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index c113d51b8..224c05d3d 100644
+index c113d51b8..9eb7d52d3 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
 @@ -32,8 +32,9 @@ static inline void arch_copy_thread(struct arch_thread *from,
@@ -207,6 +214,21 @@ index c113d51b8..224c05d3d 100644
  
  #define ARCH_IS_STACKGROW(address) \
  	((address) + 65536 + 32 * sizeof(unsigned long) >= \
+@@ -59,6 +60,14 @@ static __always_inline void cpu_relax(void)
+ 
+ #define task_pt_regs(task) (&(task)->thread.regs)
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++extern int uml_x86_64_get_tsc_mode(unsigned long address);
++extern int uml_x86_64_set_tsc_mode(unsigned int mode);
++
++#define GET_TSC_CTL(address) uml_x86_64_get_tsc_mode((address))
++#define SET_TSC_CTL(mode) uml_x86_64_set_tsc_mode((mode))
++#endif
++
+ #include <asm/processor-generic.h>
+ 
+ #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 index dd7a005f3..b34556b3b 100644
 --- a/arch/arm64/um/asm/ptrace.h
@@ -590,7 +612,7 @@ index 3dfd7a0a6..a4767ee81 100644
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index f77c6e818..41fcf8089 100644
+index f77c6e818..e9f2fa316 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,15 +22,25 @@
@@ -628,7 +650,7 @@ index f77c6e818..41fcf8089 100644
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -55,17 +65,115 @@ struct uml_pt_regs {
+@@ -55,17 +65,117 @@ struct uml_pt_regs {
  	unsigned long fp[];
  };
  
@@ -638,6 +660,8 @@ index f77c6e818..41fcf8089 100644
 +#define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
 +#define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
 +#define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
++/* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
++#define UML_X86_64_TSC_SIGSEGV (1UL << 34)
 +
 +static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
 +{
@@ -1380,10 +1404,10 @@ index 0bc12342e..cfbf7f47a 100644
  
 diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
 new file mode 100644
-index 000000000..13b9fa093
+index 000000000..cf93d90d1
 --- /dev/null
 +++ b/arch/arm64/um/x86_64_syscalls.c
-@@ -0,0 +1,913 @@
+@@ -0,0 +1,1088 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <linux/errno.h>
@@ -1392,9 +1416,13 @@ index 000000000..13b9fa093
 +#include <linux/fcntl.h>
 +#include <linux/fs.h>
 +#include <linux/eventpoll.h>
++#include <linux/ipc.h>
 +#include <linux/kdev_t.h>
++#include <linux/loop.h>
++#include <linux/prctl.h>
 +#include <linux/sched/signal.h>
 +#include <linux/sched/task.h>
++#include <linux/sem.h>
 +#include <linux/syscalls.h>
 +#include <linux/timekeeping.h>
 +#include <linux/uaccess.h>
@@ -1960,6 +1988,141 @@ index 000000000..13b9fa093
 +		(struct mq_attr __user *)UPT_SYSCALL_ARG4(regs));
 +}
 +
++/* x86-64's __kernel_old_dev_t is an unsigned long, so its legacy loop_info
++ * is 168 bytes where the generic one the loop driver copies is 160. Both
++ * requests rewrite the caller's buffer in place, which the larger x86 layout
++ * always covers; LOOP_SET_STATUS restores the caller's bytes afterwards.
++ */
++struct uml_x86_64_loop_info {
++	int lo_number;
++	__u64 lo_device;
++	__u64 lo_inode;
++	__u64 lo_rdevice;
++	int lo_offset;
++	int lo_encrypt_type;
++	int lo_encrypt_key_size;
++	int lo_flags;
++	char lo_name[LO_NAME_SIZE];
++	unsigned char lo_encrypt_key[LO_KEY_SIZE];
++	__u64 lo_init[2];
++	char reserved[4];
++};
++
++static void uml_x86_64_loop_info_to_generic(
++	const struct uml_x86_64_loop_info *x86, struct loop_info *generic)
++{
++	memset(generic, 0, sizeof(*generic));
++	generic->lo_number = x86->lo_number;
++	generic->lo_device = x86->lo_device;
++	generic->lo_inode = x86->lo_inode;
++	generic->lo_rdevice = x86->lo_rdevice;
++	generic->lo_offset = x86->lo_offset;
++	generic->lo_encrypt_type = x86->lo_encrypt_type;
++	generic->lo_encrypt_key_size = x86->lo_encrypt_key_size;
++	generic->lo_flags = x86->lo_flags;
++	memcpy(generic->lo_name, x86->lo_name, sizeof(generic->lo_name));
++	memcpy(generic->lo_encrypt_key, x86->lo_encrypt_key,
++	       sizeof(generic->lo_encrypt_key));
++	generic->lo_init[0] = x86->lo_init[0];
++	generic->lo_init[1] = x86->lo_init[1];
++	memcpy(generic->reserved, x86->reserved, sizeof(generic->reserved));
++}
++
++static void uml_x86_64_loop_info_from_generic(
++	const struct loop_info *generic, struct uml_x86_64_loop_info *x86)
++{
++	memset(x86, 0, sizeof(*x86));
++	x86->lo_number = generic->lo_number;
++	x86->lo_device = generic->lo_device;
++	x86->lo_inode = generic->lo_inode;
++	x86->lo_rdevice = generic->lo_rdevice;
++	x86->lo_offset = generic->lo_offset;
++	x86->lo_encrypt_type = generic->lo_encrypt_type;
++	x86->lo_encrypt_key_size = generic->lo_encrypt_key_size;
++	x86->lo_flags = generic->lo_flags;
++	memcpy(x86->lo_name, generic->lo_name, sizeof(x86->lo_name));
++	memcpy(x86->lo_encrypt_key, generic->lo_encrypt_key,
++	       sizeof(x86->lo_encrypt_key));
++	x86->lo_init[0] = generic->lo_init[0];
++	x86->lo_init[1] = generic->lo_init[1];
++	memcpy(x86->reserved, generic->reserved, sizeof(x86->reserved));
++}
++
++static long uml_x86_64_loop_status(unsigned int fd, unsigned int command,
++				   unsigned long address)
++{
++	void __user *user = (void __user *)address;
++	struct uml_x86_64_loop_info x86;
++	struct loop_info generic;
++	long ret;
++
++	static_assert(sizeof(x86) == 168);
++	static_assert(sizeof(generic) < sizeof(x86));
++	if (command == LOOP_GET_STATUS) {
++		ret = sys_ioctl(fd, command, address);
++		if (ret < 0)
++			return ret;
++		if (copy_from_user(&generic, user, sizeof(generic)))
++			return -EFAULT;
++		uml_x86_64_loop_info_from_generic(&generic, &x86);
++		return copy_to_user(user, &x86, sizeof(x86)) ? -EFAULT : ret;
++	}
++	if (copy_from_user(&x86, user, sizeof(x86)))
++		return -EFAULT;
++	uml_x86_64_loop_info_to_generic(&x86, &generic);
++	if (copy_to_user(user, &generic, sizeof(generic)))
++		return -EFAULT;
++	ret = sys_ioctl(fd, command, address);
++	if (copy_to_user(user, &x86, sizeof(x86)))
++		return -EFAULT;
++	return ret;
++}
++
++/* x86-64 keeps the i386 semid64_ds padding words; the generic layout that
++ * sys_semctl writes has none, so sem_nsems lands two words early.
++ */
++struct uml_x86_64_semid64_ds {
++	struct ipc64_perm sem_perm;
++	__s64 sem_otime;
++	__u64 unused1;
++	__s64 sem_ctime;
++	__u64 unused2;
++	__u64 sem_nsems;
++	__u64 unused3;
++	__u64 unused4;
++};
++
++static long uml_x86_64_semctl(struct uml_pt_regs *regs)
++{
++	unsigned long address = UPT_SYSCALL_ARG4(regs);
++	struct uml_x86_64_semid64_ds result = { };
++	struct semid64_ds generic;
++	long ret;
++
++	static_assert(sizeof(result) == 104);
++	static_assert(sizeof(generic) < sizeof(result));
++	ret = sys_semctl(UPT_SYSCALL_ARG1(regs), UPT_SYSCALL_ARG2(regs),
++			 UPT_SYSCALL_ARG3(regs), address);
++	if (ret < 0)
++		return ret;
++	switch (UPT_SYSCALL_ARG3(regs) & ~IPC_64) {
++	case IPC_STAT:
++	case SEM_STAT:
++	case SEM_STAT_ANY:
++		break;
++	default:
++		return ret;
++	}
++	if (copy_from_user(&generic, (void __user *)address, sizeof(generic)))
++		return -EFAULT;
++	result.sem_perm = generic.sem_perm;
++	result.sem_otime = generic.sem_otime;
++	result.sem_ctime = generic.sem_ctime;
++	result.sem_nsems = generic.sem_nsems;
++	return copy_to_user((void __user *)address, &result, sizeof(result)) ?
++		-EFAULT : ret;
++}
++
 +static long uml_x86_64_time(__kernel_old_time_t __user *tloc)
 +{
 +	__kernel_old_time_t seconds =
@@ -1996,6 +2159,11 @@ index 000000000..13b9fa093
 +		*result = sys_poll((struct pollfd __user *)UPT_SYSCALL_ARG1(regs),
 +				   UPT_SYSCALL_ARG2(regs),
 +				   UPT_SYSCALL_ARG3(regs));
++		break;
++	case 16:
++		if (arg2 != LOOP_SET_STATUS && arg2 != LOOP_GET_STATUS)
++			return 0;
++		*result = uml_x86_64_loop_status(arg1, arg2, arg3);
 +		break;
 +	case 21:
 +		*result = sys_faccessat(AT_FDCWD,
@@ -2043,6 +2211,9 @@ index 000000000..13b9fa093
 +		*result = kernel_clone(&args);
 +		break;
 +	}
++	case 66:
++		*result = uml_x86_64_semctl(regs);
++		break;
 +	case 72:
 +		*result = uml_x86_64_fcntl(regs);
 +		break;
@@ -2262,6 +2433,8 @@ index 000000000..13b9fa093
 +#define UML_ARCH_SET_FS 0x1002
 +#define UML_ARCH_GET_FS 0x1003
 +#define UML_ARCH_GET_GS 0x1004
++#define UML_ARCH_GET_CPUID 0x1011
++#define UML_ARCH_SET_CPUID 0x1012
 +
 +long uml_x86_64_arch_prctl(struct uml_pt_regs *regs)
 +{
@@ -2281,9 +2454,35 @@ index 000000000..13b9fa093
 +	case UML_ARCH_GET_GS:
 +		return put_user(UPT_X86_64_GS_BASE(regs),
 +			(unsigned long __user *)address) ? -EFAULT : 0;
++	/* The emulated CPU has no CPUID faulting, so CPUID always executes. */
++	case UML_ARCH_GET_CPUID:
++		return 1;
++	case UML_ARCH_SET_CPUID:
++		return -ENODEV;
 +	default:
 +		return -EINVAL;
 +	}
++}
++
++int uml_x86_64_get_tsc_mode(unsigned long address)
++{
++	int mode = current_pt_regs()->regs.svcr & UML_X86_64_TSC_SIGSEGV ?
++		PR_TSC_SIGSEGV : PR_TSC_ENABLE;
++
++	return put_user(mode, (int __user *)address);
++}
++
++int uml_x86_64_set_tsc_mode(unsigned int mode)
++{
++	struct uml_pt_regs *regs = &current_pt_regs()->regs;
++
++	if (mode == PR_TSC_SIGSEGV)
++		regs->svcr |= UML_X86_64_TSC_SIGSEGV;
++	else if (mode == PR_TSC_ENABLE)
++		regs->svcr &= ~UML_X86_64_TSC_SIGSEGV;
++	else
++		return -EINVAL;
++	return 0;
 +}
 +
 +long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result)
@@ -2326,6 +2525,23 @@ index 215668ff8..0c0aae139 100644
  
  	*args++ = UPT_SYSCALL_ARG1(r);
  	*args++ = UPT_SYSCALL_ARG2(r);
+diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
+index d0f443c19..54db27567 100644
+--- a/arch/um/kernel/exec.c
++++ b/arch/um/kernel/exec.c
+@@ -31,7 +31,12 @@ void flush_thread(void)
+ 	 * user_pt_regs and the FPSIMD image zeroed by get_safe_registers().
+ 	 */
+ 	current_pt_regs()->regs.fpmr = 0;
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	/* x86 keeps a task's PR_SET_TSC mode across execve. */
++	current_pt_regs()->regs.svcr &= UML_X86_64_TSC_SIGSEGV;
++#else
+ 	current_pt_regs()->regs.svcr = 0;
++#endif
+ 	memset(current_pt_regs()->regs.pointer_auth_keys, 0,
+ 	       sizeof(current_pt_regs()->regs.pointer_auth_keys));
+ #endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
 index 838272e9b..d48d5ec6b 100644
 --- a/arch/um/kernel/process.c
@@ -2387,8 +2603,22 @@ index ba7494f9b..f4f5b15ab 100644
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
+diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
+index 31575c43f..06008dda1 100644
+--- a/arch/um/kernel/trap.c
++++ b/arch/um/kernel/trap.c
+@@ -474,6 +474,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+ 		struct faultinfo *fi = UPT_FAULTINFO(regs);
+ 		current->thread.arch.faultinfo = *fi;
+ 		force_sig_fault(sig, code, (void __user *)FAULT_ADDRESS(*fi));
++	} else if (err == 0 && code == SI_KERNEL) {
++		/* A trap such as x86 INT3 carries no fault address. */
++		force_sig(sig);
+ 	} else {
+ 		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
+ 		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2c98e0fb2..f9b93955b 100644
+index 2c98e0fb2..38bde60dd 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
@@ -2485,7 +2715,7 @@ index 2c98e0fb2..f9b93955b 100644
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -763,14 +768,32 @@ void userspace(struct uml_pt_regs *registers)
+@@ -763,14 +768,45 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -2497,12 +2727,25 @@ index 2c98e0fb2..f9b93955b 100644
 +				signal_info.si_errno = 0;
 +				signal_info.si_code = 0;
 +				signal_info.si_addr = NULL;
++			} else if (registers->faultinfo.trap_no == 13) {
++				/* A #GP, such as RDTSC under PR_TSC_SIGSEGV, reaches
++				 * native userspace as SIGSEGV with Linux SI_KERNEL,
++				 * a name Darwin's signal.h does not define. */
++				registers->faultinfo.cr2 = 0;
++				signal_info.si_signo = SIGSEGV;
++				signal_info.si_errno = 0;
++				signal_info.si_code = 0x80;
++				signal_info.si_addr = NULL;
 +			} else {
++				/* INT3 is the x86 #BP trap.  Native Linux delivers it
++				 * as SIGTRAP with SI_KERNEL and no address, which is
++				 * how debuggers recognize their own breakpoints. */
 +				registers->faultinfo.trap_no = 3;
++				registers->faultinfo.cr2 = 0;
 +				signal_info.si_signo = SIGTRAP;
 +				signal_info.si_errno = 0;
-+				signal_info.si_code = TRAP_BRKPT;
-+				signal_info.si_addr = (void *)UPT_IP(registers);
++				signal_info.si_code = 0x80;
++				signal_info.si_addr = NULL;
 +			}
 +#else
  			registers->faultinfo.trap_no = 0;

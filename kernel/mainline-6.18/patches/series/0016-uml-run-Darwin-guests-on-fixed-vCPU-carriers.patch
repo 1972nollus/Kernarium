@@ -1,7 +1,7 @@
-From 3a63409a29b3505085b3e303b3460585c3a28603 Mon Sep 17 00:00:00 2001
+From 31e89ff4384c37226f8f2fa0a6747bd8e14e45d4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:26 +0900
-Subject: [PATCH 16/36] uml: run Darwin guests on fixed vCPU carriers
+Subject: [PATCH 16/37] uml: run Darwin guests on fixed vCPU carriers
 
 Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-vCPU lookup together as one fixed-carrier scheduler topic.
 ---
@@ -13,11 +13,11 @@ Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-
  arch/um/os-Darwin/signal.c                  |  17 +-
  arch/um/os-Darwin/skas/process.c            | 584 ++------------------
  arch/um/os-Darwin/smp.c                     | 207 +++++--
- arch/um/os-Darwin/time.c                    |  17 +-
+ arch/um/os-Darwin/time.c                    | 106 +++-
  arch/um/os-Darwin/uml_darwin_abi.h          |   6 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_host.h         |   2 +
- 12 files changed, 284 insertions(+), 603 deletions(-)
+ 12 files changed, 359 insertions(+), 617 deletions(-)
 
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
 index 3cf7106cc..c113d51b8 100644
@@ -1231,10 +1231,23 @@ index e05157ba5..00a5d2f34 100644
  
  void os_init_smp(void)
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 06199debb..1f1209910 100644
+index 06199debb..01b84a0bf 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -13,6 +13,7 @@
+@@ -1,10 +1,12 @@
+ // SPDX-License-Identifier: GPL-2.0
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <pthread.h>
+ #include <signal.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <sys/event.h>
+ #include <sys/select.h>
+ #include <sys/time.h>
+ #include <time.h>
+@@ -13,6 +15,7 @@
  #include <kern_util.h>
  #include <os.h>
  #include <smp.h>
@@ -1242,44 +1255,152 @@ index 06199debb..1f1209910 100644
  #include "irq.h"
  #include "internal.h"
  
-@@ -202,6 +203,8 @@ void os_idle_sleep(void)
+@@ -21,6 +24,8 @@ struct darwin_cpu_timer {
+ 	unsigned long long deadline_ns;
+ 	int active;
+ 	int periodic;
++	/* Owned by the CPU's carrier; see arm_idle_deadline(). */
++	int deadline_queue;
+ };
+ 
+ static struct darwin_cpu_timer cpu_timers[CONFIG_NR_CPUS];
+@@ -64,8 +69,12 @@ long long os_nsecs(void)
+ 
+ int os_timer_create(void)
+ {
+-	memset(timer_for_cpu(uml_curr_cpu()), 0,
+-	       sizeof(struct darwin_cpu_timer));
++	struct darwin_cpu_timer *state = timer_for_cpu(uml_curr_cpu());
++	int deadline_queue = state->deadline_queue;
++
++	/* A re-onlined CPU keeps the queue its carrier already created. */
++	memset(state, 0, sizeof(*state));
++	state->deadline_queue = deadline_queue;
+ 	return 0;
+ }
+ 
+@@ -185,6 +194,63 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+ 	}
+ }
+ 
++/* A pselect() timeout is subject to Darwin timer coalescing, which lets a
++ * one-millisecond wait overrun by about half a millisecond.  A critical
++ * kqueue timer is delivered on time, and the queue is readable once it fires,
++ * so the idle wait keeps pselect() for its atomic signal mask and adds the
++ * queue to its read set.  Returns the descriptor, or -1 to fall back to the
++ * pselect() timeout alone.
++ */
++static int arm_idle_deadline(struct darwin_cpu_timer *state,
++			     unsigned long long remaining)
++{
++	struct kevent timer;
++
++	if (state->deadline_queue < 0)
++		return -1;
++	if (!state->deadline_queue) {
++		int queue = kqueue();
++
++		if (queue < 0 || queue >= FD_SETSIZE) {
++			if (queue >= 0)
++				close(queue);
++			state->deadline_queue = -1;
++			return -1;
++		}
++		(void)fcntl(queue, F_SETFD, FD_CLOEXEC);
++		state->deadline_queue = queue;
++	}
++	EV_SET(&timer, 0, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
++	       NOTE_NSECONDS | NOTE_CRITICAL, (intptr_t)remaining, NULL);
++	if (kevent(state->deadline_queue, &timer, 1, NULL, 0, NULL) < 0)
++		return -1;
++	return state->deadline_queue;
++}
++
++static void disarm_idle_deadline(struct darwin_cpu_timer *state)
++{
++	static const struct timespec poll_only;
++	struct kevent timer;
++	struct kevent result;
++
++	/* Deleting the knote also discards a delivery nobody collected. */
++	EV_SET(&timer, 0, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
++	(void)kevent(state->deadline_queue, &timer, 1, &result, 1, &poll_only);
++}
++
++static void add_wake_fd(fd_set *read_fds, int fd)
++{
++	/* Darwin's fortified FD_SET asks libc to validate the backing
++	 * object.  UML kernel stacks are outside a native pthread's
++	 * conventional stack allocation, so that check rejects this valid
++	 * local fd_set and silently leaves it empty.  Callers bound fd by
++	 * FD_SETSIZE, which provides the required safety instead.
++	 */
++	read_fds->fds_bits[(unsigned int)fd /
++		(sizeof(read_fds->fds_bits[0]) * 8)] |=
++		1U << ((unsigned int)fd % (sizeof(read_fds->fds_bits[0]) * 8));
++}
++
+ void os_idle_sleep(void)
+ {
+ 	int cpu = uml_curr_cpu();
+@@ -202,6 +268,9 @@ void os_idle_sleep(void)
  		unsigned long long now;
  		unsigned long long remaining;
  		int ipi_fd;
 +		int stop_fd;
++		int deadline_fd = -1;
 +		int wake_fd;
  		int fire_timer = 0;
  
  		if (cpu == 0)
-@@ -228,6 +231,7 @@ void os_idle_sleep(void)
+@@ -226,28 +295,32 @@ void os_idle_sleep(void)
+ 			timeout.tv_sec = (time_t)(remaining / UM_NSEC_PER_SEC);
+ 			timeout.tv_nsec = (long)(remaining % UM_NSEC_PER_SEC);
  			timeout_pointer = &timeout;
++			if (remaining)
++				deadline_fd = arm_idle_deadline(state, remaining);
  		}
  		ipi_fd = darwin_ipi_idle_fd();
 +		stop_fd = darwin_uml_stop_fd();
  		FD_ZERO(&read_fds);
  		if (ipi_fd >= FD_SETSIZE)
  			panic("Darwin: CPU%d IPI wake fd %d exceeds FD_SETSIZE",
-@@ -244,9 +248,17 @@ void os_idle_sleep(void)
- 				1U << ((unsigned int)ipi_fd %
- 					(sizeof(read_fds.fds_bits[0]) * 8));
- 		}
+ 			      cpu, ipi_fd);
+-		if (ipi_fd >= 0) {
+-			/* Darwin's fortified FD_SET asks libc to validate the backing
+-			 * object.  UML kernel stacks are outside a native pthread's
+-			 * conventional stack allocation, so that check rejects this valid
+-			 * local fd_set and silently leaves it empty.  The explicit bound
+-			 * above provides the required safety for the native representation.
+-			 */
+-			read_fds.fds_bits[(unsigned int)ipi_fd /
+-				(sizeof(read_fds.fds_bits[0]) * 8)] |=
+-				1U << ((unsigned int)ipi_fd %
+-					(sizeof(read_fds.fds_bits[0]) * 8));
+-		}
++		if (ipi_fd >= 0)
++			add_wake_fd(&read_fds, ipi_fd);
 +		if (stop_fd >= FD_SETSIZE)
 +			panic("Darwin: host stop fd %d exceeds FD_SETSIZE", stop_fd);
 +		if (stop_fd >= 0)
-+			read_fds.fds_bits[(unsigned int)stop_fd /
-+				(sizeof(read_fds.fds_bits[0]) * 8)] |=
-+				1U << ((unsigned int)stop_fd %
-+					(sizeof(read_fds.fds_bits[0]) * 8));
++			add_wake_fd(&read_fds, stop_fd);
++		if (deadline_fd >= 0)
++			add_wake_fd(&read_fds, deadline_fd);
 +		wake_fd = ipi_fd > stop_fd ? ipi_fd : stop_fd;
++		if (deadline_fd > wake_fd)
++			wake_fd = deadline_fd;
  		darwin_ipi_idle_begin();
 -		(void)pselect(ipi_fd >= 0 ? ipi_fd + 1 : 0,
 -			      ipi_fd >= 0 ? &read_fds : NULL, NULL, NULL,
 +		(void)pselect(wake_fd >= 0 ? wake_fd + 1 : 0,
 +			      wake_fd >= 0 ? &read_fds : NULL, NULL, NULL,
  			      timeout_pointer, &mask);
++		if (deadline_fd >= 0)
++			disarm_idle_deadline(state);
  		/* Clear before draining.  A sender which observed the idle state has
  		 * already left a pipe byte; a later sender will use the signal wake
-@@ -260,6 +272,7 @@ void os_idle_sleep(void)
+ 		 * path while this CPU processes the completed wait.
+@@ -260,6 +333,7 @@ void os_idle_sleep(void)
  			darwin_irq_idle_end(&previous_mask);
  		else
  			pthread_sigmask(SIG_SETMASK, &previous_mask, NULL);

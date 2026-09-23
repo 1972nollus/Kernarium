@@ -1,7 +1,7 @@
-From a8a9cd6bd959d3a23d3f36460647824aee0660c5 Mon Sep 17 00:00:00 2001
+From 3a7f7e9700669c382c65884f7d0e92626729e73a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 09:57:14 +0900
-Subject: [PATCH 48/48] UML-DARWIN-LOCAL: uml: stop a vhost-user device whose
+Subject: [PATCH 48/49] UML-DARWIN-LOCAL: uml: stop a vhost-user device whose
  backend has gone
 
 vu_interrupt() warns on every result that is not a would-block errno and does

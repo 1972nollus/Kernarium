@@ -1,7 +1,7 @@
-From 14c7f2e6607819b9b443ca4db19166a329644351 Mon Sep 17 00:00:00 2001
+From 0b7981bb051b8d4e98e7e0ce9ddd4487bddd4d0d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
-Subject: [PATCH 02/48] uml: add MMU synchronization and large-page support
+Subject: [PATCH 02/49] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, large-page handling, same-process address-space lifetime, and user-access behavior in one reviewable final-state topic.
 ---
@@ -14,9 +14,9 @@ Keep page-table synchronization, large-page handling, same-process address-space
  arch/um/kernel/skas/process.c    | 113 +++++-
  arch/um/kernel/skas/uaccess.c    | 288 +++++++++++----
  arch/um/kernel/tlb.c             | 585 +++++++++++++++++++++++++++++--
- arch/um/kernel/trap.c            |  41 ++-
+ arch/um/kernel/trap.c            |  69 +++-
  mm/mmu_gather.c                  |   7 +-
- 11 files changed, 1338 insertions(+), 108 deletions(-)
+ 11 files changed, 1362 insertions(+), 112 deletions(-)
  create mode 100644 arch/um/kernel/hugetlb.c
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
@@ -1816,7 +1816,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..ad0d6ab60e10e9b1118532b0cff0cea9
 +	}
  }
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2cdcbcdd9 100644
+index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c30b78c6a 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -17,6 +17,11 @@
@@ -1831,7 +1831,15 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2
  /*
   * NOTE: UML does not have exception tables. As such, this is almost a copy
   * of the code in mm/memory.c, only adjusting the logic to simply check whether
-@@ -142,6 +147,9 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -137,11 +142,15 @@ um_lock_mm_and_find_vma(struct mm_struct *mm,
+  * Note this is constrained to return 0, -EFAULT, -EACCES, -ENOMEM by
+  * segv().
+  */
+-int handle_page_fault(unsigned long address, unsigned long ip,
+-		      int is_write, int is_user, int *code_out)
++static int handle_page_fault_access(unsigned long address, unsigned long ip,
++				    int is_write, int is_exec, int is_user,
++				    int *code_out)
  {
  	struct mm_struct *mm = current->mm;
  	struct vm_area_struct *vma;
@@ -1841,7 +1849,21 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2
  	pmd_t *pmd;
  	pte_t *pte;
  	int err = -EFAULT;
-@@ -203,7 +211,15 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -168,6 +177,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+ 		if (!(vma->vm_flags & VM_WRITE))
+ 			goto out;
+ 		flags |= FAULT_FLAG_WRITE;
++	} else if (is_exec) {
++		/* A readable mapping cannot satisfy an instruction fetch; resolving
++		 * the fault would only retry the fetch forever.
++		 */
++		if (!(vma->vm_flags & VM_EXEC))
++			goto out;
++		flags |= FAULT_FLAG_INSTRUCTION;
+ 	} else {
+ 		/* Don't require VM_READ|VM_EXEC for write faults! */
+ 		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
+@@ -203,7 +219,15 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  			goto retry;
  		}
  
@@ -1857,7 +1879,21 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2
  		pte = pte_offset_kernel(pmd, address);
  	} while (!pte_present(*pte));
  	err = 0;
-@@ -316,17 +332,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -236,6 +260,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+ 	return 0;
+ }
+ 
++int handle_page_fault(unsigned long address, unsigned long ip,
++		      int is_write, int is_user, int *code_out)
++{
++	return handle_page_fault_access(address, ip, is_write, 0, is_user,
++					code_out);
++}
++
+ static void show_segv_info(struct uml_pt_regs *regs)
+ {
+ 	struct task_struct *tsk = current;
+@@ -316,17 +347,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	if (!is_user && regs)
  		current->thread.segv_regs = container_of(regs, struct pt_regs, regs);
  
@@ -1896,7 +1932,23 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1c8cd2c41d8a57acc9fb5bfecc96d5b2
  		goto out;
  	}
  	else if (current->pagefault_disabled) {
-@@ -375,7 +409,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -353,8 +402,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+ 	}
+ 
+ 	if (SEGV_IS_FIXABLE(&fi))
+-		err = handle_page_fault(address, ip, is_write, is_user,
+-					&si_code);
++		err = handle_page_fault_access(address, ip, is_write,
++#ifdef UML_HOST_DARWIN
++					       !is_write && FAULT_EXECUTE(fi),
++#else
++					       0,
++#endif
++					       is_user, &si_code);
+ 	else {
+ 		err = -EFAULT;
+ 		/*
+@@ -375,7 +429,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		panic("Kernel mode fault at addr 0x%lx, ip 0x%lx",
  		      address, ip);
  	}

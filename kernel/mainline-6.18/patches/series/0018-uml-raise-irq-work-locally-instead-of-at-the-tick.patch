@@ -1,7 +1,7 @@
-From c26289f019b2a6a3556984beae5cf1768f83d79a Mon Sep 17 00:00:00 2001
+From 27c71ee50670b3b1b88e03497c227f187979a676 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
-Subject: [PATCH 18/36] uml: raise irq work locally instead of at the tick
+Subject: [PATCH 18/37] uml: raise irq work locally instead of at the tick
 
 UML never implemented arch_irq_work_raise(), so the generic weak stub left
 queued work waiting for the next timer tick.  That is not just slow, it breaks
@@ -184,12 +184,12 @@ index 00a5d2f34..6d15c566a 100644
  {
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 1f1209910..fcc40b471 100644
+index 01b84a0bf..391cbe2ca 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -257,6 +257,14 @@ void os_idle_sleep(void)
- 					(sizeof(read_fds.fds_bits[0]) * 8));
- 		wake_fd = ipi_fd > stop_fd ? ipi_fd : stop_fd;
+@@ -316,6 +316,14 @@ void os_idle_sleep(void)
+ 		if (deadline_fd > wake_fd)
+ 			wake_fd = deadline_fd;
  		darwin_ipi_idle_begin();
 +		/* A vector pending here has no wake edge of its own; see
 +		 * darwin_ipi_idle_pending().  Drain it below rather than sleep on it.

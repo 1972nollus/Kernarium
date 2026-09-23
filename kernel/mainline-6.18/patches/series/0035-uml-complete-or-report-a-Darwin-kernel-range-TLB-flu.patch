@@ -1,7 +1,7 @@
-From ba57a8582caef996f3932f9e33a6b44ffa06efb6 Mon Sep 17 00:00:00 2001
+From da0277f365ff56081b7693783b32f04ae7fba9b2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 07:38:06 +0900
-Subject: [PATCH 35/36] uml: complete or report a Darwin kernel-range TLB flush
+Subject: [PATCH 35/37] uml: complete or report a Darwin kernel-range TLB flush
 
 flush_tlb_kernel_range() discarded um_tlb_sync()'s result. On Darwin
 flush_cache_vmap() and flush_cache_vunmap() are both that macro, so every

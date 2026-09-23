@@ -103,8 +103,8 @@ inherits the shared eBPF syscall, verifier, and cgroup BPF policy without a
 product-specific configuration override.
 
 Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
-range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only
-drivers, and the same host/kernel ABI. There is no platform-specific image or
+range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE` with
+high-resolution timers, built-in-only drivers, and the same host/kernel ABI. There is no platform-specific image or
 address-space configuration axis.
 
 The native mapping window contains guest RAM plus an auxiliary address-space
