@@ -94,7 +94,7 @@ enum class ProgramSourceComparison {
 
 struct ProgramCodeStamps final {
 	std::array<::uml::memory::CodePageStamp, 2> pages{};
-	std::size_t count{};
+	std::uint8_t count{};
 	bool complete{};
 
 	friend bool operator==(
@@ -444,12 +444,16 @@ private:
 	struct LinkRecord;
 	struct Slot;
 
+	/* A slot's place in the list of slots holding code from one guest page.
+	 * Every way exists whether or not it holds a translation, so the lists
+	 * are threaded through slots by 32-bit link id -- two per slot, `2 *
+	 * index + entry + 1`, with 0 for none -- rather than by pointer, and the
+	 * page is not kept: entry 0 is the page the slot's first byte is on and
+	 * entry 1 the page its last byte is on, which the slot's program still
+	 * says whenever a link is taken out. */
 	struct PageLink final {
-		Slot *slot{};
-		PageLink *previous{};
-		PageLink *next{};
-		std::uint64_t page{};
-		bool linked{};
+		std::uint32_t previous{};
+		std::uint32_t next{};
 	};
 
 	struct Slot final {
@@ -458,28 +462,33 @@ private:
 		std::uint64_t epoch{};
 		std::uint64_t generation{};
 		std::uint64_t address{};
-		std::uint64_t validated_changes{};
-		ProgramCodeStamps code_stamps{};
-		std::size_t instruction_limit{};
+		/* The slot's flat index, which names it in successor sets and page
+		 * lists; fixed when its slab is made. */
+		std::uint32_t index{};
+		std::uint8_t instruction_limit{};
 		ExecutionMode mode{ExecutionMode::long64};
 		bool terminal{};
-		std::optional<Program> program;
+		/* Which of `page_links` are in a page's list. */
+		std::uint8_t linked_pages{};
+		std::uint64_t validated_changes{};
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
 		std::array<PageLink, 2> page_links{};
+		ProgramCodeStamps code_stamps{};
+		std::optional<Program> program;
 	};
-
-	struct SuccessorSet;
-	struct Successor final {
-		Slot *slot{};
-		SuccessorSet *successors{};
-	};
+	static_assert(sizeof(Slot) == 184,
+		"a way costs its slot whether or not it holds a translation");
+	static_assert(program_cache_slots < (std::size_t{1} << 31),
+		"a page link id fits 32 bits");
 
 	/* The common monomorphic and bimorphic successors bypass the main
-	 * four-way probe. Slots and their companion sets live in lazy slabs for
-	 * the executor's lifetime; epoch and key checks make stale pointers inert. */
+	 * four-way probe. A successor is named by its slot's index plus one, so
+	 * zero is empty, and a slot's own set sits at that same index. Slots and
+	 * their companion sets live in lazy slabs for the executor's lifetime;
+	 * epoch and key checks make stale entries inert. */
 	struct SuccessorSet final {
-		std::array<Successor, 2> entries{};
+		std::array<std::uint32_t, 2> entries{};
 		std::uint8_t next_replacement{};
 	};
 
@@ -556,7 +565,8 @@ private:
 		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
 		std::array<std::vector<IndirectLink *>, 2> live_indirect;
 		std::vector<std::uint32_t> slots;
-		std::unordered_map<std::uint64_t, PageLink *> code_pages;
+		/* The first link of each page's list. */
+		std::unordered_map<std::uint64_t, std::uint32_t> code_pages;
 		bool slots_complete{true};
 	};
 
@@ -572,9 +582,10 @@ public:
 		current_ = nullptr;
 		for (auto &slab : slabs_)
 			if (slab)
-				for (auto &slot : slab->slots)
-					for (auto &link : slot.page_links)
-						link = {};
+				for (auto &slot : slab->slots) {
+					slot.page_links = {};
+					slot.linked_pages = 0;
+				}
 		preceding_ = nullptr;
 		++epoch_;
 		if (epoch_ != 0)
@@ -654,14 +665,14 @@ public:
 					(current & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
 			const auto found = current_->code_pages.find(page);
 			if (found != current_->code_pages.end()) {
-				for (auto *entry = found->second; entry != nullptr;
-					     entry = entry->next) {
-					auto *slot = entry->slot;
-					if (slot != nullptr && slot->epoch == epoch_ &&
-					    slot->generation == current_generation_ &&
-					    slot->program && source_overlaps(
-						    *slot->program, address, size))
-						deactivate(*slot);
+				for (auto id = found->second; id != 0;
+					     id = page_link(id).next) {
+					auto &slot = page_link_slot(id);
+					if (slot.epoch == epoch_ &&
+					    slot.generation == current_generation_ &&
+					    slot.program && source_overlaps(
+						    *slot.program, address, size))
+						deactivate(slot);
 				}
 			}
 			remaining -= count;
@@ -734,11 +745,13 @@ public:
 	{
 		cache_hit = false;
 		if (preceding_ != nullptr) {
-			for (const auto &linked : preceding_->entries) {
-				if (linked.slot == nullptr || linked.successors == nullptr ||
-					!matches(*linked.slot, address, mode))
+			for (const auto successor : preceding_->entries) {
+				if (successor == 0)
 					continue;
-				const auto *program = use(*linked.slot,
+				auto &slot = slot_at(successor - 1U);
+				if (!matches(slot, address, mode))
+					continue;
+				const auto *program = use(slot,
 					maximum_instructions, changes, mapping_changes,
 					memory, execution_context, sequence_reader,
 					diagnostics);
@@ -746,7 +759,7 @@ public:
 					preceding_ = nullptr;
 					return nullptr;
 				}
-				activate(*linked.slot, *linked.successors);
+				activate(slot, successors_at(successor - 1U));
 				++diagnostics.successor_hits;
 				cache_hit = true;
 				return program;
@@ -784,8 +797,13 @@ public:
 		const auto location = locate_program(current_generation_,
 			program.address(), program.execution_mode());
 		auto &slab = slabs_[location.slab];
-		if (!slab)
+		if (!slab) {
 			slab = std::make_unique<Slab>();
+			for (std::size_t offset = 0; offset < program_cache_slab_slots;
+			     ++offset)
+				slab->slots[offset].index = static_cast<std::uint32_t>(
+					location.slab * program_cache_slab_slots + offset);
+		}
 
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
@@ -823,7 +841,7 @@ public:
 		slot.address = slot.program->address();
 		slot.validated_changes = changes;
 		slot.code_stamps = code_stamps;
-		slot.instruction_limit = instruction_limit;
+		slot.instruction_limit = kept_instruction_limit(instruction_limit);
 		slot.mode = slot.program->execution_mode();
 		slot.terminal = slot.program->terminal();
 		/* Epoch is the validity marker and is written only after the slot is
@@ -1084,64 +1102,91 @@ private:
 		try {
 			for (; completed < pages.count; ++completed) {
 				auto [bucket, inserted] =
-					index.try_emplace(pages.pages[completed], nullptr);
+					index.try_emplace(pages.pages[completed], 0U);
 				if (inserted && registries_ != nullptr)
 					registries_->of(slot.generation).add(
 						pages.pages[completed], &registries_->participant);
+				const auto id = page_link_id(slot, completed);
 				auto &link = slot.page_links[completed];
-				link = {
-					.slot = &slot,
-					.previous = nullptr,
-					.next = bucket->second,
-					.page = pages.pages[completed],
-					.linked = true,
-				};
-				if (link.next != nullptr)
-					link.next->previous = &link;
-				bucket->second = &link;
+				link = {.previous = 0, .next = bucket->second};
+				if (link.next != 0)
+					page_link(link.next).previous = id;
+				bucket->second = id;
+				slot.linked_pages |=
+					static_cast<std::uint8_t>(1U << completed);
 			}
 		} catch (...) {
 			for (std::size_t entry = 0; entry < completed; ++entry)
-				unlink(current_generation_, current(),
-					slot.page_links[entry]);
+				unlink(current_generation_, current(), slot, entry);
 			throw;
 		}
 	}
 
-	void unlink(std::uint64_t generation, Generation &state,
-		PageLink &link) noexcept
+	[[nodiscard]] static std::uint32_t page_link_id(
+		const Slot &slot, std::size_t entry) noexcept
 	{
-		if (!link.linked)
+		return slot.index * 2U + static_cast<std::uint32_t>(entry) + 1U;
+	}
+
+	[[nodiscard]] Slot &page_link_slot(std::uint32_t id) noexcept
+	{
+		return slot_at((id - 1U) / 2U);
+	}
+
+	[[nodiscard]] PageLink &page_link(std::uint32_t id) noexcept
+	{
+		return page_link_slot(id).page_links[(id - 1U) % 2U];
+	}
+
+	/* Take one of a slot's links out of its page's list. The slot must
+	 * still hold the program the link was made for, which names the page. */
+	void unlink(std::uint64_t generation, Generation &state, Slot &slot,
+		std::size_t entry) noexcept
+	{
+		const auto bit = static_cast<std::uint8_t>(1U << entry);
+		if ((slot.linked_pages & bit) == 0)
 			return;
-		if (link.previous != nullptr) {
-			link.previous->next = link.next;
+		auto &link = slot.page_links[entry];
+		if (link.previous != 0) {
+			page_link(link.previous).next = link.next;
 		} else {
-			auto bucket = state.code_pages.find(link.page);
+			const auto page = program_pages(*slot.program).pages[entry];
+			auto bucket = state.code_pages.find(page);
 			if (bucket != state.code_pages.end() &&
-			    bucket->second == &link) {
+			    bucket->second == page_link_id(slot, entry)) {
 				bucket->second = link.next;
-				if (bucket->second == nullptr) {
+				if (bucket->second == 0) {
 					state.code_pages.erase(bucket);
 					if (registries_ != nullptr)
-						registries_->of(generation).remove(link.page);
+						registries_->of(generation).remove(page);
 				}
 			}
 		}
-		if (link.next != nullptr)
-			link.next->previous = link.previous;
+		if (link.next != 0)
+			page_link(link.next).previous = link.previous;
 		link = {};
+		slot.linked_pages &= static_cast<std::uint8_t>(~bit);
 	}
 
 	void unindex(Slot &slot) noexcept
 	{
 		auto owner = generations_.find(slot.generation);
 		if (owner == generations_.end()) {
-			for (auto &link : slot.page_links)
-				link = {};
+			slot.page_links = {};
+			slot.linked_pages = 0;
 			return;
 		}
-		for (auto &link : slot.page_links)
-			unlink(slot.generation, owner->second, link);
+		for (std::size_t entry = 0; entry < slot.page_links.size(); ++entry)
+			unlink(slot.generation, owner->second, slot, entry);
+	}
+
+	/* A slot keeps the limit it was built under in one byte. The runtime
+	 * asks for at most 64 instructions; a larger limit is kept, and
+	 * compared, as 255, so a block built under one serves any other. */
+	[[nodiscard]] static std::uint8_t kept_instruction_limit(
+		std::size_t limit) noexcept
+	{
+		return static_cast<std::uint8_t>(std::min<std::size_t>(limit, 0xffU));
 	}
 
 	[[nodiscard]] bool matches(const Slot &slot, std::uint64_t address,
@@ -1163,8 +1208,8 @@ private:
 			discard(slot);
 			return nullptr;
 		}
-		if (!slot.terminal &&
-			maximum_instructions > slot.instruction_limit) {
+		if (!slot.terminal && kept_instruction_limit(maximum_instructions) >
+			slot.instruction_limit) {
 			discard(slot);
 			return nullptr;
 		}
@@ -1187,19 +1232,17 @@ private:
 	void activate(Slot &slot, SuccessorSet &successors) noexcept
 	{
 		if (preceding_ != nullptr) {
+			const auto id = slot.index + 1U;
 			auto selected = static_cast<std::size_t>(
 				preceding_->next_replacement & 1U);
 			for (std::size_t way = 0; way < preceding_->entries.size(); ++way) {
-				const auto &entry = preceding_->entries[way];
-				if (entry.slot == nullptr || entry.slot == &slot) {
+				const auto entry = preceding_->entries[way];
+				if (entry == 0 || entry == id) {
 					selected = way;
 					break;
 				}
 			}
-			preceding_->entries[selected] = {
-				.slot = &slot,
-				.successors = &successors,
-			};
+			preceding_->entries[selected] = id;
 			preceding_->next_replacement = static_cast<std::uint8_t>(
 				(selected + 1U) & 1U);
 		}
@@ -1422,6 +1465,12 @@ private:
 	{
 		auto &slab = slabs_[index / program_cache_slab_slots];
 		return slab->slots[index % program_cache_slab_slots];
+	}
+
+	[[nodiscard]] SuccessorSet &successors_at(std::uint32_t index) noexcept
+	{
+		auto &slab = slabs_[index / program_cache_slab_slots];
+		return slab->successors[index % program_cache_slab_slots];
 	}
 
 	[[nodiscard]] Generation &current()
