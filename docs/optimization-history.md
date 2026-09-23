@@ -490,6 +490,7 @@ belongs in translation and validation rather than in the count of returns.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Read the MMU trace switches once per process | Accepted. The per-page trace checks called `getenv` three times, reading the address variables before the enable switch. On an x86-64 guest with four vCPUs, ABBA medians of 1000 process spawns fell 13 percent; tmpfs streaming was neutral. A sampled 2 percent share understated the effect on exec-heavy work. |
+| Reach guest RAM through the mapping's recorded backing identity | Accepted. Each shadow-page read or write called `fstat` three times on the same descriptor to recognize guest RAM and size it. A mapping already records the backing's device and inode, so guest RAM is now found from that identity with no system call. Against the switch-caching build, 1000 process spawns fell a further 20 percent and 64 MiB tmpfs streaming 8 percent; an eight-compile workload was neutral. |
 
 ## Kernarium startup display
 

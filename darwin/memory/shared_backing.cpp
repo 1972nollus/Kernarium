@@ -391,6 +391,20 @@ bool is_anonymous_shared_backing(int fd) noexcept
 	return same_backing(status);
 }
 
+AnonymousBackingMemory anonymous_shared_backing_memory(
+	std::uint64_t device, std::uint64_t inode) noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	if (!anonymous_backing.registered ||
+	    static_cast<std::uint64_t>(anonymous_backing.device) != device ||
+	    static_cast<std::uint64_t>(anonymous_backing.inode) != inode)
+		return {};
+	if (anonymous_backing.root == nullptr)
+		return {true, {}};
+	return {true, {static_cast<std::byte *>(anonymous_backing.root),
+		anonymous_backing.size}};
+}
+
 SharedBackingView acquire_shared_backing_view(int fd,
 	std::uint64_t offset, std::size_t length, int protection) noexcept
 {

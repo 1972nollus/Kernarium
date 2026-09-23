@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace uml::memory {
 
@@ -36,6 +37,18 @@ private:
 
 [[nodiscard]] bool register_anonymous_shared_backing(int fd) noexcept;
 [[nodiscard]] bool is_anonymous_shared_backing(int fd) noexcept;
+
+/* Guest RAM when (device, inode) identifies the anonymous backing. A caller
+ * that recorded a descriptor's identity when it mapped it reaches the RAM
+ * without an fstat per access. memory is empty until the kernel's physical
+ * window exists. */
+struct AnonymousBackingMemory final {
+	bool anonymous{};
+	std::span<std::byte> memory;
+};
+
+[[nodiscard]] AnonymousBackingMemory anonymous_shared_backing_memory(
+	std::uint64_t device, std::uint64_t inode) noexcept;
 
 /* Acquire a read/write consumer view without creating another Mach mapping
  * when fd identifies the anonymous guest-RAM root. The kernel's in-place

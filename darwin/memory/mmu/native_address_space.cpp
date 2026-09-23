@@ -22,6 +22,7 @@
 #include <optional>
 #include <pthread.h>
 #include <shared_mutex>
+#include <span>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <thread>
@@ -264,30 +265,32 @@ void merge_shadow_page(std::uintptr_t page,
 	return protection;
 }
 
-int read_exact(int fd, std::uint64_t offset, std::byte *destination,
-	       std::size_t length)
+[[nodiscard]] bool anonymous_range(std::span<std::byte> memory,
+	std::uint64_t offset, std::size_t length) noexcept
+{
+	if (memory.empty()) {
+		errno = EAGAIN;
+		return false;
+	}
+	if (offset > memory.size() || length > memory.size() - offset) {
+		errno = EINVAL;
+		return false;
+	}
+	return true;
+}
+
+/* device and inode identify fd's backing, recorded when it was mapped, so
+ * guest RAM is reached without an fstat per access. */
+int read_exact(int fd, std::uint64_t device, std::uint64_t inode,
+	       std::uint64_t offset, std::byte *destination, std::size_t length)
 {
 	if (length == 0)
 		return 0;
-	if (is_anonymous_shared_backing(fd)) {
-		struct stat status {};
-		if (fstat(fd, &status) != 0)
+	const auto anonymous = anonymous_shared_backing_memory(device, inode);
+	if (anonymous.anonymous) {
+		if (!anonymous_range(anonymous.memory, offset, length))
 			return -1;
-		if (status.st_size <= 0 ||
-		    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX) {
-			errno = EINVAL;
-			return -1;
-		}
-		const auto backing_size = static_cast<std::size_t>(status.st_size);
-		if (offset > backing_size || length > backing_size - offset) {
-			errno = EINVAL;
-			return -1;
-		}
-		auto view = acquire_shared_backing_view(fd, 0, backing_size,
-			PROT_READ | PROT_WRITE);
-		if (!view)
-			return -1;
-		const auto *source = static_cast<const std::byte *>(view.data()) +
+		const auto *source = anonymous.memory.data() +
 			static_cast<std::size_t>(offset);
 		std::size_t completed = 0;
 		while (completed < length &&
@@ -329,30 +332,16 @@ int read_exact(int fd, std::uint64_t offset, std::byte *destination,
 	return 0;
 }
 
-int write_exact(int fd, std::uint64_t offset, const std::byte *source,
-		std::size_t length)
+int write_exact(int fd, std::uint64_t device, std::uint64_t inode,
+		std::uint64_t offset, const std::byte *source, std::size_t length)
 {
 	if (length == 0)
 		return 0;
-	if (is_anonymous_shared_backing(fd)) {
-		struct stat status {};
-		if (fstat(fd, &status) != 0)
+	const auto anonymous = anonymous_shared_backing_memory(device, inode);
+	if (anonymous.anonymous) {
+		if (!anonymous_range(anonymous.memory, offset, length))
 			return -1;
-		if (status.st_size <= 0 ||
-		    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX) {
-			errno = EINVAL;
-			return -1;
-		}
-		const auto backing_size = static_cast<std::size_t>(status.st_size);
-		if (offset > backing_size || length > backing_size - offset) {
-			errno = EINVAL;
-			return -1;
-		}
-		auto view = acquire_shared_backing_view(fd, 0, backing_size,
-			PROT_READ | PROT_WRITE);
-		if (!view)
-			return -1;
-		auto *destination = static_cast<std::byte *>(view.data()) +
+		auto *destination = anonymous.memory.data() +
 			static_cast<std::size_t>(offset);
 		std::size_t completed = 0;
 		while (completed < length &&
@@ -1684,7 +1673,8 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 		return finish(0);
 	}
 	mmu_trace_live_stacks("flush-shadow-page", page, guest_page_size);
-	if (read_exact(found->second.fd, found->second.offset,
+	if (read_exact(found->second.fd, found->second.identity.device,
+		found->second.identity.inode, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return finish(-1);
 	const bool backing_changed = backing != found->second.original;
@@ -1745,7 +1735,8 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 		} while (position < guest_page_size &&
 			 shadow[position] != found->second.original[position] &&
 			 backing[position] == found->second.original[position]);
-		if (write_exact(found->second.fd, found->second.offset + first,
+		if (write_exact(found->second.fd, found->second.identity.device,
+			found->second.identity.inode, found->second.offset + first,
 			backing.data() + first, position - first) < 0)
 			return finish(-1);
 	}
@@ -1812,7 +1803,8 @@ int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
 	if (!found->second.loaded)
 		return load_page_locked(page);
 	std::array<std::byte, guest_page_size> backing{};
-	if (read_exact(found->second.fd, found->second.offset,
+	if (read_exact(found->second.fd, found->second.identity.device,
+		found->second.identity.inode, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return -1;
 	if (trace)
@@ -1883,7 +1875,8 @@ int NativeAddressSpace::load_page_locked(std::uintptr_t page)
 				mmu_trace_word(found->second.original.data(), 0x280)));
 	mmu_trace_live_stacks("load-shadow-page", page, guest_page_size);
 	std::array<std::byte, guest_page_size> backing{};
-	if (read_exact(found->second.fd, found->second.offset,
+	if (read_exact(found->second.fd, found->second.identity.device,
+		found->second.identity.inode, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return -1;
 	/* A new mapping replaces the quarter captured above. For an established
@@ -1917,7 +1910,8 @@ int NativeAddressSpace::reload_page_from_backing_locked(std::uintptr_t page)
 	std::array<std::byte, guest_page_size> shadow{};
 	snapshot_shadow_page(page, shadow);
 	std::array<std::byte, guest_page_size> backing{};
-	if (read_exact(found->second.fd, found->second.offset,
+	if (read_exact(found->second.fd, found->second.identity.device,
+		found->second.identity.inode, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return -1;
 	/* Translated x86 userspace writes the shared physical backing directly.

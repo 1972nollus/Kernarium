@@ -10,6 +10,7 @@
 #include <mach/mach_vm.h>
 #include <source_location>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <utility>
 #include <unistd.h>
 
@@ -101,6 +102,15 @@ void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
 	require(uml::memory::is_anonymous_shared_backing(token.get()));
 
 	const auto backing_size = page_size * 4;
+	struct stat identity {};
+	require(::fstat(token.get(), &identity) == 0);
+	const auto device = static_cast<std::uint64_t>(identity.st_dev);
+	const auto inode = static_cast<std::uint64_t>(identity.st_ino);
+	const auto unrooted =
+		uml::memory::anonymous_shared_backing_memory(device, inode);
+	require(unrooted.anonymous && unrooted.memory.empty());
+	require(!uml::memory::anonymous_shared_backing_memory(
+		device, inode + 1).anonymous);
 	errno = 0;
 	auto premature = uml::memory::acquire_shared_backing_view(
 		token.get(), page_size, page_size, PROT_READ | PROT_WRITE);
@@ -132,6 +142,12 @@ void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
 			token.get(), 0, backing_size, PROT_READ | PROT_WRITE);
 		require(static_cast<bool>(root));
 		require(root.data() == root_address);
+		const auto rooted =
+			uml::memory::anonymous_shared_backing_memory(device, inode);
+		require(rooted.anonymous);
+		require(rooted.memory.data() ==
+			static_cast<std::byte *>(root_address));
+		require(rooted.memory.size() == backing_size);
 		{
 			auto tail = uml::memory::acquire_shared_backing_view(
 				token.get(), page_size * 3, page_size,
