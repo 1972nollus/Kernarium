@@ -161,6 +161,13 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	bool executor_prepared = false;
 	std::uint64_t prepared_mapping_changes{};
 	std::uint64_t prepared_code_changes{};
+	/* Set once POPF arms RFLAGS.TF: the run ends after one more instruction
+	 * and reports the #DB that instruction raises. */
+	bool trap_armed = false;
+	const auto budget_reason = [&]() noexcept {
+		return trap_armed ? ::uml::cpu::ExitReason::single_step :
+			::uml::cpu::ExitReason::instruction_budget;
+	};
 	while (result.retired_instructions < instruction_budget) {
 		const auto sequences = execution.sequences();
 		if (sequences.execution_interrupt != 0) {
@@ -219,11 +226,19 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		prepared_code_changes = executor.prepared_code_changes();
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
-			result.reason = ::uml::cpu::ExitReason::instruction_budget;
+			result.reason = budget_reason();
 			return run;
 		}
 		switch (executed.event) {
 		case ::uml::cpu::EngineEvent::continued:
+			continue;
+		case ::uml::cpu::EngineEvent::trap_flag:
+			/* With no budget left for the next instruction, the next entry
+			 * sees TF and steps it instead. */
+			if (result.retired_instructions < instruction_budget) {
+				instruction_budget = result.retired_instructions + 1;
+				trap_armed = true;
+			}
 			continue;
 		case ::uml::cpu::EngineEvent::system_call:
 			result.reason = ::uml::cpu::ExitReason::system_call;
@@ -262,7 +277,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 	}
-	result.reason = ::uml::cpu::ExitReason::instruction_budget;
+	result.reason = budget_reason();
 	return run;
 }
 

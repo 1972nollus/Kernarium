@@ -6745,6 +6745,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			return false;
 		stream.push_back(entry);
 		stream.push_back(gadget.address);
+		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	}
 	case Operation::leave: {

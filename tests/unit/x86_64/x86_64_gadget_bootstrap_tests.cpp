@@ -4977,6 +4977,49 @@ read_test_sequences(void *context) noexcept
 		"the stepped system call did not report its own exit");
 }
 
+/* POPF that sets TF arms #DB after the next instruction, so the program
+ * leaves at that instruction for the runtime to run it alone. A POPF that
+ * leaves TF clear, or finds it already set, runs on. */
+[[nodiscard]] bool popf_setting_trap_flag_leaves_at_the_next_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x68, 0x02, 0x01, 0x00, 0x00, // push 0x102 (TF)
+		0x9d,                         // popfq
+		0x48, 0xff, 0xc0,             // inc rax
+		0x68, 0x02, 0x00, 0x00, 0x00, // push 0x2
+		0x9d,                         // popfq
+		0x48, 0xff, 0xc0,             // inc rax
+		0x0f, 0x05,                   // syscall
+	});
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"POPF block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.gpr(Register::rsp) = 0x200;
+	cpu.rflags = 0x2;
+	const auto armed = gadgets::execute(built.program, cpu, memory, 64);
+	if (!expect(armed.event == uml::cpu::EngineEvent::trap_flag &&
+			armed.retired_instructions == 2 && cpu.rip == 6 &&
+			(cpu.rflags & rflags_trap) != 0 &&
+			cpu.gpr(Register::rax) == 0 &&
+			cpu.gpr(Register::rsp) == 0x200,
+		"POPF setting TF did not leave at the next instruction"))
+		return false;
+
+	/* Already set: no transition, so the program runs to the system call. */
+	cpu = CpuState{};
+	cpu.gpr(Register::rsp) = 0x200;
+	cpu.rflags = 0x2 | rflags_trap;
+	const auto held = gadgets::execute(built.program, cpu, memory, 64);
+	return expect(held.event == uml::cpu::EngineEvent::system_call &&
+			held.retired_instructions == 7 &&
+			cpu.gpr(Register::rax) == 2 && (cpu.rflags & rflags_trap) == 0,
+		"POPF with TF already set did not run on");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -6274,6 +6317,7 @@ int main()
 		privileged_instructions_raise_general_protection() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
+		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

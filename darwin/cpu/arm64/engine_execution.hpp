@@ -140,7 +140,8 @@ template<bool PollCallback, typename Executor>
 					::uml::memory::MemoryAccess::execute);
 			case EngineEvent::overflow:
 			case EngineEvent::general_protection:
-				/* x86 INTO and #GP are not arm64 engine events. */
+			case EngineEvent::trap_flag:
+				/* x86 INTO, #GP and TF are not arm64 engine events. */
 				return finish(ExitReason::fatal, retired);
 			case EngineEvent::fatal:
 				return finish(ExitReason::fatal, retired);

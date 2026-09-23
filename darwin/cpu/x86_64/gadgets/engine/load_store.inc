@@ -295,6 +295,7 @@ gadget pop_flags_\width
 .Lx86_pop_flags_done\@:
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	mov x12, x9
 	mov x10, #0x4dd5
 	.if \width != 16
 	movk x10, #0x24, lsl #16
@@ -304,12 +305,23 @@ gadget pop_flags_\width
 	orr x9, x9, x24
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	bic x12, x9, x12
 	add x9, x25, #(\width / 8)
 	.if \width == 32
 	mov w9, w9
 	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	/* Setting TF arms #DB after the next instruction: leave at it so the
+	 * runtime can run exactly that one. */
+	ldr x8, [_stream], #8
+	tbnz x12, #8, .Lx86_pop_flags_trap\@
 	retire_and_next
+.Lx86_pop_flags_trap\@:
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
+	b uml_x86_64_gadget_leave
 .Lx86_pop_flags_cross\@:
 	mov x0, _context
 	mov x1, x25

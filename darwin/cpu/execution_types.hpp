@@ -23,6 +23,9 @@ enum class EngineEvent : int {
 	pc_alignment = 8,
 	overflow = 9,
 	general_protection = 10,
+	/* x86 POPF set RFLAGS.TF: the next instruction raises #DB after it
+	 * retires. RIP names that instruction. */
+	trap_flag = 11,
 };
 
 enum class ExitReason {
