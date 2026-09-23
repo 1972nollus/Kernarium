@@ -39,6 +39,10 @@ OVERLAY_SHELL_BOOTSTRAP = "\n".join(
         "mkdir -p /mnt/root/.uml-lower",
         "cd /mnt/root",
         "pivot_root . .uml-lower",
+        # The kernel starts init without PATH. The shell searches its own
+        # default, but programs that locate themselves through PATH (gcc)
+        # need it in the environment.
+        "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "rm -f /etc/resolv.conf",
         "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
         "'nameserver 10.0.2.3' > /etc/resolv.conf",
