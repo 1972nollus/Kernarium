@@ -153,8 +153,8 @@ std::span<const Gadget> Program::replay_instructions() const noexcept
 Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::size_t byte_count, std::span<const Gadget> gadgets,
 	std::span<const std::byte> source, ProgramLinkResolver links)
-	: mode_{mode}, address_{normalize_instruction_pointer(mode, address)},
-	  byte_count_{byte_count}
+	: address_{normalize_instruction_pointer(mode, address)},
+	  byte_count_{byte_count}, mode_{mode}
 {
 	auto &words = native_scratch();
 	words.clear();

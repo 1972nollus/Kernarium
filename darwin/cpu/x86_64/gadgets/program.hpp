@@ -180,7 +180,8 @@ public:
 	}
 
 private:
-	ExecutionMode mode_{ExecutionMode::long64};
+	/* Widest members first: every way of an executor's cache embeds a
+	 * program, so padding here is paid once per way. */
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
 	/* The words the engine runs, alone. Holding them in one allocation with
@@ -195,6 +196,7 @@ private:
 	std::uint32_t words_{};
 	std::uint32_t instructions_{};
 	std::uint32_t source_{};
+	ExecutionMode mode_{ExecutionMode::long64};
 	bool terminal_{};
 };
 

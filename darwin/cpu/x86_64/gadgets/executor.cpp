@@ -486,7 +486,7 @@ private:
 		ProgramCodeStamps code_stamps{};
 		std::optional<Program> program;
 	};
-	static_assert(sizeof(Slot) == 184,
+	static_assert(sizeof(Slot) == 176,
 		"a way costs its slot whether or not it holds a translation");
 	static_assert(program_cache_slots < (std::size_t{1} << 31),
 		"a page link id fits 32 bits");
