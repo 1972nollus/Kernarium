@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #include <cstdlib>
@@ -226,6 +227,15 @@ struct ProgramCodeStamps final {
 	return ProgramSourceComparison::match;
 }
 
+/* An unlinked BlockLink's stream is the one link_exit word in front of it,
+ * which takes the RIP from the BlockLink. */
+struct UnlinkedBlockLink final {
+	std::uintptr_t fallback_stream;
+	BlockLink link;
+};
+static_assert(offsetof(UnlinkedBlockLink, link) == sizeof(std::uintptr_t),
+	"link_exit reads the RIP two words past its stream word");
+
 /* Entries no block has claimed name an address no block begins at and carry
  * that address's own fallback, so the translated tier can load the pointer
  * before it has compared the address, and a guest that really does branch
@@ -233,17 +243,16 @@ struct ProgramCodeStamps final {
  */
 [[nodiscard]] const TargetLinkTable &vacant_target_links() noexcept
 {
-	static const std::uintptr_t fallback[2] = {
+	static const UnlinkedBlockLink vacant{
 		reinterpret_cast<std::uintptr_t>(
 			native::uml_x86_64_gadget_link_exit),
-		static_cast<std::uintptr_t>(~std::uint64_t{}),
+		{&vacant.fallback_stream, 0, ~std::uint64_t{}, ~std::uint64_t{},
+			~std::uint64_t{}},
 	};
-	static const BlockLink vacant{fallback, 0, ~std::uint64_t{},
-		~std::uint64_t{}, ~std::uint64_t{}};
 	static const TargetLinkTable table = [] {
 		TargetLinkTable initial{};
 		for (auto &entry : initial)
-			entry = {~std::uint64_t{}, &vacant};
+			entry = {~std::uint64_t{}, &vacant.link};
 		return initial;
 	}();
 	return table;
@@ -497,28 +506,32 @@ private:
 		std::array<SuccessorSet, program_cache_slab_slots> successors;
 	};
 
+	/* Laid out as an UnlinkedBlockLink, so an unlinked record's stream is
+	 * its own link_exit word. */
 	struct LinkRecord final {
 		explicit LinkRecord(std::uint64_t address) noexcept
-			: fallback_stream{
-				reinterpret_cast<std::uintptr_t>(
-					native::uml_x86_64_gadget_link_exit),
-				static_cast<std::uintptr_t>(address)},
-			  link{fallback_stream.data(), 0, address, address, address}
+			: fallback_stream{reinterpret_cast<std::uintptr_t>(
+				native::uml_x86_64_gadget_link_exit)},
+			  link{&fallback_stream, 0, address, address, address}
 		{}
 
 		void reset() noexcept
 		{
-			link.stream = fallback_stream.data();
+			link.stream = &fallback_stream;
 			link.instruction_count = 0;
 			link.program_begin = link.guest_rip;
 			link.program_end = link.guest_rip;
 		}
 
-		std::array<std::uintptr_t, 2> fallback_stream;
+		std::uintptr_t fallback_stream;
 		BlockLink link;
 		bool listed{};
 		LinkRecord *next_live{};
 	};
+	static_assert(offsetof(LinkRecord, link) ==
+			offsetof(UnlinkedBlockLink, link) &&
+		sizeof(LinkRecord) == 64,
+		"link_exit reads the RIP two words past its stream word");
 
 	struct LinkKey final {
 		[[nodiscard]] std::uint64_t operator()(
