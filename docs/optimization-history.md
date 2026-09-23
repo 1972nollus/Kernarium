@@ -485,6 +485,12 @@ belongs in translation and validation rather than in the count of returns.
 | --- | --- |
 | Enable high-resolution timers on the mainline kernels | Accepted; Android already had them. An arm64 16 KiB ABBA comparison on four vCPUs was neutral on host CPU per run, idle timer interrupts, CPU-bound, syscall, pipe, fork and parallel workloads, while 500 one-millisecond sleeps fell from 5.0 to 2.2 seconds. Programming the one-shot Darwin clock event only records a deadline, so the 100 Hz tick policy, not timer resolution, is what bounds host wakeups. |
 
+## 4 KiB native MMU page publication
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Read the MMU trace switches once per process | Accepted. The per-page trace checks called `getenv` three times, reading the address variables before the enable switch. On an x86-64 guest with four vCPUs, ABBA medians of 1000 process spawns fell 13 percent; tmpfs streaming was neutral. A sampled 2 percent share understated the effect on exec-heavy work. |
+
 ## Kernarium startup display
 
 | Attempt | Disposition and lesson |

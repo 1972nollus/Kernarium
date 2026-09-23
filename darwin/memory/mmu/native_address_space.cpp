@@ -53,22 +53,31 @@ constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
 		pthread_mach_thread_np(pthread_self()));
 }
 
+/* Trace switches sit on per-page paths, so each is read once per process. */
+[[nodiscard]] bool environment_switch(const char *name) noexcept
+{
+	const auto *value = std::getenv(name);
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
 [[nodiscard]] bool mmu_trace_enabled() noexcept
 {
-	const auto *value = std::getenv("UML_MMU_TRACE");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
+	static const bool enabled = environment_switch("UML_MMU_TRACE");
+	return enabled;
 }
 
 [[nodiscard]] bool mmu_conflict_trace_enabled() noexcept
 {
-	const auto *value = std::getenv("UML_MMU_CONFLICT_TRACE");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
+	static const bool enabled =
+		environment_switch("UML_MMU_CONFLICT_TRACE");
+	return enabled;
 }
 
 [[nodiscard]] bool mmu_live_stack_trace_enabled() noexcept
 {
-	const auto *value = std::getenv("UML_MMU_LIVE_STACK_TRACE");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
+	static const bool enabled =
+		environment_switch("UML_MMU_LIVE_STACK_TRACE");
+	return enabled;
 }
 
 void mmu_trace_live_stacks(const char *operation, std::uintptr_t address,
@@ -111,7 +120,7 @@ void mmu_trace_live_stacks(const char *operation, std::uintptr_t address,
 		static_cast<vm_size_t>(thread_count * sizeof(*threads)));
 }
 
-[[nodiscard]] std::uintptr_t mmu_trace_address() noexcept
+[[nodiscard]] std::uintptr_t parse_mmu_trace_address() noexcept
 {
 	const auto *value = std::getenv("UML_MMU_TRACE_DYNAMIC_ADDRESS");
 	if (value == nullptr || value[0] == '\0')
@@ -125,6 +134,12 @@ void mmu_trace_live_stacks(const char *operation, std::uintptr_t address,
 	return static_cast<std::uintptr_t>(parsed);
 }
 
+[[nodiscard]] std::uintptr_t mmu_trace_address() noexcept
+{
+	static const auto address = parse_mmu_trace_address();
+	return address;
+}
+
 [[nodiscard]] std::uintptr_t mmu_trace_page() noexcept
 {
 	return mmu_trace_address() & ~(guest_page_size - 1);
@@ -132,9 +147,10 @@ void mmu_trace_live_stacks(const char *operation, std::uintptr_t address,
 
 [[nodiscard]] bool mmu_trace_target(std::uintptr_t page) noexcept
 {
+	if (!mmu_trace_enabled())
+		return false;
 	const auto target = mmu_trace_page();
-	return mmu_trace_enabled() && target != 0 &&
-		host_slot_for(page) == host_slot_for(target);
+	return target != 0 && host_slot_for(page) == host_slot_for(target);
 }
 
 [[nodiscard]] std::uint64_t mmu_trace_word(
@@ -2397,8 +2413,8 @@ int NativeAddressSpace::map(
 				aliases, direct_aliases);
 		}
 	}
-	if (std::getenv("UML_MMU_WATCH") != nullptr &&
-	    traced_page >= address && traced_page - address < length)
+	static const bool watch = std::getenv("UML_MMU_WATCH") != nullptr;
+	if (watch && traced_page >= address && traced_page - address < length)
 		__builtin_debugtrap();
 	return 0;
 }
