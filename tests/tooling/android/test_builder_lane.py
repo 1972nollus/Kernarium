@@ -1275,7 +1275,7 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
         "UML_KERNEL_FINAL_TREE": "bd1cbf5460475ed09e78afa6ecd33a3a3c4d1580",
-        "UML_KERNEL_PATCH_COUNT": "51",
+        "UML_KERNEL_PATCH_COUNT": "43",
         "UML_KERNEL_ABI_VERSION": "11",
         "UML_KERNEL_ABI_FINGERPRINT": "0xa54125de28365272",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -1410,33 +1410,21 @@ def main() -> None:
     required_kernel_builtins = (
         android_root / "support/verification/required-kernel-builtins.txt"
     ).read_text()
-    rcu_spin_patch = (
+    cooperative_patch = (
         kernel_root
-        / "patches/series/0024-UML-DARWIN-LOCAL-service-timers-from-kernel-spin-che.patch"
-    ).read_text()
-    rcu_quiescent_patch = (
-        kernel_root
-        / "patches/series/0025-UML-DARWIN-LOCAL-add-quiescent-boundaries-to-kernel-.patch"
-    ).read_text()
-    rcu_timer_boundary_patch = (
-        kernel_root
-        / "patches/series/0026-UML-DARWIN-LOCAL-service-timers-at-kernel-quiescent-.patch"
-    ).read_text()
-    rcu_cond_resched_patch = (
-        kernel_root
-        / "patches/series/0027-UML-DARWIN-LOCAL-poll-timers-before-cond_resched.patch"
+        / "patches/series/0021-UML-DARWIN-LOCAL-service-cooperative-progress-at-ker.patch"
     ).read_text()
     ubd_direct_discard_patch = (
         kernel_root
-        / "patches/series/0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch"
+        / "patches/series/0029-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch"
     ).read_text()
     initrd_range_patch = (
         kernel_root
-        / "patches/series/0033-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
+        / "patches/series/0026-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
     ).read_text()
     battery_patch = (
         kernel_root
-        / "patches/series/0035-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
+        / "patches/series/0027-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
     ).read_text()
     build_make_patch = "\n".join(
         path.read_text()
@@ -1499,7 +1487,6 @@ def main() -> None:
         if token not in regenerate_kernel:
             fail(f"ACK patch regenerator is missing isolation policy: {token}")
     for token in (
-        "darwin_timer_spin_checkpoint",
         "darwin_timer_poll(&current_pt_regs()->regs)",
         "#include <linux/ptrace.h>",
         "spin_relax_counts[CONFIG_NR_CPUS]",
@@ -1507,9 +1494,9 @@ def main() -> None:
         "darwin_ipi_poll();",
         "(++spin_relax_counts[cpu] & 0xffU) == 0",
     ):
-        if token not in rcu_spin_patch:
-            fail(f"ACK RCU spin-timer topic is missing fixed policy: {token}")
-    if len(re.findall(r"\+\s*cpu = uml_curr_cpu\(\);", rcu_spin_patch)) != 2:
+        if token not in cooperative_patch:
+            fail(f"ACK cooperative-progress topic is missing spin policy: {token}")
+    if len(re.findall(r"\+\s*cpu = uml_curr_cpu\(\);", cooperative_patch)) != 2:
         fail("ACK spin checkpoint does not recompute CPU identity after IPI service")
     if re.search(
         r"if \(!um_get_signals\(\)\).*"
@@ -1517,8 +1504,8 @@ def main() -> None:
         r"if \(__atomic_load_n\(&pending_ipis\[cpu\].*"
         r"darwin_ipi_poll\(\);.*"
         r"cpu = uml_curr_cpu\(\);.*"
-        r"darwin_timer_spin_checkpoint\(\);",
-        rcu_spin_patch,
+        r"darwin_timer_kernel_checkpoint\(\);",
+        cooperative_patch,
         re.DOTALL,
     ) is None:
         fail("ACK spin checkpoint no longer preserves IRQ/IPI/timer ordering")
@@ -1528,21 +1515,21 @@ def main() -> None:
         "cond_resched();",
         "darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);",
     ):
-        if token not in rcu_quiescent_patch:
-            fail(f"ACK RCU quiescent-boundary topic is missing policy: {token}")
+        if token not in cooperative_patch:
+            fail(f"ACK cooperative-progress topic is missing quiescent policy: {token}")
     for token in (
         "darwin_timer_kernel_checkpoint",
         "!may_resched || !um_get_signals()",
         "darwin_timer_poll(&current_pt_regs()->regs)",
         "darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);",
     ):
-        if token not in rcu_timer_boundary_patch:
-            fail(f"ACK RCU timer-boundary topic is missing policy: {token}")
+        if token not in cooperative_patch:
+            fail(f"ACK cooperative-progress topic is missing timer policy: {token}")
     if re.search(
         r"if \(!may_resched \|\| !um_get_signals\(\)\).*"
         r"darwin_timer_kernel_checkpoint\(\);.*"
         r"cond_resched\(\);",
-        rcu_timer_boundary_patch,
+        cooperative_patch,
         re.DOTALL,
     ) is None:
         fail("ACK uaccess boundary no longer polls the timer before rescheduling")
@@ -1551,7 +1538,7 @@ def main() -> None:
         r"if \(um_get_signals\(\)\).*"
         r"darwin_timer_kernel_checkpoint\(\);.*"
         r"cond_resched\(\);",
-        rcu_timer_boundary_patch,
+        cooperative_patch,
         re.DOTALL,
     ) is None:
         fail("ACK TLB boundary no longer preserves invalidate/IRQ/timer/reschedule ordering")
@@ -1563,14 +1550,14 @@ def main() -> None:
         "darwin_timer_kernel_checkpoint();",
         "if (should_resched(0) && !irqs_disabled())",
     ):
-        if token not in rcu_cond_resched_patch:
-            fail(f"ACK cond_resched timer topic is missing fixed policy: {token}")
+        if token not in cooperative_patch:
+            fail(f"ACK cooperative-progress topic is missing cond_resched policy: {token}")
     if re.search(
         r"int __sched __cond_resched\(void\).*"
         r"if \(!irqs_disabled\(\)\).*"
         r"darwin_timer_kernel_checkpoint\(\);.*"
         r"if \(should_resched\(0\) && !irqs_disabled\(\)\)",
-        rcu_cond_resched_patch,
+        cooperative_patch,
         re.DOTALL,
     ) is None:
         fail("ACK cond_resched boundary no longer polls the timer before rescheduling")
@@ -1938,7 +1925,7 @@ def main() -> None:
         "JELLY_UPSTREAM_BRANCH": "lineage-23.2",
         "JELLY_UPSTREAM_COMMIT": "767833067da7bbbb639782bbddec33f602215c3d",
         "JELLY_UPSTREAM_TREE": "82fe9a20385cd4546a0f5bc48c472e11ed7ad0fc",
-        "JELLY_FINAL_COMMIT": "607d28aece407ccc5e245539d2e1b76d3ea81a37",
+        "JELLY_FINAL_COMMIT": "5053e2cc96992955859f13e77a806bc6dee214b1",
         "JELLY_FINAL_TREE": "ce63d63703fbfd2e616e94513ea1e5c63ccae4ef",
         "JELLY_PATCH_COUNT": "2",
         "JELLY_DESTINATION": "packages/apps/Jelly",
@@ -2027,23 +2014,29 @@ def main() -> None:
         ).read_text():
             fail(f"Connectivity patch route is missing UML BPF policy: {token}")
     for token in (
-        "UML_ANDROID_DISABLE_PROJECT_QUOTAS := true",
         "ifeq ($(UML_ANDROID_DISABLE_PROJECT_QUOTAS),true)",
         "external_storage.casefold.enabled=1",
         "external_storage.sdcardfs.enabled=0",
-        "latemount,wait,check,formattable",
+        "LOCAL_ENABLE_NEURALNETWORKS ?= true",
+        "LOCAL_ENABLE_SENSORS ?= true",
+    ):
+        if token not in cuttlefish_patches:
+            fail(f"Cuttlefish patch route is missing userdata quota policy: {token}")
+    overlay_fstab = (android_root / "overlay/config/fstab.uml").read_text()
+    for token in (
+        "UML_ANDROID_DISABLE_PROJECT_QUOTAS := true",
         "BOARD_HAVE_BLUETOOTH := false",
         "CF_VENDOR_NO_UWB := true",
         "CF_VENDOR_NO_THREADNETWORK := true",
         "LOCAL_ENABLE_LIGHT := false",
         "LOCAL_ENABLE_OEMLOCK := false",
         "LOCAL_ENABLE_NEURALNETWORKS := false",
-        "LOCAL_ENABLE_NEURALNETWORKS ?= true",
         "LOCAL_ENABLE_SENSORS := false",
-        "LOCAL_ENABLE_SENSORS ?= true",
     ):
-        if token not in cuttlefish_patches:
-            fail(f"Cuttlefish patch route is missing userdata quota policy: {token}")
+        if token not in (android_root / "overlay/aosp_kernarium_darwin.mk").read_text():
+            fail(f"Android product is missing omitted-hardware policy: {token}")
+    if "latemount,wait,check,formattable" not in overlay_fstab:
+        fail("Android product fstab is missing the late userdata mount policy")
     for token in (
         "verify-target-files.py",
         "verify-initramfs.py",

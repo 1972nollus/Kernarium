@@ -1,0 +1,33 @@
+From bdafdea95dcd06c340b0e56af9b6fae1b9fa298a Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 11:37:32 +0000
+Subject: [PATCH 6/6] UML-ANDROID-LOCAL: Package 16 KiB Mesa Virgl GLES
+
+Let a product set UML_ANDROID_SOURCE_MESA=true to install the source-built
+Mesa Virgl GLES stack (gallium_dri, the Mesa EGL and GLES libraries, and the
+Virgl DRI symlink) instead of the prebuilt libGLES_mesa.
+
+Change-Id: Iccef1c6c9762d9cacd6828abcaa34bca3c1fc9dd
+---
+ shared/virgl/device_vendor.mk | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/shared/virgl/device_vendor.mk b/shared/virgl/device_vendor.mk
+index 347eb163ca27ba978b1d5d56638c5e886be0fdce..5006deb8c9e67fa20b1fb220ea0d8c95d14112f3 100644
+--- a/shared/virgl/device_vendor.mk
++++ b/shared/virgl/device_vendor.mk
+@@ -14,5 +14,13 @@
+ # limitations under the License.
+ #
+ 
+-
++ifeq ($(UML_ANDROID_SOURCE_MESA),true)
++PRODUCT_PACKAGES += \
++    gallium_dri \
++    libEGL_mesa \
++    libGLESv1_CM_mesa \
++    libGLESv2_mesa \
++    uml_virgl_dri_symlink
++else
+ PRODUCT_PACKAGES += libGLES_mesa
++endif

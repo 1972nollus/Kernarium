@@ -1,0 +1,22 @@
+From 76ac3316804ccab49f14e5f6b510128a7c1d7ca8 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 14:49:49 +0000
+Subject: [PATCH 16/43] UML-DARWIN-LOCAL: um: use generic SIMD availability
+
+Change-Id: Ibb6351ff74e2e9533609cd6b2a2dd295a5508c37
+---
+ arch/um/include/asm/Kbuild | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
+index 3c21b4fd2a3474a1fb619c120cb3b806e1ae9cb0..af6be97171bad5c22fe1dc81a6817b0bb9d88aed 100644
+--- a/arch/um/include/asm/Kbuild
++++ b/arch/um/include/asm/Kbuild
+@@ -19,6 +19,7 @@ generic-y += parport.h
+ generic-y += percpu.h
+ generic-y += preempt.h
+ generic-y += runtime-const.h
++generic-y += simd.h
+ generic-y += softirq_stack.h
+ generic-y += switch_to.h
+ generic-y += trace_clock.h

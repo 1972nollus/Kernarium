@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated Jelly topic identity. Patch bytes come only from git format-patch.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Jelly-build-against-SDK-37.patch	37f26d2e5af4b6fc8342ecc360e4a16ff920c624	b985725f58044d5b4072a3ea837fee0461720d0a68aa2819807fa9e77fd3eeee	UML-ANDROID-LOCAL: Jelly build against SDK 37
-2	0002-UML-ANDROID-LOCAL-Jelly-disable-geolocation-by-defau.patch	54bcec394df934d1768c8aa6890a8ea743decac0	6711b58d580b40d38593744530b46b334ca89e66090dae83e16c848e68444b2d	UML-ANDROID-LOCAL: Jelly disable geolocation by default
+1	0001-UML-ANDROID-LOCAL-Jelly-build-against-SDK-37.patch	37f26d2e5af4b6fc8342ecc360e4a16ff920c624	0e7f4d2ed282a398f29e4ef97ff169b1489cfde7787c0c2099cef5324bc0b981	UML-ANDROID-LOCAL: Jelly build against SDK 37
+2	0002-UML-ANDROID-LOCAL-Jelly-disable-geolocation-by-defau.patch	54bcec394df934d1768c8aa6890a8ea743decac0	217b81f3c7e38b4b9d0f79da9fd1a86734b6dd044f33d087b42b96bdb863f92f	UML-ANDROID-LOCAL: Jelly disable geolocation by default

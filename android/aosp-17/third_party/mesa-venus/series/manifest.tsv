@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated Mesa Venus Android topic identity. Patch bytes come only from git format-patch.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Mesa-Venus-pair-the-generated-prot.patch	96305c6745df15c67b5108b6ccae74d18b1f93db	0a0767ffd79889e60767c3f97ddff9b32a3b2aa13a269ab94bdf1e47eada069d	UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers
-2	0002-UML-ANDROID-LOCAL-Mesa-Venus-take-paired-protocol-he.patch	3b9e7ac09126a6dfc7c6e56871047139a01c587e	b74945b80decbe2d4a2dfb0cd16daf173d30a7ab6e5753c188897df619c24900	UML-ANDROID-LOCAL: Mesa Venus take paired protocol headers from the tree
-3	0003-UML-ANDROID-LOCAL-Mesa-Venus-drop-the-legacy-Android.patch	99aa5ce5b08eb1aa4fbc2ef54524325942bf45ef	824c8e99b25cb7ca0064baa7a899ea493fb02087107c6f9ea26481a95548020c	UML-ANDROID-LOCAL: Mesa Venus drop the legacy Android.mk
-4	0004-UML-ANDROID-LOCAL-Mesa-Venus-generated-Soong-port.patch	461fe5c4f7576d7b287f2eea1b90e1323ff946fb	84a75977146ba94e7e269162e3809540699209ef0affe06ca36335445ac9db32	UML-ANDROID-LOCAL: Mesa Venus generated Soong port
+1	0001-UML-ANDROID-LOCAL-Mesa-Venus-pair-the-generated-prot.patch	d1ced627d705bca54318ee1e3eb3e50a2c3ceb59	c3b326dc866825337f576759ed132f8e97409c1a81bc89d51914c173c458a3ae	UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers
+2	0002-UML-ANDROID-LOCAL-Mesa-Venus-generated-Soong-port.patch	dfc941aaa8e61e26783b5ddf61b4138c81b88cea	04cfdd9ae75ab4704e28722cf7c94c6ee60ec5534429a762f22cf9e1ca11304f	UML-ANDROID-LOCAL: Mesa Venus generated Soong port

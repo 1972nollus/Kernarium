@@ -1,7 +1,7 @@
-From 2438d770733804ad3231ff2367ef82e586be5c93 Mon Sep 17 00:00:00 2001
+From fe223581b294820adb7ff4257f60881f1751eb55 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 12:21:08 +0000
-Subject: [PATCH 2/3] UML-ANDROID-LOCAL: build: allow inherited payload
+Subject: [PATCH 2/2] UML-ANDROID-LOCAL: build: allow inherited payload
  exclusions
 
 Change-Id: Id61d2ee5525b53f0721b994e3b4909aa67ca4a10

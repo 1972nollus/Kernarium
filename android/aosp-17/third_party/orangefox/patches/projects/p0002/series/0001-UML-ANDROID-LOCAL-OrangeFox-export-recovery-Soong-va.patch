@@ -1,7 +1,8 @@
-From 951961dd6d48ee1d2ebd092568f85ab21c8079b9 Mon Sep 17 00:00:00 2001
+From 2aed5dfd2610fead706056cee3a448533edde45a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 03:41:57 +0000
-Subject: [PATCH] UML-ANDROID-LOCAL: OrangeFox export recovery Soong variables
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: OrangeFox export recovery Soong
+ variables
 
 ---
  config/BoardConfigSoong.mk | 1 +

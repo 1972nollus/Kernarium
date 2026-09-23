@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Settings-omit-unavailable-radio-co.patch	e92a1393b96536ba878a12e1730b7db78b780ef9	d0160605de17ec7d73e4bcf5960127fbc9691069887fb905a5efc38be3da514d	UML-ANDROID-LOCAL: Settings omit unavailable radio controls
-2	0002-UML-ANDROID-LOCAL-Settings-omit-Bluetooth-media-outp.patch	a8d59202da492d466fbbedf2657f32ae617bdc48	6ff7f0b14e52f1ea4c4077e40a01c40ec7d394ceee6f53aed7105179222e8cfa	UML-ANDROID-LOCAL: Settings omit Bluetooth media output
-3	0003-UML-ANDROID-LOCAL-Settings-keep-network-software-con.patch	62bbfef488683bcaca2637510b29b7306dbdff06	9aa4fd14fe545a8f82f8c972dc7f4e8e1bcd2489c36133b5c8350d93a13fd0bc	UML-ANDROID-LOCAL: Settings keep network software controls
-4	0004-UML-ANDROID-LOCAL-Settings-gate-unavailable-radio-ro.patch	0b072863da0aaf311eadc0ca80527e4d39ee6d35	dff31ee025c437b42136af9244b0ae8eebb342b1da9d7b24b43cd00ebd0f5bbd	UML-ANDROID-LOCAL: Settings gate unavailable radio routes
+1	0001-UML-ANDROID-LOCAL-Settings-omit-unavailable-radio-co.patch	9c07cef86dba123215f3c09e5add2db326e25877	ac65d44d98045ceae1d71b79687d6eda7aaec59c1684fe79c70a1b3d1f40c05d	UML-ANDROID-LOCAL: Settings omit unavailable radio controls
+2	0002-UML-ANDROID-LOCAL-Settings-keep-network-software-con.patch	62bbfef488683bcaca2637510b29b7306dbdff06	4c9c55132cc3fdb8b7daaabd7c0d5fb7a874928890bafb2d2485bf6d16925b4f	UML-ANDROID-LOCAL: Settings keep network software controls

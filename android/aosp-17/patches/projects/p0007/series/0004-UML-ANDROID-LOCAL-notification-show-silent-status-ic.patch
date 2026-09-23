@@ -1,4 +1,4 @@
-From c9490b27ad45bd93402ba35cff8a9b637a206922 Mon Sep 17 00:00:00 2001
+From 151e04bf2abe5b3f2f63eb5096b69df5b7bc6b4b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 11:58:35 +0000
 Subject: [PATCH 4/5] UML-ANDROID-LOCAL: notification: show silent status icons

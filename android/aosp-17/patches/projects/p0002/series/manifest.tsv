@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-build-omit-updater-when-OTA-is-ski.patch	c79ab77827c566a348db372b923218315286ae11	3f65dd41e8c02f6b772fc81d19fe5f05646e60d7176be3e3c0f3f49f88439bd7	UML-ANDROID-LOCAL: build: omit updater when OTA is skipped
-2	0002-UML-ANDROID-LOCAL-build-allow-inherited-payload-excl.patch	29c361f771a738e505b7b358fe38d28ba33dc535	e52e80a76c0c655f25cb4b09320d1ddd6e4bcaa375e4022369296ef6b5da463c	UML-ANDROID-LOCAL: build: allow inherited payload exclusions
-3	0003-UML-ANDROID-LOCAL-build-omit-recovery-reconstruction.patch	56611295f9f8702592c45d3ce52aba50ab64aff4	ce6caf5ff18a9073a302c05022b3155207a4e6de2d6a57f4a9799e3a175fa9be	UML-ANDROID-LOCAL: build: omit recovery reconstruction when OTA is skipped
+1	0001-UML-ANDROID-LOCAL-build-omit-OTA-only-outputs-when-O.patch	8e5ff625985b009b79dc916244cdb1129711876a	54cdd81937a2aeb5396a716b1e0f37cd2abe0b69ab9dc8b2aca1f223beb76f9e	UML-ANDROID-LOCAL: build: omit OTA-only outputs when OTA is skipped
+2	0002-UML-ANDROID-LOCAL-build-allow-inherited-payload-excl.patch	29c361f771a738e505b7b358fe38d28ba33dc535	1256112fdc6c5aa668d6454ec2f406fe534a43f3bcd3367387f748a0f147de30	UML-ANDROID-LOCAL: build: allow inherited payload exclusions

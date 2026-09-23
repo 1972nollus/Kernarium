@@ -89,7 +89,7 @@ uml_add_tooling_test(
         --mainline-patch
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
         --android-patch
-            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series/0037-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
+            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series/0029-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
     LABELS kernel;android;audit
     TIMEOUT 30)
 

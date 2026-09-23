@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	14bc5636845e1c0ad8b3cfa7d4bad1378d626176093c2ea4f3d5f0ddc7087b70	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
-2	0002-UML-ANDROID-LOCAL-audio-make-assistant-default-confi.patch	7f895c9222f43b36b91a719b0ab69b73ee086144	666b13c75f44305aca5e2d38ef0868ea90391a5137e98be879de988f5c776a0b	UML-ANDROID-LOCAL: audio: make assistant default configurable
-3	0003-UML-ANDROID-LOCAL-enable-configurable-developer-defa.patch	157c49692a91307ebeecc70915b74df65590e5a1	71c3b254b749a39054abf9acbb0221093d4150c7d73e31c3eb5fbe621a405fd3	UML-ANDROID-LOCAL: enable configurable developer defaults
-4	0004-UML-ANDROID-LOCAL-notification-show-silent-status-ic.patch	f811015715eef6d3983fa44291ca1e9fa06ceaea	99190a6396582ead4db9fd21d1d7b6a857271e9f4ca677e041bd3acd5d80db27	UML-ANDROID-LOCAL: notification: show silent status icons by default
-5	0005-UML-ANDROID-LOCAL-support-wireless-debugging-over-Et.patch	827abc97f400c0d9b82657037c897957b87ea722	ba4753191cd525c4657984e6a57381f0d2a0c8b588a135b02d25c20bd4282abb	UML-ANDROID-LOCAL: support wireless debugging over Ethernet
+1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	68b56fe41f033e6545c7c02939e2c391a786da5cfa891f31386ca2de870d6e88	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
+2	0002-UML-ANDROID-LOCAL-audio-make-assistant-default-confi.patch	7f895c9222f43b36b91a719b0ab69b73ee086144	9b8fd3950490e8f124d93230f6a2e86bfea72144488c0e85c7473beab9fd9b5a	UML-ANDROID-LOCAL: audio: make assistant default configurable
+3	0003-UML-ANDROID-LOCAL-enable-configurable-developer-defa.patch	157c49692a91307ebeecc70915b74df65590e5a1	f814941476edb1bc9b4981cf6239d3b138ba3173884c02e9d33e23fe3e135776	UML-ANDROID-LOCAL: enable configurable developer defaults
+4	0004-UML-ANDROID-LOCAL-notification-show-silent-status-ic.patch	f811015715eef6d3983fa44291ca1e9fa06ceaea	b80a68705b74aad9a1b4ed292e0e6f930f148cfb15140a13522f7944128a2cf3	UML-ANDROID-LOCAL: notification: show silent status icons by default
+5	0005-UML-ANDROID-LOCAL-support-wireless-debugging-over-Et.patch	827abc97f400c0d9b82657037c897957b87ea722	f1effd019dd0825558f45a2102954c16d8da0fd9db94d1ac7f9e631d0a6a11ec	UML-ANDROID-LOCAL: support wireless debugging over Ethernet

@@ -1,4 +1,4 @@
-From 08698d61188ff923a8081303a0ffea9dc11f24bb Mon Sep 17 00:00:00 2001
+From 0fccd9300ca0e1c64bb5e088a56ebd16f128090c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 08:28:48 +0000
 Subject: [PATCH 1/1] UML-ANDROID-LOCAL: allow boot-time ADB auth bypass

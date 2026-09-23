@@ -1,4 +1,4 @@
-From 15ae8f1264fafe2a22b01fb4bd306dcad37a10e4 Mon Sep 17 00:00:00 2001
+From 33e344c0958b3a3f0c53e9f7ac504842c523f631 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 1 Sep 2026 19:06:18 +0000
 Subject: [PATCH 5/5] UML-ANDROID-LOCAL: support wireless debugging over
