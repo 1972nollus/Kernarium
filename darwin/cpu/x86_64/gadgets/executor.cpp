@@ -465,6 +465,21 @@ private:
 		std::uint32_t next{};
 	};
 
+	/* What a way holds only while it holds a translation: the program, the
+	 * page stamps it was last validated against and its places in the
+	 * code-page lists. A large cache commonly runs with half its ways empty,
+	 * and every way pays for its slot, so these live in an allocation of
+	 * their own, which a replaced translation hands to its successor. */
+	struct Translation final {
+		explicit Translation(Program &&built) noexcept
+			: program{std::move(built)}
+		{}
+
+		std::array<PageLink, 2> page_links{};
+		ProgramCodeStamps code_stamps{};
+		Program program;
+	};
+
 	struct Slot final {
 		/* Keep every field needed to reject a way in the first cache line.
 		 * The program and saved bytes are touched only after the key matches. */
@@ -477,16 +492,15 @@ private:
 		std::uint8_t instruction_limit{};
 		ExecutionMode mode{ExecutionMode::long64};
 		bool terminal{};
-		/* Which of `page_links` are in a page's list. */
+		/* Which of the translation's `page_links` are in a page's list;
+		 * never set without a translation. */
 		std::uint8_t linked_pages{};
 		std::uint64_t validated_changes{};
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
-		std::array<PageLink, 2> page_links{};
-		ProgramCodeStamps code_stamps{};
-		std::optional<Program> program;
+		std::unique_ptr<Translation> translation;
 	};
-	static_assert(sizeof(Slot) == 176,
+	static_assert(sizeof(Slot) == 64,
 		"a way costs its slot whether or not it holds a translation");
 	static_assert(program_cache_slots < (std::size_t{1} << 31),
 		"a page link id fits 32 bits");
@@ -595,10 +609,8 @@ public:
 		current_ = nullptr;
 		for (auto &slab : slabs_)
 			if (slab)
-				for (auto &slot : slab->slots) {
-					slot.page_links = {};
+				for (auto &slot : slab->slots)
 					slot.linked_pages = 0;
-				}
 		preceding_ = nullptr;
 		++epoch_;
 		if (epoch_ != 0)
@@ -683,8 +695,9 @@ public:
 					auto &slot = page_link_slot(id);
 					if (slot.epoch == epoch_ &&
 					    slot.generation == current_generation_ &&
-					    slot.program && source_overlaps(
-						    *slot.program, address, size))
+					    slot.translation && source_overlaps(
+						    slot.translation->program,
+						    address, size))
 						deactivate(slot);
 				}
 			}
@@ -849,14 +862,19 @@ public:
 		deactivate(slot);
 		slot.epoch = 0;
 		successors = {};
-		slot.program.emplace(std::move(program));
+		if (slot.translation)
+			slot.translation->program = std::move(program);
+		else
+			slot.translation =
+				std::make_unique<Translation>(std::move(program));
+		const auto &stored = slot.translation->program;
 		slot.generation = current_generation_;
-		slot.address = slot.program->address();
+		slot.address = stored.address();
 		slot.validated_changes = changes;
-		slot.code_stamps = code_stamps;
+		slot.translation->code_stamps = code_stamps;
 		slot.instruction_limit = kept_instruction_limit(instruction_limit);
-		slot.mode = slot.program->execution_mode();
-		slot.terminal = slot.program->terminal();
+		slot.mode = stored.execution_mode();
+		slot.terminal = stored.terminal();
 		/* Epoch is the validity marker and is written only after the slot is
 		 * complete. */
 		slot.epoch = epoch_;
@@ -864,12 +882,12 @@ public:
 			index(slot);
 		} catch (...) {
 			slot.epoch = 0;
-			slot.program.reset();
+			slot.translation.reset();
 			throw;
 		}
 		activate_link(slot);
 		activate(slot, successors);
-		return *slot.program;
+		return stored;
 	}
 
 	[[nodiscard]] std::size_t resident_generations() const noexcept
@@ -903,12 +921,13 @@ public:
 			for (const auto &slot : slab->slots) {
 				if (!resident(slot))
 					continue;
-				/* A translation is the native stream and the
-				 * saved source; a block some replay has ended
-				 * inside also holds what that replay
-				 * decoded. */
-				const auto &program = *slot.program;
-				streams += program.native_stream().size_bytes() +
+				/* A translation is its record, the native
+				 * stream and the saved source; a block some
+				 * replay has ended inside also holds what that
+				 * replay decoded. */
+				const auto &program = slot.translation->program;
+				streams += sizeof(Translation) +
+					program.native_stream().size_bytes() +
 					program.source().size();
 				decoded += program.replay_bytes();
 			}
@@ -984,7 +1003,7 @@ public:
 			for (const auto &slot : slab->slots) {
 				if (!resident(slot))
 					continue;
-				const auto &program = *slot.program;
+				const auto &program = slot.translation->program;
 				const auto source = program.source();
 				/* The same bytes decoded in the other
 				 * execution mode are a different translation,
@@ -1023,7 +1042,7 @@ private:
 	 * one. */
 	[[nodiscard]] bool resident(const Slot &slot) const noexcept
 	{
-		return slot.epoch == epoch_ && slot.program.has_value();
+		return slot.epoch == epoch_ && slot.translation != nullptr;
 	}
 
 	/* libc++ keeps one heap node per element -- the value, a next pointer
@@ -1098,9 +1117,9 @@ private:
 
 	void index(Slot &slot)
 	{
-		if (!slot.program)
+		if (!slot.translation)
 			return;
-		const auto pages = program_pages(*slot.program);
+		const auto pages = program_pages(slot.translation->program);
 		if (write_translations_ != nullptr)
 			for (std::size_t entry = 0; entry < pages.count; ++entry) {
 				auto &translation = write_translations_[
@@ -1120,7 +1139,7 @@ private:
 					registries_->of(slot.generation).add(
 						pages.pages[completed], &registries_->participant);
 				const auto id = page_link_id(slot, completed);
-				auto &link = slot.page_links[completed];
+				auto &link = slot.translation->page_links[completed];
 				link = {.previous = 0, .next = bucket->second};
 				if (link.next != 0)
 					page_link(link.next).previous = id;
@@ -1148,7 +1167,8 @@ private:
 
 	[[nodiscard]] PageLink &page_link(std::uint32_t id) noexcept
 	{
-		return page_link_slot(id).page_links[(id - 1U) % 2U];
+		return page_link_slot(id).translation->page_links[
+			(id - 1U) % 2U];
 	}
 
 	/* Take one of a slot's links out of its page's list. The slot must
@@ -1159,11 +1179,12 @@ private:
 		const auto bit = static_cast<std::uint8_t>(1U << entry);
 		if ((slot.linked_pages & bit) == 0)
 			return;
-		auto &link = slot.page_links[entry];
+		auto &link = slot.translation->page_links[entry];
 		if (link.previous != 0) {
 			page_link(link.previous).next = link.next;
 		} else {
-			const auto page = program_pages(*slot.program).pages[entry];
+			const auto page = program_pages(
+				slot.translation->program).pages[entry];
 			auto bucket = state.code_pages.find(page);
 			if (bucket != state.code_pages.end() &&
 			    bucket->second == page_link_id(slot, entry)) {
@@ -1183,13 +1204,15 @@ private:
 
 	void unindex(Slot &slot) noexcept
 	{
+		if (slot.linked_pages == 0)
+			return;
 		auto owner = generations_.find(slot.generation);
 		if (owner == generations_.end()) {
-			slot.page_links = {};
 			slot.linked_pages = 0;
 			return;
 		}
-		for (std::size_t entry = 0; entry < slot.page_links.size(); ++entry)
+		auto &links = slot.translation->page_links;
+		for (std::size_t entry = 0; entry < links.size(); ++entry)
 			unlink(slot.generation, owner->second, slot, entry);
 	}
 
@@ -1217,7 +1240,7 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.program) {
+		if (!slot.translation) {
 			discard(slot);
 			return nullptr;
 		}
@@ -1239,7 +1262,7 @@ private:
 		 * rebuild as blocks run, rather than only when one needs revalidating.
 		 */
 		activate_link(slot);
-		return &*slot.program;
+		return &slot.translation->program;
 	}
 
 	void activate(Slot &slot, SuccessorSet &successors) noexcept
@@ -1368,7 +1391,7 @@ private:
 
 	void activate_link(Slot &slot) noexcept
 	{
-		if (!slot.program)
+		if (!slot.translation)
 			return;
 		if (slot.link == nullptr || slot.link_epoch != epoch_) {
 			auto owner = generations_.find(slot.generation);
@@ -1387,7 +1410,7 @@ private:
 			record.next_live = current().live_links;
 			current().live_links = &record;
 		}
-		const auto &program = *slot.program;
+		const auto &program = slot.translation->program;
 		record.link.stream = program.native_stream().data();
 		record.link.instruction_count = program.instruction_count();
 		record.link.guest_rip = program.address();
@@ -1406,10 +1429,11 @@ private:
 
 	void deactivate(Slot &slot) noexcept
 	{
-		if (slot.program) {
+		if (slot.translation) {
+			const auto *stream =
+				slot.translation->program.native_stream().data();
 			if (slot.link != nullptr && slot.link_epoch == epoch_) {
-				if (slot.link->link.stream ==
-					slot.program->native_stream().data())
+				if (slot.link->link.stream == stream)
 					slot.link->reset();
 			} else if (slot.link_epoch == epoch_) {
 				auto owner = generations_.find(slot.generation);
@@ -1418,7 +1442,7 @@ private:
 						mode_index(slot.mode)].find(slot.address);
 					if (found != nullptr &&
 						found->link.stream ==
-							slot.program->native_stream().data())
+							stream)
 						found->reset();
 				}
 			}
@@ -1468,7 +1492,7 @@ private:
 
 	void release(Slot &slot, std::uint64_t generation) noexcept
 	{
-		if (slot.epoch != epoch_ || !slot.program ||
+		if (slot.epoch != epoch_ || !slot.translation ||
 			slot.generation != generation)
 			return;
 		discard(slot);
@@ -1499,9 +1523,8 @@ private:
 		unindex(slot);
 		deactivate(slot);
 		slot.epoch = 0;
-		slot.program.reset();
+		slot.translation.reset();
 		slot.validated_changes = 0;
-		slot.code_stamps = {};
 		slot.terminal = false;
 	}
 
@@ -1511,10 +1534,11 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.program || slot.program->source().empty() ||
-			slot.program->source().size() !=
-				slot.program->byte_count() ||
-			slot.program->source().size() >
+		if (!slot.translation ||
+			slot.translation->program.source().empty() ||
+			slot.translation->program.source().size() !=
+				slot.translation->program.byte_count() ||
+			slot.translation->program.source().size() >
 				maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
@@ -1567,10 +1591,11 @@ private:
 			return false;
 		};
 
+		auto &translation = *slot.translation;
 		const auto current_stamps = capture_program_code_stamps(
-			memory, *slot.program, execution_context);
-		if (slot.code_stamps.complete && current_stamps.complete &&
-		    current_stamps == slot.code_stamps) {
+			memory, translation.program, execution_context);
+		if (translation.code_stamps.complete && current_stamps.complete &&
+		    current_stamps == translation.code_stamps) {
 			if (!memory_settled())
 				return false;
 			slot.validated_changes = changes;
@@ -1580,7 +1605,8 @@ private:
 		}
 
 		switch (compare_program_source(
-			memory, *slot.program, slot.program->source())) {
+			memory, translation.program,
+			translation.program.source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
 			discard(slot);
@@ -1596,7 +1622,7 @@ private:
 		if (!memory_settled())
 			return false;
 		slot.validated_changes = changes;
-		slot.code_stamps = current_stamps;
+		translation.code_stamps = current_stamps;
 		++diagnostics.validation_hits;
 		return true;
 	}

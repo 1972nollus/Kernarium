@@ -180,8 +180,8 @@ public:
 	}
 
 private:
-	/* Widest members first: every way of an executor's cache embeds a
-	 * program, so padding here is paid once per way. */
+	/* Widest members first: every translation an executor caches embeds
+	 * a program, so padding here is paid once per translation. */
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
 	/* The words the engine runs, alone. Holding them in one allocation with
