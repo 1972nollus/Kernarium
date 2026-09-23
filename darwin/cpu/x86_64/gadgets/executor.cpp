@@ -2,6 +2,7 @@
 #include "executor.hpp"
 
 #include "cpu/gadget_cache_geometry.hpp"
+#include "cpu/gadget_record_table.hpp"
 
 #include "code_page_registry.hpp"
 #include "native_entry.hpp"
@@ -510,14 +511,46 @@ private:
 		LinkRecord *next_live{};
 	};
 
+	struct LinkKey final {
+		[[nodiscard]] std::uint64_t operator()(
+			const LinkRecord &record) const noexcept
+		{
+			return record.link.guest_rip;
+		}
+	};
+
+	/* An indirect site is named by the branch that owns it, which its own
+	 * cells do not record. Translated streams point at the site, the first
+	 * member. */
+	struct IndirectRecord final {
+		explicit IndirectRecord(std::uint64_t source) noexcept
+			: source_rip{source}
+		{}
+
+		IndirectLink site{};
+		std::uint64_t source_rip;
+	};
+
+	struct IndirectKey final {
+		[[nodiscard]] std::uint64_t operator()(
+			const IndirectRecord &record) const noexcept
+		{
+			return record.source_rip;
+		}
+	};
+
 	/* As in the arm64 cache, each address space owns the list of slots it has
 	 * populated. Retiring the least-recently-current generation therefore
 	 * scales with that generation's footprint rather than the whole cache.
+	 * Its records are named by address from translated streams and released
+	 * only with it, so they live in chunks rather than map nodes (G210).
 	 */
 	struct Generation final {
 		std::uint64_t changes{};
-		std::array<std::unordered_map<std::uint64_t, LinkRecord>, 2> links;
-		std::array<std::unordered_map<std::uint64_t, IndirectLink>, 2>
+		std::array<gadget_cache::StableRecordTable<LinkRecord, LinkKey>, 2>
+			links;
+		std::array<gadget_cache::StableRecordTable<IndirectRecord,
+				   IndirectKey>, 2>
 			indirect;
 		LinkRecord *live_links{};
 		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
@@ -665,10 +698,10 @@ public:
 	{
 		const auto *empty = link(empty_target(mode), mode);
 		auto [created, inserted] = current().indirect[mode_index(mode)]
-			.try_emplace(source);
+			.try_emplace(source, source);
 		if (inserted)
-			reset_indirect(created->second, empty_target(mode), empty);
-		return &created->second;
+			reset_indirect(created->site, empty_target(mode), empty);
+		return &created->site;
 	}
 
 	void learn_indirect(IndirectLink &site, std::uint64_t target,
@@ -854,12 +887,12 @@ public:
 		std::size_t targets = 0;
 		for (const auto &[generation, state] : generations_) {
 			for (const auto &mode : state.links)
-				links += map_bytes(mode);
+				links += mode.bytes();
 			links += state.slots.capacity() *
 					sizeof(std::uint32_t) +
 				map_bytes(state.code_pages);
 			for (const auto &mode : state.indirect)
-				indirect += map_bytes(mode);
+				indirect += mode.bytes();
 			for (const auto &live : state.live_indirect)
 				indirect += live.capacity() *
 					sizeof(IndirectLink *);
@@ -1187,8 +1220,8 @@ private:
 	[[nodiscard]] LinkRecord &link_record(Generation &state,
 		std::uint64_t address, ExecutionMode mode)
 	{
-		return state.links[mode_index(mode)]
-			.try_emplace(address, address).first->second;
+		return *state.links[mode_index(mode)]
+			.try_emplace(address, address).first;
 	}
 
 	static void reset_indirect(IndirectLink &site, std::uint64_t empty,
@@ -1268,11 +1301,11 @@ private:
 			const auto mode = index == 0 ? ExecutionMode::long64 :
 				ExecutionMode::compat32;
 			const auto empty = empty_target(mode);
-			const auto found = state.links[index].find(empty);
-			if (found == state.links[index].end())
+			const auto *found = state.links[index].find(empty);
+			if (found == nullptr)
 				continue;
 			for (auto *site : live)
-				reset_indirect(*site, empty, &found->second.link);
+				reset_indirect(*site, empty, &found->link);
 			live.clear();
 		}
 	}
@@ -1285,11 +1318,11 @@ private:
 			auto owner = generations_.find(slot.generation);
 			if (owner == generations_.end())
 				return;
-			auto &links = owner->second.links[mode_index(slot.mode)];
-			auto found = links.find(slot.address);
-			if (found == links.end())
+			auto *found = owner->second.links[mode_index(slot.mode)]
+				.find(slot.address);
+			if (found == nullptr)
 				return;
-			slot.link = &found->second;
+			slot.link = found;
 			slot.link_epoch = epoch_;
 		}
 		auto &record = *slot.link;
@@ -1325,12 +1358,12 @@ private:
 			} else if (slot.link_epoch == epoch_) {
 				auto owner = generations_.find(slot.generation);
 				if (owner != generations_.end()) {
-					auto &links = owner->second.links[mode_index(slot.mode)];
-					auto found = links.find(slot.address);
-					if (found != links.end() &&
-						found->second.link.stream ==
+					auto *found = owner->second.links[
+						mode_index(slot.mode)].find(slot.address);
+					if (found != nullptr &&
+						found->link.stream ==
 							slot.program->native_stream().data())
-						found->second.reset();
+						found->reset();
 				}
 			}
 		}
