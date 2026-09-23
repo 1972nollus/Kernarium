@@ -31,8 +31,8 @@ gadget gcs_fault
 	b uml_arm64_gadget_leave
 
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
- * target points at its own {link_exit, guest_pc} stream, so the hot path needs
- * no linked/unlinked test. Resolved edges defer the architectural PC store
+ * target points at the one-word {link_exit} stream in front of it, so the hot
+ * path needs no linked/unlinked test. Resolved edges defer the architectural PC store
  * until an actual exit. Bound chains at 4,096 guest instructions; the
  * executor still observes pending shootdowns/IPIs sixteen times within its
  * 64K fairness limit. */
@@ -51,8 +51,10 @@ gadget gcs_fault
 	next_gadget
 .endm
 
+/* The stream an unlinked BlockLink names is the link_exit word right in front
+ * of that BlockLink, so the guest PC is the BlockLink's own. */
 gadget link_exit
-	ldr x9, [_stream]
+	ldr x9, [_stream, #16]
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
@@ -87,10 +89,11 @@ gadget return_guarded
 	b NAME(uml_arm64_gadget_return_cached)
 
 /*
- * Translation points FP/SIMD BlockLinks at a private
- * {fp_link_entry, target_stream} prefix. Most entries need one predicted
- * loaded-state branch and one dirty-byte store. Only a freshly deferred
- * kernel frame calls the cold materialization helper.
+ * A block that accesses FP/SIMD state keeps this entry word in front of its
+ * stream, and links to the block name that word, so the entry falls through
+ * into the block. Most entries need one predicted loaded-state branch and one
+ * dirty-byte store. Only a freshly deferred kernel frame calls the cold
+ * materialization helper.
  */
 gadget fp_link_entry
 	ldrb w8, [_cpu, #UML_GADGET_CPU_FP_LOADED]
@@ -98,7 +101,6 @@ gadget fp_link_entry
 	mov w8, #1
 	strb w8, [_cpu, #UML_GADGET_CPU_FP_DIRTY]
 98:
-	ldr _stream, [_stream]
 	next_gadget
 97:
 	stp x1, x2, [sp, #-16]!

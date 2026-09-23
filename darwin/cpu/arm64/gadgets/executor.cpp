@@ -11,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <cassert>
+#include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #include <cstdlib>
@@ -919,7 +920,7 @@ public:
 		if (slot.body != nullptr) {
 			if (slot.epoch == epoch_)
 				deactivate(slot.generation, slot.pc,
-					slot.body->words());
+					slot.body->link_entry());
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
@@ -1025,15 +1026,27 @@ private:
 		bool accesses_fp_state{};
 
 		/* The stream follows the body, and the guest words it is
-		 * validated against follow the stream. A block with more than one
+		 * validated against follow the stream. A block that accesses
+		 * FP/SIMD state is linked to through one fp_link_entry word in
+		 * front of its stream, which falls through into it, so its link
+		 * record needs no prefix of its own. A block with more than one
 		 * run keeps the list last. */
+		[[nodiscard]] std::size_t entry_words() const noexcept
+		{
+			return accesses_fp_state ? 1U : 0U;
+		}
+		[[nodiscard]] const std::uintptr_t *link_entry() const noexcept
+		{
+			return reinterpret_cast<const std::uintptr_t *>(this + 1);
+		}
 		[[nodiscard]] std::uintptr_t *words() noexcept
 		{
-			return reinterpret_cast<std::uintptr_t *>(this + 1);
+			return reinterpret_cast<std::uintptr_t *>(this + 1) +
+				entry_words();
 		}
 		[[nodiscard]] const std::uintptr_t *words() const noexcept
 		{
-			return reinterpret_cast<const std::uintptr_t *>(this + 1);
+			return link_entry() + entry_words();
 		}
 		[[nodiscard]] std::uint32_t *source_words() noexcept
 		{
@@ -1045,6 +1058,7 @@ private:
 			return reinterpret_cast<const std::uint32_t *>(
 				words() + word_count);
 		}
+		/* `words` counts an FP block's entry word with its stream. */
 		[[nodiscard]] static std::size_t runs_offset(
 			std::size_t words, std::size_t sources) noexcept
 		{
@@ -1069,8 +1083,8 @@ private:
 		}
 		[[nodiscard]] std::size_t allocation_bytes() const noexcept
 		{
-			return allocation_bytes(word_count, source_word_count,
-				run_count);
+			return allocation_bytes(entry_words() + word_count,
+				source_word_count, run_count);
 		}
 		[[nodiscard]] std::span<const arm64::gadgets::GuestRun>
 		extra_runs() const noexcept
@@ -1079,7 +1093,8 @@ private:
 				return {};
 			return {reinterpret_cast<const arm64::gadgets::GuestRun *>(
 					reinterpret_cast<const std::byte *>(this) +
-					runs_offset(word_count, source_word_count)),
+					runs_offset(entry_words() + word_count,
+						source_word_count)),
 				run_count};
 		}
 		[[nodiscard]] std::span<const std::uintptr_t> stream() const noexcept
@@ -1126,11 +1141,12 @@ private:
 		unsigned long generation{};
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
-		/* Reactivation resolves the same link record every time, so the
-		 * node address is memoised here rather than hashed again on each
-		 * pass. The owning address space's link map is node-based, so the
-		 * address is stable until invalidate() clears it, and that also
-		 * advances epoch_, which is what link_epoch is compared against.
+		/* Reactivation resolves the same link record every time, so its
+		 * address is memoised here rather than hashed again on each pass.
+		 * The owning address space keeps its records in chunks that never
+		 * move, so the address is stable until invalidate() clears them,
+		 * and that also advances epoch_, which is what link_epoch is
+		 * compared against.
 		 * Retiring the address space clears this slot's epoch in the same
 		 * pass that destroys the map.
 		 *
@@ -1171,16 +1187,10 @@ private:
 	 * map, which also keeps the key a single word. */
 	struct LinkRecord final {
 		explicit LinkRecord(std::uint64_t pc) noexcept
-			: fallback_stream{
-				reinterpret_cast<std::uintptr_t>(
-					uml_arm64_gadget_link_exit),
-				static_cast<std::uintptr_t>(pc)},
-			  fp_stream{
-				reinterpret_cast<std::uintptr_t>(
-					uml_arm64_gadget_fp_link_entry),
-				0},
+			: fallback_stream{reinterpret_cast<std::uintptr_t>(
+				uml_arm64_gadget_link_exit)},
 			  link{
-				.stream = fallback_stream.data(),
+				.stream = &fallback_stream,
 				.instruction_count = 0,
 				.guest_pc = pc,
 			  }
@@ -1189,19 +1199,23 @@ private:
 
 		void reset() noexcept
 		{
-			link.stream = fallback_stream.data();
+			link.stream = &fallback_stream;
 			link.instruction_count = 0;
-			fp_stream[1] = 0;
 		}
 
-		std::array<std::uintptr_t, 2> fallback_stream;
-		std::array<std::uintptr_t, 2> fp_stream;
+		/* An unlinked record's stream: link_exit, which takes the guest
+		 * PC from the BlockLink right behind it. */
+		std::uintptr_t fallback_stream;
 		arm64::gadgets::BlockLink link;
 		/* Set while this record sits in its address space's live list, so
 		 * a code change resets the records that hold an activation
 		 * instead of every record the translator ever named. */
 		bool listed{};
 	};
+
+	static_assert(offsetof(LinkRecord, link) == sizeof(std::uintptr_t) &&
+		sizeof(LinkRecord) == 40,
+		"link_exit reads the PC two words past its stream word");
 
 	struct LinkKey final {
 		[[nodiscard]] std::uint64_t operator()(
@@ -1366,8 +1380,9 @@ private:
 			runs[0].instructions == program.instruction_count());
 		assert(program.instruction_count() <=
 			block_instruction_count * arm64::gadgets::Program::maximum_runs);
+		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
 		const auto bytes = Body::allocation_bytes(
-			words.size(), validation.size(), runs.size());
+			entry + words.size(), validation.size(), runs.size());
 		auto *body = new (bodies_.allocate(bytes)) Body{
 			.guest_address = program.guest_address(),
 			.stop_address = built.stop_address,
@@ -1381,6 +1396,9 @@ private:
 			.complete = built.complete,
 			.accesses_fp_state = program.accesses_fp_state(),
 		};
+		if (entry != 0)
+			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
+				uml_arm64_gadget_fp_link_entry);
 		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
 			body->source_words());
@@ -1388,7 +1406,7 @@ private:
 			std::copy(runs.begin(), runs.end(),
 				reinterpret_cast<arm64::gadgets::GuestRun *>(
 					reinterpret_cast<std::byte *>(body) +
-					Body::runs_offset(words.size(),
+					Body::runs_offset(entry + words.size(),
 						validation.size())));
 		return body;
 	}
@@ -1436,7 +1454,7 @@ private:
 	{
 		if (slot.body != nullptr) {
 			deactivate(slot.generation, slot.pc,
-				slot.body->words());
+				slot.body->link_entry());
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
@@ -1533,18 +1551,12 @@ private:
 			current().live_links.push_back(&record);
 		}
 		auto *target = &record.link;
-		if (body.accesses_fp_state) {
-			record.fp_stream[1] =
-				reinterpret_cast<std::uintptr_t>(body.words());
-			target->stream = record.fp_stream.data();
-		} else {
-			target->stream = body.words();
-		}
+		target->stream = body.link_entry();
 		target->instruction_count = body.instruction_count;
 	}
 
 	void deactivate(unsigned long generation, std::uint64_t pc,
-			const std::uintptr_t *words) noexcept
+			const std::uintptr_t *entry) noexcept
 	{
 		/* Slots of several address spaces share this cache, so an
 		 * eviction is frequently not from the current one; the record to
@@ -1557,11 +1569,7 @@ private:
 		if (found == nullptr)
 			return;
 		auto &record = *found;
-		const bool direct = record.link.stream == words;
-		const bool fp = record.link.stream == record.fp_stream.data() &&
-			record.fp_stream[1] ==
-				reinterpret_cast<std::uintptr_t>(words);
-		if (direct || fp)
+		if (record.link.stream == entry)
 			record.reset();
 	}
 
