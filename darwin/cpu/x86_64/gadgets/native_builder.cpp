@@ -6877,6 +6877,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			instruction.auxiliary.immediate != 0 ?
 				native::uml_x86_64_gadget_rdtscp :
 				native::uml_x86_64_gadget_rdtsc));
+		stream.push_back(gadget.address);
 		return true;
 	case Operation::read_processor_id: {
 		const auto destination = register_offset(instruction.destination);

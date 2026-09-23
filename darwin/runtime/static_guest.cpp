@@ -57,6 +57,8 @@ constexpr std::size_t x86_64_x87_exponent_slot = 27;
 constexpr std::size_t x86_32_tls_entry_count = 3;
 constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
 constexpr std::uint64_t x86_64_compat32_execution = 1ULL << 33U;
+/* The x86 slice's PR_SET_TSC(PR_TSC_SIGSEGV) task state. */
+constexpr std::uint64_t x86_64_timestamp_faults = 1ULL << 34U;
 #endif
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
@@ -442,6 +444,7 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 			x86_64::ExecutionMode::compat32 : x86_64::ExecutionMode::long64;
 	cpu.rip = x86_64::normalize_instruction_pointer(
 		cpu.execution_mode, registers.pc);
+	cpu.timestamp_faults = (registers.svcr & x86_64_timestamp_faults) != 0;
 	cpu.rflags = registers.x[x86_64_rflags_slot] |
 		x86_64::rflags_reserved;
 	cpu.compat_tls_bases = {};
@@ -531,7 +534,8 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 		(static_cast<std::uint64_t>(cpu.segment_selectors[5]) << 16U) |
 		(cpu.system_call_32bit ? x86_64_compatibility_syscall : 0U) |
 		(cpu.execution_mode == x86_64::ExecutionMode::compat32 ?
-			x86_64_compat32_execution : 0U);
+			x86_64_compat32_execution : 0U) |
+		(cpu.timestamp_faults ? x86_64_timestamp_faults : 0U);
 	static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 	std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
 	fp.fpsr = cpu.mxcsr;

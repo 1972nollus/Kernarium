@@ -107,6 +107,8 @@ struct CpuState final {
 	bool x87_reduced_precision{};
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};
+	/* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
+	bool timestamp_faults{};
 	DeferredFlags deferred_flags{};
 	/* The record an INC or DEC displaced without settling its carry. Only a
 	 * pending INC or DEC record reads it, and only for the carry flag. */

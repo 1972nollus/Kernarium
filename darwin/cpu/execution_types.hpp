@@ -22,6 +22,7 @@ enum class EngineEvent : int {
 	floating_point_trap = 7,
 	pc_alignment = 8,
 	overflow = 9,
+	general_protection = 10,
 };
 
 enum class ExitReason {

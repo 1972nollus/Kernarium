@@ -38,6 +38,8 @@ static_assert(offsetof(CpuState, system_call_32bit) ==
 	UML_X86_64_CPU_SYSTEM_CALL_32BIT);
 static_assert(offsetof(CpuState, execution_mode) ==
 	UML_X86_64_CPU_EXECUTION_MODE);
+static_assert(offsetof(CpuState, timestamp_faults) ==
+	UML_X86_64_CPU_TIMESTAMP_FAULTS);
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, left) == UML_X86_64_CPU_DEFERRED_LEFT);
 static_assert(offsetof(CpuState, deferred_flags) +

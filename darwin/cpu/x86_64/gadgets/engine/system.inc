@@ -170,6 +170,9 @@ gadget xgetbv
 
 .macro timestamp rdtscp
 gadget \rdtscp
+	ldr x22, [_stream], #8
+	ldrb w8, [_cpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
+	cbnz w8, .Lx86_timestamp_fault
 	isb
 	mrs x8, cntvct_el0
 	mov w9, w8
@@ -185,6 +188,12 @@ gadget \rdtscp
 timestamp rdtsc
 timestamp rdtscp
 .purgem timestamp
+
+/* A faulting instruction does not retire; RIP names the instruction. */
+.Lx86_timestamp_fault:
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
+	b uml_x86_64_gadget_leave
 
 gadget rdpid_32_r
 	ldr x8, [_stream], #8

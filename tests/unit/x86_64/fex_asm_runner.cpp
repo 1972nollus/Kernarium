@@ -541,6 +541,7 @@ void print_result(std::string_view status, std::size_t retired,
 		return "floating_point_trap";
 	case uml::cpu::EngineEvent::pc_alignment: return "pc_alignment";
 	case uml::cpu::EngineEvent::overflow: return "overflow";
+	case uml::cpu::EngineEvent::general_protection: return "general_protection";
 	}
 	return "unknown";
 }
