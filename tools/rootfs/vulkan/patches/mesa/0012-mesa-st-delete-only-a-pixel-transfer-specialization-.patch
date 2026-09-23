@@ -1,7 +1,7 @@
-From 41ae5b81ea2b66b398bf53dd13b5992c284ac9ff Mon Sep 17 00:00:00 2001
+From f0751e87d4f4c028c20b660ace2607e05f94f7d5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:13:28 +0900
-Subject: [PATCH 12/28] mesa/st: delete only a pixel-transfer specialization
+Subject: [PATCH 12/27] mesa/st: delete only a pixel-transfer specialization
  that was compiled
 
 A specialized pixel-transfer conversion shader is prepared in two steps: a
@@ -32,7 +32,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/mesa/state_tracker/tests/st_pbo_compute_deinit.cpp
 
 diff --git a/src/mesa/state_tracker/st_pbo_compute.c b/src/mesa/state_tracker/st_pbo_compute.c
-index 2510829..712e333 100644
+index 25108299..712e333e 100644
 --- a/src/mesa/state_tracker/st_pbo_compute.c
 +++ b/src/mesa/state_tracker/st_pbo_compute.c
 @@ -32,6 +32,7 @@
@@ -85,7 +85,7 @@ index 2510829..712e333 100644
           _mesa_set_fini(&async->specialized, NULL);
 diff --git a/src/mesa/state_tracker/st_pbo_compute.h b/src/mesa/state_tracker/st_pbo_compute.h
 new file mode 100644
-index 0000000..926750a
+index 00000000..926750a3
 --- /dev/null
 +++ b/src/mesa/state_tracker/st_pbo_compute.h
 @@ -0,0 +1,65 @@
@@ -155,7 +155,7 @@ index 0000000..926750a
 +
 +#endif /* ST_PBO_COMPUTE_H */
 diff --git a/src/mesa/state_tracker/tests/meson.build b/src/mesa/state_tracker/tests/meson.build
-index 1c362c9..bbe2ba9 100644
+index 1c362c91..bbe2ba97 100644
 --- a/src/mesa/state_tracker/tests/meson.build
 +++ b/src/mesa/state_tracker/tests/meson.build
 @@ -13,4 +13,18 @@ if not with_platform_windows
@@ -179,7 +179,7 @@ index 1c362c9..bbe2ba9 100644
  endif
 diff --git a/src/mesa/state_tracker/tests/st_pbo_compute_deinit.cpp b/src/mesa/state_tracker/tests/st_pbo_compute_deinit.cpp
 new file mode 100644
-index 0000000..273919a
+index 00000000..273919a6
 --- /dev/null
 +++ b/src/mesa/state_tracker/tests/st_pbo_compute_deinit.cpp
 @@ -0,0 +1,159 @@

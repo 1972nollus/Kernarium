@@ -1,7 +1,7 @@
-From 3f2f578132673c2f95ab824933258167bdbb1b68 Mon Sep 17 00:00:00 2001
+From 76ca4b5f392dbd19ae24cae6b0d1bb0206b29903 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:39:23 +0900
-Subject: [PATCH 21/28] venus: pass through VK_KHR_pipeline_binary
+Subject: [PATCH 21/27] venus: pass through VK_KHR_pipeline_binary
 
 The local venus-protocol series gives the extension's five commands their
 command ids and codecs, and the renderer now tracks VkPipelineBinaryKHR as an
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 176 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index a77bf4e..fb990e8 100644
+index a77bf4e1..fb990e89 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -188,6 +188,7 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
@@ -81,7 +81,7 @@ index a77bf4e..fb990e8 100644
        .KHR_ray_query = physical_dev->ray_tracing,
        .KHR_ray_tracing_maintenance1 = physical_dev->ray_tracing,
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index bd9f88c..f7b5aba 100644
+index bd9f88c9..f7b5aba3 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -541,6 +541,168 @@ vn_MergePipelineCaches(VkDevice device,
@@ -254,7 +254,7 @@ index bd9f88c..f7b5aba 100644
  
  static struct vn_graphics_pipeline *
 diff --git a/src/virtio/vulkan/vn_pipeline.h b/src/virtio/vulkan/vn_pipeline.h
-index c135f80..46dc18e 100644
+index c135f80e..46dc18ea 100644
 --- a/src/virtio/vulkan/vn_pipeline.h
 +++ b/src/virtio/vulkan/vn_pipeline.h
 @@ -48,6 +48,14 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(vn_pipeline_cache,

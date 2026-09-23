@@ -1,7 +1,7 @@
-From 196689ef4c9b158aee49ef9ac61068b5b52a89a8 Mon Sep 17 00:00:00 2001
+From e879863dc092a4dfb6c708ab635ff912f9ada5cc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 01:28:59 +0900
-Subject: [PATCH 10/28] mesa/st: store integer pixel transfers without a blit
+Subject: [PATCH 10/27] mesa/st: store integer pixel transfers without a blit
 
 A pixel transfer saturates an integer into the destination range. The blit
 paths hand the texels to a colour attachment, which keeps only the
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
 
 diff --git a/src/gallium/auxiliary/meson.build b/src/gallium/auxiliary/meson.build
-index f975629..b938552 100644
+index f975629a..b9385528 100644
 --- a/src/gallium/auxiliary/meson.build
 +++ b/src/gallium/auxiliary/meson.build
 @@ -549,6 +549,19 @@ if with_tests
@@ -70,7 +70,7 @@ index f975629..b938552 100644
  
 diff --git a/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp b/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
 new file mode 100644
-index 0000000..bcb6899
+index 00000000..bcb68994
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
 @@ -0,0 +1,307 @@
@@ -382,7 +382,7 @@ index 0000000..bcb6899
 +
 +}  // namespace
 diff --git a/src/mesa/state_tracker/st_cb_readpixels.c b/src/mesa/state_tracker/st_cb_readpixels.c
-index bf6b062..4b63ccc 100644
+index bf6b0623..4b63ccc6 100644
 --- a/src/mesa/state_tracker/st_cb_readpixels.c
 +++ b/src/mesa/state_tracker/st_cb_readpixels.c
 @@ -68,31 +68,6 @@
@@ -461,7 +461,7 @@ index bf6b062..4b63ccc 100644
     }
     _mesa_readpixels(ctx, x, y, width, height, format, type, pack, pixels);
 diff --git a/src/mesa/state_tracker/st_cb_texture.c b/src/mesa/state_tracker/st_cb_texture.c
-index 99249aa..75ba80e 100644
+index 99249aa9..75ba80e3 100644
 --- a/src/mesa/state_tracker/st_cb_texture.c
 +++ b/src/mesa/state_tracker/st_cb_texture.c
 @@ -2253,6 +2253,18 @@ st_TexSubImage(struct gl_context *ctx, GLuint dims,
@@ -500,7 +500,7 @@ index 99249aa..75ba80e 100644
        if (try_pbo_download(st, texImage,
                             src_format, dst_format,
 diff --git a/src/mesa/state_tracker/st_pbo_compute.c b/src/mesa/state_tracker/st_pbo_compute.c
-index 95a031e..2510829 100644
+index 95a031e9..25108299 100644
 --- a/src/mesa/state_tracker/st_pbo_compute.c
 +++ b/src/mesa/state_tracker/st_pbo_compute.c
 @@ -1315,6 +1315,13 @@ st_GetTexSubImage_shader(struct gl_context * ctx,
@@ -518,7 +518,7 @@ index 95a031e..2510829 100644
     if (width >= UINT16_MAX || height >= UINT16_MAX ||
         /* I don't know why this works only for the texture rects
 diff --git a/src/util/format/u_format.c b/src/util/format/u_format.c
-index 8f6defb..8253863 100644
+index 8f6defb3..82538633 100644
 --- a/src/util/format/u_format.c
 +++ b/src/util/format/u_format.c
 @@ -221,6 +221,15 @@ util_format_is_pure_uint(enum pipe_format format)
@@ -538,7 +538,7 @@ index 8f6defb..8253863 100644
   * Returns true if the format contains normalized signed channels.
   */
 diff --git a/src/util/format/u_format.h b/src/util/format/u_format.h
-index 2614a16..7251d27 100644
+index 2614a161..7251d271 100644
 --- a/src/util/format/u_format.h
 +++ b/src/util/format/u_format.h
 @@ -826,6 +826,19 @@ util_format_is_pure_sint(enum pipe_format format) ATTRIBUTE_CONST;

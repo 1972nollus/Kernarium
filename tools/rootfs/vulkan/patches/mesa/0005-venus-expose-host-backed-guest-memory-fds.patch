@@ -1,7 +1,7 @@
-From 1f431d95b73acabe85d542956e5fb30c1b64c42c Mon Sep 17 00:00:00 2001
+From 98b5b6cc019e279fc93b2d13c8ed874b090192b2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
-Subject: [PATCH 05/28] venus: expose host-backed guest memory fds
+Subject: [PATCH 05/27] venus: expose host-backed guest memory fds
 
 ---
  src/virtio/vulkan/vn_device.c          |  12 +++
@@ -12,7 +12,7 @@ Subject: [PATCH 05/28] venus: expose host-backed guest memory fds
  5 files changed, 125 insertions(+), 33 deletions(-)
 
 diff --git a/src/virtio/vulkan/vn_device.c b/src/virtio/vulkan/vn_device.c
-index f42b9f9..e938ebc 100644
+index f42b9f91..e938ebc1 100644
 --- a/src/virtio/vulkan/vn_device.c
 +++ b/src/virtio/vulkan/vn_device.c
 @@ -316,6 +316,18 @@ vn_device_fix_create_info(const struct vn_device *dev,
@@ -35,7 +35,7 @@ index f42b9f9..e938ebc 100644
     }
  
 diff --git a/src/virtio/vulkan/vn_device_memory.c b/src/virtio/vulkan/vn_device_memory.c
-index 8b6eb4c..c38713b 100644
+index 8b6eb4cc..c38713be 100644
 --- a/src/virtio/vulkan/vn_device_memory.c
 +++ b/src/virtio/vulkan/vn_device_memory.c
 @@ -150,7 +150,16 @@ vn_device_memory_import_dma_buf(struct vn_device *dev,
@@ -78,7 +78,7 @@ index 8b6eb4c..c38713b 100644
     if (mem_vk->export_handle_types &&
         mem_vk->export_handle_types != renderer_handle_type) {
 diff --git a/src/virtio/vulkan/vn_image.c b/src/virtio/vulkan/vn_image.c
-index 5d4f916..931cf79 100644
+index 5d4f9168..931cf79e 100644
 --- a/src/virtio/vulkan/vn_image.c
 +++ b/src/virtio/vulkan/vn_image.c
 @@ -536,7 +536,8 @@ vn_CreateImage(VkDevice device,
@@ -92,7 +92,7 @@ index 5d4f916..931cf79 100644
     VkResult result;
  
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 77898b7..cdc44a5 100644
+index 77898b72..cdc44a58 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -1046,6 +1046,22 @@ vn_physical_device_init_external_memory(
@@ -248,7 +248,7 @@ index 77898b7..cdc44a5 100644
  
  VKAPI_ATTR void VKAPI_CALL
 diff --git a/src/virtio/vulkan/vn_physical_device.h b/src/virtio/vulkan/vn_physical_device.h
-index 2c2f4a9..553535f 100644
+index 2c2f4a91..553535f2 100644
 --- a/src/virtio/vulkan/vn_physical_device.h
 +++ b/src/virtio/vulkan/vn_physical_device.h
 @@ -115,7 +115,10 @@ struct vn_physical_device {

@@ -1,7 +1,7 @@
-From ce09cdf3946dfae60f5687415f5b6b3792d6e2fd Mon Sep 17 00:00:00 2001
+From e8be3ffd6a06db3b2fcd0228f00527a7c560dd65 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 11 Sep 2026 16:40:47 +0900
-Subject: [PATCH 14/28] vulkan/wsi/wayland: bound the waits a compositor need
+Subject: [PATCH 14/27] vulkan/wsi/wayland: bound the waits a compositor need
  not end
 
 A FIFO swapchain on a compositor without wp_fifo_v1 is throttled with a
@@ -37,7 +37,7 @@ connection still ends the wait. vkWaitForPresent2KHR gets the same treatment.
  1 file changed, 111 insertions(+), 11 deletions(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
-index 0280095..1717275 100644
+index 02800957..17172759 100644
 --- a/src/vulkan/wsi/wsi_common_wayland.c
 +++ b/src/vulkan/wsi/wsi_common_wayland.c
 @@ -2752,6 +2752,28 @@ wsi_wl_swapchain_present_id_completes_in_finite_time_locked(struct wsi_wl_swapch

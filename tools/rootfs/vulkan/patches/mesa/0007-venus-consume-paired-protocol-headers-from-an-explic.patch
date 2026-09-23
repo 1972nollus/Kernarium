@@ -1,7 +1,7 @@
-From a8afc9ac944f5bf3979dc856079ec60592e0a443 Mon Sep 17 00:00:00 2001
+From 298eb259b79d8402705d85d28e320dc709a96384 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
-Subject: [PATCH 07/28] venus: consume paired protocol headers from an explicit
+Subject: [PATCH 07/27] venus: consume paired protocol headers from an explicit
  build directory
 
 ---
@@ -29,7 +29,7 @@ Subject: [PATCH 07/28] venus: consume paired protocol headers from an explicit
  21 files changed, 52 insertions(+), 38 deletions(-)
 
 diff --git a/meson.options b/meson.options
-index 93a60e3..92dfd10 100644
+index 93a60e30..92dfd10d 100644
 --- a/meson.options
 +++ b/meson.options
 @@ -202,6 +202,13 @@ option(
@@ -47,7 +47,7 @@ index 93a60e3..92dfd10 100644
    'vulkan-drivers',
    type : 'array',
 diff --git a/src/virtio/vulkan/meson.build b/src/virtio/vulkan/meson.build
-index df85f0a..507d0b3 100644
+index df85f0a0..507d0b32 100644
 --- a/src/virtio/vulkan/meson.build
 +++ b/src/virtio/vulkan/meson.build
 @@ -92,7 +92,14 @@ libvn_files = files(
@@ -66,7 +66,7 @@ index df85f0a..507d0b3 100644
    inc_src,
    inc_virtio,
 diff --git a/src/virtio/vulkan/vn_acceleration_structure.c b/src/virtio/vulkan/vn_acceleration_structure.c
-index 95d94f8..fc8b3d1 100644
+index 95d94f8b..fc8b3d14 100644
 --- a/src/virtio/vulkan/vn_acceleration_structure.c
 +++ b/src/virtio/vulkan/vn_acceleration_structure.c
 @@ -5,7 +5,7 @@
@@ -79,7 +79,7 @@ index 95d94f8..fc8b3d1 100644
  #include "vn_device.h"
  
 diff --git a/src/virtio/vulkan/vn_buffer.c b/src/virtio/vulkan/vn_buffer.c
-index 58f2264..0950c15 100644
+index 58f22641..0950c159 100644
 --- a/src/virtio/vulkan/vn_buffer.c
 +++ b/src/virtio/vulkan/vn_buffer.c
 @@ -10,8 +10,8 @@
@@ -94,7 +94,7 @@ index 58f2264..0950c15 100644
  #include "vn_device.h"
  #include "vn_device_memory.h"
 diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
-index e7be2ff..1e30520 100644
+index e7be2fff..1e30520d 100644
 --- a/src/virtio/vulkan/vn_command_buffer.c
 +++ b/src/virtio/vulkan/vn_command_buffer.c
 @@ -10,8 +10,8 @@
@@ -109,7 +109,7 @@ index e7be2ff..1e30520 100644
  
  #include "vn_descriptor_set.h"
 diff --git a/src/virtio/vulkan/vn_common.c b/src/virtio/vulkan/vn_common.c
-index 84e3052..dcc23ed 100644
+index 84e3052f..dcc23ed5 100644
 --- a/src/virtio/vulkan/vn_common.c
 +++ b/src/virtio/vulkan/vn_common.c
 @@ -15,7 +15,7 @@
@@ -122,7 +122,7 @@ index 84e3052..dcc23ed 100644
  
  #include "vn_instance.h"
 diff --git a/src/virtio/vulkan/vn_cs.h b/src/virtio/vulkan/vn_cs.h
-index f2a9d12..a78523b 100644
+index f2a9d127..a78523b1 100644
 --- a/src/virtio/vulkan/vn_cs.h
 +++ b/src/virtio/vulkan/vn_cs.h
 @@ -8,7 +8,7 @@
@@ -135,7 +135,7 @@ index f2a9d12..a78523b 100644
  #define VN_CS_ENCODER_BUFFER_INITIALIZER(storage)                            \
     (struct vn_cs_encoder_buffer)                                             \
 diff --git a/src/virtio/vulkan/vn_descriptor_heap.c b/src/virtio/vulkan/vn_descriptor_heap.c
-index 0ce0c81..f909803 100644
+index 0ce0c81e..f9098033 100644
 --- a/src/virtio/vulkan/vn_descriptor_heap.c
 +++ b/src/virtio/vulkan/vn_descriptor_heap.c
 @@ -3,7 +3,7 @@
@@ -148,7 +148,7 @@ index 0ce0c81..f909803 100644
  #include "vn_descriptor.h"
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_descriptor_set.c b/src/virtio/vulkan/vn_descriptor_set.c
-index d452aa2..10a4c00 100644
+index d452aa2b..10a4c002 100644
 --- a/src/virtio/vulkan/vn_descriptor_set.c
 +++ b/src/virtio/vulkan/vn_descriptor_set.c
 @@ -10,10 +10,10 @@
@@ -167,7 +167,7 @@ index d452aa2..10a4c00 100644
  #include "vn_device.h"
  #include "vn_pipeline.h"
 diff --git a/src/virtio/vulkan/vn_device.c b/src/virtio/vulkan/vn_device.c
-index e938ebc..7a30a58 100644
+index e938ebc1..7a30a583 100644
 --- a/src/virtio/vulkan/vn_device.c
 +++ b/src/virtio/vulkan/vn_device.c
 @@ -12,7 +12,7 @@
@@ -180,7 +180,7 @@ index e938ebc..7a30a58 100644
  #include "vn_android.h"
  #include "vn_instance.h"
 diff --git a/src/virtio/vulkan/vn_device_memory.c b/src/virtio/vulkan/vn_device_memory.c
-index c38713b..db16eff 100644
+index c38713be..db16eff7 100644
 --- a/src/virtio/vulkan/vn_device_memory.c
 +++ b/src/virtio/vulkan/vn_device_memory.c
 @@ -10,8 +10,8 @@
@@ -195,7 +195,7 @@ index c38713b..db16eff 100644
  
  #include "vn_android.h"
 diff --git a/src/virtio/vulkan/vn_host_copy.c b/src/virtio/vulkan/vn_host_copy.c
-index 69ed631..2eae2f4 100644
+index 69ed6314..2eae2f4e 100644
 --- a/src/virtio/vulkan/vn_host_copy.c
 +++ b/src/virtio/vulkan/vn_host_copy.c
 @@ -5,7 +5,7 @@
@@ -208,7 +208,7 @@ index 69ed631..2eae2f4 100644
  
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_image.c b/src/virtio/vulkan/vn_image.c
-index 9341c5c..921a044 100644
+index 9341c5c1..921a044d 100644
 --- a/src/virtio/vulkan/vn_image.c
 +++ b/src/virtio/vulkan/vn_image.c
 @@ -10,10 +10,10 @@
@@ -227,7 +227,7 @@ index 9341c5c..921a044 100644
  
  #include "vn_android.h"
 diff --git a/src/virtio/vulkan/vn_instance.c b/src/virtio/vulkan/vn_instance.c
-index 7fcee07..e0f00b9 100644
+index 7fcee07b..e0f00b9e 100644
 --- a/src/virtio/vulkan/vn_instance.c
 +++ b/src/virtio/vulkan/vn_instance.c
 @@ -11,9 +11,9 @@
@@ -244,7 +244,7 @@ index 7fcee07..e0f00b9 100644
  #include "vn_icd.h"
  #include "vn_physical_device.h"
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index cdc44a5..d80fa14 100644
+index cdc44a58..d80fa140 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -15,7 +15,7 @@
@@ -257,7 +257,7 @@ index cdc44a5..d80fa14 100644
  #include "vk_common_entrypoints.h"
  
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index 0876f7b..3040a3a 100644
+index 0876f7b5..3040a3a7 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -10,10 +10,10 @@
@@ -276,7 +276,7 @@ index 0876f7b..3040a3a 100644
  #include "vn_descriptor_set.h"
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_query_pool.c b/src/virtio/vulkan/vn_query_pool.c
-index 383eea6..3944c40 100644
+index 383eea69..3944c405 100644
 --- a/src/virtio/vulkan/vn_query_pool.c
 +++ b/src/virtio/vulkan/vn_query_pool.c
 @@ -10,7 +10,7 @@
@@ -289,7 +289,7 @@ index 383eea6..3944c40 100644
  #include "vn_device.h"
  #include "vn_feedback.h"
 diff --git a/src/virtio/vulkan/vn_queue.c b/src/virtio/vulkan/vn_queue.c
-index a4497b0..d85e931 100644
+index a4497b0d..d85e9312 100644
 --- a/src/virtio/vulkan/vn_queue.c
 +++ b/src/virtio/vulkan/vn_queue.c
 @@ -10,8 +10,8 @@
@@ -304,7 +304,7 @@ index a4497b0..d85e931 100644
  #include "vn_command_buffer.h"
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_render_pass.c b/src/virtio/vulkan/vn_render_pass.c
-index 42debbe..d552233 100644
+index 42debbe7..d552233e 100644
 --- a/src/virtio/vulkan/vn_render_pass.c
 +++ b/src/virtio/vulkan/vn_render_pass.c
 @@ -10,8 +10,8 @@
@@ -319,7 +319,7 @@ index 42debbe..d552233 100644
  
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_ring.c b/src/virtio/vulkan/vn_ring.c
-index 2d75f05..c458ee0 100644
+index 2d75f051..c458ee00 100644
 --- a/src/virtio/vulkan/vn_ring.c
 +++ b/src/virtio/vulkan/vn_ring.c
 @@ -9,7 +9,7 @@
@@ -332,7 +332,7 @@ index 2d75f05..c458ee0 100644
  #include "vn_cs.h"
  #include "vn_instance.h"
 diff --git a/src/virtio/vulkan/vn_sync.c b/src/virtio/vulkan/vn_sync.c
-index ee0a539..fdee560 100644
+index ee0a5391..fdee5600 100644
 --- a/src/virtio/vulkan/vn_sync.c
 +++ b/src/virtio/vulkan/vn_sync.c
 @@ -5,10 +5,10 @@

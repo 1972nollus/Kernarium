@@ -1,7 +1,7 @@
-From e54702d21c85fca6cffbd75872d5568c56f894c2 Mon Sep 17 00:00:00 2001
+From 9d5abf75f94bd751a0da850452b36d7c06221f37 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 08:02:38 -0400
-Subject: [PATCH 01/28] venus: observe pipeline creation results
+Subject: [PATCH 01/27] venus: observe pipeline creation results
 
 Pipeline creation on the primary ring was asynchronous, which reports VK_SUCCESS before the renderer has run the command. Native backends can reject a pipeline for reasons other than allocation failure; retaining a guest handle for an object the renderer never created makes the command stream fatal on first use. Always use the synchronous call so the application receives the real result and failed handles are released locally. This costs one round trip per pipeline-creation call.
 
@@ -11,7 +11,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 34 insertions(+), 62 deletions(-)
 
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index ee43ffd..0876f7b 100644
+index ee43ffd7..0876f7b5 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -637,10 +637,6 @@ vn_destroy_failed_pipeline_handles(struct vn_device *dev,

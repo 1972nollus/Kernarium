@@ -1,7 +1,7 @@
-From c28393559248b774c4c70c7c04fa8732f0f20358 Mon Sep 17 00:00:00 2001
+From 05f30d1b7de9565b8a886f7c4a009bfbd6a273c7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:09:22 +0900
-Subject: [PATCH 17/28] nir: index the split 64-bit vec3/vec4 arrays by leaf
+Subject: [PATCH 17/27] nir: index the split 64-bit vec3/vec4 arrays by leaf
  element
 
 nir_split_64bit_vec3_and_vec4 replaces a function-temp variable whose leaf
@@ -43,7 +43,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 14 insertions(+), 5 deletions(-)
 
 diff --git a/src/compiler/nir/nir_split_64bit_vec3_and_vec4.c b/src/compiler/nir/nir_split_64bit_vec3_and_vec4.c
-index 53900d2..c20dbea 100644
+index 53900d26..c20dbeae 100644
 --- a/src/compiler/nir/nir_split_64bit_vec3_and_vec4.c
 +++ b/src/compiler/nir/nir_split_64bit_vec3_and_vec4.c
 @@ -101,6 +101,18 @@ merge_to_vec3_or_vec4(nir_builder *b, nir_def *load1,

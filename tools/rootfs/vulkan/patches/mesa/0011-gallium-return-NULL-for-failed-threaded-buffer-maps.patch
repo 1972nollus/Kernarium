@@ -1,7 +1,7 @@
-From 888b96500fa1124a29ce3408e8e78e66237bb722 Mon Sep 17 00:00:00 2001
+From ba0107aaca94297fa322a6c710413ad3215d5d11 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 20:33:46 +0900
-Subject: [PATCH 11/28] gallium: return NULL for failed threaded buffer maps
+Subject: [PATCH 11/27] gallium: return NULL for failed threaded buffer maps
 
 A driver buffer_map failure leaves the output transfer untouched, but the
 threaded context annotated it anyway and dereferenced an uninitialized
@@ -23,7 +23,7 @@ thread-safe, and CPU-shadow paths and the recovery map afterwards.
  create mode 100644 src/gallium/auxiliary/util/u_threaded_context_test.cpp
 
 diff --git a/src/gallium/auxiliary/meson.build b/src/gallium/auxiliary/meson.build
-index b938552..d6730a9 100644
+index b9385528..d6730a97 100644
 --- a/src/gallium/auxiliary/meson.build
 +++ b/src/gallium/auxiliary/meson.build
 @@ -562,6 +562,20 @@ if with_tests
@@ -48,7 +48,7 @@ index b938552..d6730a9 100644
  endif
  
 diff --git a/src/gallium/auxiliary/util/u_threaded_context.c b/src/gallium/auxiliary/util/u_threaded_context.c
-index c2beee2..2e51d31 100644
+index c2beee2a..2e51d310 100644
 --- a/src/gallium/auxiliary/util/u_threaded_context.c
 +++ b/src/gallium/auxiliary/util/u_threaded_context.c
 @@ -2771,6 +2771,13 @@ tc_buffer_map(struct pipe_context *_pipe,
@@ -80,7 +80,7 @@ index c2beee2..2e51d31 100644
        tc_clear_driver_thread(tc);
 diff --git a/src/gallium/auxiliary/util/u_threaded_context_test.cpp b/src/gallium/auxiliary/util/u_threaded_context_test.cpp
 new file mode 100644
-index 0000000..e138f5d
+index 00000000..e138f5d6
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/u_threaded_context_test.cpp
 @@ -0,0 +1,177 @@

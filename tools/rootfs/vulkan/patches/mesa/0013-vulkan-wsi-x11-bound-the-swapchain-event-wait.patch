@@ -1,14 +1,14 @@
-From fb6e34920ee9c998f2d7e8c8f2e6a07e4ec8ea8f Mon Sep 17 00:00:00 2001
+From a147831d68077ff19776956a7df1df6754d3a03a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 21:05:08 +0900
-Subject: [PATCH 13/28] vulkan/wsi/x11: bound the swapchain event wait
+Subject: [PATCH 13/27] vulkan/wsi/x11: bound the swapchain event wait
 
 ---
  src/vulkan/wsi/wsi_common_x11.c | 65 ++++++++++++++++++++++++++++++++-
  1 file changed, 64 insertions(+), 1 deletion(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_x11.c b/src/vulkan/wsi/wsi_common_x11.c
-index a077afe..864fa1c 100644
+index a077afeb..864fa1cf 100644
 --- a/src/vulkan/wsi/wsi_common_x11.c
 +++ b/src/vulkan/wsi/wsi_common_x11.c
 @@ -40,6 +40,7 @@

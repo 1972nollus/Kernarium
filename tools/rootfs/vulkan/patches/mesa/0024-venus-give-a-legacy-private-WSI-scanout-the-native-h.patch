@@ -1,7 +1,7 @@
-From 2cd0efd15240cbe994f7c016911b74b1263ae159 Mon Sep 17 00:00:00 2001
+From a6cb1bcba64b1baf23235f11d8555dddafc50455 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 12:18:35 +0900
-Subject: [PATCH 24/28] venus: give a legacy private WSI scanout the native
+Subject: [PATCH 24/27] venus: give a legacy private WSI scanout the native
  heap identity
 
 Common WSI chains VkExternalMemoryImageCreateInfo on every swapchain image it
@@ -42,7 +42,7 @@ renderer still offers common WSI no DRM format modifiers.
  5 files changed, 79 insertions(+), 8 deletions(-)
 
 diff --git a/src/virtio/vulkan/tests/vn_wsi_native_test.c b/src/virtio/vulkan/tests/vn_wsi_native_test.c
-index dbce9e3..f766dfe 100644
+index dbce9e34..f766dfe8 100644
 --- a/src/virtio/vulkan/tests/vn_wsi_native_test.c
 +++ b/src/virtio/vulkan/tests/vn_wsi_native_test.c
 @@ -6,6 +6,7 @@
@@ -88,7 +88,7 @@ index dbce9e3..f766dfe 100644
     return 0;
  }
 diff --git a/src/virtio/vulkan/vn_image.c b/src/virtio/vulkan/vn_image.c
-index 921a044..ade1a73 100644
+index 921a044d..ade1a736 100644
 --- a/src/virtio/vulkan/vn_image.c
 +++ b/src/virtio/vulkan/vn_image.c
 @@ -21,6 +21,7 @@
@@ -171,7 +171,7 @@ index 921a044..ade1a73 100644
  
  /* image view commands */
 diff --git a/src/virtio/vulkan/vn_image.h b/src/virtio/vulkan/vn_image.h
-index 1439711..76b37f0 100644
+index 14397110..76b37f05 100644
 --- a/src/virtio/vulkan/vn_image.h
 +++ b/src/virtio/vulkan/vn_image.h
 @@ -55,6 +55,7 @@ struct vn_image {
@@ -183,7 +183,7 @@ index 1439711..76b37f0 100644
        /* Logical DRI3 envelope, not the native heap's physical row layout. */
        uint32_t native_heap_row_pitch;
 diff --git a/src/virtio/vulkan/vn_wsi.c b/src/virtio/vulkan/vn_wsi.c
-index a099602..6f5bb50 100644
+index a099602d..6f5bb509 100644
 --- a/src/virtio/vulkan/vn_wsi.c
 +++ b/src/virtio/vulkan/vn_wsi.c
 @@ -151,10 +151,8 @@ vn_wsi_get_image_subresource_layout(VkDevice device, VkImage image,
@@ -212,7 +212,7 @@ index a099602..6f5bb50 100644
        physical_dev->wsi_device.GetImageSubresourceLayout =
           vn_wsi_get_image_subresource_layout;
 diff --git a/src/virtio/vulkan/vn_wsi_native.h b/src/virtio/vulkan/vn_wsi_native.h
-index 25aa7f1..745d1b2 100644
+index 25aa7f11..745d1b24 100644
 --- a/src/virtio/vulkan/vn_wsi_native.h
 +++ b/src/virtio/vulkan/vn_wsi_native.h
 @@ -112,4 +112,19 @@ vn_wsi_native_offers_modifiers(bool supports_drm_format_modifier,

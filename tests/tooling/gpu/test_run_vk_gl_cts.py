@@ -518,7 +518,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
         self.assertEqual(contract.size, 8 * 1024 * 1024 * 1024)
         self.assertEqual(
             contract.sha256,
-            "4ce0bd95b44b596e2905092b93baac8e4fbc53b74d69d18ce4275fea058e5e36",
+            "f844e5195ca43444a4f2d02b043b171b6e7d4422a4747a8a991f2d409069ad7d",
         )
         self.assertEqual(
             contract.glcts_sha256,

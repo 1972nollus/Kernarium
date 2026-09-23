@@ -1,7 +1,7 @@
-From d7ccfdc4e7c100696c51ce493a6c4861cbea8c7c Mon Sep 17 00:00:00 2001
+From c541730b125246d1cdffd81013bccc50300954d4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 13:24:15 +0900
-Subject: [PATCH 09/28] gallium: preserve integer blit output types in NIR
+Subject: [PATCH 09/27] gallium: preserve integer blit output types in NIR
 
 Generated color blits already know their integer destination type. Carry it into NIR before driver finalization instead of losing it in the untyped TGSI output declaration. Preserve existing sample payloads and signedness clamps, and leave TGSI-only consumers, floating-point color, depth, and stencil paths unchanged.
 
@@ -16,7 +16,7 @@ Exercise all signedness pairs across sample, texel-fetch, and multisample paths,
  create mode 100644 src/gallium/auxiliary/util/u_simple_shaders_test.cpp
 
 diff --git a/src/gallium/auxiliary/meson.build b/src/gallium/auxiliary/meson.build
-index e4815f8..f975629 100644
+index e4815f8a..f975629a 100644
 --- a/src/gallium/auxiliary/meson.build
 +++ b/src/gallium/auxiliary/meson.build
 @@ -535,6 +535,21 @@ if with_tests
@@ -42,7 +42,7 @@ index e4815f8..f975629 100644
  
  _libgalliumvl_stub = static_library(
 diff --git a/src/gallium/auxiliary/nir/tgsi_to_nir.c b/src/gallium/auxiliary/nir/tgsi_to_nir.c
-index fc917f2..b73da3e 100644
+index fc917f2e..b73da3e5 100644
 --- a/src/gallium/auxiliary/nir/tgsi_to_nir.c
 +++ b/src/gallium/auxiliary/nir/tgsi_to_nir.c
 @@ -2568,6 +2568,48 @@ ttn_finalize_nir(struct ttn_compile *c, struct pipe_screen *screen)
@@ -115,7 +115,7 @@ index fc917f2..b73da3e 100644
     if (NIR_DEBUG(TGSI)) {
        mesa_logi("NIR after translation from TGSI:\n");
 diff --git a/src/gallium/auxiliary/nir/tgsi_to_nir.h b/src/gallium/auxiliary/nir/tgsi_to_nir.h
-index f1ba44d..3938a2e 100644
+index f1ba44d4..3938a2e9 100644
 --- a/src/gallium/auxiliary/nir/tgsi_to_nir.h
 +++ b/src/gallium/auxiliary/nir/tgsi_to_nir.h
 @@ -36,6 +36,13 @@ tgsi_to_nir(const void *tgsi_tokens,
@@ -133,7 +133,7 @@ index f1ba44d..3938a2e 100644
  tgsi_to_nir_noscreen(const void *tgsi_tokens,
                       const nir_shader_compiler_options *options);
 diff --git a/src/gallium/auxiliary/util/u_simple_shaders.c b/src/gallium/auxiliary/util/u_simple_shaders.c
-index 6aea364..a9e8898 100644
+index 6aea3648..a9e8898e 100644
 --- a/src/gallium/auxiliary/util/u_simple_shaders.c
 +++ b/src/gallium/auxiliary/util/u_simple_shaders.c
 @@ -46,6 +46,7 @@
@@ -257,7 +257,7 @@ index 6aea364..a9e8898 100644
  
 diff --git a/src/gallium/auxiliary/util/u_simple_shaders_test.cpp b/src/gallium/auxiliary/util/u_simple_shaders_test.cpp
 new file mode 100644
-index 0000000..b998759
+index 00000000..b9987591
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/u_simple_shaders_test.cpp
 @@ -0,0 +1,229 @@

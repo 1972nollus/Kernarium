@@ -1,7 +1,7 @@
-From 4c72cfd0a8547281024b7ef5f3b15ff6a731e79f Mon Sep 17 00:00:00 2001
+From 1b449cca51e512d38ad99a5cfb3ffd353d0b95cf Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 22:59:57 +0900
-Subject: [PATCH 27/28] zink: keep a shared planar image in one allocation
+Subject: [PATCH 27/27] zink: keep a shared planar image in one allocation
 
 A planar image that leaves this process goes as one dma-buf whose planes sit
 at their own offsets, which is what a gbm buffer, an EGL dma-buf import and a
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 36 insertions(+), 13 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index d364476..48201b5 100644
+index d3644764..48201b53 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -409,6 +409,22 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)

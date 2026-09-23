@@ -1,7 +1,7 @@
-From daf60fae5c5eb3c29862353d93904641750f4489 Mon Sep 17 00:00:00 2001
+From 7c19796b201faeeec9b2e70fb1633eddb658b106 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 18:19:44 +0900
-Subject: [PATCH 23/28] venus: support hardware buffers over a host-allocation
+Subject: [PATCH 23/27] venus: support hardware buffers over a host-allocation
  blob
 
 Venus only offers the Android hardware buffer handle type when the renderer
@@ -18,7 +18,7 @@ is answered instead of refused and a swapchain can reach the driver.
  1 file changed, 5 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index fb990e8..e0d42db 100644
+index fb990e89..e0d42dbe 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -1090,9 +1090,14 @@ vn_physical_device_init_external_memory(

@@ -1,7 +1,7 @@
-From f8a3fdf2d0cb99303dadc87d40f0946971eb6b31 Mon Sep 17 00:00:00 2001
+From 09b13ed5c60630cf12fc4574910c5ee9b4b34ec1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 12:29:50 +0900
-Subject: [PATCH 19/28] venus: pass through VK_EXT_primitive_restart_index
+Subject: [PATCH 19/27] venus: pass through VK_EXT_primitive_restart_index
 
 The uprevved protocol encodes the extension's capability structure and gives
 vkCmdSetPrimitiveRestartIndexEXT a command ID, and the renderer now dispatches
@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 12 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
-index 3bf0425..5cad536 100644
+index 3bf04252..5cad536c 100644
 --- a/src/virtio/vulkan/vn_command_buffer.c
 +++ b/src/virtio/vulkan/vn_command_buffer.c
 @@ -2951,6 +2951,14 @@ vn_CmdSetDepthClampRangeEXT(VkCommandBuffer commandBuffer,
@@ -34,7 +34,7 @@ index 3bf0425..5cad536 100644
  vn_CmdSetAttachmentFeedbackLoopEnableEXT(VkCommandBuffer commandBuffer,
                                           VkImageAspectFlags aspectMask)
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 6f2efc7..63226f6 100644
+index 6f2efc72..63226f61 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -250,6 +250,8 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)

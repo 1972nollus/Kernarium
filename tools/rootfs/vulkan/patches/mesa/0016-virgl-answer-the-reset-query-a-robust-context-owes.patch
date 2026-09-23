@@ -1,7 +1,7 @@
-From 7fbace27206742b3fbd27a4b6b5d234de5da3bb2 Mon Sep 17 00:00:00 2001
+From bfa797136f7287ace23bfc94b9c550bbf04b21d4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 07:57:03 +0900
-Subject: [PATCH 16/28] virgl: answer the reset query a robust context owes
+Subject: [PATCH 16/27] virgl: answer the reset query a robust context owes
 
 Mesa's EGL advertises EGL_EXT_create_context_robustness, and with it
 EXT_query_reset_notification_strategy, only when the screen sets
@@ -24,7 +24,7 @@ reset, and PIPE_NO_RESET is the whole truth a live guest context can report.
  2 files changed, 16 insertions(+)
 
 diff --git a/src/gallium/drivers/virgl/virgl_context.c b/src/gallium/drivers/virgl/virgl_context.c
-index bfc9835..fb8c4ae 100644
+index bfc98350..fb8c4aed 100644
 --- a/src/gallium/drivers/virgl/virgl_context.c
 +++ b/src/gallium/drivers/virgl/virgl_context.c
 @@ -1594,6 +1594,15 @@ virgl_emit_string_marker(struct pipe_context *ctx, const char *message,  int len
@@ -54,7 +54,7 @@ index bfc9835..fb8c4ae 100644
     vctx->base.create_video_buffer = virgl_video_create_buffer;
  
 diff --git a/src/gallium/drivers/virgl/virgl_screen.c b/src/gallium/drivers/virgl/virgl_screen.c
-index 66b3d3d..6601189 100644
+index 66b3d3d6..66011893 100644
 --- a/src/gallium/drivers/virgl/virgl_screen.c
 +++ b/src/gallium/drivers/virgl/virgl_screen.c
 @@ -416,6 +416,10 @@ virgl_init_screen_caps(struct virgl_screen *vscreen)

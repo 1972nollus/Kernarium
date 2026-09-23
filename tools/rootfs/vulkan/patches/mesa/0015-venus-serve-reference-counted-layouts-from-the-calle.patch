@@ -1,7 +1,7 @@
-From 12ba335268aac55c432c1f50bde8e3765774b6a4 Mon Sep 17 00:00:00 2001
+From 211307e2582418d82bad9e9b80e67ce325a86d18 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 14:26:52 +0900
-Subject: [PATCH 15/28] venus: serve reference-counted layouts from the
+Subject: [PATCH 15/27] venus: serve reference-counted layouts from the
  caller's allocator
 
 vkCreateDescriptorSetLayout and vkCreatePipelineLayout ignored the
@@ -54,7 +54,7 @@ the object instead of letting the device's allocator serve it quietly.
  create mode 100644 src/virtio/vulkan/vn_object_alloc.h
 
 diff --git a/src/virtio/vulkan/meson.build b/src/virtio/vulkan/meson.build
-index 507d0b3..57604e3 100644
+index 507d0b32..57604e32 100644
 --- a/src/virtio/vulkan/meson.build
 +++ b/src/virtio/vulkan/meson.build
 @@ -190,4 +190,10 @@ if with_tests
@@ -70,7 +70,7 @@ index 507d0b3..57604e3 100644
  endif
 diff --git a/src/virtio/vulkan/tests/vn_object_alloc_test.c b/src/virtio/vulkan/tests/vn_object_alloc_test.c
 new file mode 100644
-index 0000000..c7d7e3d
+index 00000000..c7d7e3d6
 --- /dev/null
 +++ b/src/virtio/vulkan/tests/vn_object_alloc_test.c
 @@ -0,0 +1,167 @@
@@ -242,7 +242,7 @@ index 0000000..c7d7e3d
 +   return 0;
 +}
 diff --git a/src/virtio/vulkan/vn_descriptor_set.c b/src/virtio/vulkan/vn_descriptor_set.c
-index 10a4c00..eef6ab0 100644
+index 10a4c002..eef6ab0d 100644
 --- a/src/virtio/vulkan/vn_descriptor_set.c
 +++ b/src/virtio/vulkan/vn_descriptor_set.c
 @@ -18,6 +18,9 @@
@@ -302,7 +302,7 @@ index 10a4c00..eef6ab0 100644
     vn_object_base_init(&layout->base, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
                         &dev->base);
 diff --git a/src/virtio/vulkan/vn_descriptor_set.h b/src/virtio/vulkan/vn_descriptor_set.h
-index d692473..2bdbfeb 100644
+index d692473a..2bdbfeb5 100644
 --- a/src/virtio/vulkan/vn_descriptor_set.h
 +++ b/src/virtio/vulkan/vn_descriptor_set.h
 @@ -12,6 +12,7 @@
@@ -328,7 +328,7 @@ index d692473..2bdbfeb 100644
     uint32_t last_binding;
 diff --git a/src/virtio/vulkan/vn_object_alloc.h b/src/virtio/vulkan/vn_object_alloc.h
 new file mode 100644
-index 0000000..d068b8d
+index 00000000..d068b8dd
 --- /dev/null
 +++ b/src/virtio/vulkan/vn_object_alloc.h
 @@ -0,0 +1,73 @@
@@ -406,7 +406,7 @@ index 0000000..d068b8d
 +
 +#endif /* VN_OBJECT_ALLOC_H */
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index 3040a3a..bd9f88c 100644
+index 3040a3a7..bd9f88c9 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -297,7 +297,6 @@ static void
@@ -449,7 +449,7 @@ index 3040a3a..bd9f88c 100644
     vn_object_base_init(&layout->base, VK_OBJECT_TYPE_PIPELINE_LAYOUT,
                         &dev->base);
 diff --git a/src/virtio/vulkan/vn_pipeline.h b/src/virtio/vulkan/vn_pipeline.h
-index 3e4ba69..c135f80 100644
+index 3e4ba699..c135f80e 100644
 --- a/src/virtio/vulkan/vn_pipeline.h
 +++ b/src/virtio/vulkan/vn_pipeline.h
 @@ -12,6 +12,7 @@

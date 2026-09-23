@@ -1,7 +1,7 @@
-From bd0d9229bb6dd7669566e3cb203aa0bb3fb15326 Mon Sep 17 00:00:00 2001
+From 168607c291b9351661f1da81b332fcbd9173b05f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:09:33 +0900
-Subject: [PATCH 08/28] venus: forward device address and maintenance commands
+Subject: [PATCH 08/27] venus: forward device address and maintenance commands
 
 Expose device address commands and maintenance8/10 only through renderer-supported features and properties. Forward native addresses through typed protocol commands, preserving rendering teardown and query feedback bookkeeping. Keep acceleration-structure creation in the Venus typed object domain.
 ---
@@ -11,7 +11,7 @@ Expose device address commands and maintenance8/10 only through renderer-support
  3 files changed, 244 insertions(+), 8 deletions(-)
 
 diff --git a/src/virtio/vulkan/vn_acceleration_structure.c b/src/virtio/vulkan/vn_acceleration_structure.c
-index fc8b3d1..0f16a04 100644
+index fc8b3d14..0f16a04e 100644
 --- a/src/virtio/vulkan/vn_acceleration_structure.c
 +++ b/src/virtio/vulkan/vn_acceleration_structure.c
 @@ -9,14 +9,10 @@
@@ -92,7 +92,7 @@ index fc8b3d1..0f16a04 100644
  vn_DestroyAccelerationStructureKHR(
     VkDevice device,
 diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
-index 1e30520..3bf0425 100644
+index 1e30520d..3bf04252 100644
 --- a/src/virtio/vulkan/vn_command_buffer.c
 +++ b/src/virtio/vulkan/vn_command_buffer.c
 @@ -1278,6 +1278,13 @@ vn_CmdBindIndexBuffer2(VkCommandBuffer commandBuffer,
@@ -376,7 +376,7 @@ index 1e30520..3bf0425 100644
  vn_CmdBindResourceHeapEXT(VkCommandBuffer commandBuffer,
                            const VkBindHeapInfoEXT *pBindInfo)
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index d80fa14..858e6ca 100644
+index d80fa140..858e6ca4 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -180,10 +180,13 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
