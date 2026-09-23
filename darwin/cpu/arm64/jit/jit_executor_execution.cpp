@@ -53,15 +53,16 @@ namespace uml::cpu::arm64 {
       cpu, generation, sequences.code_changes, block_pc);
 
   /*
-   * Enabled guest exception traps are rare.  Keep them completely outside
-   * the cached multi-instruction hot path so no translated block can run
-   * past a potentially trapping instruction.  This cold path still lowers
-   * and executes the exact native JIT form; it merely limits the boundary
-   * to one guest instruction so a register-only FP/SIMD operation can be
-   * committed transactionally.
+   * Enabled guest exception traps and single steps are rare.  Keep them
+   * completely outside the cached multi-instruction hot path so no
+   * translated block can run past a potentially trapping or stepped
+   * instruction.  This cold path still lowers and executes the exact native
+   * JIT form; it merely limits the boundary to one guest instruction so a
+   * register-only FP/SIMD operation can be committed transactionally.
    */
   const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
-  if (arm64::detail::enabled_exception_flags(guest_fpcr) != 0U) {
+  if (single_step_ ||
+      arm64::detail::enabled_exception_flags(guest_fpcr) != 0U) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     indirect_link_diagnostics_.unsafe_target_refusals +=
         pending_source.has_value();

@@ -10,6 +10,7 @@
 #include "memory/guest_address_space.hpp"
 #include "platform/apple/host_features.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -4922,6 +4923,60 @@ read_test_sequences(void *context) noexcept
 			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
 }
 
+/* RFLAGS.TF single-steps: the runtime runs each entry with a budget of one.
+ * Once blocks are cached and linked, a one-instruction budget must still
+ * stop after exactly one instruction, including across a taken branch. */
+[[nodiscard]] bool one_instruction_budget_steps_linked_programs()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xff, 0xc0,       // inc rax
+		0xeb, 0x02,             // jmp +2
+		0x90, 0x90,             // nop; nop (skipped)
+		0x48, 0xff, 0xc0,       // inc rax
+		0x0f, 0x05,             // syscall
+	});
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, 1, 1);
+	const auto run = [&](CpuState &cpu, std::size_t budget) {
+		const auto selected = executor.select_program(
+			memory, cpu.rip, ExecutionMode::long64,
+			std::min<std::size_t>(64, budget));
+		if (selected.status != gadgets::BuildStatus::built ||
+			selected.program == nullptr)
+			return gadgets::ExecuteResult{};
+		return gadgets::execute(*selected.program, cpu, memory, executor,
+			budget);
+	};
+	for (std::size_t entry = 0; entry < 3; ++entry) {
+		CpuState warm{};
+		auto result = run(warm, 64);
+		for (std::size_t block = 0; block < 8 &&
+			result.event == uml::cpu::EngineEvent::continued; ++block)
+			result = run(warm, 64);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+				warm.gpr(Register::rax) == 2,
+			"warm-up run did not reach the system call"))
+			return false;
+	}
+
+	CpuState cpu{};
+	constexpr std::array<std::uint64_t, 3> expected_rip{3, 7, 10};
+	for (std::size_t index = 0; index < expected_rip.size(); ++index) {
+		const auto result = run(cpu, 1);
+		if (!expect(result.instruction_budget_exhausted &&
+				result.retired_instructions == 1 &&
+				cpu.rip == expected_rip[index],
+			"a one-instruction budget did not stop after one instruction"))
+			return false;
+	}
+	const auto last = run(cpu, 1);
+	return expect(last.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 2 && cpu.rip == 12,
+		"the stepped system call did not report its own exit");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -6218,6 +6273,7 @@ int main()
 		native_into_reports_overflow_precisely() &&
 		privileged_instructions_raise_general_protection() &&
 		software_interrupt_vectors_trap() &&
+		one_instruction_budget_steps_linked_programs() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

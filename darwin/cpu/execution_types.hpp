@@ -35,6 +35,8 @@ enum class ExitReason {
 	floating_point_trap,
 	pc_alignment,
 	instruction_budget,
+	/* A requested single step retired one instruction and had no other exit. */
+	single_step,
 	fatal,
 };
 

@@ -243,6 +243,11 @@ bool JitExecutor::preempted() const noexcept {
   return implementation_ != nullptr && implementation_->preempted();
 }
 
+void JitExecutor::set_single_step(bool enabled) noexcept {
+  if (implementation_ != nullptr)
+    implementation_->set_single_step(enabled);
+}
+
 std::uint64_t JitExecutor::fault_address() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->fault_address();
 }

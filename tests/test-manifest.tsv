@@ -85,6 +85,7 @@ arm64-jit-cache-geometry	tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp	uni
 arm64-jit-shared-translation-cache	tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp	unit	retained
 arm64-jit-executor-pool	tests/unit/arm64/arm64_jit_executor_pool_tests.cpp	unit	retained
 arm64-jit-executor-pool-multislot	tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp	unit	retained
+arm64-single-step	tests/unit/arm64/arm64_single_step_tests.cpp	unit	retained
 arm64-jit-barrier_codegen	tests/unit/arm64	unit	retained
 arm64-jit-barrier_runtime	tests/unit/arm64	unit	retained
 arm64-jit-illegal_runtime	tests/unit/arm64	unit	retained

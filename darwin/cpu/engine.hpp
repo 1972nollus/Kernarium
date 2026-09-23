@@ -37,6 +37,9 @@ struct ExecutionRequest final {
 	InterruptToken interrupt{};
 	BoundaryHook boundary{};
 	void *boundary_context{};
+	/* Retire at most one instruction and report single_step when it
+	 * completes without another exit, as PSTATE.SS does. */
+	bool single_step{};
 };
 
 struct EngineConfiguration final {

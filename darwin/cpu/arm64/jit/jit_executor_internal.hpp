@@ -46,6 +46,7 @@ public:
                                 unsigned long generation,
                                 std::size_t &executed);
   [[nodiscard]] bool preempted() const noexcept;
+  void set_single_step(bool enabled) noexcept { single_step_ = enabled; }
   [[nodiscard]] std::uint64_t fault_address() const noexcept;
   [[nodiscard]] Access fault_access() const noexcept;
   [[nodiscard]] bool fault_alignment() const noexcept;
@@ -271,6 +272,7 @@ private:
 #endif
   PendingIndirect pending_indirect_{};
   bool preempted_{};
+  bool single_step_{};
   bool enable_guarded_control_flow_{};
   bool enable_pointer_authentication_{true};
 #if UML_JIT_RUNTIME_DIAGNOSTICS

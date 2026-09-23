@@ -65,6 +65,8 @@ public:
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		unsigned long generation, std::size_t &executed);
 	[[nodiscard]] bool preempted() const noexcept { return preempted_; }
+	/* While set, every run_block retires at most one guest instruction. */
+	void set_single_step(bool enabled) noexcept { single_step_ = enabled; }
 
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
@@ -108,6 +110,7 @@ private:
 	void *execution_context_{};
 	unsigned long execution_generation_{};
 	bool preempted_{};
+	bool single_step_{};
 	std::uint32_t floating_point_syndrome_{};
 	BuildOptions build_options_;
 	/* Which translations this executor's builds are interchangeable with;

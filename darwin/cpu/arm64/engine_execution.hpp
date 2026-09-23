@@ -30,6 +30,7 @@ template<bool PollCallback, typename Executor>
 		}
 	};
 	[[maybe_unused]] const ExecutionScope execution_scope{executor};
+	executor.set_single_step(request.single_step);
 	const auto interrupt_pending = [&]() noexcept {
 		if (request.interrupt.state_pending())
 			return true;
@@ -92,6 +93,12 @@ template<bool PollCallback, typename Executor>
 				request.boundary(
 					request.cpu, request.boundary_context))
 				return finish(ExitReason::system_call, retired);
+			/* A stepping executor runs one instruction per block. Its
+			 * cold-mode boundary is not a guest-visible interrupt. */
+			if (request.single_step && block_instructions != 0 &&
+				(event == EngineEvent::continued ||
+				 event == EngineEvent::interrupt))
+				return finish(ExitReason::single_step, retired);
 			if (event == EngineEvent::continued) {
 				if (retired < request.instruction_budget)
 					continue;

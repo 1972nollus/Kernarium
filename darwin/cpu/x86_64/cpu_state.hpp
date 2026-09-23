@@ -131,6 +131,7 @@ inline constexpr std::uint64_t rflags_parity = 1ULL << 2;
 inline constexpr std::uint64_t rflags_auxiliary = 1ULL << 4;
 inline constexpr std::uint64_t rflags_zero = 1ULL << 6;
 inline constexpr std::uint64_t rflags_sign = 1ULL << 7;
+inline constexpr std::uint64_t rflags_trap = 1ULL << 8;
 inline constexpr std::uint64_t rflags_direction = 1ULL << 10;
 inline constexpr std::uint64_t rflags_overflow = 1ULL << 11;
 

@@ -72,6 +72,11 @@ public:
 		++end_calls;
 	}
 
+	void set_single_step(bool enabled) noexcept
+	{
+		single_step = enabled;
+	}
+
 	[[nodiscard]] uml::cpu::EngineEvent run_block(
 		uml::cpu::arm64::CpuState &, uml::memory::StaticGuestMemory &,
 		unsigned long, std::size_t &executed)
@@ -106,6 +111,7 @@ public:
 	static constexpr std::size_t block_size = 4096;
 	std::size_t begin_calls{};
 	std::size_t end_calls{};
+	bool single_step{};
 	std::size_t block_calls{};
 };
 
@@ -125,6 +131,8 @@ public:
 		++end_calls;
 		entered = false;
 	}
+
+	void set_single_step(bool) noexcept {}
 
 	[[nodiscard]] uml::cpu::EngineEvent run_block(
 		uml::cpu::arm64::CpuState &, uml::memory::StaticGuestMemory &,

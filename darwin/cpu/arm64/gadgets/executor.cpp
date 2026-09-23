@@ -1738,7 +1738,7 @@ const BuildResult &GadgetExecutor::store(
 	}
 	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
 	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
-	if ((guest_fpcr &
+	if (single_step_ || (guest_fpcr &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
 	if (cache_generation_ != generation) {
@@ -1840,10 +1840,11 @@ const BuildResult &GadgetExecutor::store(
 ::uml::cpu::EngineEvent GadgetExecutor::run_trap_enabled_instruction(
 	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
 {
-	/* Guest trap enables are intentionally a cold execution mode.  Limiting
-	 * every translated run to one instruction guarantees that an integer or
-	 * memory instruction cannot carry execution past a later FP/SIMD
-	 * data-processing instruction in the same cached block.
+	/* Guest trap enables and single steps are intentionally a cold
+	 * execution mode.  Limiting every translated run to one instruction
+	 * guarantees that an integer or memory instruction cannot carry
+	 * execution past a later FP/SIMD data-processing instruction in the
+	 * same cached block, or past the instruction being stepped.
 	 */
 	cpu.gadget_indirect_miss = nullptr;
 	arm64::gadgets::restore_native_fp_environment(cpu);

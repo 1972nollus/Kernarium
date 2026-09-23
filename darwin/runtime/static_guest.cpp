@@ -67,6 +67,14 @@ constexpr std::uint32_t pstate_tco = 0x0200'0000U;
 constexpr std::uint32_t pstate_dit = 0x0100'0000U;
 constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
+/* PSTATE.SS: the kernel asks for one instruction, as for a stepped eret. */
+constexpr std::uint32_t pstate_ss = 0x0020'0000U;
+/* Trap numbers the kernel turns into SIGTRAP/TRAP_TRACE: the x86 #DB vector
+ * and the arm64 software-step exception class. */
+#if DARWIN_UML_X86_64_GUEST
+constexpr std::int32_t x86_64_debug_trap = 1;
+#endif
+constexpr std::int32_t arm64_software_step = 0x32;
 constexpr std::uint64_t svcr_sm = 1U;
 constexpr std::uint64_t svcr_za = 2U;
 constexpr std::uint32_t public_floating_point_flags =
@@ -558,14 +566,20 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 #endif
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
+	/* RFLAGS.TF raises #DB after each instruction. The executor retires
+	 * exactly its budget, so a budget of one is a single step. */
+	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
 	const auto &registered_interrupt = runtime.interrupt;
-	const auto run = ::uml::runtime::run_x86_gadgets(
+	auto run = ::uml::runtime::run_x86_gadgets(
 		cpu, runtime.memory, runtime.x86_executor, generation,
-		dispatch_budget, {
+		stepping ? 1 : dispatch_budget, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
 	});
+	if (stepping &&
+		run.execution.reason == uml::cpu::ExitReason::instruction_budget)
+		run.execution.reason = uml::cpu::ExitReason::single_step;
 	const auto &result = run.execution;
 	if (result.reason == uml::cpu::ExitReason::system_call)
 		trace_x86_write(cpu, runtime.memory, generation);
@@ -597,6 +611,12 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
+		event = DARWIN_UML_EVENT_BREAKPOINT;
+		break;
+	case uml::cpu::ExitReason::single_step:
+		registers.fault.error_code = 0;
+		registers.fault.address = cpu.rip;
+		registers.fault.trap_number = x86_64_debug_trap;
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
@@ -681,6 +701,7 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	case uml::cpu::ExitReason::illegal_instruction:
 		return DispatchExit::illegal_instruction;
 	case uml::cpu::ExitReason::breakpoint:
+	case uml::cpu::ExitReason::single_step:
 		return DispatchExit::breakpoint;
 	case uml::cpu::ExitReason::gcs_fault:
 		return DispatchExit::memory_fault;
@@ -759,6 +780,7 @@ int run_common_guest(
 			.stop = context->stop_token(),
 		},
 		.boundary = signal_return_boundary,
+		.single_step = (mutable_registers.pstate & pstate_ss) != 0,
 	};
 	int event = DARWIN_UML_EVENT_FATAL;
 	const auto result = engine->run(request);
@@ -798,6 +820,15 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
+		mutable_registers.fault.error_code = 0;
+		mutable_registers.fault.address = cpu.pc;
+		mutable_registers.fault.trap_number = 0;
+		event = DARWIN_UML_EVENT_BREAKPOINT;
+		break;
+	case uml::cpu::ExitReason::single_step:
+		mutable_registers.fault.error_code = 0;
+		mutable_registers.fault.address = cpu.pc;
+		mutable_registers.fault.trap_number = arm64_software_step;
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::gcs_fault:

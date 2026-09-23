@@ -386,6 +386,23 @@
         COMMAND uml_arm64_jit_executor_pool_tests
         LABELS tsan)
 
+    add_executable(uml_arm64_single_step_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_single_step_tests.cpp
+        $<TARGET_OBJECTS:uml_runtime_guest_selector>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+    target_include_directories(uml_arm64_single_step_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_arm64_single_step_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_arm64_single_step_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-single-step
+        COMMAND uml_arm64_single_step_tests)
+
     add_executable(uml_arm64_jit_executor_pool_multislot_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>

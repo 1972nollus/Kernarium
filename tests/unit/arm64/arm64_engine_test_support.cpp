@@ -147,6 +147,7 @@ event_for(::uml::cpu::ExitReason reason) noexcept {
 	case ::uml::cpu::ExitReason::instruction_budget:
 	case ::uml::cpu::ExitReason::interrupt:
 		return ExpectedEvent::instruction_budget;
+	case ::uml::cpu::ExitReason::single_step:
 	case ::uml::cpu::ExitReason::fatal:
 		return ExpectedEvent::fatal;
 	}

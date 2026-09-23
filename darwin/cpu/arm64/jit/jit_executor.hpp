@@ -114,6 +114,8 @@ public:
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		unsigned long generation, std::size_t &executed);
 	[[nodiscard]] bool preempted() const noexcept;
+	/* While set, every run_block retires at most one guest instruction. */
+	void set_single_step(bool enabled) noexcept;
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
 	[[nodiscard]] bool fault_alignment() const noexcept;
