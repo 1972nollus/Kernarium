@@ -1,7 +1,7 @@
-From 65c5ce21f0af518c7985a98572cb46c2766be8de Mon Sep 17 00:00:00 2001
+From 89074d5a815db3011ca9fb4953a7cb3c71738388 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 10:59:06 +0900
-Subject: [PATCH 12/51] vrend: recognise a Mesa host driver by its GL vendor
+Subject: [PATCH 12/49] vrend: recognise a Mesa host driver by its GL vendor
 
 The buffer-storage capability is gated on inferring the host's map cache
 type, and that inference tests the GL renderer string for "Mesa". Only
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 3282e39..3bdb490 100644
+index 3282e399..3bdb490a 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -12743,7 +12743,10 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c

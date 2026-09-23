@@ -1,7 +1,7 @@
-From 7a20cc9b53231f42222e523c6a87629fdc3eb688 Mon Sep 17 00:00:00 2001
+From e3e5a8b7ed84a796fd375b5158f198c9adf4055e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 11 Sep 2026 16:33:14 +0900
-Subject: [PATCH 11/51] virgl: reference-count the shared fence table
+Subject: [PATCH 11/49] virgl: reference-count the shared fence table
 
 virgl_fence_table is one process-global singleton, but two independent
 owners create and destroy it. The VMM side takes it in
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 69 insertions(+), 12 deletions(-)
 
 diff --git a/src/virgl_fence.c b/src/virgl_fence.c
-index a22727f..5703baa 100644
+index a22727fb..5703baa4 100644
 --- a/src/virgl_fence.c
 +++ b/src/virgl_fence.c
 @@ -27,6 +27,29 @@ struct virgl_fence {
@@ -138,7 +138,7 @@ index a22727f..5703baa 100644
     return 0;
  }
 diff --git a/src/virgl_fence.h b/src/virgl_fence.h
-index 9a91e7f..8a92fd0 100644
+index 9a91e7fa..8a92fd08 100644
 --- a/src/virgl_fence.h
 +++ b/src/virgl_fence.h
 @@ -6,6 +6,14 @@

@@ -1,0 +1,52 @@
+From ed45dc993286fb26ea0301a233bd2071517b44f0 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 02:12:09 +0900
+Subject: [PATCH 068/102] vulkan/wsi: only ask for immediate present where
+ Metal offers it
+
+CAMetalLayer.displaySyncEnabled is macOS-only; every other Apple platform
+composites on the display refresh boundary and the property does not exist,
+so the Metal WSI does not compile for iOS. Keep the macOS behaviour and make
+the request a no-op elsewhere, with the one call site routed through the
+setter so both paths stay in one place.
+---
+ src/vulkan/wsi/wsi_common_metal_layer.m | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/vulkan/wsi/wsi_common_metal_layer.m b/src/vulkan/wsi/wsi_common_metal_layer.m
+index 67c3e7ff..57c9c83b 100644
+--- a/src/vulkan/wsi/wsi_common_metal_layer.m
++++ b/src/vulkan/wsi/wsi_common_metal_layer.m
+@@ -6,6 +6,8 @@
+ 
+ #include "wsi_common_metal_layer.h"
+ 
++#include <TargetConditionals.h>
++
+ #import <QuartzCore/CAMetalLayer.h>
+ #import <Metal/Metal.h>
+ 
+@@ -137,7 +139,14 @@
+ wsi_metal_layer_set_immediate(const CAMetalLayer *metal_layer,
+                               bool enable_immediate)
+ {
++#if TARGET_OS_OSX
+    metal_layer.displaySyncEnabled = !enable_immediate;
++#else
++   /* Only macOS lets a layer present without waiting for the display; every
++    * other Apple platform composites on the refresh boundary. */
++   (void)metal_layer;
++   (void)enable_immediate;
++#endif
+ }
+ 
+ VkResult
+@@ -169,7 +178,7 @@
+       metal_layer.maximumDrawableCount = image_count;
+       metal_layer.drawableSize = (CGSize){.width = width, .height = height};
+       metal_layer.opaque = enable_opaque;
+-      metal_layer.displaySyncEnabled = !enable_immediate;
++      wsi_metal_layer_set_immediate(metal_layer, enable_immediate);
+       metal_layer.pixelFormat = metal_format;
+ 
+       metal_layer.colorspace = cg_color_space;

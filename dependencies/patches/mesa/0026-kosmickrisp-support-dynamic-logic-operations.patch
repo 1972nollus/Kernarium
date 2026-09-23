@@ -1,7 +1,7 @@
-From ee5f74c15dc002dbf26dd1baf7430f765cf36780 Mon Sep 17 00:00:00 2001
+From eeb52e0b13d49fbd3443c49a30d00e0955f36002 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:59:33 +0900
-Subject: [PATCH 026/109] kosmickrisp: support dynamic logic operations
+Subject: [PATCH 026/102] kosmickrisp: support dynamic logic operations
 
 ---
  src/compiler/nir/nir_lower_blend.c           |  78 +++++++++--
@@ -19,7 +19,7 @@ Subject: [PATCH 026/109] kosmickrisp: support dynamic logic operations
  create mode 100644 src/kosmickrisp/vulkan/tests/test_logic_op.c
 
 diff --git a/src/compiler/nir/nir_lower_blend.c b/src/compiler/nir/nir_lower_blend.c
-index 726503f..5e06bed 100644
+index 726503fd..5e06beda 100644
 --- a/src/compiler/nir/nir_lower_blend.c
 +++ b/src/compiler/nir/nir_lower_blend.c
 @@ -256,9 +256,41 @@ nir_logicop_func(
@@ -145,7 +145,7 @@ index 726503f..5e06bed 100644
        blended = nir_blend_advanced(b, options, rt, src, dst);
     } else if (!util_format_is_pure_integer(format) &&
 diff --git a/src/compiler/nir/nir_lower_blend.h b/src/compiler/nir/nir_lower_blend.h
-index bc979a7..245d3b9 100644
+index bc979a79..245d3b9d 100644
 --- a/src/compiler/nir/nir_lower_blend.h
 +++ b/src/compiler/nir/nir_lower_blend.h
 @@ -61,6 +61,14 @@ typedef struct {
@@ -175,7 +175,7 @@ index bc979a7..245d3b9 100644
  nir_color_blend(nir_builder *b, nir_def *src0, nir_def *src1, nir_def *dst,
                  const nir_lower_blend_rt *rt, bool scalar_blend_const);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 4536661..1bf8c0d 100644
+index 45366615..1bf8c0d9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -43,7 +43,7 @@ struct kk_root_descriptor_table {
@@ -188,7 +188,7 @@ index 4536661..1bf8c0d 100644
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index d043363..57940cb 100644
+index d0433630..57940cbe 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -14,6 +14,7 @@
@@ -239,7 +239,7 @@ index d043363..57940cb 100644
         IS_DIRTY(VI_BINDING_STRIDES) || gfx->dirty & KK_DIRTY_VB) {
        struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
 diff --git a/src/kosmickrisp/vulkan/kk_gpl.h b/src/kosmickrisp/vulkan/kk_gpl.h
-index 6ffdd35..de3e4d7 100644
+index 6ffdd35f..de3e4d71 100644
 --- a/src/kosmickrisp/vulkan/kk_gpl.h
 +++ b/src/kosmickrisp/vulkan/kk_gpl.h
 @@ -7,6 +7,7 @@
@@ -271,7 +271,7 @@ index 6ffdd35..de3e4d7 100644
        key->static_sample_mask = state->ms->sample_mask;
 diff --git a/src/kosmickrisp/vulkan/kk_logic_op.h b/src/kosmickrisp/vulkan/kk_logic_op.h
 new file mode 100644
-index 0000000..c3b85e7
+index 00000000..c3b85e7f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_logic_op.h
 @@ -0,0 +1,42 @@
@@ -318,7 +318,7 @@ index 0000000..c3b85e7
 +
 +#endif
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index f61a7b6..a7d974c 100644
+index f61a7b6e..a7d974c3 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -322,7 +322,7 @@ kk_get_device_features(
@@ -331,7 +331,7 @@ index f61a7b6..a7d974c 100644
        .graphicsPipelineLibrary = true,
        .inlineUniformBlock = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ea3fe35..a384575 100644
+index ea3fe351..a3845756 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -13,6 +13,7 @@
@@ -386,7 +386,7 @@ index ea3fe35..a384575 100644
  
     static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3976d33..466bfc8 100644
+index 4083d483..1474a4cb 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -83,6 +83,7 @@ kk_files = files(
@@ -423,7 +423,7 @@ index 3976d33..466bfc8 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_logic_op.c b/src/kosmickrisp/vulkan/tests/test_logic_op.c
 new file mode 100644
-index 0000000..1de26ed
+index 00000000..1de26ed2
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_logic_op.c
 @@ -0,0 +1,134 @@

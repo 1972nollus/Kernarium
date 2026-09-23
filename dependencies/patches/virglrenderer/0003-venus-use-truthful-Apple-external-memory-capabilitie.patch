@@ -1,7 +1,7 @@
-From adeb4bf90398341adfb3e6cc1308634f844ada5e Mon Sep 17 00:00:00 2001
+From b40a52e8f73b807115024b7182693d1f5f2f2a04 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:04:14 +0900
-Subject: [PATCH 03/51] venus: use truthful Apple external-memory capabilities
+Subject: [PATCH 03/49] venus: use truthful Apple external-memory capabilities
 
 ---
  src/meson.build                 |  4 +-
@@ -25,7 +25,7 @@ Subject: [PATCH 03/51] venus: use truthful Apple external-memory capabilities
  delete mode 100644 src/venus/vkr_metal_helpers.m
 
 diff --git a/src/meson.build b/src/meson.build
-index c956715..6d1ce14 100644
+index c9567159..6d1ce14b 100644
 --- a/src/meson.build
 +++ b/src/meson.build
 @@ -76,6 +76,7 @@ venus_sources = [
@@ -47,7 +47,7 @@ index c956715..6d1ce14 100644
  
  if with_drm_renderers
 diff --git a/src/venus/vkr_buffer.c b/src/venus/vkr_buffer.c
-index 9e466f8..99ec8dd 100644
+index 9e466f83..99ec8dd9 100644
 --- a/src/venus/vkr_buffer.c
 +++ b/src/venus/vkr_buffer.c
 @@ -6,7 +6,6 @@
@@ -59,7 +59,7 @@ index 9e466f8..99ec8dd 100644
  static void
  vkr_dispatch_vkCreateBuffer(struct vn_dispatch_context *dispatch,
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 603f45b..66e20d3 100644
+index 603f45b8..66e20d39 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -11,7 +11,6 @@
@@ -117,7 +117,7 @@ index 603f45b..66e20d3 100644
     free(exts);
  
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index c71f085..a8c185c 100644
+index c71f0853..a8c185c6 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -27,7 +27,7 @@ struct vkr_device {
@@ -130,7 +130,7 @@ index c71f085..a8c185c 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 1abc23a..a8dd8fc 100644
+index 1abc23a8..a8dd8fcd 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -10,7 +10,7 @@
@@ -293,7 +293,7 @@ index 1abc23a..a8dd8fc 100644
  
     const bool can_export_dma_buf = mem->valid_fd_types & (1 << VIRGL_RESOURCE_FD_DMABUF);
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index 3259966..b82e878 100644
+index 32599664..b82e8786 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -9,7 +9,7 @@
@@ -318,7 +318,7 @@ index 3259966..b82e878 100644
     uint32_t memory_type_index;
 diff --git a/src/venus/vkr_host_memory.c b/src/venus/vkr_host_memory.c
 new file mode 100644
-index 0000000..0e36494
+index 00000000..0e364942
 --- /dev/null
 +++ b/src/venus/vkr_host_memory.c
 @@ -0,0 +1,68 @@
@@ -392,7 +392,7 @@ index 0000000..0e36494
 +}
 diff --git a/src/venus/vkr_host_memory.h b/src/venus/vkr_host_memory.h
 new file mode 100644
-index 0000000..55c2f5c
+index 00000000..55c2f5c8
 --- /dev/null
 +++ b/src/venus/vkr_host_memory.h
 @@ -0,0 +1,24 @@
@@ -421,7 +421,7 @@ index 0000000..55c2f5c
 +
 +#endif /* VKR_HOST_MEMORY_H */
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 2b627e3..5634aa7 100644
+index 2b627e37..5634aa74 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -162,6 +162,13 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
@@ -439,7 +439,7 @@ index 2b627e3..5634aa7 100644
     args->ret = vk->GetImageDrmFormatModifierPropertiesEXT(args->device, args->image,
                                                            args->pProperties);
 diff --git a/src/venus/vkr_instance.c b/src/venus/vkr_instance.c
-index 8191b37..f3d1b6b 100644
+index 8191b372..f3d1b6b7 100644
 --- a/src/venus/vkr_instance.c
 +++ b/src/venus/vkr_instance.c
 @@ -207,17 +207,6 @@ vkr_dispatch_vkCreateInstance(struct vn_dispatch_context *dispatch,
@@ -462,7 +462,7 @@ index 8191b37..f3d1b6b 100644
     assert(layer_count <= ARRAY_SIZE(layer_names));
 diff --git a/src/venus/vkr_metal_helpers.h b/src/venus/vkr_metal_helpers.h
 deleted file mode 100644
-index 4f5208b..0000000
+index 4f5208bd..00000000
 --- a/src/venus/vkr_metal_helpers.h
 +++ /dev/null
 @@ -1,72 +0,0 @@
@@ -540,7 +540,7 @@ index 4f5208b..0000000
 -#endif /* VKR_METAL_HELPERS_H */
 diff --git a/src/venus/vkr_metal_helpers.m b/src/venus/vkr_metal_helpers.m
 deleted file mode 100644
-index f0373ed..0000000
+index f0373ed1..00000000
 --- a/src/venus/vkr_metal_helpers.m
 +++ /dev/null
 @@ -1,99 +0,0 @@
@@ -644,7 +644,7 @@ index f0373ed..0000000
 -
 -#endif /* __APPLE__ */
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index bc38754..d59aade 100644
+index bc387548..d59aade3 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -282,10 +282,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
@@ -733,7 +733,7 @@ index bc38754..d59aade 100644
        vkr_physical_device_init_id_properties(physical_dev);
        vkr_physical_device_init_queue_family_properties(physical_dev);
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 371899b..bd2a474 100644
+index 371899b3..bd2a4748 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -28,8 +28,8 @@ struct vkr_physical_device {

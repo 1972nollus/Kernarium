@@ -1,7 +1,7 @@
-From 7d5a89d0699b5ac47f4a4cbcdc3a1909524397f9 Mon Sep 17 00:00:00 2001
+From 4eef1addd7573834cb06638264600694176d7905 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 02:29:40 +0900
-Subject: [PATCH 049/109] kosmickrisp: read coherent global memory through
+Subject: [PATCH 049/102] kosmickrisp: read coherent global memory through
  relaxed atomics
 
 A compute kernel that reads device memory through a coherent pointer inside a loop miscompiles on macOS 27: the first such load in an iteration returns the right value and every later one returns zero. Two coherent loads are enough and one is not, and any unrelated edit moves the failure to a different kernel rather than removing it.
@@ -22,7 +22,7 @@ Record the issue as KK_WORKAROUND_17 and pin the emitted MSL for a coherent acce
  create mode 100644 src/kosmickrisp/vulkan/tests/test_msl_coherent_access.c
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 8248ca1..4e1a6c0 100644
+index 8248ca16..4e1a6c00 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,43 @@ info on what was updated.
@@ -70,7 +70,7 @@ index 8248ca1..4e1a6c0 100644
  ----------------
  | macOS version: 26.x
 diff --git a/src/kosmickrisp/compiler/msl_private.h b/src/kosmickrisp/compiler/msl_private.h
-index 6d57f27..01711fa 100644
+index 6d57f276..01711fa3 100644
 --- a/src/kosmickrisp/compiler/msl_private.h
 +++ b/src/kosmickrisp/compiler/msl_private.h
 @@ -52,6 +52,11 @@ struct hash_table *msl_infer_types(nir_shader *shader);
@@ -86,7 +86,7 @@ index 6d57f27..01711fa 100644
  
  const char *msl_type_for_src(struct hash_table *types, nir_src *src);
 diff --git a/src/kosmickrisp/compiler/msl_type_inference.c b/src/kosmickrisp/compiler/msl_type_inference.c
-index a65587e..9797cad 100644
+index a65587e0..9797cad7 100644
 --- a/src/kosmickrisp/compiler/msl_type_inference.c
 +++ b/src/kosmickrisp/compiler/msl_type_inference.c
 @@ -716,6 +716,20 @@ msl_type_for_def(struct hash_table *types, nir_def *def)
@@ -111,7 +111,7 @@ index a65587e..9797cad 100644
  msl_type_for_src(struct hash_table *types, nir_src *src)
  {
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 0101968..d679a62 100644
+index 01019686..d679a62a 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -252,6 +252,82 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
@@ -299,10 +299,10 @@ index 0101968..d679a62 100644
     msl_emit_io_blocks(&ctx, shader);
     if (shader->info.stage == MESA_SHADER_FRAGMENT &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e8d9a72..909edb0 100644
+index d04882b0..59e1098d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -877,6 +877,20 @@ if with_tests
+@@ -899,6 +899,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -325,7 +325,7 @@ index e8d9a72..909edb0 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_msl_coherent_access.c b/src/kosmickrisp/vulkan/tests/test_msl_coherent_access.c
 new file mode 100644
-index 0000000..5942563
+index 00000000..5942563d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_msl_coherent_access.c
 @@ -0,0 +1,147 @@

@@ -1,7 +1,7 @@
-From 3a217a20cc223bae52681f30b3e20711fae6906f Mon Sep 17 00:00:00 2001
+From 4f3e58f29d4b8aae66fa10b5beb11c1fe882bca3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 17:25:46 +0900
-Subject: [PATCH 04/51] venus: keep pipelines created before a failure
+Subject: [PATCH 04/49] venus: keep pipelines created before a failure
 
 vkCreate*Pipelines is not all-or-nothing. When any pipeline fails the
 driver still returns valid handles for the ones it did create, sets only
@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 33 insertions(+), 4 deletions(-)
 
 diff --git a/src/venus/vkr_device_object.py b/src/venus/vkr_device_object.py
-index 07d14cd..2844d37 100644
+index 07d14cd1..2844d37d 100644
 --- a/src/venus/vkr_device_object.py
 +++ b/src/venus/vkr_device_object.py
 @@ -205,7 +205,36 @@ vkr_{create_func_name}_create_array(
@@ -68,7 +68,7 @@ index 07d14cd..2844d37 100644
  SIMPLE_OBJECT_CREATE_AND_ADD_TEMPL = '''
  /* create a vkr_{vkr_type} and add it to the vkr_device */
 diff --git a/src/venus/vkr_pipeline.c b/src/venus/vkr_pipeline.c
-index 76709b9..d0d6f83 100644
+index 76709b9b..d0d6f836 100644
 --- a/src/venus/vkr_pipeline.c
 +++ b/src/venus/vkr_pipeline.c
 @@ -114,7 +114,7 @@ vkr_dispatch_vkCreateGraphicsPipelines(struct vn_dispatch_context *dispatch,

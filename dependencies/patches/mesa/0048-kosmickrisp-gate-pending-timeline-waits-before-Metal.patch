@@ -1,7 +1,7 @@
-From ac5940105521a5abf4cda774efe27cb8e123d33d Mon Sep 17 00:00:00 2001
+From f2db542567fd52d54987e856ac7ae7bfebc79eea Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 9 Sep 2026 05:25:04 +0900
-Subject: [PATCH 048/109] kosmickrisp: gate pending timeline waits before Metal
+Subject: [PATCH 048/102] kosmickrisp: gate pending timeline waits before Metal
  submission
 
 Use on-demand common submission for unsatisfied timeline waits so Metal cannot retire a native event wait before the host signals it. Move reusable binary payloads correctly and stop the worker before device resource destruction.
@@ -26,10 +26,10 @@ Keep absolute CPU wait deadlines while observing device loss, wake queue drains 
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 09c0985..fe6f29d 100644
+index 175b4edc..64d690c9 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
-@@ -298,6 +298,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -366,6 +366,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
     if (result != VK_SUCCESS)
        goto fail_alloc;
  
@@ -43,7 +43,7 @@ index 09c0985..fe6f29d 100644
     dev->vk.shader_ops = &kk_device_shader_ops;
     dev->mtl_handle = pdev->mtl_dev_handle;
     dev->vk.command_buffer_ops = &kk_cmd_buffer_ops;
-@@ -393,6 +400,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -467,6 +474,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
        mtl_stop_gpu_capture();
     }
  
@@ -56,7 +56,7 @@ index 09c0985..fe6f29d 100644
     /* Meta first since it may destroy Vulkan objects */
     kk_device_finish_meta(dev);
     kk_device_finish_lib(dev);
-@@ -403,11 +416,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -477,11 +490,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
     if (dev->heap)
        kk_destroy_bo(dev, dev->heap);
  
@@ -65,11 +65,11 @@ index 09c0985..fe6f29d 100644
 -      dev->has_queue = false;
 -   }
 -
-    /* Release the residency set last once all BOs are released. */
-    assert(list_is_empty(&dev->address_space.allocations));
-    simple_mtx_destroy(&dev->address_space.mutex);
+    /* Outstanding completion callbacks keep their own reference. */
+    kk_command_allocator_cache_unref(dev->allocator_cache);
+ 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 28294b6..acd2bc3 100644
+index 28294b60..acd2bc3a 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -1188,6 +1188,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
@@ -82,10 +82,10 @@ index 28294b6..acd2bc3 100644
     pdev->sync_types[st_idx++] = &kk_sync_type;
     pdev->sync_types[st_idx++] = &pdev->sync_binary_type.sync;
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index c4c41ae..e4ad084 100644
+index 64922e8a..f7f30265 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -217,6 +217,9 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -225,6 +225,9 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
           container_of(signal->sync, struct kk_sync_timeline, base);
        mtl_signal_event(queue->mtl_handle, sync->mtl_handle,
                         signal->signal_value);
@@ -95,7 +95,7 @@ index c4c41ae..e4ad084 100644
     }
  
     return VK_SUCCESS;
-@@ -287,6 +290,9 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+@@ -295,6 +298,9 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
  void
  kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
  {
@@ -105,14 +105,14 @@ index c4c41ae..e4ad084 100644
     simple_mtx_lock(&queue->feedback->mutex);
     queue->feedback->device = NULL;
     simple_mtx_unlock(&queue->feedback->mutex);
-@@ -296,5 +302,4 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
+@@ -304,5 +310,4 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
     mtl_command_queue_remove_residency_set(queue->mtl_handle,
                                            dev->residency_set.handle);
     mtl_release(queue->mtl_handle);
 -   vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index f44200c..4f03bf3 100644
+index f44200c3..4f03bf30 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -7,6 +7,11 @@
@@ -306,7 +306,7 @@ index f44200c..4f03bf3 100644
     .finish = kk_timeline_finish,
     .signal = kk_timeline_signal,
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index da4f149..a045d8a 100644
+index da4f1499..a045d8ae 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
 @@ -16,8 +16,23 @@ struct kk_queue;
@@ -334,7 +334,7 @@ index da4f149..a045d8a 100644
 +
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 028739b..e8d9a72 100644
+index d7d479a6..d04882b0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -507,6 +507,81 @@ if with_tests
@@ -421,7 +421,7 @@ index 028739b..e8d9a72 100644
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 new file mode 100644
-index 0000000..8998f9a
+index 00000000..8998f9a9
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 @@ -0,0 +1,348 @@
@@ -775,7 +775,7 @@ index 0000000..8998f9a
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
 new file mode 100644
-index 0000000..e808a61
+index 00000000..e808a617
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
 @@ -0,0 +1,365 @@
@@ -1146,7 +1146,7 @@ index 0000000..e808a61
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 new file mode 100644
-index 0000000..7b8dd8b
+index 00000000..7b8dd8bc
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 @@ -0,0 +1,182 @@
@@ -1333,7 +1333,7 @@ index 0000000..7b8dd8b
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_queue.c b/src/vulkan/runtime/vk_queue.c
-index b6b8ba7..65c0339 100644
+index b6b8ba7e..65c03393 100644
 --- a/src/vulkan/runtime/vk_queue.c
 +++ b/src/vulkan/runtime/vk_queue.c
 @@ -729,6 +729,18 @@ done:

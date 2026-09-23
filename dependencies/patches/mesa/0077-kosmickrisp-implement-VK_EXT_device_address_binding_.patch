@@ -1,0 +1,186 @@
+From e4c3965a08c905480016bcf70ffa4e82ade2ad54 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 14:12:45 +0900
+Subject: [PATCH 077/102] kosmickrisp: implement
+ VK_EXT_device_address_binding_report
+
+VP_ANDROID_17_requirements makes this extension mandatory. It asks an
+implementation to tell a debug-utils messenger when a GPU virtual address
+range becomes bound to, or unbound from, a Vulkan object, so a tool can name
+the object behind an address in a fault report.
+
+Metal hands out a GPU address for every heap-backed buffer, and this driver
+already keeps one for each allocation, buffer and image plane, so the reports
+are the addresses it has rather than anything new it has to track. Device
+memory is reported as it enters and leaves the device address space, a buffer
+as its Metal handle is bound and released, and an image once per plane,
+because a disjoint image's planes can come from different allocations.
+
+The common runtime's vk_address_binding_report does the rest: it marks a
+report internal when the object is not client visible, and returns at once
+when no messenger is listening, which is what keeps this off the cost of an
+ordinary allocation.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/kosmickrisp/vulkan/kk_buffer.c          | 11 ++++++++
+ src/kosmickrisp/vulkan/kk_device_memory.c   | 10 +++++++
+ src/kosmickrisp/vulkan/kk_image.c           | 30 +++++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_physical_device.c |  4 +++
+ 4 files changed, 55 insertions(+)
+
+diff --git a/src/kosmickrisp/vulkan/kk_buffer.c b/src/kosmickrisp/vulkan/kk_buffer.c
+index f119907d..2a53a8e6 100644
+--- a/src/kosmickrisp/vulkan/kk_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_buffer.c
+@@ -13,6 +13,8 @@
+ 
+ #include "kosmickrisp/bridge/mtl_bridge.h"
+ 
++#include "vk_debug_utils.h"
++
+ static uint64_t
+ kk_get_buffer_alignment(const struct kk_physical_device *pdev, uint64_t size,
+                         VkBufferUsageFlags2KHR usage_flags,
+@@ -61,6 +63,11 @@ kk_DestroyBuffer(VkDevice device, VkBuffer _buffer,
+    if (!buffer)
+       return;
+ 
++   if (buffer->vk.device_address)
++      vk_address_binding_report(dev->vk.physical->instance, &buffer->vk.base,
++                                buffer->vk.device_address, buffer->vk.size,
++                                VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
++
+    if (buffer->mtl_handle)
+       mtl_release(buffer->mtl_handle);
+ 
+@@ -173,6 +180,10 @@ kk_bind_buffer_memory(struct kk_device *dev, const VkBindBufferMemoryInfo *info)
+     * data in the GPU debugger... */
+    mtl_get_contents(buffer->mtl_handle);
+ 
++   vk_address_binding_report(dev->vk.physical->instance, &buffer->vk.base,
++                             buffer->vk.device_address, buffer->vk.size,
++                             VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
++
+    return VK_SUCCESS;
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_device_memory.c b/src/kosmickrisp/vulkan/kk_device_memory.c
+index a52d7737..f504640d 100644
+--- a/src/kosmickrisp/vulkan/kk_device_memory.c
++++ b/src/kosmickrisp/vulkan/kk_device_memory.c
+@@ -18,6 +18,8 @@
+ #include "util/u_atomic.h"
+ #include "util/u_memory.h"
+ 
++#include "vk_debug_utils.h"
++
+ #include <inttypes.h>
+ #include <sys/mman.h>
+ 
+@@ -151,6 +153,10 @@ kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
+    list_addtail(&mem->address_space_link, &dev->address_space.allocations);
+    simple_mtx_unlock(&dev->address_space.mutex);
+ 
++   vk_address_binding_report(dev->vk.physical->instance, &mem->vk.base,
++                             mem->bo->gpu, mem->bo->size_B,
++                             VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
++
+    *pMem = kk_device_memory_to_handle(mem);
+ 
+    return VK_SUCCESS;
+@@ -174,6 +180,10 @@ kk_FreeMemory(VkDevice device, VkDeviceMemory _mem,
+    list_del(&mem->address_space_link);
+    simple_mtx_unlock(&dev->address_space.mutex);
+ 
++   vk_address_binding_report(dev->vk.physical->instance, &mem->vk.base,
++                             mem->bo->gpu, mem->bo->size_B,
++                             VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
++
+    kk_destroy_bo(dev, mem->bo);
+ 
+    vk_device_memory_destroy(&dev->vk, pAllocator, &mem->vk);
+diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
+index 54321d3a..54965017 100644
+--- a/src/kosmickrisp/vulkan/kk_image.c
++++ b/src/kosmickrisp/vulkan/kk_image.c
+@@ -25,6 +25,12 @@
+ 
+ #include "drm-uapi/drm_fourcc.h"
+ 
++#include "vk_debug_utils.h"
++
++static void kk_image_report_address_binding(struct kk_device *dev,
++                                            const struct kk_image *image,
++                                            VkDeviceAddressBindingTypeEXT type);
++
+ #include <vulkan/vulkan_metal.h>
+ 
+ static VkFormatFeatureFlags2
+@@ -801,6 +807,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
+    if (!image)
+       return;
+ 
++   kk_image_report_address_binding(dev, image,
++                                   VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
++
+    kk_image_finish(dev, image, pAllocator);
+    vk_free2(&dev->vk.alloc, pAllocator, image);
+ }
+@@ -1071,6 +1080,24 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+    return VK_SUCCESS;
+ }
+ 
++static void
++kk_image_report_address_binding(struct kk_device *dev,
++                                const struct kk_image *image,
++                                VkDeviceAddressBindingTypeEXT type)
++{
++   /* An image occupies one range per plane, and a disjoint image's planes can
++    * come from different allocations, so each is reported on its own. */
++   for (uint8_t plane = 0u; plane < image->plane_count; ++plane) {
++      if (image->planes[plane].addr == 0u)
++         continue;
++
++      vk_address_binding_report(dev->vk.physical->instance,
++                                &((struct kk_image *)image)->vk.base,
++                                image->planes[plane].addr,
++                                image->planes[plane].layout.size_B, type);
++   }
++}
++
+ static VkResult
+ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+ {
+@@ -1128,6 +1155,9 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+       }
+    }
+ 
++   kk_image_report_address_binding(dev, image,
++                                   VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
++
+    return VK_SUCCESS;
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index cb199e69..813ef0d9 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
+       .EXT_metal_objects = true,
+       .EXT_hdr_metadata = true,
+       .EXT_image_2d_view_of_3d = true,
++      .EXT_device_address_binding_report = true,
+       .EXT_image_compression_control = true,
+       .EXT_image_compression_control_swapchain = true,
+       .EXT_image_drm_format_modifier = true,
+@@ -497,6 +498,9 @@ kk_get_device_features(
+       .image2DViewOf3D = true,
+       .sampler2DViewOf3D = true,
+ 
++      /* VK_EXT_device_address_binding_report */
++      .reportAddressBinding = true,
++
+       /* VK_EXT_image_compression_control and its swapchain companion.
+        * Metal never tells the driver whether it compressed a texture and
+        * offers no fixed-rate control, so every query answers "no

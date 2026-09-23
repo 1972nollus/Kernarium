@@ -1,7 +1,7 @@
-From cf9777b74ab9fadda4fbbbf3a6357b3eff8f8140 Mon Sep 17 00:00:00 2001
+From 35ec2a2ec514ff0ff754f6fef07812f543972ba0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 12:43:17 +0900
-Subject: [PATCH 041/109] kosmickrisp: survive Metal command queue timeouts
+Subject: [PATCH 041/102] kosmickrisp: survive Metal command queue timeouts
 
 Metal reports MTL4CommandQueueErrorTimeout when one submission exceeds the
 time the system allows, which is not the same as the GPU failing or the
@@ -98,7 +98,7 @@ submission, so the timeout is still survived.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 4cde058..6e41aec 100644
+index 4cde058c..6e41aecf 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -12,6 +12,7 @@
@@ -137,7 +137,7 @@ index 4cde058..6e41aec 100644
        buffer->mtl_handle, &layout, aligned_offset_B);
     if (!view->mtl_texel_buffer_handle) {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 405b303..0bc236e 100644
+index 405b303c..0bc236ea 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -565,9 +565,24 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
@@ -206,7 +206,7 @@ index 405b303..0bc236e 100644
  
 diff --git a/src/kosmickrisp/vulkan/kk_image_extent.c b/src/kosmickrisp/vulkan/kk_image_extent.c
 new file mode 100644
-index 0000000..a430f77
+index 00000000..a430f775
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_image_extent.c
 @@ -0,0 +1,15 @@
@@ -227,7 +227,7 @@ index 0000000..a430f77
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_image_extent.h b/src/kosmickrisp/vulkan/kk_image_extent.h
 new file mode 100644
-index 0000000..f2e928c
+index 00000000..f2e928c3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_image_extent.h
 @@ -0,0 +1,34 @@
@@ -266,7 +266,7 @@ index 0000000..f2e928c
 +
 +#endif /* KK_IMAGE_EXTENT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
-index f65cb2c..b746720 100644
+index f65cb2c3..b7467202 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.c
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.c
 @@ -8,6 +8,7 @@
@@ -315,7 +315,7 @@ index f65cb2c..b746720 100644
 +   return VK_SUCCESS;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_image_layout.h b/src/kosmickrisp/vulkan/kk_image_layout.h
-index 6b93665..c8776dd 100644
+index 6b936653..c8776dd8 100644
 --- a/src/kosmickrisp/vulkan/kk_image_layout.h
 +++ b/src/kosmickrisp/vulkan/kk_image_layout.h
 @@ -229,9 +229,13 @@ bool kk_image_layout_can_optimize(VkImageUsageFlags usage, VkImageTiling tiling,
@@ -337,7 +337,7 @@ index 6b93665..c8776dd 100644
  
  #endif /* KK_IMAGE_LAYOUT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index c9d180d..52f85b4 100644
+index c9d180dc..52f85b40 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -11,6 +11,7 @@
@@ -380,7 +380,7 @@ index c9d180d..52f85b4 100644
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 0000000..e10beac
+index 00000000..e10beac6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
 @@ -0,0 +1,137 @@
@@ -523,7 +523,7 @@ index 0000000..e10beac
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 0000000..a6fb7ee
+index 00000000..a6fb7ee1
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
 @@ -0,0 +1,68 @@
@@ -596,7 +596,7 @@ index 0000000..a6fb7ee
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 89f4d77..5e5e6a5 100644
+index 89e84e47..e51c5ed1 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -652,7 +652,7 @@ index 89f4d77..5e5e6a5 100644
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_image_extent.c b/src/kosmickrisp/vulkan/tests/test_image_extent.c
 new file mode 100644
-index 0000000..b34363d
+index 00000000..b34363d6
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_image_extent.c
 @@ -0,0 +1,112 @@
@@ -770,7 +770,7 @@ index 0000000..b34363d
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_queue_error.c b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 new file mode 100644
-index 0000000..144e9a5
+index 00000000..144e9a5c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 @@ -0,0 +1,363 @@

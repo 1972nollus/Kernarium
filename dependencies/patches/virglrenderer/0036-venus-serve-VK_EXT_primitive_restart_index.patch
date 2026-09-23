@@ -1,0 +1,55 @@
+From 537e2c58b3dc927e61ba6600216530a88ff81677 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 12:29:50 +0900
+Subject: [PATCH 36/49] venus: serve VK_EXT_primitive_restart_index
+
+The uprevved protocol assigns vkCmdSetPrimitiveRestartIndexEXT a command ID
+and encodes the extension's capability structure, and the host driver this
+renderer runs on advertises the extension, so all the renderer lacked was the
+one command's dispatch. The command sets one unsigned value on a command
+buffer and needs no object tracking of its own. The dispatch replaces the
+placeholder comment left at the end of the dispatch table.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/venus/vkr_command_buffer.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/src/venus/vkr_command_buffer.c b/src/venus/vkr_command_buffer.c
+index 146a047e..7fb91288 100644
+--- a/src/venus/vkr_command_buffer.c
++++ b/src/venus/vkr_command_buffer.c
+@@ -1211,6 +1211,15 @@ vkr_dispatch_vkCmdSetDepthClampRangeEXT(UNUSED struct vn_dispatch_context *dispa
+                 args->pDepthClampRange);
+ }
+ 
++static void
++vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT(
++   UNUSED struct vn_dispatch_context *dispatch,
++   struct vn_command_vkCmdSetPrimitiveRestartIndexEXT *args)
++{
++   VKR_CMD_CALL(CmdSetPrimitiveRestartIndexEXT, args,
++                args->primitiveRestartIndex);
++}
++
+ static void
+ vkr_dispatch_vkCmdSetAttachmentFeedbackLoopEnableEXT(
+    UNUSED struct vn_dispatch_context *dispatch,
+@@ -1690,6 +1699,10 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
+    dispatch->dispatch_vkCmdSetDepthClampRangeEXT =
+       vkr_dispatch_vkCmdSetDepthClampRangeEXT;
+ 
++   /* VK_EXT_primitive_restart_index */
++   dispatch->dispatch_vkCmdSetPrimitiveRestartIndexEXT =
++      vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT;
++
+    /* VK_EXT_attachment_feedback_loop_dynamic_state */
+    dispatch->dispatch_vkCmdSetAttachmentFeedbackLoopEnableEXT =
+       vkr_dispatch_vkCmdSetAttachmentFeedbackLoopEnableEXT;
+@@ -1752,6 +1765,4 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
+ 
+    /* VK_KHR_maintenance10 */
+    dispatch->dispatch_vkCmdEndRendering2KHR = vkr_dispatch_vkCmdEndRendering2KHR;
+-
+-   /* VK_EXT_primitive_restart_index */
+ }

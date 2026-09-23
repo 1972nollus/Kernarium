@@ -1,0 +1,168 @@
+From d0953597f9d104651e1332c6f0351be6740b0cb3 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 11:42:25 +0900
+Subject: [PATCH 094/102] kosmickrisp: never wait forever for a query a failure
+ destroyed
+
+A query becomes available through a GPU write inside a submitted command
+buffer. When Metal fails that submission the write is destroyed, and no
+report ever names the query: the queue reports submissions, not the
+memory they were going to touch. vkGetQueryPoolResults with
+VK_QUERY_RESULT_WAIT_BIT then polled forever, which is how one killed
+submission froze a Vulkan CTS fraction inside
+query_pool.statistics_query with the guest silent and nothing left to
+time out.
+
+A queue that has failed therefore bounds the wait, and one that has not
+still waits as long as the submission takes. The bound is the same order
+as the one the timeline recovery uses and for the same reason: three
+orders of magnitude over the time the tightest device this driver targets
+allows a command buffer, so it cannot fire on a healthy submission. Past
+it the call reports VK_ERROR_DEVICE_LOST for that query rather than
+holding its caller, which is what Vulkan offers for a result the
+implementation cannot produce.
+
+The queue records whether it has ever failed separately from the failure
+count the signal recovery uses, because that count is cleared when a
+retired queue is replaced while a write the old queue destroyed stays
+destroyed.
+---
+ src/kosmickrisp/vulkan/kk_query_pool.c | 39 ++++++++++++++++++++++++--
+ src/kosmickrisp/vulkan/kk_queue.c      | 15 ++++++++++
+ src/kosmickrisp/vulkan/kk_queue.h      | 12 ++++++++
+ 3 files changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
+index 89f96972..9253e654 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.c
++++ b/src/kosmickrisp/vulkan/kk_query_pool.c
+@@ -17,9 +17,15 @@
+ #include "kk_entrypoints.h"
+ #include "kk_physical_device.h"
+ #include "kk_query_table.h"
++#include "kk_queue.h"
+ 
+ #include "kosmickrisp/bridge/mtl_bridge.h"
+ 
++#include "util/os_time.h"
++
++#include <inttypes.h>
++#include <stdio.h>
++
+ struct kk_query_report {
+    uint64_t value;
+ };
+@@ -532,12 +538,27 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
+    return p_atomic_read(available) != 0;
+ }
+ 
++/* How long a query may stay unavailable on a queue that has failed before the
++ * wait gives up. A query becomes available through a GPU write inside a
++ * submitted command buffer, so a failure that killed that command buffer takes
++ * the write with it and no report ever names the query. Waiting is then
++ * endless, which is what this bound exists to prevent; it is three orders of
++ * magnitude over the time the tightest device this driver targets allows a
++ * command buffer, so a query a healthy submission is still on its way to
++ * writing is never given up on. */
++static const uint64_t kk_lost_query_timeout_ns = 10ull * 1000000000ull;
++
+ static VkResult
+ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+                             uint32_t query)
+ {
+-   /* WAIT has no timeout. The queue's native completion handler reports an
+-    * actual device failure; a slow submission must not manufacture one. */
++   /* WAIT has no timeout of its own. The queue's native completion handler
++    * reports an actual device failure; a slow submission must not manufacture
++    * one. What it cannot report is a GPU write it destroyed, so a queue that
++    * has failed bounds the wait and a queue that has not waits as long as it
++    * takes. */
++   uint64_t unavailable_since = 0u;
++
+    for (;;) {
+       if (kk_query_is_available(dev, pool, query))
+          return VK_SUCCESS;
+@@ -546,6 +567,20 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+       if (status != VK_SUCCESS)
+          return status;
+ 
++      if (dev->has_queue && kk_queue_has_failed(&dev->queue)) {
++         uint64_t now = os_time_get_nano();
++         if (unavailable_since == 0u) {
++            unavailable_since = now;
++         } else if (now - unavailable_since >= kk_lost_query_timeout_ns) {
++            fprintf(stderr,
++                    "KosmicKrisp gave up on a query a failed Metal submission "
++                    "never made available after %" PRIu64
++                    " s, so its caller is not held forever\n",
++                    kk_lost_query_timeout_ns / 1000000000ull);
++            return VK_ERROR_DEVICE_LOST;
++         }
++      }
++
+       os_time_sleep(50);
+    }
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+index 9933c76b..20ab6728 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -78,6 +78,20 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
+    return made_good;
+ }
+ 
++bool
++kk_queue_has_failed(struct kk_queue *queue)
++{
++   struct kk_queue_feedback *feedback = queue->feedback;
++   if (!feedback)
++      return false;
++
++   simple_mtx_lock(&feedback->signal_mutex);
++   bool failed = feedback->ever_failed;
++   simple_mtx_unlock(&feedback->signal_mutex);
++
++   return failed;
++}
++
+ /* Metal reports a failure against one submission, but the work it kills
+  * behind that submission does not always arrive as a report of its own. A
+  * signal enqueued after the reported one can therefore go missing with
+@@ -294,6 +308,7 @@ commit_callback(struct mtl_feedback_data *data)
+       ++feedback->failures;
+       /* Survived or not, this queue runs nothing more that can be trusted. */
+       feedback->poisoned = true;
++      feedback->ever_failed = true;
+    }
+    simple_mtx_unlock(&feedback->signal_mutex);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
+index 573787d4..5e3f724b 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.h
++++ b/src/kosmickrisp/vulkan/kk_queue.h
+@@ -52,6 +52,10 @@ struct kk_queue_feedback {
+     * has killed one, so a survived failure retires the native queue. Set by
+     * the report, acted on by the submit thread. */
+    bool poisoned;
++   /* Whether Metal has ever failed a submission on this device's queue.
++    * Unlike failures, this is never cleared: a GPU write destroyed by a
++    * failure stays destroyed after the queue that lost it is retired. */
++   bool ever_failed;
+ };
+ 
+ /* Per-submission feedback payload. Metal reports a failure against one
+@@ -89,6 +93,14 @@ kk_queue_device(struct kk_queue *queue)
+ uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
+                                         mtl_shared_event *event);
+ 
++/* Whether Metal has ever failed a submission on this queue.
++ *
++ * A failure destroys the work the submission had not run, including GPU writes
++ * a caller is waiting to observe directly in memory rather than through a
++ * timeline. Such a caller cannot be told the write is gone - nothing names it -
++ * so it needs this to know that waiting longer cannot produce it. */
++bool kk_queue_has_failed(struct kk_queue *queue);
++
+ VkResult kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+                        const VkDeviceQueueCreateInfo *pCreateInfo,
+                        uint32_t index_in_family);

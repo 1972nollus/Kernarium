@@ -1,7 +1,7 @@
-From 51be2eb06a55fd1fd0fa2847a358c8b4956dd5c5 Mon Sep 17 00:00:00 2001
+From 4315692a090533dee221afeb7352b24a728009e1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 02:19:23 +0900
-Subject: [PATCH 023/109] kosmickrisp: implement RGB32 uniform texel buffers
+Subject: [PATCH 023/102] kosmickrisp: implement RGB32 uniform texel buffers
 
 Metal has no three-component 32-bit texture-buffer format, so a view of one
 is read through the GPU address the descriptor carries, with the bounds test
@@ -35,7 +35,7 @@ format test discards it.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 2a16944..4cde058 100644
+index 2a169448..4cde058c 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -8,6 +8,7 @@
@@ -135,7 +135,7 @@ index 2a16944..4cde058 100644
      * the native texture view identity registered for its lifetime.
      */
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.h b/src/kosmickrisp/vulkan/kk_buffer_view.h
-index b1ce0e0..07cae2c 100644
+index b1ce0e0d..07cae2c9 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.h
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.h
 @@ -23,6 +23,9 @@ struct kk_buffer_view {
@@ -149,7 +149,7 @@ index b1ce0e0..07cae2c 100644
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
-index 50045f7..6650556 100644
+index 50045f7f..66505561 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
 @@ -232,10 +232,11 @@ write_buffer_view_desc(struct kk_descriptor_set *set,
@@ -166,7 +166,7 @@ index 50045f7..6650556 100644
        desc.element_count = view->vk.elements;
     }
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9b4a16d..649b2de 100644
+index 9b4a16df..649b2dec 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -77,13 +77,90 @@ struct kk_storage_image_descriptor {
@@ -263,7 +263,7 @@ index 9b4a16d..649b2de 100644
  
  /* This has to match nir_address_format_64bit_bounded_global */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index df16b9e..426b289 100644
+index df16b9e6..426b2899 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -503,14 +503,13 @@ index df16b9e..426b289 100644
     bool pass_lower_ssbo = nir_shader_intrinsics_pass(
        nir, lower_ssbo_descriptor, nir_metadata_control_flow, &ctx);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index cfd8253..74d3065 100644
+index 122a0f6b..be0938b8 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -258,4 +258,39 @@ if with_tests
-     ),
+@@ -259,6 +259,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
-+
+ 
 +  test(
 +    'kosmickrisp_rgb32_texel_format',
 +    executable(
@@ -524,6 +523,14 @@ index cfd8253..74d3065 100644
 +    ),
 +    suite : ['kosmickrisp'],
 +  )
++
+   test(
+     'kosmickrisp_non_seamless_cube_lowering',
+     executable(
+@@ -280,4 +294,25 @@ if with_tests
+     ),
+     suite : ['kosmickrisp'],
+   )
 +
 +  test(
 +    'kosmickrisp_rgb32_texel_lowering',
@@ -548,7 +555,7 @@ index cfd8253..74d3065 100644
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
 new file mode 100644
-index 0000000..8823e3e
+index 00000000..8823e3ed
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
 @@ -0,0 +1,80 @@
@@ -634,7 +641,7 @@ index 0000000..8823e3e
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 new file mode 100644
-index 0000000..589757a
+index 00000000..589757a8
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 @@ -0,0 +1,310 @@

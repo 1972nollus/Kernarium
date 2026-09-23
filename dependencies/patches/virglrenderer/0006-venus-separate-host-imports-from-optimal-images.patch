@@ -1,7 +1,7 @@
-From d153ba62fa5a087fe79fadc08175c32b5653dbf1 Mon Sep 17 00:00:00 2001
+From fe9bd594deb534a2902b0c3b92e1639890007677 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 15:51:18 +0900
-Subject: [PATCH 06/51] venus: separate host imports from optimal images
+Subject: [PATCH 06/49] venus: separate host imports from optimal images
 
 ---
  src/venus/vkr_buffer.c          | 12 +++++
@@ -12,7 +12,7 @@ Subject: [PATCH 06/51] venus: separate host imports from optimal images
  5 files changed, 130 insertions(+), 13 deletions(-)
 
 diff --git a/src/venus/vkr_buffer.c b/src/venus/vkr_buffer.c
-index 99ec8dd..d4d2309 100644
+index 99ec8dd9..d4d23097 100644
 --- a/src/venus/vkr_buffer.c
 +++ b/src/venus/vkr_buffer.c
 @@ -6,6 +6,7 @@
@@ -56,7 +56,7 @@ index 99ec8dd..d4d2309 100644
  
  void
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index a8dd8fc..a3336e1 100644
+index a8dd8fcd..a3336e15 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -254,11 +254,16 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
@@ -117,7 +117,7 @@ index a8dd8fc..a3336e1 100644
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 5634aa7..7516604 100644
+index 5634aa74..75166040 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -51,6 +51,9 @@ vkr_dispatch_vkGetImageMemoryRequirements(
@@ -153,7 +153,7 @@ index 5634aa7..7516604 100644
  
  static void
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index d59aade..ca4cf38 100644
+index d59aade3..ca4cf387 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -171,7 +171,43 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -268,7 +268,7 @@ index d59aade..ca4cf38 100644
  
  static void
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index bd2a474..6923db4 100644
+index bd2a4748..6923db49 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -31,7 +31,11 @@ struct vkr_physical_device {

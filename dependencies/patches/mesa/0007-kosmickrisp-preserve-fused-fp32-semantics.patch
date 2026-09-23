@@ -1,14 +1,14 @@
-From 3d3e572e8d052a93bce62fa8eb2f3c41265556c0 Mon Sep 17 00:00:00 2001
+From 33a9a84b9afb92fcee2406112be6e0ad4963b0ff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 18:52:26 +0900
-Subject: [PATCH 007/109] kosmickrisp: preserve fused fp32 semantics
+Subject: [PATCH 007/102] kosmickrisp: preserve fused fp32 semantics
 
 ---
  src/kosmickrisp/compiler/nir_to_msl.c | 112 +++++++++++++++++++++++++-
  1 file changed, 111 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 975c723..2ca8a7b 100644
+index 975c7237..2ca8a7b2 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
 @@ -32,6 +32,111 @@ get_entrypoint_name(nir_shader *shader)

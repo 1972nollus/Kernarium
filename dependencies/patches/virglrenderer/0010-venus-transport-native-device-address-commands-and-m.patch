@@ -1,7 +1,7 @@
-From d7637eaaa9d924be09ea5e2f17ccd577bf1eb6f6 Mon Sep 17 00:00:00 2001
+From 05b5cfdd5969e6a45a995bd3c6940a2462ac9248 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 17:23:49 +0900
-Subject: [PATCH 10/51] venus: transport native device-address commands and
+Subject: [PATCH 10/49] venus: transport native device-address commands and
  maintenance
 
 ---
@@ -34,7 +34,7 @@ Subject: [PATCH 10/51] venus: transport native device-address commands and
  26 files changed, 330 insertions(+), 43 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index ced2650..96c8c88 100644
+index ced2650e..96c8c887 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -374,23 +374,73 @@ if with_venus and with_host_darwin
@@ -137,7 +137,7 @@ index ced2650..96c8c88 100644
  with_fuzzer = get_option('fuzzer')
  with_valgrind = get_option('valgrind')
 diff --git a/meson_options.txt b/meson_options.txt
-index c594cb5..31937a0 100644
+index c594cb51..31937a0a 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
 @@ -45,6 +45,13 @@ option(
@@ -155,7 +155,7 @@ index c594cb5..31937a0 100644
    'vulkan-dload',
    type : 'boolean',
 diff --git a/src/venus/vkr_acceleration_structure.c b/src/venus/vkr_acceleration_structure.c
-index f08abf0..f9ce115 100644
+index f08abf0b..f9ce1157 100644
 --- a/src/venus/vkr_acceleration_structure.c
 +++ b/src/venus/vkr_acceleration_structure.c
 @@ -5,7 +5,7 @@
@@ -192,7 +192,7 @@ index f08abf0..f9ce115 100644
        vkr_dispatch_vkDestroyAccelerationStructureKHR;
     dispatch->dispatch_vkGetAccelerationStructureBuildSizesKHR =
 diff --git a/src/venus/vkr_allocator.c b/src/venus/vkr_allocator.c
-index 47ec240..e42935a 100644
+index 47ec2402..e42935a0 100644
 --- a/src/venus/vkr_allocator.c
 +++ b/src/venus/vkr_allocator.c
 @@ -31,6 +31,7 @@
@@ -204,7 +204,7 @@ index 47ec240..e42935a 100644
  #include "vulkan/vulkan.h"
  
 diff --git a/src/venus/vkr_command_buffer.c b/src/venus/vkr_command_buffer.c
-index 766c5c7..146a047 100644
+index 766c5c71..146a047e 100644
 --- a/src/venus/vkr_command_buffer.c
 +++ b/src/venus/vkr_command_buffer.c
 @@ -1268,18 +1268,181 @@ vkr_dispatch_vkCmdPushDataEXT(UNUSED struct vn_dispatch_context *dispatch,
@@ -454,7 +454,7 @@ index 766c5c7..146a047 100644
 -      vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT;
  }
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 0a5c9e8..0694d4c 100644
+index 0a5c9e8c..0694d4ca 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -9,7 +9,7 @@
@@ -485,7 +485,7 @@ index 0a5c9e8..0694d4c 100644
     .KHR_ray_query = true,
     .KHR_ray_tracing_maintenance1 = true,
 diff --git a/src/venus/vkr_common.h b/src/venus/vkr_common.h
-index 00a4252..439b36d 100644
+index 00a42529..439b36d3 100644
 --- a/src/venus/vkr_common.h
 +++ b/src/venus/vkr_common.h
 @@ -28,6 +28,8 @@
@@ -498,7 +498,7 @@ index 00a4252..439b36d 100644
  #include "virgl_util.h"
  #include "virglrenderer.h"
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index e045777..48d3b52 100644
+index e0457772..48d3b522 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -10,7 +10,7 @@
@@ -511,7 +511,7 @@ index e045777..48d3b52 100644
  #define XXH_INLINE_ALL
  #include "util/xxhash.h"
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index 7383f92..f0acdd4 100644
+index 7383f924..f0acdd4a 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
 @@ -9,8 +9,8 @@
@@ -526,7 +526,7 @@ index 7383f92..f0acdd4 100644
  
  #include "vkr_cs.h"
 diff --git a/src/venus/vkr_descriptor_heap.c b/src/venus/vkr_descriptor_heap.c
-index 6b2f347..0c92125 100644
+index 6b2f3479..0c921250 100644
 --- a/src/venus/vkr_descriptor_heap.c
 +++ b/src/venus/vkr_descriptor_heap.c
 @@ -5,7 +5,7 @@
@@ -539,7 +539,7 @@ index 6b2f347..0c92125 100644
  #include "vkr_context.h"
  #include "vkr_device.h"
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index bdd2ab8..c2870a0 100644
+index bdd2ab82..c2870a0f 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -5,7 +5,7 @@
@@ -552,7 +552,7 @@ index bdd2ab8..c2870a0 100644
  #include "vkr_command_buffer.h"
  #include "vkr_context.h"
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index 980b687..fe75431 100644
+index 980b6877..fe754314 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -8,7 +8,7 @@
@@ -565,7 +565,7 @@ index 980b687..fe75431 100644
  #include "vkr_context.h"
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 8e3f118..84e6ab9 100644
+index 8e3f118a..84e6ab94 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -11,7 +11,7 @@
@@ -578,7 +578,7 @@ index 8e3f118..84e6ab9 100644
  #include "vkr_device_memory_gen.h"
  #include "vkr_host_memory.h"
 diff --git a/src/venus/vkr_device_object.json b/src/venus/vkr_device_object.json
-index 5a52181..5cc414f 100644
+index 5a521811..5cc414f1 100644
 --- a/src/venus/vkr_device_object.json
 +++ b/src/venus/vkr_device_object.json
 @@ -332,7 +332,13 @@
@@ -597,7 +597,7 @@ index 5a52181..5cc414f 100644
          ]
      }
 diff --git a/src/venus/vkr_device_object.py b/src/venus/vkr_device_object.py
-index 2844d37..5ec55ea 100644
+index 2844d37d..5ec55ea6 100644
 --- a/src/venus/vkr_device_object.py
 +++ b/src/venus/vkr_device_object.py
 @@ -494,7 +494,7 @@ def file_header_generator(json_file):
@@ -610,7 +610,7 @@ index 2844d37..5ec55ea 100644
      return FILE_HEADER_TEMPL.format(script=script, guard=guard,
              protocol_includes=protocol_includes).lstrip()
 diff --git a/src/venus/vkr_host_copy.c b/src/venus/vkr_host_copy.c
-index 077a5cd..757e049 100644
+index 077a5cd6..757e0493 100644
 --- a/src/venus/vkr_host_copy.c
 +++ b/src/venus/vkr_host_copy.c
 @@ -9,7 +9,7 @@
@@ -623,7 +623,7 @@ index 077a5cd..757e049 100644
  #include "vkr_context.h"
  #include "vkr_device.h"
 diff --git a/src/venus/vkr_instance.c b/src/venus/vkr_instance.c
-index f3d1b6b..3536dea 100644
+index f3d1b6b7..3536deaa 100644
 --- a/src/venus/vkr_instance.c
 +++ b/src/venus/vkr_instance.c
 @@ -5,7 +5,7 @@
@@ -636,7 +636,7 @@ index f3d1b6b..3536dea 100644
  #include "vkr_context.h"
  #include "vkr_physical_device.h"
 diff --git a/src/venus/vkr_instance.h b/src/venus/vkr_instance.h
-index edd2ec0..0ac5318 100644
+index edd2ec07..0ac5318b 100644
 --- a/src/venus/vkr_instance.h
 +++ b/src/venus/vkr_instance.h
 @@ -8,7 +8,7 @@
@@ -649,7 +649,7 @@ index edd2ec0..0ac5318 100644
  struct vkr_instance {
     struct vkr_object base;
 diff --git a/src/venus/vkr_library.h b/src/venus/vkr_library.h
-index 12aebf9..d279891 100644
+index 12aebf96..d2798919 100644
 --- a/src/venus/vkr_library.h
 +++ b/src/venus/vkr_library.h
 @@ -8,7 +8,7 @@
@@ -662,7 +662,7 @@ index 12aebf9..d279891 100644
  struct vulkan_library {
     void *handle;
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index fd79413..bdc96c9 100644
+index fd79413d..bdc96c93 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -5,7 +5,7 @@
@@ -675,7 +675,7 @@ index fd79413..bdc96c9 100644
  #include "vkr_context.h"
  #include "vkr_device.h"
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 7bda834..1d3ef2f 100644
+index 7bda8340..1d3ef2f1 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -8,7 +8,7 @@
@@ -688,7 +688,7 @@ index 7bda834..1d3ef2f 100644
  struct vkr_physical_device {
     struct vkr_object base;
 diff --git a/src/venus/vkr_queue.c b/src/venus/vkr_queue.c
-index d75a229..36c39e7 100644
+index d75a2294..36c39e70 100644
 --- a/src/venus/vkr_queue.c
 +++ b/src/venus/vkr_queue.c
 @@ -5,7 +5,7 @@
@@ -701,7 +701,7 @@ index d75a229..36c39e7 100644
  #include "vkr_context.h"
  #include "vkr_physical_device.h"
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
-index 3a69b92..52ef342 100644
+index 3a69b928..52ef342c 100644
 --- a/src/venus/vkr_renderer.c
 +++ b/src/venus/vkr_renderer.c
 @@ -5,7 +5,7 @@
@@ -714,7 +714,7 @@ index 3a69b92..52ef342 100644
  #include "venus_hw.h"
  
 diff --git a/src/venus/vkr_ring.c b/src/venus/vkr_ring.c
-index 0d4899e..2644648 100644
+index 0d4899ef..26446485 100644
 --- a/src/venus/vkr_ring.c
 +++ b/src/venus/vkr_ring.c
 @@ -9,7 +9,7 @@
@@ -727,7 +727,7 @@ index 0d4899e..2644648 100644
  #include "vkr_context.h"
  
 diff --git a/src/venus/vkr_ring.h b/src/venus/vkr_ring.h
-index 89d8159..15adc6f 100644
+index 89d8159e..15adc6f6 100644
 --- a/src/venus/vkr_ring.h
 +++ b/src/venus/vkr_ring.h
 @@ -8,7 +8,7 @@
@@ -740,7 +740,7 @@ index 89d8159..15adc6f 100644
  /* We read from the ring buffer to a temporary buffer for
   * vkr_context_submit_cmd.  Until that is changed, we want to put a limit
 diff --git a/src/venus/vkr_transport.c b/src/venus/vkr_transport.c
-index a8daba4..61167bb 100644
+index a8daba46..61167bbd 100644
 --- a/src/venus/vkr_transport.c
 +++ b/src/venus/vkr_transport.c
 @@ -5,8 +5,8 @@

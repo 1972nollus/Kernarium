@@ -1,7 +1,7 @@
-From 30fd353c309083b6063ef6d89c555af017719647 Mon Sep 17 00:00:00 2001
+From f0953d0dd7bf5825d9056e9836cb5a9035a9b9eb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 19:28:45 +0900
-Subject: [PATCH 030/109] vulkan: preserve trailing bytes when lowering
+Subject: [PATCH 030/102] vulkan: preserve trailing bytes when lowering
  whole-size fills
 
 vkCmdFillBuffer with VK_WHOLE_SIZE fills complete uint32 words and leaves any trailing one to three bytes untouched. Round only that resolved range with a 64-bit mask, and skip dispatch when it contains no full word. Explicit sizes and generic device address ranges retain their existing semantics.
@@ -15,7 +15,7 @@ Add a dispatch-level regression test linked to the production command-buffer obj
  create mode 100644 src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 
 diff --git a/src/vulkan/runtime/meson.build b/src/vulkan/runtime/meson.build
-index 7da99c8..84b2d80 100644
+index 7da99c88..84b2d805 100644
 --- a/src/vulkan/runtime/meson.build
 +++ b/src/vulkan/runtime/meson.build
 @@ -339,3 +339,19 @@ idep_vulkan_runtime = declare_dependency(
@@ -40,7 +40,7 @@ index 7da99c8..84b2d80 100644
 +endif
 diff --git a/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c b/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 new file mode 100644
-index 0000000..cd936e1
+index 00000000..cd936e1d
 --- /dev/null
 +++ b/src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 @@ -0,0 +1,104 @@
@@ -149,7 +149,7 @@ index 0000000..cd936e1
 +   return 0;
 +}
 diff --git a/src/vulkan/runtime/vk_command_buffer.c b/src/vulkan/runtime/vk_command_buffer.c
-index f23ad4b0..3ce8d41 100644
+index f23ad4b0..3ce8d414 100644
 --- a/src/vulkan/runtime/vk_command_buffer.c
 +++ b/src/vulkan/runtime/vk_command_buffer.c
 @@ -935,8 +935,14 @@ vk_common_CmdFillBuffer(

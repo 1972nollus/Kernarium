@@ -1,7 +1,7 @@
-From 59ea73fa388ffb40d774ff4f2d13cbd90fd19322 Mon Sep 17 00:00:00 2001
+From b7e69a3240ff73abe8b44e2a05a1dbf702aa2418 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 23:51:15 +0900
-Subject: [PATCH 01/51] build: name an Apple host's foreign resources through
+Subject: [PATCH 01/49] build: name an Apple host's foreign resources through
  Metal
 
 An Apple host has neither GBM nor dma-buf, so a blob another renderer
@@ -24,7 +24,7 @@ where those handles exist.
  create mode 100644 src/virgl_metal.m
 
 diff --git a/config.h.meson b/config.h.meson
-index 3f894fd..d32d76a 100644
+index 3f894fd4..d32d76aa 100644
 --- a/config.h.meson
 +++ b/config.h.meson
 @@ -45,6 +45,7 @@
@@ -36,7 +36,7 @@ index 3f894fd..d32d76a 100644
  #mesondefine ENABLE_SAME_PROCESS_RENDER_SERVER
  #mesondefine ENABLE_RENDER_SERVER_WORKER_PROCESS
 diff --git a/meson.build b/meson.build
-index 235d798..18e8b7a 100644
+index 235d7986..18e8b7a2 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -219,6 +219,17 @@ if cc.has_header('linux/udmabuf.h')
@@ -58,7 +58,7 @@ index 235d798..18e8b7a 100644
               'popcount', 'popcountll', 'types_compatible_p', 'unreachable']
    if cc.has_function(b)
 diff --git a/src/meson.build b/src/meson.build
-index f4a2272..c956715 100644
+index f4a2272d..c9567159 100644
 --- a/src/meson.build
 +++ b/src/meson.build
 @@ -216,6 +216,13 @@ if with_venus and gbm_dep.found()
@@ -77,7 +77,7 @@ index f4a2272..c956715 100644
     virgl_sources += venus_codegen
 diff --git a/src/virgl_metal.h b/src/virgl_metal.h
 new file mode 100644
-index 0000000..e1894e4
+index 00000000..e1894e4c
 --- /dev/null
 +++ b/src/virgl_metal.h
 @@ -0,0 +1,19 @@
@@ -102,7 +102,7 @@ index 0000000..e1894e4
 +#endif /* VIRGL_METAL_H */
 diff --git a/src/virgl_metal.m b/src/virgl_metal.m
 new file mode 100644
-index 0000000..214cc92
+index 00000000..214cc92f
 --- /dev/null
 +++ b/src/virgl_metal.m
 @@ -0,0 +1,22 @@

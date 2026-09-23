@@ -1,7 +1,7 @@
-From f857ee2802876b4daa2b5011549f298be283e0a9 Mon Sep 17 00:00:00 2001
+From 7742ea29a5f056605c4fade6fd07e7a246bbbf7a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 18:25:14 +0900
-Subject: [PATCH 09/51] venus: present native Metal scanouts
+Subject: [PATCH 09/49] venus: present native Metal scanouts
 
 ---
  src/venus/vkr_device.c          |  17 ++++
@@ -19,7 +19,7 @@ Subject: [PATCH 09/51] venus: present native Metal scanouts
  12 files changed, 574 insertions(+), 24 deletions(-)
 
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 59c7795..bdd2ab8 100644
+index 59c77952..bdd2ab82 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -132,6 +132,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
@@ -61,7 +61,7 @@ index 59c7795..bdd2ab8 100644
  
     args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
-index fcf875c..980b687 100644
+index fcf875c2..980b6877 100644
 --- a/src/venus/vkr_device.h
 +++ b/src/venus/vkr_device.h
 @@ -30,6 +30,12 @@ struct vkr_device {
@@ -78,7 +78,7 @@ index fcf875c..980b687 100644
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 4c8286c..8e3f118 100644
+index 4c8286c7..8e3f118a 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -5,7 +5,10 @@
@@ -280,7 +280,7 @@ index 4c8286c..8e3f118 100644
        *out_blob = (struct virgl_context_blob) {
           .type = VIRGL_RESOURCE_FD_SHM,
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index e25198b..02e2ebf 100644
+index e25198b5..02e2ebf3 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -32,6 +32,7 @@ struct vkr_device_memory {
@@ -302,7 +302,7 @@ index e25198b..02e2ebf 100644
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index d1222ad..1e76f17 100644
+index d1222ad9..1e76f17f 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -6,13 +6,123 @@
@@ -500,7 +500,7 @@ index d1222ad..1e76f17 100644
  
  static void
 diff --git a/src/venus/vkr_image.h b/src/venus/vkr_image.h
-index a491b8d..5120b80 100644
+index a491b8d7..5120b80f 100644
 --- a/src/venus/vkr_image.h
 +++ b/src/venus/vkr_image.h
 @@ -11,6 +11,8 @@
@@ -513,7 +513,7 @@ index a491b8d..5120b80 100644
  VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index cb6fdfe..fd79413 100644
+index cb6fdfe9..fd79413d 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -359,6 +359,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
@@ -527,7 +527,7 @@ index cb6fdfe..fd79413 100644
           physical_dev->KHR_portability_subset = true;
  
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index ad07431..7bda834 100644
+index ad07431a..7bda8340 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -31,6 +31,7 @@ struct vkr_physical_device {
@@ -539,7 +539,7 @@ index ad07431..7bda834 100644
     VkPhysicalDeviceMemoryProperties host_memory_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
-index dbc803c..e555eda 100644
+index dbc803cf..e555eda8 100644
 --- a/src/virgl_resource.c
 +++ b/src/virgl_resource.c
 @@ -54,6 +54,15 @@ struct virgl_native_resource {
@@ -733,7 +733,7 @@ index dbc803c..e555eda 100644
        free(released);
     }
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index d21fc0b..50cd862 100644
+index d21fc0bc..50cd8625 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
 @@ -210,6 +210,22 @@ virgl_resource_native_acquire(int fd,
@@ -760,7 +760,7 @@ index d21fc0b..50cd862 100644
  virgl_resource_native_release(uint64_t id);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index c927c0d..6ab8aa7 100644
+index c927c0d5..6ab8aa7d 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
 @@ -50,6 +50,7 @@
@@ -835,7 +835,7 @@ index c927c0d..6ab8aa7 100644
  virgl_renderer_export_fence(uint64_t client_fence_id, int *fd)
  {
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 0bcafef..7c6969d 100644
+index 0bcafef4..7c6969d9 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
 @@ -363,7 +363,23 @@ struct virgl_renderer_resource_info {
