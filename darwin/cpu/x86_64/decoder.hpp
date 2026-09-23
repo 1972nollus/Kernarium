@@ -197,6 +197,8 @@ enum class Operation : std::uint8_t {
 	mxcsr,
 	system_call,
 	breakpoint,
+	/* Raises #GP at user privilege: port I/O, HLT, CLI/STI, INT n, MSRs. */
+	privileged,
 };
 
 enum class Condition : std::uint8_t {

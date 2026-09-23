@@ -189,6 +189,8 @@ timestamp rdtsc
 timestamp rdtscp
 .purgem timestamp
 
+gadget privileged
+	ldr x22, [_stream]
 /* A faulting instruction does not retire; RIP names the instruction. */
 .Lx86_timestamp_fault:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]

@@ -679,6 +679,13 @@ void print_result(std::string_view status, std::size_t retired,
 			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
 			continue;
 		}
+		/* HLT, the test's end marker, raises #GP at user privilege without
+		 * retiring. The loop head recognizes it and compares the state. */
+		if (result.event == uml::cpu::EngineEvent::general_protection) {
+			const auto marker = memory.snapshot(cpu.rip, 1);
+			if (!marker.empty() && marker.front() == std::byte{0xf4})
+				continue;
+		}
 		if (result.event != uml::cpu::EngineEvent::continued) {
 			const auto status = result.event ==
 				uml::cpu::EngineEvent::memory_fault ?

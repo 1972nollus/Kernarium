@@ -2519,6 +2519,11 @@ private:
 			return true;
 		case 0x01:
 			return decode_0f01(instruction);
+		case 0x06: case 0x07: case 0x08: case 0x09:
+		case 0x20: case 0x21: case 0x22: case 0x23:
+		case 0x30: case 0x32: case 0x33: case 0x35:
+			instruction.operation = Operation::privileged;
+			return true;
 		case 0x05:
 			if (prefixes_.mode == ExecutionMode::compat32)
 				return false;
@@ -3052,8 +3057,22 @@ private:
 			return true;
 		case 0xcd: {
 			std::uint64_t vector{};
-			if (!read_unsigned(1, vector) || vector != 0x80)
+			if (!read_unsigned(1, vector))
 				return false;
+			/* Linux gates only vectors 3, 4 and 0x80 for user mode. */
+			if (vector == 3) {
+				instruction.operation = Operation::breakpoint;
+				return true;
+			}
+			if (vector == 4) {
+				instruction.operation = Operation::interrupt_overflow;
+				instruction.vector_opcode = opcode;
+				return true;
+			}
+			if (vector != 0x80) {
+				instruction.operation = Operation::privileged;
+				return true;
+			}
 			instruction.operation = Operation::system_call;
 			instruction.vector_opcode = opcode;
 			return true;
@@ -3114,6 +3133,14 @@ private:
 		case 0xf5:
 			instruction.operation = Operation::carry_complement;
 			return true;
+		/* User mode has IOPL 0 and no I/O bitmap. */
+		case 0x6c: case 0x6d: case 0x6e: case 0x6f:
+		case 0xe4: case 0xe5: case 0xe6: case 0xe7:
+		case 0xec: case 0xed: case 0xee: case 0xef:
+		case 0xf4:
+		case 0xfa: case 0xfb:
+			instruction.operation = Operation::privileged;
+			return true;
 		case 0xf6:
 		case 0xf7:
 			return decode_unary_group(instruction, opcode, width);
@@ -3173,6 +3200,7 @@ bool Instruction::terminal() const noexcept
 	case Operation::interrupt_ret:
 	case Operation::system_call:
 	case Operation::breakpoint:
+	case Operation::privileged:
 		return true;
 	default:
 		return false;

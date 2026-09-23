@@ -175,6 +175,7 @@ gadget into
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	tbz x8, #11, .Lx86_into_not_taken
+.Lx86_into_taken:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -182,6 +183,11 @@ gadget into
 	b uml_x86_64_gadget_leave
 .Lx86_into_not_taken:
 	retire_and_next
+
+/* INT 4 raises the overflow trap whatever OF holds. */
+gadget int4
+	ldr x22, [_stream], #8
+	b .Lx86_into_taken
 
 .purgem legacy_store_flags
 .purgem legacy_set_szp

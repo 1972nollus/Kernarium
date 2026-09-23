@@ -6161,7 +6161,9 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return true;
 	}
 	case Operation::interrupt_overflow:
-		stream.push_back(entry_address(native::uml_x86_64_gadget_into));
+		stream.push_back(entry_address(instruction.vector_opcode == 0xcd ?
+			native::uml_x86_64_gadget_int4 :
+			native::uml_x86_64_gadget_into));
 		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	case Operation::move: {
@@ -6865,6 +6867,10 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	case Operation::breakpoint:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_breakpoint));
 		stream.push_back(next_instruction_pointer(gadget, mode));
+		return true;
+	case Operation::privileged:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_privileged));
+		stream.push_back(gadget.address);
 		return true;
 	case Operation::cpuid:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_cpuid));

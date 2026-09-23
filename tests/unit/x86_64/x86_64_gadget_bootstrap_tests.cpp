@@ -4867,6 +4867,91 @@ read_test_sequences(void *context) noexcept
 		"clear-overflow INTO did not retire normally");
 }
 
+/* User mode runs with IOPL 0 and CR4.TSD under PR_SET_TSC: these raise #GP,
+ * which Linux delivers as SIGSEGV, rather than #UD. The faulting instruction
+ * does not retire. */
+[[nodiscard]] bool privileged_instructions_raise_general_protection()
+{
+	using namespace uml::cpu::x86_64;
+	const std::vector<std::vector<std::uint8_t>> encodings{
+		{0xed}, {0xec}, {0xe6, 0x80}, {0xe5, 0x70}, {0xef},
+		{0x6c}, {0xf3, 0x6f}, {0xf4}, {0xfa}, {0xfb},
+		{0xcd, 0x21}, {0x0f, 0x30}, {0x0f, 0x32}, {0x0f, 0x33},
+		{0x0f, 0x09}, {0x0f, 0x22, 0xd8},
+	};
+	for (const auto &encoding : encodings) {
+		TestMemory memory;
+		for (std::size_t index = 0; index < encoding.size(); ++index)
+			memory.load(100 + index, {encoding[index]});
+		const auto built = gadgets::build(memory, 100, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"privileged instruction did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.rip = 100;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		if (!expect(result.event ==
+				uml::cpu::EngineEvent::general_protection,
+			"privileged instruction did not raise #GP") ||
+			!expect(result.retired_instructions == 0 && cpu.rip == 100,
+				"#GP retired or lost its precise RIP"))
+			return false;
+	}
+
+	TestMemory timestamp_memory;
+	timestamp_memory.load(100, {0x0f, 0x31});
+	const auto timestamp = gadgets::build(timestamp_memory, 100, 1);
+	if (!expect(timestamp.status == gadgets::BuildStatus::built,
+		"RDTSC did not build"))
+		return false;
+	CpuState enabled{};
+	enabled.rip = 100;
+	const auto enabled_result = gadgets::execute(
+		timestamp.program, enabled, timestamp_memory, 1);
+	CpuState disabled{};
+	disabled.rip = 100;
+	disabled.timestamp_faults = true;
+	const auto disabled_result = gadgets::execute(
+		timestamp.program, disabled, timestamp_memory, 1);
+	return expect(enabled_result.event == uml::cpu::EngineEvent::continued &&
+		enabled.rip == 102, "enabled RDTSC did not retire") &&
+		expect(disabled_result.event ==
+			uml::cpu::EngineEvent::general_protection &&
+			disabled_result.retired_instructions == 0 &&
+			disabled.rip == 100,
+			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
+}
+
+/* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
+ * both trap after the instruction. */
+[[nodiscard]] bool software_interrupt_vectors_trap()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(100, {0xcd, 0x03});
+	memory.load(200, {0xcd, 0x04});
+	const auto int3 = gadgets::build(memory, 100, 1);
+	const auto int4 = gadgets::build(memory, 200, 1);
+	if (!expect(int3.status == gadgets::BuildStatus::built &&
+		int4.status == gadgets::BuildStatus::built,
+		"INT 3 or INT 4 did not build"))
+		return false;
+	CpuState breakpoint{};
+	breakpoint.rip = 100;
+	const auto breakpoint_result = gadgets::execute(
+		int3.program, breakpoint, memory, 1);
+	CpuState overflow{};
+	overflow.rip = 200;
+	const auto overflow_result = gadgets::execute(
+		int4.program, overflow, memory, 1);
+	return expect(breakpoint_result.event ==
+			uml::cpu::EngineEvent::breakpoint && breakpoint.rip == 102,
+		"INT 3 did not trap after the instruction") &&
+		expect(overflow_result.event == uml::cpu::EngineEvent::overflow &&
+			overflow.rip == 202,
+			"INT 4 did not raise the overflow trap with OF clear");
+}
+
 /* PALIGNR, PSRLDQ and PSLLDQ take a byte count as a full eight-bit immediate.
  * Every count that reaches the operand's size discards the whole lane, so the
  * only architecturally visible answer is zero.  The gadgets index their
@@ -6131,6 +6216,8 @@ int main()
 		migrated_gadgets_are_native_only() &&
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
+		privileged_instructions_raise_general_protection() &&
+		software_interrupt_vectors_trap() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&
