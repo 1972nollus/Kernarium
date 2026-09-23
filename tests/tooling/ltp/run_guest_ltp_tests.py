@@ -1782,6 +1782,13 @@ page dumped because: still mapped when deleted
             {"passed": 1, "failed": 0, "broken": 1, "skipped": 0},
             "",
         )
+        clean = runner.Result(
+            case, 0,
+            {"passed": 4, "failed": 0, "broken": 0,
+             "skipped": 0, "warnings": 0},
+            "",
+        )
+        self.assertTrue(runner.accepted(clean))
         self.assertTrue(runner.accepted(warning))
         self.assertTrue(runner.accepted(partial))
         self.assertFalse(runner.accepted(

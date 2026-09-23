@@ -990,6 +990,13 @@ def accepted(result: Result) -> bool:
             and result.summary.get("warnings", 0) > 0
         )
     if result.case.expectation == "userspace-flaky-exempt":
+        clean = (
+            result.return_code == 0
+            and result.summary.get("passed", 0) > 0
+            and failed == 0
+            and broken == 0
+            and skipped == 0
+        )
         warning_only = (
             result.return_code == 4
             and result.summary.get("passed", 0) > 0
@@ -1004,7 +1011,7 @@ def accepted(result: Result) -> bool:
             and failed == 0
             and broken > 0
         )
-        return warning_only or partial_break
+        return clean or warning_only or partial_break
     if result.case.expectation == "userspace-broken-exempt":
         return (
             result.return_code == 2

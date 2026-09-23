@@ -165,7 +165,7 @@ syscalls	eventfd02	eventfd02	pass	120	All five eventfd read and write checks pas
 syscalls	eventfd03	eventfd03	pass	120	All three eventfd semaphore checks pass
 syscalls	eventfd04	eventfd04	pass	120	All three eventfd overflow checks pass
 syscalls	eventfd05	eventfd05	pass	120	Both eventfd poll checks pass
-syscalls	eventfd06	eventfd06	libc-exempt	120	The installed LTP binary reports libaio unavailable before testing the kernel
+syscalls	eventfd06	eventfd06	pass	120	LTP is built with libaio, and the eventfd-signalled AIO check passes
 syscalls	eventfd2_01	eventfd2_01	pass	120	Both basic eventfd2 checks pass
 syscalls	eventfd2_02	eventfd2_02	pass	120	Both eventfd2 flag checks pass
 syscalls	eventfd2_03	eventfd2_03	pass	120	Both eventfd2 error-path checks pass
@@ -444,7 +444,7 @@ syscalls	get_robust_list01	get_robust_list01	pass	120	All five robust-list check
 syscalls	getrusage01	getrusage01	pass	120	Both getrusage checks pass
 syscalls	getrusage02	getrusage02	libc-exempt	120	All three applicable checks pass; LTP intentionally skips libc getrusage EFAULT
 syscalls	getrusage03	getrusage03	pass	180	All nine getrusage accounting checks pass
-syscalls	getrusage04	getrusage04	pass	120	The getrusage child-accounting check passes
+syscalls	getrusage04	getrusage04	hardware-exempt	120	LTP skips the CPU-time accounting check on a virtual machine, and systemd-detect-virt reports UML
 syscalls	getsid01	getsid01	pass	120	The basic getsid check passes
 syscalls	getsid02	getsid02	pass	120	The getsid error-path check passes
 syscalls	getsockname01	getsockname01	pass	120	All six getsockname checks pass
@@ -462,7 +462,7 @@ syscalls	getxattr01	getxattr01	pass	180	All four ext2 and tmpfs getxattr checks 
 syscalls	getxattr02	getxattr02	pass	180	All eight ext2 and tmpfs getxattr error-path checks pass
 syscalls	getxattr03	getxattr03	pass	120	The getxattr permission check passes
 syscalls	getxattr04	getxattr04	userspace-exempt	180	XFS is built in, but the installed rootfs lacks mkfs.xfs
-syscalls	getxattr05	getxattr05	libc-exempt	120	The installed LTP package was built without xattr or ACL development headers
+syscalls	getxattr05	getxattr05	pass	120	LTP is built with ACL and xattr headers, and all ACL-namespace checks pass
 syscalls	init_module01	init_module01	static-kernel-exempt	120	Loadable modules are disabled and the rootfs omits init_module.ko
 syscalls	init_module02	init_module02	static-kernel-exempt	120	Loadable modules are disabled and the rootfs omits init_module.ko
 syscalls	ioctl01	ioctl01	pass	120	All nine PTY ioctl checks pass after mounting devpts at boot
@@ -473,9 +473,9 @@ syscalls	ioctl05	ioctl05	pass	180	All three filesystem flag ioctl checks pass
 syscalls	ioctl06	ioctl06	pass	180	All nine block-device ioctl error-path checks pass
 syscalls	ioctl07	ioctl07	pass	180	The clone-range filesystem-compatibility check passes
 syscalls	ioctl08	ioctl08	userspace-exempt	180	Btrfs is built in, but the installed rootfs lacks mkfs.btrfs
-syscalls	ioctl09	ioctl09	userspace-exempt	180	The installed rootfs lacks parted, so the case exits before an ioctl
+syscalls	ioctl09	ioctl09	pass	180	The LTP image carries parted, and the partition-table rescan checks pass
 syscalls	ioctl10	ioctl10	pass	180	All 17 pipe-size ioctl argument and descriptor checks pass
-syscalls	ioctl_loop01	ioctl_loop01	userspace-exempt	240	Nine loop checks pass; three partition subcases require absent parted
+syscalls	ioctl_loop01	ioctl_loop01	pass	240	The LTP image carries parted, so all loop partition subcases pass
 syscalls	ioctl_loop02	ioctl_loop02	pass	240	All 16 loop configure and status argument checks pass
 syscalls	ioctl_loop03	ioctl_loop03	pass	240	The loop block-size ioctl check passes
 syscalls	ioctl_loop04	ioctl_loop04	pass	240	All three loop direct-I/O state checks pass
@@ -501,7 +501,7 @@ syscalls	ioctl_pidfd02	ioctl_pidfd02	pass	240	All 10 pidfd ioctl error-path chec
 syscalls	ioctl_pidfd03	ioctl_pidfd03	pass	240	All three pidfd cgroup-namespace ioctl checks pass	ext2
 syscalls	ioctl_pidfd04	ioctl_pidfd04	pass	240	All five pidfd namespace-mask ioctl checks pass	ext2
 syscalls	ioctl_pidfd05	ioctl_pidfd05	pass	240	Both pidfd namespace parent and owner checks pass	ext2
-syscalls	ioctl_pidfd06	ioctl_pidfd06	userspace-failure-exempt	240	Installed LTP expects ESRCH but Linux 6.18.14+ correctly returns EREMOTE	ext2
+syscalls	ioctl_pidfd06	ioctl_pidfd06	pass	240	The LTP image builds current LTP, which expects the EREMOTE result Linux 6.18 returns	ext2
 syscalls	inotify_init1_01	inotify_init1_01	pass	240	All four inotify_init1 flag checks pass	ext2
 syscalls	inotify_init1_02	inotify_init1_02	pass	240	All four inotify_init1 descriptor semantics checks pass	ext2
 syscalls	inotify01	inotify01	pass	240	All seven basic inotify event checks pass	ext2
@@ -525,16 +525,16 @@ syscalls	ioprio_set01	ioprio_set01	userspace-exempt	240	Valid priority setting p
 syscalls	ioprio_set02	ioprio_set02	pass	240	All three invalid I/O-priority argument checks pass	ext2
 syscalls	ioprio_set03	ioprio_set03	pass	240	All three I/O-priority permission and ownership checks pass	ext2
 syscalls	io_cancel01	io_cancel01	pass	240	The native AIO cancellation behavior check passes	ext2
-syscalls	io_cancel02	io_cancel02	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
-syscalls	io_destroy01	io_destroy01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
+syscalls	io_cancel02	io_cancel02	pass	240	LTP is built with libaio, and the cancel error path passes	ext2
+syscalls	io_destroy01	io_destroy01	pass	240	LTP is built with libaio, and the destroy error path passes	ext2
 syscalls	io_destroy02	io_destroy02	pass	240	The native AIO context destruction behavior check passes	ext2
 syscalls	io_getevents01	io_getevents01	pass	240	The native AIO event retrieval behavior check passes	ext2
-syscalls	io_getevents02	io_getevents02	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
+syscalls	io_getevents02	io_getevents02	pass	240	LTP is built with libaio, and the getevents error path passes	ext2
 syscalls	io_pgetevents01	io_pgetevents01	pass	240	io_pgetevents with a signal mask passes	ext2
 syscalls	io_pgetevents02	io_pgetevents02	pass	240	All six io_pgetevents error paths pass	ext2
-syscalls	io_setup01	io_setup01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
+syscalls	io_setup01	io_setup01	pass	240	LTP is built with libaio, and every setup check passes	ext2
 syscalls	io_setup02	io_setup02	pass	240	All five native AIO setup argument and resource checks pass	ext2
-syscalls	io_submit01	io_submit01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
+syscalls	io_submit01	io_submit01	pass	240	LTP is built with libaio, and every submit check passes	ext2
 syscalls	io_submit02	io_submit02	pass	240	Both native AIO submission validation checks pass	ext2
 syscalls	io_submit03	io_submit03	pass	240	All seven native AIO submission descriptor and opcode checks pass	ext2
 syscalls	keyctl01	keyctl01	pass	240	Both kernel keyring join and search checks pass	ext2
@@ -588,7 +588,7 @@ syscalls	listmount04	listmount04	userspace-exempt	240	Eight Linux 6.18 error pat
 syscalls	listxattr01	listxattr01	pass	240	Extended attribute name listing succeeds
 syscalls	listxattr02	listxattr02	pass	240	All four listxattr error paths pass
 syscalls	listxattr03	listxattr03	pass	240	Both listxattr size and buffer behavior checks pass
-syscalls	listxattr04	listxattr04	libc-exempt	240	Installed LTP lacks the xattr or ACL development headers required to build this case
+syscalls	listxattr04	listxattr04	pass	240	LTP is built with xattr headers, and the attribute-length check passes
 syscalls	llistxattr01	llistxattr01	pass	240	Symlink extended attribute name listing succeeds
 syscalls	llistxattr02	llistxattr02	pass	240	All four llistxattr error paths pass
 syscalls	llistxattr03	llistxattr03	pass	240	Both llistxattr size and buffer behavior checks pass
@@ -850,7 +850,7 @@ syscalls	pipeio_5	pipeio -T pipeio_5 -c 5 -s 5000 -i 10 -b -f x80	pass	240	Buffe
 syscalls	pipeio_6	pipeio -T pipeio_6 -c 5 -s 5000 -i 10 -b -u -f x80	pass	240	Unaligned buffered large-record pipe I/O stress passes	host-pressure
 syscalls	pipeio_7	pipeio -T pipeio_7 -c 5 -s 5000 -i 10 -f x80	pass	240	Large-record pipe I/O stress passes	host-pressure
 syscalls	pipeio_8	pipeio -T pipeio_8 -c 5 -s 5000 -i 10 -u -f x80	pass	240	Unaligned large-record pipe I/O stress passes	host-pressure
-syscalls	pivot_root01	pivot_root01	userspace-exempt	240	Four applicable pivot_root checks pass; installed LTP lacks libcap support for the capability-drop subcase
+syscalls	pivot_root01	pivot_root01	pass	240	LTP is built with libcap, so the capability-drop subcase also passes
 syscalls	poll01	poll01	pass	240	Poll readiness and timeout behavior passes
 syscalls	poll02	poll02	pass	240	All poll bad-address and descriptor checks pass
 syscalls	ppoll01	ppoll01	pass	240	All ppoll timeout signal and argument checks pass
@@ -859,7 +859,7 @@ syscalls	prctl02	prctl02	hardware-exempt	240	All 17 applicable prctl error cases
 syscalls	prctl03	prctl03	pass	240	All parent-death signal controls pass
 syscalls	prctl05	prctl05	pass	240	All process-name controls pass
 syscalls	prctl06	prctl06	pass	240	All child subreaper controls pass with a built-in loop scratch device
-syscalls	prctl07	prctl07	userspace-exempt	240	Kernel ambient capabilities are supported; installed LTP compiled out the assertions because libcap development files were missing
+syscalls	prctl07	prctl07	pass	240	LTP is built with libcap, and the ambient-capability assertions pass
 syscalls	prctl08	prctl08	pass	240	All no-new-privileges controls pass
 syscalls	prctl09	prctl09	pass	240	All anonymous VMA naming controls pass
 syscalls	prctl10	prctl10	hardware-exempt	240	PR_GET_TSC and PR_SET_TSC are x86 timestamp-counter controls and upstream rejects aarch64 before execution
@@ -1645,7 +1645,7 @@ mm	kallsyms	kallsyms	pass	300	All readable kernel symbols are probed with 32810 
 mm	cpuset01	cpuset01	libc-exempt	300	Installed LTP lacks libnuma API version 2 and exits before exercising the cpuset workload
 mm	cpuset02	cpuset02	libc-exempt	300	Installed LTP lacks libnuma API version 2 and exits before exercising the second cpuset workload
 mm	oom02	oom02	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
-mm	oom03	oom03	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
+mm	oom03	oom03	pass	600	LTP is built with libnuma, and the memcg OOM checks pass
 mm	oom04	oom04	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
 mm	oom05	oom05	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
 mm	swapping01	swapping01 -i 5	pass	900	All five over-RAM allocation iterations swap 285 to 376 MiB without heavy-swapping failure	tmpfs	swap=2G	host-pressure
@@ -1653,7 +1653,7 @@ mm	vma01	vma01	pass	300	Parent and child create and discover both expected three
 mm	vma02	vma02	libc-exempt	300	Installed LTP lacks libnuma API version 2 and exits before exercising either VMA workload
 mm	vma03	vma03	hardware-exempt	300	Native arm64 has no legacy mmap2 syscall and LTP exits before executing either case
 mm	vma04	vma04	libc-exempt	300	Installed LTP lacks libnuma API version 2 and exits before exercising either NUMA-aware VMA workload
-mm	vma05	vma05.sh	userspace-exempt	300	Installed guest package lacks the gdb command required by this script before its first assertion
+mm	vma05	vma05.sh	pass	300	The LTP image carries gdb, and the vDSO core-dump backtrace completes
 mm	overcommit_memory01	overcommit_memory	pass	300	All eight strict heuristic and always-overcommit allocation-limit checks pass at the default ratio
 mm	overcommit_memory02	overcommit_memory -R 0	pass	300	All eight allocation-limit checks pass with swap supplying the zero-ratio strict commit limit	tmpfs	swap=2G
 mm	overcommit_memory03	overcommit_memory -R 30	pass	300	All eight strict heuristic and always-overcommit allocation-limit checks pass at a 30 percent ratio
@@ -1829,12 +1829,12 @@ containers	mountns01	mountns01	pass	120	Shared mount propagation succeeds from p
 containers	mountns02	mountns02	pass	120	Private mounts stay isolated in both parent-to-child and child-to-parent directions
 containers	mountns03	mountns03	pass	120	Slave mount propagation follows the expected one-way parent-to-child semantics
 containers	mountns04	mountns04	pass	120	An unbindable mount rejects bind propagation as expected
-containers	userns01	userns01	libc-exempt	120	The installed LTP package was built without libcap and skips before exercising user namespaces
+containers	userns01	userns01	pass	120	LTP is built with libcap, and the user-namespace checks pass
 containers	userns02	userns02	pass	120	User-namespace UID and GID mappings expose the expected credentials
 containers	userns03	userns03	pass	120	Nested user namespaces preserve UID and GID maps and prevent re-enabling setgroups
 containers	userns04	userns04	pass	120	setns enforces user-namespace permissions and permits the authorized transition
 containers	userns05	userns05	pass	120	Namespace inode identities distinguish shared, cloned, and unshared user namespaces
-containers	userns06	userns06	libc-exempt	120	The installed LTP package was built without libcap and skips before exercising user namespaces
+containers	userns06	userns06	pass	120	LTP is built with libcap, and the user-namespace checks pass
 containers	userns07	userns07	pass	120	All nested user-namespace children complete successfully
 containers	userns08	userns08	pass	120	A mapped user namespace is denied write access to a restricted file with EACCES
 containers	sysinfo03	sleep 11; sysinfo03	pass	240	The unchanged time-namespace sysinfo test passes after its negative-offset uptime precondition is met
@@ -1943,14 +1943,14 @@ controllers	cgroup_core03	cgroup_core03	pass	120	Both threaded and ordinary leaf
 controllers	cgroup	cgroup_regression_test.sh	userspace-exempt	300	All seven production-profile legacy cgroup regressions pass; two branches require a removed scheduler interface and one optional diagnostic branch is not built
 controllers	memcg_regression	memcg_regression_test.sh	pass	300	All four legacy memory-controller OOM and regression checks pass on an isolated cgroup v1 hierarchy	cgroup1=memory	host-pressure
 controllers	memcg_test_3	memcg_test_3	pass	300	The memory controller survives 50000 cgroup create-remove cycles raced against signals; the race needs a second vCPU because a single one alternates the two tasks only at the 100 Hz tick	cgroup1=memory	serial
-controllers	memcg_failcnt	memcg_failcnt.sh	userspace-warning-exempt	300	All three fail-counter assertions pass; cleanup warns because the rootfs BusyBox find lacks GNU -delete	cgroup1=memory
-controllers	memcg_force_empty	memcg_force_empty.sh	userspace-warning-exempt	300	All six force-empty interface assertions pass; cleanup warns because the rootfs BusyBox find lacks GNU -delete	cgroup1=memory
-controllers	memcg_limit_in_bytes	memcg_limit_in_bytes.sh	userspace-warning-exempt	300	All eighteen limit enforcement, rounding, and invalid-input assertions pass; cleanup warns because BusyBox find lacks GNU -delete	cgroup1=memory
+controllers	memcg_failcnt	memcg_failcnt.sh	pass	300	The LTP image uses GNU findutils, so cleanup is warning-free and all checks pass	cgroup1=memory
+controllers	memcg_force_empty	memcg_force_empty.sh	pass	300	The LTP image uses GNU findutils, so cleanup is warning-free and all checks pass	cgroup1=memory
+controllers	memcg_limit_in_bytes	memcg_limit_in_bytes.sh	pass	300	The LTP image uses GNU findutils, so cleanup is warning-free and all checks pass	cgroup1=memory
 controllers	memcg_stat_rss	memcg_stat_rss.sh	userspace-flaky-exempt	300	Linux 6.18 batches memcg stats above 64 times online CPUs; results vary between delayed counter failures, cleanup breaks, and a warning-only pass because the rootfs find applet lacks -delete	cgroup1=memory
 controllers	memcg_subgroup_charge	memcg_subgroup_charge.sh	userspace-variable-matrix-exempt	300	The legacy script requires non-hierarchical memcg v1 behavior that Linux 6.18 hardwires off, then continues after its setup write is rejected	cgroup1=memory	host-pressure
-controllers	memcg_max_usage_in_bytes	memcg_max_usage_in_bytes_test.sh	userspace-flaky-exempt	300	All ten peak-memory assertions pass with a cleanup warning when charges settle; the legacy exact-delta helper may instead break after completed assertions	cgroup1=memory
+controllers	memcg_max_usage_in_bytes	memcg_max_usage_in_bytes_test.sh	userspace-flaky-exempt	300	All ten peak-memory assertions pass; under load the helper's back-to-back warm-up SIGUSR1 signals can coalesce, leaving the allocation outside the cgroup so the charge wait breaks	cgroup1=memory
 controllers	memcg_move_charge_at_immigrate	memcg_move_charge_at_immigrate_test.sh	userspace-failure-exempt	300	Linux 6.18 removed charge migration: the documented ABI always reads zero and rejects every nonzero write with EINVAL	cgroup1=memory
-controllers	memcg_memsw_limit_in_bytes	memcg_memsw_limit_in_bytes_test.sh	userspace-warning-exempt	300	All fifteen memory-plus-swap limit and input-validation assertions pass; cleanup warns because BusyBox find lacks GNU -delete	cgroup1=memory
+controllers	memcg_memsw_limit_in_bytes	memcg_memsw_limit_in_bytes_test.sh	pass	300	The LTP image uses GNU findutils, so cleanup is warning-free and all checks pass	cgroup1=memory
 controllers	memcg_stat	memcg_stat_test.sh	userspace-variable-matrix-exempt	300	The fixed-65-page test reads batched cache, mapped-file, and unevictable counters immediately; result counts vary with topology and its removed non-hierarchical case skips	cgroup1=memory
 controllers	memcg_use_hierarchy	memcg_use_hierarchy_test.sh	userspace-exempt	300	Hierarchical ancestor OOM enforcement passes; the second legacy case requires non-hierarchical mode removed since Linux 5.11	cgroup1=memory
 controllers	memcg_usage_in_bytes	memcg_usage_in_bytes_test.sh	userspace-flaky-exempt	300	All four assertions pass; under load the helper's back-to-back warm-up SIGUSR1 signals can coalesce, leaving the allocation outside the cgroup so the charge wait breaks	cgroup1=memory
@@ -2004,26 +2004,26 @@ controllers	pids_8_2	pids.sh 8 2 0	pass	300	Pids events accounting reports the e
 controllers	pids_8_10	pids.sh 8 10 0	pass	300	Pids events accounting reports the expected limit hit with ten resident tasks
 controllers	pids_9_2	pids.sh 9 2 0	pass	300	Pids events-local accounting distinguishes local and descendant limit hits with two tasks
 controllers	pids_9_10	pids.sh 9 10 0	pass	300	Pids events-local accounting distinguishes local and descendant limit hits with ten tasks
-power_management_tests	runpwtests01	runpwtests01.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
-power_management_tests	runpwtests02	runpwtests02.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
+power_management_tests	runpwtests01	runpwtests01.sh	userspace-missing-exempt	300	LTP 20260529 no longer ships the runpwtests01.sh script its runtest file names
+power_management_tests	runpwtests02	runpwtests02.sh	userspace-missing-exempt	300	LTP 20260529 no longer ships the runpwtests02.sh script its runtest file names
 power_management_tests	runpwtests03	runpwtests03.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
 power_management_tests	runpwtests04	runpwtests04.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
 power_management_tests	runpwtests06	runpwtests06.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
-commands	ar_sh	export TCdat=$LTPROOT/testcases/bin; ar01.sh	userspace-broken-exempt	300	BusyBox ar lacks GNU append option syntax and the rootfs also lacks stat
-commands	ld01_sh	ld01.sh	userspace-exempt	300	The rootfs intentionally omits the GCC development toolchain required by this command test
-commands	ldd01_sh	ldd01.sh	userspace-failure-exempt	300	The rootfs omits the ldd development helper and the legacy script misreports that missing command as TFAIL
-commands	nm01_sh	nm01.sh	userspace-exempt	300	The rootfs intentionally omits the nm development tool required by this command test
-commands	file01_sh	file01.sh	userspace-exempt	300	The rootfs intentionally omits readelf which this command test requires during setup
-commands	tar01_sh	tar_tests.sh	userspace-matrix-exempt	300	Nine supported operations pass; BusyBox tar lacks GNU compare and append modes and stat is absent
+commands	ar_sh	export TCdat=$LTPROOT/testcases/bin; ar01.sh	pass	300	The LTP image carries GNU binutils and coreutils, and every ar check passes
+commands	ld01_sh	ld01.sh	pass	300	The LTP image carries the GCC toolchain, and every link check passes
+commands	ldd01_sh	ldd01.sh	pass	300	The LTP image carries ldd, and the dependency listing passes
+commands	nm01_sh	nm01.sh	pass	300	The LTP image carries GNU binutils, and every nm check passes
+commands	file01_sh	file01.sh	pass	300	The LTP image carries file and readelf, and every check passes
+commands	tar01_sh	tar_tests.sh	pass	300	The LTP image carries GNU tar, and every mode passes
 commands	cpio01_sh	cpio_tests.sh	userspace-exempt	300	BusyBox cpio lacks the output-mode flag required by the packaged command test
 commands	unzip01_sh	unzip01.sh	pass	300	Unzip execution output and extracted files all pass
-commands	gzip01_sh	gzip_tests.sh	userspace-matrix-exempt	300	BusyBox gzip lacks recursive mode and the legacy script then breaks on its stale scratch directory
+commands	gzip01_sh	gzip_tests.sh	pass	300	The LTP image carries GNU gzip, and every mode passes
 commands	cp01_sh	cp_tests.sh	pass	300	All ten copy hard-link symlink and recursive directory checks pass
 commands	ln01_sh	ln_tests.sh	pass	300	All twelve hard-link and symbolic-link command checks pass
 commands	mkdir01_sh	mkdir_tests.sh	pass	300	All five mkdir mode parent and error-path checks pass
-commands	mv01_sh	mv_tests.sh	userspace-partial-broken-exempt	300	The supported recursive move passes before BusyBox mv rejects GNU backup mode
-commands	du01_sh	du01.sh	userspace-exempt	300	The rootfs omits stat which the packaged du test requires to compute expected values
-commands	df01_sh	df01.sh	userspace-error-exempt	300	The rootfs omits stat and the legacy script exits on an empty arithmetic operand before assertions
+commands	mv01_sh	mv_tests.sh	pass	300	The LTP image carries GNU coreutils, and every move mode passes
+commands	du01_sh	du01.sh	pass	300	The LTP image carries GNU coreutils, and every du check passes
+commands	df01_sh	df01.sh	pass	300	The LTP image carries GNU coreutils, and every df check passes
 commands	mkfs01_sh	mkfs01.sh	pass	300	All five generic mkfs and ext2 formatting checks pass
 commands	mkfs01_ext2_sh	mkfs01.sh -f ext2	pass	300	All five explicit ext2 formatting checks pass
 commands	mkfs01_ext3_sh	mkfs01.sh -f ext3	pass	300	All five explicit ext3 format mount bad-block scan version and help checks pass
@@ -2034,14 +2034,14 @@ commands	mkfs01_minix_sh	mkfs01.sh -f minix	userspace-exempt	300	The rootfs omit
 commands	mkfs01_msdos_sh	mkfs01.sh -f msdos	userspace-exempt	300	The rootfs omits the mkfs.msdos formatter requested by this command test
 commands	mkfs01_vfat_sh	mkfs01.sh -f vfat	userspace-exempt	300	The rootfs omits the mkfs.vfat formatter requested by this command test
 commands	mkfs01_ntfs_sh	mkfs01.sh -f ntfs	userspace-exempt	300	The rootfs omits the mkfs.ntfs formatter requested by this command test
-commands	mkswap01_sh	mkswap01.sh	userspace-partial-broken-exempt	300	Five swap-formatting and kernel swapon checks pass before missing udevadm prevents the by-label device link from appearing
-commands	which01_sh	which01.sh	pass	300	All ten pathname alias version and help checks pass
+commands	mkswap01_sh	mkswap01.sh	userspace-exempt	300	The LTP image lacks uuidgen, so the script skips before formatting swap
+commands	which01_sh	which01.sh	userspace-exempt	300	Debian which passes both pathname checks and lacks the GNU alias, version and help options the other eight probe
 commands	lsmod01_sh	lsmod01.sh	static-kernel-exempt	300	The test requires loading ltp_lsmod01.ko while loadable modules are deliberately disabled
 commands	insmod01_sh	insmod01.sh	static-kernel-exempt	300	The test requires loading ltp_insmod01.ko while loadable modules are deliberately disabled
-commands	wc01_sh	wc01.sh	userspace-exempt	300	BusyBox wc passes all six supported short-option and help checks but omits six GNU long-option aliases
+commands	wc01_sh	wc01.sh	pass	300	The LTP image carries GNU coreutils, and all twelve wc checks pass
 commands	keyctl01_sh	keyctl01.sh	userspace-exempt	300	The rootfs omits the keyctl userspace command although kernel key syscalls are covered by passing syscall cases
-commands	gdb01_sh	gdb01.sh	userspace-exempt	300	The rootfs omits the gdb userspace debugger required by this command test
-commands	unshare01_sh	unshare01.sh	userspace-exempt	300	The rootfs omits the unshare userspace command although namespaces are covered by passing syscall and container cases
+commands	gdb01_sh	gdb01.sh	pass	300	The LTP image carries gdb, which runs a program to completion under ptrace
+commands	unshare01_sh	unshare01.sh	pass	300	The LTP image carries util-linux unshare, and every namespace mode passes
 commands	sysctl01_sh	sysctl01.sh	userspace-exempt	300	Linux 6.18 removed both legacy scheduler averaging tunables and the packaged compatibility test reports that matrix entry unsupported
 commands	sysctl02_sh	sysctl02.sh	userspace-exempt	300	All three applicable overflow checks pass while the fourth diagnostic-only case requires deliberately absent KASAN instrumentation
 commands	shell_test01	echo "SUCCESS" | shell_pipe01.sh	pass	300	The shell pipeline transports stdin and the comparison passes
