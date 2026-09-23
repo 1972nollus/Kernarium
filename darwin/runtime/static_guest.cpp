@@ -566,13 +566,14 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 #endif
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
-	/* RFLAGS.TF raises #DB after each instruction. The executor retires
-	 * exactly its budget, so a budget of one is a single step. */
+	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
+	 * budget the executor retires exactly that many, so a budget of one is
+	 * a single step. */
 	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
 	const auto &registered_interrupt = runtime.interrupt;
 	auto run = ::uml::runtime::run_x86_gadgets(
 		cpu, runtime.memory, runtime.x86_executor, generation,
-		stepping ? 1 : dispatch_budget, {
+		stepping ? 1 : dispatch_budget, stepping, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
