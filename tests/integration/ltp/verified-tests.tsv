@@ -530,8 +530,8 @@ syscalls	io_destroy01	io_destroy01	libc-exempt	240	The installed LTP binary lack
 syscalls	io_destroy02	io_destroy02	pass	240	The native AIO context destruction behavior check passes	ext2
 syscalls	io_getevents01	io_getevents01	pass	240	The native AIO event retrieval behavior check passes	ext2
 syscalls	io_getevents02	io_getevents02	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
-syscalls	io_pgetevents01	io_pgetevents01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
-syscalls	io_pgetevents02	io_pgetevents02	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
+syscalls	io_pgetevents01	io_pgetevents01	pass	240	io_pgetevents with a signal mask passes	ext2
+syscalls	io_pgetevents02	io_pgetevents02	pass	240	All six io_pgetevents error paths pass	ext2
 syscalls	io_setup01	io_setup01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
 syscalls	io_setup02	io_setup02	pass	240	All five native AIO setup argument and resource checks pass	ext2
 syscalls	io_submit01	io_submit01	libc-exempt	240	The installed LTP binary lacks required libaio development support	ext2
@@ -1942,7 +1942,7 @@ controllers	cgroup_core02	cgroup_core02	pass	120	A lesser cgroup namespace canno
 controllers	cgroup_core03	cgroup_core03	pass	120	Both threaded and ordinary leaf cgroups report the expected process counts
 controllers	cgroup	cgroup_regression_test.sh	userspace-exempt	300	All seven production-profile legacy cgroup regressions pass; two branches require a removed scheduler interface and one optional diagnostic branch is not built
 controllers	memcg_regression	memcg_regression_test.sh	pass	300	All four legacy memory-controller OOM and regression checks pass on an isolated cgroup v1 hierarchy	cgroup1=memory	host-pressure
-controllers	memcg_test_3	memcg_test_3	pass	300	The legacy memory controller preserves the expected task-migration and charge-accounting behavior	cgroup1=memory
+controllers	memcg_test_3	memcg_test_3	pass	300	The memory controller survives 50000 cgroup create-remove cycles raced against signals; the race needs a second vCPU because a single one alternates the two tasks only at the 100 Hz tick	cgroup1=memory	serial
 controllers	memcg_failcnt	memcg_failcnt.sh	userspace-warning-exempt	300	All three fail-counter assertions pass; cleanup warns because the rootfs BusyBox find lacks GNU -delete	cgroup1=memory
 controllers	memcg_force_empty	memcg_force_empty.sh	userspace-warning-exempt	300	All six force-empty interface assertions pass; cleanup warns because the rootfs BusyBox find lacks GNU -delete	cgroup1=memory
 controllers	memcg_limit_in_bytes	memcg_limit_in_bytes.sh	userspace-warning-exempt	300	All eighteen limit enforcement, rounding, and invalid-input assertions pass; cleanup warns because BusyBox find lacks GNU -delete	cgroup1=memory
@@ -1953,7 +1953,7 @@ controllers	memcg_move_charge_at_immigrate	memcg_move_charge_at_immigrate_test.s
 controllers	memcg_memsw_limit_in_bytes	memcg_memsw_limit_in_bytes_test.sh	userspace-warning-exempt	300	All fifteen memory-plus-swap limit and input-validation assertions pass; cleanup warns because BusyBox find lacks GNU -delete	cgroup1=memory
 controllers	memcg_stat	memcg_stat_test.sh	userspace-variable-matrix-exempt	300	The fixed-65-page test reads batched cache, mapped-file, and unevictable counters immediately; result counts vary with topology and its removed non-hierarchical case skips	cgroup1=memory
 controllers	memcg_use_hierarchy	memcg_use_hierarchy_test.sh	userspace-exempt	300	Hierarchical ancestor OOM enforcement passes; the second legacy case requires non-hierarchical mode removed since Linux 5.11	cgroup1=memory
-controllers	memcg_usage_in_bytes	memcg_usage_in_bytes_test.sh	userspace-flaky-exempt	300	All four assertions pass when kernel charges remain stable; the shared helper can instead break after a valid allocation because it demands an exact free delta	cgroup1=memory
+controllers	memcg_usage_in_bytes	memcg_usage_in_bytes_test.sh	userspace-flaky-exempt	300	All four assertions pass; under load the helper's back-to-back warm-up SIGUSR1 signals can coalesce, leaving the allocation outside the cgroup so the charge wait breaks	cgroup1=memory
 controllers	memcg_control	memcg_control_test.sh	pass	300	The legacy memory controller exposes and accepts the expected control-file operations	cgroup1=memory
 controllers	memcontrol01	memcontrol01	pass	300	Both cgroup-v2 memory.current accounting subcases pass
 controllers	memcontrol02	memcontrol02	pass	300	All eighteen anonymous and file-backed cgroup-v2 accounting assertions pass across ext2 and tmpfs	2G
@@ -2174,7 +2174,7 @@ kernel_misc	cpufreq_boost	cpufreq_boost	hardware-exempt	180	The case requires a 
 kernel_misc	uaccess	uaccess	static-kernel-exempt	180	The packaged case requires a runtime-loaded user-access test module
 kernel_misc	rcu_torture	rcu_torture.sh	static-kernel-exempt	180	The packaged case requires loading and unloading a runtime torture module
 kernel_misc	lock_torture	lock_torture.sh	static-kernel-exempt	180	The packaged case requires loading and unloading a runtime torture module
-kernel_misc	zram01	zram01.sh	userspace-exempt	300	All 12 applicable zram lifecycle and compression checks pass; one retired max_comp_streams attribute probe is skipped	kernel-arg=ncpus=1	serial
+kernel_misc	zram01	zram01.sh	userspace-exempt	600	All 12 applicable zram lifecycle and compression checks pass; one retired max_comp_streams attribute probe is skipped	kernel-arg=ncpus=1	serial
 kernel_misc	zram02	zram02.sh	userspace-exempt	420	All applicable swap-device paths pass; one retired attribute probe is skipped	4G
 kernel_misc	zram03	zram03	pass	300	The full compressed-memory write read and reset cycle passes
 kernel_misc	umip_basic_test	umip_basic_test	hardware-exempt	180	The packaged case is specific to an unavailable x86 instruction-control facility

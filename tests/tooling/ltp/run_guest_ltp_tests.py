@@ -319,6 +319,12 @@ class ResultParsingTests(unittest.TestCase):
             "one retired max_comp_streams attribute probe is skipped",
         )
         self.assertTrue(cases["kernel_misc/zram01"].serial)
+        # zram01 fills three 25 MiB devices with one dd process per KiB,
+        # about 63,000 execs; each exec translates its code from cold, so
+        # the x86-64 guest needs well over the default 300 s.
+        self.assertGreaterEqual(
+            cases["kernel_misc/zram01"].timeout_seconds, 600
+        )
         self.assertEqual(
             cases["kernel_misc/zram01"].kernel_arguments, ("ncpus=1",)
         )
@@ -349,6 +355,55 @@ class ResultParsingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate disabled case"):
                 runner.load_disabled_manifest(path)
 
+    def test_expectation_overrides_replace_only_named_cases(self) -> None:
+        cases = [
+            runner.Case("syscalls", "a", "a", "hardware-exempt", 60, "arm64"),
+            runner.Case("syscalls", "b", "b", "pass", 60, "shared"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "expectations.tsv"
+            path.write_text(
+                "# scenario\ttest_id\texpectation\treason\n"
+                "syscalls\ta\tpass\tx86-64 has the legacy syscall\n",
+                encoding="utf-8",
+            )
+            overridden = runner.load_expectation_overrides(path, cases)
+        self.assertEqual(
+            [(case.expectation, case.reason) for case in overridden],
+            [("pass", "x86-64 has the legacy syscall"), ("pass", "shared")],
+        )
+
+    def test_expectation_overrides_are_strict(self) -> None:
+        cases = [runner.Case("syscalls", "a", "a", "pass", 60, "shared")]
+        for body, message in (
+            ("syscalls\tz\tpass\tr\n", "unknown case"),
+            ("syscalls\ta\tpass\tr\n", "already expects"),
+            ("syscalls\ta\tbogus\tr\n", "invalid expectation"),
+            ("syscalls\ta\thardware-exempt\n", "four nonempty"),
+            (
+                "syscalls\ta\thardware-exempt\tr\n"
+                "syscalls\ta\thardware-exempt\tr\n",
+                "duplicate case",
+            ),
+        ):
+            with self.subTest(message=message):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = pathlib.Path(directory) / "expectations.tsv"
+                    path.write_text(body, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        runner.load_expectation_overrides(path, cases)
+
+    def test_repository_x86_64_manifests_match_the_shared_manifest(self) -> None:
+        cases = runner.load_manifest(LTP_ROOT / "verified-tests.tsv")
+        runner.load_expectation_overrides(
+            LTP_ROOT / "x86_64/expectations.tsv", cases
+        )
+        shared = runner.load_disabled_manifest(LTP_ROOT / "disabled-tests.tsv")
+        x86_64 = runner.load_disabled_manifest(
+            LTP_ROOT / "x86_64/disabled-tests.tsv"
+        )
+        self.assertFalse(shared.keys() & x86_64.keys())
+
     def test_guest_disk_uses_raw_erofs_root(self) -> None:
         arguments = runner.emulator_arguments(
             pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"), "1G"
@@ -375,6 +430,18 @@ class ResultParsingTests(unittest.TestCase):
         self.assertIn("mount -t sysfs sysfs /sys", bootstrap)
         self.assertIn("mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run", bootstrap)
         self.assertIn("mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp", bootstrap)
+        self.assertIn(
+            "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm", bootstrap
+        )
+        self.assertIn("mount -t devpts", bootstrap)
+        self.assertIn("mount -t securityfs", bootstrap)
+        self.assertIn("mount --make-rshared /", bootstrap)
+        self.assertIn("ip link set lo up", bootstrap)
+        self.assertIn("ip route add default via 10.0.2.2", bootstrap)
+        self.assertLess(
+            bootstrap.index("ip link set lo up"),
+            bootstrap.index(guest_support.OVERLAY_READY_MARKER),
+        )
         self.assertIn("uml_ltp_workspace=ext2", bootstrap)
         self.assertIn("command -v mkfs.ext2", bootstrap)
         self.assertIn("command -v mke2fs", bootstrap)

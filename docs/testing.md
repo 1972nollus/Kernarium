@@ -329,7 +329,14 @@ test count.
 The runner uses `/opt/ltp` from `rootfs.erofs` and the selected kernel bundle's
 `modules.builtin`. The shipped kernels have `CONFIG_MODULES=n`; disposable
 guest helpers may recognize exact built-ins but must reject unknown module
-operations. See the runner's current options with:
+operations.
+
+`--guest-arch x86_64` runs the same manifests on the x86_64-userspace slice
+with the [x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), applying
+the expectation overrides and additional exclusions in
+`tests/integration/ltp/x86_64/`. An override exists only where that image's
+userspace or the x86 ABI changes a case's outcome; an x86 exclusion names
+hardware or host-address-space behavior UML cannot provide. See the runner's current options with:
 
 ```sh
 python3 tests/integration/ltp/run_guest_ltp.py --help

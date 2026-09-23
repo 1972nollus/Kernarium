@@ -1,0 +1,52 @@
+# scenario	test_id	expectation	reason
+syscalls	arch_prctl01	pass	The x86 guest implements ARCH_GET_CPUID and ARCH_SET_CPUID, and every subcase passes
+syscalls	epoll_create01	pass	The x86-64 ABI has the legacy epoll_create syscall, and both raw and libc checks pass
+syscalls	epoll_create02	pass	The x86-64 ABI has the legacy epoll_create syscall, and all error checks pass
+syscalls	eventfd06	pass	The x86 image builds LTP with libaio, and the eventfd-signalled AIO check passes
+syscalls	futimesat01	pass	The x86-64 ABI has the legacy futimesat syscall, and every subcase passes
+syscalls	getxattr05	pass	The x86 image builds LTP with ACL and xattr headers, and all ACL-namespace checks pass
+syscalls	io_cancel02	pass	The x86 image builds LTP with libaio, and the cancel error path passes
+syscalls	io_destroy01	pass	The x86 image builds LTP with libaio, and the destroy error path passes
+syscalls	io_getevents02	pass	The x86 image builds LTP with libaio, and the getevents error path passes
+syscalls	io_setup01	pass	The x86 image builds LTP with libaio, and every setup check passes
+syscalls	io_submit01	pass	The x86 image builds LTP with libaio, and every submit check passes
+syscalls	ioctl09	pass	The x86 image carries parted, and the partition-table rescan checks pass
+syscalls	ioctl_loop01	pass	The x86 image carries parted, so all loop partition subcases pass
+syscalls	ioctl_pidfd06	pass	The x86 image builds current LTP, which expects the EREMOTE result Linux 6.18 returns
+syscalls	listxattr04	pass	The x86 image builds LTP with xattr headers, and the attribute-length check passes
+syscalls	pivot_root01	pass	The x86 image builds LTP with libcap, so the capability-drop subcase also passes
+syscalls	prctl07	pass	The x86 image builds LTP with libcap, and the ambient-capability assertions pass
+syscalls	prctl10	pass	PR_GET_TSC and PR_SET_TSC control the emulated x86 timestamp counter, and every subcase passes
+syscalls	ptrace07	pass	The x86-only check that PTRACE_SETREGSET rejects bad XSTATE headers passes
+syscalls	signal06	pass	The x86-only FPU-state-across-signal check passes
+syscalls	ustat01	pass	The x86-64 ABI has the obsolete ustat syscall, and the lookup passes
+syscalls	ustat02	pass	The x86-64 ABI has the obsolete ustat syscall, and every error check passes
+mm	mmapstress08	pass	The x86-only mapping stress passes
+mm	oom03	pass	The x86 image builds LTP with libnuma, and the memcg OOM checks pass
+mm	vma05	pass	The x86 image carries gdb, and the vDSO core-dump backtrace completes
+containers	userns01	pass	The x86 image builds LTP with libcap, and the user-namespace checks pass
+containers	userns06	pass	The x86 image builds LTP with libcap, and the user-namespace checks pass
+controllers	memcg_failcnt	pass	The x86 image uses GNU findutils, so cleanup is warning-free and all checks pass
+controllers	memcg_force_empty	pass	The x86 image uses GNU findutils, so cleanup is warning-free and all checks pass
+controllers	memcg_limit_in_bytes	pass	The x86 image uses GNU findutils, so cleanup is warning-free and all checks pass
+controllers	memcg_memsw_limit_in_bytes	pass	The x86 image uses GNU findutils, so cleanup is warning-free and all checks pass
+cve	cve-2017-15537	pass	The x86-only XSTATE regset reserved-bit check passes
+power_management_tests	runpwtests01	userspace-missing-exempt	LTP 20260529 no longer ships the runpwtests01.sh script its runtest file names
+power_management_tests	runpwtests02	userspace-missing-exempt	LTP 20260529 no longer ships the runpwtests02.sh script its runtest file names
+power_management_tests	runpwtests04	pass	The x86 guest is a supported architecture, and the sched_mc checks pass
+power_management_tests	runpwtests06	pass	The x86 guest is a supported architecture, and the timer-migration checks pass
+commands	ar_sh	pass	The x86 image carries GNU binutils and coreutils, and every ar check passes
+commands	df01_sh	pass	The x86 image carries GNU coreutils, and every df check passes
+commands	du01_sh	pass	The x86 image carries GNU coreutils, and every du check passes
+commands	file01_sh	pass	The x86 image carries file and readelf, and every check passes
+commands	gdb01_sh	pass	The x86 image carries gdb, which runs a program to completion under ptrace
+commands	gzip01_sh	pass	The x86 image carries GNU gzip, and every mode passes
+commands	ld01_sh	pass	The x86 image carries the GCC toolchain, and every link check passes
+commands	ldd01_sh	pass	The x86 image carries ldd, and the dependency listing passes
+commands	mkswap01_sh	userspace-exempt	The x86 image lacks uuidgen, so the script skips before formatting swap
+commands	mv01_sh	pass	The x86 image carries GNU coreutils, and every move mode passes
+commands	nm01_sh	pass	The x86 image carries GNU binutils, and every nm check passes
+commands	tar01_sh	pass	The x86 image carries GNU tar, and every mode passes
+commands	unshare01_sh	pass	The x86 image carries util-linux unshare, and every namespace mode passes
+commands	wc01_sh	pass	The x86 image carries GNU coreutils, and all twelve wc checks pass
+commands	which01_sh	userspace-exempt	Debian which passes both pathname checks and lacks the GNU alias, version and help options the other eight probe

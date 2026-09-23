@@ -47,6 +47,21 @@ OVERLAY_SHELL_BOOTSTRAP = "\n".join(
         "mkdir -p /run",
         "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run",
         "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
+        # An init would provide these; POSIX shm, ptys and loopback sockets
+        # otherwise fail with ENOENT or ENETUNREACH.
+        "mkdir -p /dev/shm /dev/pts",
+        "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm",
+        "mount -t devpts -o gid=5,mode=620,ptmxmode=000 devpts /dev/pts",
+        "mount -t securityfs securityfs /sys/kernel/security",
+        # systemd makes every mount shared; unshare(1) relies on it.
+        "mount --make-rshared /",
+        "ip link set lo up",
+        # The SLiRP provider's fixed lease; the kernel has no IP_PNP.
+        "if ip link show eth0 >/dev/null 2>&1; then",
+        "ip link set eth0 up",
+        "ip addr add 10.0.2.15/24 dev eth0",
+        "ip route add default via 10.0.2.2",
+        "fi",
         'case " $(cat /proc/cmdline) " in',
         '*" uml_ltp_workspace=ext2 "*)',
         "workspace_image=/run/uml-ltp-workspace.ext2",

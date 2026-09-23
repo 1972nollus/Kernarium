@@ -78,6 +78,10 @@ CGROUP2_NSDELEGATE_OPTION = "cgroup2=nsdelegate"
 KERNEL_ARGUMENT_PREFIX = "kernel-arg="
 CGROUP1_CONTROLLER = re.compile(r"^[a-z0-9_]+$")
 LTP_ROOT = "/opt/ltp"
+MANIFEST_DIRECTORY = pathlib.Path(__file__).resolve().parent
+# The shared manifest describes the arm64 guest. Another guest architecture
+# overrides the expectations its ABI changes and disables its own omissions.
+GUEST_ARCHITECTURES = ("arm64", "x86_64")
 LTP_BIN = f"{LTP_ROOT}/testcases/bin"
 LTP_OUTPUT = "/tmp/uml-ltp-output"
 LTP_DISPOSABLE_TOOLS = "/run/uml-ltp-tools"
@@ -708,6 +712,50 @@ def load_manifest(path: pathlib.Path) -> list[Case]:
     return cases
 
 
+def load_expectation_overrides(
+    path: pathlib.Path, cases: list[Case]
+) -> list[Case]:
+    """Apply one guest architecture's expectation overrides to the manifest."""
+    by_key = {case.key: case for case in cases}
+    overrides: dict[str, tuple[str, str]] = {}
+    with path.open(encoding="utf-8") as manifest:
+        for line_number, raw_line in enumerate(manifest, 1):
+            line = raw_line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) != 4 or not all(fields):
+                raise ValueError(
+                    f"{path}:{line_number}: expected four nonempty "
+                    "tab-separated fields"
+                )
+            scenario, test_id, expectation, reason = fields
+            key = f"{scenario}/{test_id}"
+            if key in overrides:
+                raise ValueError(f"{path}:{line_number}: duplicate case {key}")
+            if key not in by_key:
+                raise ValueError(f"{path}:{line_number}: unknown case {key}")
+            if expectation not in VALID_EXPECTATIONS:
+                raise ValueError(
+                    f"{path}:{line_number}: invalid expectation {expectation!r}"
+                )
+            if expectation == by_key[key].expectation:
+                raise ValueError(
+                    f"{path}:{line_number}: {key} already expects {expectation}"
+                )
+            overrides[key] = (expectation, reason)
+    return [
+        dataclasses.replace(
+            case,
+            expectation=overrides[case.key][0],
+            reason=overrides[case.key][1],
+        )
+        if case.key in overrides
+        else case
+        for case in cases
+    ]
+
+
 def load_disabled_manifest(path: pathlib.Path) -> dict[str, str]:
     """Load cases intentionally omitted from this emulator's LTP campaign."""
     disabled: dict[str, str] = {}
@@ -1001,6 +1049,16 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="userspace execution engine for every guest (default: jit)",
     )
     parser.add_argument(
+        "--guest-arch",
+        choices=GUEST_ARCHITECTURES,
+        default="arm64",
+        help=(
+            "guest userspace architecture; x86_64 applies "
+            "x86_64/expectations.tsv and x86_64/disabled-tests.tsv "
+            "(default: arm64)"
+        ),
+    )
+    parser.add_argument(
         "--results-dir",
         type=pathlib.Path,
         help="write raw per-case output and a machine-readable campaign summary",
@@ -1136,6 +1194,23 @@ def main() -> int:
         return 2
     cases = load_manifest(arguments.manifest)
     disabled = load_disabled_manifest(arguments.disabled_manifest)
+    if arguments.guest_arch != "arm64":
+        architecture = MANIFEST_DIRECTORY / arguments.guest_arch
+        try:
+            cases = load_expectation_overrides(
+                architecture / "expectations.tsv", cases
+            )
+            for key, reason in load_disabled_manifest(
+                architecture / "disabled-tests.tsv"
+            ).items():
+                if key in disabled:
+                    raise ValueError(
+                        f"{arguments.guest_arch} disables {key} twice"
+                    )
+                disabled[key] = reason
+        except (OSError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 2
     if arguments.jobs < 1:
         print("--jobs must be at least 1", file=sys.stderr)
         return 2
