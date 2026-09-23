@@ -1,7 +1,7 @@
-From 3ec1c2db738ea8c6206afcdd0b8885bd18817472 Mon Sep 17 00:00:00 2001
+From 4cc464fcfcfd58080d7b31f37711f7e4bfce637f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 11:52:15 +0000
-Subject: [PATCH 38/49] UML-DARWIN-LOCAL: uml: name the virtual CPU from the
+Subject: [PATCH 38/51] UML-DARWIN-LOCAL: uml: name the virtual CPU from the
  host emulator
 
 /proc/cpuinfo reported "UML" as the model name on every configuration.  That

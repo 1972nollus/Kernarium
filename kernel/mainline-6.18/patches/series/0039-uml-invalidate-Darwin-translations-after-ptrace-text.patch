@@ -1,0 +1,151 @@
+From 139b58eb6bfa52c6f46c6d1656355a08c8740912 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 23 Sep 2026 18:14:48 +0900
+Subject: [PATCH 39/39] uml: invalidate Darwin translations after ptrace text
+ writes
+
+Darwin guests run user code through host translations that are cached
+per page and revalidated only when a store publishes a code change. A
+ptrace POKETEXT or /proc/pid/mem store reaches the tracee's text through
+the kernel's own view of the frame, so no translated store sees it, and
+the tracee kept executing the old instructions. gdb inserts and removes
+breakpoints and builds its displaced-stepping pad this way; an x86_64
+guest stepped into a stale _start and jumped to a stack value, and an
+arm64 guest trapped on a breakpoint gdb had already removed.
+
+copy_to_user_page() calls flush_icache_user_page() after the copy, which
+is where arm64 synchronises its instruction cache for the same reason.
+On Darwin it now asks the host to move the page's code stamp and publish
+the range in the target mm's generation. This adds
+darwin_uml_vm_invalidate_code() to the bridge, version 11.
+---
+ arch/um/include/asm/cacheflush.h            | 14 ++++++++++++++
+ arch/um/include/shared/os.h                 |  3 +++
+ arch/um/kernel/tlb.c                        | 15 +++++++++++++++
+ arch/um/os-Darwin/skas/process.c            |  4 ++--
+ arch/um/os-Darwin/uml_darwin_abi.h          |  4 ++--
+ arch/um/os-Darwin/uml_darwin_abi_identity.h |  4 ++--
+ arch/um/os-Darwin/uml_darwin_memory.h       |  2 ++
+ 7 files changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/arch/um/include/asm/cacheflush.h b/arch/um/include/asm/cacheflush.h
+index 4c9858cd3..0bc7c7b96 100644
+--- a/arch/um/include/asm/cacheflush.h
++++ b/arch/um/include/asm/cacheflush.h
+@@ -5,5 +5,19 @@
+ #define flush_cache_vmap flush_tlb_kernel_range
+ #define flush_cache_vunmap flush_tlb_kernel_range
+ 
++#ifdef UML_HOST_DARWIN
++struct vm_area_struct;
++struct page;
++/*
++ * Darwin guests run translated code cached by address. A ptrace or
++ * /proc/pid/mem store reaches another process's text through the kernel's
++ * view of the frame, so tell the host which of that process's pages changed.
++ */
++extern void darwin_flush_icache_user_page(struct vm_area_struct *vma,
++					  struct page *page,
++					  unsigned long addr, int len);
++#define flush_icache_user_page darwin_flush_icache_user_page
++#endif
++
+ #include <asm-generic/cacheflush.h>
+ #endif /* __UM_ASM_CACHEFLUSH_H */
+diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
+index da7f6996f..e4f92c572 100644
+--- a/arch/um/include/shared/os.h
++++ b/arch/um/include/shared/os.h
+@@ -273,6 +273,9 @@ extern int darwin_uml_vm_walker_lock(unsigned long generation);
+ extern int darwin_uml_vm_walker_unlock(unsigned long generation);
+ extern int darwin_uml_vm_destroy(unsigned long generation);
+ extern int darwin_uml_vm_flush_generation(unsigned long generation);
++extern int darwin_uml_vm_invalidate_code(unsigned long generation,
++					 unsigned long address,
++					 unsigned long length);
+ extern int darwin_uml_vm_unmap_generation(unsigned long generation,
+ 					  void *address,
+ 					  unsigned long length);
+diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
+index ef849ea26..8747a242c 100644
+--- a/arch/um/kernel/tlb.c
++++ b/arch/um/kernel/tlb.c
+@@ -1025,6 +1025,21 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
+ 		panic("Darwin: unable to invalidate guest mm %lu range %#lx-%#lx",
+ 		      mm->context.id.darwin_generation, start, end);
+ }
++
++void darwin_flush_icache_user_page(struct vm_area_struct *vma,
++				   struct page *page, unsigned long addr,
++				   int len)
++{
++	struct mm_struct *mm = vma->vm_mm;
++
++	(void)page;
++	if (mm == &init_mm || len <= 0)
++		return;
++	if (darwin_uml_vm_invalidate_code(mm->context.id.darwin_generation,
++					  addr, len) < 0)
++		panic("Darwin: unable to invalidate guest mm %lu code %#lx+%d",
++		      mm->context.id.darwin_generation, addr, len);
++}
+ #endif
+ 
+ void flush_tlb_mm(struct mm_struct *mm)
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index 05a138639..8cfd9f19c 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -24,8 +24,8 @@
+  * These checks make an ABI drift fail at the kernel compiler rather than at a
+  * guest boundary after register state has been reinterpreted. */
+ _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");
+-_Static_assert(DARWIN_UML_ABI_VERSION == 10U, "unexpected ABI version");
+-_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x81bfcab1377c7e09ULL,
++_Static_assert(DARWIN_UML_ABI_VERSION == 11U, "unexpected ABI version");
++_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xa54125de28365272ULL,
+ 	       "unexpected ABI fingerprint");
+ _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
+ 	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
+diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
+index 5c7a6735f..8d524efff 100644
+--- a/arch/um/os-Darwin/uml_darwin_abi.h
++++ b/arch/um/os-Darwin/uml_darwin_abi.h
+@@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {
+ 
+ #if defined(__cplusplus)
+ #include <stddef.h>
+-static_assert(DARWIN_UML_ABI_VERSION == 10U);
+-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x81bfcab1377c7e09ULL);
++static_assert(DARWIN_UML_ABI_VERSION == 11U);
++static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xa54125de28365272ULL);
+ static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
+ static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
+ static_assert(DARWIN_UML_EVENT_STOP == 9);
+diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
+index 3aafae44c..9353f8d82 100644
+--- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
++++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
+@@ -3,7 +3,7 @@
+ #ifndef UML_DARWIN_ABI_IDENTITY_H
+ #define UML_DARWIN_ABI_IDENTITY_H
+ 
+-#define DARWIN_UML_ABI_VERSION 10U
+-#define DARWIN_UML_ABI_FINGERPRINT 0x81bfcab1377c7e09ULL
++#define DARWIN_UML_ABI_VERSION 11U
++#define DARWIN_UML_ABI_FINGERPRINT 0xa54125de28365272ULL
+ 
+ #endif
+diff --git a/arch/um/os-Darwin/uml_darwin_memory.h b/arch/um/os-Darwin/uml_darwin_memory.h
+index 41008cebc..355527f5c 100644
+--- a/arch/um/os-Darwin/uml_darwin_memory.h
++++ b/arch/um/os-Darwin/uml_darwin_memory.h
+@@ -27,6 +27,8 @@ int darwin_uml_vm_walker_unlock(unsigned long generation);
+ int darwin_uml_vm_destroy(unsigned long generation);
+ int darwin_uml_vm_flush_active(void);
+ int darwin_uml_vm_flush_generation(unsigned long generation);
++int darwin_uml_vm_invalidate_code(unsigned long generation,
++				  unsigned long address, unsigned long length);
+ int darwin_uml_vm_sync_to_backing(unsigned long address);
+ int darwin_uml_vm_sync_from_backing(unsigned long address);
+ int darwin_uml_vm_sync_from_buffer(unsigned long address,

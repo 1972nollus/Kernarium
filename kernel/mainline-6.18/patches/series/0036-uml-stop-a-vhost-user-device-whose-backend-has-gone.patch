@@ -1,7 +1,7 @@
 From b2ee45cb9aace7d9ff7b873ea2374e4e248ae25c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 09:54:30 +0900
-Subject: [PATCH 36/37] uml: stop a vhost-user device whose backend has gone
+Subject: [PATCH 36/39] uml: stop a vhost-user device whose backend has gone
 
 vu_interrupt() warns on every result that is not a would-block errno and does
 nothing else with it. When the backend closes its end of a virtqueue call

@@ -1,7 +1,7 @@
-From f669c699600adeb48f4aa8a03d97310abbffd369 Mon Sep 17 00:00:00 2001
+From a9518647ae687a5c5a7ace3553e6b62b260a450d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:19:23 +0900
-Subject: [PATCH 3/4] arm64: describe the emulated x86 CPU in /proc/cpuinfo
+Subject: [PATCH 3/5] arm64: describe the emulated x86 CPU in /proc/cpuinfo
 
 The x86-userspace slice runs an arm64 kernel, so setup_arch asks the host
 for its arm64 HWCAP and /proc/cpuinfo names arm64 features: an x86_64

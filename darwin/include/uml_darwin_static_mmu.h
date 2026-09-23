@@ -141,6 +141,8 @@ int darwin_uml_static_vm_execution_context_code_change_ranges(
 	struct darwin_uml_static_code_change *changes, size_t capacity,
 	uint64_t *current_sequence);
 void darwin_uml_static_vm_invalidate_code(unsigned long address);
+int darwin_uml_static_vm_invalidate_code_generation(
+	unsigned long generation, unsigned long address, unsigned long length);
 
 #ifdef __cplusplus
 }

@@ -27,6 +27,8 @@ int darwin_uml_vm_walker_unlock(unsigned long generation);
 int darwin_uml_vm_destroy(unsigned long generation);
 int darwin_uml_vm_flush_active(void);
 int darwin_uml_vm_flush_generation(unsigned long generation);
+int darwin_uml_vm_invalidate_code(unsigned long generation,
+				  unsigned long address, unsigned long length);
 int darwin_uml_vm_sync_to_backing(unsigned long address);
 int darwin_uml_vm_sync_from_backing(unsigned long address);
 int darwin_uml_vm_sync_from_buffer(unsigned long address,

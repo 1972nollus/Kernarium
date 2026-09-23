@@ -1,7 +1,7 @@
-From 0a2c83cc2b2796cd4481893a8e41f7416f7363c3 Mon Sep 17 00:00:00 2001
+From 9023fb2561c39ee64476efc6ab849a9058cf711b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 22 Sep 2026 18:30:50 +0900
-Subject: [PATCH 42/49] UML-DARWIN-LOCAL: virtio-gpu: allocate host-visible
+Subject: [PATCH 42/51] UML-DARWIN-LOCAL: virtio-gpu: allocate host-visible
  blobs for in-kernel consumers
 
 A guest driver that fills a buffer its client then renders from cannot use

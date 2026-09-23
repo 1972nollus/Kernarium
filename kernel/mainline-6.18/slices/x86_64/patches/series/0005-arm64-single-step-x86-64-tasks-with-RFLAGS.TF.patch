@@ -1,0 +1,84 @@
+From 49e45bdca227dbe1456c317902124b0ec56eb902 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 23 Sep 2026 17:38:02 +0900
+Subject: [PATCH 5/5] arm64: single-step x86-64 tasks with RFLAGS.TF
+
+An x86-64 task is stepped with the trap flag, as on native x86: while
+PTRACE_SINGLESTEP is in effect the kernel sets TF for the entry, the
+engine retires one instruction and raises #DB, and the kernel delivers
+SIGTRAP with TRAP_TRACE at the next instruction. A TF the task set
+itself also raises #DB, and only a flag the kernel forced is cleared on
+return, so ptrace and signal frames observe the task's own value.
+---
+ arch/um/os-Darwin/skas/process.c | 36 ++++++++++++++++++++++++++++++--
+ 1 file changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index aed88f9d8..df6902016 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -71,6 +71,29 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+  * set.  The bit exists only for the entry, so saved, traced and signal-frame
+  * registers never carry it.  Returns whether the bit was set for this entry.
+  */
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++/*
++ * An x86 task steps with RFLAGS.TF, which raises #DB after one instruction.
++ * A task may set TF itself; only a flag the kernel forced is cleared again,
++ * so ptrace and signal frames observe the task's own value.
++ */
++#define DARWIN_GUEST_RFLAGS_TF (1UL << 8)
++
++static int begin_guest_step(struct uml_pt_regs *regs)
++{
++	if (!singlestepping() ||
++	    (UPT_X86_64_RFLAGS(regs) & DARWIN_GUEST_RFLAGS_TF))
++		return 0;
++	UPT_X86_64_RFLAGS(regs) |= DARWIN_GUEST_RFLAGS_TF;
++	return 1;
++}
++
++static void end_guest_step(struct uml_pt_regs *regs, int stepping)
++{
++	if (stepping)
++		UPT_X86_64_RFLAGS(regs) &= ~DARWIN_GUEST_RFLAGS_TF;
++}
++#else
+ static int begin_guest_step(struct uml_pt_regs *regs)
+ {
+ 	if (!singlestepping())
+@@ -84,6 +107,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+ 	if (stepping)
+ 		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
+ }
++#endif
+ 
+ static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
+@@ -795,16 +819,24 @@ void userspace(struct uml_pt_regs *registers)
+ 		case DARWIN_UML_EVENT_BREAKPOINT:
+ 		{
+ 			siginfo_t signal_info = { 0 };
+-
++#ifndef CONFIG_UML_X86_64_USERSPACE_ONLY
+ 			/* A completed single step is the software-step exception,
+ 			 * which native arm64 reports as TRAP_TRACE at the next PC. */
+ 			int stepped = registers->faultinfo.trap_no ==
+ 				DARWIN_GUEST_SOFTWARE_STEP;
++#endif
+ 
+ 			registers->faultinfo.error_code = 0;
+ 			registers->faultinfo.cr2 = UPT_IP(registers);
+ #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
+-			if (registers->faultinfo.trap_no == 4) {
++			if (registers->faultinfo.trap_no == 1) {
++				/* #DB after a TF single step.  Native Linux reports
++				 * TRAP_TRACE at the next instruction. */
++				signal_info.si_signo = SIGTRAP;
++				signal_info.si_errno = 0;
++				signal_info.si_code = TRAP_TRACE;
++				signal_info.si_addr = (void *)UPT_IP(registers);
++			} else if (registers->faultinfo.trap_no == 4) {
+ 				/* INTO is the x86 #OF trap.  Native Linux delivers it as
+ 				 * SIGSEGV with a zero si_code and no fault address. */
+ 				signal_info.si_signo = SIGSEGV;

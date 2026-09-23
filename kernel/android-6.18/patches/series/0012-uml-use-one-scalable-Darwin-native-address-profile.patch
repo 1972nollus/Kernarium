@@ -1,7 +1,7 @@
-From 268552d0ae740ebaf880ecaf10eeaa7433b94c67 Mon Sep 17 00:00:00 2001
+From 0cf7faf71779d64983ff8e07a4ef297bd5b0c050 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 23:44:10 +0900
-Subject: [PATCH 12/49] uml: use one scalable Darwin native address profile
+Subject: [PATCH 12/51] uml: use one scalable Darwin native address profile
 
 All Apple products should exercise one sparse software guest address contract
 instead of allowing macOS to hide bugs behind a different kernel image or

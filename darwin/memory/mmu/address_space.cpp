@@ -877,6 +877,34 @@ public:
 		publish_code_change(*state, address);
 	}
 
+	/* Linux wrote a user page through its own mapping of the frame -- a
+	 * ptrace or /proc/pid/mem store into another process's text -- so no
+	 * translated store saw it. Move each page's stamp and publish the range
+	 * in that process's generation, as a guest code synchronization would. */
+	int invalidate_code(std::uint64_t generation, std::uint64_t address,
+			    std::uint64_t length)
+	{
+		if (length == 0)
+			return 0;
+		if (length > std::numeric_limits<std::uint64_t>::max() - address)
+			return -1;
+		const auto end = address + length;
+		if (end > std::numeric_limits<std::uint64_t>::max() -
+				(page_size - 1))
+			return -1;
+		const auto first = address & ~(page_size - 1);
+		const auto rounded_end = (end + page_size - 1) & ~(page_size - 1);
+		if (AddressLayout::classify(first, rounded_end - first) ==
+		    AddressDomain::invalid)
+			return -1;
+		auto state = state_for(generation_for(first, generation));
+		for (auto page = first; page < rounded_end; page += page_size)
+			invalidate_code_page(*state, page);
+		::uml::memory::publish_code_change(
+			*state, first, rounded_end - first);
+		return 0;
+	}
+
 	[[nodiscard]] std::uint64_t active_generation() const noexcept
 	{
 		const auto &active = active_thread_generation();
@@ -2238,6 +2266,14 @@ extern "C" uint64_t darwin_uml_static_vm_code_changes(
 {
 	return with_address_space_sequence(
 		[&](auto &space) { return space.changes(generation, true); });
+}
+
+extern "C" int darwin_uml_static_vm_invalidate_code_generation(
+	unsigned long generation, unsigned long address, unsigned long length)
+{
+	return with_address_space([&](auto &space) {
+		return space.invalidate_code(generation, address, length);
+	});
 }
 
 extern "C" void darwin_uml_static_vm_invalidate_code(unsigned long address)

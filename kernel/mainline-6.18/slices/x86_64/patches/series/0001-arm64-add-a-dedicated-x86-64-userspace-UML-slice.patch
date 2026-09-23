@@ -1,7 +1,7 @@
-From 3b45239b733403e9017816ef76dc528ffc48468a Mon Sep 17 00:00:00 2001
+From 904781755b8178135fa37484d15d7fc79dfb3548 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 01:55:46 +0900
-Subject: [PATCH 1/4] arm64: add a dedicated x86-64 userspace UML slice
+Subject: [PATCH 1/5] arm64: add a dedicated x86-64 userspace UML slice
 
 Keep the UML kernel and kernel-mode execution arm64 while making the
 dedicated 4 KiB Darwin compatibility slice accept only EM_X86_64
@@ -2618,7 +2618,7 @@ index 31575c43f..06008dda1 100644
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2c98e0fb2..38bde60dd 100644
+index 8cfd9f19c..f4b19d7c0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
@@ -2629,7 +2629,7 @@ index 2c98e0fb2..38bde60dd 100644
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -311,28 +312,25 @@ static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
+@@ -334,28 +335,25 @@ static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
  
  static int syscall_snapshots_address_space(struct uml_pt_regs *registers)
  {
@@ -2676,7 +2676,7 @@ index 2c98e0fb2..38bde60dd 100644
  		 */
  		return 1;
  	default:
-@@ -534,7 +532,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -560,7 +558,7 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_SYSCALL:
  			if (profiling)
  				profile_start = os_nsecs();
@@ -2685,7 +2685,7 @@ index 2c98e0fb2..38bde60dd 100644
  #ifndef CONFIG_PAGE_SIZE_16KB
  			snapshots_mm = syscall_snapshots_address_space(registers);
  			if (snapshots_mm && darwin_uml_vm_flush_active() < 0)
-@@ -545,7 +543,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -571,7 +569,7 @@ void userspace(struct uml_pt_regs *registers)
  				os_warn("Darwin static syscall cpu=%d pid=%d nr=%ld ret=%#lx\n",
  					uml_curr_cpu(), get_current_pid(),
  					(long)UPT_SYSCALL_NR(registers),
@@ -2694,7 +2694,7 @@ index 2c98e0fb2..38bde60dd 100644
  			if (profiling) {
  				profile_add(&profile_syscall_ns,
  					    os_nsecs() - profile_start);
-@@ -654,13 +652,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -680,13 +678,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2715,7 +2715,7 @@ index 2c98e0fb2..38bde60dd 100644
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -763,14 +768,45 @@ void userspace(struct uml_pt_regs *registers)
+@@ -794,14 +799,45 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -2751,7 +2751,7 @@ index 2c98e0fb2..38bde60dd 100644
  			registers->faultinfo.trap_no = 0;
  			signal_info.si_signo = SIGTRAP;
  			signal_info.si_errno = 0;
- 			signal_info.si_code = TRAP_BRKPT;
+ 			signal_info.si_code = stepped ? TRAP_TRACE : TRAP_BRKPT;
  			signal_info.si_addr = (void *)UPT_IP(registers);
 +#endif
  			registers->is_user = 1;

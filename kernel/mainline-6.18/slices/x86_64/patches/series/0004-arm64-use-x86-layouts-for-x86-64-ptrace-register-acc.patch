@@ -1,7 +1,7 @@
-From 63cb6df94bf201d69f0c3902a2b520e17158c8a5 Mon Sep 17 00:00:00 2001
+From 9aa677bd901d39bc3e5cad0217cb51fafb38e72b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 12:38:51 +0900
-Subject: [PATCH 4/4] arm64: use x86 layouts for x86-64 ptrace register access
+Subject: [PATCH 4/5] arm64: use x86 layouts for x86-64 ptrace register access
 
 The x86-64 slice inherited arm64 ptrace layouts that do not match x86
 tracers.  PTRACE_GETREGS wrote the 272-byte arm64 frame into gdb's

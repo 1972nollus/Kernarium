@@ -1,7 +1,7 @@
-From 4226557b0d71c4fb10a8a4c55c708843448a9a5c Mon Sep 17 00:00:00 2001
+From 1d9a5a90d3363c8cca14f5567f7f469d324e37ad Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 14:34:03 +0900
-Subject: [PATCH 49/49] UML-DARWIN-LOCAL: mm: vmscan: write back dirty
+Subject: [PATCH 49/51] UML-DARWIN-LOCAL: mm: vmscan: write back dirty
  swap-cache folios
 
 Since shmem_writepage() and swap_writepage() were removed, pageout()

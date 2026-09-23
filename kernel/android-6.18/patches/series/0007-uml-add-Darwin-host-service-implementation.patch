@@ -1,7 +1,7 @@
-From c83af8f620e49d64266004215051ce2735c17220 Mon Sep 17 00:00:00 2001
+From 2780d6ae724bc43275c822ad94f77d86f859c7ce Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 07/49] uml: add Darwin host service implementation
+Subject: [PATCH 07/51] uml: add Darwin host service implementation
 
 Apply the reviewed final-state topic without intermediate churn.
 ---

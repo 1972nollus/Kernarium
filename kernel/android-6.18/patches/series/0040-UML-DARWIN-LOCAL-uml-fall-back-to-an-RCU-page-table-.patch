@@ -1,7 +1,7 @@
-From 30444f591bed3ab5c41e411832bc111af8fc39b0 Mon Sep 17 00:00:00 2001
+From 4355c8d00f37b929f324dcaac87ed2d16baa1e79 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 15:33:58 +0900
-Subject: [PATCH 40/49] UML-DARWIN-LOCAL: uml: fall back to an RCU page-table
+Subject: [PATCH 40/51] UML-DARWIN-LOCAL: uml: fall back to an RCU page-table
  walk under mmap contention
 
 pin_user_mapping() answered a contended mmap_read_trylock() with a fault

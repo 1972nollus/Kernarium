@@ -1,7 +1,7 @@
-From a3bfb7ca5312e40bb249b9b3dd23b978057b5e48 Mon Sep 17 00:00:00 2001
+From a259f78fe3c6cb267e1f450c753ef0d9ef7febc2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
-Subject: [PATCH 2/4] arm64: add i386 userspace task support
+Subject: [PATCH 2/5] arm64: add i386 userspace task support
 
 Add the complete i386 process ABI to the dedicated x86-family UML slice: ELF loading, task and register mode, signal frames, TLS, ptrace register layout, restart handling, and compat structure translation.
 
@@ -3042,7 +3042,7 @@ index f4f5b15ab..300039328 100644
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index ef849ea26..465b8a2c7 100644
+index 8747a242c..e6e77e215 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -11,6 +11,9 @@
@@ -3076,10 +3076,10 @@ index ef849ea26..465b8a2c7 100644
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 38bde60dd..92c403020 100644
+index f4b19d7c0..aed88f9d8 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -450,6 +450,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -474,6 +474,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

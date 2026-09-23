@@ -14,4 +14,4 @@ arch/arm64/um/tls.c	0001,0002	Topic 0001 owns x86-64 TLS state, while topic 0002
 arch/arm64/um/x86_64_syscalls.c	0001,0002	Topic 0001 implements x86-64 syscall translation, while topic 0002 replaces its provisional number map with generated dispatch and retains ABI-specific adapters.
 arch/um/kernel/ptrace.c	0002,0004	Topic 0002 adapts generic ptrace to compat tasks, while topic 0004 routes x86-64 PTRACE_GETREGS and SETREGS to the slice's x86 layouts.
 arch/um/kernel/skas/syscall.c	0001,0002	Topic 0001 dispatches the fixed x86-64 ABI, while topic 0002 separates true i386 int80 calls and applies syscall-user-dispatch before both complete generated tables.
-arch/um/os-Darwin/skas/process.c	0001,0002	Topic 0001 transports fixed x86 task state, while topic 0002 publishes the persistent compat decoding mode to the host bridge.
+arch/um/os-Darwin/skas/process.c	0001,0002,0005	Topic 0001 transports fixed x86 task state, while topic 0002 publishes the persistent compat decoding mode to the host bridge. Topic 0005 steps x86 tasks with RFLAGS.TF and reports #DB as TRAP_TRACE.

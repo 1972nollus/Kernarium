@@ -155,6 +155,46 @@ void changed_words_rebuild_and_republish_links()
 #endif
 }
 
+/* Linux writes a traced process's text through its own view of the frame --
+ * ptrace inserting a breakpoint -- so no translated store publishes it. The
+ * kernel then names the process's generation and the written range through
+ * darwin_uml_vm_invalidate_code(); the page
+ * stamp must move and the next run must execute the new instruction. */
+void a_kernel_text_write_republishes_through_the_bridge()
+{
+	constexpr unsigned long generation = 922;
+	JitBacking backing{1};
+	backing.put32(0, move_immediate(0, 1));
+	backing.put32(4, system_call);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	arm64::CpuState cpu{};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 1);
+
+	struct darwin_uml_static_code_page_stamp before{};
+	void *handle = nullptr;
+	require(darwin_uml_static_vm_code_page(generation, code_base, &handle,
+		&before) == DARWIN_UML_STATIC_TRANSLATED);
+	backing.put32(0, move_immediate(0, 2));
+	require(darwin_uml_static_vm_invalidate_code_generation(
+		generation, code_base, 4) == 0);
+	struct darwin_uml_static_code_page_stamp after{};
+	require(darwin_uml_static_vm_code_page(generation, code_base, &handle,
+		&after) == DARWIN_UML_STATIC_TRANSLATED);
+	require(after.identity == before.identity &&
+		after.version != before.version);
+
+	cpu = {};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 2);
+}
+
 /* A code change resets every activation, not only the ones it touched.
  *
  * The guest code-change sequence carries no range, so a change anywhere has to
@@ -431,6 +471,7 @@ int main()
 {
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
+	a_kernel_text_write_republishes_through_the_bridge();
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
 #if UML_GADGET_EXACT_CACHE_VALIDATION

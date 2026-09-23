@@ -1,7 +1,7 @@
 From f2437c045a2069fd5f70561aea6aad97757ab003 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 13:27:07 +0900
-Subject: [PATCH 33/37] UML-DARWIN-LOCAL: deliver data-alignment faults to
+Subject: [PATCH 33/39] UML-DARWIN-LOCAL: deliver data-alignment faults to
  guest signal handlers
 
 ---

@@ -439,6 +439,22 @@ extern "C" int darwin_uml_vm_sync_from_buffer(unsigned long address, const void 
 	return darwin_uml_static_vm_copy_from_buffer(address, buffer, length);
 }
 
+extern "C" int darwin_uml_vm_invalidate_code(unsigned long generation,
+					    unsigned long address,
+					    unsigned long length)
+{
+	const auto range = address_range(reinterpret_cast<void *>(address),
+		length);
+	if (range == AddressDomain::invalid)
+		return invalid_address_range();
+	/* Only translated guest pages cache code; native pages execute the
+	 * shared frame directly. */
+	if (range != AddressDomain::guest)
+		return 0;
+	return darwin_uml_static_vm_invalidate_code_generation(generation,
+		address, length);
+}
+
 extern "C" int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
 					     unsigned long long offset)
 {
