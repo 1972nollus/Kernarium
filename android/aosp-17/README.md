@@ -179,10 +179,10 @@ this driver has not been qualified against Android's Vulkan dEQP must-pass list.
 
 The Android hardware buffer handle type a swapchain needs is guest Mesa work,
 so it arrives with the guest Vulkan epoch pinned in
-`third_party/mesa-venus/metadata.env`. The pinned `source-24` epoch does not
-carry it: a HAL built from it enumerates Venus and serves ordinary rendering,
-but refuses the loader's hardware-buffer image-format query, and presentation
-needs the `source-25` epoch.
+`third_party/mesa-venus/metadata.env`. The HAL and the host renderer must also
+speak the same Venus protocol revision: a guest epoch that changes the paired
+protocol leaves an older release's HAL unable to talk to a newer renderer, so
+such an epoch needs a port replay and a new release.
 
 ## Payload reduction
 
