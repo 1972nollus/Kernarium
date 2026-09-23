@@ -5532,6 +5532,23 @@ struct FlagState final {
 	return width == OperandWidth::byte ? baked::byte_slots : baked::gpr_slots;
 }
 
+/* A baked access carries its instruction's RIP and length in one word: the
+ * RIP in bits 47:0, which every user-mode RIP fits, and the length in bits
+ * 59:56. Bit 60 stays clear for the store's publication flag. Only a fault
+ * or an exit after a store into the running block reads the RIP back. */
+constexpr unsigned baked_rip_bits = 48;
+
+[[nodiscard]] bool baked_access_fits(const Gadget &gadget) noexcept
+{
+	return (gadget.address >> baked_rip_bits) == 0;
+}
+
+[[nodiscard]] std::uintptr_t baked_access_word(const Gadget &gadget) noexcept
+{
+	return static_cast<std::uintptr_t>(gadget.address) |
+		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
+}
+
 struct BakedAddress final {
 	unsigned base{};
 	unsigned index{};
@@ -5546,7 +5563,7 @@ struct BakedAddress final {
 [[nodiscard]] std::optional<BakedAddress> baked_address(
 	const Gadget &gadget, const Operand &operand) noexcept
 {
-	if (operand.kind != OperandKind::memory)
+	if (operand.kind != OperandKind::memory || !baked_access_fits(gadget))
 		return std::nullopt;
 	const auto &memory = operand.memory;
 	if (memory.segment != Segment::none || memory.address_16 ||
@@ -5584,11 +5601,6 @@ struct BakedAddress final {
 	return address;
 }
 
-[[nodiscard]] std::uintptr_t baked_length_word(const Gadget &gadget) noexcept
-{
-	return static_cast<std::uintptr_t>(gadget.instruction.length) << 56U;
-}
-
 /* Emit a memory access: the fused entry for [base + displacement], or the
  * address entry followed by the split access entry. `slot` indexes the value
  * dimension of both tables. */
@@ -5600,8 +5612,7 @@ void append_baked_access(std::vector<std::uintptr_t> &stream,
 	if (!address.indexed) {
 		stream.push_back(fused[slot * baked::base_slots + address.base]);
 		stream.push_back(address.displacement);
-		stream.push_back(baked_length_word(gadget));
-		stream.push_back(gadget.address);
+		stream.push_back(baked_access_word(gadget));
 		return;
 	}
 	stream.push_back(baked::uml_x86_64_baked_ea[
@@ -5609,8 +5620,7 @@ void append_baked_access(std::vector<std::uintptr_t> &stream,
 			baked::scale_slots + address.scale]);
 	stream.push_back(address.displacement);
 	stream.push_back(split[slot]);
-	stream.push_back(baked_length_word(gadget));
-	stream.push_back(gadget.address);
+	stream.push_back(baked_access_word(gadget));
 }
 
 /* The host flags a baked entry of this operation leaves. Narrow widths
@@ -5762,16 +5772,14 @@ struct BakedArithTables final {
 	if (!address->indexed) {
 		stream.push_back(tables.mi[address->base]);
 		stream.push_back(address->displacement);
-		stream.push_back(baked_length_word(gadget));
-		stream.push_back(gadget.address);
+		stream.push_back(baked_access_word(gadget));
 	} else {
 		stream.push_back(baked::uml_x86_64_baked_ea[
 			(address->base * baked::gpr_slots + address->index) *
 				baked::scale_slots + address->scale]);
 		stream.push_back(address->displacement);
 		stream.push_back(*tables.xmi);
-		stream.push_back(baked_length_word(gadget));
-		stream.push_back(gadget.address);
+		stream.push_back(baked_access_word(gadget));
 	}
 	stream.push_back(source.immediate);
 	return true;
@@ -5981,12 +5989,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	if (operand.width != OperandWidth::qword)
 		return false;
 	const auto slot = baked_register_slot(operand);
-	if (!slot)
+	if (!slot || !baked_access_fits(gadget))
 		return false;
 	stream.push_back((push ? baked::uml_x86_64_baked_push_64_r :
 		baked::uml_x86_64_baked_pop_64_r)[*slot]);
-	stream.push_back(baked_length_word(gadget));
-	stream.push_back(gadget.address);
+	stream.push_back(baked_access_word(gadget));
 	return true;
 }
 

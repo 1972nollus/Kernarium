@@ -23,6 +23,9 @@ Two banks implement the scalar integer instructions.
   is an immediate in the entry, so the host forwards the CPU-state stores into
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
+  An access carries its instruction's RIP and length in one stream word, the
+  RIP in bits 47:0 and the length in bits 59:56, because only its fault and
+  overlap exits read them.
   INC and DEC are enumerated a second time by the carry their producer left,
   because they preserve the carry flag: a borrow, carry or cleared source
   reaches RFLAGS with at most one condition, a settled one inherits the
