@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
+#include "cpu/gadget_record_table.hpp"
 #include "shared_programs.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -539,22 +540,14 @@ public:
 		for (const auto &slab : slabs_)
 			if (slab)
 				slabs += sizeof(Slab);
-		/* libc++ keeps one heap node per element plus a bucket pointer;
-		 * close enough to attribute the map, exact for the arrays. */
-		constexpr std::size_t node = 2 * sizeof(void *);
 		std::size_t links = 0;
 		std::size_t indirect = 0;
 		for (const auto &[generation, state] : generations_) {
-			links += state.links.size() *
-					(sizeof(LinkRecord) + node) +
-				state.links.bucket_count() * sizeof(void *) +
+			links += state.links.bytes() +
 				state.live_links.capacity() *
 					sizeof(LinkRecord *) +
 				state.slots.capacity() * sizeof(std::uint32_t);
-			indirect += state.indirect.size() *
-					(sizeof(arm64::gadgets::IndirectLink) +
-						node) +
-				state.indirect.bucket_count() * sizeof(void *) +
+			indirect += state.indirect.bytes() +
 				state.live_indirect.capacity() * sizeof(void *);
 		}
 		return {
@@ -784,15 +777,15 @@ public:
 		std::uint64_t source_pc)
 	{
 		const auto [created, inserted] =
-			current().indirect.try_emplace(source_pc);
+			current().indirect.try_emplace(source_pc, source_pc);
 		if (inserted) {
 			const auto *empty_link = link(empty_pc);
-			for (auto &entry : created->second.entries) {
+			for (auto &entry : created->site.entries) {
 				entry.guest_pc = empty_pc;
 				entry.link = empty_link;
 			}
 		}
-		return &created->second;
+		return &created->site;
 	}
 
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
@@ -1133,6 +1126,34 @@ private:
 		bool listed{};
 	};
 
+	struct LinkKey final {
+		[[nodiscard]] std::uint64_t operator()(
+			const LinkRecord &record) const noexcept
+		{
+			return record.link.guest_pc;
+		}
+	};
+
+	/* An indirect site is named by the branch that owns it, which its own
+	 * cells do not record. Translated streams point at the site, the first
+	 * member. */
+	struct IndirectRecord final {
+		explicit IndirectRecord(std::uint64_t source) noexcept
+			: source_pc{source}
+		{}
+
+		arm64::gadgets::IndirectLink site{};
+		std::uint64_t source_pc;
+	};
+
+	struct IndirectKey final {
+		[[nodiscard]] std::uint64_t operator()(
+			const IndirectRecord &record) const noexcept
+		{
+			return record.source_pc;
+		}
+	};
+
 	/* Everything that belongs to one address space.
 	 *
 	 * Retiring an address space is then dropping this, rather than filtering
@@ -1143,31 +1164,24 @@ private:
 	 * one being retired. See G167.
 	 */
 	struct Generation final {
-		explicit Generation(std::pmr::memory_resource *upstream =
-					    std::pmr::get_default_resource())
-			: storage{upstream}, links{&storage}, indirect{&storage},
-			  live_links{&storage}, live_indirect{&storage}, slots{&storage}
-		{}
-
+		Generation() = default;
 		Generation(const Generation &) = delete;
 		Generation &operator=(const Generation &) = delete;
 		Generation(Generation &&) = delete;
 		Generation &operator=(Generation &&) = delete;
 
 		std::uint64_t changes{};
-		/* These collections grow for the address space's whole residency and
-		 * are erased only together. Backing them with one arena turns retirement
-		 * into a small number of bulk releases instead of serialising thousands
-		 * of allocator frees across busy vCPU carriers. The node-based maps
-		 * retain the stable addresses required by translated link cells.
-		 */
-		std::pmr::unsynchronized_pool_resource storage;
-		std::pmr::unordered_map<std::uint64_t, LinkRecord> links;
-		std::pmr::unordered_map<std::uint64_t, arm64::gadgets::IndirectLink>
+		/* These grow for the address space's whole residency and are
+		 * released only together. The records live in chunks, so retiring
+		 * an address space is a few bulk releases rather than thousands of
+		 * allocator frees across busy vCPU carriers, and each record stays
+		 * where translated link cells name it. */
+		gadget_cache::StableRecordTable<LinkRecord, LinkKey> links;
+		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>
 			indirect;
 		/* The records and sites holding an activation. */
-		std::pmr::vector<LinkRecord *> live_links;
-		std::pmr::vector<arm64::gadgets::IndirectLink *> live_indirect;
+		std::vector<LinkRecord *> live_links;
+		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
 		/* Slots this address space has stored into, as flat slot
 		 * indices. It may name a slot another address space has since
 		 * taken, and may name one twice, so retirement checks every
@@ -1175,7 +1189,7 @@ private:
 		 * `slots_complete` records and retirement answers with the whole
 		 * sweep.
 		 */
-		std::pmr::vector<std::uint32_t> slots;
+		std::vector<std::uint32_t> slots;
 		bool slots_complete{true};
 	};
 
@@ -1331,7 +1345,7 @@ private:
 
 	[[nodiscard]] LinkRecord &link_record(Generation &state, std::uint64_t pc)
 	{
-		return state.links.try_emplace(pc, pc).first->second;
+		return *state.links.try_emplace(pc, pc).first;
 	}
 
 	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
@@ -1460,10 +1474,10 @@ private:
 		const auto owner = generations_.find(generation);
 		if (owner == generations_.end())
 			return;
-		const auto found = owner->second.links.find(pc);
-		if (found == owner->second.links.end())
+		auto *found = owner->second.links.find(pc);
+		if (found == nullptr)
 			return;
-		auto &record = found->second;
+		auto &record = *found;
 		const auto *words = program.words().data();
 		const bool direct = record.link.stream == words;
 		const bool fp = record.link.stream == record.fp_stream.data() &&
