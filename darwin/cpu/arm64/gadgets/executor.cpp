@@ -10,11 +10,13 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #include <cstdlib>
 #endif
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <memory_resource>
@@ -590,23 +592,19 @@ public:
 			for (const auto &slot : slab->slots) {
 				if (slot.epoch != epoch_ || slot.body == nullptr)
 					continue;
-				const auto &program = slot.body->result.program;
+				const auto &body = *slot.body;
 				std::uint64_t digest = 0xcbf29ce484222325ULL;
-				std::size_t sources = 0;
-#if UML_GADGET_EXACT_CACHE_VALIDATION
-				sources = slot.body->source_word_count;
-				const auto *words = slot.body->source_words();
-				for (std::size_t index = 0; index < sources;
-				     ++index)
+				const std::size_t sources = body.source_word_count;
+				const auto *words = body.source_words();
+				for (std::size_t index = 0; index < sources; ++index)
 					digest = (digest ^ words[index]) *
 						0x100000001b3ULL;
-#endif
 				std::fprintf(out,
 					"P %lu 0x%llx %zu %zu %zu 0x%llx\n",
 					slot.generation,
 					static_cast<unsigned long long>(slot.pc),
-					program.instruction_count(),
-					program.words().size(), sources,
+					std::size_t{body.instruction_count},
+					std::size_t{body.word_count}, sources,
 					static_cast<unsigned long long>(digest));
 			}
 		}
@@ -702,7 +700,7 @@ public:
 		current_->changes = changes;
 	}
 
-	[[nodiscard]] const BuildResult *find(
+	[[nodiscard]] std::optional<BuildResult> find(
 		std::uint64_t pc, std::uint64_t changes,
 		std::uint64_t mapping_changes, StaticGuestMemory &memory,
 		void *execution_context, GadgetCacheDiagnostics &diagnostics)
@@ -710,7 +708,7 @@ public:
 		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab) {
-			return nullptr;
+			return std::nullopt;
 		}
 		for (std::size_t way = 0; way < ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
@@ -720,25 +718,25 @@ public:
 				continue;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 			if (slot.validated_changes == changes) {
-				return &slot.body->result;
+				return slot.body->result();
 			}
 			++diagnostics.validation_attempts;
 			if (!validate(slot, changes, mapping_changes, memory,
 				    execution_context, diagnostics)) {
-				return nullptr;
+				return std::nullopt;
 			}
 			activate(pc, slot);
-			return &slot.body->result;
+			return slot.body->result();
 #else
 			(void)changes;
 			(void)mapping_changes;
 			(void)memory;
 			(void)execution_context;
 			(void)diagnostics;
-			return &slot.body->result;
+			return slot.body->result();
 #endif
 		}
-		return nullptr;
+		return std::nullopt;
 	}
 
 	/* The translation whose stream holds an address.
@@ -751,20 +749,22 @@ public:
 	 * translations, and nothing is stored or released between the exit and
 	 * this lookup. The answer is exact, with no index to fall out of.
 	 */
-	[[nodiscard]] const BuildResult *find_stream(
+	[[nodiscard]] std::optional<BuildResult> find_stream(
 		const void *stream) const noexcept
 	{
 		if (stream == nullptr)
-			return nullptr;
+			return std::nullopt;
 #if UML_GADGET_CACHE_CENSUS
 		++stream_lookups_;
 #endif
 		const auto *body = static_cast<const Body *>(
 			bodies_.owner(stream));
-		if (body == nullptr ||
-		    !program_contains_stream(body->result.program, stream))
-			return nullptr;
-		return &body->result;
+		if (body == nullptr)
+			return std::nullopt;
+		auto result = body->result();
+		if (!program_contains_stream(result.program, stream))
+			return std::nullopt;
+		return result;
 	}
 
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(
@@ -830,26 +830,26 @@ public:
 	 * from one built here, and the producer may be destroyed without
 	 * touching it.
 	 */
-	[[nodiscard]] const BuildResult *adopt(
+	[[nodiscard]] std::optional<BuildResult> adopt(
 		const arm64::gadgets::SharedKey &key, std::uint64_t changes)
 	{
 		std::pmr::vector<std::uintptr_t> words{program_storage()};
 		arm64::gadgets::SharedTranslation translation;
 		if (!arm64::gadgets::SharedProgramStore::instance().adopt(
 			    key, words, translation))
-			return nullptr;
+			return std::nullopt;
 		const auto &relocations = translation.relocations;
 		for (std::size_t index = 0; index < relocations.count; ++index) {
 			const auto &relocation = relocations.entries[index];
 			if (relocation.word >= words.size())
-				return nullptr;
+				return std::nullopt;
 			words[relocation.word] = relocation.indirect ?
 				reinterpret_cast<std::uintptr_t>(
 					indirect_link(relocation.guest_pc)) :
 				reinterpret_cast<std::uintptr_t>(
 					link(relocation.guest_pc));
 		}
-		return &store(key.guest_pc,
+		return store(key.guest_pc,
 			BuildResult{
 				arm64::gadgets::Program{
 					key.guest_pc,
@@ -862,8 +862,8 @@ public:
 			key.window, changes);
 	}
 
-	[[nodiscard]] const BuildResult &store(
-		std::uint64_t pc, BuildResult result,
+	[[nodiscard]] BuildResult store(
+		std::uint64_t pc, const BuildResult &result,
 		std::span<const std::uint32_t> guest_words,
 		std::uint64_t changes)
 	{
@@ -919,7 +919,7 @@ public:
 		if (slot.body != nullptr) {
 			if (slot.epoch == epoch_)
 				deactivate(slot.generation, slot.pc,
-					slot.body->result.program);
+					slot.body->words());
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
@@ -949,7 +949,7 @@ public:
 		++stores_;
 #endif
 		activate(pc, slot);
-		return slot.body->result;
+		return slot.body->result();
 	}
 
 	/* Whether a callee may be translated inline here.
@@ -1003,24 +1003,38 @@ private:
 	 * body, an empty way costs a tag rather than a full BuildResult, and the
 	 * words a spilling stream used to allocate on their own now share the
 	 * body's allocation.
+	 *
+	 * The body is also paid for by every translation the cache holds, so it
+	 * keeps only what a stored block cannot recompute. A BuildResult is 136
+	 * bytes -- three runs, a words object able to own and grow its storage,
+	 * and padding -- against a mean stream of about 225; a stored block has
+	 * one run unless a call was inlined into it, and its words are the ones
+	 * behind this header. result() rebuilds the builder's type from these
+	 * fields whenever a caller needs one, which is once per entry from C++.
 	 */
 	struct Body final {
-		BuildResult result;
-		/* What the arena must be given back, so the body carries it
-		 * rather than the slot that indexes it. */
-		std::uint32_t bytes{};
+		/* Where the block starts, which is its first run's address. */
+		std::uint64_t guest_address{};
+		std::uint64_t stop_address{};
+		std::uint32_t stop_instruction{};
 		std::uint32_t word_count{};
-#if UML_GADGET_EXACT_CACHE_VALIDATION
-		std::uint32_t source_word_count{};
-#endif
+		std::uint16_t instruction_count{};
+		std::uint8_t source_word_count{};
+		std::uint8_t run_count{1};
+		bool complete{};
+		bool accesses_fp_state{};
 
 		/* The stream follows the body, and the guest words it is
-		 * validated against follow the stream. */
+		 * validated against follow the stream. A block with more than one
+		 * run keeps the list last. */
 		[[nodiscard]] std::uintptr_t *words() noexcept
 		{
 			return reinterpret_cast<std::uintptr_t *>(this + 1);
 		}
-#if UML_GADGET_EXACT_CACHE_VALIDATION
+		[[nodiscard]] const std::uintptr_t *words() const noexcept
+		{
+			return reinterpret_cast<const std::uintptr_t *>(this + 1);
+		}
 		[[nodiscard]] std::uint32_t *source_words() noexcept
 		{
 			return reinterpret_cast<std::uint32_t *>(
@@ -1029,14 +1043,77 @@ private:
 		[[nodiscard]] const std::uint32_t *source_words() const noexcept
 		{
 			return reinterpret_cast<const std::uint32_t *>(
-				reinterpret_cast<const std::uintptr_t *>(
-					this + 1) + word_count);
+				words() + word_count);
 		}
-#endif
+		[[nodiscard]] static std::size_t runs_offset(
+			std::size_t words, std::size_t sources) noexcept
+		{
+			const auto end = sizeof(Body) +
+				words * sizeof(std::uintptr_t) +
+				sources * sizeof(std::uint32_t);
+			return (end + alignof(arm64::gadgets::GuestRun) - 1) &
+				~(alignof(arm64::gadgets::GuestRun) - 1);
+		}
+		/* What the arena must be given back follows from the counts, so
+		 * neither the body nor the slot that indexes it stores it. */
+		[[nodiscard]] static std::size_t allocation_bytes(
+			std::size_t words, std::size_t sources,
+			std::size_t runs) noexcept
+		{
+			if (runs <= 1)
+				return sizeof(Body) +
+					words * sizeof(std::uintptr_t) +
+					sources * sizeof(std::uint32_t);
+			return runs_offset(words, sources) +
+				runs * sizeof(arm64::gadgets::GuestRun);
+		}
+		[[nodiscard]] std::size_t allocation_bytes() const noexcept
+		{
+			return allocation_bytes(word_count, source_word_count,
+				run_count);
+		}
+		[[nodiscard]] std::span<const arm64::gadgets::GuestRun>
+		extra_runs() const noexcept
+		{
+			if (run_count <= 1)
+				return {};
+			return {reinterpret_cast<const arm64::gadgets::GuestRun *>(
+					reinterpret_cast<const std::byte *>(this) +
+					runs_offset(word_count, source_word_count)),
+				run_count};
+		}
+		[[nodiscard]] std::span<const std::uintptr_t> stream() const noexcept
+		{
+			return {words(), word_count};
+		}
+
+		/* The stored block as the builder produced it. The program
+		 * refers to the words behind this header rather than copying
+		 * them, so it is valid exactly as long as the body is. */
+		[[nodiscard]] BuildResult result() const noexcept
+		{
+			arm64::gadgets::ProgramWords view{
+				arm64::gadgets::ProgramWords::Borrowed{
+					const_cast<std::uintptr_t *>(words()),
+					word_count}};
+			return run_count <= 1 ?
+				BuildResult{arm64::gadgets::Program{guest_address,
+					instruction_count, std::move(view),
+					accesses_fp_state},
+					complete, stop_address, stop_instruction} :
+				BuildResult{arm64::gadgets::Program{extra_runs(),
+					instruction_count, std::move(view),
+					accesses_fp_state},
+					complete, stop_address, stop_instruction};
+		}
 	};
-	static_assert(alignof(Body) == alignof(std::uintptr_t) &&
+	static_assert(sizeof(Body) == 32 &&
 		sizeof(Body) % alignof(std::uintptr_t) == 0,
 		"the stream tail follows the body at pointer alignment");
+	static_assert(block_instruction_count *
+			arm64::gadgets::Program::maximum_runs <= 0xffffU &&
+		block_instruction_count < 0xffU,
+		"a stored block's counts fit the body's narrow fields");
 
 	struct Slot final {
 		Body *body{};
@@ -1279,45 +1356,46 @@ private:
 	[[nodiscard]] Body *new_body(
 		const BuildResult &built, std::span<const std::uint32_t> validation)
 	{
-		const auto words = built.program.words();
-		const auto bytes = sizeof(Body) +
-			words.size() * sizeof(std::uintptr_t) +
-			validation.size() * sizeof(std::uint32_t);
-		auto *storage = static_cast<std::byte *>(bodies_.allocate(bytes));
-		auto *tail = reinterpret_cast<std::uintptr_t *>(
-			storage + sizeof(Body));
-		std::copy(words.begin(), words.end(), tail);
-		auto *body = new (storage) Body{
-			.result = BuildResult{
-				arm64::gadgets::Program{
-					built.program.runs(),
-					built.program.instruction_count(),
-					arm64::gadgets::ProgramWords{
-						arm64::gadgets::ProgramWords::
-							Borrowed{tail,
-								words.size()}},
-					built.program.accesses_fp_state()},
-				built.complete, built.stop_address,
-				built.stop_instruction},
-			.bytes = static_cast<std::uint32_t>(bytes),
+		const auto &program = built.program;
+		const auto words = program.words();
+		const auto runs = program.runs();
+		/* The builder gives a single-run block exactly its instruction
+		 * count as the run's length, which is what lets result() rebuild
+		 * that run from the header alone. */
+		assert(runs.size() > 1 ||
+			runs[0].instructions == program.instruction_count());
+		assert(program.instruction_count() <=
+			block_instruction_count * arm64::gadgets::Program::maximum_runs);
+		const auto bytes = Body::allocation_bytes(
+			words.size(), validation.size(), runs.size());
+		auto *body = new (bodies_.allocate(bytes)) Body{
+			.guest_address = program.guest_address(),
+			.stop_address = built.stop_address,
+			.stop_instruction = built.stop_instruction,
 			.word_count = static_cast<std::uint32_t>(words.size()),
-#if UML_GADGET_EXACT_CACHE_VALIDATION
+			.instruction_count = static_cast<std::uint16_t>(
+				program.instruction_count()),
 			.source_word_count =
-				static_cast<std::uint32_t>(validation.size()),
-#endif
+				static_cast<std::uint8_t>(validation.size()),
+			.run_count = static_cast<std::uint8_t>(runs.size()),
+			.complete = built.complete,
+			.accesses_fp_state = program.accesses_fp_state(),
 		};
-#if UML_GADGET_EXACT_CACHE_VALIDATION
+		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
 			body->source_words());
-#else
-		(void)validation;
-#endif
+		if (runs.size() > 1)
+			std::copy(runs.begin(), runs.end(),
+				reinterpret_cast<arm64::gadgets::GuestRun *>(
+					reinterpret_cast<std::byte *>(body) +
+					Body::runs_offset(words.size(),
+						validation.size())));
 		return body;
 	}
 
 	void delete_body(Body *body) noexcept
 	{
-		const auto bytes = body->bytes;
+		const auto bytes = body->allocation_bytes();
 		body->~Body();
 		bodies_.deallocate(body, bytes);
 	}
@@ -1358,7 +1436,7 @@ private:
 	{
 		if (slot.body != nullptr) {
 			deactivate(slot.generation, slot.pc,
-				slot.body->result.program);
+				slot.body->words());
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
@@ -1383,7 +1461,8 @@ private:
 		 * The word a stopped build read without retiring belongs to the
 		 * last run, which is where the build stopped. */
 		std::array<std::uint32_t, block_instruction_count> fetched;
-		const auto &program = slot.body->result.program;
+		const auto result = slot.body->result();
+		const auto &program = result.program;
 		const auto runs = program.runs();
 		std::size_t saved = 0;
 		for (std::size_t index = 0; index < runs.size(); ++index) {
@@ -1440,8 +1519,8 @@ private:
 
 	void activate(std::uint64_t pc, Slot &slot)
 	{
-		const auto &result = slot.body->result;
-		if (!result.complete || result.program.instruction_count() == 0)
+		const auto &body = *slot.body;
+		if (!body.complete || body.instruction_count == 0)
 			return;
 		if (slot.link == nullptr || slot.link_epoch != epoch_ ||
 		    slot.link->link.guest_pc != pc) {
@@ -1454,18 +1533,18 @@ private:
 			current().live_links.push_back(&record);
 		}
 		auto *target = &record.link;
-		if (result.program.accesses_fp_state()) {
-			record.fp_stream[1] = reinterpret_cast<std::uintptr_t>(
-				result.program.words().data());
+		if (body.accesses_fp_state) {
+			record.fp_stream[1] =
+				reinterpret_cast<std::uintptr_t>(body.words());
 			target->stream = record.fp_stream.data();
 		} else {
-			target->stream = result.program.words().data();
+			target->stream = body.words();
 		}
-		target->instruction_count = result.program.instruction_count();
+		target->instruction_count = body.instruction_count;
 	}
 
 	void deactivate(unsigned long generation, std::uint64_t pc,
-			const arm64::gadgets::Program &program) noexcept
+			const std::uintptr_t *words) noexcept
 	{
 		/* Slots of several address spaces share this cache, so an
 		 * eviction is frequently not from the current one; the record to
@@ -1478,7 +1557,6 @@ private:
 		if (found == nullptr)
 			return;
 		auto &record = *found;
-		const auto *words = program.words().data();
 		const bool direct = record.link.stream == words;
 		const bool fp = record.link.stream == record.fp_stream.data() &&
 			record.fp_stream[1] ==
@@ -1642,15 +1720,12 @@ void GadgetExecutor::prepare_cache(
 	cache_changes_ = changes;
 }
 
-std::optional<GadgetExecutor::CachedResult> GadgetExecutor::find(
+std::optional<BuildResult> GadgetExecutor::find(
 	std::uint64_t pc, std::uint64_t changes, StaticGuestMemory &memory)
 {
-	const auto *found = programs_->find(
+	return programs_->find(
 		pc, changes, mapping_changes_, memory, execution_context_,
 		cache_diagnostics_);
-	if (found == nullptr)
-		return std::nullopt;
-	return std::cref(*found);
 }
 
 /* Produce a translation the cache did not hold.
@@ -1662,22 +1737,21 @@ std::optional<GadgetExecutor::CachedResult> GadgetExecutor::find(
  * other executor has already translated. It is not worth asking when no other
  * executor exists to have answered.
  */
-const BuildResult &GadgetExecutor::translate(
+BuildResult GadgetExecutor::translate(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
 	++cache_diagnostics_.translations;
 	if (!arm64::gadgets::SharedProgramStore::sharing_worthwhile())
 		return build(pc, window, nullptr);
 	const auto key = arm64::gadgets::SharedKey::of(pc, window, profile_);
-	if (const auto *adopted = programs_->adopt(key, cache_changes_);
-	    adopted != nullptr) {
+	if (auto adopted = programs_->adopt(key, cache_changes_); adopted) {
 		++cache_diagnostics_.adoptions;
-		return *adopted;
+		return std::move(*adopted);
 	}
 	return build(pc, window, &key);
 }
 
-const BuildResult &GadgetExecutor::build(
+BuildResult GadgetExecutor::build(
 	std::uint64_t pc, std::span<const std::uint32_t> window,
 	const arm64::gadgets::SharedKey *key)
 {
@@ -1714,16 +1788,15 @@ const BuildResult &GadgetExecutor::build(
 	/* With a callee inlined the words the build read are no longer a prefix
 	 * of the caller's window, so the stale-program check is given what the
 	 * build actually read, in run order. */
-	return store(pc, std::move(decoded),
+	return store(pc, decoded,
 		std::span<const std::uint32_t>{consumed}.first(consumed_count));
 }
 
-const BuildResult &GadgetExecutor::store(
-	std::uint64_t pc, BuildResult result,
+BuildResult GadgetExecutor::store(
+	std::uint64_t pc, const BuildResult &result,
 	std::span<const std::uint32_t> guest_words)
 {
-	return programs_->store(
-		pc, std::move(result), guest_words, cache_changes_);
+	return programs_->store(pc, result, guest_words, cache_changes_);
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_block(
@@ -1780,10 +1853,10 @@ const BuildResult &GadgetExecutor::store(
 		}
 		const auto window = std::span{instructions}.first(count);
 		build_memory_ = &memory;
-		selected = std::cref(translate(cpu.pc, window));
+		selected.emplace(translate(cpu.pc, window));
 		build_memory_ = nullptr;
 	}
-	const auto &built = selected->get();
+	const auto &built = *selected;
 	if (built.program.instruction_count() == 0) {
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
@@ -1800,11 +1873,11 @@ const BuildResult &GadgetExecutor::store(
 	if (count_exit) {
 		const auto *current_program = &built.program;
 		const auto *exit_stream = cpu.gadget_indirect_miss;
+		std::optional<BuildResult> exit_block;
 		if (!program_contains_stream(*current_program, exit_stream)) {
-			if (const auto *cached =
-				    programs_->find_stream(exit_stream);
-			    cached != nullptr)
-				current_program = &cached->program;
+			exit_block = programs_->find_stream(exit_stream);
+			if (exit_block)
+				current_program = &exit_block->program;
 		}
 		if (fpcr_enable_exit)
 			correct_fpcr_enable_instruction_count(

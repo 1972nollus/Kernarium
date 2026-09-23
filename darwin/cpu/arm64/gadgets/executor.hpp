@@ -10,7 +10,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -78,20 +77,20 @@ public:
 	}
 
 private:
-	using CachedResult = std::reference_wrapper<const BuildResult>;
-
+	/* A cached translation is handed out as a BuildResult whose program
+	 * borrows the cache's words, so it is valid until the next store. */
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
 	void select_cpu(CpuState &cpu) noexcept;
-	[[nodiscard]] std::optional<CachedResult> find(
+	[[nodiscard]] std::optional<BuildResult> find(
 		std::uint64_t pc, std::uint64_t changes,
 		::uml::memory::StaticGuestMemory &memory);
-	[[nodiscard]] const BuildResult &translate(
+	[[nodiscard]] BuildResult translate(
 		std::uint64_t pc, std::span<const std::uint32_t> window);
-	[[nodiscard]] const BuildResult &build(
+	[[nodiscard]] BuildResult build(
 		std::uint64_t pc, std::span<const std::uint32_t> window,
 		const SharedKey *key);
-	[[nodiscard]] const BuildResult &store(
-		std::uint64_t pc, BuildResult result,
+	[[nodiscard]] BuildResult store(
+		std::uint64_t pc, const BuildResult &result,
 		std::span<const std::uint32_t> guest_words);
 	[[nodiscard]] void *execution_context(unsigned long generation);
 	[[nodiscard]] ::uml::cpu::EngineEvent run_trap_enabled_instruction(
