@@ -54,8 +54,6 @@ def inventory(root: Path) -> list[tuple[str, str, str]]:
             relative = path.relative_to(root).as_posix()
             if "\n" in relative or "\t" in relative:
                 raise RuntimeError(f"binary path is not TSV-safe: {relative!r}")
-            if name.lower() in {"libarm64ecfex.dll", "libwow64fex.dll", "libfexcore.so"}:
-                raise RuntimeError(f"unexpected guest FEX engine: {relative}")
             with path.open("rb") as stream:
                 header = stream.read(20)
             if not header.startswith(b"\x7fELF"):

@@ -9,13 +9,10 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
-TOOLCHAIN_MANIFEST=${UML_DEPENDENCY_TOOLCHAIN_MANIFEST:-"$ROOT_DIR/dependencies/toolchains.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
 DEPENDENCY_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
 CACHE_ROOT=${UML_DEPENDENCY_CACHE:-"$ROOT_DIR/.build/dependency-cache"}
-TOOLCHAIN_ROOT=${UML_DEPENDENCY_TOOLCHAIN_ROOT:-"$ROOT_DIR/.build/dependency-toolchains"}
 PRODUCT=${UML_DEPENDENCY_PRODUCT:-macos}
-TOOLCHAIN=
 VERIFY_ONLY=0
 FETCH=1
 VALIDATE_MANIFEST_ONLY=0
@@ -41,15 +38,10 @@ Usage: dependencies/prepare.sh [options]
 
 Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
-                  ios-x86, wine-arm64ec-rootfs, steam-arm64ec-rootfs, apple-gpu,
-                  apple-gpu-vulkan-experiment, x86-conformance, or all
+                  apple-gpu, apple-gpu-vulkan-experiment, x86-conformance, or
+                  all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
-  --toolchain NAME
-                  Prepare one immutable binary toolchain archive instead of
-                  Git sources
-  --toolchain-root PATH
-                  Prepared toolchain root (default: .build/dependency-toolchains)
   --verify        Verify prepared repositories without changing or fetching
   --no-fetch      Prepare only from commits already present in the Git cache
   --validate-manifest-only
@@ -84,16 +76,6 @@ while [ "$#" -gt 0 ]; do
 	--cache)
 		[ "$#" -ge 2 ] || fail "--cache requires a path"
 		CACHE_ROOT=$2
-		shift 2
-		;;
-	--toolchain)
-		[ "$#" -ge 2 ] || fail "--toolchain requires a name"
-		TOOLCHAIN=$2
-		shift 2
-		;;
-	--toolchain-root)
-		[ "$#" -ge 2 ] || fail "--toolchain-root requires a path"
-		TOOLCHAIN_ROOT=$2
 		shift 2
 		;;
 	--verify)
@@ -140,9 +122,6 @@ done
 case "$PRODUCT" in
 *[!A-Za-z0-9._+-]*|'') fail "unsafe dependency product: $PRODUCT" ;;
 esac
-case "$TOOLCHAIN" in
-*[!A-Za-z0-9._+-]*) fail "unsafe dependency toolchain: $TOOLCHAIN" ;;
-esac
 
 [ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
 # shellcheck disable=SC1090
@@ -150,14 +129,6 @@ esac
 if [ -z "$ARCHIVE_MANIFEST" ] && [ -z "$RESOLVE_REPOSITORY" ] &&
 	[ -z "$TAG_REPOSITORY" ]; then
 	uml_require_git_identity 'dependencies/prepare.sh'
-fi
-if [ "$PRODUCT" = steam-arm64ec-rootfs ]; then
-	[ -z "$TOOLCHAIN" ] || fail "Steam preparation selects its own SDK"
-	set -- --root "$DEPENDENCY_ROOT"
-	[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] || set -- "$@" --validate-manifest-only
-	[ "$VERIFY_ONLY" -eq 0 ] || set -- "$@" --verify
-	[ "$FETCH" -eq 1 ] || set -- "$@" --no-fetch
-	exec python3 -B "$ROOT_DIR/tools/rootfs/steam-arm64ec/prepare-inputs.py" "$@"
 fi
 
 sha256_file()
@@ -169,142 +140,9 @@ sha256_file()
 	fi
 }
 
-prepare_toolchain()
-{
-	command -v python3 >/dev/null 2>&1 || fail "python3 build tool is required"
-	if ! command -v shasum >/dev/null 2>&1 &&
-		! command -v sha256sum >/dev/null 2>&1; then
-		fail "shasum or sha256sum build tool is required"
-	fi
-	[ -r "$TOOLCHAIN_MANIFEST" ] ||
-		fail "missing dependency toolchain manifest: $TOOLCHAIN_MANIFEST"
-	awk -F '\t' '
-		/^#/ || /^[[:space:]]*$/ { next }
-		$1 == "name" {
-			if (header || data || NF != 6 || $2 != "version" ||
-			    $3 != "host" || $4 != "archive_url" ||
-			    $5 != "sha256" || $6 != "archive_root") exit 1
-			header = 1
-			next
-		}
-		!header || NF != 6 || seen[$1]++ { exit 1 }
-		{ data = 1 }
-		END { if (!header || !data) exit 1 }
-	' "$TOOLCHAIN_MANIFEST" || fail "dependency toolchain manifest is invalid"
-	matched=0
-	tab=$(printf '\t')
-	while IFS="$tab" read -r toolchain_name toolchain_version toolchain_host \
-		archive_url archive_sha256 archive_root; do
-		case "$toolchain_name" in
-		\#*|name|'') continue ;;
-		esac
-		case "$toolchain_name:$toolchain_version:$toolchain_host" in
-		*[!A-Za-z0-9._+:-]*) fail "unsafe toolchain identity" ;;
-		esac
-		case "$archive_url" in
-		https://*.tar.xz) ;;
-		*) fail "$toolchain_name has an unsupported archive URL" ;;
-		esac
-		case "$archive_sha256" in
-		*[!0-9a-f]*|'') fail "$toolchain_name has an invalid archive hash" ;;
-		esac
-		[ "${#archive_sha256}" -eq 64 ] ||
-			fail "$toolchain_name archive hash must be SHA-256"
-		case "$archive_root" in
-		''|/*|*\\*|..|../*|*/../*|*/..|*//* )
-			fail "$toolchain_name has an unsafe archive root" ;;
-		esac
-		[ "$toolchain_name" = "$TOOLCHAIN" ] || continue
-		matched=1
-		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] || continue
-		destination="$TOOLCHAIN_ROOT/$toolchain_name-$toolchain_version-$toolchain_host"
-		expected_receipt=$(printf '%s\n' \
-			"name=$toolchain_name" \
-			"version=$toolchain_version" \
-			"host=$toolchain_host" \
-			"archive_url=$archive_url" \
-			"sha256=$archive_sha256" \
-			"archive_root=$archive_root")
-		if [ -e "$destination" ] || [ -L "$destination" ]; then
-			[ -d "$destination" ] || fail "$toolchain_name destination is not a directory"
-			actual_receipt=$(cat "$destination/.uml-toolchain-receipt" 2>/dev/null || true)
-			[ "$actual_receipt" = "$expected_receipt" ] ||
-				fail "$toolchain_name prepared receipt differs"
-			for binary in clang llvm-dlltool lld-link; do
-				[ -x "$destination/bin/$binary" ] ||
-					fail "$toolchain_name is missing executable bin/$binary"
-			done
-			printf '%s\n' "verified dependency toolchain: $destination"
-			continue
-		fi
-		[ "$VERIFY_ONLY" -eq 0 ] || fail "$toolchain_name is not prepared: $destination"
-		mkdir -p -- "$CACHE_ROOT/archives" "$TOOLCHAIN_ROOT"
-		archive="$CACHE_ROOT/archives/$toolchain_name-$toolchain_version-$archive_sha256.tar.xz"
-		if [ ! -f "$archive" ]; then
-			[ "$FETCH" -eq 1 ] || fail "$toolchain_name archive is absent: $archive"
-			command -v curl >/dev/null 2>&1 || fail "curl build tool is required"
-			temporary_archive=$(mktemp "$CACHE_ROOT/archives/.${toolchain_name}.XXXXXX")
-			if ! curl --fail --location --retry 3 --output "$temporary_archive" "$archive_url"; then
-				rm -f -- "$temporary_archive"
-				fail "$toolchain_name archive download failed"
-			fi
-			[ "$(sha256_file "$temporary_archive")" = "$archive_sha256" ] || {
-				rm -f -- "$temporary_archive"
-				fail "$toolchain_name downloaded archive hash differs"
-			}
-			if ! mv -n -- "$temporary_archive" "$archive" 2>/dev/null; then
-				rm -f -- "$temporary_archive"
-				[ -f "$archive" ] || fail "$toolchain_name archive could not be published"
-			fi
-		fi
-		[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
-			fail "$toolchain_name cached archive hash differs"
-		staging=$(mktemp -d "$TOOLCHAIN_ROOT/.${toolchain_name}.XXXXXX")
-		python3 - "$archive" "$staging" <<'PY'
-import pathlib
-import sys
-import tarfile
-
-archive = pathlib.Path(sys.argv[1])
-destination = pathlib.Path(sys.argv[2])
-with tarfile.open(archive, "r:xz") as source:
-    for member in source.getmembers():
-        path = pathlib.PurePosixPath(member.name)
-        if path.is_absolute() or ".." in path.parts:
-            raise SystemExit(f"unsafe archive member: {member.name}")
-    source.extractall(destination, filter="data")
-PY
-		[ -d "$staging/$archive_root" ] || {
-			rm -rf -- "$staging"
-			fail "$toolchain_name archive root differs"
-		}
-		printf '%s\n' "$expected_receipt" \
-			> "$staging/$archive_root/.uml-toolchain-receipt"
-		for binary in clang llvm-dlltool lld-link; do
-			[ -x "$staging/$archive_root/bin/$binary" ] || {
-				rm -rf -- "$staging"
-				fail "$toolchain_name archive is missing executable bin/$binary"
-			}
-		done
-		if ! mv -n -- "$staging/$archive_root" "$destination" 2>/dev/null; then
-			rm -rf -- "$staging"
-			[ -d "$destination" ] || fail "$toolchain_name could not be published"
-		else
-			rm -rf -- "$staging"
-		fi
-		actual_receipt=$(cat "$destination/.uml-toolchain-receipt" 2>/dev/null || true)
-		[ "$actual_receipt" = "$expected_receipt" ] ||
-			fail "$toolchain_name published receipt differs"
-		printf '%s\n' "verified dependency toolchain: $destination"
-	done < "$TOOLCHAIN_MANIFEST"
-	[ "$matched" -eq 1 ] || fail "toolchain manifest has no entry named $TOOLCHAIN"
-	[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] ||
-		printf '%s\n' "validated dependency toolchain manifest: $TOOLCHAIN_MANIFEST"
-}
-
 if [ -n "$ARCHIVE_MANIFEST" ]; then
-	[ -z "$TOOLCHAIN" ] && [ -z "$RESOLVE_REPOSITORY" ] && [ -z "$TAG_REPOSITORY" ] ||
-		fail "archive preparation cannot be combined with toolchain or ref discovery"
+	[ -z "$RESOLVE_REPOSITORY" ] && [ -z "$TAG_REPOSITORY" ] ||
+		fail "archive preparation cannot be combined with ref discovery"
 	python3 - "$ARCHIVE_MANIFEST" <<'PY_ARCHIVES'
 import csv
 import pathlib
@@ -368,8 +206,7 @@ fi
 
 if [ -n "$TAG_REPOSITORY" ]; then
 	[ "$FETCH" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] &&
-		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] && [ -z "$TOOLCHAIN" ] &&
-		[ -z "$RESOLVE_REPOSITORY" ] ||
+		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] && [ -z "$RESOLVE_REPOSITORY" ] ||
 		fail "--materialize-tag cannot be combined with other preparation modes"
 	case "$TAG_REPOSITORY" in
 	https://?*) ;;
@@ -405,7 +242,7 @@ fi
 
 if [ -n "$RESOLVE_REPOSITORY" ]; then
 	[ "$FETCH" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] &&
-		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] && [ -z "$TOOLCHAIN" ] ||
+		[ "$VALIDATE_MANIFEST_ONLY" -eq 0 ] ||
 		fail "--resolve-ref cannot be combined with offline or preparation modes"
 	case "$RESOLVE_REPOSITORY" in
 	https://?*) ;;
@@ -433,11 +270,6 @@ if [ -n "$RESOLVE_REPOSITORY" ]; then
 	printf 'resolved %s %s: ref-object=%s peeled-object=%s\n' \
 		"$RESOLVE_REPOSITORY" "$RESOLVE_REF" "$ref_object" "$object" >&2
 	printf '%s\n' "$object"
-	exit 0
-fi
-
-if [ -n "$TOOLCHAIN" ]; then
-	prepare_toolchain
 	exit 0
 fi
 

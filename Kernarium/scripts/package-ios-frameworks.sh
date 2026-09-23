@@ -54,7 +54,6 @@ find_tool OTOOL otool
 
 RUNTIME_4K="KRuntime_6_18_4K"
 RUNTIME_16K="KRuntime_6_18_16K"
-RUNTIME_WINE_4K="KRuntime_Wine_6_18_4K"
 
 # The Android runtime carries an independently accepted ACK artifact. Rootfs
 # release updates do not rename this framework and kernel-only updates do not
@@ -63,7 +62,6 @@ RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
 
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
-DEVICE_RUNTIME_WINE="$ROOT_DIR/.build/wine-arm64ec-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_WINE_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
@@ -78,15 +76,12 @@ GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
 # consuming the device prefix.
 "$ROOT_DIR/dependencies/build-apple-gpu.sh" \
 	--product "$PRODUCT" --platform ios --verify-only
-"$ROOT_DIR/dependencies/build-ios-x86.sh" \
-	--platform ios --verify-only
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"
 
 for framework in \
 	"$DEVICE_RUNTIME_4K" \
 	"$DEVICE_RUNTIME_16K" \
-	"$DEVICE_RUNTIME_WINE" \
 	"$DEVICE_RUNTIME_ANDROID" \
 	"$STORAGE" \
 	"$ZSTD"; do
@@ -123,7 +118,6 @@ create_xcframework()
 
 create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
 create_xcframework "$RUNTIME_16K" "$DEVICE_RUNTIME_16K"
-create_xcframework "$RUNTIME_WINE_4K" "$DEVICE_RUNTIME_WINE"
 create_xcframework "$RUNTIME_ANDROID_16K" "$DEVICE_RUNTIME_ANDROID"
 for framework in $GPU_FRAMEWORKS; do
 	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
@@ -133,7 +127,7 @@ done
 "$CMAKE" -E copy_directory "$ZSTD" \
 	"$STAGE/LibZstd.xcframework"
 
-RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_WINE_4K $RUNTIME_ANDROID_16K"
+RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_ANDROID_16K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
 	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
 	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"

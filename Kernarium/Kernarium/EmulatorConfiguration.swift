@@ -307,13 +307,8 @@ enum GuestSelection {
     /// ordinary Linux images leave the choice to the setting.
     var requiredPageSize: KernelPageSize? {
         switch self {
-        case let .image(_, flavor):
-            switch flavor {
-            case .wineARM64EC:
-                .fourKiB
-            case .linux, .android:
-                nil
-            }
+        case .image:
+            nil
         case let .bundle(bundle):
             bundle.requiredPageSize
         }
@@ -323,7 +318,6 @@ enum GuestSelection {
 enum RootfsImage {
     static let defaultFilename = "rootfs.erofs"
     static let environmentKey = "KERNARIUM_ROOTFS"
-    static let wineARM64ECFilenamePrefix = "wine-arm64ec-"
 
     static var documentsDirectory: URL {
         FileManager.default.urls(
@@ -360,10 +354,7 @@ enum RootfsImage {
                 .map(GuestSelection.bundle)
         }
         guard fileManager.fileExists(atPath: url.path) else { return nil }
-        let flavor: GuestFlavor = validated.hasPrefix(
-            wineARM64ECFilenamePrefix
-        ) ? .wineARM64EC : .linux
-        return .image(url, flavor: flavor)
+        return .image(url, flavor: .linux)
     }
 
     /// The page profile a stored selection forces, if any. Settings and the

@@ -16,16 +16,7 @@ if(UML_TEST_APPLE_AUDIO)
     add_subdirectory(audio)
 endif()
 
-option(UML_TEST_STEAM_ARM64EC "Qualify the Steam gaming rootfs instead of the Wine XFCE rootfs" OFF)
-if(UML_TEST_STEAM_ARM64EC AND NOT UML_BUILD_WINE_ARM64EC)
-    message(FATAL_ERROR "Steam rootfs qualification requires the ARM64EC Wine emulator")
-endif()
-
-if(UML_BUILD_WINE_ARM64EC)
-    set(_uml_integration_emulator uml-darwin-wine-arm64ec)
-else()
-    set(_uml_integration_emulator uml-darwin)
-endif()
+set(_uml_integration_emulator uml-darwin)
 if(NOT TARGET "${_uml_integration_emulator}")
     message(FATAL_ERROR
         "Integration emulator target is unavailable: ${_uml_integration_emulator}")
@@ -366,36 +357,6 @@ done'"
         TIMEOUT 1800
         PROCESSORS 10
         RESOURCE_GROUPS cpus:10,gpus:1)
-endif()
-
-if(UML_BUILD_WINE_ARM64EC AND UML_TEST_STEAM_ARM64EC)
-    set(_uml_steam_graphics_arguments)
-    if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
-        list(APPEND _uml_steam_graphics_arguments --experimental-venus)
-    endif()
-    uml_add_guest_integration_test(
-        NAME guest-steam-arm64ec-smoke
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/integration/steam_arm64ec/run_guest_steam_smoke.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-            --log ${CMAKE_BINARY_DIR}/reports/steam-arm64ec-guest.log
-            ${_uml_steam_graphics_arguments}
-        LABELS guest;steam;wine;arm64ec;gpu;smoke
-        TIMEOUT 1800
-        PROCESSORS 4
-        RESOURCE_GROUPS cpus:4,gpus:1)
-elseif(UML_BUILD_WINE_ARM64EC)
-    uml_add_guest_integration_test(
-        NAME guest-wine-arm64ec-smoke
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/wine_arm64ec/run_guest_wine_smoke.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-        LABELS guest;wine;arm64ec;x86_64;xfce;smoke
-        TIMEOUT 600
-        PROCESSORS 4
-        RESOURCE_GROUPS cpus:4)
 endif()
 
 # The iOS slice renders through Mesa Zink on KosmicKrisp, which requires Metal

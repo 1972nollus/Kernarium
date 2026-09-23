@@ -79,13 +79,6 @@ The normal arm64-userspace profiles are:
 - 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
 - 4 KiB pages from `config/page-4k.fragment` (compatibility).
 
-The separate `wine-arm64ec` profile composes
-`profiles/wine-arm64ec/config.fragment` after the arm64 4 KiB profile. It
-retains an AArch64 Linux userspace ABI, asserts the process, memory, event, and
-sandbox facilities required by Wine, and uses a 250 Hz active tick with idle
-tick suppression. It has its own accepted artifact descriptor and is selected
-only by the dedicated ARM64EC Wine emulator build.
-
 The separate x86_64-userspace slice is 4 KiB only. It composes
 `slices/x86_64/config/userspace.fragment` after the shared common and 4 KiB
 fragments and applies only the patches in `slices/x86_64/patches`. The kernel
@@ -243,9 +236,6 @@ kernel/mainline-6.18/build/build-kernel.sh \
   --slice arm64 --build /case-sensitive/build-arm64-16k --page-size 16k
 kernel/mainline-6.18/build/build-kernel.sh \
   --slice arm64 --build /case-sensitive/build-arm64-4k --page-size 4k
-kernel/mainline-6.18/build/build-kernel.sh \
-  --slice arm64 --profile wine-arm64ec \
-  --build /case-sensitive/build-wine-arm64ec-4k --page-size 4k
 kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
 kernel/mainline-6.18/build/build-kernel.sh \
   --slice x86_64 --build /case-sensitive/build-x86_64-4k --page-size 4k
@@ -259,8 +249,6 @@ source checkout. Use the script's `--help` for output and release options.
 
 `artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
 publications below `.build/kernel/artifacts`.
-`profiles/wine-arm64ec/artifacts/accepted-4k.env` independently selects the
-ARM64EC Wine appliance kernel.
 `slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
 userspace publication. Artifact identity includes the slice, so an arm64 4 KiB
 kernel cannot satisfy an x86_64 selection. Apple products validate the whole

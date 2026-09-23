@@ -212,8 +212,7 @@ other store, and the accesses inside one instruction keep the order the gadget
 gives them. The mark is textual, so a new guest memory path that bypasses those
 macros has to mark itself, and a memory form that joins another gadget's tail,
 as DIV and IDIV do, runs the boundary before it branches. Leaving the engine
-always carries the barrier. The Wine CPU service builds the stronger form, a
-barrier after every gadget (`UML_X86_64_STRICT_TSO`).
+always carries the barrier.
 
 ## Locked operands
 
@@ -274,10 +273,6 @@ is executable. The registry guarantees:
   registry's change counter after publishing its entry;
 - counting a page in or out never sleeps: the counts are guarded in 64 stripes
   by the word-sized lock the MMU uses.
-
-The Wine ARM64EC CPU service, whose arm64 translations live outside the
-registry, publishes on every executable store instead
-(`Executor::publish_every_executable_store`).
 
 A native program owes one publication per page it stores into, and a store
 spanning a page boundary owes both of them. The record a publication leaves is

@@ -136,7 +136,7 @@ function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
         TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-        EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE EXPECTED_CONFIG_FRAGMENT)
+        EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
             TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
@@ -157,18 +157,6 @@ function(uml_import_kernel_artifact)
     set(_uml_abi_metadata "${ARTIFACT_COMMON_ROOT}/abi/identity.env")
     set(_uml_verifier
         "${ARTIFACT_COMMON_ROOT}/artifacts/verify-kernel-artifact.py")
-    set(_uml_profile_verifier_arguments)
-    if(ARTIFACT_EXPECTED_CONFIG_FRAGMENT)
-        if(NOT IS_ABSOLUTE "${ARTIFACT_EXPECTED_CONFIG_FRAGMENT}" OR
-           NOT EXISTS "${ARTIFACT_EXPECTED_CONFIG_FRAGMENT}")
-            message(FATAL_ERROR
-                "Kernel profile fragment is missing: "
-                "${ARTIFACT_EXPECTED_CONFIG_FRAGMENT}")
-        endif()
-        list(APPEND _uml_profile_verifier_arguments
-            --expected-config-fragment
-            "${ARTIFACT_EXPECTED_CONFIG_FRAGMENT}")
-    endif()
     execute_process(
         COMMAND "${Python3_EXECUTABLE}" -B "${_uml_verifier}"
             --artifact "${ARTIFACT_ARTIFACT_ROOT}"
@@ -179,7 +167,6 @@ function(uml_import_kernel_artifact)
             --expected-slice "${ARTIFACT_EXPECTED_SLICE}"
             --expected-release-series "${ARTIFACT_EXPECTED_RELEASE_SERIES}"
             --expected-page-size "${ARTIFACT_EXPECTED_PAGE_SIZE}"
-            ${_uml_profile_verifier_arguments}
         RESULT_VARIABLE _uml_artifact_result
         OUTPUT_VARIABLE _uml_artifact_output
         ERROR_VARIABLE _uml_artifact_error)
@@ -243,7 +230,4 @@ function(uml_import_kernel_artifact)
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/kernel.release"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin.modinfo")
-    if(ARTIFACT_EXPECTED_CONFIG_FRAGMENT)
-        uml_watch_artifact_inputs("${ARTIFACT_EXPECTED_CONFIG_FRAGMENT}")
-    endif()
 endfunction()

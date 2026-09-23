@@ -104,8 +104,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         return @"KRuntime_";
     case KERNARIUM_RUNTIME_GUEST_ANDROID:
         return @"KRuntime_ACK_";
-    case KERNARIUM_RUNTIME_GUEST_WINE_ARM64EC:
-        return @"KRuntime_Wine_";
     default:
         return nil;
     }

@@ -241,10 +241,8 @@ json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	to
 ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained
 rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained
 rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained
-rootfs-steam-arm64ec-image-audit	tests/tooling/rootfs/test_steam_arm64ec_image.py	tooling	retained
 rootfs-steam-x86-64-image-audit	tests/tooling/rootfs/test_steam_x86_64_image.py	tooling	retained
 rootfs-starter-image-contract	tests/tooling/rootfs/test_starter_images.py	tooling	retained
-rootfs-wine-arm64ec-pe-audit	tests/tooling/rootfs/test_wine_arm64ec_pe.py	tooling	retained
 gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
 gpu-guest-process-ownership-safety	tests/tooling/gpu/test_guest_process.py	tooling	retained
 vulkan-probe-guest-safety	tests/tooling/gpu/test_run_vulkan_probe.py	tooling	retained
@@ -307,10 +305,8 @@ guest-overlay-systemd-smoke	tests/integration	integration	retained
 guest-gadgets-smoke	tests/integration/jit	integration	retained
 guest-jit-smoke	tests/integration/jit	integration	retained
 guest-slirp-network	tests/integration/network	integration	retained
-guest-wine-arm64ec-smoke	tests/integration/wine_arm64ec	integration	conditional
 apple-ios-mac-vk-gl-cts	tests/integration/gpu	integration	conditional
 apple-ios-device-vk-cts	tests/integration/gpu	integration	conditional
-guest-steam-arm64ec-smoke	tests/integration/steam_arm64ec	integration	conditional
 guest-mmu-stress	tests/integration/smp	integration	retained
 guest-docker-hello-world	tests/integration	integration	conditional
 guest-external-network	tests/integration/network	integration	conditional

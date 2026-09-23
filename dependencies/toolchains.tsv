@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Binary build tools are pinned by release URL and archive SHA-256. They are
-# build-host inputs only and are never shipped in an emulator product.
-name	version	host	archive_url	sha256	archive_root
-llvm-mingw-arm64ec	20250920	linux-aarch64	https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-aarch64.tar.xz	bce5cc755c613515fd44e1ee9523123d854103abae147571adb645450036274d	llvm-mingw-20250920-ucrt-ubuntu-22.04-aarch64

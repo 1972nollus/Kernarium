@@ -4,7 +4,7 @@
 set -euo pipefail
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$here/../../.." && pwd)
-# Storage, session and splash assets shared with the ARM64EC appliance.
+# Storage, session and splash assets from the shared Steam directory.
 shared=$(CDPATH= cd -- "$here/../steam-common" && pwd)
 usage()
 {

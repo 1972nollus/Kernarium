@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-order	patch	stable_patch_id	sha256	subject
-1	0001-Select-the-UML-ARM64EC-and-WoW64-CPU-bridges.patch	e0dca1171d69550894bee948dca938cf251c414d	908d6d32948dd8bc688e551356a86f004067a49f05ec8174f30bd0e10a299868	Select the UML ARM64EC and WoW64 CPU bridges
-2	0002-Provide-a-readable-ARM64-signal-restorer-for-UML-unw.patch	2dc22753b8a195d57caa168b7edc5773977cbed7	f0cb0960d15d8b728f64697b14359aedef3daecfbd0ac3670717135c7f05a7ae	Provide a readable ARM64 signal restorer for UML unwinding

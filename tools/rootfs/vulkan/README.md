@@ -287,7 +287,3 @@ sudo tools/rootfs/vulkan/install-runtime.py --architecture amd64 \
   --source WORK/stage/runtime-amd64 \
   --receipt WORK/output/guest-runtime-amd64.receipt.json --root IMAGE_ROOT
 ```
-
-The ARM64EC producer keeps `tools/rootfs/steam-arm64ec/install-vulkan.py`,
-which imports the same runtime from the receipt-gated CTS image and is bound
-to that image's accepted identity.

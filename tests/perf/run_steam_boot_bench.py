@@ -56,14 +56,10 @@ def _load_disk_preparation():
     The user-data disk carries a one-shot initialization marker that the
     image-owned storage stage requires before it will ever run mkfs, so the
     benchmark must create disks exactly the way a real launch does. The shared
-    launcher owns that layout; the per-image launcher re-exports it.
+    launcher owns that layout.
     """
-    for directory, module in (("tools/rootfs/steam-common", "launcher"),
-                              ("tools/rootfs/steam-arm64ec", "boot")):
-        if (REPOSITORY / directory / f"{module}.py").is_file():
-            sys.path.insert(0, str(REPOSITORY / directory))
-            return importlib.import_module(module).prepare_disk
-    raise SystemExit("no Steam appliance launcher module was found")
+    sys.path.insert(0, str(REPOSITORY / "tools/rootfs/steam-common"))
+    return importlib.import_module("launcher").prepare_disk
 
 
 prepare_disk = _load_disk_preparation()

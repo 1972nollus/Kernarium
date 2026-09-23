@@ -68,22 +68,6 @@ void CodePageRegistry::leave(Participant &participant) noexcept
 		participants_.erase(found);
 }
 
-void CodePageRegistry::set_conservative(bool value) noexcept
-{
-	conservative_.store(value, std::memory_order_relaxed);
-	if (!value)
-		return;
-	/* A removal that read the flag before it was set clears its bit under
-	 * its stripe; hold them all so the fill comes after every such clear. */
-	for (auto &stripe : stripes_)
-		stripe.mutex.lock();
-	for (std::size_t word = 0; word < bit_count / 64U; ++word)
-		bits_[word].store(~std::uint64_t{0}, std::memory_order_relaxed);
-	changes_.fetch_add(1, std::memory_order_acq_rel);
-	for (auto &stripe : stripes_)
-		stripe.mutex.unlock();
-}
-
 void CodePageRegistry::retire_write_translations(std::uint64_t page) noexcept
 {
 	const auto index = native_tlb_index(page);
@@ -100,8 +84,7 @@ void CodePageRegistry::retire_write_translations(std::uint64_t page) noexcept
 bool CodePageRegistry::holds_exactly(
 	std::uint64_t address, std::size_t bit) const noexcept
 {
-	if (conservative_.load(std::memory_order_relaxed) ||
-	    inexact_.load(std::memory_order_relaxed))
+	if (inexact_.load(std::memory_order_relaxed))
 		return true;
 	const auto &stripe = stripe_for(bit);
 	const std::shared_lock lock{stripe.mutex};
@@ -179,11 +162,10 @@ void CodePageRegistry::remove(std::uint64_t page) noexcept
 	    found != stripe.pages.end() && found->second != 0)
 		lost = --found->second == 0;
 	auto &count = counts_[bit];
-	if (count != 0 && count != 0xff && --count == 0 &&
-	    !conservative_.load(std::memory_order_relaxed))
+	if (count != 0 && count != 0xff && --count == 0)
 		bits_[bit >> 6U].fetch_and(~(std::uint64_t{1} << (bit & 63U)),
 			std::memory_order_release);
-	if (!lost || conservative_.load(std::memory_order_relaxed))
+	if (!lost)
 		return;
 	/* A write translation tagged while the page held code would keep
 	 * publishing; retire it so the next store refills it untagged. A

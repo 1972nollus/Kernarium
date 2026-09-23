@@ -93,11 +93,6 @@ public:
 	void add(std::uint64_t page, const Participant *self) noexcept;
 	void remove(std::uint64_t page) noexcept;
 
-	/* Every executable page counts as code. The Wine CPU service runs x86
-	 * executors beside arm64 ones whose translations this registry does not
-	 * see, so it keeps the unconditional publication. */
-	void set_conservative(bool value) noexcept;
-
 private:
 	static constexpr unsigned bit_count_log2 = 18;
 	static constexpr std::size_t bit_count = std::size_t{1} << bit_count_log2;
@@ -139,7 +134,6 @@ private:
 	std::unique_ptr<std::atomic<std::uint64_t>[]> bits_;
 	std::unique_ptr<std::uint8_t[]> counts_;
 	std::atomic<std::uint64_t> changes_{0};
-	std::atomic<bool> conservative_{false};
 	/* A page count could not be allocated, so the bits answer alone again. */
 	std::atomic<bool> inexact_{false};
 };

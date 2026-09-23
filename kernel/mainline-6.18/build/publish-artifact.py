@@ -48,9 +48,6 @@ def main() -> None:
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--page-size", choices=("4k", "16k"), required=True)
     parser.add_argument("--slice", choices=("arm64", "x86_64"), default="arm64")
-    parser.add_argument(
-        "--profile", choices=("standard", "wine-arm64ec"), default="standard"
-    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     args = parser.parse_args()
@@ -68,7 +65,6 @@ def main() -> None:
         sha256_path,
         verify_artifact,
         verify_config,
-        verify_config_fragment,
         verify_elf,
     )
 
@@ -81,10 +77,6 @@ def main() -> None:
         fail("release ID has an unsafe format")
     if args.slice == "x86_64" and args.page_size != "4k":
         fail("the x86_64 userspace slice supports only 4 KiB pages")
-    if args.profile == "wine-arm64ec" and (
-        args.slice != "arm64" or args.page_size != "4k"
-    ):
-        fail("the wine-arm64ec profile requires the arm64 4 KiB slice")
 
     if args.slice == "x86_64":
         slice_root = line_root / "slices/x86_64"
@@ -154,11 +146,6 @@ def main() -> None:
                 fail(f"loadable module output is forbidden: {Path(root) / name}")
 
     verify_config(source_paths["kernel/config"], page_size, args.slice)
-    if args.profile == "wine-arm64ec":
-        verify_config_fragment(
-            source_paths["kernel/config"],
-            line_root / "profiles/wine-arm64ec/config.fragment",
-        )
     verify_elf(
         source_paths["kernel/vmlinux"], page_size, common_root, args.slice
     )

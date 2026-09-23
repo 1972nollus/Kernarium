@@ -45,13 +45,6 @@ struct EmulatorSettingsView: View {
         )?.flavor == .android
     }
 
-    private var wineARM64ECSelected: Bool {
-        RootfsImage.selection(
-            named: rootfsFilename,
-            in: documentsDirectory
-        )?.flavor == .wineARM64EC
-    }
-
     init(
         defaults: UserDefaults = .standard,
         maximumVCPUCount: Int = EmulatorConfiguration.physicalProcessorCount,
@@ -165,21 +158,11 @@ struct EmulatorSettingsView: View {
                     }
 
                     if let required = requiredPageSize {
-                        Group {
-                            if wineARM64ECSelected {
-                                Text(
-                                    "\(rootfsFilename) uses the dedicated " +
-                                    "ARM64EC Wine runtime with " +
-                                    "\(required.title) pages."
-                                )
-                            } else {
-                                Text(
-                                    "\(rootfsFilename) carries its own " +
-                                    "kernel and boots with \(required.title) " +
-                                    "pages."
-                                )
-                            }
-                        }
+                        Text(
+                            "\(rootfsFilename) carries its own " +
+                            "kernel and boots with \(required.title) " +
+                            "pages."
+                        )
                         .accessibilityIdentifier("guestBundleNote")
                     } else {
                         Text(

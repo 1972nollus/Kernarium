@@ -13,12 +13,8 @@
 
 namespace uml::runtime {
 
-using X86NativeTargetPredicate = bool (*)(
-	::uml::memory::StaticGuestMemory &, std::uint64_t, void *) noexcept;
-
 struct X86GadgetRunResult final {
 	::uml::cpu::ExecutionResult execution;
-	bool native_target{};
 };
 
 [[nodiscard]] X86GadgetRunResult run_x86_gadgets(
@@ -26,9 +22,7 @@ struct X86GadgetRunResult final {
 	::uml::memory::StaticGuestMemory &memory,
 	::uml::cpu::x86_64::gadgets::Executor &executor,
 	unsigned long generation, std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt,
-	X86NativeTargetPredicate native_target = nullptr,
-	void *native_target_context = nullptr) noexcept;
+	const ::uml::cpu::InterruptToken &interrupt) noexcept;
 
 } // namespace uml::runtime
 

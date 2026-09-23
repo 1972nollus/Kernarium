@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: LGPL-2.1-or-later
-
-MODULE  = xtajit64.dll
-IMPORTS = ntdll winecrt0
-
-SOURCES = \
-	cpu.c \
-	entry.S

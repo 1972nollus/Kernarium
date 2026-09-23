@@ -81,37 +81,6 @@ set_target_properties(uml_emulator PROPERTIES
     PUBLIC_HEADER
         "${PROJECT_SOURCE_DIR}/darwin/api/include/uml/emulator.h;${PROJECT_SOURCE_DIR}/darwin/api/include/uml/abi_identity.h")
 
-if(UML_BUILD_WINE_ARM64EC)
-    # Keep the appliance archive independently addressable. It shares the
-    # boundary objects from this product configuration, but its name prevents
-    # an ordinary 4 KiB runtime from being packaged by accident.
-    add_library(uml_wine_arm64ec_emulator STATIC
-        $<TARGET_OBJECTS:uml_emulator_boundary>
-        ${_uml_emulator_carried_objects})
-    add_library(UML::WineArm64ECEmulator ALIAS
-        uml_wine_arm64ec_emulator)
-    uml_declare_architecture_target(uml_wine_arm64ec_emulator emulator)
-    target_link_libraries(uml_wine_arm64ec_emulator PRIVATE
-        UML::ApiContract
-        UML::DeviceGuestConsole
-        UML::GuestPageConfiguration
-        UML::NetworkDevice
-        UML::RuntimeCore
-        UML::RuntimeContract)
-    target_include_directories(uml_wine_arm64ec_emulator
-        PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
-        PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin/include
-            ${PROJECT_SOURCE_DIR}/darwin/device/network
-            ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-            ${PROJECT_SOURCE_DIR}/darwin/runtime
-            ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_wine_arm64ec_emulator PUBLIC cxx_std_20)
-    set_target_properties(uml_wine_arm64ec_emulator PROPERTIES
-        OUTPUT_NAME uml_wine_arm64ec_emulator
-        POSITION_INDEPENDENT_CODE ON)
-endif()
-
 set(_uml_need_admission_test_variant OFF)
 if(UML_BUILD_UNIT_TESTS OR
    (UML_BUILD_TOOLING_TESTS AND UML_BUILD_KERNEL_RUNNER))

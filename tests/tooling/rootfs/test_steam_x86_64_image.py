@@ -99,7 +99,7 @@ class ImageAudit(unittest.TestCase):
             image.inventory(self.root)
 
     def test_bundled_compatibility_tool_is_rejected(self) -> None:
-        (self.root / "opt/proton-uml-arm64ec").mkdir(parents=True)
+        (self.root / "opt/proton").mkdir(parents=True)
         with self.assertRaisesRegex(RuntimeError, "no compatibility tool"):
             image.inventory(self.root)
 
@@ -136,12 +136,11 @@ class ImageAudit(unittest.TestCase):
 
 class SeedPinning(unittest.TestCase):
     def test_pinned_manifest_matches_the_lock(self) -> None:
-        # The x86-64 seed must stay on the client release the ARM64EC appliance
-        # seeds, so a first-boot comparison starts from the same client.
+        # The seeded client manifest is the release the lock names.
         lock = json.loads((ROOT / PRODUCER / "sources.json").read_text())
         self.assertEqual(inputs.validate_policy(lock), inputs.validate_policy(lock))
-        arm64 = (ROOT / "tools/rootfs/steam-arm64ec/steam-client.manifest").read_text()
-        self.assertIn(f'"{lock["steam_client_version"]}"', arm64)
+        manifest = (ROOT / PRODUCER / "steam-client.manifest").read_text()
+        self.assertIn(f'"{lock["steam_client_version"]}"', manifest)
 
     def test_package_names_must_be_plain_filenames(self) -> None:
         packages = inputs.client_packages((ROOT / PRODUCER / "steam-client.manifest").read_text())
@@ -175,16 +174,11 @@ class GamingSession(unittest.TestCase):
         self.assertIn("/usr/share/uml-vulkan/guest-runtime.json", session)
         self.assertIn("MESA_LOADER_DRIVER_OVERRIDE=zink", session)
         self.assertIn("GALLIUM_DRIVER=zink", session)
-        # Nothing ARM64EC specific belongs in the pure x86-64 session.
-        self.assertNotIn("PROTON_USE_ARM64", session)
 
 
 class VideoDecodeWiring(unittest.TestCase):
-    """Hardware video decode is an x86-64 arrangement and must stay one.
-
-    The ARM64EC appliance shares this launcher but ships no VA-API backend, so
-    the client option must reach Valve's web helper only where the backend and
-    the decoder node exist.
+    """The client option reaches Valve's web helper only where the image's
+    VA-API backend and the decoder node exist.
     """
 
     def setUp(self) -> None:
@@ -199,12 +193,6 @@ class VideoDecodeWiring(unittest.TestCase):
         self.assertTrue(any("uml_drv_video.so" in line and "/dev/video-dec0" in line
                             for line in gate),
                         "the session must require the module and the decoder node")
-
-    def test_arm64ec_session_stays_inert(self) -> None:
-        arm64ec = (ROOT / "tools/rootfs/steam-arm64ec/overlay" / SESSION).read_text()
-        for token in ("KERNARIUM_CEF_VAAPI", "LIBVA_DRIVER_NAME", "LIBVA_DRIVERS_PATH",
-                      "cef-enable-vaapi"):
-            self.assertNotIn(token, arm64ec)
 
     def test_shared_launcher_only_adds_the_option_when_asked(self) -> None:
         self.assertIn("-cef-enable-vaapi", self.launcher)

@@ -106,19 +106,6 @@ void test_membership_retires_write_translations()
 		"a participant that left was still retired");
 }
 
-void test_conservative_holds_every_page()
-{
-	CodePageRegistry registry;
-	const auto page = page_at(17);
-	registry.add(page, nullptr);
-	registry.set_conservative(true);
-	require(registry.holds(page_at(4000)),
-		"a conservative registry does not hold every page");
-	registry.remove(page);
-	require(registry.holds(page),
-		"a removal cleared a conservative registry's page");
-}
-
 /* Every executor of an address space counts pages in and out at once. The
  * counts stay exact across stripes, a page one holder never releases stays
  * held throughout, and nothing is left behind.
@@ -169,7 +156,6 @@ int main()
 	test_membership_is_counted();
 	test_membership_is_exact_behind_a_shared_bit();
 	test_membership_retires_write_translations();
-	test_conservative_holds_every_page();
 	test_concurrent_holders_stay_exact();
 	return 0;
 }

@@ -140,9 +140,7 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
 	unsigned long generation, std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt,
-	X86NativeTargetPredicate native_target,
-	void *native_target_context) noexcept
+	const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
 	X86GadgetRunResult run{};
 	auto &result = run.execution;
@@ -179,12 +177,6 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			prepared_mapping_changes = sequences.mapping_changes;
 			prepared_code_changes = sequences.code_changes;
 			executor_prepared = true;
-		}
-		if (native_target != nullptr &&
-			native_target(memory, cpu.rip, native_target_context)) {
-			run.native_target = true;
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			return run;
 		}
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
 			cpu.gpr(x86_64::Register::rax) = 15;

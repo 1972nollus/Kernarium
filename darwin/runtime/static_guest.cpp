@@ -4,9 +4,6 @@
 #if DARWIN_UML_X86_64_GUEST
 #include "runtime/x86_gadget_runtime.hpp"
 #endif
-#if DARWIN_UML_WINE_CPU_SERVICE
-#include "runtime/wine_cpu_service.hpp"
-#endif
 #include "platform/apple/host_features.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
@@ -746,50 +743,21 @@ int run_common_guest(
 	const auto started = DispatchClock::now();
 #endif
 	const auto &interrupt = runtime->interrupt;
-	const uml::cpu::InterruptToken dispatch_interrupt{
-		.sequence = interrupt.sequence,
-		.snapshot = interrupt.snapshot,
-		.stop = context->stop_token(),
+	uml::cpu::ExecutionRequest request{
+		.cpu = cpu,
+		.memory = memory,
+		.translated_memory = &memory,
+		.generation = generation,
+		.instruction_budget = dispatch_budget,
+		.interrupt = {
+			.sequence = interrupt.sequence,
+			.snapshot = interrupt.snapshot,
+			.stop = context->stop_token(),
+		},
+		.boundary = signal_return_boundary,
 	};
 	int event = DARWIN_UML_EVENT_FATAL;
-	uml::cpu::ExecutionResult result{};
-	std::size_t retired_instructions{};
-	for (;;) {
-		uml::cpu::ExecutionRequest request{
-			.cpu = cpu,
-			.memory = memory,
-			.translated_memory = &memory,
-			.generation = generation,
-			.instruction_budget = dispatch_budget - retired_instructions,
-			.interrupt = dispatch_interrupt,
-			.boundary = signal_return_boundary,
-		};
-		result = engine->run(request);
-		retired_instructions += result.retired_instructions;
-		if (result.reason != uml::cpu::ExitReason::breakpoint)
-			break;
-#if DARWIN_UML_WINE_CPU_SERVICE
-		const auto hostcall = ::uml::runtime::handle_wine_cpu_hostcall(
-			cpu, *runtime, generation,
-			dispatch_budget - retired_instructions, dispatch_interrupt);
-		switch (hostcall.disposition) {
-		case ::uml::runtime::WineCpuHostcallDisposition::not_handled:
-			break;
-		case ::uml::runtime::WineCpuHostcallDisposition::memory_fault:
-			result.reason = uml::cpu::ExitReason::memory_fault;
-			result.fault = hostcall.fault;
-			break;
-		case ::uml::runtime::WineCpuHostcallDisposition::resume:
-			retired_instructions += hostcall.retired_instructions;
-			if (retired_instructions < dispatch_budget)
-				continue;
-			result.reason = uml::cpu::ExitReason::instruction_budget;
-			break;
-		}
-#endif
-		break;
-	}
-	result.retired_instructions = retired_instructions;
+	const auto result = engine->run(request);
 	save_cpu(cpu, mutable_registers, fp, *tls);
 
 	switch (result.reason) {

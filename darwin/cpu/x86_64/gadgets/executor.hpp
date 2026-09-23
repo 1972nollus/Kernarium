@@ -89,9 +89,6 @@ public:
 	 * stores this one has already translated. */
 	void enter_engine() noexcept;
 	void leave_engine() noexcept;
-	/* Treat every executable page as holding code, for a process whose other
-	 * translations this executor's registry cannot see. */
-	void publish_every_executable_store(bool value) noexcept;
 	/* The host takes exclusive accesses at any alignment inside a 16-byte
 	 * granule (FEAT_LSE2), so an unaligned locked operand that fits in one
 	 * keeps the exclusive path. Off until the runtime reports the feature. */

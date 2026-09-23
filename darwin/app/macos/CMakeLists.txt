@@ -95,22 +95,9 @@ if(UML_BUILD_CLI)
     if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
         message(FATAL_ERROR "uml-darwin requires a selected mainline artifact")
     endif()
-    if(UML_BUILD_WINE_ARM64EC)
-        if(NOT TARGET UML::WineArm64ECEmulator)
-            message(FATAL_ERROR
-                "The ARM64EC Wine macOS app requires its emulator archive")
-        endif()
-        uml_add_macos_embedded_kernel_app(
-            uml-darwin-wine-arm64ec linux_main.cpp
-            "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
-            UML::WineArm64ECEmulator uml_wine_arm64ec_emulator)
-        target_compile_definitions(uml-darwin-wine-arm64ec PRIVATE
-            UML_APP_TOUCHSCREEN_INPUT=1)
-    else()
-        uml_add_macos_embedded_kernel_app(
-            uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
-            UML::Emulator uml_emulator)
-    endif()
+    uml_add_macos_embedded_kernel_app(
+        uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+        UML::Emulator uml_emulator)
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)

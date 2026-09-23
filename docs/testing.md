@@ -247,31 +247,12 @@ Build it on an x86-64 Linux host and run the bounded
 `tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check; it is not a
 replacement for the accepted general-purpose rootfs.
 
-`tools/rootfs/wine-arm64ec` owns the separate ARM64-only Debian/XFCE appliance
-containing source-built ARM64EC/ARM64X Wine, PE-only i386 WoW64 modules, and
-AMD64 and i386 execution probes. Its producer emits package, ELF, PE, and
-provenance inventories and rejects any x86 ELF payload. Build it on native
-AArch64 Linux with the pinned Wine source and checksum-verified ARM64EC
-compiler described in its
-[producer README](../tools/rootfs/wine-arm64ec/README.md).
-
-The fast full-stack gate is
-`cmake --workflow --preset check-wine-arm64ec-macos`. It boots the dedicated
-4 KiB kernel and emulator, starts Xvfb and the XFCE window manager, and requires
-Wine to return exit code 42 from the AMD64 PE probe and 43 from the i386 WoW64
-probe. iOS packaging and launch validation follows only after this macOS gate
-passes.
-
-The separate gaming-only Steam image uses
-`cmake --workflow --preset check-steam-arm64ec-macos`. It qualifies systemd
-boot, the same 4 KiB ARM64EC CPU bridges, a launch through Proton, and the
-Gamescope Vulkan startup boundary. Stock Mesa and experimental Venus are
-separate image/renderer selections. The Venus gate requires framebuffer
-registration and the native Steam bootstrap, not a working login screen.
-Its test-only GPT/ext4 data disk is reused across two boots to check persistence
-and immutable-root write rejection, then removed after the guest exits.
-Interactive Steam launches retain that disk across boots and rootfs replacements.
-The [Steam producer](../tools/rootfs/steam-arm64ec/README.md) owns its inputs,
+`tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
+Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
+readiness, and persistence of its separate GPT/ext4 data disk are exercised by
+`tests/perf/run_steam_boot_bench.py`. Interactive Steam launches retain that
+disk across boots and rootfs replacements. The
+[Steam producer](../tools/rootfs/steam-x86_64/README.md) owns its inputs,
 binary audit, startup contract, and continuing graphics limitation.
 
 ## Apple builds and Kernarium
@@ -287,13 +268,11 @@ scripts/build-xcframework.sh
 ```
 
 Kernarium is an iOS device product: it has runtime presets for 16 KiB and 4 KiB
-Linux, 16 KiB Android, and the dedicated 4 KiB ARM64EC Wine profile, with no
-Simulator variant, because its GPU stack needs a Metal 4 device.
+Linux and 16 KiB Android, with no Simulator variant, because its GPU stack needs
+a Metal 4 device.
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. A `wine-arm64ec-*.erofs` filename selects
-`KRuntime_Wine_6_18_4K`; this reserved identity prevents the ordinary Linux
-runtime from opening the Wine appliance with no x86 CPU service.
+Xcode.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
@@ -307,7 +286,7 @@ Kernarium defaults to 16 KiB Linux, 4 GiB of guest memory where the process is
 given the host's memory (an iOS app on macOS), 2 GiB on a physical device whose
 jetsam limit a 4 GiB guest would cross, and the processor count reported by
 `NSProcessInfo`. Android fixes the
-page profile at 16 KiB; the ARM64EC Wine image fixes it at 4 KiB. A `.kern`
+page profile at 16 KiB. A `.kern`
 bundle contains the selected rootfs release and its persistent writable state;
 rebuilding the app or kernel framework must not erase it.
 

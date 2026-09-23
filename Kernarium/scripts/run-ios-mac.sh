@@ -15,23 +15,18 @@ ROOTFS="$ROOT_DIR/rootfs.erofs"
 # The device runtimes render through the Vulkan-experiment GPU stack, whose
 # guest reaches host-visible blob memory through the vhost-user shared-memory
 # aperture that only the Vulkan-experiment kernel line carries. The presets
-# select that product; stage the artifacts it names. The Wine runtime keeps
-# the accepted mainline bundle of its own profile.
+# select that product; stage the artifacts it names.
 # shellcheck disable=SC1091
 . "$ROOT_DIR/kernel/mainline-6.18/artifacts/vulkan-experiment-16k.env"
 ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 # shellcheck disable=SC1091
 . "$ROOT_DIR/kernel/mainline-6.18/artifacts/vulkan-experiment-4k.env"
 ARTIFACT_4K=${UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
-# shellcheck disable=SC1091
-. "$ROOT_DIR/kernel/mainline-6.18/profiles/wine-arm64ec/artifacts/accepted-4k.env"
-ARTIFACT_WINE_4K=${UML_MAINLINE_618_WINE_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
 DESTINATION='platform=macOS,variant=Designed for iPad'
 AQUARIUM=0
 GUEST_BUNDLE=
-WINE_ARM64EC=0
 JOBS=4
 SKIP_BUILD=0
 
@@ -53,10 +48,8 @@ usage()
 		"                 is kept across runs" \
 		"  --artifact-16k PATH  Accepted 16 KiB kernel artifact directory" \
 		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
-		"  --artifact-wine-4k PATH  Accepted Wine 4 KiB kernel artifact" \
 		"  --jobs NUMBER  Parallel build jobs (default: 4)" \
 		"  --no-build     Stage and launch the installed app as it stands" \
-		"  --wine-arm64ec  Select the dedicated Wine runtime/rootfs" \
 		"  --aquarium     Launch Chromium WebGL Aquarium verification" \
 		"  -h, --help      Show this help"
 }
@@ -78,11 +71,6 @@ while [ "$#" -gt 0 ]; do
 		ARTIFACT_4K=$2
 		shift 2
 		;;
-	--artifact-wine-4k)
-		[ "$#" -ge 2 ] || fail "--artifact-wine-4k requires a path"
-		ARTIFACT_WINE_4K=$2
-		shift 2
-		;;
 	--guest-bundle)
 		[ "$#" -ge 2 ] || fail "--guest-bundle requires a name"
 		GUEST_BUNDLE=$2
@@ -101,10 +89,6 @@ while [ "$#" -gt 0 ]; do
 		AQUARIUM=1
 		shift
 		;;
-	--wine-arm64ec)
-		WINE_ARM64EC=1
-		shift
-		;;
 	-h|--help)
 		usage
 		exit 0
@@ -115,17 +99,7 @@ done
 
 [ -f "$ROOTFS" ] || fail "rootfs image is unavailable: $ROOTFS"
 case "$ROOTFS" in
-*.erofs)
-	if [ "$WINE_ARM64EC" -eq 1 ]; then
-		ROOTFS_FILENAME=$(basename -- "$ROOTFS")
-		case "$ROOTFS_FILENAME" in
-		wine-arm64ec-*.erofs) ;;
-		*) fail "Wine rootfs must use the wine-arm64ec-*.erofs name" ;;
-		esac
-	else
-		ROOTFS_FILENAME=rootfs.erofs
-	fi
-	;;
+*.erofs) ROOTFS_FILENAME=rootfs.erofs ;;
 *.ext4) ROOTFS_FILENAME=rootfs.ext4 ;;
 *) fail "rootfs must have an .erofs or .ext4 suffix: $ROOTFS" ;;
 esac
@@ -133,12 +107,6 @@ esac
 	fail "16 KiB kernel artifact is unavailable: $ARTIFACT_16K"
 [ -d "$ARTIFACT_4K" ] ||
 	fail "4 KiB kernel artifact is unavailable: $ARTIFACT_4K"
-[ -d "$ARTIFACT_WINE_4K" ] ||
-	fail "Wine 4 KiB kernel artifact is unavailable: $ARTIFACT_WINE_4K"
-[ "$WINE_ARM64EC" -eq 0 ] || [ -z "$GUEST_BUNDLE" ] ||
-	fail "--wine-arm64ec and --guest-bundle are mutually exclusive"
-[ "$WINE_ARM64EC" -eq 0 ] || [ "$AQUARIUM" -eq 0 ] ||
-	fail "--wine-arm64ec and --aquarium are mutually exclusive"
 
 cd "$ROOT_DIR"
 if [ "$SKIP_BUILD" -eq 0 ]; then
@@ -148,9 +116,6 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 	cmake --preset kernarium-ios-device-4k \
 		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_4K"
 	cmake --build --preset kernarium-ios-device-4k --parallel "$JOBS"
-	cmake --preset wine-arm64ec-ios-device \
-		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_WINE_4K"
-	cmake --build --preset wine-arm64ec-ios-device --parallel "$JOBS"
 	"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh"
 	xcodebuild \
 		-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \

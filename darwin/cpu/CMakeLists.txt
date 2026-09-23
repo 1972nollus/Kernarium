@@ -59,8 +59,8 @@ option(UML_GADGET_CACHE_CENSUS
     OFF)
 
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
-# The fixed x86 Linux slice and the ARM64EC Wine service both use a 4 KiB guest
-# profile; Apple-platform-specific imports provide their exact math archives.
+# The fixed x86 Linux slice uses a 4 KiB guest profile on macOS, whose
+# dependency prefix provides the exact math archives.
 if(UML_BUILD_X86_64_GUEST)
     add_library(uml_x86_64_gadgets OBJECT
         x86_64/cpu_state.cpp
@@ -84,8 +84,7 @@ if(UML_BUILD_X86_64_GUEST)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
         UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
-        UML_X86_64_STRICT_TSO=$<BOOL:${UML_BUILD_WINE_CPU_SERVICE}>)
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     set_target_properties(uml_x86_64_gadgets PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 

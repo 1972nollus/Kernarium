@@ -25,13 +25,8 @@ if(_kernarium_artifact_family STREQUAL "android-6.18")
     set(KERNARIUM_KERNEL_RELEASE_SERIES "6.18")
 elseif(_kernarium_artifact_family STREQUAL "mainline-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 0)
-    if(UML_BUILD_WINE_ARM64EC)
-        set(KERNARIUM_RUNTIME_GUEST_FLAVOR
-            KERNARIUM_RUNTIME_GUEST_WINE_ARM64EC)
-    else()
-        set(KERNARIUM_RUNTIME_GUEST_FLAVOR
-            KERNARIUM_RUNTIME_GUEST_LINUX)
-    endif()
+    set(KERNARIUM_RUNTIME_GUEST_FLAVOR
+        KERNARIUM_RUNTIME_GUEST_LINUX)
     set(KERNARIUM_KERNEL_RELEASE_SERIES "6.18")
 else()
     message(FATAL_ERROR
@@ -61,9 +56,6 @@ if(KERNARIUM_RUNTIME_ANDROID_GUEST)
     endif()
     set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
         "KRuntime_ACK_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
-elseif(UML_BUILD_WINE_ARM64EC)
-    set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
-        "KRuntime_Wine_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
 else()
     set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
         "KRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
@@ -185,18 +177,8 @@ target_include_directories(KernariumRuntime
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/input/virtio
         ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
-if(UML_BUILD_WINE_ARM64EC)
-    if(NOT TARGET UML::WineArm64ECEmulator)
-        message(FATAL_ERROR "The ARM64EC Wine emulator target is unavailable")
-    endif()
-    set(_kernarium_emulator_target UML::WineArm64ECEmulator)
-    set(_kernarium_emulator_archive_target uml_wine_arm64ec_emulator)
-else()
-    set(_kernarium_emulator_target UML::Emulator)
-    set(_kernarium_emulator_archive_target uml_emulator)
-endif()
 target_link_libraries(KernariumRuntime PRIVATE
-    ${_kernarium_emulator_target}
+    UML::Emulator
     UML::AndroidBoot
     UML::GuestPageConfiguration
     UML::AudioDevice
@@ -227,7 +209,7 @@ target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
     KERNARIUM_RUNTIME_FRAMEWORK_NAME="${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 target_link_options(KernariumRuntime PRIVATE
-    "LINKER:-force_load,$<TARGET_FILE:${_kernarium_emulator_archive_target}>")
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 if(UML_APPLE_PLATFORM MATCHES "^ios")
     # The framework code signature covers __TEXT pages. The loader aliases
     # the ELF's immutable executable pages from this aligned carrier into the
@@ -258,10 +240,6 @@ set_target_properties(KernariumRuntime PROPERTIES
     XCODE_ATTRIBUTE_DEFINES_MODULE YES
     XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME
         "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
-
-if(UML_BUILD_WINE_ARM64EC)
-    add_custom_target(wine-arm64ec-ios-runtime DEPENDS KernariumRuntime)
-endif()
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/module.modulemap.in"

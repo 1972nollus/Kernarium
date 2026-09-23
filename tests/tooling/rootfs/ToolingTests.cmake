@@ -20,13 +20,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME rootfs-steam-arm64ec-image-audit
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_steam_arm64ec_image.py
-    LABELS rootfs;steam;arm64ec;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME rootfs-steam-x86-64-image-audit
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_steam_x86_64_image.py
@@ -42,16 +35,5 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
         --android-kernel-config
         ${PROJECT_SOURCE_DIR}/kernel/android-6.18/config/android.fragment
-    LABELS rootfs;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME rootfs-wine-arm64ec-pe-audit
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_wine_arm64ec_pe.py
-        --verifier
-        ${PROJECT_SOURCE_DIR}/tools/rootfs/wine-arm64ec/verify-pe.py
-        --builder
-        ${PROJECT_SOURCE_DIR}/tools/rootfs/wine-arm64ec/build.sh
     LABELS rootfs;audit
     TIMEOUT 30)

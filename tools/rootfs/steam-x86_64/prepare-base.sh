@@ -32,8 +32,6 @@ EOF
 sudo -n chmod +x "$root/usr/sbin/policy-rc.d"
 sudo -n cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 sudo -n chroot "$root" apt-get update
-# The runtime closure mirrors the ARM64EC appliance so a boot comparison
-# measures the guest architecture rather than a different Debian selection.
 sudo -n chroot "$root" env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --no-install-recommends \
 	systemd-sysv systemd-resolved udev kmod dbus dbus-user-session \

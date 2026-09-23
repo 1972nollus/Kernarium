@@ -161,12 +161,13 @@ whose map state is `IsViewable`. One run creates a fresh GPT user-data disk,
 times a first boot while Steam downloads and installs its own update, shuts the
 guest down through systemd, then times a second boot on that same disk with no
 download. It works for any image that uses the shared Kernarium init and
-session supervisor, so images for different guest ISAs are directly comparable.
+session supervisor, so two images or two emulator builds are directly
+comparable.
 
 ```sh
 python3 tests/perf/run_steam_boot_bench.py \
-  --image arm64ec --emulator BUILD-A/bin/uml-darwin-wine-arm64ec --rootfs A.erofs \
-  --image x86_64  --emulator BUILD-B/bin/uml-darwin              --rootfs B.erofs \
+  --image base      --emulator BUILD-A/bin/uml-darwin --rootfs A.erofs \
+  --image candidate --emulator BUILD-B/bin/uml-darwin --rootfs B.erofs \
   --output-dir RESULTS --runs 3
 ```
 

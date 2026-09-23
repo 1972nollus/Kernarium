@@ -258,18 +258,14 @@ struct CodePageRegistries final {
 	std::shared_ptr<CodePageRegistry> current;
 	std::uint64_t current_generation{};
 	CodePageRegistry::Participant participant;
-	bool conservative{};
 
 	~CodePageRegistries() { unbind(); }
 
 	[[nodiscard]] CodePageRegistry &of(std::uint64_t generation)
 	{
 		auto [entry, inserted] = held.try_emplace(generation);
-		if (inserted) {
+		if (inserted)
 			entry->second = CodePageRegistry::acquire(generation);
-			if (conservative)
-				entry->second->set_conservative(true);
-		}
 		return *entry->second;
 	}
 
@@ -1730,13 +1726,6 @@ void Executor::leave_engine() noexcept
 {
 	storage_->registries.participant.engine_epoch.fetch_add(
 		1, std::memory_order_release);
-}
-
-void Executor::publish_every_executable_store(bool value) noexcept
-{
-	storage_->registries.conservative = value;
-	for (auto &[generation, registry] : storage_->registries.held)
-		registry->set_conservative(value);
 }
 
 void Executor::permit_unaligned_exclusives(bool value) noexcept

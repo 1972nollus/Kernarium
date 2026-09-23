@@ -9,16 +9,6 @@ set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
     "Prebuilt kernel product consumed by the selected Apple executable/runtime")
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
     mainline-6.18 mainline-6.18-vulkan-experiment android-17)
-set(UML_MAINLINE_KERNEL_PROFILE "standard" CACHE STRING
-    "Mainline arm64 kernel profile: standard or wine-arm64ec")
-set_property(CACHE UML_MAINLINE_KERNEL_PROFILE PROPERTY STRINGS
-    standard wine-arm64ec)
-
-if(UML_BUILD_WINE_ARM64EC AND
-   NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
-    message(FATAL_ERROR
-        "The ARM64EC Wine emulator requires the mainline-6.18 kernel product")
-endif()
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     # Apple targets consume the ACK artifact only. Rootfs bundles are selected
@@ -52,28 +42,17 @@ if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
     message(FATAL_ERROR
         "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
 endif()
-if(NOT UML_MAINLINE_KERNEL_PROFILE MATCHES "^(standard|wine-arm64ec)$")
-    message(FATAL_ERROR
-        "UML_MAINLINE_KERNEL_PROFILE must be standard or wine-arm64ec")
-endif()
-if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec" AND
-   (NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" OR UML_GUEST_16K_PAGES))
-    message(FATAL_ERROR
-        "The wine-arm64ec kernel profile requires the arm64 4 KiB slice")
-endif()
 if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment" AND
-   (NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" OR
-    NOT UML_MAINLINE_KERNEL_PROFILE STREQUAL "standard"))
+   NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64")
     message(FATAL_ERROR
         "The mainline-6.18-vulkan-experiment product is published only for "
-        "the standard arm64 profile")
+        "the arm64 slice")
 endif()
 
 # The Vulkan experiment reads the same mainline-6.18 series through its own
 # fixed descriptors, so the accepted default product keeps its reviewed bundle
 # and its migration defaults.
 set(_uml_mainline_artifact_cache_arguments)
-set(_uml_mainline_profile_fragment)
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
@@ -94,12 +73,7 @@ elseif(UML_GUEST_16K_PAGES)
     endif()
     set(_uml_expected_page_size 16384)
 else()
-    if(UML_MAINLINE_KERNEL_PROFILE STREQUAL "wine-arm64ec")
-        set(_uml_mainline_acceptance
-            "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/artifacts/accepted-4k.env")
-        set(_uml_mainline_profile_fragment
-            "${UML_KERNEL_LINE_ROOT}/profiles/wine-arm64ec/config.fragment")
-    elseif(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
+    if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
         set(_uml_mainline_acceptance
             "${UML_KERNEL_LINE_ROOT}/artifacts/vulkan-experiment-4k.env")
     else()
@@ -141,8 +115,7 @@ uml_import_kernel_artifact(
     EXPECTED_FAMILY mainline-6.18
     EXPECTED_SLICE "${UML_MAINLINE_KERNEL_SLICE}"
     EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE "${_uml_expected_page_size}"
-    EXPECTED_CONFIG_FRAGMENT "${_uml_mainline_profile_fragment}")
+    EXPECTED_PAGE_SIZE "${_uml_expected_page_size}")
 
 set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET uml_mainline_kernel_artifact
     CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)

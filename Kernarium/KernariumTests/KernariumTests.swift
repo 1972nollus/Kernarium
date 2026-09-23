@@ -636,46 +636,6 @@ struct KernariumTests {
     }
 
     @Test
-    func wineRootfsSelectsItsDedicatedFourKiBRuntime() throws {
-        let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer { try? manager.removeItem(at: directory) }
-        let filename = "wine-arm64ec-xfce.erofs"
-        #expect(
-            manager.createFile(
-                atPath: directory.appendingPathComponent(filename).path,
-                contents: Data()
-            )
-        )
-
-        let selection = RootfsImage.selection(
-            named: filename,
-            in: directory,
-            fileManager: manager
-        )
-        #expect(selection?.flavor == .wineARM64EC)
-        #expect(selection?.requiredPageSize == .fourKiB)
-
-        let (defaults, suiteName) = isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(filename, forKey: "emulator.rootfsFilename")
-        defaults.set(16384, forKey: "emulator.kernelPageSize")
-        let configuration = EmulatorConfiguration.load(
-            defaults: defaults,
-            physicalProcessorCount: 4,
-            documentsDirectory: directory
-        )
-        #expect(configuration.kernelPageSize == .fourKiB)
-    }
-
-    @Test
     func rootfsEnumerationIncludesOnlyRegularSupportedImages() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
@@ -716,13 +676,6 @@ struct KernariumTests {
         )
         #expect(
             manager.createFile(
-                atPath: directory
-                    .appendingPathComponent("wine-arm64ec-xfce.erofs").path,
-                contents: Data()
-            )
-        )
-        #expect(
-            manager.createFile(
                 atPath: directory.appendingPathComponent("ignored.img").path,
                 contents: Data()
             )
@@ -738,7 +691,6 @@ struct KernariumTests {
                 "pmos-sxmo.erofs",
                 "rootfs-gl-gles.ext4",
                 "rootfs.erofs",
-                "wine-arm64ec-xfce.erofs",
             ]
         )
     }

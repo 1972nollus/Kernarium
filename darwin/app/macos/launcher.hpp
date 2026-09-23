@@ -5,7 +5,7 @@
 
 namespace uml::app {
 
-enum class DisplayInput { mouse, touchscreen, virtio_touchscreen };
+enum class DisplayInput { mouse, touchscreen };
 
 struct LaunchConfiguration {
 	const char *rootfs_path {};

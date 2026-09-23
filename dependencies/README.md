@@ -9,13 +9,6 @@ prefix verification. Kernel provenance is separate under
 upstream Git commit, the products that consume it, the required source paths,
 and any ordered local patch series.
 
-The guest-only [Steam inventory](steam-arm64ec/README.md) separately pins
-Proton and its Wine topics. It does not participate in Apple library receipts.
-
-[`toolchains.tsv`](toolchains.tsv) pins binary build-host toolchains by release
-archive and SHA-256. Toolchains are inputs to dependency production only and
-are not shipped in an emulator product.
-
 Production must not discover libraries from Homebrew, ambient
 `CMAKE_PREFIX_PATH`, or unrestricted `pkg-config`. Consumers use only verified
 private prefixes through the CMake targets in this directory.
@@ -41,13 +34,6 @@ The dependency products are:
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
 - `ios-compression`: the pinned, decode-only zstd library as one static arm64
   `LibZstd.xcframework` with iOS device and Simulator slices; and
-- `ios-x86`: the arm64 iOS device and Simulator builds of the pinned Berkeley
-  SoftFloat 3e and 128-bit Cephes archives used only by the ARM64EC Wine CPU
-  service;
-- `wine-arm64ec-rootfs`: the pinned Wine 10 source used to build the ARM64X
-  userspace and its ARM64EC emulation-module interface for the appliance;
-- `steam-arm64ec-rootfs`: the Proton, SDK, native Steam, and Debian gaming
-  inputs owned by the [Steam producer](../tools/rootfs/steam-arm64ec/README.md);
 - `x86-conformance`: the test-only FEX and K x86-64 semantics instruction
   corpora plus their pinned producer inputs, used to generate the checked-in
   self-contained x86 unit corpus and qualify x86 gadget
@@ -93,13 +79,6 @@ dependencies/build-ios-storage.sh --verify-only
 dependencies/prepare.sh --product ios-compression
 dependencies/build-ios-zstd.sh
 dependencies/build-ios-zstd.sh --verify-only
-
-dependencies/prepare.sh --product ios-x86
-dependencies/build-ios-x86.sh --platform ios
-dependencies/build-ios-x86.sh --platform ios-simulator
-
-dependencies/prepare.sh --product wine-arm64ec-rootfs
-dependencies/prepare.sh --toolchain llvm-mingw-arm64ec
 
 dependencies/prepare.sh --product x86-conformance
 ```

@@ -308,14 +308,11 @@ foreach(FIRST_PARTY_SCOPE IN ITEMS
 endforeach()
 list(REMOVE_DUPLICATES C_SOURCES)
 set(ALLOWED_C_SOURCES
-    "${SOURCE_ROOT}/tests/consumer/apple/main.c"
-    "${SOURCE_ROOT}/tools/rootfs/wine-arm64ec/bridge/cpu.c"
-    "${SOURCE_ROOT}/tools/rootfs/wine-arm64ec/wow64-bridge/cpu.c")
+    "${SOURCE_ROOT}/tests/consumer/apple/main.c")
 foreach(PATH IN LISTS C_SOURCES)
     if(PATH IN_LIST ALLOWED_C_SOURCES)
-        # The installed-package acceptance is a genuine C consumer. The Wine
-        # bridge is guest-side PE source copied into a pinned upstream build;
-        # neither exception is compiled into the host project.
+        # The installed-package acceptance is a genuine C consumer and is
+        # not compiled into the host project.
         continue()
     endif()
     list(APPEND VIOLATIONS "${PATH}: project C source is not allowed")

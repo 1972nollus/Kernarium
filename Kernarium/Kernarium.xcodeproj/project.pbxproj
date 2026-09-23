@@ -15,7 +15,6 @@
 		A10000000000000000000008 /* KRuntime_ACK_6_18_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000009 /* GPTFDisk.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* GPTFDisk.xcframework */; };
 		A1000000000000000000000A /* LibZstd.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* LibZstd.xcframework */; };
-		A1000000000000000000000B /* KRuntime_Wine_6_18_4K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* KRuntime_Wine_6_18_4K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B20000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
@@ -45,7 +44,6 @@
 			files = (
 				A10000000000000000000007 /* KRuntime_6_18_4K.xcframework in Embed Frameworks */,
 				A10000000000000000000004 /* KRuntime_6_18_16K.xcframework in Embed Frameworks */,
-				A1000000000000000000000B /* KRuntime_Wine_6_18_4K.xcframework in Embed Frameworks */,
 				A10000000000000000000008 /* KRuntime_ACK_6_18_16K.xcframework in Embed Frameworks */,
 				A10000000000000000000005 /* MesaEGL.xcframework in Embed Frameworks */,
 				A10000000000000000000006 /* MesaGallium.xcframework in Embed Frameworks */,
@@ -67,7 +65,6 @@
 		A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_ACK_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_ACK_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000016 /* GPTFDisk.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GPTFDisk.xcframework; path = "../.build/kernarium-xcframeworks/GPTFDisk.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000017 /* LibZstd.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LibZstd.xcframework; path = "../.build/kernarium-xcframeworks/LibZstd.xcframework"; sourceTree = SOURCE_ROOT; };
-		A10000000000000000000018 /* KRuntime_Wine_6_18_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_Wine_6_18_4K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_Wine_6_18_4K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000019 /* KosmicKrisp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KosmicKrisp.xcframework; path = "../.build/kernarium-xcframeworks/KosmicKrisp.xcframework"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -145,7 +142,6 @@
 				A10000000000000000000017 /* LibZstd.xcframework */,
 				A10000000000000000000014 /* KRuntime_6_18_4K.xcframework */,
 				A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */,
-				A10000000000000000000018 /* KRuntime_Wine_6_18_4K.xcframework */,
 				A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */,
 				A10000000000000000000012 /* MesaEGL.xcframework */,
 				A10000000000000000000013 /* MesaGallium.xcframework */,

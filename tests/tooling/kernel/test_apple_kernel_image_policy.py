@@ -475,15 +475,6 @@ def main() -> int:
             == "apple-gpu-vulkan-experiment",
             "the device runtime does not select both experimental products",
         )
-        # The Wine profile inherits this runtime, and the Vulkan-experiment
-        # artifact is published only for the standard profile, so the device
-        # Wine runtime names the mainline artifact back explicitly.
-        require(
-            configurations["wine-arm64ec-ios-" + platform]["cacheVariables"]
-            .get("UML_KERNEL_PRODUCT", "mainline-6.18")
-            == "mainline-6.18",
-            f"{platform} Wine runtime does not stay on the mainline artifact",
-        )
         require(
             profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
             and "UML_KERNARIUM_KERNEL_IMAGE"
@@ -506,8 +497,6 @@ def main() -> int:
         "DARWIN_UML_X86_64_USERSPACE_ONLY",
         "The fixed x86_64 userspace product does not use the arm64 unit or ",
         "The fixed x86_64 userspace slice requires the x86_64 gadget backend",
-        "The ARM64EC Wine emulator requires the wine-arm64ec kernel profile",
-        "The wine-arm64ec kernel profile requires the ARM64EC Wine emulator",
     ):
         require(contract in root_cmake, f"root product selection lacks {contract}")
     backend_selection_start = "if(NOT UML_GUEST_16K_PAGES AND"
@@ -521,7 +510,6 @@ def main() -> int:
     require(
         'UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64"' in backend_selection
         and "UML_BUILD_UNIT_TESTS" in backend_selection
-        and "UML_BUILD_WINE_ARM64EC" in backend_selection
         and "UML_BUILD_INTEGRATION_TESTS" not in backend_selection,
         "x86_64 backend selection no longer isolates regular arm64 integration",
     )
@@ -549,12 +537,9 @@ def main() -> int:
         "vulkan-experiment-4k.env",
         "mainline-6.18-vulkan-experiment",
         "slices/x86_64/artifacts/accepted-4k.env",
-        "profiles/wine-arm64ec/artifacts/accepted-4k.env",
-        "profiles/wine-arm64ec/config.fragment",
         "mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4",
         "mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4",
         "The x86_64 mainline kernel slice supports only 4 KiB guest pages",
-        "The ARM64EC Wine emulator requires the mainline-6.18 kernel product",
         "Accepted mainline kernel slice",
     ):
         require(contract in kernel_cmake, f"kernel importer lacks {contract}")
@@ -837,7 +822,6 @@ def main() -> int:
     # storage and compression cores carry no Metal dependency and keep theirs.
     for forbidden in (
         "kernarium-runtime-ios-simulator",
-        "wine-arm64ec-runtime-ios-simulator",
         "ios-simulator-arm64",
         "--platform ios-simulator",
     ):
@@ -953,8 +937,7 @@ def main() -> int:
         "UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR",
         "UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR",
         # The device runtimes take the Vulkan-experiment kernel line with the
-        # Vulkan-experiment GPU stack; only the Wine profile keeps its
-        # accepted mainline bundle.
+        # Vulkan-experiment GPU stack.
         "vulkan-experiment-16k.env",
         "vulkan-experiment-4k.env",
         "cmake --build --preset kernarium-ios-device",

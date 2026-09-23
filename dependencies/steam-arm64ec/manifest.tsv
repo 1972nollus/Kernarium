@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-name	version	products	repository	commit	source_paths	patch_series
-proton	11.0-20260904	steam-arm64ec-rootfs	https://github.com/ValveSoftware/Proton.git	5b89db940e0ebe3a137a6009a3589232fe084c09	.	patches/proton/series.tsv
-proton-wine	11.0-20260904	steam-arm64ec-rootfs	https://github.com/ValveSoftware/wine.git	dc26e61847081a1b5cb0733dc30feba6ee575482	.	patches/proton-wine/series.tsv

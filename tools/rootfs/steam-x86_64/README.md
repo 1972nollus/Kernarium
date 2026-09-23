@@ -4,9 +4,7 @@ This producer builds a Debian 13 amd64 Steam appliance with Gamescope,
 Xwayland, and Valve's own native x86-64 Linux Steam client started with
 `-gamepadui`. It installs no desktop environment and no compatibility tool:
 the guest runs the client Valve ships for this architecture, and Steam manages
-Proton itself. It is the pure x86-64 sibling of the
-[ARM64EC appliance](../steam-arm64ec/README.md) and shares that appliance's
-storage, session, splash and launch contract through
+Proton itself. Its storage, session, splash and launch contract live in
 [`../steam-common`](../steam-common).
 
 The image has no i386 multiarch and no 32-bit system loader. Valve's current
@@ -18,7 +16,7 @@ The default build retains Debian Mesa, which Gamescope cannot use for a
 Vulkan session. The Vulkan build imports a receipt-verified Mesa/Venus and
 Vulkan-Loader runtime built for x86-64 through that guest's own importer,
 `../vulkan/install-runtime.py`; the gaming session then selects Zink for
-Xwayland and OpenGL clients exactly as the ARM64EC session does. This
+Xwayland and OpenGL clients. This
 qualifies neither game rendering nor Vulkan conformance.
 
 `lsof` is required for Steam to authenticate its loopback WebUI connections.
@@ -30,19 +28,17 @@ there is no 16 KiB Steam product.
 [`sources.json`](sources.json) locks the Debian suite, the Steam release
 channel, the pinned client version, and the Steam runtime snapshot.
 [`steam-client.manifest`](steam-client.manifest) is the unmodified upstream
-`ubuntu12` client manifest for client version `1788652215` — the same client
-release the ARM64EC appliance seeds, so a first-boot comparison measures the
-guest and not a different starting point. Valve serves only the current
-manifest, so the pinned one is retrieved from the SteamDB SteamTracking mirror
-recorded in `steam_manifest_origin`; every package it names is then downloaded
+`ubuntu12` client manifest for client version `1788652215`. Valve serves only
+the current manifest, so the pinned one is retrieved from the SteamDB
+SteamTracking mirror recorded in `steam_manifest_origin`; every package it names is then downloaded
 from Valve's own content service and verified against the SHA-256 in the
 manifest, and the manifest itself is verified against `steam_manifest_sha256`.
 The mirror's copy of the *current* manifest is byte-identical to the one
 Valve's service serves, which is how the mirror was qualified.
 
 The client seeded in the image is therefore one release behind Valve's current
-publication, and the first boot downloads that difference like the ARM64EC
-appliance does. Debian package versions are resolved during preparation and
+publication, and the first boot downloads that difference. Debian package
+versions are resolved during preparation and
 recorded with the base archive digest.
 
 ## Build on native x86-64 Linux
@@ -79,8 +75,8 @@ provenance sidecars. The audit requires the native x86-64 Steam client and web
 helper, Gamescope, the splash renderer, the GTK/OpenAL/libnm aliases the native
 Steam UI needs, the V4L2 decoder rule, and the VA-API backend with the session
 and launcher wiring that selects it; it rejects foreign ELF payloads,
-system i386 payloads, an installed desktop environment, a bundled compatibility
-tool under `/opt`, and a guest FEX engine.
+system i386 payloads, an installed desktop environment, and a bundled
+compatibility tool under `/opt`.
 
 `steam-gaming.service` starts a Gamescope session as the image-owned `uml`
 user, which has passwordless local sudo and serial autologin on `ttyS0`. The
@@ -103,10 +99,9 @@ when the X window `Steam Big Picture Mode` becomes viewable.
 
 ## Video decode boundary
 
-Big Picture plays `steamui/movies/bigpicture_startup.webm` on every start here
-as it does on the ARM64EC appliance, and the
-[shared assets](../steam-common/README.md) record why neither image decodes it
-in hardware. Two things are specific to this client:
+Big Picture plays `steamui/movies/bigpicture_startup.webm` on every start, and
+the [shared assets](../steam-common/README.md) record why it is not decoded in
+hardware. Two things are specific to this client:
 
 - Valve's x86-64 CEF has no stateful V4L2 decoder, so the image's
   `/dev/video-dec0` is never a candidate for it. Its only hardware decode path

@@ -24,7 +24,6 @@ def main() -> None:
     parser.add_argument("--expected-slice")
     parser.add_argument("--expected-release-series")
     parser.add_argument("--expected-page-size", type=int)
-    parser.add_argument("--expected-config-fragment", type=Path)
     args = parser.parse_args()
 
     if args.compatible:
@@ -49,7 +48,6 @@ def main() -> None:
             args.expected_slice,
             args.expected_release_series,
             args.expected_page_size,
-            args.expected_config_fragment,
         )
     else:
         if args.kernel_metadata is None or args.patch_manifest is None:

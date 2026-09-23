@@ -3,10 +3,6 @@
 
 .arch armv8.2-a
 
-#ifndef UML_X86_64_STRICT_TSO
-#define UML_X86_64_STRICT_TSO 0
-#endif
-
 #if __APPLE__
 #define NAME(value) _##value
 #else
@@ -71,8 +67,7 @@ NAME(uml_x86_64_gadget_\name):
  * gadget that works on registers alone pays nothing and a locked gadget is
  * fenced like any other store. The mark is textual: a memory form that joins
  * another gadget's tail runs the boundary before it branches. Accesses inside
- * one instruction keep the order the gadget gives them. The Wine CPU service
- * keeps the stronger form, a barrier after every gadget.
+ * one instruction keep the order the gadget gives them.
  */
 .macro x86_memory_order_barrier
 	dmb ish
@@ -83,13 +78,9 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 .macro x86_memory_order_boundary
-#if UML_X86_64_STRICT_TSO
-	x86_memory_order_barrier
-#else
 	.if x86_guest_memory_gadget
 	x86_memory_order_barrier
 	.endif
-#endif
 .endm
 
 .macro retire_and_next
