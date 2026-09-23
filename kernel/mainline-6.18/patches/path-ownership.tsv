@@ -13,6 +13,8 @@ kernel/sched/core.c	uml-generic	carry-locally	The central cond_resched boundary 
 scripts/*	darwin-host-build	carry-locally	Kbuild host tools run before the outer emulator exists, so their ELF portability remains in this local line; see extraction-decisions.tsv.
 mm/filemap.c	base-correctness	drop-locally-if-contained	Independent cachestat zero-length correctness fix; remove locally when the selected base contains it.
 mm/mmu_gather.c	uml-generic	carry-locally	Architecture hook for preserving precise nested mmu-gather ranges when a synchronous range flush already serializes all executors.
+mm/process_vm_access.c	uml-generic	carry-locally	Calls the process_vm_writev() code-coherence hook after writing another mm's frames.
+include/asm-generic/cacheflush.h	uml-generic	carry-locally	No-op hook that lets an architecture caching translated code observe process_vm_writev() stores.
 security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	Independent connected-stream sendmsg correctness fix; remove locally when the selected base contains it.
 drivers/media/*	uml-devices	carry-locally	Stateful V4L2 decoding through the shared Virtio device.
 include/uapi/linux/virtio_video.h	uml-devices	carry-locally	Paired host and kernel video queue contract.

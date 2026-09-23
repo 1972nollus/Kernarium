@@ -1,4 +1,4 @@
-From a259f78fe3c6cb267e1f450c753ef0d9ef7febc2 Mon Sep 17 00:00:00 2001
+From 3494ca5f59d5df31c26fcad3c490e0807e96f5e1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 09:53:06 +0900
 Subject: [PATCH 2/5] arm64: add i386 userspace task support
@@ -3042,7 +3042,7 @@ index f4f5b15ab..300039328 100644
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 8747a242c..e6e77e215 100644
+index 7cccc32c0..08ab5b2e0 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -11,6 +11,9 @@

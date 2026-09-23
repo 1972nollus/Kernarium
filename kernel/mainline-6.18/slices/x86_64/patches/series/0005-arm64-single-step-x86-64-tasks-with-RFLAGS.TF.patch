@@ -1,4 +1,4 @@
-From 49e45bdca227dbe1456c317902124b0ec56eb902 Mon Sep 17 00:00:00 2001
+From 332188f5b6ec6b4e2d3f9abc6b2efa79fc2f2034 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 17:38:02 +0900
 Subject: [PATCH 5/5] arm64: single-step x86-64 tasks with RFLAGS.TF
@@ -8,16 +8,69 @@ PTRACE_SINGLESTEP is in effect the kernel sets TF for the entry, the
 engine retires one instruction and raises #DB, and the kernel delivers
 SIGTRAP with TRAP_TRACE at the next instruction. A TF the task set
 itself also raises #DB, and only a flag the kernel forced is cleared on
-return, so ptrace and signal frames observe the task's own value.
+return, so ptrace and signal frames observe the task's own value. As in
+x86's is_setting_trap_flag(), a stepped POPF or IRET writes TF itself,
+so the kernel leaves the value that instruction produced.
 ---
- arch/um/os-Darwin/skas/process.c | 36 ++++++++++++++++++++++++++++++--
- 1 file changed, 34 insertions(+), 2 deletions(-)
+ arch/arm64/um/ptrace.c           | 39 ++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 39 ++++++++++++++++++++++++++++++--
+ 2 files changed, 76 insertions(+), 2 deletions(-)
 
+diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
+index a64194ef8..84ff5d15e 100644
+--- a/arch/arm64/um/ptrace.c
++++ b/arch/arm64/um/ptrace.c
+@@ -138,6 +138,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
+ 	upt_x86_64_set_segment_selector(guest, 2, regs->ss);
+ }
+ 
++/*
++ * Like x86's is_setting_trap_flag(): whether the instruction a step is about
++ * to run is a POPF or IRET, which writes TF itself, so the flag the kernel
++ * set for the step must not be cleared afterwards. Runs in the stepping
++ * task before it enters the engine; an unreadable byte means no.
++ */
++int uml_x86_64_step_sets_trap_flag(const struct uml_pt_regs *regs)
++{
++	const bool compat = upt_x86_32_task_mode(regs);
++	unsigned long address = UPT_IP(regs);
++	unsigned char opcode;
++	int i;
++
++	for (i = 0; i < 15; i++, address++) {
++		if (compat)
++			address &= 0xffffffffUL;
++		if (copy_from_user_nofault(&opcode,
++					   (const void __user *)address, 1))
++			return 0;
++		switch (opcode) {
++		case 0x9d: /* popf */
++		case 0xcf: /* iret */
++			return 1;
++		case 0x26: case 0x2e: case 0x36: case 0x3e:
++		case 0x64: case 0x65: case 0x66: case 0x67:
++		case 0xf0: case 0xf2: case 0xf3:
++			continue;
++		case 0x40 ... 0x4f:
++			/* REX in long mode; INC or DEC in compat mode. */
++			if (compat)
++				return 0;
++			continue;
++		default:
++			return 0;
++		}
++	}
++	return 0;
++}
++
+ unsigned long getreg(struct task_struct *child, int regno)
+ {
+ 	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index aed88f9d8..df6902016 100644
+index aed88f9d8..ef4604179 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -71,6 +71,29 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+@@ -71,6 +71,32 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
   * set.  The bit exists only for the entry, so saved, traced and signal-frame
   * registers never carry it.  Returns whether the bit was set for this entry.
   */
@@ -29,13 +82,16 @@ index aed88f9d8..df6902016 100644
 + */
 +#define DARWIN_GUEST_RFLAGS_TF (1UL << 8)
 +
++extern int uml_x86_64_step_sets_trap_flag(const struct uml_pt_regs *regs);
++
 +static int begin_guest_step(struct uml_pt_regs *regs)
 +{
 +	if (!singlestepping() ||
 +	    (UPT_X86_64_RFLAGS(regs) & DARWIN_GUEST_RFLAGS_TF))
 +		return 0;
 +	UPT_X86_64_RFLAGS(regs) |= DARWIN_GUEST_RFLAGS_TF;
-+	return 1;
++	/* A stepped POPF or IRET writes TF itself: leave its result. */
++	return !uml_x86_64_step_sets_trap_flag(regs);
 +}
 +
 +static void end_guest_step(struct uml_pt_regs *regs, int stepping)
@@ -47,7 +103,7 @@ index aed88f9d8..df6902016 100644
  static int begin_guest_step(struct uml_pt_regs *regs)
  {
  	if (!singlestepping())
-@@ -84,6 +107,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -84,6 +110,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  	if (stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
@@ -55,7 +111,7 @@ index aed88f9d8..df6902016 100644
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -795,16 +819,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -795,16 +822,24 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };

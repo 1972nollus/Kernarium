@@ -40,4 +40,4 @@ order	filename	stable_patch_id	sha256	subject
 36	0036-uml-stop-a-vhost-user-device-whose-backend-has-gone.patch	9e703133ef70c7bf6f35ef48bccb167070a33492	0b543695f4e03ee97d7a0d28c2e3cec1ed3115258d246596d5c251f886928290	uml: stop a vhost-user device whose backend has gone
 37	0037-mm-vmscan-write-back-dirty-swap-cache-folios.patch	ec4f4a544b54657d9cd7014e1b0ce528dcb95b21	f51b2fb5feea93164966477878ba0491519fcfc4024b727a79dfc92f29ece2bf	mm: vmscan: write back dirty swap-cache folios
 38	0038-uml-single-step-Darwin-guests-for-ptrace.patch	7dc787a13328c86b311dcf2a55bc8459fae21028	2af7282c1c4e5521496e1c7c8f7066268af9ee3ce9b9330807fc6fc55204c0c9	uml: single-step Darwin guests for ptrace
-39	0039-uml-invalidate-Darwin-translations-after-ptrace-text.patch	79c63afecc031e2a37ced4094b446137cb8a6ea4	dcdc1e5de6041f1056b1af51321fccbadccb20e61f70ee13089da7618d30b4b6	uml: invalidate Darwin translations after ptrace text writes
+39	0039-uml-invalidate-Darwin-translations-after-kernel-text.patch	d4021778d76e6028406c1914bae85874cbbe0983	261b33df6fe2a9f1361e1c7907bb230d20e00286824849fe0003eb12e0c6e657	uml: invalidate Darwin translations after kernel text writes

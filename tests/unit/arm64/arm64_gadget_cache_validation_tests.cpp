@@ -193,6 +193,21 @@ void a_kernel_text_write_republishes_through_the_bridge()
 	require(run_once(executor, memory, generation, cpu).event ==
 		::uml::cpu::EngineEvent::system_call);
 	require(cpu.registers[0] == 2);
+
+	/* process_vm_writev() reports its data transfers the same way; a page
+	 * mapped without execute permission holds no translation to retire. */
+	constexpr auto data_base = code_base + 0x10'0000;
+	JitBacking data{1};
+	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(data_base),
+		data.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
+	const auto code_changes = darwin_uml_static_vm_code_changes(generation);
+	require(darwin_uml_static_vm_invalidate_code_generation(
+		generation, data_base, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
+	require(darwin_uml_static_vm_code_changes(generation) == code_changes);
+	require(darwin_uml_static_vm_invalidate_code_generation(
+		generation, code_base, 4) == 0);
+	require(darwin_uml_static_vm_code_changes(generation) != code_changes);
 }
 
 /* A code change resets every activation, not only the ones it touched.

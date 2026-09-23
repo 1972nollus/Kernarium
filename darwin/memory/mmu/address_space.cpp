@@ -878,9 +878,12 @@ public:
 	}
 
 	/* Linux wrote a user page through its own mapping of the frame -- a
-	 * ptrace or /proc/pid/mem store into another process's text -- so no
-	 * translated store saw it. Move each page's stamp and publish the range
-	 * in that process's generation, as a guest code synchronization would. */
+	 * ptrace, /proc/pid/mem or process_vm_writev() store into another
+	 * process's memory -- so no translated store saw it. Move each code
+	 * page's stamp and publish the range in that process's generation, as a
+	 * guest code synchronization would. A page mapped without execute
+	 * permission holds no translation, which keeps the data transfers of
+	 * process_vm_writev() from publishing anything. */
 	int invalidate_code(std::uint64_t generation, std::uint64_t address,
 			    std::uint64_t length)
 	{
@@ -898,10 +901,27 @@ public:
 		    AddressDomain::invalid)
 			return -1;
 		auto state = state_for(generation_for(first, generation));
-		for (auto page = first; page < rounded_end; page += page_size)
-			invalidate_code_page(*state, page);
-		::uml::memory::publish_code_change(
-			*state, first, rounded_end - first);
+		std::uint64_t publish_first = rounded_end;
+		std::uint64_t publish_end = first;
+		{
+			std::shared_lock lock{state->mappings_mutex};
+			for (auto page = first; page < rounded_end;
+			     page += page_size) {
+				const auto mapping = state->mappings.find(page);
+				if (mapping != state->mappings.end()) {
+					if (!mapping->second.guest_code)
+						continue;
+					MappedBacking::invalidate_code_page(
+						mapping->second.backing->code_page_handle(
+							mapping->second.offset));
+				}
+				publish_first = std::min(publish_first, page);
+				publish_end = page + page_size;
+			}
+		}
+		if (publish_first < publish_end)
+			::uml::memory::publish_code_change(*state, publish_first,
+				publish_end - publish_first);
 		return 0;
 	}
 

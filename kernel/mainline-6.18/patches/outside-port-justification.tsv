@@ -7,6 +7,8 @@ drivers/gpu/drm/virtio/virtgpu_vram.c	uml-devices	carry-locally	0027	carry-local
 drivers/video/console/Kconfig	uml-devices	carry-locally	0010	carry-locally	Let fbcon own the standard VT major on UML configurations that deliberately disable the legacy stdio console driver.
 kernel/sched/core.c	uml-generic	carry-locally	0019	carry-locally	Poll Darwin's cooperative timer at the scheduler's central lock-free cond_resched boundary before testing whether the expired deadline requested rescheduling.
 mm/filemap.c	base-correctness	drop-locally-if-contained	0012	drop-locally-if-contained	Independent zero-length cachestat range correction required by the port's guest workload; keep it isolated so this local line can drop it when contained.
+include/asm-generic/cacheflush.h	uml-generic	carry-locally	0039	carry-locally	Declare a no-op flush_icache_remote_user_range() hook so an architecture that caches translated code by user address can observe process_vm_writev() stores into another mm.
+mm/process_vm_access.c	uml-generic	carry-locally	0039	carry-locally	Call flush_icache_remote_user_range() after process_vm_writev() copies into another mm's pinned frames, so Darwin guests retire stale translations of that code.
 mm/mmu_gather.c	uml-generic	carry-locally	0002	carry-locally	Let an architecture whose synchronous range invalidation serializes every executor retain precise nested mmu-gather ranges instead of forcing a generation-wide flush.
 scripts/Makefile.vmlinux	darwin-host-build	carry-locally	0011	carry-locally	Use Perl for Darwin's in-place trailing-NUL trim while retaining the existing sed command on Linux hosts.
 scripts/link-vmlinux.sh	darwin-host-build	carry-locally	0011	carry-locally	Avoid Linux-only linker options when the kernel host is Darwin.

@@ -259,17 +259,21 @@ x86 RFLAGS.TF). Every engine then retires exactly one instruction and reports a
 single-step exit. The runtime returns that exit as a breakpoint event with trap
 number 0x32 (arm64 software step) or 1 (x86 `#DB`), and Linux delivers
 `SIGTRAP`/`TRAP_TRACE`. A stepped instruction that exits on its own, such as a
-system call, breakpoint or fault, reports that exit instead. A guest that sets
-RFLAGS.TF itself with `popf` traps at its next kernel entry, not after the next
-instruction.
+system call, breakpoint or fault, reports that exit instead. A `popf` that sets
+RFLAGS.TF leaves the x86 program at the next instruction, and the runtime
+retires exactly that instruction before it reports the step, as native `#DB`
+timing requires. As in x86 Linux, a ptrace step over `popf` or `iret` leaves the
+TF value that instruction wrote.
 
-Linux writes another process's text, such as ptrace breakpoints, gdb's
-displaced-stepping pad or `/proc/pid/mem` stores, through its own view of the
-frame, so no translated store publishes the change. `copy_to_user_page()` calls
-`flush_icache_user_page()`, which on Darwin calls `darwin_uml_vm_invalidate_code()`
-for the target mm's generation. That call moves the page's code stamp and
-publishes the range, as a guest code synchronization would.
-`process_vm_writev()` does not take this hook.
+Linux writes another process's memory, such as ptrace breakpoints, gdb's
+displaced-stepping pad, `/proc/pid/mem` or `process_vm_writev()` stores, through
+its own view of the frame, so no translated store publishes the change.
+`copy_to_user_page()` calls `flush_icache_user_page()`, and `process_vm_writev()`
+calls the local `flush_icache_remote_user_range()` hook, a no-op on other
+architectures. On Darwin both call `darwin_uml_vm_invalidate_code()` for the
+target mm's generation. That call moves the code stamp of each executable page
+and publishes the range, as a guest code synchronization would. Pages mapped
+without execute permission are skipped, so data transfers publish nothing.
 
 ## Kernel and Android ownership
 
