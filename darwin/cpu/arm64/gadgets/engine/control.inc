@@ -141,10 +141,13 @@ gadget branch_link
 	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
+/* With the return ring built in, the call's second operand is the return
+ * block's link rather than the return address, which that BlockLink holds. */
 gadget branch_link_linked
 	ldr x8, [_stream], #8
 #if UML_GADGET_RETURN_STACK
-	ldp x9, x11, [_stream]
+	ldr x11, [_stream]
+	ldr x9, [x11, #16]
 	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x9, x11
 	follow_block_link x8
@@ -153,7 +156,7 @@ gadget branch_link_linked
 	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	follow_block_link x8
 	/* Matched-layout control for the return-stack build; unreachable. */
-	.space 28
+	.space 32
 #endif
 
 gadget branch_register
@@ -249,11 +252,14 @@ gadget branch_register_cached
 	ldr x10, [_cpu, x8]
 	follow_indirect_link
 
+/* As branch_link_linked, the return address comes out of the return block's
+ * link when the ring is built in. */
 gadget branch_link_register_cached
 	ldp x8, x9, [_stream], #16
 #if UML_GADGET_RETURN_STACK
-	ldp x11, x14, [_stream]
+	ldr x14, [_stream]
 	ldr x10, [_cpu, x8]
+	ldr x11, [x14, #16]
 	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x11, x14
 	follow_indirect_link
@@ -263,7 +269,7 @@ gadget branch_link_register_cached
 	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	follow_indirect_link
 	/* Matched-layout control for the return-stack build; unreachable. */
-	.space 28
+	.space 32
 #endif
 
 gadget return_cached

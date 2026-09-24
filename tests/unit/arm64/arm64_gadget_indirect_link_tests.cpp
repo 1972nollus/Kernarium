@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory_resource>
 #include <source_location>
 #include <utility>
@@ -74,9 +75,15 @@ gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 	return gadgets::Builder{}.build(pc, instructions);
 }
 
-/* Cached calls also name their return block's link (the return ring pushes
- * it), so the fixture resolves any direct target to one unlinked record. */
-LinkTarget unlinked_return{~std::uint64_t{}};
+/* Cached calls also name their return block's link: the return ring pushes
+ * it, and the call reads the return address it sets out of it. So the fixture
+ * resolves each direct target to an unlinked record of its own, as the
+ * executor does. */
+const gadgets::BlockLink *unlinked(std::uint64_t pc)
+{
+	static std::map<std::uint64_t, LinkTarget> records;
+	return &records.try_emplace(pc, pc).first->second.link;
+}
 
 gadgets::BuildResult build_cached(std::uint64_t pc,
 	std::uint32_t instruction, gadgets::IndirectLink &site)
@@ -84,7 +91,7 @@ gadgets::BuildResult build_cached(std::uint64_t pc,
 	const std::array instructions{instruction};
 	return gadgets::Builder{}.build(
 		pc, instructions,
-		[](std::uint64_t) { return &unlinked_return.link; },
+		[](std::uint64_t target) { return unlinked(target); },
 		std::pmr::get_default_resource(),
 		[&](std::uint64_t source_pc) {
 			require(source_pc == pc);

@@ -296,16 +296,21 @@ int main()
 	}
 
 	/* BL preserves its fixed return address while using the same deferred-PC
-	 * linked edge as B. */
+	 * linked edge as B. The return address is the return block's link's own,
+	 * so that address resolves to a record of its own, as in the executor. */
 	{
 		auto successor = build_target(0x4040, 17);
 		LinkTarget target{0x4040};
 		target.resolve(successor);
+		LinkTarget return_site{0x4004};
 		const std::array instructions{
 			direct_branch(0x4000, target.link.guest_pc, true)};
 		auto first = gadgets::Builder{}.build(
 			0x4000, instructions,
-			[&](std::uint64_t) { return &target.link; });
+			[&](std::uint64_t pc) {
+				return pc == target.link.guest_pc ?
+					&target.link : &return_site.link;
+			});
 		arm64::CpuState cpu{};
 		::uml::memory::Tlb tlb;
 		std::size_t executed = 0;
