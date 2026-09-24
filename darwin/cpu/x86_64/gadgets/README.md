@@ -147,6 +147,12 @@ used to cost a link follow, and the taken edge keeps its link. A build with no
 link resolver -- the budget-limited replay of a cached block -- keeps the
 terminal form instead and leaves the translated tail unreachable.
 
+Only a block that the fetch window cut short ends in a terminator, which
+follows the link to the next instruction or leaves with its RIP. Every gadget
+a branch selects leaves or follows a link on each of its paths -- a
+conditional branch that ends a block takes its two-exit form -- so a block
+that ended at a branch carries none. See X82.
+
 A dispatch's instruction budget bounds how long it runs, not where a block
 may stop: the block that crosses the budget runs to its end, as the arm64
 engines' blocks do, so a dispatch can retire up to one block more than its

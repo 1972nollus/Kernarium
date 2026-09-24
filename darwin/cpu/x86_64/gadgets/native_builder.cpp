@@ -7124,15 +7124,15 @@ void append_native_stream(std::vector<std::uintptr_t> &stream,
 				"x86-64 operation has no native assembly gadget"};
 		state = produced;
 	}
-	/* A block that ended at a branch never reaches this terminator, so only
-	 * one cut short by the fetch window can use a link -- and asking for a
-	 * link record for an address the block never falls through to would
-	 * allocate one per branch-ended block for nothing.
+	/* Every gadget a terminal instruction selects leaves or follows a link
+	 * on each of its paths, so a block that ended at a branch never reaches
+	 * the end of its stream and carries no terminator. Only a block the
+	 * fetch window cut short falls off its last instruction.
 	 */
+	if (!gadgets.empty() && gadgets.back().instruction.terminal())
+		return;
 	const auto next = normalize_instruction_pointer(mode, final_rip);
-	const bool falls_through = !gadgets.empty() &&
-		!gadgets.back().instruction.terminal();
-	const auto *link = falls_through && links.resolve != nullptr ?
+	const auto *link = !gadgets.empty() && links.resolve != nullptr ?
 		links.resolve(links.context, next, mode) : nullptr;
 	if (link != nullptr) {
 		stream.push_back(entry_address(
