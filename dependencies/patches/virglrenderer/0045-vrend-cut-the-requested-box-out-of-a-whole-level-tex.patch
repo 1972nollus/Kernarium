@@ -1,7 +1,7 @@
-From 3d051aed1a65cd741c848b02f5293a8e9b350679 Mon Sep 17 00:00:00 2001
+From 6a8845fdef0394933956d05a6af5f21a17748607 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:43:53 +0900
-Subject: [PATCH 45/49] vrend: cut the requested box out of a whole-level
+Subject: [PATCH 45/50] vrend: cut the requested box out of a whole-level
  texture readback
 
 glGetTexImage and glGetCompressedTexImage can only read a whole mip level,

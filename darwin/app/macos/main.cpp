@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
 #include "audio/protocol.hpp"
+#include "balloon/in_process_service.hpp"
+#include "balloon/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
 #include "video/in_process_service.hpp"
@@ -429,6 +431,31 @@ bool has_virtio_device_argument(const std::vector<std::string> &arguments,
 	return false;
 }
 
+/* The last mem= as Linux memparse() reads it: a base-0 integer and one
+ * optional binary suffix, with any further text ignored. */
+std::uint64_t guest_memory_bytes(const std::vector<std::string> &arguments)
+{
+	std::uint64_t bytes = 0;
+	for (const auto &argument : arguments) {
+		if (!argument.starts_with("mem="))
+			continue;
+		char *end = nullptr;
+		bytes = std::strtoull(argument.c_str() + 4, &end, 0);
+		unsigned shifts = 0;
+		switch (*end) {
+		case 'E': case 'e': ++shifts; [[fallthrough]];
+		case 'P': case 'p': ++shifts; [[fallthrough]];
+		case 'T': case 't': ++shifts; [[fallthrough]];
+		case 'G': case 'g': ++shifts; [[fallthrough]];
+		case 'M': case 'm': ++shifts; [[fallthrough]];
+		case 'K': case 'k': ++shifts; break;
+		default: break;
+		}
+		bytes <<= 10U * shifts;
+	}
+	return bytes;
+}
+
 bool host_has_lse_atomics()
 {
 	int supported = 0;
@@ -508,6 +535,11 @@ int uml::app::runEmbeddedKernel(
 	 * so both backends share one index of the ranges published there. */
 	auto shared_memory_regions =
 		std::make_shared<uml::virtio::SharedMemoryRegions>();
+	/* GPU memory is charged to the process like guest RAM, so the GPU may
+	 * use at most half of the guest's allocation and the balloon takes what
+	 * it uses out of the guest. */
+	const std::uint64_t guest_memory = guest_memory_bytes(prepared.kernel);
+	const std::uint64_t device_memory_limit = guest_memory / 2;
 	if (prepared.gpu.enabled && !informational(argc, argv)) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
@@ -537,6 +569,8 @@ int uml::app::runEmbeddedKernel(
 							prepared.gpu.auto_resize_guest,
 						.sharedMemoryRegions =
 							shared_memory_regions,
+						.deviceMemoryLimit =
+							device_memory_limit,
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
@@ -548,6 +582,31 @@ int uml::app::runEmbeddedKernel(
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio-GPU: %s\n",
+				error.what());
+			return 1;
+		}
+	}
+	std::unique_ptr<uml::balloon::InProcessBalloonService> balloon_service;
+	if (gpu_service && device_memory_limit != 0 &&
+	    !has_virtio_device_argument(
+		    prepared.kernel, uml::balloon::protocol::deviceId)) {
+		try {
+			balloon_service =
+				std::make_unique<uml::balloon::InProcessBalloonService>(
+					uml::balloon::BalloonOptions{
+						.guestMemoryBytes = guest_memory,
+						.target = uml::balloon::hostGpuMemoryTarget(
+							device_memory_limit),
+						.hostPageSize = static_cast<std::size_t>(
+							getpagesize()),
+					});
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				balloon_service->takeConnectionName() + ":" +
+				std::to_string(uml::balloon::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio balloon: %s\n",
 				error.what());
 			return 1;
 		}

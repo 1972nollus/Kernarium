@@ -29,6 +29,9 @@ struct InProcessGpuOptions {
      * publishes every host-visible blob range it maps there, so a device
      * whose guest names a buffer inside the region can resolve it. */
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions;
+    /* The most device memory a Venus guest may allocate, counted against
+     * everything the host GPU holds for this process, or zero for no bound. */
+    std::uint64_t deviceMemoryLimit {};
 };
 
 class InProcessGpuService {

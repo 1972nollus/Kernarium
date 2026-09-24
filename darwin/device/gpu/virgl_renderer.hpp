@@ -66,6 +66,11 @@ public:
     VirglRenderer();
     ~VirglRenderer();
 
+    /* Bounds the device memory a Venus guest may allocate to `bytes`,
+     * counted against everything the host GPU holds for this process, or
+     * zero for no bound. Takes effect for the next renderer constructed. */
+    static void setDeviceMemoryLimit(std::uint64_t bytes) noexcept;
+
     VirglRenderer(const VirglRenderer&) = delete;
     VirglRenderer& operator=(const VirglRenderer&) = delete;
 

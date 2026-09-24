@@ -51,6 +51,7 @@ function(uml_add_macos_embedded_kernel_app
         "${EMULATOR_TARGET}"
         UML::AudioDevice
         UML::BatteryDevice
+        UML::BalloonDevice
         UML::VideoDevice
         UML::ConsoleDevice
         UML::GpuDevice

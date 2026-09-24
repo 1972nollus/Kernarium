@@ -1,7 +1,7 @@
 From 72c7ab0f8f59935b84f5044ac82f79a92434e959 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 16:08:25 +0900
-Subject: [PATCH 13/43] uml: run Darwin guests on fixed vCPU carriers
+Subject: [PATCH 13/46] uml: run Darwin guests on fixed vCPU carriers
 
 Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-vCPU lookup together as one fixed-carrier scheduler topic.
 

@@ -3,6 +3,7 @@
 #include "virgl_renderer.hpp"
 
 #include "host_gl_provider.hpp"
+#include "host_gpu_memory.hpp"
 #include "protocol.hpp"
 
 #include <algorithm>
@@ -46,6 +47,12 @@ constexpr std::uint32_t venusCapsetId = 4;
 
 std::atomic_bool missingGlEntryPoint;
 std::atomic_bool rendererInstanceActive;
+std::atomic<std::uint64_t> deviceMemoryLimit;
+
+std::uint64_t hostDeviceMemoryUsage(void*)
+{
+    return uml::platform::hostGpuAllocatedBytes();
+}
 
 [[nodiscard]] bool capabilityReportEnabled() noexcept
 {
@@ -181,6 +188,11 @@ int checkGlDispatchResult(int result)
 
 } // namespace
 
+void VirglRenderer::setDeviceMemoryLimit(std::uint64_t bytes) noexcept
+{
+    deviceMemoryLimit.store(bytes, std::memory_order_release);
+}
+
 VirglRenderer::VirglRenderer()
     : provider_(std::make_unique<HostGlProvider>())
 {
@@ -234,6 +246,17 @@ VirglRenderer::VirglRenderer()
              */
             virgl_renderer_set_host_visible_aperture_size(
                 protocol::hostVisibleSharedMemoryRegionSize);
+            /*
+             * GPU memory is charged to this process like the guest's own
+             * RAM. The guest is shown, and may allocate, only the share the
+             * host granted it, counted against everything the GPU holds for
+             * the process so that the presentation path and the host GL
+             * driver draw on the same share.
+             */
+            virgl_renderer_set_device_memory_limit(
+                deviceMemoryLimit.load(std::memory_order_acquire),
+                &hostDeviceMemoryUsage,
+                nullptr);
         }
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);

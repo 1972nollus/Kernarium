@@ -84,11 +84,12 @@ Darwin UML guest RAM uses the kernel's linear physical window as its root. The
 signed kernel image occupies the reserved prefix and the allocatable suffix is
 created anonymously in place; software-MMU and host-service views borrow that
 window rather than retaining a second full-span mapping. This applies to both
-mainline page profiles and the Android kernel. Physical iOS commits and wires
-the anonymous suffix, the loader-to-reserve tail, and any prefix pages as the
-kernel releases them into guest RAM; a wire failure aborts startup. Simulator
-and macOS retain demand allocation. Disk and image descriptors remain
-file-backed.
+mainline page profiles and the Android kernel. The guest commits and releases
+guest RAM on demand. Physical iOS wires only the committed pages; Simulator and
+macOS commit and release without wiring. A Virtio balloon takes the host GPU's
+memory out of the guest. See [the memory
+architecture](../docs/architecture.md#memory-and-executable-code). Disk and
+image descriptors remain file-backed.
 
 ## CPU engines
 

@@ -152,11 +152,11 @@ CONFIG_CIFS_XATTR=y
 # CONFIG_KSM is not set
 CONFIG_USERFAULTFD=y
 CONFIG_CMA=y
-# Retain the free-page reporter for a file-backed physical-memory provider.
-# The accepted Darwin runtime uses anonymous physical RAM and rejects its first
-# hole-punch request, causing the reporter to disable itself without further
-# polling; ordinary file-backed providers can still release past high-water
-# memory without changing the configured mem= ceiling.
+# mem= is a ceiling rather than a reservation. arch/um registers a free-page
+# reporting driver that hands free chunks of guest RAM back to the host, which
+# drops them from the emulator's footprint (and unwires them on iOS), and
+# commits a released chunk again the first time the allocator hands out a page
+# of it.
 CONFIG_PAGE_REPORTING=y
 # Huge pages are deliberately absent. The guest's pages are host allocations
 # behind a software MMU, so a second huge-page tier buys no TLB reach here and
@@ -396,6 +396,10 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
+# The host carves the memory its GPU uses out of the guest's allocation
+# through a standard Virtio balloon, so guest RAM and GPU memory together stay
+# within what the user configured.
+CONFIG_VIRTIO_BALLOON=y
 # The outer macOS emulator can attach an optional single console or named
 # multiport serial endpoint; ttyS0 remains the default host console.
 CONFIG_VIRTIO_CONSOLE=y

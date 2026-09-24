@@ -1,4 +1,4 @@
-From f3bcaf048def8ae4832c4164418d9baccfe48e1d Mon Sep 17 00:00:00 2001
+From c96f78ac74de305e5c0997bfc9ae8c016569a667 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:19:23 +0900
 Subject: [PATCH 3/5] arm64: describe the emulated x86 CPU in /proc/cpuinfo
@@ -57,12 +57,12 @@ index c224dfb5c..3cb07f3bc 100644
  
  #endif
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 5777ded66..a010caedc 100644
+index 3c0e879c2..e24f9d1d6 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -20,7 +20,13 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \
  	um_arch.o umid.o kmsg_dump.o skas/
- obj-y += load_file.o
+ obj-y += load_file.o page_cache_trim.o
  
 +ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +# The kernel is arm64, but /proc/cpuinfo describes the CPU its userspace runs

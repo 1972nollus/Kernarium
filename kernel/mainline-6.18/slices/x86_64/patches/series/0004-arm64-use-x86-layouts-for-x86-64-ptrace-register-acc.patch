@@ -1,4 +1,4 @@
-From dfcc3ef06d7f998154240f989d7a1002378707e1 Mon Sep 17 00:00:00 2001
+From 0c34d6f421d5efa11a3be6355b6fd9c82d228ff4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 12:38:51 +0900
 Subject: [PATCH 4/5] arm64: use x86 layouts for x86-64 ptrace register access

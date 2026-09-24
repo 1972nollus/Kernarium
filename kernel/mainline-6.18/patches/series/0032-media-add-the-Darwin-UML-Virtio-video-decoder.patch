@@ -1,7 +1,7 @@
 From 3baa035903bfd514fdcf3cc7c201ef78b788e183 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 20:12:50 +0900
-Subject: [PATCH 32/39] media: add the Darwin UML Virtio video decoder
+Subject: [PATCH 32/42] media: add the Darwin UML Virtio video decoder
 
 The stateful V4L2 decoder for the Darwin host's Virtio video device.
 

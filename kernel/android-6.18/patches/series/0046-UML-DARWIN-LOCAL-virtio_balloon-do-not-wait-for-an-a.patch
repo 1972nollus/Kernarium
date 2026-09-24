@@ -1,0 +1,43 @@
+From 70ca74044c0afc6cf917a06debe5ee2161b02b91 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 12:31:36 +0900
+Subject: [PATCH 46/46] UML-DARWIN-LOCAL: virtio_balloon: do not wait for an
+ answer from a broken device
+
+tell_host() ignored the result of virtqueue_add_outbuf() and then waited,
+uninterruptibly, for the host to return the buffer. On a broken
+virtqueue the add fails with -EIO and nothing is ever returned.
+
+UML reaches that state on every power-off with an inflated balloon: it
+runs virtio_uml_exit() as an exitcall after device_shutdown() has broken
+and reset every virtio device, and virtio_balloon's remove then returns
+its pages through tell_host(). The guest stopped for ever after
+"reboot: Power down".
+
+Return when the buffer cannot be queued. The pages still leave the
+balloon; a device that is gone cannot be told.
+
+Change-Id: I64e9dab266f3ddebc853188d02585a7276c61dae
+---
+ drivers/virtio/virtio_balloon.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 0d86b5a957387e043379899f985695b52190ea13..5de8ecd8133b00ea2c840444d8147937c5a5675e 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -192,8 +192,12 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
+ 
+ 	post_page_relinquish_tlb_inv();
+ 
+-	/* We should always be able to add one buffer to an empty queue. */
+-	virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL);
++	/*
++	 * We should always be able to add one buffer to an empty queue, unless
++	 * the device is broken, and then no answer will ever come.
++	 */
++	if (virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL))
++		return;
+ 	virtqueue_kick(vq);
+ 
+ 	/* When host has read buffer, this completes via balloon_ack */

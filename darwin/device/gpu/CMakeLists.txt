@@ -75,7 +75,9 @@ uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS
     UML_GPU_VULKAN_EXPERIMENT=1)
-target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
+target_link_libraries(uml_gpu_renderer PRIVATE
+    UML::ThirdPartyVirglrenderer
+    UML::HostGpuMemory)
 target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework CoreFoundation"
     "-framework Foundation"

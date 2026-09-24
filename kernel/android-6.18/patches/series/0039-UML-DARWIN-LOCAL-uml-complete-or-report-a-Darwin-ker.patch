@@ -1,7 +1,7 @@
 From 4dab4d297298d78e1a46e4a70534842b8b7c6bb6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 07:52:44 +0900
-Subject: [PATCH 39/43] UML-DARWIN-LOCAL: uml: complete or report a Darwin
+Subject: [PATCH 39/46] UML-DARWIN-LOCAL: uml: complete or report a Darwin
  kernel-range TLB flush
 
 flush_tlb_kernel_range() discarded um_tlb_sync()'s result. On Darwin
