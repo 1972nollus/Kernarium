@@ -10,6 +10,20 @@
 #include <utility>
 
 namespace uml::cpu::arm64::gadgets {
+namespace {
+
+/* A fault in the entered block itself resolves here. One in a linked
+ * successor left from a stream this program does not hold, and the executor,
+ * which can find that successor, resolves it. */
+void resolve_entered_fault(const Program &program, CpuState &cpu,
+	::uml::cpu::EngineEvent event) noexcept
+{
+	if (event == ::uml::cpu::EngineEvent::memory_fault &&
+	    program_contains_stream(program, cpu.gadget_indirect_miss))
+		resolve_fault_position(program, cpu.pc);
+}
+
+} // namespace
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 		 ProgramWords words,
@@ -71,7 +85,9 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 			);
 	restore_native_fp_environment(cpu);
 	executed = result.executed;
-	return static_cast<::uml::cpu::EngineEvent>(result.event);
+	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
+	resolve_entered_fault(program, cpu, event);
+	return event;
 }
 ::uml::cpu::EngineEvent execute_preserving_native_fp_environment(
 	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
@@ -92,7 +108,9 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 #endif
 			);
 	executed = result.executed;
-	return static_cast<::uml::cpu::EngineEvent>(result.event);
+	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
+	resolve_entered_fault(program, cpu, event);
+	return event;
 }
 
 } // namespace uml::cpu::arm64::gadgets

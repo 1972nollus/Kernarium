@@ -105,8 +105,10 @@
 .Lx86_zero_ready\@:
 .endm
 
+/* The stream an unlinked BlockLink names is the link_exit word right in front
+ * of that BlockLink, so the RIP is the BlockLink's own. */
 gadget link_exit
-	ldr x9, [_stream]
+	ldr x9, [_stream, #16]
 	str x9, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -42,16 +44,13 @@ gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 	return gadgets::Builder{}.build(pc, instructions);
 }
 
+/* Laid out as the executor's link record: the unlinked stream is one
+ * link_exit word, which takes the PC from the BlockLink behind it. */
 struct LinkTarget final {
 	explicit LinkTarget(std::uint64_t pc) noexcept
-		: fallback_stream{
-			gadget_address(uml_arm64_gadget_link_exit),
-			static_cast<std::uintptr_t>(pc)},
-		  fp_stream{
-			gadget_address(uml_arm64_gadget_fp_link_entry),
-			0},
+		: fallback_stream{gadget_address(uml_arm64_gadget_link_exit)},
 		  link{
-			.stream = fallback_stream.data(),
+			.stream = &fallback_stream,
 			.instruction_count = 0,
 			.guest_pc = pc,
 		  }
@@ -67,26 +66,30 @@ struct LinkTarget final {
 		link.instruction_count = target.program.instruction_count();
 	}
 
+	/* As the executor stores an FP/SIMD block: its stream behind one
+	 * fp_link_entry word, which the link names. */
 	void resolve_fp(const gadgets::BuildResult &target) noexcept
 	{
 		require(target.program.accesses_fp_state());
-		fp_stream[1] = reinterpret_cast<std::uintptr_t>(
-			target.program.words().data());
+		const auto words = target.program.words();
+		require(words.size() < fp_stream.size());
+		fp_stream[0] = gadget_address(uml_arm64_gadget_fp_link_entry);
+		std::copy(words.begin(), words.end(), fp_stream.begin() + 1);
 		link.stream = fp_stream.data();
 		link.instruction_count = target.program.instruction_count();
 	}
 
 	void reset() noexcept
 	{
-		link.stream = fallback_stream.data();
+		link.stream = &fallback_stream;
 		link.instruction_count = 0;
-		fp_stream[1] = 0;
 	}
 
-	std::array<std::uintptr_t, 2> fallback_stream;
-	std::array<std::uintptr_t, 2> fp_stream;
+	std::uintptr_t fallback_stream;
 	gadgets::BlockLink link;
+	std::array<std::uintptr_t, 64> fp_stream{};
 };
+static_assert(offsetof(LinkTarget, link) == sizeof(std::uintptr_t));
 
 std::uint32_t direct_branch(std::uint64_t pc, std::uint64_t target,
 			    bool link = false)
@@ -293,16 +296,21 @@ int main()
 	}
 
 	/* BL preserves its fixed return address while using the same deferred-PC
-	 * linked edge as B. */
+	 * linked edge as B. The return address is the return block's link's own,
+	 * so that address resolves to a record of its own, as in the executor. */
 	{
 		auto successor = build_target(0x4040, 17);
 		LinkTarget target{0x4040};
 		target.resolve(successor);
+		LinkTarget return_site{0x4004};
 		const std::array instructions{
 			direct_branch(0x4000, target.link.guest_pc, true)};
 		auto first = gadgets::Builder{}.build(
 			0x4000, instructions,
-			[&](std::uint64_t) { return &target.link; });
+			[&](std::uint64_t pc) {
+				return pc == target.link.guest_pc ?
+					&target.link : &return_site.link;
+			});
 		arm64::CpuState cpu{};
 		::uml::memory::Tlb tlb;
 		std::size_t executed = 0;

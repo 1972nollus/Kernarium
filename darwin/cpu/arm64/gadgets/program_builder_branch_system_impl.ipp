@@ -64,12 +64,16 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				uml_arm64_gadget_branch);
 			emit(words, target);
 		}
-		if (link)
-			emit(words, address + sizeof(instruction));
 #if UML_GADGET_RETURN_STACK
-		/* The linked call also pushes the return block's link. */
+		/* The linked call also pushes the return block's link, and
+		 * reads the return address it sets out of that BlockLink. */
 		if (link && resolve_link)
 			emit_link(context, address + sizeof(instruction));
+		else if (link)
+			emit(words, address + sizeof(instruction));
+#else
+		if (link)
+			emit(words, address + sizeof(instruction));
 #endif
 		++compiled;
 		return DecodeResult::terminal;
@@ -345,11 +349,16 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		if (cached)
 			emit_indirect_link(context, address,
 				opcode == 0xd65f'0000U);
-		if (opcode == 0xd63f'0000U)
-			emit(words, address + sizeof(instruction));
 #if UML_GADGET_RETURN_STACK
+		/* As for a direct call, a cached one's return address is the
+		 * return block's link's own. */
 		if (opcode == 0xd63f'0000U && cached)
 			emit_link(context, address + sizeof(instruction));
+		else if (opcode == 0xd63f'0000U)
+			emit(words, address + sizeof(instruction));
+#else
+		if (opcode == 0xd63f'0000U)
+			emit(words, address + sizeof(instruction));
 #endif
 		++compiled;
 		return DecodeResult::terminal;

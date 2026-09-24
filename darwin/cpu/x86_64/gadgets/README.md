@@ -23,6 +23,9 @@ Two banks implement the scalar integer instructions.
   is an immediate in the entry, so the host forwards the CPU-state stores into
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
+  An access carries its instruction's RIP and length in one stream word, the
+  RIP in bits 47:0 and the length in bits 59:56, because only its fault and
+  overlap exits read them.
   INC and DEC are enumerated a second time by the carry their producer left,
   because they preserve the carry flag: a borrow, carry or cleared source
   reaches RFLAGS with at most one condition, a settled one inherits the
@@ -144,22 +147,24 @@ used to cost a link follow, and the taken edge keeps its link. A build with no
 link resolver -- the budget-limited replay of a cached block -- keeps the
 terminal form instead and leaves the translated tail unreachable.
 
-A dispatch whose remaining budget is shorter than the block replays it: the
-block's first few instructions are assembled into a stream of their own, which
-ends where the budget does. What that replay decodes from is the block's saved
-source, not guest memory, so it recovers exactly the instructions the block was
-built from however the guest's own bytes have moved since. A translation is
-therefore built with no decoded instructions in it at all.
+Only a block that the fetch window cut short ends in a terminator, which
+follows the link to the next instruction or leaves with its RIP. Every gadget
+a branch selects leaves or follows a link on each of its paths -- a
+conditional branch that ends a block takes its two-exit form -- so a block
+that ended at a branch carries none. See X82.
 
-A replay is not rare. It happens once for each dispatch that runs out of
-budget inside a block, which on the compiler workload is one block entry in
-sixteen, so decoding the block again on every one of them costs about two
-percent of the guest. It is also concentrated: about a tenth of the blocks a
-workload translates are ever replayed, and each of those is replayed about
-twenty times. So the first replay of a block keeps what it decoded, in a third
-allocation that only such a block has, and every later replay of it reads that
-instead. A block no dispatch ever ends inside -- nine in ten of them -- never
-pays for the decoded form at all.
+A dispatch's instruction budget bounds how long it runs, not where a block
+may stop: the block that crosses the budget runs to its end, as the arm64
+engines' blocks do, so a dispatch can retire up to one block more than its
+budget. Only a single step, and the one instruction that a POPF setting TF
+leaves before its trap, asks for an exact budget. That is the one case where a
+block is replayed: its first few instructions are assembled into a stream of
+their own, which ends where the budget does. What that replay decodes from is
+the block's saved source, not guest memory, so it recovers exactly the
+instructions the block was built from however the guest's own bytes have moved
+since. A translation is therefore built with no decoded instructions in it at
+all; the first replay of a block keeps what it decoded, in a third allocation
+that only a stepped block has. See X73.
 
 The retirement counter carries the dispatch's instruction budget as a negative
 bias, so an edge that follows a link tests the sign of one addition instead of

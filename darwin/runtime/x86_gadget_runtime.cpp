@@ -21,6 +21,9 @@ namespace {
 namespace x86_64 = ::uml::cpu::x86_64;
 using ::uml::memory::StaticGuestMemory;
 
+/* The most instructions the builder puts in one block. */
+constexpr std::size_t block_instructions = 64;
+
 class X86StaticExecutionScope final {
 public:
 	X86StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
@@ -140,7 +143,7 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
 	unsigned long generation, std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt) noexcept
+	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
 	X86GadgetRunResult run{};
 	auto &result = run.execution;
@@ -192,9 +195,16 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		const auto available = instruction_budget - result.retired_instructions;
+		/* Only a step has to stop inside a block. Cutting the block that
+		 * crosses an ordinary budget would decode it again for a truncated
+		 * copy, which the program keeps -- a different block every
+		 * dispatch, and on a busy guest more bytes than the streams -- and
+		 * would build short blocks that a later full budget throws away. */
+		const std::size_t limit = exact_budget || trap_armed ? available :
+			std::max<std::size_t>(available, block_instructions);
 		const auto selected = executor.select_program(
 			memory, cpu.rip, cpu.execution_mode,
-			std::min<std::size_t>(64, available));
+			std::min(block_instructions, limit));
 		switch (selected.status) {
 		case x86_64::gadgets::BuildStatus::fetch_fault:
 			result.reason = ::uml::cpu::ExitReason::memory_fault;
@@ -220,7 +230,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		const auto executed = x86_64::gadgets::execute(
-			*selected.program, cpu, memory, executor, available,
+			*selected.program, cpu, memory, executor, limit,
 			guarded_interrupt);
 		result.retired_instructions += executed.retired_instructions;
 		prepared_code_changes = executor.prepared_code_changes();

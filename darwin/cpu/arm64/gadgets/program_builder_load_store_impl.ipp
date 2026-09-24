@@ -253,8 +253,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 		emit(words, reg_offset |
 			(static_cast<std::uintptr_t>(base_offset) << 16) |
-			(static_cast<std::uintptr_t>(offset) << 32));
-		emit(words, address);
+			(static_cast<std::uintptr_t>(offset) << 32) |
+			fault_position(context));
 	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0800U &&
 		   (instruction & 0x3fbf'fc00U) != 0x1980'0800U) {
 		const auto fixed = instruction & 0xffe0'fc00U;
@@ -934,8 +934,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				((instruction >> 10) & 0xfffU) << size_code;
 			emit(words, transfer_offset |
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
-				(static_cast<std::uintptr_t>(offset) << 32));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(offset) << 32) |
+				fault_position(context));
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3900'0000U) {
 		const auto size_code = instruction >> 30;
@@ -1119,11 +1119,11 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, (*gadgets)[address_mode][base == 31U]
 				[register_mode]);
 			emit(words, first_offset |
-				(static_cast<std::uintptr_t>(second_offset) << 16) |
+				(static_cast<std::uintptr_t>(second_offset) << 9) |
+				((static_cast<std::uint64_t>(displacement) & 0x3fffU)
+					<< 18) |
 				(static_cast<std::uintptr_t>(base_offset) << 32) |
-				((static_cast<std::uint64_t>(displacement) & 0xffffU)
-					<< 48));
-			emit(words, address);
+				fault_position(context));
 		} else {
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);

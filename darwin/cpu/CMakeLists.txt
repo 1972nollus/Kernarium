@@ -18,12 +18,12 @@ target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 # translated and lost, and address-space retirement causes none of them. The
 # slot count, not residency or validation, is what bounds Clang.
 #
-# Capacity is not free in the same currency on both engines. An arm64 slot is
-# 56 bytes and an x86 slot 256, so the same count costs 4.6x more on the engine
-# whose working set is larger. macOS can spend it and iOS cannot: the iOS app
-# runs under a jetsam limit with a 2048 MiB guest default, and one executor per
-# host core would pay for it several times over. The compatibility default
-# therefore stays where it was measured to be affordable.
+# Capacity is not free on either engine. An empty way costs 56 bytes on arm64
+# and 76 on x86, and an occupied one its translation besides. macOS can spend
+# it and iOS cannot: the iOS app runs under a jetsam limit with a 2048 MiB
+# guest default, and one executor per host core would pay for it several times
+# over. The compatibility default therefore stays where it was measured to be
+# affordable.
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_gadget_cache_slots_default "262144")
 else()

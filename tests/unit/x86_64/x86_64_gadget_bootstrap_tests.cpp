@@ -4535,7 +4535,7 @@ read_test_sequences(void *context) noexcept
 				const auto jump_plain =
 					jump_separated.program.native_stream();
 				if (!expect(jump_fused.size() + 1U == jump_plain.size() &&
-					jump_fused.size() > 4U,
+					jump_fused.size() > 3U,
 					"jump pairing changed the stream layout"))
 					return false;
 				const auto jump_consumer = consumer_index(jump_fused, jump_plain);

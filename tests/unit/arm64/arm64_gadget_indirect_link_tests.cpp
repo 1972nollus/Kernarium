@@ -2,9 +2,11 @@
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory_resource>
 #include <source_location>
 #include <utility>
@@ -34,13 +36,13 @@ std::uintptr_t gadget_address(void (*gadget)())
 	return reinterpret_cast<std::uintptr_t>(gadget);
 }
 
+/* Laid out as the executor's link record: the unlinked stream is one
+ * link_exit word, which takes the PC from the BlockLink behind it. */
 struct LinkTarget final {
 	explicit LinkTarget(std::uint64_t pc) noexcept
-		: fallback_stream{
-			gadget_address(uml_arm64_gadget_link_exit),
-			static_cast<std::uintptr_t>(pc)},
+		: fallback_stream{gadget_address(uml_arm64_gadget_link_exit)},
 		  link{
-			.stream = fallback_stream.data(),
+			.stream = &fallback_stream,
 			.instruction_count = 0,
 			.guest_pc = pc,
 		  }
@@ -55,13 +57,14 @@ struct LinkTarget final {
 
 	void reset() noexcept
 	{
-		link.stream = fallback_stream.data();
+		link.stream = &fallback_stream;
 		link.instruction_count = 0;
 	}
 
-	std::array<std::uintptr_t, 2> fallback_stream;
+	std::uintptr_t fallback_stream;
 	gadgets::BlockLink link;
 };
+static_assert(offsetof(LinkTarget, link) == sizeof(std::uintptr_t));
 
 gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 {
@@ -72,9 +75,15 @@ gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 	return gadgets::Builder{}.build(pc, instructions);
 }
 
-/* Cached calls also name their return block's link (the return ring pushes
- * it), so the fixture resolves any direct target to one unlinked record. */
-LinkTarget unlinked_return{~std::uint64_t{}};
+/* Cached calls also name their return block's link: the return ring pushes
+ * it, and the call reads the return address it sets out of it. So the fixture
+ * resolves each direct target to an unlinked record of its own, as the
+ * executor does. */
+const gadgets::BlockLink *unlinked(std::uint64_t pc)
+{
+	static std::map<std::uint64_t, LinkTarget> records;
+	return &records.try_emplace(pc, pc).first->second.link;
+}
 
 gadgets::BuildResult build_cached(std::uint64_t pc,
 	std::uint32_t instruction, gadgets::IndirectLink &site)
@@ -82,7 +91,7 @@ gadgets::BuildResult build_cached(std::uint64_t pc,
 	const std::array instructions{instruction};
 	return gadgets::Builder{}.build(
 		pc, instructions,
-		[](std::uint64_t) { return &unlinked_return.link; },
+		[](std::uint64_t target) { return unlinked(target); },
 		std::pmr::get_default_resource(),
 		[&](std::uint64_t source_pc) {
 			require(source_pc == pc);

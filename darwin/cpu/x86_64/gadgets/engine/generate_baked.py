@@ -191,8 +191,8 @@ def translate(o, write, size, record_stack=False):
 
 def finish_store(o, size, check=None):
     """The ordinary store epilogue with its publication and overlap tails shared.
-    x25 is the guest address, x23 the length word, x22 the RIP. `check` names
-    the overlap test for a caller that has already settled publication.
+    x25 is the guest address and x23 the access word. `check` names the
+    overlap test for a caller that has already settled publication.
     """
     done, overlap = o.label('sdone'), o.label('soverlap')
     if check is None:
@@ -233,22 +233,30 @@ def normalize(o, width, reg):
 
 
 def memory_prologue(o, base):
-    """Stream: displacement, length word, RIP."""
+    """Stream: displacement, access word. The access word is the RIP in bits
+    47:0 and the instruction length in bits 59:56; bit 60 is the store's
+    publication flag, clear in the stream. Only the fault and overlap tails
+    read the RIP, so nothing on the way through takes it out."""
     o.emit('\tldp x14, x23, [_stream], #16')
-    o.emit('\tldr x22, [_stream], #8')
     base_address(o, base)
     o.emit('\tmov x25, x7')
 
 
 def access_prologue(o):
     """The access half of a split address: x7 arrived from the address entry."""
-    o.emit('\tldp x23, x22, [_stream], #16')
+    o.emit('\tldr x23, [_stream], #8')
     o.emit('\tmov x25, x7')
 
 
 def shared_tails(o):
     # Every tail belongs to a guest memory access, whichever gadget reaches it.
     o.emit('\tx86_marks_guest_memory')
+    # The ordinary fault exit reports the RIP from x22, which a baked access
+    # keeps in the low bits of its access word instead.
+    o.emit('\t.p2align 2')
+    o.emit('.Lx86_baked_memory_fault:')
+    o.emit('\tand x22, x23, #0xffffffffffff')
+    o.emit('\tb .Lx86_memory_fault')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
@@ -262,7 +270,7 @@ def shared_tails(o):
             o.emit('\tbl NAME(uml_x86_64_gadget_tlb_miss)')
             o.emit('\tldr x9, [sp], #16')
             o.emit('\tmsr nzcv, x9')
-            o.emit('\tcbz x0, .Lx86_memory_fault')
+            o.emit('\tcbz x0, .Lx86_baked_memory_fault')
             o.emit('\tmov x7, x0')
             o.emit('\tbr x19')
     # A crossing load returns the raw bytes zero-extended; the widening forms
@@ -281,7 +289,7 @@ def shared_tails(o):
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_load)')
         o.emit('\tldr x9, [sp], #16')
         o.emit('\tmsr nzcv, x9')
-        o.emit('\tcbz x1, .Lx86_memory_fault')
+        o.emit('\tcbz x1, .Lx86_baked_memory_fault')
         o.emit('\tmov x11, x0')
         if extend:
             o.emit('\t' + extend)
@@ -298,7 +306,7 @@ def shared_tails(o):
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_store)')
         o.emit('\tldr x9, [sp], #16')
         o.emit('\tmsr nzcv, x9')
-        o.emit('\tcbz w0, .Lx86_memory_fault')
+        o.emit('\tcbz w0, .Lx86_baked_memory_fault')
         o.emit('\tbr x19')
         o.emit('\t.p2align 2')
         o.emit(f'.Lx86_baked_publish_{size}:')
@@ -322,7 +330,8 @@ def shared_tails(o):
         o.emit('\tbl NAME(uml_x86_64_gadget_invalidate_code)')
         o.emit(f'.Lx86_baked_store_overlap_exit_{size}:')
         o.emit('\tubfx x8, x23, #56, #4')
-        o.emit('\tadd x8, x22, x8')
+        o.emit('\tand x9, x23, #0xffffffffffff')
+        o.emit('\tadd x8, x9, x8')
         o.emit('\tstr x8, [_cpu, #UML_X86_64_CPU_RIP]')
         o.emit('\tadd _executed, _executed, #1')
         o.emit('\tx86_memory_order_boundary')
@@ -801,12 +810,12 @@ def lea(o):
 
 
 def push_pop(o):
-    """64-bit PUSH and POP of a register. Stream: length word, RIP."""
+    """64-bit PUSH and POP of a register. Stream: access word."""
     entries = []
     for d in GPR:
         entry = f'push_64_r_{d}'
         o.gadget(entry)
-        o.emit('\tldp x23, x22, [_stream], #16')
+        o.emit('\tldr x23, [_stream], #8')
         o.emit(f'\tldr x24, [_cpu, #{d}]')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tsub x25, x25, #8')
@@ -836,7 +845,7 @@ def push_pop(o):
     for d in GPR:
         entry = f'pop_64_r_{d}'
         o.gadget(entry)
-        o.emit('\tldp x23, x22, [_stream], #16')
+        o.emit('\tldr x23, [_stream], #8')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tmov x7, x25')
         crossed, done, slow = o.label('popcross'), o.label('popdone'), o.label('popslow')

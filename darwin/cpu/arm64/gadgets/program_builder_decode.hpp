@@ -87,6 +87,17 @@ struct DecodeContext final {
 	const std::function<bool(std::uint64_t)> *may_inline_call;
 };
 
+/* The top 16 bits of the operand of a transfer that carries no PC word: the
+ * instruction's position in the whole block, which a fault reports and the
+ * C++ boundary turns back into the PC from the program's runs (see
+ * resolve_fault_position). `build` bounds a block to fit. */
+[[nodiscard]] inline std::uintptr_t fault_position(
+	const DecodeContext &context) noexcept
+{
+	const auto position = context.retired_before_run + context.compiled;
+	return static_cast<std::uintptr_t>(position) << 48;
+}
+
 /* Emit the cell a direct control-flow gadget reads its successor through.
  *
  * The pointer is this executor's record for `target`; the guest PC is what

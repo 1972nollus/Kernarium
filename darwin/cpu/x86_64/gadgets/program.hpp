@@ -159,13 +159,13 @@ public:
 		return {source_storage_.get(), source_};
 	}
 	/* This block's decoded instructions, for the budget-limited replay that
-	 * is the only caller. The first one decodes them out of the saved source
-	 * -- the same bytes the build read, so the block recovers as itself
-	 * whatever the guest has done to that memory since -- and the program
-	 * keeps them, because a block that one dispatch ended inside is a block
-	 * dispatches end inside: about a tenth of the blocks a workload
-	 * translates are ever replayed, and each of those tens of times. An
-	 * empty result means the decode or its storage failed and the caller has
+	 * is the only caller: a single step, or the one instruction a POPF that
+	 * sets TF leaves, which are the only exact budgets. The first one
+	 * decodes them out of the saved source -- the same bytes the build read,
+	 * so the block recovers as itself whatever the guest has done to that
+	 * memory since -- and the program keeps them, because a block that is
+	 * stepped through once is usually stepped through again. An empty
+	 * result means the decode or its storage failed and the caller has
 	 * nothing to run.
 	 *
 	 * A program belongs to the cache of one executor, which is one vCPU
@@ -180,7 +180,8 @@ public:
 	}
 
 private:
-	ExecutionMode mode_{ExecutionMode::long64};
+	/* Widest members first: every translation an executor caches embeds
+	 * a program, so padding here is paid once per translation. */
 	std::uint64_t address_{};
 	std::size_t byte_count_{};
 	/* The words the engine runs, alone. Holding them in one allocation with
@@ -195,6 +196,7 @@ private:
 	std::uint32_t words_{};
 	std::uint32_t instructions_{};
 	std::uint32_t source_{};
+	ExecutionMode mode_{ExecutionMode::long64};
 	bool terminal_{};
 };
 
