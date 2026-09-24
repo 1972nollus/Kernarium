@@ -1,7 +1,7 @@
-From 77d6dba0824feea8b5d683025c3b020b8e82793c Mon Sep 17 00:00:00 2001
+From 60186ca48e79aa6efc444ffce2ccf04fa4fa20d7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 06:27:17 +0900
-Subject: [PATCH 02/49] venus: require an explicit Darwin Vulkan provider
+Subject: [PATCH 02/50] venus: require an explicit Darwin Vulkan provider
 
 ---
  meson.build              | 10 ++++++++++

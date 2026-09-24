@@ -35,6 +35,20 @@ else()
     target_link_libraries(uml_host_battery PRIVATE "-framework UIKit")
 endif()
 
+add_library(uml_host_gpu_memory STATIC apple/host_gpu_memory.mm)
+add_library(UML::HostGpuMemory ALIAS uml_host_gpu_memory)
+uml_declare_architecture_target(uml_host_gpu_memory platform)
+target_include_directories(uml_host_gpu_memory PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_host_gpu_memory PUBLIC cxx_std_20)
+set_target_properties(uml_host_gpu_memory PROPERTIES OBJCXX_STANDARD 20)
+target_compile_options(uml_host_gpu_memory PRIVATE
+    -Wall -Wextra -Werror
+    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+target_link_libraries(uml_host_gpu_memory PRIVATE
+    UML::PlatformContract
+    "-framework Metal")
+
 add_library(uml_run_routing OBJECT run_routing.cpp)
 add_library(UML::RunRouting ALIAS uml_run_routing)
 uml_declare_architecture_target(uml_run_routing platform)

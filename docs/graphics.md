@@ -276,6 +276,16 @@ conformance run reports as a session-ending `ResourceError`. A host-visible
 heap of one aperture therefore leaves a mapping of a quarter of it usable with
 room to spare.
 
+Device memory is charged to the application like guest RAM, so the host gives
+Venus a share of the guest's allocation: half of `mem=`. The renderer shrinks
+every advertised heap and budget to that share and fails a new, non-import
+allocation with `VK_ERROR_OUT_OF_DEVICE_MEMORY` once the process's Metal
+allocation (`MTLDevice.currentAllocatedSize`, which also counts presentation
+and host GL memory) has reached it. A guest therefore sizes its allocations
+from the share instead of from the host's memory. The Virtio balloon then
+takes the same amount out of the guest's RAM (see [memory
+architecture](architecture.md#memory-and-executable-code)).
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route. Its GLES stack

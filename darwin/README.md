@@ -86,7 +86,8 @@ created anonymously in place; software-MMU and host-service views borrow that
 window rather than retaining a second full-span mapping. This applies to both
 mainline page profiles and the Android kernel. The guest commits and releases
 guest RAM on demand. Physical iOS wires only the committed pages; Simulator and
-macOS commit and release without wiring. See [the memory
+macOS commit and release without wiring. A Virtio balloon takes the host GPU's
+memory out of the guest. See [the memory
 architecture](../docs/architecture.md#memory-and-executable-code). Disk and
 image descriptors remain file-backed.
 

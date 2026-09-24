@@ -8,6 +8,8 @@
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
 #include "audio/protocol.hpp"
+#include "balloon/in_process_service.hpp"
+#include "balloon/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
@@ -22,9 +24,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cctype>
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +43,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <mach/mach.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <thread>
@@ -581,6 +587,77 @@ public:
 
     ActiveRuntime(const ActiveRuntime&) = delete;
     ActiveRuntime& operator=(const ActiveRuntime&) = delete;
+};
+
+/* KERNARIUM_FOOTPRINT_LOG_MS reports the process footprint, the figure iOS
+ * holds the application to, while the guest runs: one line per interval and
+ * the peak when the guest stops. */
+class FootprintReporter final {
+public:
+    FootprintReporter()
+    {
+        const char* value = std::getenv("KERNARIUM_FOOTPRINT_LOG_MS");
+        const long interval = value == nullptr ? 0 : std::strtol(value, nullptr, 10);
+        if (interval <= 0)
+            return;
+        interval_ = std::chrono::milliseconds {interval};
+        /* The guest's timer signal must never land on this thread. */
+        sigset_t all;
+        sigset_t previous;
+        sigfillset(&all);
+        (void)pthread_sigmask(SIG_BLOCK, &all, &previous);
+        thread_ = std::thread([this] { run(); });
+        (void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    }
+
+    ~FootprintReporter()
+    {
+        if (!thread_.joinable())
+            return;
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+        }
+        stopped_.notify_one();
+        thread_.join();
+        std::printf("Kernarium: footprint peak %.1f MiB\n", peak_ / 1048576.0);
+    }
+
+    FootprintReporter(const FootprintReporter&) = delete;
+    FootprintReporter& operator=(const FootprintReporter&) = delete;
+
+private:
+    static std::uint64_t footprint() noexcept
+    {
+        task_vm_info_data_t info {};
+        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+        if (task_info(mach_task_self(), TASK_VM_INFO,
+                reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+            return 0;
+        return info.phys_footprint;
+    }
+
+    void run()
+    {
+        (void)pthread_setname_np("kernarium-footprint");
+        const auto start = std::chrono::steady_clock::now();
+        std::unique_lock lock(mutex_);
+        while (!stopped_.wait_for(lock, interval_, [this] { return stopping_; })) {
+            const std::uint64_t bytes = footprint();
+            peak_ = std::max(peak_, bytes);
+            const auto elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - start).count();
+            std::printf("Kernarium: footprint %.1f s %.1f MiB\n", elapsed,
+                bytes / 1048576.0);
+        }
+    }
+
+    std::chrono::milliseconds interval_ {};
+    std::mutex mutex_;
+    std::condition_variable stopped_;
+    bool stopping_ {};
+    std::uint64_t peak_ {};
+    std::thread thread_;
 };
 
 class ActiveEmulatorRegistration final {
@@ -1447,6 +1524,12 @@ int runtimeRun(
          * both backends share one index of the ranges published there. */
         auto sharedMemoryRegions =
             std::make_shared<uml::virtio::SharedMemoryRegions>();
+        /* GPU memory is charged to the application like guest RAM, so the
+         * GPU may use at most half of the guest's allocation and the balloon
+         * takes what it uses out of the guest. */
+        const std::uint64_t guestMemoryBytes =
+            static_cast<std::uint64_t>(guestMemoryMiB) << 20;
+        const std::uint64_t deviceMemoryLimit = guestMemoryBytes / 2;
         uml::gpu::InProcessGpuService gpuService(
             uml::gpu::InProcessGpuOptions {
                 .displayMode = uml::gpu::DisplayMode::native,
@@ -1456,6 +1539,13 @@ int runtimeRun(
                 .nativeView = (__bridge void*)view,
                 .autoResizeGuest = boot->auto_resize_guest != 0,
                 .sharedMemoryRegions = sharedMemoryRegions,
+                .deviceMemoryLimit = deviceMemoryLimit,
+            });
+        uml::balloon::InProcessBalloonService balloonService(
+            uml::balloon::BalloonOptions {
+                .guestMemoryBytes = guestMemoryBytes,
+                .target = uml::balloon::hostGpuMemoryTarget(deviceMemoryLimit),
+                .hostPageSize = static_cast<std::size_t>(getpagesize()),
             });
         uml::input::virtio::InProcessInputService touchscreen(
             uml::input::virtio::DeviceKind::touchscreen, width, height);
@@ -1626,6 +1716,9 @@ int runtimeRun(
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
             std::to_string(uml::gpu::protocol::virtioGpuDeviceId));
         arguments.emplace_back(
+            "virtio_uml.device=" + balloonService.takeConnectionName() + ":" +
+            std::to_string(uml::balloon::protocol::deviceId));
+        arguments.emplace_back(
             "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +
             std::to_string(uml::input::virtio::protocol::deviceId));
         arguments.emplace_back(
@@ -1729,6 +1822,7 @@ int runtimeRun(
             ActiveInputRegistration inputRegistration {
                 touchscreen, keyboard};
             ActiveEmulatorRegistration registration {emulator.get()};
+            const FootprintReporter footprintReporter;
             result = uml_emulator_run(
                 emulator.get(),
                 static_cast<int>(pointers.size()),

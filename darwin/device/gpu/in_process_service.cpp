@@ -4,6 +4,7 @@
 
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
+#include "virgl_renderer.hpp"
 
 #ifndef UML_GPU_SERVICE_TRANSPORT_TESTING
 #define UML_GPU_SERVICE_TRANSPORT_TESTING 0
@@ -315,6 +316,7 @@ InProcessGpuService::InProcessGpuService(InProcessGpuOptions options)
      * original mask when this scope ends.
      */
     ScopedGuestTimerBlock timerBlock;
+    VirglRenderer::setDeviceMemoryLimit(options.deviceMemoryLimit);
     implementation_ =
         std::make_unique<Implementation>(std::move(options));
 }
