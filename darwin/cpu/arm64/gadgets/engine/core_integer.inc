@@ -78,7 +78,7 @@ NAME(uml_arm64_gadget_\name):
  * one-way folded entries. On success x7 is the host address. The miss helper
  * updates the entry.
  */
-.macro translate access, page_offset, forward=0
+.macro translate access, page_offset, forward=0, fault=uml_arm64_gadget_memory_fault
 	/* Entries are keyed by guest page number (address >> page shift). */
 	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -114,10 +114,10 @@ NAME(uml_arm64_gadget_\name):
 	/* Cross-section conditional relocations are not available on Mach-O.
 	 * Only the cold miss path needs this long-branch trampoline. */
 	cbnz x0, 94f
-	b uml_arm64_gadget_memory_fault
+	b \fault
 94:
 	.else
-	cbz x0, uml_arm64_gadget_memory_fault
+	cbz x0, \fault
 	.endif
 	mov x7, x0
 	b 92f
@@ -156,7 +156,7 @@ NAME(uml_arm64_gadget_\name):
  * resolved the branch late enough to cost two percent on transfer-bound
  * loops. Scratch: x8-x12.
  */
-.macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0
+.macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, fault=uml_arm64_gadget_memory_fault
 #if UML_GADGET_FUSED_TRANSLATE
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \bytes > 1
@@ -192,7 +192,7 @@ NAME(uml_arm64_gadget_\name):
 	.ifnc \address, x7
 	mov x7, \address
 	.endif
-	translate \access, \page_offset, \forward
+	translate \access, \page_offset, \forward, \fault
 	.ifnc \address, x7
 	mov \address, x7
 	.endif
@@ -206,7 +206,7 @@ NAME(uml_arm64_gadget_\name):
 /* outofline=1 when the caller places this tail in a section of its own: a
  * conditional branch cannot leave its section, so the fault exit takes the
  * same trampoline the forwarding arm already uses. */
-.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, outofline=0
+.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, outofline=0, fault=uml_arm64_gadget_memory_fault
 #if UML_GADGET_FUSED_TRANSLATE
 \cold:
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -229,10 +229,10 @@ NAME(uml_arm64_gadget_\name):
 	ldp x1, x2, [sp], #16
 	.if \forward || \outofline
 	cbnz x0, 94f
-	b uml_arm64_gadget_memory_fault
+	b \fault
 94:
 	.else
-	cbz x0, uml_arm64_gadget_memory_fault
+	cbz x0, \fault
 	.endif
 	mov \address, x0
 	b \resume
@@ -272,7 +272,7 @@ NAME(uml_arm64_gadget_\name):
  * pages before stores, so a fault cannot leave a partially modified range.
  * q0/q1 carry up to 32 bytes to or from the helper.
  */
-.macro transfer_slow access, address, size
+.macro transfer_slow access, address, size, fault=uml_arm64_gadget_memory_fault
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
 	.if \access
@@ -297,7 +297,7 @@ NAME(uml_arm64_gadget_\name):
 	b 98f
 97:
 	add sp, sp, #48
-	b uml_arm64_gadget_memory_fault
+	b \fault
 98:
 .endm
 

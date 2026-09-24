@@ -266,6 +266,52 @@ void linked_successor_terminal_subtracts_only_its_suffix()
 	require(linked.cpu.gadget_indirect_miss == nullptr);
 }
 
+/* A pair transfer carries no PC word, so a fault in one inside a linked
+ * successor is named by its position in that successor, which only the
+ * executor can resolve. */
+void linked_successor_pair_fault_reports_its_pc(bool store)
+{
+	static unsigned long next_generation = 765;
+	const auto generation = next_generation++;
+	constexpr auto target = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, direct_branch(code_base, target));
+	backing.put32(0x100, 0xd280'0121U); // movz x1, #9
+	backing.put32(0x104, 0xd280'0141U); // movz x1, #10
+	backing.put32(0x108, store ?
+		0xa900'1043U : // stp x3, x4, [x2]
+		0xa940'1043U); // ldp x3, x4, [x2]
+	backing.put32(0x10c, 0xd400'0001U); // svc #0
+	JitMapping mapping{
+		generation, code_base, backing, 1, PROT_READ | PROT_EXEC};
+	StaticGuestMemory memory;
+	GadgetExecutor executor;
+	const auto unmapped = code_base + DARWIN_UML_GUEST_PAGE_SIZE;
+
+	arm64::CpuState warm_cpu{};
+	warm_cpu.pc = target;
+	warm_cpu.registers[2] = unmapped;
+	const auto warm = execute_block(
+		executor, memory, generation, warm_cpu);
+	require(warm.event == ::uml::cpu::EngineEvent::memory_fault);
+	require(warm.cpu.pc == target + 2 * sizeof(std::uint32_t));
+	require(warm.executed == 2);
+
+	arm64::CpuState linked_cpu{};
+	linked_cpu.pc = code_base;
+	linked_cpu.registers[2] = unmapped;
+	const auto linked = execute_block(
+		executor, memory, generation, linked_cpu);
+	require(linked.event == ::uml::cpu::EngineEvent::memory_fault);
+	require(linked.cpu.pc == target + 2 * sizeof(std::uint32_t));
+	require(linked.cpu.registers[1] == 10);
+	require(linked.executed == 3);
+	require(linked.fault_address == unmapped);
+	require(linked.fault_access == (store ?
+		::uml::memory::Access::write : ::uml::memory::Access::read));
+	require(linked.cpu.gadget_indirect_miss == nullptr);
+}
+
 void linked_successor_fpcr_exit_subtracts_only_its_suffix()
 {
 	constexpr unsigned long generation = 761;
@@ -536,6 +582,8 @@ int main()
 	retiring_terminals_keep_their_instruction_count();
 	add_immediate_at_block_tail_reaches_synthetic_terminal();
 	linked_successor_terminal_subtracts_only_its_suffix();
+	linked_successor_pair_fault_reports_its_pc(false);
+	linked_successor_pair_fault_reports_its_pc(true);
 	linked_successor_fpcr_exit_subtracts_only_its_suffix();
 	a_retranslated_successor_answers_from_its_new_body();
 	linked_successor_is_found_across_arena_chunks(true);

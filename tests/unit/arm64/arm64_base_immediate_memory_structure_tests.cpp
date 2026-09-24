@@ -181,11 +181,14 @@ template<typename Function>
 		std::array{instruction});
 }
 
+/* The unsigned-offset forms name their instruction by position in the operand
+ * rather than by a PC word, so their stream is a word shorter. */
 void require_stream(
 	const gadgets::BuildResult &built, Gadget expected_gadget,
-	std::uintptr_t expected_operand)
+	std::uintptr_t expected_operand, std::size_t expected_words = 5U)
 {
-	test::require(built.complete && built.program.words().size() == 5U,
+	test::require(built.complete &&
+			built.program.words().size() == expected_words,
 		"scalar immediate-memory stream has an unexpected shape");
 	test::require(built.program.words()[0] == address(expected_gadget),
 		"scalar immediate-memory gadget was not selected at translation");
@@ -223,7 +226,7 @@ void select_all_reachable_gadgets()
 					imm12, rn, rt);
 				require_stream(build(instruction), entry,
 					packed_operand(rn, rt,
-						imm12 * variant.size));
+						imm12 * variant.size), 4U);
 				selected.insert(address(entry));
 				expected.insert(address(entry));
 			}

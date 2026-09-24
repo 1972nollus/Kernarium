@@ -119,9 +119,14 @@ BuildResult Builder::build(
 	std::size_t run_count = 0;
 	std::size_t retired_before_run = 0;
 	auto run_base = guest_address;
-	auto window = instructions;
 	std::array<std::uint32_t, 64> callee_window{};
 	std::array<std::uint32_t, 64> return_window{};
+	/* A transfer without a PC word names its instruction by a 16-bit
+	 * position in the block, which an inlined call extends by at most the
+	 * two windows above. */
+	auto window = instructions.first(std::min(instructions.size(),
+		(std::size_t{1} << 16) - callee_window.size() -
+			return_window.size()));
 	std::uint64_t continue_at = 0;
 	std::uint64_t continue_return = 0;
 	std::uint64_t inlined_return = 0;

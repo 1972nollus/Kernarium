@@ -267,6 +267,41 @@ private:
 	return std::nullopt;
 }
 
+/* Whether `stream` is one of this program's own words, which is how the
+ * boundary tells which block an exit left from. */
+[[nodiscard]] inline bool program_contains_stream(
+	const Program &program, const void *stream) noexcept
+{
+	if (stream == nullptr || program.words().empty())
+		return false;
+	const auto marker = reinterpret_cast<std::uintptr_t>(stream);
+	const auto begin = reinterpret_cast<std::uintptr_t>(
+		program.words().data());
+	const auto end =
+		begin + program.words().size() * sizeof(std::uintptr_t);
+	return marker >= begin && marker < end;
+}
+
+/* The unsigned-offset scalar and integer pair transfers carry no PC word. A
+ * fault in one reports its position in the program instead, shifted left by
+ * two with bit 0 set, which no instruction address has; this puts the PC of
+ * the instruction at that position in its place. `program` must be the one
+ * the fault left from. */
+inline void resolve_fault_position(
+	const Program &program, std::uint64_t &pc) noexcept
+{
+	if ((pc & (sizeof(std::uint32_t) - 1U)) != 1U)
+		return;
+	auto position = pc >> 2;
+	for (const auto &run : program.runs()) {
+		if (position < run.instructions) {
+			pc = run.address + position * sizeof(std::uint32_t);
+			return;
+		}
+		position -= run.instructions;
+	}
+}
+
 struct BuildResult final {
 	Program program;
 	bool complete{};

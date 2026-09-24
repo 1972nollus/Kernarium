@@ -97,6 +97,19 @@ static void require_predecoded(const gadgets::Program &program,
 	require(program.words()[2] == 0x4000U);
 }
 
+/* The unsigned-offset scalar and integer pair transfers carry no PC word: their
+ * one operand ends in the instruction's position in its block, here the first,
+ * and the terminal build_one appends follows it directly. */
+static void require_positioned(const gadgets::Program &program,
+	std::uint32_t instruction)
+{
+	const std::array terminal{0xd400'0001U};
+	const auto alone = gadgets::Builder{}.build(0x4004, terminal);
+	require(program.words()[1] != instruction);
+	require((program.words()[1] >> 48) == 0U);
+	require(program.words().size() == 2U + alone.program.words().size());
+}
+
 static constexpr std::uint32_t unsigned_immediate(unsigned size,
 	unsigned operation, unsigned immediate, unsigned base,
 	unsigned transfer, bool vector = false)
@@ -206,8 +219,13 @@ static void mixed_family_walk_preserves_stream_order()
 		require(built.complete);
 		require(built.program.instruction_count() == 1U);
 		require(built.program.words().size() >= 3U);
-		expected.insert(expected.end(), built.program.words().begin(),
+		std::vector<std::uintptr_t> words(built.program.words().begin(),
 			built.program.words().end() - 2);
+		/* The unsigned-offset load names its instruction by its position in
+		 * the block, which is zero when it is built alone. */
+		if (index == 3U)
+			words[1] |= std::uintptr_t{index} << 48;
+		expected.insert(expected.end(), words.begin(), words.end());
 		accesses_fp_state = accesses_fp_state ||
 			built.program.accesses_fp_state();
 	}
@@ -324,14 +342,17 @@ int main()
 		require(program.words()[0] ==
 			address_of(uml_arm64_gadget_load64_unsigned_fast_r));
 #endif
-		/* The opcode is not carried into the runtime stream: operand then PC. */
-		require(program.words()[2] == 0x4000U);
+		/* The opcode is not carried into the runtime stream, and neither is
+		 * a PC: one operand, the offsets, displacement and position. */
+		require(program.words()[1] == (2U * 8U | (3U * 8U) << 16 |
+			std::uintptr_t{8} << 32));
+		require_positioned(program, 0xf940'0462U);
 	}
 	{
 		const auto instruction = unsigned_immediate(0, 1, 1, 3, 2);
 		const auto program = build_one(instruction); // ldrb w2,[x3,#1]
 		require_gadget(program, uml_arm64_gadget_load8_unsigned_fast_r);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = unsigned_immediate(0, 3, 1, 3, 2, true);
@@ -361,7 +382,7 @@ int main()
 		const auto instruction = pair(2, false, true, 3, 1, 3, 2, 4);
 		const auto program = build_one(instruction); // ldp x2,x4,[x3,#8]!
 		require_gadget(program, uml_arm64_gadget_integer_pair_load64_1_rr);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = pair(2, true, true, 1, 1, 3, 2, 4);

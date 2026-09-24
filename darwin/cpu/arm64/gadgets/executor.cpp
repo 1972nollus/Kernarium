@@ -93,19 +93,6 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	}
 }
 
-[[nodiscard]] bool program_contains_stream(
-	const arm64::gadgets::Program &program, const void *stream) noexcept
-{
-	if (stream == nullptr || program.words().empty())
-		return false;
-	const auto marker = reinterpret_cast<std::uintptr_t>(stream);
-	const auto begin = reinterpret_cast<std::uintptr_t>(
-		program.words().data());
-	const auto end =
-		begin + program.words().size() * sizeof(std::uintptr_t);
-	return marker >= begin && marker < end;
-}
-
 [[nodiscard]] std::uint32_t effective_fpcr(
 	const arm64::CpuState &cpu) noexcept
 {
@@ -1884,8 +1871,11 @@ BuildResult GadgetExecutor::store(
 		std::optional<BuildResult> exit_block;
 		if (!program_contains_stream(*current_program, exit_stream)) {
 			exit_block = programs_->find_stream(exit_stream);
-			if (exit_block)
+			if (exit_block) {
 				current_program = &exit_block->program;
+				arm64::gadgets::resolve_fault_position(
+					*current_program, cpu.pc);
+			}
 		}
 		if (fpcr_enable_exit)
 			correct_fpcr_enable_instruction_count(
