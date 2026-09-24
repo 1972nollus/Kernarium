@@ -236,21 +236,18 @@ pending its Mesa/KosmicKrisp port. macOS provides native AppKit and VNC
 display consumers; iOS provides UIKit Metal presentation and deliberately
 excludes VNC. See [`../docs/graphics.md`](../docs/graphics.md).
 
-The separately named macOS-only `apple-gpu-vulkan-experiment` composition adds
-a Venus facade over one directly linked Mesa KosmicKrisp framework, and routes
-host OpenGL through Mesa Zink on that same driver. It is compiled only by the `*-venus*` presets and
-remains invisible at runtime unless `UML_GPU_EXPERIMENTAL_VULKAN=1` is set
-exactly. Under that gate, the host implements capset 4/version 0, HOST3D blob
-resources, ring-indexed deferred fences on the same transport pipeline the
-default Virgl path uses, and a bounded 1 GiB vhost-user shared-memory
-aperture; invalid memory types, ranges, ownership, acknowledgements, or
+The `apple-gpu-vulkan-experiment` composition adds a Venus facade over one
+directly linked Mesa KosmicKrisp framework, and routes host OpenGL through
+Mesa Zink on that same driver. Every GPU build advertises it: the host
+implements capset 4/version 0, HOST3D blob resources, ring-indexed deferred
+fences on the same transport pipeline the Virgl path uses, and a bounded 1 GiB
+vhost-user shared-memory aperture; invalid memory types, ranges, ownership, acknowledgements, or
 reconnect state fail closed. The guest can map up to one blob per 16 KiB
 aperture page without a smaller record-count limit. Page ownership stays
 reserved through pending map/unmap acknowledgements; successful teardown or a
 failed map releases it for reuse. A receipt-bound guest image supplies the
-paired Mesa Venus driver and Vulkan CTS payload. The accepted product contains
-no KosmicKrisp and advertises none of these experimental features; passing
-local probes or CTS runs does not create a formal Vulkan conformance claim.
+paired Mesa Venus driver and Vulkan CTS payload. Passing local probes or CTS
+runs does not create a formal Vulkan conformance claim.
 
 Kernarium attaches:
 

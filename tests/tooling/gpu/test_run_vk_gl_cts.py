@@ -641,16 +641,16 @@ class VkGlCtsToolingTests(unittest.TestCase):
             command = cts.build_harness_command(
                 options, selection, Path("/tmp/uml-zink-cts-test")
             )
-            self.assertEqual(command[:2], ["env", "UML_GPU_EXPERIMENTAL_VULKAN=1"])
+            self.assertEqual(cts.gl_scope_launch_environment(options), ())
+            self.assertEqual(command[0], "env")
+            self.assertFalse(command[1].startswith("UML_GPU_"))
             self.assertFalse(
                 any("systemctl set-environment" in argument for argument in command)
             )
             self.assertIn("systemd.mask=sddm.service", command)
             self.assertIn("multi-user.target", command)
 
-    def test_gl46_scope_gives_both_stacks_the_host_visible_blob_aperture(
-        self,
-    ) -> None:
+    def test_every_virgl_scope_reports_its_host_provider(self) -> None:
         identity = cts.load_identity()
         with tempfile.TemporaryDirectory() as temporary:
             receipt_path = Path(temporary) / "zink-gl-receipt.json"
@@ -675,7 +675,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
             self.assertTrue(options.gl46_scope)
             self.assertEqual(
                 cts.gl_scope_launch_environment(options),
-                ("UML_GPU_CAPABILITY_REPORT", "UML_GPU_EXPERIMENTAL_VULKAN"),
+                ("UML_GPU_CAPABILITY_REPORT",),
             )
         gles3 = cts.parse_arguments(["--leaf", "gles3", "--api", "gles3"])
         self.assertFalse(gles3.gl46_scope)
@@ -1453,8 +1453,9 @@ native_display_cleanup
             changed_comparison["capsets"][0]["differences"][0]["field"],
             "$.decoded.v1.glsl_level",
         )
+        self.assertNotIn("venus_capset", parsed)
         venus = cts.parse_gpu_capability_report(
-            gpu_capability_report(venus_capset=True), venus_capset=True
+            gpu_capability_report(venus_capset=True)
         )
         self.assertEqual(
             [capset["id"] for capset in venus["virgl_capsets"]], [1, 2]
@@ -1463,10 +1464,19 @@ native_display_cleanup
         self.assertEqual(venus["venus_capset"]["size"], 16)
         with self.assertRaisesRegex(cts.CampaignError, "omitted a Virgl capset"):
             cts.parse_gpu_capability_report(
-                gpu_capability_report(venus_capset=True)
+                "\n".join(
+                    line
+                    for line in gpu_capability_report(venus_capset=True)
+                    .splitlines()
+                    if "|id=2|" not in line
+                )
             )
         with self.assertRaisesRegex(cts.CampaignError, "omitted a Virgl capset"):
-            cts.parse_gpu_capability_report(report, venus_capset=True)
+            cts.parse_gpu_capability_report(
+                gpu_capability_report(venus_capset=True).replace(
+                    f"id={cts.VENUS_CAPSET_ID}|", "id=3|"
+                )
+            )
         with self.assertRaisesRegex(cts.CampaignError, "omitted an ES 3.x"):
             cts.parse_gpu_capability_report(
                 "\n".join(

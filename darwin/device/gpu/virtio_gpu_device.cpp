@@ -322,38 +322,28 @@ VirtioGpuDevice::VirtioGpuDevice(
     testing::VirtioGpuDeviceDependencies& dependencies,
     GuestReader guestReader,
     GuestMapper guestMapper,
-    std::uint32_t dotsPerInch,
-    bool experimentalVulkan)
+    std::uint32_t dotsPerInch)
     : dependencies_(dependencies)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
     , dotsPerInch_(dotsPerInch)
-    , experimentalVulkan_(experimentalVulkan)
 {
-    if (experimentalVulkan_) {
-        sharedMemoryActions_.reserve(
-            protocol::maximumHostVisibleBlobResources);
-        blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
-    }
+    sharedMemoryActions_.reserve(protocol::maximumHostVisibleBlobResources);
+    blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
 }
 #else
 VirtioGpuDevice::VirtioGpuDevice(
     Display& display,
     GuestReader guestReader,
     GuestMapper guestMapper,
-    std::uint32_t dotsPerInch,
-    bool experimentalVulkan)
+    std::uint32_t dotsPerInch)
     : display_(display)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
     , dotsPerInch_(dotsPerInch)
-    , experimentalVulkan_(experimentalVulkan)
 {
-    if (experimentalVulkan_) {
-        sharedMemoryActions_.reserve(
-            protocol::maximumHostVisibleBlobResources);
-        blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
-    }
+    sharedMemoryActions_.reserve(protocol::maximumHostVisibleBlobResources);
+    blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
 }
 #endif
 
@@ -455,9 +445,7 @@ protocol::GpuConfig VirtioGpuDevice::config() const noexcept
         .eventsRead = events,
         .eventsClear = 0,
         .scanoutCount = protocol::primaryScanoutId + 1U,
-        .capsetCount = experimentalVulkan_
-            ? protocol::venusCapsetIndex + 1U
-            : protocol::virgl2CapsetIndex + 1U,
+        .capsetCount = protocol::venusCapsetIndex + 1U,
     };
 }
 
@@ -711,8 +699,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
     if (request.capsetIndex == protocol::virglCapsetIndex ||
         request.capsetIndex == protocol::virgl2CapsetIndex ||
-        (experimentalVulkan_ &&
-         request.capsetIndex == protocol::venusCapsetIndex)) {
+        request.capsetIndex == protocol::venusCapsetIndex) {
         information.capsetId =
             request.capsetIndex == protocol::virglCapsetIndex
             ? protocol::virglCapsetId
@@ -733,11 +720,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
 std::vector<std::uint8_t> VirtioGpuDevice::capset(
     const protocol::GpuGetCapset& request) const
 {
-    if ((request.capsetId != protocol::virglCapsetId &&
-         request.capsetId != protocol::virgl2CapsetId &&
-         request.capsetId != protocol::venusCapsetId) ||
-        (request.capsetId == protocol::venusCapsetId &&
-         !experimentalVulkan_)) {
+    if (request.capsetId != protocol::virglCapsetId &&
+        request.capsetId != protocol::virgl2CapsetId &&
+        request.capsetId != protocol::venusCapsetId) {
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
     }
@@ -912,8 +897,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
              requestedCapset != protocol::virglCapsetId &&
              requestedCapset != protocol::virgl2CapsetId &&
              requestedCapset != protocol::venusCapsetId) ||
-            (requestedCapset == protocol::venusCapsetId &&
-             !experimentalVulkan_) ||
             (create->contextInit & ~protocol::contextInitCapsetMask) != 0 ||
             contexts_.contains(create->header.contextId)) {
             return response(
@@ -1055,12 +1038,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                 ? header->ringIndex
                 : 0;
-            /* Venus places each guest ring on its own fence timeline, so a
-             * non-zero ring index is deferrable once the experiment is on.
-             * Ring indexes are already bounded by validVenusFenceHeader(). */
+            /* Venus places each guest ring on its own fence timeline, so any
+             * ring of a Venus context is deferrable; Virgl retires one
+             * timeline per context, so only its ring zero is. Venus ring
+             * indexes are already bounded by validVenusFenceHeader(). */
             if (deferredFence != nullptr && fenceCookie != 0 &&
                 header->contextId != 0 &&
-                (ringIndex == 0 || experimentalVulkan_)) {
+                (ringIndex == 0 ||
+                 venusContexts_.contains(header->contextId))) {
                 if (UML_GPU_RENDERER.createContextFence(
                         header->contextId, ringIndex, fenceCookie) != 0) {
                     return response(
@@ -1139,7 +1124,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 create->size > protocol::hostVisibleSharedMemoryRegionSize
             ? 0U
             : alignHostVisibleSize(create->size);
-        if (!experimentalVulkan_ || create == nullptr ||
+        if (create == nullptr ||
             create->resourceId == protocol::invalidResourceId ||
             create->header.flags != 0 ||
             create->header.fenceId != 0 ||
@@ -1220,7 +1205,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     case protocol::GpuCommand::resourceMapBlob: {
         const auto* map =
             readStructure<protocol::GpuResourceMapBlob>(request);
-        if (!experimentalVulkan_ || map == nullptr ||
+        if (map == nullptr ||
             request.size() != sizeof(*map) ||
             map->header.flags != 0 ||
             map->header.fenceId != 0 ||
@@ -1315,7 +1300,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     case protocol::GpuCommand::resourceUnmapBlob: {
         const auto* unmap =
             readStructure<protocol::GpuResourceUnmapBlob>(request);
-        if (!experimentalVulkan_ || unmap == nullptr ||
+        if (unmap == nullptr ||
             request.size() != sizeof(*unmap) ||
             unmap->header.flags != 0 ||
             unmap->header.fenceId != 0 ||
@@ -1411,12 +1396,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                 ? header->ringIndex
                 : 0;
-            /* Venus places each guest ring on its own fence timeline, so a
-             * non-zero ring index is deferrable once the experiment is on.
-             * Ring indexes are already bounded by validVenusFenceHeader(). */
+            /* Venus places each guest ring on its own fence timeline, so any
+             * ring of a Venus context is deferrable; Virgl retires one
+             * timeline per context, so only its ring zero is. Venus ring
+             * indexes are already bounded by validVenusFenceHeader(). */
             if (deferredFence != nullptr && fenceCookie != 0 &&
                 header->contextId != 0 &&
-                (ringIndex == 0 || experimentalVulkan_)) {
+                (ringIndex == 0 ||
+                 venusContexts_.contains(header->contextId))) {
                 if (UML_GPU_RENDERER.createContextFence(
                         header->contextId, ringIndex, fenceCookie) != 0) {
                     return response(
@@ -1794,7 +1781,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     case protocol::GpuCommand::setScanoutBlob: {
         const auto* scanout =
             readStructure<protocol::GpuSetScanoutBlob>(request);
-        if (!experimentalVulkan_ || scanout == nullptr ||
+        if (scanout == nullptr ||
             request.size() != sizeof(*scanout) ||
             scanout->scanoutId != protocol::primaryScanoutId) {
             return response(

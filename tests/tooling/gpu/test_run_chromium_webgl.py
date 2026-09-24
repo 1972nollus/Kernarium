@@ -190,20 +190,14 @@ class AquariumProbePolicyTests(unittest.TestCase):
         self.assertIn("eglinfo -v -a gles -p wayland", launcher)
         self.assertNotIn("@RENDERER_BACKEND@", launcher)
 
-    def test_zink_enables_the_opt_in_host_vulkan_backend(self) -> None:
+    def test_native_display_reports_frame_statistics(self) -> None:
         with mock.patch.dict(run_chromium_webgl.os.environ, {}, clear=True):
-            environment = run_chromium_webgl.build_host_environment(
-                "zink", "vnc"
-            )
-        self.assertEqual(environment["UML_GPU_EXPERIMENTAL_VULKAN"], "1")
-        self.assertNotIn("UML_GPU_FRAME_STATS", environment)
+            environment = run_chromium_webgl.build_host_environment("vnc")
+        self.assertEqual(environment, {})
 
         with mock.patch.dict(run_chromium_webgl.os.environ, {}, clear=True):
-            environment = run_chromium_webgl.build_host_environment(
-                "virgl", "native"
-            )
-        self.assertNotIn("UML_GPU_EXPERIMENTAL_VULKAN", environment)
-        self.assertEqual(environment["UML_GPU_FRAME_STATS"], "1")
+            environment = run_chromium_webgl.build_host_environment("native")
+        self.assertEqual(environment, {"UML_GPU_FRAME_STATS": "1"})
 
     def test_guest_shutdown_escalates_for_a_wedged_emulator(self) -> None:
         process = mock.Mock()

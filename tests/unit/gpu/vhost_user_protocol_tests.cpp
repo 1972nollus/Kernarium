@@ -1348,7 +1348,7 @@ void validConfigurationProtocol(VhostUserServer& server)
         require(returnedHeader.flags == protocol::configFlagWritable);
         require(configuration.eventsRead == 0);
         require(configuration.scanoutCount == 1);
-        require(configuration.capsetCount == 2);
+        require(configuration.capsetCount == protocol::venusCapsetIndex + 1U);
 
         const std::uint32_t clearEvents = UINT32_MAX;
         const protocol::ConfigHeader clearHeader {

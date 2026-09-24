@@ -211,9 +211,9 @@ void disconnectClient(int& descriptor) noexcept
 
 void readbackTracksClientDemandAndReconnects()
 {
-    /* The Metal readback belongs to the experimental Vulkan path. The default
-     * Virgl contract presents through the CPU framebuffer instead. */
-    ::unsetenv("UML_GPU_EXPERIMENTAL_VULKAN");
+    /* A scanout the Metal readback cannot convert - here one with no
+     * texture - falls back to the CPU framebuffer at the scanout's extent,
+     * and that fallback follows client demand. */
     constexpr std::uint32_t extent = 64;
     constexpr std::uint32_t scanoutWidth = 48;
     constexpr std::uint32_t scanoutHeight = 32;
@@ -277,12 +277,9 @@ void readbackTracksClientDemandAndReconnects()
 void privateMetalTextureReadbackIsDamageBounded()
 {
     /* A Venus scanout has no guest-visible Virgl resource, so the display
-     * converts the private Metal texture itself. The readback is created only
-     * for the experimental Vulkan path, and a scanout is still dropped while
-     * no client is watching, so connect one before presenting. */
-    ::setenv("UML_GPU_EXPERIMENTAL_VULKAN", "1", 1);
+     * converts the private Metal texture itself. A scanout is still dropped
+     * while no client is watching, so connect one before presenting. */
     uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
-    ::unsetenv("UML_GPU_EXPERIMENTAL_VULKAN");
     int client = connectClient(display.port());
     requireEventually([&] { return display.needsFullCpuFallback(); });
     uml::gpu::testing::verifyPrivateMetalTextureReadback(display);

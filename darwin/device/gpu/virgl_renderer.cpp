@@ -60,16 +60,6 @@ std::uint64_t hostDeviceMemoryUsage(void*)
     return value != nullptr && std::strcmp(value, "1") == 0;
 }
 
-[[nodiscard]] bool experimentalVulkanEnabled() noexcept
-{
-#if UML_GPU_VULKAN_EXPERIMENT
-    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
-    return value != nullptr && std::strcmp(value, "1") == 0;
-#else
-    return false;
-#endif
-}
-
 [[nodiscard]] std::string hexEncode(std::span<const std::uint8_t> bytes)
 {
     constexpr char digits[] = "0123456789abcdef";
@@ -202,7 +192,6 @@ VirglRenderer::VirglRenderer()
     }
     bool initialized = false;
     try {
-        const bool enableExperimentalVulkan = experimentalVulkanEnabled();
         epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
         // virgl_renderer_init() retains this pointer until cleanup rather than
         // copying the callback table. Keep it alive for the process lifetime
@@ -224,40 +213,36 @@ VirglRenderer::VirglRenderer()
          * desktop OpenGL 4.6 core. It publishes no Metal texture for a vrend
          * resource and no VideoToolbox decode surface, so scanouts of those
          * resources take the readback path.
+         *
+         * The render server publishes each context's per-ring timeline
+         * sequence numbers in shared memory, so virgl_renderer_context_poll
+         * retires Venus fences and invokes the fence callback on the polling
+         * thread. VIRGL_RENDERER_ASYNC_FENCE_CB would instead move retirement
+         * onto renderer-owned sync threads, forbid that poll, and make Virgl
+         * fence delivery asynchronous too.
          */
-        int rendererFlags = 0;
-        if (enableExperimentalVulkan) {
-            /*
-             * The render server publishes each context's per-ring timeline
-             * sequence numbers in shared memory, so virgl_renderer_context_poll
-             * retires Venus fences and invokes the fence callback on the
-             * polling thread. VIRGL_RENDERER_ASYNC_FENCE_CB would instead move
-             * retirement onto renderer-owned sync threads, forbid that poll,
-             * and make Virgl fence delivery asynchronous too.
-             */
-            rendererFlags |=
-                VIRGL_RENDERER_VENUS |
-                VIRGL_RENDERER_RENDER_SERVER;
-            /*
-             * Host-visible Venus memory reaches the guest only through the
-             * blob aperture, so the renderer advertises a host-visible heap
-             * the aperture can deliver rather than the host's system memory.
-             * A guest sizes its largest host-visible mapping from that heap.
-             */
-            virgl_renderer_set_host_visible_aperture_size(
-                protocol::hostVisibleSharedMemoryRegionSize);
-            /*
-             * GPU memory is charged to this process like the guest's own
-             * RAM. The guest is shown, and may allocate, only the share the
-             * host granted it, counted against everything the GPU holds for
-             * the process so that the presentation path and the host GL
-             * driver draw on the same share.
-             */
-            virgl_renderer_set_device_memory_limit(
-                deviceMemoryLimit.load(std::memory_order_acquire),
-                &hostDeviceMemoryUsage,
-                nullptr);
-        }
+        const int rendererFlags =
+            VIRGL_RENDERER_VENUS |
+            VIRGL_RENDERER_RENDER_SERVER;
+        /*
+         * Host-visible Venus memory reaches the guest only through the blob
+         * aperture, so the renderer advertises a host-visible heap the
+         * aperture can deliver rather than the host's system memory. A guest
+         * sizes its largest host-visible mapping from that heap.
+         */
+        virgl_renderer_set_host_visible_aperture_size(
+            protocol::hostVisibleSharedMemoryRegionSize);
+        /*
+         * GPU memory is charged to this process like the guest's own RAM.
+         * The guest is shown, and may allocate, only the share the host
+         * granted it, counted against everything the GPU holds for the
+         * process so that the presentation path and the host GL driver draw
+         * on the same share.
+         */
+        virgl_renderer_set_device_memory_limit(
+            deviceMemoryLimit.load(std::memory_order_acquire),
+            &hostDeviceMemoryUsage,
+            nullptr);
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
         const int checkedResult = checkGlDispatchResult(result);
@@ -279,8 +264,7 @@ VirglRenderer::VirglRenderer()
                 reportContextProbe(provider_->probeContext(major, minor));
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
-            if (enableExperimentalVulkan)
-                reportCapset(venusCapsetId, capset(venusCapsetId));
+            reportCapset(venusCapsetId, capset(venusCapsetId));
         }
     } catch (...) {
         if (initialized)

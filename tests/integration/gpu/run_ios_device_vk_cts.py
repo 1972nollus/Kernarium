@@ -137,7 +137,6 @@ def launch_environment(options: argparse.Namespace) -> dict[str, str]:
             ),
             "DEVICECTL_CHILD_KERNARIUM_VCPU_COUNT": str(options.cpus),
             "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": "16384",
-            "DEVICECTL_CHILD_UML_GPU_EXPERIMENTAL_VULKAN": "1",
             "DEVICECTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
             "DEVICECTL_CHILD_UML_GPU_FRAME_STATS": "1",
         }

@@ -23,10 +23,9 @@ The route is macOS-only and requires macOS 26. The iOS GPU product has no
 build: KosmicKrisp requires Metal 4, so it targets a physical device only and
 is pending its Mesa/KosmicKrisp port.
 
-Vulkan exists only in the separately named `apple-gpu-vulkan-experiment`
-product and only when `UML_GPU_EXPERIMENTAL_VULKAN=1` is set. The experiment
-must never change capsets 1/2, GL context selection, or native Metal
-presentation.
+Vulkan comes from the `apple-gpu-vulkan-experiment` product, the only Apple
+GPU product, and the host always advertises it. Venus must never change
+capsets 1/2, GL context selection, or native Metal presentation.
 
 MoltenVK is not an input, fallback, packaged framework, runtime provider, or
 test target in this design. Historical feasibility documents may discuss it,

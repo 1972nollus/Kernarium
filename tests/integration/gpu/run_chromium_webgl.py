@@ -1086,10 +1086,8 @@ def rootfs_contract_metadata(
     }
 
 
-def build_host_environment(renderer: str, display: str) -> dict[str, str]:
+def build_host_environment(display: str) -> dict[str, str]:
     environment = os.environ.copy()
-    if renderer == "zink":
-        environment["UML_GPU_EXPERIMENTAL_VULKAN"] = "1"
     if display == "native":
         environment["UML_GPU_FRAME_STATS"] = "1"
     return environment
@@ -1336,7 +1334,7 @@ def main() -> int:
         json.dumps(run_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    environment = build_host_environment(options.renderer, options.display)
+    environment = build_host_environment(options.display)
     with log_path.open("wb") as log:
         process = subprocess.Popen(
             command,

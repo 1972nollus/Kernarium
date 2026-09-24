@@ -669,11 +669,8 @@ if(TARGET uml_gpu_display)
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc
         ${CMAKE_CURRENT_SOURCE_DIR})
-    # The Metal readback only exists on the experimental Vulkan path. Compile
-    # it in so the display test can exercise both presentation contracts.
     target_compile_definitions(uml_gpu_display_test_variant PRIVATE
-        UML_GPU_VNC_STARTUP_TESTING=1
-        UML_GPU_VULKAN_EXPERIMENT=1)
+        UML_GPU_VNC_STARTUP_TESTING=1)
     target_compile_features(uml_gpu_display_test_variant PUBLIC cxx_std_20)
     set_target_properties(uml_gpu_display_test_variant PROPERTIES
         OBJCXX_STANDARD 20)

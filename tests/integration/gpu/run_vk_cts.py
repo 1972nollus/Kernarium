@@ -1980,10 +1980,7 @@ def build_harness_command(
         "--gpu-width=1280",
         "--gpu-height=720",
     ]
-    environment = ["env", "UML_GPU_CAPABILITY_REPORT=1"]
-    if options.experimental_venus:
-        environment.append("UML_GPU_EXPERIMENTAL_VULKAN=1")
-    return [*environment, *command]
+    return ["env", "UML_GPU_CAPABILITY_REPORT=1", *command]
 
 
 def build_receipt_harness_command(
@@ -2012,11 +2009,7 @@ def build_receipt_harness_command(
         resume_after=resume_after,
         relax_diagnostics=getattr(options, "relax_diagnostics", False),
     )
-    environment = [
-        "env",
-        "UML_GPU_CAPABILITY_REPORT=1",
-        "UML_GPU_EXPERIMENTAL_VULKAN=1",
-    ]
+    environment = ["env", "UML_GPU_CAPABILITY_REPORT=1"]
     if uses_wsi:
         overlay_commands = (
             common.install_text(CTS_SERVICE_PATH, launcher, "0755"),

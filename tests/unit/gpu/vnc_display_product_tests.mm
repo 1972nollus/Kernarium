@@ -270,11 +270,9 @@ void shippedVncDisplayReadsBackAVenusScanout()
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         require(device != nil, "Metal device unavailable");
 
-        ::setenv("UML_GPU_EXPERIMENTAL_VULKAN", "1", 1);
         auto display = uml::gpu::makeDisplay(
             uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, displayExtent,
             displayExtent);
-        ::unsetenv("UML_GPU_EXPERIMENTAL_VULKAN");
         require(display != nullptr, "VNC display creation failed");
         const auto port = display->vncPort();
         require(port.has_value() && *port != 0, "VNC display has no port");

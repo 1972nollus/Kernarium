@@ -1330,9 +1330,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
         },
         [](std::uint64_t, std::size_t) {
             return std::span<std::uint8_t> {};
-        },
-        0,
-        true};
+        }};
 
     const auto context = createContext(811, protocol::venusCapsetId);
     const auto software = create2d(812, 1, 1);
@@ -1962,7 +1960,7 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     require(dependencies.guestSessionResetCount == 1);
 }
 
-void experimentalVenusBlobsAndFencesUseStandardWireState()
+void venusBlobsAndFencesUseStandardWireState()
 {
     FakeGpuDependencies dependencies;
     const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
@@ -1971,22 +1969,12 @@ void experimentalVenusBlobsAndFencesUseStandardWireState()
     const auto mapper = [](std::uint64_t, std::size_t) {
         return std::span<std::uint8_t> {};
     };
-    VirtioGpuDevice disabled {dependencies, reader, mapper};
-    require(disabled.config().capsetCount ==
-        protocol::virgl2CapsetIndex + 1U);
+    VirtioGpuDevice device {dependencies, reader, mapper};
+    require(device.config().capsetCount == protocol::venusCapsetIndex + 1U);
     protocol::GpuGetCapsetInfo capsetInfo {};
     capsetInfo.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::getCapsetInfo);
     capsetInfo.capsetIndex = protocol::venusCapsetIndex;
-    const auto disabledInfo = disabled.process(
-        requestBytes(capsetInfo), false);
-    protocol::GpuCapsetInfo disabledCapset {};
-    std::memcpy(
-        &disabledCapset, disabledInfo.data(), sizeof(disabledCapset));
-    require(disabledCapset.capsetId == 0);
-
-    VirtioGpuDevice device {dependencies, reader, mapper, 0, true};
-    require(device.config().capsetCount == protocol::venusCapsetIndex + 1U);
     const auto enabledInfo = device.process(requestBytes(capsetInfo), false);
     protocol::GpuCapsetInfo venusInfo {};
     std::memcpy(&venusInfo, enabledInfo.data(), sizeof(venusInfo));
@@ -2265,7 +2253,7 @@ void blobMappingCapacityFollowsTheAperture()
     const auto mapper = [](std::uint64_t, std::size_t) {
         return std::span<std::uint8_t> {};
     };
-    VirtioGpuDevice device {dependencies, reader, mapper, 0, true};
+    VirtioGpuDevice device {dependencies, reader, mapper};
     const auto context = createContext(0x601, protocol::venusCapsetId);
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
@@ -2359,7 +2347,7 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     const auto mapper = [](std::uint64_t, std::size_t) {
         return std::span<std::uint8_t> {};
     };
-    VirtioGpuDevice disabled {dependencies, reader, mapper};
+    VirtioGpuDevice empty {dependencies, reader, mapper};
     protocol::GpuSetScanoutBlob scanout {};
     scanout.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::setScanoutBlob);
@@ -2371,10 +2359,11 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     scanout.format = static_cast<std::uint32_t>(
         protocol::GpuFormat::b8g8r8a8Unorm);
     scanout.strides[0] = 8U * protocol::gpuBytesPerPixel;
-    require(responseType(disabled.process(requestBytes(scanout), false)) !=
+    /* A blob scanout must name a blob the device already holds. */
+    require(responseType(empty.process(requestBytes(scanout), false)) !=
         protocol::GpuResponse::okNoData);
 
-    VirtioGpuDevice device {dependencies, reader, mapper, 0, true};
+    VirtioGpuDevice device {dependencies, reader, mapper};
     const auto context = createContext(0x701, protocol::venusCapsetId);
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
@@ -2475,7 +2464,7 @@ void virglBlobScanoutPresentsThroughReadback()
     const auto mapper = [](std::uint64_t, std::size_t) {
         return std::span<std::uint8_t> {};
     };
-    VirtioGpuDevice device {dependencies, reader, mapper, 0, true};
+    VirtioGpuDevice device {dependencies, reader, mapper};
     const auto context = createContext(0x801, protocol::virgl2CapsetId);
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
@@ -2643,7 +2632,7 @@ void runVirtioGpuDeviceTests()
     backingRangesAndAttachStateAreValidated();
     failedTransferDoesNotPartiallyCommitPixels();
     setScanoutReplyFailureDoesNotCommitAllocation();
-    experimentalVenusBlobsAndFencesUseStandardWireState();
+    venusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsThroughReadback();

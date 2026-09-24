@@ -73,8 +73,7 @@ add_library(uml_gpu_renderer STATIC
     virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
-    VIRGL_RENDERER_UNSTABLE_APIS
-    UML_GPU_VULKAN_EXPERIMENT=1)
+    VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE
     UML::ThirdPartyVirglrenderer
     UML::HostGpuMemory)
@@ -152,12 +151,8 @@ uml_configure_gpu_component(uml_gpu_display)
 set_target_properties(uml_gpu_display PROPERTIES OBJCXX_STANDARD 20)
 target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-# The renderer and the transport compile the Venus path unconditionally, so
-# the display must too: a scanout only this product produces has no other way
-# to reach a VNC client. Both are gated at run time by the same opt-in.
 target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_HAS_VNC=$<BOOL:${UML_TARGET_MACOS}>
-    UML_GPU_VULKAN_EXPERIMENT=1
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
@@ -194,8 +189,7 @@ add_library(uml_gpu_transport STATIC
     vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)
 target_compile_definitions(uml_gpu_transport PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>
-    UML_GPU_VULKAN_EXPERIMENT=1)
+    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 target_link_libraries(uml_gpu_transport PUBLIC
     UML::DeviceSocketPaths
     UML::MemorySharedBacking

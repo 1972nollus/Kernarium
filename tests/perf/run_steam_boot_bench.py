@@ -224,14 +224,11 @@ class SteamGuest:
         ]
         self._transcript_path = transcript_path
         self._transcript = bytearray()
-        # Gamescope needs Venus, so the experimental Vulkan path is on by
-        # default; an explicit setting in the caller's environment still wins,
-        # which is how a non-Vulkan control is measured. The video device
-        # writes its activity log once, when a stream closes, so naming a
-        # per-boot file records what each boot decoded without costing timing.
-        # A caller that already named one is collecting across boots on
-        # purpose, so leave theirs alone.
-        environment = {"UML_GPU_EXPERIMENTAL_VULKAN": "1", **os.environ}
+        # The video device writes its activity log once, when a stream
+        # closes, so naming a per-boot file records what each boot decoded
+        # without costing timing. A caller that already named one is
+        # collecting across boots on purpose, so leave theirs alone.
+        environment = dict(os.environ)
         if activity_log is not None and "UML_VIDEO_ACTIVITY_LOG" not in os.environ:
             environment["UML_VIDEO_ACTIVITY_LOG"] = str(activity_log)
         master, slave = pty.openpty()

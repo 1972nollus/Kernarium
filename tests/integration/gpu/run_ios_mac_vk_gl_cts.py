@@ -190,16 +190,13 @@ def launch_environment(
 ) -> dict[str, str]:
     """The host switches this campaign's stack needs, named by the drivers.
 
-    A guest Zink renders on Venus and a desktop-GL Virgl guest needs the
-    host-visible blob aperture, so the GL selection belongs to the GL driver
-    rather than to this lane. A Vulkan campaign reaches Venus and takes the
-    same pair its own lane sets. The application always drives a native
-    display.
+    The GL selection belongs to the GL driver rather than to this lane. A
+    Vulkan campaign takes the capability report its own lane sets. The
+    application always drives a native display.
     """
     settings = {"UML_GPU_FRAME_STATS": "1"}
     if campaign in VULKAN_CAMPAIGNS:
         settings["UML_GPU_CAPABILITY_REPORT"] = "1"
-        settings["UML_GPU_EXPERIMENTAL_VULKAN"] = "1"
         return settings
     if shard is None:
         return settings

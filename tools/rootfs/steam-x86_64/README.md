@@ -128,7 +128,7 @@ export. The backend then falls back to memfd-backed surfaces, which satisfy
 ## Interactive boot
 
 ```sh
-UML_GPU_EXPERIMENTAL_VULKAN=1 python3 tools/rootfs/steam-x86_64/boot.py \
+python3 tools/rootfs/steam-x86_64/boot.py \
   --emulator /path/to/uml-darwin \
   --rootfs /path/to/steam-x86_64-gaming.erofs \
   --userdata /path/to/your-userdata.img --size-gib 32 \

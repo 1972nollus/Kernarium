@@ -140,8 +140,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "git": cts.common.git_state(), "passed": False,
     }
     guest.write_json(directory / "run.json", report)
-    previous = os.environ.get("UML_GPU_EXPERIMENTAL_VULKAN")
-    os.environ["UML_GPU_EXPERIMENTAL_VULKAN"] = "1"
     try:
         code, passed, failed = guest.run_guest(
             command, guest.make_bootstrap(script, "ext4"),
@@ -152,10 +150,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         (directory / "console.log").read_text(errors="replace"))
         report["passed"] = True
     finally:
-        if previous is None:
-            os.environ.pop("UML_GPU_EXPERIMENTAL_VULKAN", None)
-        else:
-            os.environ["UML_GPU_EXPERIMENTAL_VULKAN"] = previous
         if (directory / "console.log").is_file():
             report["console_sha256"] = receipt_contract.sha256_file(directory / "console.log")
         guest.write_json(directory / "run.json", report)

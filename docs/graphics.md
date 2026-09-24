@@ -37,8 +37,8 @@ consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend. With no connected VNC client,
 scanout flushes retire without a synchronous GPU-to-CPU readback; the first
 frame after a zero-client interval refreshes the complete active scanout.
-The experimental Vulkan product compiles native Metal readback into the VNC
-display target and enables it with the same explicit runtime opt-in as Venus.
+The VNC display converts native Metal scanouts with an asynchronous Metal
+readback.
 Images shared through native Metal heaps retain tiled storage but disable
 usage-dependent lossless compression. A compositor can therefore import a
 render target for sampling without reinterpreting its compression metadata as
@@ -77,9 +77,8 @@ Virgl, because the host renders the Virgl command stream on a desktop OpenGL
 `GL_ARB_buffer_storage`, which the guest exposes only over coherent
 host-visible blob resources: the virtio-GPU device publishes its host-visible
 aperture to Virgl contexts as well as Venus ones, and vrend backs those
-coherent buffers with shared host pages pinned into GL. The aperture is part
-of the experimental Vulkan device, so a macOS Virgl guest reaches 4.6 only
-when that device is enabled.
+coherent buffers with shared host pages pinned into GL. The device always
+publishes the aperture, so a macOS Virgl guest reaches 4.6.
 
 GLES reaches the guest over the same path and from the same capsets: the
 guest's Mesa derives its GLES version from what Virgl advertises, so nothing
@@ -214,11 +213,10 @@ remain aligned with the pixels that are actually visible.
 
 ## Vulkan
 
-Guest Vulkan is an experimental, separately named capability, not part of the
-supported product. It exists only in the `apple-gpu-vulkan-experiment`
-dependency product, where Venus runs over KosmicKrisp on Metal and the guest
-reaches the host ring through the kernel's vhost-user shared-memory aperture.
-No build advertises a Vulkan capset without `UML_GPU_EXPERIMENTAL_VULKAN`.
+Every GPU build advertises guest Vulkan. Venus runs over the packaged
+KosmicKrisp on Metal, and the guest reaches the host ring through the kernel's
+vhost-user shared-memory aperture. The device always offers the Venus capset,
+blob resources, and that aperture; no runtime switch withholds them.
 
 That route makes no conformance claim. Support is asserted only by the
 receipt-bound guest CTS campaigns described in

@@ -751,7 +751,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("--serial-socket", command)
         self.assertIn("umid=vkcts-", joined)
         self.assertIn("sysrq_always_enabled", command)
-        self.assertIn("UML_GPU_EXPERIMENTAL_VULKAN=1", command)
+        self.assertEqual(command[:2], ["env", "UML_GPU_CAPABILITY_REPORT=1"])
         self.assertNotIn("UML_GPU_VENUS_METAL_ARGUMENT_BUFFERS", command)
         self.assertIn(
             "set +e; /usr/local/libexec/uml-vulkan-cts; set -e; :", joined

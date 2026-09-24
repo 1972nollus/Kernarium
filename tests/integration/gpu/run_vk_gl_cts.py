@@ -177,8 +177,7 @@ CAPSET_CHUNK = re.compile(
 CAPSET_END = re.compile(
     r"UML_GPU_CAPSET_END\|id=([0-9]+)\|chunks=([0-9]+)\Z"
 )
-# The experimental Vulkan device reports this capset alongside the two Virgl
-# ones. It carries the Venus protocol identity, not a Virgl capability record.
+# The host reports this capset alongside the two Virgl ones. It carries the Venus protocol identity, not a Virgl capability record.
 VENUS_CAPSET_ID = 4
 NATIVE_DISPLAY_FINAL = re.compile(
     r"Native display final: guest ([0-9]+) presented ([0-9]+) "
@@ -2737,14 +2736,13 @@ def decode_report_text(value: str, field: str) -> str:
     return decoded
 
 
-def parse_gpu_capability_report(
-    transcript: str, *, venus_capset: bool = False
-) -> dict[str, Any]:
+def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
     """Decode the host capability report the emulator prints at start-up.
 
-    A run that enables the experimental Vulkan device also reports the
-    Venus capset. It is not a Virgl capset and has no Virgl layout, so it
-    is recorded by identity alone and kept out of `virgl_capsets`.
+    The host also reports the Venus capset. It is not a Virgl capset and has
+    no Virgl layout, so it is recorded by identity alone and kept out of
+    `virgl_capsets`. A transcript from a host that published Venus only on
+    request has none, so the report carries it only when present.
     """
     contexts: dict[tuple[int, int], dict[str, Any]] = {}
     context_extensions: dict[tuple[int, int], list[str]] = {}
@@ -2884,8 +2882,7 @@ def parse_gpu_capability_report(
             raise CampaignError("failed host context has contradictory evidence")
         serialized_contexts.append(context)
 
-    expected_capsets = {1, 2} | ({VENUS_CAPSET_ID} if venus_capset else set())
-    if set(capsets) != expected_capsets:
+    if not {1, 2} <= set(capsets) <= {1, 2, VENUS_CAPSET_ID}:
         raise CampaignError("GPU capability report omitted a Virgl capset")
     serialized_capsets: list[dict[str, Any]] = []
     serialized_venus: dict[str, Any] | None = None
@@ -4274,16 +4271,12 @@ WantedBy=multi-user.target
 def gl_scope_launch_environment(options: argparse.Namespace) -> tuple[str, ...]:
     """Name the host switches this run's stack needs, in a stable order.
 
-    Guest Zink renders on Venus and needs the experimental Vulkan device.
-    A Virgl guest needs it too in the GL46 scope: desktop GL 4.6 requires
-    GL_ARB_buffer_storage, whose coherent buffers reach the guest through the
-    host-visible blob aperture that switch publishes. Outside that scope the
-    Virgl guest stays on the plain device and only reports its host provider.
+    The host always publishes Venus and the host-visible blob aperture, which
+    guest Zink and a GL46 Virgl guest's GL_ARB_buffer_storage rely on. A
+    Virgl guest also reports its host provider.
     """
     if options.renderer == "zink":
-        return ("UML_GPU_EXPERIMENTAL_VULKAN",)
-    if getattr(options, "gl46_scope", False):
-        return ("UML_GPU_CAPABILITY_REPORT", "UML_GPU_EXPERIMENTAL_VULKAN")
+        return ()
     return ("UML_GPU_CAPABILITY_REPORT",)
 
 
@@ -6113,13 +6106,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
     metadata["console_sha256"] = sha256_file(log_path)
     if options.renderer == "virgl":
         validate_host_backend(transcript)
-        metadata.update(
-            parse_gpu_capability_report(
-                transcript,
-                venus_capset="UML_GPU_EXPERIMENTAL_VULKAN"
-                in gl_scope_launch_environment(options),
-            )
-        )
+        capability_report = parse_gpu_capability_report(transcript)
+        if "venus_capset" not in capability_report:
+            raise CampaignError("GPU capability report omitted the Venus capset")
+        metadata.update(capability_report)
     if options.display == "native":
         metadata["native_display_final"] = parse_native_display_final(transcript)
     write_json(artifact_directory / "run.json", metadata)

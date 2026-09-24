@@ -406,21 +406,20 @@ negotiated memory region, clamps a reply to the writable descriptors the guest
 supplied, and the renderer ends a Venus reply stream at the window the guest
 declared rather than at the resource holding it.
 
-The separately configured macOS Vulkan experiment adds an independent route:
+Every GPU build also carries an independent Vulkan route:
 
 ```text
 Linux Vulkan -> Mesa Venus -> virglrenderer capset 4
     -> directly linked Mesa KosmicKrisp -> Metal
 ```
 
-That route exists only in the verified `apple-gpu-vulkan-experiment` product
-and is enabled at runtime only by `UML_GPU_EXPERIMENTAL_VULKAN=1`. It does not
-replace or enter the GL facade, and no iOS runtime or application target
-contains the experimental provider. Its fences ride the same deferred
+The host always advertises that route. It does not replace or enter the GL
+facade. Its fences ride the same deferred
 fence pipeline the default path uses: the device creates a context fence per
 pipelined request, and the transport retires it from the queue-worker timer.
 Venus gives each guest ring its own timeline, so a Venus context is polled
-individually while one poll still drains every Virgl context. Software 2D
+individually while one poll still drains every Virgl context, and only a
+Venus context defers a fence on a ring other than zero. Software 2D
 console transfers and flushes can progress while renderer fences are pending;
 otherwise a console command can block a later host signal needed by that fence.
 Renderer-resource flushes and destructive resource operations retain their
@@ -438,7 +437,7 @@ The transport keeps serving the connection either way, so a wedged submission
 fails the workload that owns it while the guest stays able to finish its
 remaining work and power off.
 
-The experiment keeps shareable Zink scanouts in their renderer-optimal Metal
+Venus keeps shareable Zink scanouts in their renderer-optimal Metal
 layout. An unlinked vnode-backed identity descriptor reconnects each guest
 dma-buf with its in-process MTLHeap and native MTLTexture; the descriptor never
 stores pixel data. Native presentation samples that texture directly. The VNC

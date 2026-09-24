@@ -392,16 +392,6 @@ void requireNoDescriptors(
     requireDescriptorCount(message, 0, request);
 }
 
-[[nodiscard]] bool experimentalVulkanEnabled() noexcept
-{
-#if UML_GPU_VULKAN_EXPERIMENT
-    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
-    return value != nullptr && std::strcmp(value, "1") == 0;
-#else
-    return false;
-#endif
-}
-
 class GpuVhostUserDevice final : public uml::virtio::VhostUserDevice {
 public:
     GpuVhostUserDevice(
@@ -409,14 +399,8 @@ public:
         VirtioGpuDevice::GuestReader reader,
         VirtioGpuDevice::GuestMapper mapper,
         std::uint32_t dotsPerInch)
-        : experimentalVulkan_(experimentalVulkanEnabled())
-        , display_(display)
-        , gpu_(
-              display,
-              std::move(reader),
-              std::move(mapper),
-              dotsPerInch,
-              experimentalVulkan_)
+        : display_(display)
+        , gpu_(display, std::move(reader), std::move(mapper), dotsPerInch)
         , hasEdid_(dotsPerInch != 0)
         , eventQueue_(::kqueue())
     {
@@ -457,9 +441,7 @@ public:
     {
         return protocol::virtioGpuFeatureVirgl |
             (hasEdid_ ? protocol::virtioGpuFeatureEdid : 0U) |
-            (experimentalVulkan_
-                ? protocol::virtioGpuFeatureResourceBlob
-                : 0U) |
+            protocol::virtioGpuFeatureResourceBlob |
             protocol::virtioGpuFeatureContextInit;
     }
 
@@ -663,25 +645,20 @@ public:
                 pendingFences_.front().fence.contextId) != 0) {
             throw std::runtime_error("polling GPU fences failed");
         }
-        if (experimentalVulkan_) {
-            for (std::size_t index = 1; index < pendingFences_.size();
-                 ++index) {
-                const auto contextId = pendingFences_[index].fence.contextId;
-                const auto previous = std::find_if(
-                    pendingFences_.begin(),
-                    pendingFences_.begin() +
-                        static_cast<std::ptrdiff_t>(index),
-                    [contextId](const PendingFence& pending) {
-                        return pending.fence.contextId == contextId;
-                    });
-                if (previous !=
-                    pendingFences_.begin() +
-                        static_cast<std::ptrdiff_t>(index)) {
-                    continue;
-                }
-                if (gpu_.pollContextFences(contextId) != 0)
-                    throw std::runtime_error("polling GPU fences failed");
+        for (std::size_t index = 1; index < pendingFences_.size(); ++index) {
+            const auto contextId = pendingFences_[index].fence.contextId;
+            const auto previous = std::find_if(
+                pendingFences_.begin(),
+                pendingFences_.begin() + static_cast<std::ptrdiff_t>(index),
+                [contextId](const PendingFence& pending) {
+                    return pending.fence.contextId == contextId;
+                });
+            if (previous !=
+                pendingFences_.begin() + static_cast<std::ptrdiff_t>(index)) {
+                continue;
             }
+            if (gpu_.pollContextFences(contextId) != 0)
+                throw std::runtime_error("polling GPU fences failed");
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -791,8 +768,6 @@ public:
     [[nodiscard]] std::optional<uml::virtio::VhostUserSharedMemoryRegion>
         sharedMemoryRegion() const noexcept override
     {
-        if (!experimentalVulkan_)
-            return std::nullopt;
         return uml::virtio::VhostUserSharedMemoryRegion {
             .id = protocol::hostVisibleSharedMemoryRegionId,
             .size = protocol::hostVisibleSharedMemoryRegionSize,
@@ -949,19 +924,14 @@ private:
             loadUnaligned<protocol::GpuControlHeader>(request.data());
         const auto command = static_cast<protocol::GpuCommand>(header.type);
         const bool fence = (header.flags & protocol::gpuFlagFence) != 0;
-        const auto ringIndex =
-            (header.flags & protocol::gpuFlagInfoRingIndex) != 0
-            ? header.ringIndex
-            : 0;
         const bool pipelineCommand =
             command == protocol::GpuCommand::submit3d ||
             command == protocol::GpuCommand::transferToHost3d ||
             command == protocol::GpuCommand::transferFromHost3d;
-        /* Virgl retires one fence timeline per context, so only ring zero
-         * is meaningful there. Venus gives every guest ring its own timeline,
-         * and the device rejects a ring index the capset does not allow. */
-        return pipelineCommand && fence && header.contextId != 0 &&
-            (ringIndex == 0 || experimentalVulkan_);
+        /* Virgl retires one fence timeline per context and Venus one per
+         * guest ring. The device knows each context's capset, so it decides
+         * which rings defer and completes the rest synchronously. */
+        return pipelineCommand && fence && header.contextId != 0;
     }
 
     /* One line per transition, never per poll: this shares the guest console
@@ -1054,7 +1024,6 @@ private:
         }
     }
 
-    bool experimentalVulkan_ {};
     Display& display_;
     VirtioGpuDevice gpu_;
     bool hasEdid_;

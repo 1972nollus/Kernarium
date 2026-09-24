@@ -28,19 +28,6 @@ namespace uml::gpu {
 
 namespace {
 
-[[nodiscard]] bool experimentalVulkanEnabled() noexcept
-{
-#if UML_GPU_VULKAN_EXPERIMENT
-    const char* value = std::getenv("UML_GPU_EXPERIMENTAL_VULKAN");
-    return value != nullptr && std::strcmp(value, "1") == 0;
-#else
-    return false;
-#endif
-}
-
-} // namespace
-namespace {
-
 namespace vnc_input = uml::input::vnc;
 
 constexpr std::uint64_t clientCountMask =
@@ -227,12 +214,10 @@ VncDisplay::VncDisplay(
     testing::eventThreadStartCheckpoint(
         static_cast<std::uint16_t>(screen_->port));
 #endif
-    if (experimentalVulkanEnabled()) {
-        metalReadback_ = std::make_unique<MetalReadback>(
-            [this](const MetalReadbackFrame& frame) noexcept {
-                publishMetalFrame(frame);
-            });
-    }
+    metalReadback_ = std::make_unique<MetalReadback>(
+        [this](const MetalReadbackFrame& frame) noexcept {
+            publishMetalFrame(frame);
+        });
     eventThread_ = std::thread(&VncDisplay::eventLoop, this);
     screenGuard.release();
 }
@@ -369,11 +354,13 @@ PresentOutcome VncDisplay::presentMetal(
     }
     /* A Venus scanout is a Metal texture with no guest-visible virgl
      * resource, so the CPU framebuffer path cannot reach it. The readback
-     * converts it off the guest timeline; without it, unsupported
-     * deliberately selects the ordinary CPU framebuffer path. */
-    if (metalReadback_)
-        return metalReadback_->present(scanout);
-    displayActivityLog().record("present display=vnc readback=absent");
+     * converts it off the guest timeline; a scanout it cannot convert
+     * returns unsupported, which deliberately selects the ordinary CPU
+     * framebuffer path at the scanout's extent. */
+    const auto outcome = metalReadback_->present(scanout);
+    if (outcome != PresentOutcome::unsupported)
+        return outcome;
+    displayActivityLog().record("present display=vnc readback=rejected");
     cpuFallbackExtent_.store(
         makeExtent(
             std::min(scanout.width, framebuffer_.width()),

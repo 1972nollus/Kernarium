@@ -65,15 +65,13 @@ public:
         testing::VirtioGpuDeviceDependencies& dependencies,
         GuestReader guestReader,
         GuestMapper guestMapper,
-        std::uint32_t dotsPerInch = 0,
-        bool experimentalVulkan = false);
+        std::uint32_t dotsPerInch = 0);
 #else
     VirtioGpuDevice(
         Display& display,
         GuestReader guestReader,
         GuestMapper guestMapper,
-        std::uint32_t dotsPerInch = 0,
-        bool experimentalVulkan = false);
+        std::uint32_t dotsPerInch = 0);
 #endif
     ~VirtioGpuDevice();
 
@@ -199,7 +197,6 @@ private:
     GuestReader guestReader_;
     GuestMapper guestMapper_;
     std::uint32_t dotsPerInch_;
-    bool experimentalVulkan_ {};
 #if !UML_GPU_DEVICE_TESTING
     VirglRenderer renderer_;
 #endif
