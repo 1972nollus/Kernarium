@@ -1,4 +1,4 @@
-From 9ab9c4815e88a8ea5cfebc7a9f3261d7672106b6 Mon Sep 17 00:00:00 2001
+From e0400b2b0a5caa99119e569dbb8669ea6e7fdb2e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 01:55:46 +0900
 Subject: [PATCH 1/5] arm64: add a dedicated x86-64 userspace UML slice
@@ -2618,7 +2618,7 @@ index 31575c43f..06008dda1 100644
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8cfd9f19c..f4b19d7c0 100644
+index f8068b196..f4478d475 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

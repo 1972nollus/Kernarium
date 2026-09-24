@@ -1,7 +1,7 @@
 From 2a4359c5b754c7a28cd13b4227acf74ed88c0d0e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 23:44:10 +0900
-Subject: [PATCH 12/43] uml: use one scalable Darwin native address profile
+Subject: [PATCH 12/46] uml: use one scalable Darwin native address profile
 
 Use one sparse Apple guest address contract, size the native hole from configured RAM, give auxiliary mappings a RAM-sized allowance within the supported bounds, and let vmalloc consume that whole window.
 

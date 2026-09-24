@@ -23,6 +23,7 @@ memory-execution-gate-profile	tests/unit/memory	unit	retained
 memory-word-shared-mutex	tests/unit/memory/word_shared_mutex_tests.cpp	unit	retained
 memory-native-window-reservation	tests/unit/memory/native_window_reservation_tests.cpp	unit	retained
 memory-shared-backing-view	tests/unit/memory/shared_backing_view_tests.cpp	unit	retained
+memory-guest-ram-commitment	tests/unit/memory/guest_ram_commitment_tests.cpp	unit	retained
 gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional
 gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional
 gpu-transport-descriptor-ceiling	tests/unit/gpu/vhost_user_descriptor_ceiling_tests.cpp	unit	conditional

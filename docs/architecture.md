@@ -81,12 +81,23 @@ process, and a later one maps the same window.
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
-Physical iOS wires all guest-allocatable pages before publishing them, while
-macOS and Simulator retain demand allocation. Wiring is a compression-avoidance
-property, not a mapping one: a refused wiring keeps the mapping it was asked to
-pin, because a caller told the mapping failed drops its record of a mapping the
-host still serves, and a host mapping no page table names outlives everything
-that could have removed it.
+
+`mem=` is a ceiling, not a reservation. The guest commits guest RAM before
+using it and releases what it frees, through the bridge's
+`darwin_uml_physmem_commit` and `darwin_uml_physmem_release`, and
+`memory/guest_ram_commitment.cpp` applies both, one host page at a time. The
+kernel's page-reporting driver releases free 512 KiB blocks (128 KiB at 4 KiB
+pages); the allocator commits a released block again, outside the zone lock,
+the first time it hands out a page of it. A released page leaves the process
+footprint (`MADV_FREE_REUSABLE`), and a committed one is counted again
+(`MADV_FREE_REUSE`). Physical iOS also wires a page when it is committed and
+unwires it when it is released, so it wires only the RAM the guest holds; the
+signed kernel image and the loader tail stay wired from startup. Simulator and
+macOS commit and release without wiring. Wiring prevents compression; it does
+not decide whether a page is mapped. A commit that cannot wire leaves the page
+committed and usable. The kernel also trims its inactive page cache towards a
+floor in the background (`page_cache_trim.*`). The host caches the same disk
+blocks, so a large guest page cache mostly holds memory twice.
 
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion

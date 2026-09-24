@@ -1,4 +1,4 @@
-From 332188f5b6ec6b4e2d3f9abc6b2efa79fc2f2034 Mon Sep 17 00:00:00 2001
+From 6a68ac50098e53f2396ee32ed105d2cd4995f0aa Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 17:38:02 +0900
 Subject: [PATCH 5/5] arm64: single-step x86-64 tasks with RFLAGS.TF
@@ -67,7 +67,7 @@ index a64194ef8..84ff5d15e 100644
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index aed88f9d8..ef4604179 100644
+index 8d59e86d2..7abcfdff9 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -71,6 +71,32 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

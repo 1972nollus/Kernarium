@@ -41,7 +41,9 @@ The local series provides the durable Android-specific behavior:
   Darwin vCPU carriers;
 - direct touchscreen classification compatible with Android input;
 - NAPI receive processing for sustained user networking;
-- free-page reporting for file-backed guest RAM where supported;
+- guest RAM committed on demand and released through free-page reporting, with
+  inactive page cache trimmed above a floor, and a Virtio balloon that does not
+  wait on a broken device at power-off, as in the mainline line;
 - virtually mapped 128 KiB task stacks and the common RAM-scaled auxiliary
   address window;
 - 128 MiB batched discard for directly attached UBD images without modifying
@@ -51,15 +53,14 @@ The local series provides the durable Android-specific behavior:
   charging-state passthrough;
 - system suspend and wake through the management console, including secondary
   vCPU hotplug across an Apple host background interval; and
-- anonymous host VM for Android physical memory, with page reporting disabled
-  when no file extent exists.
+- anonymous host VM for Android physical memory.
 
 Pure touchscreen input is specific to this Android line because Android and
 recovery must not enter pointer mode. The mainline kernel continues to expose
 desktop mouse buttons, hover, and wheel input for non-Android guests.
 
-Physical iOS wires the complete anonymous RAM root before guest start. macOS
-and Simulator retain demand allocation. Normal image descriptors remain
+Physical iOS wires only the guest RAM the guest has committed, and a Virtio
+balloon takes the host GPU's memory out of it. Normal image descriptors remain
 file-backed.
 
 A pagefault-disabled uaccess never reports mmap-lock contention as a fault.

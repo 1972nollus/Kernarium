@@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {
 
 #if defined(__cplusplus)
 #include <stddef.h>
-static_assert(DARWIN_UML_ABI_VERSION == 11U);
-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xa54125de28365272ULL);
+static_assert(DARWIN_UML_ABI_VERSION == 12U);
+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefee2a66cbe8be89ULL);
 static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
 static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
 static_assert(DARWIN_UML_EVENT_STOP == 9);

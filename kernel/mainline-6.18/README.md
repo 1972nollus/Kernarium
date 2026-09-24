@@ -137,10 +137,19 @@ host-visible Virtio-GPU contract.
 
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
-consumers do not retain a second full-span mapping. Physical iOS wires the
-guest-allocatable ranges before use; macOS and Simulator allocate on demand.
-Free-page reporting remains available to a file-backed provider and disables
-itself after the anonymous provider rejects range punching.
+consumers do not retain a second full-span mapping. Guest RAM is committed on
+demand: every chunk of the anonymous root starts released, `mem_init` commits
+what memblock reserved, `arch_alloc_page()` commits a released chunk the first
+time the allocator hands out a page of it, and the free-page reporting driver
+releases each whole reported chunk through the bridge. Physical iOS wires only
+committed chunks. `page_cache_trim` reclaims inactive page cache above a floor
+(`page_cache_trim.floor_mb`, by default 1/32 of RAM, checked every
+`page_cache_trim.interval_ms`) through memcg proactive reclaim, which leaves
+anonymous memory alone. `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU
+memory out of guest RAM. UML removes virtio drivers from an exitcall that runs
+after `device_shutdown()` has broken every virtqueue, so the balloon returns
+its pages without waiting for a host answer when its queue is broken; otherwise
+power-off with an inflated balloon never completes.
 
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in

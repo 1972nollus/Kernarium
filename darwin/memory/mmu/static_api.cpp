@@ -3,6 +3,7 @@
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
 #include "address_layout.hpp"
+#include "memory/guest_ram_commitment.hpp"
 #if UML_MEMORY_HAS_NATIVE_VM
 #include "native_address_space.hpp"
 #endif
@@ -540,4 +541,16 @@ extern "C" int darwin_uml_begin_write_single_step(unsigned long, unsigned long)
 {
 	errno = ENOTSUP;
 	return -1;
+}
+
+extern "C" int darwin_uml_physmem_release(unsigned long long offset,
+	unsigned long long length)
+{
+	return uml::memory::release_guest_ram(offset, length);
+}
+
+extern "C" int darwin_uml_physmem_commit(unsigned long long offset,
+	unsigned long long length)
+{
+	return uml::memory::commit_guest_ram(offset, length);
 }

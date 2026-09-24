@@ -1,7 +1,7 @@
 From 3e4c84f100f7c4ba11d210681cc30b9b4dbbc158 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:02 +0900
-Subject: [PATCH 01/39] uml: establish shared architecture contracts and build
+Subject: [PATCH 01/42] uml: establish shared architecture contracts and build
  wiring
 
 Apply the reviewed final-state topic without intermediate churn.

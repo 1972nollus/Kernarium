@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "shared_backing.hpp"
 
+#include "guest_ram_commitment.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <mach/mach.h>
 #include <mutex>
 #include <sys/mman.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -186,48 +188,60 @@ struct AnonymousTail final {
 		return MAP_FAILED;
 	}
 #if UML_WIRE_ANONYMOUS_GUEST_RAM
-	struct rlimit lock_limit {};
-	if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
-		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: wiring %zu bytes "
-			"(RLIMIT_MEMLOCK soft=%llu hard=%llu)\n",
-			length,
-			static_cast<unsigned long long>(lock_limit.rlim_cur),
-			static_cast<unsigned long long>(lock_limit.rlim_max));
-	} else {
-		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: wiring %zu bytes "
-			"(RLIMIT_MEMLOCK unavailable, errno=%d)\n",
-			length, errno);
-	}
-	if ((tail.address != nullptr && mlock(tail.address, tail.length) != 0) ||
-	    mlock(root, length) != 0) {
+	/* Guest RAM is wired so that it is never compressed, but only as the
+	 * guest commits it; see guest_ram_commitment.hpp. The reserved tail sits
+	 * below everything the guest allocates and is wired now. */
+	if (tail.address != nullptr && mlock(tail.address, tail.length) != 0) {
 		const int saved_errno = errno;
 		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: failed to wire the direct "
-			"physical window, errno=%d; refusing lazy guest RAM\n",
-			saved_errno);
+			"Darwin anonymous guest RAM: failed to wire the %zu-byte "
+			"reserved tail, errno=%d\n",
+			tail.length, saved_errno);
 		(void)reserve_host_range(root, length);
-		if (tail.address != nullptr)
-			(void)reserve_host_range(tail.address, tail.length);
+		(void)reserve_host_range(tail.address, tail.length);
 		errno = saved_errno;
 		return MAP_FAILED;
 	}
-	dprintf(STDERR_FILENO,
-		"Darwin anonymous guest RAM: committed and wired %zu suffix "
-		"bytes plus %zu reserved-tail bytes in the %zu-byte physical "
-		"window; host compression is disabled; direct-root=yes "
-		"offset=%llu\n",
-		length, tail.length, backing_size,
-		static_cast<unsigned long long>(offset));
+	/* Give the whole suffix one VM object before any of it is wired. Wiring
+	 * a chunk of object-less memory makes XNU create a private object for
+	 * that chunk alone, and it never treats such an object as reusable, so a
+	 * released chunk would stay in the footprint. A shared alias forces the
+	 * single object into existence, and the object outlives the alias. */
+	vm_address_t alias = 0;
+	vm_prot_t alias_current = VM_PROT_NONE;
+	vm_prot_t alias_maximum = VM_PROT_NONE;
+	const kern_return_t alias_result = vm_remap(mach_task_self(), &alias,
+		length, 0, VM_FLAGS_ANYWHERE, mach_task_self(),
+		reinterpret_cast<vm_address_t>(root), FALSE, &alias_current,
+		&alias_maximum, VM_INHERIT_NONE);
+	if (alias_result == KERN_SUCCESS)
+		(void)vm_deallocate(mach_task_self(), alias, length);
+	else
+		dprintf(STDERR_FILENO,
+			"Darwin anonymous guest RAM: failed to give the suffix one "
+			"object, kr=%d; released pages may stay in the footprint\n",
+			alias_result);
+	constexpr bool wire_guest_ram = true;
 #else
+	constexpr bool wire_guest_ram = false;
+#endif
 	dprintf(STDERR_FILENO,
 		"Darwin anonymous guest RAM: reserved %zu suffix bytes plus "
-		"%zu reserved-tail bytes in the %zu-byte physical window "
-		"without file backing; direct-root=yes offset=%llu\n",
+		"%zu reserved-tail bytes in the %zu-byte physical window; "
+		"committed on demand%s; direct-root=yes offset=%llu\n",
 		length, tail.length, backing_size,
+		wire_guest_ram ? " and wired" : "",
 		static_cast<unsigned long long>(offset));
-#endif
+	const std::size_t managed_begin = tail.address != nullptr ?
+		reinterpret_cast<std::uintptr_t>(tail.address) - physical_root :
+		static_cast<std::size_t>(offset);
+	/* A wired host starts the suffix released so that the guest's first use
+	 * wires it; an unwired one has nothing to do until the guest releases. */
+	publish_guest_ram_commitment(std::make_unique<GuestRamCommitment>(
+		reinterpret_cast<std::byte *>(physical_root), backing_size,
+		managed_begin,
+		wire_guest_ram ? static_cast<std::size_t>(offset) : backing_size,
+		wire_guest_ram, vm_page_size));
 	anonymous_backing.root = reinterpret_cast<void *>(physical_root);
 	anonymous_backing.size = backing_size;
 	return root;
@@ -273,6 +287,10 @@ int release_alias(void *address, std::size_t length, bool fixed) noexcept
 		/* Early UML releases its final reserved-prefix pages into guest RAM
 		 * with an in-place writable mapping. Wire them at that transition so
 		 * no newly allocatable physical page can enter host compression.
+		 * Only the prefix: GuestRamCommitment wires the rest as the guest
+		 * commits it, and Darwin counts wirings, so a page wired here as well
+		 * would stay wired, and in the footprint, after the guest released
+		 * it.
 		 *
 		 * The mapping itself is already in place and correct by this point,
 		 * so a refused wiring is reported and kept rather than failed: the
@@ -281,9 +299,17 @@ int release_alias(void *address, std::size_t length, bool fixed) noexcept
 		 * page table that named it. Compression costs latency; a mapping the
 		 * kernel has forgotten costs correctness.
 		 */
-		if (protection != PROT_NONE && mlock(address, length) != 0)
+		std::size_t unmanaged = length;
+		if (const GuestRamCommitment *const commitment =
+			    guest_ram_commitment()) {
+			const std::size_t managed = commitment->managed_begin();
+			unmanaged = offset < managed ?
+				std::min<std::size_t>(length, managed - offset) : 0;
+		}
+		if (protection != PROT_NONE && unmanaged != 0 &&
+		    mlock(address, unmanaged) != 0)
 			report_mapping_failure("guest RAM wiring", address,
-				length, errno);
+				unmanaged, errno);
 #endif
 		return address;
 	}

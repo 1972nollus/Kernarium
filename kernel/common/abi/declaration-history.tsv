@@ -11,3 +11,4 @@ version	fingerprint	declaration_sha256	rationale
 9	0xd17ab76bfc9adf0c	d17ab76bfc9adf0c825f58af7b0edd7157aea9409ebdac5e0bec5ef2267a265e	Name the virtual CPU from the emulator so every guest architecture reports one model
 10	0x81bfcab1377c7e09	81bfcab1377c7e0902c1cc837e363c0dba7f7b056be47f0ab036c2d5bc161e38	Deliver data-alignment faults as SIGBUS at the effective data address
 11	0xa54125de28365272	a54125de28365272c8bf2ff69c8ed15ddb7c628d0d3177bc9e850b3f40804927	Invalidate translated code in another process after Linux writes its text
+12	0xefee2a66cbe8be89	efee2a66cbe8be89aff709677b0e36174faec2f57acf9e6a359d7237d8c8a9a8	Commit and release guest RAM on demand so a released range leaves the host footprint and is wired again before reuse

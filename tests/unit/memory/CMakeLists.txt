@@ -87,3 +87,16 @@ target_compile_options(uml_word_shared_mutex_tests PRIVATE
 uml_add_unit_test(NAME memory-word-shared-mutex
     COMMAND uml_word_shared_mutex_tests LABELS tsan)
 add_dependencies(unit-test-binaries uml_word_shared_mutex_tests)
+
+add_executable(uml_guest_ram_commitment_tests guest_ram_commitment_tests.cpp)
+target_link_libraries(uml_guest_ram_commitment_tests PRIVATE
+    UML::MemorySharedBacking)
+target_compile_features(uml_guest_ram_commitment_tests PRIVATE cxx_std_20)
+target_compile_options(uml_guest_ram_commitment_tests PRIVATE
+    -Wall -Wextra -Werror)
+# The footprint assertions read the whole process, which a concurrent
+# memory-heavy test would move.
+uml_add_unit_test(NAME memory-guest-ram-commitment
+    COMMAND uml_guest_ram_commitment_tests)
+set_tests_properties(memory-guest-ram-commitment PROPERTIES RUN_SERIAL TRUE)
+add_dependencies(unit-test-binaries uml_guest_ram_commitment_tests)

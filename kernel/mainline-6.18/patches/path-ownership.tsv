@@ -20,6 +20,7 @@ drivers/media/*	uml-devices	carry-locally	Stateful V4L2 decoding through the sha
 include/uapi/linux/virtio_video.h	uml-devices	carry-locally	Paired host and kernel video queue contract.
 drivers/gpu/drm/virtio/virtgpu_prime.c	uml-devices	carry-locally	The exported blob must name the shared-memory region a second virtio device resolves.
 drivers/virtio/virtio_dma_buf.c	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.
+drivers/virtio/virtio_balloon.c	base-correctness	drop-locally-if-contained	A balloon on a broken device must not wait for the host; remove locally when the selected base contains the fix.
 include/linux/virtio_dma_buf.h	uml-devices	carry-locally	The virtio dma-buf contract carries that accessor.
 drivers/gpu/drm/virtio/virtgpu_host_blob.c	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.
 include/linux/virtio_gpu_host_blob.h	uml-devices	carry-locally	Host-visible Virtio-GPU blobs for an in-kernel consumer, so a decoded capture buffer is the object a renderer imports rather than guest pages it must refuse.

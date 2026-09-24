@@ -43,6 +43,15 @@ int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write);
 int darwin_uml_begin_write_single_step(unsigned long address,
 				       unsigned long guest_pc);
 
+/* Guest RAM commitment. Ranges are byte offsets into the anonymous physical-
+ * memory backing, aligned to the host page. Release hands a range the guest
+ * no longer uses back to the host; commit makes a released range the guest's
+ * again before the guest uses it. Both are idempotent per host page. */
+int darwin_uml_physmem_release(unsigned long long offset,
+			       unsigned long long length);
+int darwin_uml_physmem_commit(unsigned long long offset,
+			      unsigned long long length);
+
 #ifdef __cplusplus
 }
 #endif

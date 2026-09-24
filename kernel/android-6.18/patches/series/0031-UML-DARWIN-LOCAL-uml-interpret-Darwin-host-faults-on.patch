@@ -1,7 +1,7 @@
 From 77ddcc6ed6a584627ab26b32ee91b2e797841e92 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 19:38:15 +0900
-Subject: [PATCH 31/43] UML-DARWIN-LOCAL: uml: interpret Darwin host faults
+Subject: [PATCH 31/46] UML-DARWIN-LOCAL: uml: interpret Darwin host faults
  only on their owner
 
 Signal dispositions are process-wide, so UML's SIGSEGV and SIGBUS handlers

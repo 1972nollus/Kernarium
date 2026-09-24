@@ -7,7 +7,9 @@ target_link_libraries(uml_memory_contract INTERFACE
     UML::GuestPageConfiguration)
 target_compile_features(uml_memory_contract INTERFACE cxx_std_20)
 
-add_library(uml_memory_shared_backing STATIC shared_backing.cpp)
+add_library(uml_memory_shared_backing STATIC
+    shared_backing.cpp
+    guest_ram_commitment.cpp)
 add_library(UML::MemorySharedBacking ALIAS uml_memory_shared_backing)
 uml_declare_architecture_target(uml_memory_shared_backing memory)
 target_link_libraries(uml_memory_shared_backing PUBLIC UML::MemoryContract)
