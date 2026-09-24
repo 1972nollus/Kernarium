@@ -143,6 +143,7 @@ private:
         };
 
         std::uint32_t contextId {};
+        bool venus {};
         std::uint32_t memory {};
         std::uint32_t flags {};
         std::uint64_t size {};
@@ -183,6 +184,10 @@ private:
         std::optional<DeferredFence>* deferredFence);
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
+    [[nodiscard]] protocol::GpuResponse presentReadback(
+        std::uint32_t resourceId,
+        protocol::GpuFormat format,
+        const protocol::GpuRectangle& damage);
     [[nodiscard]] std::span<std::uint32_t> blobMappingPages(
         std::uint64_t offset, std::uint64_t size) noexcept;
 
@@ -220,6 +225,7 @@ private:
     std::uint32_t scanoutStride_ {};
     std::uint32_t scanoutOffset_ {};
     void* scanoutTexture_ {};
+    bool scanoutReadback_ {};
     void* scanoutMapping_ {};
     std::uint64_t scanoutMappingSize_ {};
 };

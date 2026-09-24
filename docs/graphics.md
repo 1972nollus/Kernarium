@@ -157,7 +157,10 @@ private userspace ioctl or library must never become a production dependency.
 Hardware video decode is not advertised. It published frames through a Metal
 texture client buffer that only the retired ANGLE provider exposed, and the
 renderer is built without it. Scanouts of Virgl resources take the host
-readback path, while Venus scanouts keep their native Metal textures.
+readback path, while Venus scanouts keep their native Metal textures. A blob a
+Virgl context created is a GL texture with no Metal texture either, so its
+`SET_SCANOUT_BLOB` takes the same readback path; Android's gralloc allocates
+the compositor's framebuffers that way.
 
 The GPU advertises display geometry and density through EDID. Kernarium point
 mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and

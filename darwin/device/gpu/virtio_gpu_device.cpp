@@ -382,6 +382,7 @@ void VirtioGpuDevice::releaseBlobScanout() noexcept
         UML_GPU_RENDERER.releaseBlobScanout(scanoutTexture_);
         scanoutTexture_ = nullptr;
     }
+    scanoutReadback_ = false;
     scanoutFormat_ = {};
     scanoutWidth_ = 0;
     scanoutHeight_ = 0;
@@ -396,6 +397,53 @@ void VirtioGpuDevice::clearScanout() noexcept
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
     UML_GPU_DISPLAY.clear();
+}
+
+protocol::GpuResponse VirtioGpuDevice::presentReadback(
+    std::uint32_t resourceId,
+    protocol::GpuFormat format,
+    const protocol::GpuRectangle& damage)
+{
+    UML_GPU_DISPLAY.recordCpuFallbackFrame();
+    const auto fallbackDamage =
+        UML_GPU_DISPLAY.needsFullCpuFallback() ? scanoutRectangle_ : damage;
+    const auto readbackBytes = pixelBufferSize(
+        fallbackDamage.width, fallbackDamage.height);
+    if (!readbackBytes || readbackStaging_.size() < *readbackBytes)
+        return protocol::GpuResponse::errorUnspecified;
+    const auto readback = std::span<std::uint8_t>(readbackStaging_)
+        .first(*readbackBytes);
+    const auto readbackRowBytes =
+        static_cast<std::size_t>(fallbackDamage.width) *
+        protocol::gpuBytesPerPixel;
+    try {
+        if (UML_GPU_RENDERER.readResourceRectangle(
+                resourceId,
+                readback,
+                fallbackDamage.x,
+                fallbackDamage.y,
+                fallbackDamage.width,
+                fallbackDamage.height) != 0) {
+            return protocol::GpuResponse::errorUnspecified;
+        }
+        UML_GPU_DISPLAY.update(
+            std::span<const std::uint8_t>(readback),
+            fallbackDamage.width,
+            fallbackDamage.height,
+            readbackRowBytes,
+            format,
+            0,
+            0,
+            fallbackDamage.x - scanoutRectangle_.x,
+            fallbackDamage.y - scanoutRectangle_.y,
+            fallbackDamage.width,
+            fallbackDamage.height);
+    } catch (const std::bad_alloc&) {
+        return protocol::GpuResponse::errorOutOfMemory;
+    } catch (...) {
+        return protocol::GpuResponse::errorUnspecified;
+    }
+    return protocol::GpuResponse::okNoData;
 }
 
 protocol::GpuConfig VirtioGpuDevice::config() const noexcept
@@ -1138,6 +1186,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 create->resourceId,
                 BlobResource {
                     .contextId = header->contextId,
+                    .venus = venusContexts_.contains(header->contextId),
                     .memory = create->memory,
                     .flags = create->flags,
                     .size = create->size,
@@ -1785,7 +1834,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             scanout->resourceId, scanout->width, scanout->height,
             scanout->format, scanout->strides[0], scanout->offsets[0],
             texture);
-        if (scanoutResult != 0 || texture == nullptr) {
+        const bool readback = scanoutResult != 0 || texture == nullptr;
+        if (readback && blob->second.venus) {
             displayActivityLog().record(
                 "scanout set kind=blob resource=%u source=%ux%u format=%u "
                 "stride=%u offset=%u texture=none error=%d",
@@ -1799,9 +1849,50 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
+        /*
+         * A Virgl context's blob is a GL texture, and the renderer publishes
+         * no Metal texture for one, just as for a classic Virgl resource.
+         * Android's gralloc allocates the compositor's framebuffers this way
+         * once blobs exist, so present such a scanout the classic way: read
+         * it back into the CPU framebuffer on each flush.
+         */
+        if (readback) {
+            std::vector<std::uint8_t> replacementReadback;
+            const auto byteCount = pixelBufferSize(
+                scanout->rectangle.width, scanout->rectangle.height);
+            if (!byteCount) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            }
+            if (readbackStaging_.size() != *byteCount) {
+                try {
+                    replacementReadback.resize(*byteCount);
+                } catch (const std::bad_alloc&) {
+                    return response(
+                        *header, protocol::GpuResponse::errorOutOfMemory);
+                }
+            }
+            const bool dimensionsChanged =
+                scanoutRectangle_.width != scanout->rectangle.width ||
+                scanoutRectangle_.height != scanout->rectangle.height;
+            if (dimensionsChanged &&
+                !UML_GPU_DISPLAY.guestScanoutChanged(
+                    scanout->rectangle.width,
+                    scanout->rectangle.height)) {
+                protocol::GpuControlHeader failure = *header;
+                failure.type = static_cast<std::uint32_t>(
+                    protocol::GpuResponse::errorOutOfMemory);
+                failure.flags &=
+                    protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+                std::memcpy(success.data(), &failure, sizeof(failure));
+                return success;
+            }
+            if (!replacementReadback.empty())
+                readbackStaging_.swap(replacementReadback);
+        }
         displayActivityLog().record(
             "scanout set kind=blob resource=%u source=%ux%u rect=%ux%u+%u+%u "
-            "format=%u stride=%u offset=%u texture=%p",
+            "format=%u stride=%u offset=%u texture=%p path=%s",
             scanout->resourceId,
             scanout->width,
             scanout->height,
@@ -1812,7 +1903,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             scanout->format,
             scanout->strides[0],
             scanout->offsets[0],
-            texture);
+            texture,
+            readback ? "readback" : "metal");
 
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
@@ -1823,6 +1915,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         scanoutStride_ = scanout->strides[0];
         scanoutOffset_ = scanout->offsets[0];
         scanoutTexture_ = texture;
+        scanoutReadback_ = readback;
         return success;
     }
 
@@ -1931,52 +2024,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                  * own timeline and the host presents the newest frame it can. */
                 return success;
             }
-            UML_GPU_DISPLAY.recordCpuFallbackFrame();
-            const auto fallbackDamage =
-                UML_GPU_DISPLAY.needsFullCpuFallback() ?
-                scanoutRectangle_ : *damage;
-            const auto readbackBytes = pixelBufferSize(
-                fallbackDamage.width, fallbackDamage.height);
-            if (!readbackBytes || readbackStaging_.size() < *readbackBytes) {
-                return response(
-                    *header, protocol::GpuResponse::errorUnspecified);
-            }
-            const auto readback = std::span<std::uint8_t>(readbackStaging_)
-                .first(*readbackBytes);
-            const auto readbackRowBytes =
-                static_cast<std::size_t>(fallbackDamage.width) *
-                protocol::gpuBytesPerPixel;
-            try {
-                if (UML_GPU_RENDERER.readResourceRectangle(
-                        flush->resourceId,
-                        readback,
-                        fallbackDamage.x,
-                        fallbackDamage.y,
-                        fallbackDamage.width,
-                        fallbackDamage.height) != 0) {
-                    return response(
-                        *header,
-                        protocol::GpuResponse::errorUnspecified);
-                }
-                UML_GPU_DISPLAY.update(
-                    std::span<const std::uint8_t>(readback),
-                    fallbackDamage.width,
-                    fallbackDamage.height,
-                    readbackRowBytes,
-                    resource.format,
-                    0,
-                    0,
-                    fallbackDamage.x - scanoutRectangle_.x,
-                    fallbackDamage.y - scanoutRectangle_.y,
-                    fallbackDamage.width,
-                    fallbackDamage.height);
-            } catch (const std::bad_alloc&) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            } catch (...) {
-                return response(
-                    *header, protocol::GpuResponse::errorUnspecified);
-            }
+            const auto result = presentReadback(
+                flush->resourceId, resource.format, *damage);
+            if (result != protocol::GpuResponse::okNoData)
+                return response(*header, result);
             return success;
         }
 
@@ -1996,6 +2047,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::okNoData);
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
+            if (scanoutReadback_) {
+                displayActivityLog().record(
+                    "flush kind=blob resource=%u damage=%ux%u+%u+%u "
+                    "path=readback",
+                    flush->resourceId,
+                    damage->width,
+                    damage->height,
+                    damage->x,
+                    damage->y);
+                const auto result = presentReadback(
+                    flush->resourceId, scanoutFormat_, *damage);
+                if (result != protocol::GpuResponse::okNoData)
+                    return response(*header, result);
+                return success;
+            }
             const auto outcome = scanoutTexture_ != nullptr
                 ? UML_GPU_DISPLAY.presentMetal(MetalScanout {
                       .texture = scanoutTexture_,

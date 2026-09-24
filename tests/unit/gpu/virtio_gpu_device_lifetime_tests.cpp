@@ -2466,6 +2466,105 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(dependencies.lastUnmappedResource == scanout.resourceId);
 }
 
+void virglBlobScanoutPresentsThroughReadback()
+{
+    FakeGpuDependencies dependencies;
+    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
+        return false;
+    };
+    const auto mapper = [](std::uint64_t, std::size_t) {
+        return std::span<std::uint8_t> {};
+    };
+    VirtioGpuDevice device {dependencies, reader, mapper, 0, true};
+    const auto context = createContext(0x801, protocol::virgl2CapsetId);
+    require(responseType(device.process(requestBytes(context), false)) ==
+        protocol::GpuResponse::okNoData);
+    protocol::GpuResourceCreateBlob create {};
+    create.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0x802;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagShareable;
+    create.blobId = 0x2345;
+    create.size = dependencies.blobPixels.size();
+    require(responseType(device.process(requestBytes(create), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    protocol::GpuSetScanoutBlob scanout {};
+    scanout.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::setScanoutBlob);
+    scanout.rectangle = {.width = 8, .height = 8};
+    scanout.scanoutId = protocol::primaryScanoutId;
+    scanout.resourceId = create.resourceId;
+    scanout.width = 8;
+    scanout.height = 8;
+    scanout.format = static_cast<std::uint32_t>(
+        protocol::GpuFormat::r8g8b8x8Unorm);
+    scanout.strides[0] = 8U * protocol::gpuBytesPerPixel;
+
+    /* A Virgl context's blob is a GL texture with no Metal texture, the
+     * framebuffer Android's gralloc allocates once blobs exist. */
+    dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
+    requireFirstAllocationFailsBeforeCommit(device, scanout);
+    require(dependencies.createBlobScanoutCount == 0);
+    require(dependencies.guestScanoutChangeCount == 0);
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.createBlobScanoutCount == 1);
+    require(dependencies.guestScanoutChangeCount == 1);
+    require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
+    require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
+
+    protocol::GpuResourceFlush flush {};
+    flush.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceFlush);
+    flush.rectangle = {.x = 2, .y = 3, .width = 4, .height = 2};
+    flush.resourceId = scanout.resourceId;
+    dependencies.directPresentationEnabled = true;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationCount == 0);
+    require(dependencies.mapResourceCount == 0);
+    require(dependencies.cpuFallbackFrameCount == 1);
+    require(dependencies.readResourceCount == 1);
+    require(dependencies.lastReadResource == scanout.resourceId);
+    require(dependencies.lastReadX == flush.rectangle.x);
+    require(dependencies.lastReadY == flush.rectangle.y);
+    require(dependencies.lastReadWidth == flush.rectangle.width);
+    require(dependencies.lastReadHeight == flush.rectangle.height);
+    require(dependencies.displayUpdateCount == 1);
+    require(dependencies.lastDisplayDestinationX == flush.rectangle.x);
+    require(dependencies.lastDisplayDestinationY == flush.rectangle.y);
+    const auto updated =
+        (static_cast<std::size_t>(flush.rectangle.y) *
+                dependencies.displayWidth +
+            flush.rectangle.x) *
+        protocol::gpuBytesPerPixel;
+    require(dependencies.framebuffer[updated + 2U] ==
+        dependencies.readResourceTag);
+
+    /* A client that needs a whole frame gets the whole scanout. */
+    dependencies.fullCpuFallback = true;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == 2);
+    require(dependencies.lastReadX == 0);
+    require(dependencies.lastReadY == 0);
+    require(dependencies.lastReadWidth == scanout.rectangle.width);
+    require(dependencies.lastReadHeight == scanout.rectangle.height);
+
+    auto disable = scanout;
+    disable.resourceId = protocol::invalidResourceId;
+    require(responseType(device.process(requestBytes(disable), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.releaseBlobScanoutCount == 0);
+    require(dependencies.unmapResourceCount == 0);
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == 2);
+}
+
 void malformed3dCommandsUseSpecificErrors()
 {
     FakeGpuDependencies dependencies;
@@ -2547,6 +2646,7 @@ void runVirtioGpuDeviceTests()
     experimentalVenusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
+    virglBlobScanoutPresentsThroughReadback();
     malformed3dCommandsUseSpecificErrors();
 }
 

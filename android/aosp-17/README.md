@@ -161,6 +161,9 @@ system hands it. That module is labelled `same_process_hal_file` too. minigbm
 allocates a GPU-only buffer as a virtio-gpu blob, which is the form the renderer
 can share with the Vulkan render server, and keeps a buffer the guest itself
 reads or writes on the classic transfer path, which a CPU mapping still needs.
+The compositor's framebuffers are such GPU-only blobs; the host has no Metal
+texture for a GL blob and presents them by readback, as
+[`../../docs/graphics.md`](../../docs/graphics.md) describes.
 
 Presentation is `VK_ANDROID_native_buffer`: the platform loader allocates the
 swapchain images from gralloc and the driver imports them. Those blobs belong to
