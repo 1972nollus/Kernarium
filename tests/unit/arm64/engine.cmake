@@ -1124,3 +1124,12 @@
 		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-indirect-links
 		COMMAND uml_arm64_gadget_indirect_link_tests)
+
+    add_executable(uml_gadget_record_table_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_record_table_tests.cpp)
+    target_include_directories(uml_gadget_record_table_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    target_compile_options(uml_gadget_record_table_tests PRIVATE
+		-Wall -Wextra -Werror)
+    uml_add_unit_test(NAME gadget-record-table
+		COMMAND uml_gadget_record_table_tests)

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -24,10 +25,12 @@ namespace uml::cpu::gadget_cache {
  * a 64-byte arm64 link record cost 234 bytes that way.
  *
  * Here records are carved from chunks that are released together, and the
- * index is one open-addressed array of pointers that is replaced whole when it
- * grows. The key is read back out of the record (`KeyOf`), so an index entry
- * is a single word: the pointer, with the top bits of the key's hash beside it
- * so that a probe only dereferences a record whose tag already matches.
+ * index is one open-addressed array that is replaced whole when it grows. The
+ * key is read back out of the record (`KeyOf`), so an index entry is 32 bits:
+ * the record's number in the order it was carved, with the top bits of the
+ * key's hash beside it so that a probe only resolves a record whose tag
+ * already matches. Chunk sizes follow a fixed sequence, so a number names its
+ * chunk and slot arithmetically.
  */
 template <typename Record, typename KeyOf>
 class StableRecordTable final {
@@ -55,7 +58,7 @@ public:
 			if (entry == 0)
 				return nullptr;
 			if ((entry & tag_mask) == tag) {
-				auto *record = pointer_of(entry);
+				auto *record = record_at(entry & ~tag_mask);
 				if (KeyOf{}(*record) == key)
 					return record;
 			}
@@ -67,14 +70,19 @@ public:
 	[[nodiscard]] std::pair<Record *, bool> try_emplace(
 		std::uint64_t key, Arguments &&...arguments)
 	{
+		/* A record's number is how many were carved before it, which a
+		 * constructor that threw after carving would break. */
+		static_assert(std::is_nothrow_constructible_v<Record, Arguments...>);
 		if (auto *found = find(key); found != nullptr)
 			return {found, false};
+		if (size_ == maximum_records)
+			throw std::bad_alloc{};
 		if ((size_ + 1) * 4 > capacity() * 3)
 			grow();
 		auto *record = new (carve()) Record(
 			std::forward<Arguments>(arguments)...);
 		assert(KeyOf{}(*record) == key);
-		insert(record, mix(key));
+		insert(static_cast<std::uint32_t>(size_ + 1U), mix(key));
 		++size_;
 		return {record, true};
 	}
@@ -84,7 +92,7 @@ public:
 	/* What the table holds: its chunks and its index. */
 	[[nodiscard]] std::size_t bytes() const noexcept
 	{
-		std::size_t total = capacity() * sizeof(std::uint64_t) +
+		std::size_t total = capacity() * sizeof(std::uint32_t) +
 			chunks_.capacity() * sizeof(Chunk);
 		for (const auto &chunk : chunks_)
 			total += chunk.count * sizeof(Record);
@@ -106,16 +114,26 @@ public:
 private:
 	/* Records per chunk: small for the many short-lived address spaces a
 	 * desktop guest creates, doubling to a bound so a long-lived one wastes at
-	 * most one partly used chunk of that size. */
+	 * most one partly used chunk of that size. The chunks that double before
+	 * reaching the bound hold `doubling_records` between them; every chunk
+	 * after them holds `largest_chunk`. */
 	static constexpr std::size_t first_chunk = 32;
 	static constexpr std::size_t largest_chunk =
 		std::max<std::size_t>(first_chunk, (std::size_t{128} << 10) / sizeof(Record));
+	static constexpr unsigned doubling_chunks = static_cast<unsigned>(
+		std::bit_width((largest_chunk - 1U) / first_chunk));
+	static constexpr std::size_t doubling_records =
+		first_chunk * ((std::size_t{1} << doubling_chunks) - 1U);
 	static constexpr std::size_t first_capacity = 64;
-	/* Host user addresses fit in 48 bits on every supported product, which
-	 * leaves the top sixteen for a tag. */
-	static constexpr unsigned pointer_bits = 48;
-	static constexpr std::uint64_t tag_mask =
-		~((std::uint64_t{1} << pointer_bits) - 1U);
+	/* An entry is a record number, one-based so that zero is empty, below a
+	 * six-bit tag. That numbers more records than a table could hold in
+	 * any memory the host would give it -- 2.5 GiB of 40-byte ones -- while
+	 * a probe still resolves only one mismatched record in 64. */
+	static constexpr unsigned number_bits = 26;
+	static constexpr std::uint32_t tag_mask =
+		~((std::uint32_t{1} << number_bits) - 1U);
+	static constexpr std::size_t maximum_records =
+		(std::size_t{1} << number_bits) - 1U;
 
 	struct Chunk final {
 		std::unique_ptr<std::byte[]> storage;
@@ -129,16 +147,29 @@ private:
 		return key ^ (key >> 29);
 	}
 
-	[[nodiscard]] static std::uint64_t tag_of(std::uint64_t hash) noexcept
+	[[nodiscard]] static std::uint32_t tag_of(std::uint64_t hash) noexcept
 	{
-		/* Never zero, so no entry is ever the empty word. */
-		return (hash | (std::uint64_t{1} << 63)) & tag_mask;
+		return static_cast<std::uint32_t>(hash >> 32) & tag_mask;
 	}
 
-	[[nodiscard]] static Record *pointer_of(std::uint64_t entry) noexcept
+	/* The record with one-based number `number`. */
+	[[nodiscard]] Record *record_at(std::uint32_t number) const noexcept
 	{
-		return reinterpret_cast<Record *>(
-			static_cast<std::uintptr_t>(entry & ~tag_mask));
+		const std::size_t ordinal = number - 1U;
+		std::size_t chunk = 0;
+		std::size_t slot = 0;
+		if (ordinal < doubling_records) {
+			/* Chunk k begins at first_chunk * (2^k - 1). */
+			chunk = static_cast<std::size_t>(
+				std::bit_width(ordinal / first_chunk + 1U)) - 1U;
+			slot = ordinal - first_chunk * ((std::size_t{1} << chunk) - 1U);
+		} else {
+			const auto beyond = ordinal - doubling_records;
+			chunk = doubling_chunks + beyond / largest_chunk;
+			slot = beyond % largest_chunk;
+		}
+		return std::launder(reinterpret_cast<Record *>(
+			chunks_[chunk].storage.get() + slot * sizeof(Record)));
 	}
 
 	[[nodiscard]] std::size_t capacity() const noexcept
@@ -146,28 +177,27 @@ private:
 		return index_ == nullptr ? 0 : mask_ + 1;
 	}
 
-	void insert(Record *record, std::uint64_t hash) noexcept
+	void insert(std::uint32_t number, std::uint64_t hash) noexcept
 	{
-		const auto address = reinterpret_cast<std::uintptr_t>(record);
-		assert((address & tag_mask) == 0);
+		assert(number != 0 && (number & tag_mask) == 0);
 		auto position = hash & mask_;
 		while (index_[position] != 0)
 			position = (position + 1) & mask_;
-		index_[position] = tag_of(hash) | address;
+		index_[position] = tag_of(hash) | number;
 	}
 
 	void grow()
 	{
 		const auto next = std::max<std::size_t>(first_capacity, capacity() * 2);
-		auto replacement = std::make_unique<std::uint64_t[]>(next);
+		auto replacement = std::make_unique<std::uint32_t[]>(next);
 		auto previous = std::move(index_);
 		const auto previous_capacity = previous == nullptr ? 0 : mask_ + 1;
 		index_ = std::move(replacement);
 		mask_ = next - 1;
 		for (std::size_t position = 0; position < previous_capacity; ++position)
 			if (const auto entry = previous[position]; entry != 0) {
-				auto *record = pointer_of(entry);
-				insert(record, mix(KeyOf{}(*record)));
+				const auto number = entry & ~tag_mask;
+				insert(number, mix(KeyOf{}(*record_at(number))));
 			}
 	}
 
@@ -190,7 +220,7 @@ private:
 
 	std::vector<Chunk> chunks_;
 	std::size_t used_{};
-	std::unique_ptr<std::uint64_t[]> index_;
+	std::unique_ptr<std::uint32_t[]> index_;
 	std::size_t mask_{};
 	std::size_t size_{};
 };

@@ -129,6 +129,7 @@ arm64-gadget-fp-environment	tests/unit/arm64	unit	retained
 arm64-gadget-links	tests/unit/arm64	unit	retained
 arm64-gadget-dependencies	tests/unit/arm64/arm64_gadget_dependency_tests.cpp	unit	retained
 arm64-gadget-indirect-links	tests/unit/arm64	unit	retained
+gadget-record-table	tests/unit/arm64	unit	retained
 arm64-base-arithmetic-allocation	tests/unit/arm64	unit	retained
 arm64-base-bit-allocation	tests/unit/arm64	unit	retained
 arm64-base-multiply-allocation	tests/unit/arm64	unit	retained
