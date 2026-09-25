@@ -39,3 +39,11 @@ uml_add_tooling_test(
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     LABELS performance;steam
     TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME android-launch-suite-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/android_launch_suite_tests.py
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS performance;android
+    TIMEOUT 30)

@@ -211,6 +211,34 @@ scheduling, and they exclude the cost of presenting real pixels. Because the
 first boot includes a network download, report its total, the download bytes
 and duration, and the total excluding the download window together.
 
+## Android application launch time
+
+`android_launch_suite.py` times cold launches of the applications in
+`android_launch_apps.tsv` in one Android guest boot. Each run boots an APFS
+clone of a prepared source disk, so every arm starts from the same installed
+and compiled state and the source disk is never written. Each round force-stops
+every application and times it from the activity manager's `START` line to the
+first logcat line that matches its completion pattern, both by the guest's
+logcat timestamps. A row's pattern marks the end of the launch's work: for a
+game, its first playable scene rather than its splash screen.
+
+```sh
+python3 tests/perf/android_launch_suite.py --emulator BUILD/bin/uml-darwin-android17 \
+  --release RELEASE --source-disk PREPARED.img --work-disk RUN.img \
+  --label candidate --output launches.jsonl
+python3 tests/perf/android_launch_suite.py --summary launches.jsonl
+```
+
+Each launch record also carries `am start -W`'s `TotalTime` (first frame), the
+emulator's CPU seconds during the launch, its threads' scheduling priorities (a
+napped emulator drops from 31 to 4 and launches several times slower), and the
+host load. A launch that misses its limit is recorded with no time and left out
+of the medians. The source disk's `.release-id` must name the release, because
+the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
+arm's emulator environment; `--guest-samples PATH` profiles the boot with the
+guest code sampler below. Guests are not serialized by the tool: take the GPU
+lock and a guest slot around each run, and alternate arms (ABBA) across runs.
+
 ## Gadget forwarding controls
 
 Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
