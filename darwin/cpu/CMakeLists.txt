@@ -304,6 +304,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/pair_histogram.cpp
     arm64/gadgets/dependency_coverage.cpp
     arm64/gadgets/execution_histogram.cpp
+    arm64/gadgets/guest_sampler.cpp
     arm64/gadgets/scalar_forwarding.cpp
     arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from

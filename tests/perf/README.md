@@ -282,6 +282,29 @@ models the fast-path cost per guest instruction; per-thread hardware
 counters from an `xctrace` CPU Counters recording measure the whole engine.
 Both remain diagnostics, not scores.
 
+## Guest code sampling
+
+Every arm64 gadgets build carries a statistical profiler of translated guest
+code that needs nothing from the guest, so it also profiles applications a
+production Android build keeps from `simpleperf`. Set
+`DARWIN_UML_GUEST_SAMPLES` to `PATH` or `PATH:HZ` (default 1000 passes a
+second); the profile is rewritten there every two seconds, when a run ends,
+and at exit. A sampler thread suspends each vCPU carrier in turn; when the
+carrier is inside gadget code, its executor names the translated block and the
+guest instruction words it came from, and any other host PC is counted by host
+symbol (the guest kernel, the executor, translation, MMU). Guest entry and exit
+store one flag each; the translated code is unchanged. Only the gadgets engine
+is sampled, so a macOS run, whose default engine is the JIT, needs
+`--execution-engine=gadgets`.
+
+`symbolize_guest_samples.py PROFILE ELF_OR_DIR...` finds each block's words in
+the executable segments of the ELF files given, which places it in a library
+and function regardless of where the guest loaded it. For an Android
+application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
+`/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
+builds). A block is attributed at its first instruction, so time in a block
+that falls through a function boundary counts against the first function.
+
 ## Cache census
 
 A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's

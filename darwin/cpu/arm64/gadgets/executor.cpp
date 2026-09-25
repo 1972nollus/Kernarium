@@ -755,6 +755,32 @@ public:
 		return result;
 	}
 
+	/* The same lookup for the guest sampler, which runs while this
+	 * executor's thread is suspended in gadget code: reads only. A block
+	 * with an inlined callee is described by its first run, the only words
+	 * contiguous in guest memory. */
+	[[nodiscard]] bool sample_block(const void *stream,
+		diagnostics::SampledBlock &block) const noexcept
+	{
+		const auto *body = static_cast<const Body *>(bodies_.owner(stream));
+		if (body == nullptr)
+			return false;
+		const auto *word = static_cast<const std::uintptr_t *>(stream);
+		if (word < body->link_entry() ||
+		    word >= body->words() + body->word_count)
+			return false;
+		const auto runs = body->extra_runs();
+		const std::uint32_t contiguous = runs.empty() ?
+			body->source_word_count : runs.front().instructions;
+		block.guest_address = body->guest_address;
+		block.instruction_count = body->instruction_count;
+		block.word_count = std::min<std::uint32_t>(
+			{contiguous, body->source_word_count,
+			 static_cast<std::uint32_t>(diagnostics::sampled_block_words)});
+		std::copy_n(body->source_words(), block.word_count, block.words);
+		return true;
+	}
+
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(
 		std::uint64_t pc)
 	{
@@ -1613,13 +1639,16 @@ private:
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 	: programs_{std::make_unique<ProgramCache>()},
 	  build_options_{build_options},
-	  profile_{profile_digest(build_options)}
+	  profile_{profile_digest(build_options)},
+	  sampling_{diagnostics::guest_sampling_register(*this)}
 {
 	arm64::gadgets::SharedProgramStore::executor_created();
 }
 
 GadgetExecutor::~GadgetExecutor()
 {
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_unregister(*sampling_);
 #if UML_GADGET_CACHE_CENSUS
 	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
 	    path != nullptr && *path != '\0') {
@@ -1646,12 +1675,18 @@ bool GadgetExecutor::begin_execution(unsigned long generation,
 {
 	preempted_ = false;
 	auto *context = execution_context(generation);
-	return context != nullptr &&
-		darwin_uml_static_vm_execution_context_begin(context, guest_pc) == 0;
+	if (context == nullptr ||
+	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
+		return false;
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_enter(*sampling_);
+	return true;
 }
 
 void GadgetExecutor::end_execution() noexcept
 {
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_leave(*sampling_);
 	if (current_cpu_ != nullptr) {
 		/* A miss is a pointer into this executor's cache, not architectural
 		 * state. Learning the target can allocate after the guest branch has
@@ -1713,6 +1748,12 @@ void GadgetExecutor::prepare_cache(
 #endif
 	cache_generation_ = generation;
 	cache_changes_ = changes;
+}
+
+bool GadgetExecutor::sample_block(const void *stream,
+	diagnostics::SampledBlock &block) const noexcept
+{
+	return programs_->sample_block(stream, block);
 }
 
 std::optional<BuildResult> GadgetExecutor::find(

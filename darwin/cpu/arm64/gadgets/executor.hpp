@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/gadgets/execution_histogram.hpp"
+#include "cpu/arm64/gadgets/guest_sampler.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/tlb.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -51,11 +52,13 @@ struct GadgetCacheDiagnostics final {
 #endif
 };
 
-class GadgetExecutor final {
+class GadgetExecutor final : diagnostics::SampledExecutor {
 public:
 	explicit GadgetExecutor(
 		BuildOptions build_options = {});
 	~GadgetExecutor();
+	GadgetExecutor(const GadgetExecutor &) = delete;
+	GadgetExecutor &operator=(const GadgetExecutor &) = delete;
 	[[nodiscard]] bool begin_execution(unsigned long generation,
 					   std::uint64_t guest_pc);
 	void end_execution() noexcept;
@@ -77,6 +80,9 @@ public:
 	}
 
 private:
+	[[nodiscard]] bool sample_block(const void *stream,
+		diagnostics::SampledBlock &block) const noexcept override;
+
 	/* A cached translation is handed out as a BuildResult whose program
 	 * borrows the cache's words, so it is valid until the next store. */
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
@@ -120,6 +126,8 @@ private:
 	 * the duration of one run_block. */
 	::uml::memory::StaticGuestMemory *build_memory_{};
 	GadgetCacheDiagnostics cache_diagnostics_{};
+	/* Null unless DARWIN_UML_GUEST_SAMPLES is set. */
+	diagnostics::GuestSamplingSlot *sampling_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets

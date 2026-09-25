@@ -268,6 +268,7 @@ network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	too
 jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
 gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
 performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
+guest-sample-symbolization	tests/tooling/performance/symbolize_guest_samples_tests.py	tooling	retained
 steam-boot-bench-contract	tests/tooling/performance/steam_boot_bench_tests.py	tooling	retained
 arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
 arm64-instruction-corpus-freshness	tests/tooling/arm64/test_arm64_instruction_corpus.py	tooling	retained
@@ -316,6 +317,7 @@ guest-gadgets-smoke	tests/integration/jit	integration	retained
 guest-jit-smoke	tests/integration/jit	integration	retained
 guest-slirp-network	tests/integration/network	integration	retained
 guest-slirp-network-transfer	tests/integration/network	integration	retained
+guest-code-sampler	tests/integration/profiling	integration	retained
 apple-ios-mac-vk-gl-cts	tests/integration/gpu	integration	conditional
 apple-ios-device-vk-cts	tests/integration/gpu	integration	conditional
 guest-mmu-stress	tests/integration/smp	integration	retained
