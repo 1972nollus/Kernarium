@@ -1,7 +1,7 @@
 From d4eb1dc9528ec40b871dc82dbe960fc9b85e4eab Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 11:27:11 +0900
-Subject: [PATCH 45/46] UML-DARWIN-LOCAL: uml: trim page cache the host already
+Subject: [PATCH 45/47] UML-DARWIN-LOCAL: uml: trim page cache the host already
  caches
 
 Every UML disk is a host file with a host page cache of its own, so a

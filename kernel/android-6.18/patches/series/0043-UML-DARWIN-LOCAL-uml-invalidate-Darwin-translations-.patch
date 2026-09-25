@@ -1,7 +1,7 @@
 From ee0e1fd70a735a9481fae9ac8d12e24a937882f5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 18:14:48 +0900
-Subject: [PATCH 43/46] UML-DARWIN-LOCAL: uml: invalidate Darwin translations
+Subject: [PATCH 43/47] UML-DARWIN-LOCAL: uml: invalidate Darwin translations
  after kernel text writes
 
 Darwin guests run user code through host translations that are cached

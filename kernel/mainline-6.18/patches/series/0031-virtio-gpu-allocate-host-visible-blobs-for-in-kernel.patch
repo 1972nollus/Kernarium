@@ -1,7 +1,7 @@
 From 0c9a51dedbe9177d7327ac1440d2d70b1237d629 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 22 Sep 2026 18:31:18 +0900
-Subject: [PATCH 31/42] virtio-gpu: allocate host-visible blobs for in-kernel
+Subject: [PATCH 31/43] virtio-gpu: allocate host-visible blobs for in-kernel
  consumers
 
 A guest driver that fills a buffer its client then renders from cannot use

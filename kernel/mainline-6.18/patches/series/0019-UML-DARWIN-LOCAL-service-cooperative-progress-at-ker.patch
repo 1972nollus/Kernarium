@@ -1,7 +1,7 @@
 From f7e59b0097ee3bbd57ac37b16aaadafd27459b6e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:28 +0900
-Subject: [PATCH 19/42] UML-DARWIN-LOCAL: service cooperative progress at
+Subject: [PATCH 19/43] UML-DARWIN-LOCAL: service cooperative progress at
  kernel quiescent points
 
 Keep timer checkpoints, safe loop boundaries, quiescent timer service, and the pre-cond_resched poll together as one cooperative-progress topic.

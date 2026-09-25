@@ -1,4 +1,4 @@
-From e0400b2b0a5caa99119e569dbb8669ea6e7fdb2e Mon Sep 17 00:00:00 2001
+From db81f8843770b61fb8b7d46ba534e78401e9c169 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 01:55:46 +0900
 Subject: [PATCH 1/5] arm64: add a dedicated x86-64 userspace UML slice

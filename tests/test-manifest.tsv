@@ -30,6 +30,8 @@ gpu-transport-descriptor-ceiling	tests/unit/gpu/vhost_user_descriptor_ceiling_te
 gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
 gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
 gpu-host-pointer-image	tests/unit/gpu/host_gl_host_pointer_image_tests.cpp	unit	conditional
+gpu-transfer-context-error	tests/unit/gpu/host_gl_transfer_context_error_tests.cpp	unit	conditional
+gpu-resource-metal-texture	tests/unit/gpu/host_gl_resource_metal_texture_tests.mm	unit	conditional
 gpu-cross-context-readback	tests/unit/gpu/host_gl_cross_context_readback_tests.cpp	unit	conditional
 gpu-depth-format-advertisement	tests/unit/gpu/host_gl_depth_format_advertisement_tests.cpp	unit	conditional
 gpu-line-loop-statistics	tests/unit/gpu/host_gl_line_loop_statistics_tests.cpp	unit	conditional
@@ -294,6 +296,7 @@ kernel-compressed-memory-policy	tests/tooling/kernel/test_compressed_memory_poli
 kernel-virtio-gpu-shutdown-policy	tests/tooling/kernel/test_virtio_gpu_shutdown_policy.py	tooling	retained
 kernel-ubd-discard-policy	tests/tooling/kernel/test_ubd_discard_policy.py	tooling	retained
 kernel-virtio-gpu-shared-memory-policy	tests/tooling/kernel/test_virtio_gpu_shared_memory_policy.py	tooling	retained
+kernel-virtio-gpu-context-attach-policy	tests/tooling/kernel/test_virtio_gpu_context_attach_policy.py	tooling	retained
 apple-shared-kernel-image-policy	tests/tooling/kernel/test_apple_kernel_image_policy.py	tooling	retained
 darwin-init-mm-tlb-policy	tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py	tooling	conditional
 darwin-vcpu-carrier-policy	tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py	tooling	conditional

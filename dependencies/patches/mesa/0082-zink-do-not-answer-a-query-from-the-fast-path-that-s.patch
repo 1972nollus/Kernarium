@@ -1,7 +1,7 @@
 From 6928a8cd8f7dea63cbf88b5f919b53148359c02d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 15:15:23 +0900
-Subject: [PATCH 082/102] zink: do not answer a query from the fast path that
+Subject: [PATCH 082/103] zink: do not answer a query from the fast path that
  skips its fixups
 
 zink_get_query_result() has a non-blocking shortcut that reads one Vulkan

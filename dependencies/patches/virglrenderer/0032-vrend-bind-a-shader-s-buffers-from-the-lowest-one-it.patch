@@ -1,7 +1,7 @@
-From 789a8c13289bd92b989958fc58e7f26b4f4c551e Mon Sep 17 00:00:00 2001
+From da2d64c53aafd21421c1274f1aec6bfecba89d5a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 08:20:46 +0900
-Subject: [PATCH 32/50] vrend: bind a shader's buffers from the lowest one it
+Subject: [PATCH 32/51] vrend: bind a shader's buffers from the lowest one it
  declares
 
 A guest that lowers its buffer bindings numbers its TGSI buffer declarations

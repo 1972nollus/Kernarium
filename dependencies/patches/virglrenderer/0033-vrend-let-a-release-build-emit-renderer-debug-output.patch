@@ -1,7 +1,7 @@
-From 9de77895dcb154bacd32de69242e7184af4cbc8d Mon Sep 17 00:00:00 2001
+From 55a0300bc911658abc6d9f20c073aa0e23258e07 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 08:17:36 +0900
-Subject: [PATCH 33/50] vrend: let a release build emit renderer debug output
+Subject: [PATCH 33/51] vrend: let a release build emit renderer debug output
 
 VREND_DEBUG_ENABLED was the build's assert configuration, so every
 VREND_DEBUG/VREND_DEBUG_EXT site compiled to nothing in a release build and

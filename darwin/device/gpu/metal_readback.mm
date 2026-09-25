@@ -117,6 +117,14 @@ struct MetalReadbackState final :
             return std::nullopt;
         }
 
+        if (scanout.flipped) {
+            /* The copy keeps the texture's row order; the CPU framebuffer
+             * path already reads a bottom-up resource the right way up. */
+            activity.record(
+                "readback reject=orientation texture=%p", scanout.texture);
+            return std::nullopt;
+        }
+
         id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
         const bool supportedType = texture != nil &&
             (texture.textureType == MTLTextureType2D ||

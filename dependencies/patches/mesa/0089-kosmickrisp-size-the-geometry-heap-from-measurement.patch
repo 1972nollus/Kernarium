@@ -1,7 +1,7 @@
 From 93681788224563749828c426026093a302903d93 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 17:57:39 +0900
-Subject: [PATCH 089/102] kosmickrisp: size the geometry heap from measurement
+Subject: [PATCH 089/103] kosmickrisp: size the geometry heap from measurement
 
 The per-device geometry heap was a fixed 128 MiB placement heap, taken whole
 the first time a command buffer draws through it. The size was a placeholder,

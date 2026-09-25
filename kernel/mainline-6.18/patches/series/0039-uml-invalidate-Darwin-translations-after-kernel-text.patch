@@ -1,7 +1,7 @@
 From d6752d94ba20393808bd4c3efa4e40be56ccb6a3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 18:14:48 +0900
-Subject: [PATCH 39/42] uml: invalidate Darwin translations after kernel text
+Subject: [PATCH 39/43] uml: invalidate Darwin translations after kernel text
  writes
 
 Darwin guests run user code through host translations that are cached

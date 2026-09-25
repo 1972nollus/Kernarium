@@ -1,7 +1,7 @@
-From 66b628b4d1eee501901c6b69a63d4968ac7e81a9 Mon Sep 17 00:00:00 2001
+From 696f3ed02242e25f343617d85431fac5ee5b5553 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 21:26:15 +0900
-Subject: [PATCH 27/50] vrend: import a shared-memory blob where nothing can
+Subject: [PATCH 27/51] vrend: import a shared-memory blob where nothing can
  build a texture over it
 
 A Venus context exports a Vulkan swapchain image as a shared-memory blob, and

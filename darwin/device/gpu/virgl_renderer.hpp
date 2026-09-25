@@ -53,6 +53,18 @@ public:
         std::uint32_t depth {};
     };
 
+    /* The Metal texture a resource is stored in, as the renderer describes
+     * it. The texture is borrowed: it stays valid while the resource keeps
+     * its storage, so a caller asks again for every frame. */
+    struct NativeTexture {
+        void* texture {};
+        std::uint32_t format {};
+        std::uint32_t width {};
+        std::uint32_t height {};
+        /* The resource's first row is the bottom of the image it holds. */
+        bool bottomUp {};
+    };
+
     struct ResourceBlob {
         std::uint32_t resourceId {};
         std::uint32_t contextId {};
@@ -127,7 +139,7 @@ public:
         std::uint32_t height) noexcept;
     [[nodiscard]] int resourceMetalTexture(
         std::uint32_t resourceId,
-        void*& texture) noexcept;
+        NativeTexture& texture) noexcept;
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,

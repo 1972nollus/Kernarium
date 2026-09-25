@@ -1,7 +1,7 @@
 From a03f2c89f8b20ca3accea4fffba0b2669d654801 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 14:51:41 +0900
-Subject: [PATCH 040/102] kosmickrisp: declare MSL temporaries without a dead
+Subject: [PATCH 040/103] kosmickrisp: declare MSL temporaries without a dead
  store
 
 MSL has no SSA form, so nir_to_msl declares every value at function scope

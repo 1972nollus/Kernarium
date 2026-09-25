@@ -1,7 +1,7 @@
 From a350eac9c1dda08828b01be13237cd3dead8dbef Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 20:58:49 +0900
-Subject: [PATCH 16/50] virgl: complete a query a guest spins on without a
+Subject: [PATCH 16/51] virgl: complete a query a guest spins on without a
  fence
 
 A guest blocked on a query result spins on the buffer the host writes the

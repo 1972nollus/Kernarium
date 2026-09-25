@@ -1,7 +1,7 @@
-From 016cd1e067896e4f27757f37c7a0717af20298c8 Mon Sep 17 00:00:00 2001
+From 756a8894b39a876cd1e40b6c9d2e352002172c27 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 02:03:55 +0900
-Subject: [PATCH 47/50] venus: end a reply stream where the guest declared it
+Subject: [PATCH 47/51] venus: end a reply stream where the guest declared it
 
 vkr_cs_encoder_set_stream_locked() validates the offset and size the guest
 passes through vkSetReplyCommandStreamMESA, stores them, and then sets the

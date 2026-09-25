@@ -135,6 +135,16 @@ mapping-capacity policy for its Venus Vulkan HAL. The two maintained kernel
 lines adapt the topic to their own source histories while preserving the same
 host-visible Virtio-GPU contract.
 
+A Virtio-GPU file on a device with context initialization has no context until
+it initializes one or its first transfer, submission, or resource creation
+creates it. Every handle the file opened before then, typically a PRIME
+import, is attached to the context when it is created, as a handle opened
+afterwards is when it opens; closing one first drops it without a detach.
+Upstream attaches only handles opened after the context exists, so the host
+refused every transfer that named such a buffer. Android's gralloc mapper reads
+an imported buffer exactly that way, which blanked every screenshot. The ACK
+line carries the same change.
+
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
 consumers do not retain a second full-span mapping. Guest RAM is committed on

@@ -1,7 +1,7 @@
 From 33a9a84b9afb92fcee2406112be6e0ad4963b0ff Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 18:52:26 +0900
-Subject: [PATCH 007/102] kosmickrisp: preserve fused fp32 semantics
+Subject: [PATCH 007/103] kosmickrisp: preserve fused fp32 semantics
 
 ---
  src/kosmickrisp/compiler/nir_to_msl.c | 112 +++++++++++++++++++++++++-

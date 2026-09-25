@@ -1,7 +1,7 @@
 From c6a2d80ff47b92dc370beff862f2ebbcdba397f4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 11:27:11 +0900
-Subject: [PATCH 41/42] uml: trim page cache the host already caches
+Subject: [PATCH 41/43] uml: trim page cache the host already caches
 
 Every UML disk is a host file with a host page cache of its own, so a
 guest page-cache page duplicates data the host already holds. Only the

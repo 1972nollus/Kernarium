@@ -1,7 +1,7 @@
 From fea8ca86d3e89a9d29bf96c9cc6cc1a047613ca1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 12:31:36 +0900
-Subject: [PATCH 42/42] virtio_balloon: do not wait for an answer from a broken
+Subject: [PATCH 42/43] virtio_balloon: do not wait for an answer from a broken
  device
 
 tell_host() ignored the result of virtqueue_add_outbuf() and then waited,

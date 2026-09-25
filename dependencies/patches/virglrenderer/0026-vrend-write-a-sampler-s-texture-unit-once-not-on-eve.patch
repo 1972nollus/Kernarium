@@ -1,7 +1,7 @@
-From 2190983fb777da31e63fafc40f3e8e65a9dfbeca Mon Sep 17 00:00:00 2001
+From a9427c3ad6d9e64bd0522b3361662d49d8b764ec Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 17:49:05 +0900
-Subject: [PATCH 26/50] vrend: write a sampler's texture unit once, not on
+Subject: [PATCH 26/51] vrend: write a sampler's texture unit once, not on
  every bind
 
 The unit a sampler uniform is bound to follows from the program's own sampler

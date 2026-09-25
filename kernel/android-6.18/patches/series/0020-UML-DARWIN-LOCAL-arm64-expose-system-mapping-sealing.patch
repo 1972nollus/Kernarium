@@ -1,7 +1,7 @@
 From eead5e844aa6fd27a7234a907aeef8a577eb2d35 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:23:07 +0000
-Subject: [PATCH 20/46] UML-DARWIN-LOCAL: arm64: expose system mapping sealing
+Subject: [PATCH 20/47] UML-DARWIN-LOCAL: arm64: expose system mapping sealing
 
 Change-Id: Id936ccc8a6efc6ef384bb9d377812f6fc8091410
 ---

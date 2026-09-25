@@ -1,7 +1,7 @@
-From 148e6fa5e7d1bf84fda0b8621e2da1bd406e6971 Mon Sep 17 00:00:00 2001
+From fd3fc8a836fe942ca8259a62cc46189730ea6031 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:45:41 +0900
-Subject: [PATCH 18/50] vrend: require EXT_texture_shadow_lod only for a real
+Subject: [PATCH 18/51] vrend: require EXT_texture_shadow_lod only for a real
  bias or LOD
 
 TGSI appends every operand that does not fit the coordinate vector to the

@@ -1,7 +1,7 @@
 From eeb52e0b13d49fbd3443c49a30d00e0955f36002 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:59:33 +0900
-Subject: [PATCH 026/102] kosmickrisp: support dynamic logic operations
+Subject: [PATCH 026/103] kosmickrisp: support dynamic logic operations
 
 ---
  src/compiler/nir/nir_lower_blend.c           |  78 +++++++++--
