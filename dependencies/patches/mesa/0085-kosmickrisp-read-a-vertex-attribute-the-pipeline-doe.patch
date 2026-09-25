@@ -1,7 +1,7 @@
 From dc329515d6d5a7f2cd8324e9751ef606f9ec9f86 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 09:52:56 +0900
-Subject: [PATCH 085/103] kosmickrisp: read a vertex attribute the pipeline
+Subject: [PATCH 085/104] kosmickrisp: read a vertex attribute the pipeline
  does not describe
 
 A vertex shader may declare an input that the pipeline's vertex-input

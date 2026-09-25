@@ -1,7 +1,7 @@
 From c1fba15929294d60a2b6c74e36ad30554d8c9592 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 16 Sep 2026 19:03:28 +0900
-Subject: [PATCH 084/103] zink: let a generated TCS stop naming the nir its
+Subject: [PATCH 084/104] zink: let a generated TCS stop naming the nir its
  program freed
 
 zink_shader_tcs_init() builds the generated tessellation control shader out of

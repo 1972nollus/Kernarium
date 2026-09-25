@@ -1,7 +1,7 @@
 From ae59641c28023616281a56c241192a90573f4c66 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 12:03:45 +0900
-Subject: [PATCH 098/103] kosmickrisp: lose the device when the Metal command
+Subject: [PATCH 098/104] kosmickrisp: lose the device when the Metal command
  queue stops
 
 A signal this driver hands Metal is delivered by the queue it was enqueued

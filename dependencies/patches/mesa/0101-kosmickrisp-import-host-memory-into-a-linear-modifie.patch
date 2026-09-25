@@ -1,7 +1,7 @@
 From ba3e33d15358ac0f9424043ab078831caa6f9549 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 09:07:17 +0900
-Subject: [PATCH 101/103] kosmickrisp: import host memory into a linear
+Subject: [PATCH 101/104] kosmickrisp: import host memory into a linear
  modifier image
 
 Imported host memory becomes a MTLBuffer and never a MTLHeap, so an image over

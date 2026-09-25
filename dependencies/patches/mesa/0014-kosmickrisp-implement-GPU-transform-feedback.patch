@@ -1,7 +1,7 @@
 From d2f94c3e1a0ca855c7ce8030c6c71b6c13b9a983 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 16:16:25 +0900
-Subject: [PATCH 014/103] kosmickrisp: implement GPU transform feedback
+Subject: [PATCH 014/104] kosmickrisp: implement GPU transform feedback
 
 ---
  src/kosmickrisp/libkk/kk_draws.cl             |  12 +

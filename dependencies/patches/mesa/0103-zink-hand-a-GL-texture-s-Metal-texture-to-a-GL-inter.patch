@@ -1,7 +1,7 @@
 From 9fbb42bfe47295749fadbddd878e13d2df64f4ef Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 02:04:06 +0900
-Subject: [PATCH 103/103] zink: hand a GL texture's Metal texture to a GL
+Subject: [PATCH 103/104] zink: hand a GL texture's Metal texture to a GL
  interop caller
 
 On an Apple host a GL texture zink creates is stored in a Metal texture:

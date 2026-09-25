@@ -1,7 +1,7 @@
 From 43a350432f44c1552fcb82088de7972f548cfa67 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:35:40 +0900
-Subject: [PATCH 031/103] kosmickrisp: match initial render pass attachment
+Subject: [PATCH 031/104] kosmickrisp: match initial render pass attachment
  samples
 
 Collect attachment sample counts before setting the Metal 4 render-pass default. Color-only multisample passes otherwise start with a raster sample count of one, leaving their source draw and subsequent resolves invalid.

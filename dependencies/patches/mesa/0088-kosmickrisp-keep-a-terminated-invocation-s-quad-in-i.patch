@@ -1,7 +1,7 @@
 From 14823fcc990dc854888d2bf51d70a35d072a32c4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 22:09:54 +0900
-Subject: [PATCH 088/103] kosmickrisp: keep a terminated invocation's quad in
+Subject: [PATCH 088/104] kosmickrisp: keep a terminated invocation's quad in
  its subgroup
 
 A fragment shader that declares RequireFullQuadsKHR keeps every invocation of
