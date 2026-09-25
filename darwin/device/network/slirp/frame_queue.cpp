@@ -78,6 +78,8 @@ void SlirpProvider::process_transmit_queue() noexcept
 			std::ranges::copy_n(source.data.begin(), length,
 					   frame.begin());
 			transmit_tail_ = (transmit_tail_ + 1) % ring_size;
+			if (transmit_space_waiters_ != 0)
+				transmit_space_.notify_all();
 		}
 #if UML_SLIRP_TESTING
 		processed_transmits_for_testing_.fetch_add(
@@ -148,16 +150,37 @@ int SlirpProvider::write(std::span<const std::byte> frame)
 	pause_write_before_commit_for_testing();
 #endif
 	{
-		std::lock_guard lock{transmit_mutex_};
+		std::unique_lock lock{transmit_mutex_};
 		/* stop() closes admission first and takes this same mutex before it
-		 * clears the ring or drains the wake pipe. The single existing started
-		 * load is deliberately inside that ownership interval: delayed writers
-		 * fail instead of committing into the next open() session. */
+		 * clears the ring or drains the wake pipe. The started load is
+		 * deliberately inside that ownership interval, and repeated after any
+		 * wait: delayed writers fail instead of committing into the next
+		 * open() session. */
 		if (!started_.load(std::memory_order_acquire))
 			return -EINVAL;
+		/* The guest driver has no transmit-queue flow control, so a refused
+		 * frame is a lost packet that TCP recovers only by retransmission -
+		 * and a burst of concurrent uploads overruns the ring well before the
+		 * event loop falls behind. The loop drains the whole ring each pass
+		 * and never waits on the guest, so wait for it to free a slot. The
+		 * bound keeps a stalled loop from holding a vCPU. */
+		const auto full = [this] {
+			return (transmit_head_ + 1) % ring_size == transmit_tail_;
+		};
+		if (full()) {
+			wake();
+			++transmit_space_waiters_;
+			transmit_space_.wait_for(lock, transmit_space_wait, [&] {
+				return !started_.load(std::memory_order_acquire) ||
+					!full();
+			});
+			--transmit_space_waiters_;
+			if (!started_.load(std::memory_order_acquire))
+				return -EINVAL;
+			if (full())
+				return -EAGAIN;
+		}
 		const auto next = (transmit_head_ + 1) % ring_size;
-		if (next == transmit_tail_)
-			return -EAGAIN;
 		auto &destination = transmit_ring_[transmit_head_];
 		destination.length = frame.size();
 		std::ranges::copy(frame, destination.data.begin());

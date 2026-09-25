@@ -230,6 +230,7 @@ arm64-fp8-convert-up-gadget	tests/unit/arm64	unit	retained
 arm64-fp8-convert-down-allocation	tests/unit/arm64	unit	retained
 slirp-network-arp	tests/tooling/network/slirp_arp_probe.cpp	tooling	conditional
 slirp-network-forward-specification	tests/tooling/network/slirp_forward_probe.cpp	tooling	conditional
+slirp-network-transmit-backpressure	tests/tooling/network/slirp_transmit_backpressure_probe.cpp	tooling	conditional
 guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained
 embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional
 virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional
@@ -267,7 +268,9 @@ network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	too
 jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
 gadget-dependency-analysis	tests/tooling/performance/analyze_gadget_dependencies_tests.py	tooling	retained
 performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
+guest-sample-symbolization	tests/tooling/performance/symbolize_guest_samples_tests.py	tooling	retained
 steam-boot-bench-contract	tests/tooling/performance/steam_boot_bench_tests.py	tooling	retained
+android-launch-suite-contract	tests/tooling/performance/android_launch_suite_tests.py	tooling	retained
 arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
 arm64-instruction-corpus-freshness	tests/tooling/arm64/test_arm64_instruction_corpus.py	tooling	retained
 arm64-jit-gpr-link-profile-codegen	tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp	unit	conditional
@@ -314,6 +317,8 @@ guest-overlay-systemd-smoke	tests/integration	integration	retained
 guest-gadgets-smoke	tests/integration/jit	integration	retained
 guest-jit-smoke	tests/integration/jit	integration	retained
 guest-slirp-network	tests/integration/network	integration	retained
+guest-slirp-network-transfer	tests/integration/network	integration	retained
+guest-code-sampler	tests/integration/profiling	integration	retained
 apple-ios-mac-vk-gl-cts	tests/integration/gpu	integration	conditional
 apple-ios-device-vk-cts	tests/integration/gpu	integration	conditional
 guest-mmu-stress	tests/integration/smp	integration	retained

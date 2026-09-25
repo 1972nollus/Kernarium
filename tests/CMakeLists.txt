@@ -177,6 +177,10 @@ if(TARGET uml_slirp_forward_tests)
     list(APPEND _uml_required_conditional_tests
         slirp-network-forward-specification)
 endif()
+if(TARGET uml_slirp_transmit_backpressure_tests)
+    list(APPEND _uml_required_conditional_tests
+        slirp-network-transmit-backpressure)
+endif()
 if(UML_BUILD_UNIT_TESTS AND TARGET uml_gpu_service)
     list(APPEND _uml_required_conditional_tests
         gpu-transport-wire-ownership

@@ -141,6 +141,14 @@ struct CpuState final {
 	static constexpr std::size_t return_stack_entries = 16;
 	std::array<ReturnRecord, return_stack_entries> gadget_return_stack{};
 	std::uint8_t gadget_return_top{};
+	/* Private gadget-engine target table of the running address space: a
+	 * direct-mapped array of {guest PC, BlockLink} records, indexed by a
+	 * fold of the target address, that a cached indirect branch consults
+	 * once its site cells -- and for a return the ring -- have missed. The
+	 * executor publishes it before every translated run; null turns the
+	 * lookup off. Like the ring, a stale or mismatched record can only fall
+	 * back to the ordinary miss path. */
+	const void *gadget_target_tier{};
 	[[nodiscard]] bool tagged_addresses_enabled() const noexcept
 	{
 		return mte_enabled || tbi_enabled;

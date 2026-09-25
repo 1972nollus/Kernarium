@@ -211,6 +211,34 @@ scheduling, and they exclude the cost of presenting real pixels. Because the
 first boot includes a network download, report its total, the download bytes
 and duration, and the total excluding the download window together.
 
+## Android application launch time
+
+`android_launch_suite.py` times cold launches of the applications in
+`android_launch_apps.tsv` in one Android guest boot. Each run boots an APFS
+clone of a prepared source disk, so every arm starts from the same installed
+and compiled state and the source disk is never written. Each round force-stops
+every application and times it from the activity manager's `START` line to the
+first logcat line that matches its completion pattern, both by the guest's
+logcat timestamps. A row's pattern marks the end of the launch's work: for a
+game, its first playable scene rather than its splash screen.
+
+```sh
+python3 tests/perf/android_launch_suite.py --emulator BUILD/bin/uml-darwin-android17 \
+  --release RELEASE --source-disk PREPARED.img --work-disk RUN.img \
+  --label candidate --output launches.jsonl
+python3 tests/perf/android_launch_suite.py --summary launches.jsonl
+```
+
+Each launch record also carries `am start -W`'s `TotalTime` (first frame), the
+emulator's CPU seconds during the launch, its threads' scheduling priorities (a
+napped emulator drops from 31 to 4 and launches several times slower), and the
+host load. A launch that misses its limit is recorded with no time and left out
+of the medians. The source disk's `.release-id` must name the release, because
+the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
+arm's emulator environment; `--guest-samples PATH` profiles the boot with the
+guest code sampler below. Guests are not serialized by the tool: take the GPU
+lock and a guest slot around each run, and alternate arms (ABBA) across runs.
+
 ## Gadget forwarding controls
 
 Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
@@ -281,6 +309,29 @@ shortest helper-free host-instruction path of its symbol (from `objdump -d`)
 models the fast-path cost per guest instruction; per-thread hardware
 counters from an `xctrace` CPU Counters recording measure the whole engine.
 Both remain diagnostics, not scores.
+
+## Guest code sampling
+
+Every arm64 gadgets build carries a statistical profiler of translated guest
+code that needs nothing from the guest, so it also profiles applications a
+production Android build keeps from `simpleperf`. Set
+`DARWIN_UML_GUEST_SAMPLES` to `PATH` or `PATH:HZ` (default 1000 passes a
+second); the profile is rewritten there every two seconds, when a run ends,
+and at exit. A sampler thread suspends each vCPU carrier in turn; when the
+carrier is inside gadget code, its executor names the translated block and the
+guest instruction words it came from, and any other host PC is counted by host
+symbol (the guest kernel, the executor, translation, MMU). Guest entry and exit
+store one flag each; the translated code is unchanged. Only the gadgets engine
+is sampled, so a macOS run, whose default engine is the JIT, needs
+`--execution-engine=gadgets`.
+
+`symbolize_guest_samples.py PROFILE ELF_OR_DIR...` finds each block's words in
+the executable segments of the ELF files given, which places it in a library
+and function regardless of where the guest loaded it. For an Android
+application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
+`/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
+builds). A block is attributed at its first instruction, so time in a block
+that falls through a function boundary counts against the first function.
 
 ## Cache census
 

@@ -275,6 +275,13 @@ An unavailable individual host port is reported without removing the guest's
 network interface. Filesystem socket paths are removed only by their owning
 guards or the common termination cleanup.
 
+The guest network driver has no transmit flow control, so a frame the provider
+refuses is lost and TCP must retransmit it. A guest transmit into a full
+transmit ring therefore waits, up to 500 ms, for the SLiRP event loop to free a
+slot; the loop never waits on the guest. `guest-slirp-network-transfer` checks
+that bulk, paced, concurrent, reader-stalled and request/response uploads reach
+a host listener intact, promptly and without a dropped frame.
+
 ## Guest storage and lifecycle
 
 The platform layer tracks every writable host descriptor opened for the guest.

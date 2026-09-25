@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../cpu_state.hpp"
+#include "../layout/assembly_offsets.h"
 #include "../../engine.hpp"
 #include "../fp_environment.hpp"
 #include "tlb.hpp"
@@ -473,6 +474,23 @@ static_assert(offsetof(IndirectLink, entries) == 0);
 static_assert(offsetof(IndirectLink, next_replacement) ==
 	16 * indirect_link_entries);
 static_assert(sizeof(IndirectLink) == 16 * indirect_link_entries + 8);
+
+/* An address space's target table (CpuState::gadget_target_tier): its
+ * indirect-site misses fill it, and the cached indirect gadgets consult it
+ * once a site's cells miss. The index is the target's word address within a
+ * 4 KiB page folded with its page number, exactly as the gadget code computes
+ * it, so that targets a multiple of 4 KiB apart -- page-aligned functions,
+ * handler tables -- do not collide. */
+inline constexpr std::size_t target_tier_entries =
+	std::size_t{1} << UML_GADGET_TARGET_TIER_BITS;
+static_assert(UML_GADGET_TARGET_TIER_BITS == 10,
+	"the fold pairs bits 2-11 with bits 12-21");
+
+[[nodiscard]] constexpr std::size_t target_tier_index(std::uint64_t pc) noexcept
+{
+	return static_cast<std::size_t>(((pc ^ (pc >> 10)) >> 2) &
+		(target_tier_entries - 1));
+}
 
 /* What a build needs in order to translate a callee inline: permission for this
  * particular callee, and a way to read guest instructions at an address other

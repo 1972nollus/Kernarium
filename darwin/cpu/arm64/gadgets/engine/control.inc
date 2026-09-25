@@ -228,10 +228,17 @@ gadget return
 97:
 #endif
 	.endif
+#if UML_GADGET_TARGET_TIER
+	/* The target table is consulted out of line, so the bank keeps the
+	 * layout it has without it; the padding is unreachable. */
+	b .Ltarget_tier\@
+	.space 12
+#else
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x10, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
+#endif
 98:
 	follow_block_link x12
 #if UML_GADGET_INDIRECT_ENTRIES < 4
@@ -245,6 +252,42 @@ gadget return
 	.space 68
 #endif
 	.endif
+#if UML_GADGET_TARGET_TIER
+	/* Every site of the address space shares one direct-mapped table of
+	 * {target, BlockLink}, filled by the cold helper at each miss, so a
+	 * target any site has missed on before is followed without a round
+	 * trip -- which is what a site with more targets than cells needs.
+	 * A hit trains the site's next cell as the ring does, so a site that
+	 * settles on few targets goes back to its cells. */
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+.Ltarget_tier\@:
+	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
+	cbz x13, .Ltarget_tier_miss\@
+	eor x14, x10, x10, lsr #10
+	ubfx x14, x14, #2, #UML_GADGET_TARGET_TIER_BITS
+	add x13, x13, x14, lsl #4
+	ldp x11, x12, [x13]
+	cmp x10, x11
+	b.ne .Ltarget_tier_miss\@
+	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	add x14, x9, x13, lsl #4
+	stp x10, x12, [x14]
+	add w13, w13, #1
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	follow_block_link x12
+.Ltarget_tier_miss\@:
+	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+	.popsection
+#endif
 .endm
 
 gadget branch_register_cached

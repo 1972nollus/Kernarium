@@ -314,6 +314,52 @@ void test_software_resolution_cache_drops_a_retired_domain()
 	require(uml::memory::testing::software_domain_count() == 0);
 }
 
+std::atomic_bool nest_next_software_acquisition{};
+std::atomic_int nested_activation_result{-2};
+constexpr std::uint64_t borrowed_domain = 16'001;
+constexpr std::uint64_t nested_domain = 16'002;
+constexpr unsigned long borrowed_generation = 910;
+constexpr unsigned long nested_generation = 911;
+
+void retire_and_resolve_while_acquired() noexcept
+{
+	if (!nest_next_software_acquisition.exchange(
+		    false, std::memory_order_acq_rel))
+		return;
+	active_domain.store(0, std::memory_order_release);
+	uml::memory::retire_domain(borrowed_domain);
+	active_domain.store(nested_domain, std::memory_order_release);
+	nested_activation_result.store(
+		darwin_uml_static_vm_activate(nested_generation),
+		std::memory_order_release);
+}
+
+/* An access may borrow its thread's cached reference to the address space, so
+ * that cache entry must stay put from resolution until the access is gone.
+ * Here the same thread retires the borrowed domain and resolves another one in
+ * between; replacing the entry would free the space the outer access is about
+ * to check. It must instead see the retirement and report ESHUTDOWN. */
+void test_software_nested_resolution_keeps_a_borrowed_space()
+{
+	active_domain.store(borrowed_domain, std::memory_order_release);
+	require(darwin_uml_static_vm_activate(borrowed_generation) == 0);
+	nest_next_software_acquisition.store(true, std::memory_order_release);
+	uml::memory::testing::set_software_address_space_acquired_hook(
+		&retire_and_resolve_while_acquired);
+	errno = 0;
+	const int outer = darwin_uml_static_vm_activate(borrowed_generation);
+	const int outer_errno = errno;
+	uml::memory::testing::set_software_address_space_acquired_hook(nullptr);
+
+	require(outer == -1 && outer_errno == ESHUTDOWN);
+	require(nested_activation_result.load(std::memory_order_acquire) == 0);
+	require(uml::memory::testing::software_domain_count() == 1);
+	require(darwin_uml_static_vm_activate(nested_generation) == 0);
+	active_domain.store(0, std::memory_order_release);
+	uml::memory::retire_domain(nested_domain);
+	require(uml::memory::testing::software_domain_count() == 0);
+}
+
 void test_software_thread_exit_closes_walker_and_execution()
 {
 	constexpr std::uint64_t domain = 14'001;
@@ -499,6 +545,7 @@ int main()
 	test_software_acquired_space_refuses_post_retirement_state_creation();
 	test_software_thread_state_recovers_after_domain_retirement();
 	test_software_resolution_cache_drops_a_retired_domain();
+	test_software_nested_resolution_keeps_a_borrowed_space();
 	test_software_thread_exit_closes_walker_and_execution();
 #if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 	test_native_registry_initialization_retries_once();

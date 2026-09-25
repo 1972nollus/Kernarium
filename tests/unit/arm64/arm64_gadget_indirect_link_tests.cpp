@@ -228,4 +228,85 @@ int main()
 		require(return_cpu.registers[0] == 77);
 		require(executed == 3);
 	}
+
+#if UML_GADGET_TARGET_TIER
+	/* A target the site's cells do not hold is followed through the address
+	 * space's target table, which also trains the site's next cell; without
+	 * a matching record, or with no table published, the site exits as
+	 * before. */
+	{
+		auto first_target = build_target(0x5000, 41);
+		auto second_target = build_target(0x6000, 42);
+		auto third_target = build_target(0x9000, 43);
+		LinkTarget first{0x5000};
+		LinkTarget second{0x6000};
+		LinkTarget third{0x9000};
+		first.resolve(first_target);
+		second.resolve(second_target);
+		third.resolve(third_target);
+		std::array<gadgets::IndirectLinkEntry, gadgets::target_tier_entries>
+			table;
+		table.fill({~std::uint64_t{}, &empty.link});
+		table[gadgets::target_tier_index(0x9000)] = {0x9000, &third.link};
+		/* Targets 4 KiB apart land in different records. */
+		require(gadgets::target_tier_index(0x9000) !=
+			gadgets::target_tier_index(0xa000));
+
+		gadgets::IndirectLink site{};
+		initialize(site, empty);
+		site.entries[0] = {first.link.guest_pc, &first.link};
+		site.entries[1] = {second.link.guest_pc, &second.link};
+		site.next_replacement = 1;
+		auto source = build_cached(source_pc, branch_register(5), site);
+		const auto run = [&](std::uint64_t target, const void *published,
+				std::size_t &executed) {
+			arm64::CpuState cpu{};
+			cpu.registers[5] = target;
+			cpu.gadget_target_tier = published;
+			::uml::memory::Tlb tlb;
+			executed = 0;
+			const auto event = gadgets::execute(
+				source.program, cpu, tlb, executed);
+			return std::pair{event, cpu};
+		};
+
+		std::size_t executed = 0;
+		auto [unpublished, unpublished_cpu] = run(0x9000, nullptr, executed);
+		require(unpublished == ::uml::cpu::EngineEvent::continued);
+		require(unpublished_cpu.pc == 0x9000);
+		require(unpublished_cpu.gadget_indirect_miss == &site);
+		require(site.entries[1].guest_pc == 0x6000);
+
+		auto [absent, absent_cpu] = run(0xa000, table.data(), executed);
+		require(absent == ::uml::cpu::EngineEvent::continued);
+		require(absent_cpu.pc == 0xa000);
+		require(absent_cpu.gadget_indirect_miss == &site);
+
+		auto [hit, hit_cpu] = run(0x9000, table.data(), executed);
+		require(hit == ::uml::cpu::EngineEvent::system_call);
+		require(hit_cpu.registers[0] == 43);
+		require(hit_cpu.pc == 0x9008);
+		require(hit_cpu.gadget_indirect_miss == nullptr);
+		require(executed == 3);
+		require(site.entries[1].guest_pc == 0x9000 &&
+			site.entries[1].link == &third.link);
+		require(site.entries[0].guest_pc == 0x5000);
+		require(site.next_replacement == 2 % gadgets::indirect_link_entries);
+
+		/* The trained cell now answers without the table. */
+		auto [cell, cell_cpu] = run(0x9000, nullptr, executed);
+		require(cell == ::uml::cpu::EngineEvent::system_call);
+		require(cell_cpu.registers[0] == 43);
+
+		/* A record whose translation was retired leaves through its
+		 * unlinked exit with the target PC and no miss to train. */
+		third.reset();
+		site.entries[1] = {second.link.guest_pc, &second.link};
+		auto [retired, retired_cpu] = run(0x9000, table.data(), executed);
+		require(retired == ::uml::cpu::EngineEvent::continued);
+		require(retired_cpu.pc == 0x9000);
+		require(retired_cpu.gadget_indirect_miss == nullptr);
+		require(executed == 1);
+	}
+#endif
 }

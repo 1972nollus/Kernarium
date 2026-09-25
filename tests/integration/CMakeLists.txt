@@ -220,6 +220,51 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+uml_add_guest_integration_test(
+    NAME guest-slirp-network-transfer
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_transfer.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;network;slirp
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+set(UML_GUEST_SAMPLER_WORKLOAD
+    "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")
+add_custom_command(
+    OUTPUT "${UML_GUEST_SAMPLER_WORKLOAD}"
+    COMMAND "${CMAKE_CXX_COMPILER}"
+        --target=aarch64-unknown-linux-gnu
+        -nostdlib
+        -static
+        -fuse-ld=lld
+        -Wl,-e,_start
+        "${CMAKE_CURRENT_SOURCE_DIR}/profiling/guest_sampler_workload.S"
+        -o "${UML_GUEST_SAMPLER_WORKLOAD}"
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT=${UML_GUEST_SAMPLER_WORKLOAD}
+        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/profiling/guest_sampler_workload.S"
+    COMMENT "Building the freestanding arm64 guest sampler workload"
+    VERBATIM)
+add_custom_target(uml-guest-sampler-workload
+    DEPENDS "${UML_GUEST_SAMPLER_WORKLOAD}")
+add_dependencies(integration-test-binaries uml-guest-sampler-workload)
+
+uml_add_guest_integration_test(
+    NAME guest-code-sampler
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/profiling/run_guest_code_sampler.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --workload ${UML_GUEST_SAMPLER_WORKLOAD}
+    LABELS guest;profiling
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 set(UML_GUEST_SHARED_MMAP_STRESS
     "${CMAKE_CURRENT_BINARY_DIR}/guest-shared-mmap-stress")
 add_custom_command(

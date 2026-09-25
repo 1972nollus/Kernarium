@@ -538,7 +538,9 @@ public:
 					sizeof(LinkRecord *) +
 				state.slots.capacity() * sizeof(std::uint32_t);
 			indirect += state.indirect.bytes() +
-				state.live_indirect.capacity() * sizeof(void *);
+				state.live_indirect.capacity() * sizeof(void *) +
+				(state.targets ? arm64::gadgets::target_tier_entries *
+					sizeof(arm64::gadgets::IndirectLinkEntry) : 0);
 		}
 		return {
 			.stream_index = bodies_.index_bytes(),
@@ -755,10 +757,63 @@ public:
 		return result;
 	}
 
+	/* The same lookup for the guest sampler, which runs while this
+	 * executor's thread is suspended in gadget code: reads only. A block
+	 * with an inlined callee is described by its first run, the only words
+	 * contiguous in guest memory. */
+	[[nodiscard]] bool sample_block(const void *stream,
+		diagnostics::SampledBlock &block) const noexcept
+	{
+		const auto *body = static_cast<const Body *>(bodies_.owner(stream));
+		if (body == nullptr)
+			return false;
+		const auto *word = static_cast<const std::uintptr_t *>(stream);
+		if (word < body->link_entry() ||
+		    word >= body->words() + body->word_count)
+			return false;
+		const auto runs = body->extra_runs();
+		const std::uint32_t contiguous = runs.empty() ?
+			body->source_word_count : runs.front().instructions;
+		block.guest_address = body->guest_address;
+		block.instruction_count = body->instruction_count;
+		block.word_count = std::min<std::uint32_t>(
+			{contiguous, body->source_word_count,
+			 static_cast<std::uint32_t>(diagnostics::sampled_block_words)});
+		std::copy_n(body->source_words(), block.word_count, block.words);
+		return true;
+	}
+
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(
 		std::uint64_t pc)
 	{
 		return &link_record(pc).link;
+	}
+
+	/* The running address space's target table, or null before its first
+	 * indirect miss. It lives and dies with the Generation, as the link
+	 * records it names do, so it can never name another address space's
+	 * code; a record reset by a code change just exits through link_exit. */
+	[[nodiscard]] const void *target_tier() const noexcept
+	{
+		return current_ != nullptr ? current_->targets.get() : nullptr;
+	}
+
+	void train_target(std::uint64_t pc,
+		const arm64::gadgets::BlockLink *target)
+	{
+		using arm64::gadgets::target_tier_entries;
+		auto &state = current();
+		if (!state.targets) {
+			state.targets = std::make_unique<
+				arm64::gadgets::IndirectLinkEntry[]>(
+				target_tier_entries);
+			/* Empty records name the address space's own unlinked
+			 * record for empty_pc, as reset site cells do. */
+			const auto *empty = &link_record(state, empty_pc).link;
+			std::fill_n(state.targets.get(), target_tier_entries,
+				arm64::gadgets::IndirectLinkEntry{empty_pc, empty});
+		}
+		state.targets[arm64::gadgets::target_tier_index(pc)] = {pc, target};
 	}
 
 	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
@@ -785,6 +840,9 @@ public:
 		++site_misses_[&site][target_pc];
 #endif
 		const auto *target = link(target_pc);
+#if UML_GADGET_TARGET_TIER
+		train_target(target_pc, target);
+#endif
 		/* Training is the only thing that moves a site off its empty
 		 * cells, and empty_pc is unreachable as a guest target, so a
 		 * site still holding two empty cells is untrained since its last
@@ -1257,6 +1315,9 @@ private:
 		gadget_cache::StableRecordTable<LinkRecord, LinkKey> links;
 		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>
 			indirect;
+		/* The target table the translated code consults after a site's
+		 * cells miss; allocated on the address space's first miss. */
+		std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets;
 		/* The records and sites holding an activation. */
 		std::vector<LinkRecord *> live_links;
 		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
@@ -1613,13 +1674,16 @@ private:
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 	: programs_{std::make_unique<ProgramCache>()},
 	  build_options_{build_options},
-	  profile_{profile_digest(build_options)}
+	  profile_{profile_digest(build_options)},
+	  sampling_{diagnostics::guest_sampling_register(*this)}
 {
 	arm64::gadgets::SharedProgramStore::executor_created();
 }
 
 GadgetExecutor::~GadgetExecutor()
 {
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_unregister(*sampling_);
 #if UML_GADGET_CACHE_CENSUS
 	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
 	    path != nullptr && *path != '\0') {
@@ -1646,12 +1710,18 @@ bool GadgetExecutor::begin_execution(unsigned long generation,
 {
 	preempted_ = false;
 	auto *context = execution_context(generation);
-	return context != nullptr &&
-		darwin_uml_static_vm_execution_context_begin(context, guest_pc) == 0;
+	if (context == nullptr ||
+	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
+		return false;
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_enter(*sampling_);
+	return true;
 }
 
 void GadgetExecutor::end_execution() noexcept
 {
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_leave(*sampling_);
 	if (current_cpu_ != nullptr) {
 		/* A miss is a pointer into this executor's cache, not architectural
 		 * state. Learning the target can allocate after the guest branch has
@@ -1713,6 +1783,12 @@ void GadgetExecutor::prepare_cache(
 #endif
 	cache_generation_ = generation;
 	cache_changes_ = changes;
+}
+
+bool GadgetExecutor::sample_block(const void *stream,
+	diagnostics::SampledBlock &block) const noexcept
+{
+	return programs_->sample_block(stream, block);
 }
 
 std::optional<BuildResult> GadgetExecutor::find(
@@ -1856,6 +1932,11 @@ BuildResult GadgetExecutor::store(
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
+#if UML_GADGET_TARGET_TIER
+	/* Published on every entry: the CpuState may last have run another
+	 * address space, whose table this cache may since have retired. */
+	cpu.gadget_target_tier = programs_->target_tier();
+#endif
 	const auto event =
 		arm64::gadgets::execute_preserving_native_fp_environment(
 			built.program, cpu, tlb_, executed);
@@ -1932,6 +2013,9 @@ BuildResult GadgetExecutor::store(
 	 * same cached block, or past the instruction being stepped.
 	 */
 	cpu.gadget_indirect_miss = nullptr;
+	/* Its one-instruction builds name no link state, but no stale table
+	 * may be left published either. */
+	cpu.gadget_target_tier = nullptr;
 	arm64::gadgets::restore_native_fp_environment(cpu);
 	std::uint32_t instruction = 0;
 	auto encoded = std::as_writable_bytes(std::span{&instruction, 1});
