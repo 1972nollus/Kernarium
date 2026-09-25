@@ -44,6 +44,15 @@ usage-dependent lossless compression. A compositor can therefore import a
 render target for sampling without reinterpreting its compression metadata as
 pixels. Ordinary Vulkan images keep their eligible texture optimizations.
 
+The macOS native display turns the emulator into an AppKit application, which
+makes the whole process eligible for App Nap whenever its window is occluded or
+minimized or the screen is locked. A napped process runs every thread,
+including the vCPU carriers, in the background priority band (`ps -M` shows
+priority 4 instead of 31) and has its timers coalesced. The display therefore
+holds a user-initiated, latency-critical `NSProcessInfo` activity for as long as
+its run loop runs; the activity still allows idle system sleep. No other macOS
+display mode registers the process with AppKit.
+
 A guest cannot tell a presented frame from a discarded one: every scanout
 flush succeeds whether the host presented it, dropped it, refused the native
 texture, or read it back out of memory that holds no pixels. Setting

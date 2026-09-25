@@ -256,6 +256,12 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Physical-device boot profiling | Measured. After RAM changes, the remaining gap is dominated by host execution and scheduling service for the full gadget/MMU working set. |
 | Batch sparse UBD discard | Accepted in both maintained kernel lines. A 512 MiB raw discard collapsed from 16,384 requests to four; matched controls measured about 19x lower wall time on macOS and 10.6x lower wall time on a physical iPad, while reclaiming the same sparse-file allocation. |
 
+## Android application launch
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Keep the native display out of App Nap | Accepted. Application launch time on the macOS native display was bimodal, and the slow mode was App Nap: once the window was occluded or the screen locked, every emulator thread ran at priority 4 instead of 31. In two ABBA sessions of 3DMark and Angry Birds 2 cold launches, one with the window occluded and one with the screen locked, builds holding a user-initiated, latency-critical activity launched 3DMark to its main screen in a median 8 seconds in both sessions, against 54 and 89 seconds without it, and Angry Birds 2 to its main scene in 60 and 59 seconds, against 94 and 133 seconds. The napped launches also used 1.5–5 times the host CPU: vCPU carriers descheduled while holding guest locks leave the other vCPUs spinning. A napped emulator shares the background band with background-priority host work, such as builds under `taskpolicy -b`, so its slowdown grows with host load. Record the emulator's thread priorities (`ps -M`) with any host timing; an occluded window alone invalidates a comparison. |
+
 ## JIT multicore and browser working sets
 
 | Attempt | Disposition and lesson |
