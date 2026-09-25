@@ -1423,7 +1423,18 @@ int runNativeDisplayApplication(
         });
     });
 
+    /* Becoming an AppKit application makes the whole process eligible for
+     * App Nap once its window is occluded, minimized or the screen locks.
+     * A napped process runs every thread at background priority and
+     * coalesces its timers, which starves the guest's vCPU carriers and
+     * multiplies guest wall time several times over. The guest is running
+     * work its user started, so declare it for as long as the loop runs. */
+    id<NSObject> activity = [NSProcessInfo.processInfo
+        beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep |
+            NSActivityLatencyCritical
+                          reason:@"Running a guest"];
     [application run];
+    [NSProcessInfo.processInfo endActivity:activity];
     if (!finished.load(std::memory_order_acquire))
         requestStop();
     worker.join();
