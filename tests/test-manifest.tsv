@@ -274,6 +274,7 @@ emulator-options	tests/unit	unit	retained
 runtime-context-lifecycle	tests/unit/runtime	unit	retained
 runtime-route-transaction	tests/unit/runtime	unit	retained
 runtime-exit-order	tests/unit/runtime	unit	retained
+runtime-kernel-signal-scope	tests/unit/runtime	unit	retained
 cpu-engine-contract	tests/unit	unit	retained
 arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained
 kernel-git-source-preparer	tests/tooling/kernel/test_materialize_git.sh	tooling	retained

@@ -17,8 +17,11 @@
 #include <fcntl.h>
 #include <memory>
 #include <mutex>
+#include <pthread.h>
+#include <signal.h>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -136,6 +139,32 @@ int verify_fresh_mmu_kernel(int, char *const[], char *const[])
 		generation, native_window_start, DARWIN_UML_STATIC_READ,
 		&generation_zero) == DARWIN_UML_STATIC_UNMAPPED;
 	return user_fresh && generation_zero_fresh ? 32 : 95;
+}
+
+/* Leaves process signal state behind the way the Darwin kernel does: a
+ * SIGALRM handler inside its own image (here the image's entry trampoline), an
+ * armed ITIMER_REAL, and a tick raised while every thread blocks SIGALRM,
+ * which Darwin parks on the main thread. */
+int signal_owning_kernel(int, char *const[], char *const[])
+{
+	struct sigaction action {};
+	action.sa_sigaction = reinterpret_cast<void (*)(int, siginfo_t *, void *)>(
+		static_cast<std::uintptr_t>(loader_runtime_address));
+	action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGALRM, &action, nullptr) != 0)
+		return 96;
+	itimerval timer{};
+	timer.it_value.tv_sec = 3600;
+	timer.it_interval.tv_sec = 3600;
+	if (setitimer(ITIMER_REAL, &timer, nullptr) != 0)
+		return 97;
+	sigset_t timer_signal;
+	sigemptyset(&timer_signal);
+	sigaddset(&timer_signal, SIGALRM);
+	if (pthread_sigmask(SIG_BLOCK, &timer_signal, nullptr) != 0)
+		return 98;
+	return kill(getpid(), SIGALRM) == 0 ? 33 : 99;
 }
 
 void reset_interleave()
@@ -356,6 +385,53 @@ void require_runtime_window_available()
 		loader_runtime_address;
 	(void)munmap(mapping, page_size);
 	require(exact, "successful loader call retained the runtime window");
+}
+
+/* The native display runs the kernel on a worker while the AppKit thread
+ * blocks SIGALRM, and restores that thread's mask only after the loader has
+ * released the image. A tick parked there must not reach a handler inside the
+ * released image. */
+void test_kernel_signal_state_is_revoked_before_release()
+{
+	sigset_t timer_signal;
+	sigemptyset(&timer_signal);
+	sigaddset(&timer_signal, SIGALRM);
+	sigset_t lent;
+	require(pthread_sigmask(SIG_BLOCK, &timer_signal, &lent) == 0,
+		"could not block SIGALRM on the main thread");
+	struct sigaction host {};
+	require(sigaction(SIGALRM, nullptr, &host) == 0,
+		"could not read the host SIGALRM disposition");
+	const auto image = embedded_image(signal_owning_kernel);
+	auto emulator = make_emulator(image);
+	const char *arguments[]{
+		"embedded-signal-revocation", admission_engine_argument};
+	int status = -1;
+	std::thread worker{[&] {
+		status = uml_emulator_run(emulator.get(), 2, arguments, nullptr);
+	}};
+	worker.join();
+	require(status == 33, "signal-owning kernel did not complete");
+	struct sigaction after {};
+	require(sigaction(SIGALRM, nullptr, &after) == 0,
+		"could not read the SIGALRM disposition after the run");
+	require(after.sa_handler == host.sa_handler &&
+		after.sa_flags == host.sa_flags,
+		"a SIGALRM handler inside the released image survived the run");
+	itimerval timer{};
+	require(getitimer(ITIMER_REAL, &timer) == 0 &&
+		timer.it_value.tv_sec == 0 && timer.it_value.tv_usec == 0 &&
+		timer.it_interval.tv_sec == 0 && timer.it_interval.tv_usec == 0,
+		"the kernel's ITIMER_REAL survived the run");
+	sigset_t pending;
+	sigemptyset(&pending);
+	require(sigpending(&pending) == 0 && !sigismember(&pending, SIGALRM),
+		"the tick parked on the main thread survived the run");
+	/* Before revocation this delivered the parked tick into the released
+	 * image; now it must deliver nothing. */
+	require(pthread_sigmask(SIG_SETMASK, &lent, nullptr) == 0,
+		"could not restore the main thread's signal mask");
+	require_runtime_window_available();
 }
 
 void test_occupied_runtime_window_is_not_replaced()
@@ -700,6 +776,7 @@ void test_embedded_handles_are_process_serialized()
 int main()
 {
 	try {
+		test_kernel_signal_state_is_revoked_before_release();
 		test_occupied_runtime_window_is_not_replaced();
 		test_malformed_dynamic_metadata_is_guest_failure();
 		test_non_executable_final_entry_page_is_guest_failure();

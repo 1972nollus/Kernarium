@@ -51,6 +51,20 @@ target_compile_definitions(uml_runtime_context PRIVATE
 set_target_properties(uml_runtime_context PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
+# Process signal state an embedded kernel image leaves behind; the loader
+# closes this scope before it releases the image.
+add_library(uml_runtime_kernel_signals OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_signal_scope.cpp)
+add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
+uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
+target_include_directories(uml_runtime_kernel_signals PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+target_compile_features(uml_runtime_kernel_signals PUBLIC cxx_std_20)
+target_compile_options(uml_runtime_kernel_signals PRIVATE
+    -Wall -Wextra -Werror)
+set_target_properties(uml_runtime_kernel_signals PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
 uml_declare_architecture_target(uml_runtime_guest_selector runtime)
@@ -109,6 +123,7 @@ uml_declare_architecture_target(uml_runtime_objects runtime)
 target_link_libraries(uml_runtime_objects INTERFACE UML::RuntimeContract)
 target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
+    $<TARGET_OBJECTS:uml_runtime_kernel_signals>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)
