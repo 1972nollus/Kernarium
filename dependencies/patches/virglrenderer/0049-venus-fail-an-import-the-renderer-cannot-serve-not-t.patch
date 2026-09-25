@@ -1,4 +1,4 @@
-From 64231daaaa35ecdb1f81112d5e02e55fd9273c39 Mon Sep 17 00:00:00 2001
+From 950961fb0f6c73ba3470e685803bd1e99c9f753e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 22 Sep 2026 13:40:39 +0900
 Subject: [PATCH 49/50] venus: fail an import the renderer cannot serve, not

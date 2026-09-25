@@ -61,7 +61,10 @@ remain in flight together. Their descriptor chains retire only after the
 renderer reports the corresponding host-owned timeline cookie. Commands that
 mutate or tear down renderer state wait until those deferred fences retire;
 reset cancels the timer and discards deferred transport state before releasing
-renderer resources.
+renderer resources. A command buffer or transfer the renderer refuses fails
+alone: the context error it reports is cleared with it, so a context that only
+transfers, as Android's gralloc mapper does to lock a buffer for reading, keeps
+working after one refusal.
 
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,

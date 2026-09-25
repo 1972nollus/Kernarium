@@ -1,4 +1,4 @@
-From 15686d3c1178fa221babdd8d1a5356698df5f757 Mon Sep 17 00:00:00 2001
+From 5f3ee8f24fc05e7189dff52c26803a5195171bef Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 08:56:52 +0900
 Subject: [PATCH 41/50] vrend: emit a geometry shader's own clip and cull

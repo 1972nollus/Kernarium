@@ -195,6 +195,10 @@ if(TARGET uml_gpu_host_pointer_image_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-host-pointer-image)
 endif()
+if(TARGET uml_gpu_transfer_context_error_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-transfer-context-error)
+endif()
 if(TARGET uml_gpu_cross_context_readback_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-cross-context-readback)

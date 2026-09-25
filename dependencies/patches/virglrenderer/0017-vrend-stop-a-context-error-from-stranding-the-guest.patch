@@ -1,4 +1,4 @@
-From 864474954228fe48e24551ed32bb6944c9a9659d Mon Sep 17 00:00:00 2001
+From 342f938c64f6c6af7e8b288c8f71f96fc0e58d8a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 21:38:45 +0900
 Subject: [PATCH 17/50] vrend: stop a context error from stranding the guest
@@ -18,24 +18,47 @@ the create-shader command itself has nothing left to do and returns, so
 the error is never paired with a failed dispatch and lives for as long
 as the context does.
 
-Clear the error with the buffer that carried it, whatever that buffer
+A transfer reports its errors the same way but belongs to no buffer, so
+nothing cleared what it set. A context that only ever transfers, as the
+one Android's gralloc mapper creates to lock a buffer for reading does,
+kept its first failed transfer's error and answered EINVAL to every
+transfer after it, each of which reached the guest as
+VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER and a readback of nothing.
+
+Clear the error with the buffer or transfer that carried it, whatever it
 returned, and answer a waiting query whose context can no longer run
 with the invalid result rather than dropping it. The error stays in the
 log and the dispatch still fails; what no longer happens is the guest
 losing every command it sends afterwards.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_decode.c   | 18 +++++++++++++++---
+ src/vrend/vrend_decode.c   | 26 ++++++++++++++++++++++----
  src/vrend/vrend_renderer.c | 26 +++++++++++++++++++++++++-
  src/vrend/vrend_renderer.h |  2 ++
- 3 files changed, 42 insertions(+), 4 deletions(-)
+ 3 files changed, 49 insertions(+), 5 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index 72fdab49..5e3cadc2 100644
+index 72fdab49..9c5e85dd 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
-@@ -2065,7 +2065,7 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
+@@ -1695,7 +1695,13 @@ static int vrend_decode_ctx_transfer_3d(struct virgl_context *ctx,
+    struct vrend_decode_ctx *dctx = (struct vrend_decode_ctx *)ctx;
+    int ret = vrend_renderer_transfer_iov(dctx->grctx, res->res_id, info,
+                                          transfer_mode);
+-   return vrend_check_no_error(dctx->grctx) || ret ? ret : EINVAL;
++   if (!vrend_check_no_error(dctx->grctx) && !ret)
++      ret = EINVAL;
++   /* A transfer is a command no buffer carries, so it drops its own error:
++    * a context that only transfers never submits the buffer that would.
++    */
++   vrend_clear_context_error(dctx->grctx);
++   return ret;
+ }
+ 
+ static int vrend_decode_ctx_get_blob(struct virgl_context *ctx,
+@@ -2065,7 +2071,7 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
     TRACE_FUNC();
     struct vrend_decode_ctx *gdctx = (struct vrend_decode_ctx *)ctx;
     bool bret;
@@ -44,7 +67,7 @@ index 72fdab49..5e3cadc2 100644
  
  #define TRANSFER_HEADER_SIZE 4096
  
-@@ -2099,6 +2099,7 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
+@@ -2099,6 +2105,7 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
        /* check if the guest is doing something bad */
        if (buf_offset > buf_total) {
           vrend_report_buffer_error(gdctx->grctx, 0);
@@ -52,7 +75,7 @@ index 72fdab49..5e3cadc2 100644
           break;
        }
  
-@@ -2115,10 +2116,21 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
+@@ -2115,10 +2122,21 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
                 gdctx->base.ctx_id, vrend_get_comand_name(cmd), ret);
           if (ret == EINVAL)
              vrend_report_buffer_error(gdctx->grctx, *buf);

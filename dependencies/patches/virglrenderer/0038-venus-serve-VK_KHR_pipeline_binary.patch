@@ -1,4 +1,4 @@
-From 8f21f5704d0343ea8e850a858815ef88a4d6e056 Mon Sep 17 00:00:00 2001
+From 217a72fb4ae40cec7cfcf2ee9a831628bf030550 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 14:29:09 +0900
 Subject: [PATCH 38/50] venus: serve VK_KHR_pipeline_binary
