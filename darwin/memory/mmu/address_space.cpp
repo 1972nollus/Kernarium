@@ -245,8 +245,58 @@ ActiveExecution &active_thread_execution()
 	return active.value;
 }
 
-void prune_retired_thread_state() noexcept
+class AddressSpace;
+
+std::atomic_uint64_t &domain_retirement_sequence_storage()
 {
+	static std::atomic_uint64_t sequence{};
+	return sequence;
+}
+
+std::atomic_uint64_t &lifetime_retirement_epoch()
+{
+	static std::atomic_uint64_t epoch{};
+	return epoch;
+}
+
+struct ResolvedAddressSpace final {
+	std::uint64_t domain{};
+	std::uint64_t retirement_sequence{};
+	std::shared_ptr<AddressSpace> owner;
+};
+
+/* Everything address_space() needs from its thread, behind one thread-local
+ * lookup: every resolution is a TLB miss or a mapping call on a vCPU thread.
+ *
+ * pruned_epoch is the lifetime-retirement epoch at which this thread last
+ * found none of its bindings retired. AddressSpace::retire() is the only
+ * writer of the lifetime flag that pruning tests, and it advances the epoch
+ * after setting it, so a thread that reads an unchanged epoch has nothing to
+ * prune.
+ *
+ * borrowed_accesses counts the AddressSpaceAccess objects on this thread that
+ * borrow resolved.owner instead of holding their own reference. While any is
+ * alive, resolution does not replace resolved, so the borrowed space outlives
+ * every access to it without a shared reference-count round trip, which is
+ * contended by every vCPU of one guest process. */
+struct ThreadAddressSpaceCache final {
+	ResolvedAddressSpace resolved;
+	std::uint64_t pruned_epoch{~std::uint64_t{0}};
+	unsigned borrowed_accesses{};
+};
+
+ThreadAddressSpaceCache &thread_address_space_cache()
+{
+	static thread_local ThreadAddressSpaceCache cache;
+	return cache;
+}
+
+void prune_retired_thread_state(ThreadAddressSpaceCache &cache) noexcept
+{
+	const auto epoch =
+		lifetime_retirement_epoch().load(std::memory_order_acquire);
+	if (cache.pruned_epoch == epoch)
+		return;
 	const auto domain_retired = [](const auto &state) {
 		return state != nullptr && state->address_space_lifetime &&
 			state->address_space_lifetime->retired.load(
@@ -275,6 +325,7 @@ void prune_retired_thread_state() noexcept
 		active.generation = 0;
 		active.state.reset();
 	}
+	cache.pruned_epoch = epoch;
 }
 
 class AddressSpaceAccess;
@@ -547,6 +598,7 @@ public:
 		 * scan does not observe is guaranteed to observe the retirement. */
 		wait_for_active_accesses(this);
 		lifetime_->retired.store(true, std::memory_order_release);
+		lifetime_retirement_epoch().fetch_add(1, std::memory_order_acq_rel);
 		{
 			std::lock_guard lock{states_mutex_};
 			for (auto &[generation, state] : states_) {
@@ -1544,20 +1596,28 @@ private:
 	std::atomic_bool retired_{};
 };
 
+/* Holds space for one operation. It either owns a reference or borrows the
+ * one in its thread's ThreadAddressSpaceCache; a borrowing access keeps that
+ * cache entry pinned until it is destroyed. */
 class AddressSpaceAccess final {
 public:
 	AddressSpaceAccess() noexcept = default;
 
-	explicit AddressSpaceAccess(
-		std::shared_ptr<AddressSpace> owner)
-		: owner_{std::move(owner)}, slot_{&active_access_slot()}
+	AddressSpaceAccess(AddressSpace *space,
+		std::shared_ptr<AddressSpace> owned,
+		ThreadAddressSpaceCache &cache)
+		: owned_{std::move(owned)}, space_{space},
+		  lender_{owned_ != nullptr ? nullptr : &cache},
+		  slot_{&active_access_slot()}
 	{
-		slot_->space.store(owner_.get(), std::memory_order_seq_cst);
-		if (!owner_->retired_.load(std::memory_order_seq_cst))
+		if (lender_ != nullptr)
+			++lender_->borrowed_accesses;
+		slot_->space.store(space_, std::memory_order_seq_cst);
+		if (!space_->retired_.load(std::memory_order_seq_cst))
 			return;
 		slot_->space.store(nullptr, std::memory_order_seq_cst);
 		slot_ = nullptr;
-		owner_.reset();
+		release();
 		errno = ESHUTDOWN;
 	}
 
@@ -1565,12 +1625,15 @@ public:
 	{
 		if (slot_ != nullptr)
 			slot_->space.store(nullptr, std::memory_order_seq_cst);
+		release();
 	}
 
 	AddressSpaceAccess(AddressSpaceAccess &&other) noexcept
-		: owner_{std::move(other.owner_)}, slot_{other.slot_}
+		: owned_{std::move(other.owned_)},
+		  space_{std::exchange(other.space_, nullptr)},
+		  lender_{std::exchange(other.lender_, nullptr)},
+		  slot_{std::exchange(other.slot_, nullptr)}
 	{
-		other.slot_ = nullptr;
 	}
 	AddressSpaceAccess &operator=(AddressSpaceAccess &&) noexcept = delete;
 
@@ -1579,24 +1642,33 @@ public:
 
 	[[nodiscard]] explicit operator bool() const noexcept
 	{
-		return owner_ != nullptr;
+		return space_ != nullptr;
 	}
 
 	[[nodiscard]] AddressSpace &operator*() const noexcept
 	{
-		return *owner_;
+		return *space_;
 	}
 
 	[[nodiscard]] AddressSpace *operator->() const noexcept
 	{
-		return owner_.get();
+		return space_;
 	}
 
 private:
-	/* Destroyed in reverse order, so the slot is cleared before the owner is
-	 * dropped and a concurrent retire() can never be left waiting on a slot
-	 * whose address space has already gone. */
-	std::shared_ptr<AddressSpace> owner_;
+	/* Runs after the slot is cleared, so a concurrent retire() can never be
+	 * left waiting on a slot whose address space has already gone. */
+	void release() noexcept
+	{
+		space_ = nullptr;
+		owned_.reset();
+		if (lender_ != nullptr)
+			--std::exchange(lender_, nullptr)->borrowed_accesses;
+	}
+
+	std::shared_ptr<AddressSpace> owned_;
+	AddressSpace *space_{};
+	ThreadAddressSpaceCache *lender_{};
 	ActiveAccessSlot *slot_{};
 };
 
@@ -1612,12 +1684,6 @@ std::atomic<DomainRetireObserver> &domain_retire_observer()
 {
 	static std::atomic<DomainRetireObserver> observer{};
 	return observer;
-}
-
-std::atomic_uint64_t &domain_retirement_sequence_storage()
-{
-	static std::atomic_uint64_t sequence{};
-	return sequence;
 }
 
 #if UML_MEMORY_ALLOCATION_TESTING
@@ -1654,25 +1720,19 @@ software_address_space_acquired_hook()
  * thread-local generation slot of exactly this shape. Validity is one relaxed
  * comparison against the global retirement sequence, which retire_domain()
  * advances before it touches the registry, so a cache hit proves no retirement
- * has begun since the entry was published. A hit still hands back an owning
- * reference: dropping to a raw pointer would rest on the lifecycle lock alone to
- * keep the object alive, and the refcount round-trip is far cheaper than the
- * lock and hash it replaces. */
-struct ResolvedAddressSpace final {
-	std::uint64_t domain{};
-	std::uint64_t retirement_sequence{};
-	std::shared_ptr<AddressSpace> owner;
+ * has begun since the entry was published. A hit lends the thread's own
+ * reference (see ThreadAddressSpaceCache); a resolution made while a loan is
+ * outstanding leaves the cache alone and returns an owning reference. */
+struct ResolvedOwner final {
+	AddressSpace *space{};
+	/* Empty when space is lent from the thread's cache. */
+	std::shared_ptr<AddressSpace> owned;
 };
-
-ResolvedAddressSpace &active_thread_address_space()
-{
-	static thread_local ResolvedAddressSpace resolved;
-	return resolved;
-}
 
 class AddressSpaceRegistry final {
 public:
-	[[nodiscard]] std::shared_ptr<AddressSpace> current() noexcept
+	[[nodiscard]] ResolvedOwner current(
+		ThreadAddressSpaceCache &cache) noexcept
 	{
 		for (;;) {
 			const auto retirement_sequence =
@@ -1683,15 +1743,19 @@ public:
 				errno = ESRCH;
 				return {};
 			}
-			auto &resolved = active_thread_address_space();
+			auto &resolved = cache.resolved;
+			/* A lent reference must outlive its access, so an outstanding
+			 * loan freezes the entry and a miss resolves without it. */
+			const bool cacheable = cache.borrowed_accesses == 0;
 			if (resolved.owner != nullptr) {
 				if (resolved.retirement_sequence == retirement_sequence &&
 				    resolved.domain == domain)
-					return resolved.owner;
+					return ResolvedOwner{resolved.owner.get(), {}};
 				/* Any retirement invalidates the entry, which also releases
 				 * this thread's reference to a space that may be the retired
 				 * one. */
-				if (resolved.retirement_sequence != retirement_sequence)
+				if (resolved.retirement_sequence != retirement_sequence &&
+				    cacheable)
 					resolved = {};
 			}
 			/* Only ever reached after the sequence has been re-read and found
@@ -1699,10 +1763,14 @@ public:
 			 * touched. */
 			const auto publish =
 				[&](std::shared_ptr<AddressSpace> space) noexcept {
+					if (!cacheable) {
+						auto *raw = space.get();
+						return ResolvedOwner{raw, std::move(space)};
+					}
 					resolved.domain = domain;
 					resolved.retirement_sequence = retirement_sequence;
 					resolved.owner = std::move(space);
-					return resolved.owner;
+					return ResolvedOwner{resolved.owner.get(), {}};
 				};
 			try {
 				{
@@ -1826,22 +1894,29 @@ AddressSpaceRegistry *address_space_registry() noexcept
 [[nodiscard]] AddressSpaceAccess address_space() noexcept
 {
 	try {
-		prune_retired_thread_state();
+		auto &cache = thread_address_space_cache();
+		prune_retired_thread_state(cache);
 		errno = 0;
 		auto *registry = address_space_registry();
 		if (registry == nullptr) {
 			errno = ENOMEM;
 			return {};
 		}
-		auto owner = registry->current();
-		if (!owner)
+		auto owner = registry->current(cache);
+		if (owner.space == nullptr)
 			return {};
 #if UML_MEMORY_ALLOCATION_TESTING
 		if (const auto hook = software_address_space_acquired_hook().load(
-			    std::memory_order_acquire); hook != nullptr)
+			    std::memory_order_acquire); hook != nullptr) {
+			/* The hook may resolve again, so a lent space stays pinned. */
+			const bool lent = owner.owned == nullptr;
+			cache.borrowed_accesses += lent;
 			hook();
+			cache.borrowed_accesses -= lent;
+		}
 #endif
-		return AddressSpaceAccess{std::move(owner)};
+		return AddressSpaceAccess{
+			owner.space, std::move(owner.owned), cache};
 	} catch (const std::bad_alloc &) {
 		errno = ENOMEM;
 	} catch (...) {
