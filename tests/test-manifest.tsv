@@ -294,6 +294,7 @@ kernel-compressed-memory-policy	tests/tooling/kernel/test_compressed_memory_poli
 kernel-virtio-gpu-shutdown-policy	tests/tooling/kernel/test_virtio_gpu_shutdown_policy.py	tooling	retained
 kernel-ubd-discard-policy	tests/tooling/kernel/test_ubd_discard_policy.py	tooling	retained
 kernel-virtio-gpu-shared-memory-policy	tests/tooling/kernel/test_virtio_gpu_shared_memory_policy.py	tooling	retained
+kernel-virtio-gpu-context-attach-policy	tests/tooling/kernel/test_virtio_gpu_context_attach_policy.py	tooling	retained
 apple-shared-kernel-image-policy	tests/tooling/kernel/test_apple_kernel_image_policy.py	tooling	retained
 darwin-init-mm-tlb-policy	tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py	tooling	conditional
 darwin-vcpu-carrier-policy	tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py	tooling	conditional

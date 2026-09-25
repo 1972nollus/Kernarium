@@ -1,4 +1,4 @@
-From 6a68ac50098e53f2396ee32ed105d2cd4995f0aa Mon Sep 17 00:00:00 2001
+From e7c4f327659778026ebc9f62514bac39158e00d2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 17:38:02 +0900
 Subject: [PATCH 5/5] arm64: single-step x86-64 tasks with RFLAGS.TF
@@ -17,7 +17,7 @@ so the kernel leaves the value that instruction produced.
  2 files changed, 76 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index a64194ef8..84ff5d15e 100644
+index a64194ef..84ff5d15 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -138,6 +138,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
@@ -67,7 +67,7 @@ index a64194ef8..84ff5d15e 100644
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8d59e86d2..7abcfdff9 100644
+index 8d59e86d..7abcfdff 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -71,6 +71,32 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

@@ -110,6 +110,12 @@ without `VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM, so this line negotiates
 `VHOST_USER_PROTOCOL_F_SHMEM_MAP` and reserves the same guarded guest-physical
 aperture under the same mapping-capacity policy as the mainline topic.
 
+A buffer a Virtio-GPU file imports before it has a context is attached to the
+context when the context is created. Android's gralloc mapper imports a buffer
+and then locks it for reading, so without that the host refused the lock's
+transfer and every screenshot came back empty. This is the same source change
+the mainline line carries; its contract is described there.
+
 ## Build and artifact boundary
 
 The standalone ACK replay and build are owned by

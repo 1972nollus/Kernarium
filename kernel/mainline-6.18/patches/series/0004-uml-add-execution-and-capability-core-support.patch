@@ -1,7 +1,7 @@
 From 17ff23e137bc31a80c0b8bb8dcaa63eeb354b963 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 04/42] uml: add execution and capability core support
+Subject: [PATCH 04/43] uml: add execution and capability core support
 
 Keep task lifecycle, architecture capability reporting, stack handling, and execution initialization in one reviewable final-state topic.
 ---
@@ -16,7 +16,7 @@ Keep task lifecycle, architecture capability reporting, stack handling, and exec
 
 diff --git a/arch/um/kernel/capflags_arm64.c b/arch/um/kernel/capflags_arm64.c
 new file mode 100644
-index 000000000..5e1908e06
+index 00000000..5e1908e0
 --- /dev/null
 +++ b/arch/um/kernel/capflags_arm64.c
 @@ -0,0 +1,17 @@
@@ -38,7 +38,7 @@ index 000000000..5e1908e06
 +	[9] = "atomics",
 +};
 diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
-index 13812fa97..d0f443c19 100644
+index 13812fa9..d0f443c1 100644
 --- a/arch/um/kernel/exec.c
 +++ b/arch/um/kernel/exec.c
 @@ -26,6 +26,15 @@ void flush_thread(void)
@@ -58,7 +58,7 @@ index 13812fa97..d0f443c19 100644
  
  void start_thread(struct pt_regs *regs, unsigned long eip, unsigned long esp)
 diff --git a/arch/um/kernel/ksyms.c b/arch/um/kernel/ksyms.c
-index f2fb77da0..9449ad05f 100644
+index f2fb77da..9449ad05 100644
 --- a/arch/um/kernel/ksyms.c
 +++ b/arch/um/kernel/ksyms.c
 @@ -6,8 +6,8 @@
@@ -79,7 +79,7 @@ index f2fb77da0..9449ad05f 100644
  EXPORT_SYMBOL(syscall);
 +#endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
-index 13d461712..9dcd8758f 100644
+index 13d46171..9dcd8758 100644
 --- a/arch/um/kernel/process.c
 +++ b/arch/um/kernel/process.c
 @@ -75,7 +75,12 @@ struct task_struct *__switch_to(struct task_struct *from, struct task_struct *to
@@ -177,7 +177,7 @@ index 13d461712..9dcd8758f 100644
  
  void do_uml_exitcalls(void)
 diff --git a/arch/um/kernel/stacktrace.c b/arch/um/kernel/stacktrace.c
-index fd3b61b3d..f6a76717b 100644
+index fd3b61b3..f6a76717 100644
 --- a/arch/um/kernel/stacktrace.c
 +++ b/arch/um/kernel/stacktrace.c
 @@ -12,6 +12,9 @@
@@ -215,7 +215,7 @@ index fd3b61b3d..f6a76717b 100644
  		if (__kernel_text_address(addr)) {
  			reliable = 0;
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index ed2f67848..4e2a98df7 100644
+index ed2f6784..4e2a98df 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -19,6 +19,7 @@

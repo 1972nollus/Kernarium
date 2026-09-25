@@ -1,7 +1,7 @@
 From f6b6c21a03ebb62fc7b53541ee3e90d3fb4c1f96 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 31 Aug 2026 03:46:09 +0900
-Subject: [PATCH 25/42] UML-DARWIN-LOCAL: um: never walk another task's
+Subject: [PATCH 25/43] UML-DARWIN-LOCAL: um: never walk another task's
  userspace stack
 
 get_stack_pointer() and get_frame_pointer() hand a blocked task's
@@ -26,7 +26,7 @@ walk previously produced guest bytes, not kernel frames.
  1 file changed, 14 insertions(+), 2 deletions(-)
 
 diff --git a/arch/um/include/asm/stacktrace.h b/arch/um/include/asm/stacktrace.h
-index 436b55952..1bdad33f9 100644
+index 436b5595..1bdad33f 100644
 --- a/arch/um/include/asm/stacktrace.h
 +++ b/arch/um/include/asm/stacktrace.h
 @@ -20,7 +20,13 @@ get_frame_pointer(struct task_struct *task, struct pt_regs *segv_regs)

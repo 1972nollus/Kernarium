@@ -1,4 +1,4 @@
-From 0c34d6f421d5efa11a3be6355b6fd9c82d228ff4 Mon Sep 17 00:00:00 2001
+From e0269cf339b4d6c9ee341c6f598465965d404e04 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 12:38:51 +0900
 Subject: [PATCH 4/5] arm64: use x86 layouts for x86-64 ptrace register access
@@ -29,7 +29,7 @@ cannot arm one.
  create mode 100644 arch/arm64/um/x86_fpstate.h
 
 diff --git a/arch/arm64/um/asm/ptrace-abi.h b/arch/arm64/um/asm/ptrace-abi.h
-index 3afa6ed84..7af74c93f 100644
+index 3afa6ed8..7af74c93 100644
 --- a/arch/arm64/um/asm/ptrace-abi.h
 +++ b/arch/arm64/um/asm/ptrace-abi.h
 @@ -2,8 +2,11 @@
@@ -45,7 +45,7 @@ index 3afa6ed84..7af74c93f 100644
  #define PTRACE_SETFPREGS 15
  #define PTRACE_OLDSETOPTIONS 21
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 03612f211..a64194ef8 100644
+index 03612f21..a64194ef 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -6,6 +6,20 @@
@@ -274,7 +274,7 @@ index 03612f211..a64194ef8 100644
  
  static const struct user_regset_view uml_x86_32_view = {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index c3fcb4606..1962c3bb8 100644
+index c3fcb460..1962c3bb 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -12,6 +12,7 @@
@@ -517,7 +517,7 @@ index c3fcb4606..1962c3bb8 100644
  
 diff --git a/arch/arm64/um/x86_fpstate.h b/arch/arm64/um/x86_fpstate.h
 new file mode 100644
-index 000000000..7518813d2
+index 00000000..7518813d
 --- /dev/null
 +++ b/arch/arm64/um/x86_fpstate.h
 @@ -0,0 +1,81 @@
@@ -603,7 +603,7 @@ index 000000000..7518813d2
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index 51b9576fc..689e136a7 100644
+index 51b9576f..689e136a 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -42,7 +42,7 @@ void ptrace_disable(struct task_struct *child)

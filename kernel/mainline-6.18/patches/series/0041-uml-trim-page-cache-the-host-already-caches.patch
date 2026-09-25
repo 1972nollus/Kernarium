@@ -1,7 +1,7 @@
 From c6a2d80ff47b92dc370beff862f2ebbcdba397f4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 11:27:11 +0900
-Subject: [PATCH 41/42] uml: trim page cache the host already caches
+Subject: [PATCH 41/43] uml: trim page cache the host already caches
 
 Every UML disk is a host file with a host page cache of its own, so a
 guest page-cache page duplicates data the host already holds. Only the
@@ -27,7 +27,7 @@ page_cache_trim.floor_mb tune or disable it.
  create mode 100644 arch/um/kernel/page_cache_trim.c
 
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 5777ded66..3c0e879c2 100644
+index 5777ded6..3c0e879c 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -18,7 +18,7 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \
@@ -41,7 +41,7 @@ index 5777ded66..3c0e879c2 100644
  obj-$(CONFIG_UML_X86) += capflags.o
 diff --git a/arch/um/kernel/page_cache_trim.c b/arch/um/kernel/page_cache_trim.c
 new file mode 100644
-index 000000000..19936a1b2
+index 00000000..19936a1b
 --- /dev/null
 +++ b/arch/um/kernel/page_cache_trim.c
 @@ -0,0 +1,89 @@

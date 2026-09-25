@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Ordered patch-series composition used by x86_64 artifacts.
 order	name	patch_count	manifest_path	manifest_sha256
-1	common	42	kernel/mainline-6.18/patches/series/manifest.tsv	38a5cde42c0561ec6c26db7212f1635ecc368f50578fa259060bd86dadc9f9b0
-2	x86_64	5	kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv	0dc9545b319dcf481b590f65fdcff4bbd608011fa52f725782b4760312d201e7
+1	common	43	kernel/mainline-6.18/patches/series/manifest.tsv	a76f96724b32541bea967d866be40956d2ad165c9320fc39cebab6b90a93e10c
+2	x86_64	5	kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv	aade4dd57afe58ee15b4326cc061e5cfd14848abe7ad0f4a0a5806ff39f0d9b5

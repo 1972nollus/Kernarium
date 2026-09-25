@@ -1,7 +1,7 @@
 From f2437c045a2069fd5f70561aea6aad97757ab003 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 15 Sep 2026 13:27:07 +0900
-Subject: [PATCH 33/42] UML-DARWIN-LOCAL: deliver data-alignment faults to
+Subject: [PATCH 33/43] UML-DARWIN-LOCAL: deliver data-alignment faults to
  guest signal handlers
 
 ---
@@ -11,7 +11,7 @@ Subject: [PATCH 33/42] UML-DARWIN-LOCAL: deliver data-alignment faults to
  3 files changed, 30 insertions(+), 8 deletions(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 15cd5f645..15c41d52f 100644
+index 15cd5f64..15c41d52 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -24,8 +24,8 @@
@@ -76,7 +76,7 @@ index 15cd5f645..15c41d52f 100644
  			unblock_signals_trace();
  			registers->is_user = 0;
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 2da80e362..5c7a6735f 100644
+index 2da80e36..5c7a6735 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -46,6 +46,7 @@ enum darwin_uml_guest_event {
@@ -103,7 +103,7 @@ index 2da80e362..5c7a6735f 100644
  static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
  		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index bbcdba4a4..3aafae44c 100644
+index bbcdba4a..3aafae44 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@

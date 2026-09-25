@@ -1,7 +1,7 @@
 From 27c71ee50670b3b1b88e03497c227f187979a676 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
-Subject: [PATCH 18/42] uml: raise irq work locally instead of at the tick
+Subject: [PATCH 18/43] uml: raise irq work locally instead of at the tick
 
 UML never implemented arch_irq_work_raise(), so the generic weak stub left
 queued work waiting for the next timer tick.  That is not just slow, it breaks
@@ -46,7 +46,7 @@ mask after publishing the idle state and polls instead of blocking.
  6 files changed, 82 insertions(+)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 972ac5c73..316574f49 100644
+index 972ac5c7..316574f4 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -393,6 +393,7 @@ void __attribute__((noreturn)) os_restart_secondary(void *stack,
@@ -58,7 +58,7 @@ index 972ac5c73..316574f49 100644
  void os_local_ipi_disable(void);
  #else
 diff --git a/arch/um/kernel/smp.c b/arch/um/kernel/smp.c
-index cc0c6c58a..afbd7c272 100644
+index cc0c6c58..afbd7c27 100644
 --- a/arch/um/kernel/smp.c
 +++ b/arch/um/kernel/smp.c
 @@ -18,6 +18,7 @@
@@ -110,7 +110,7 @@ index cc0c6c58a..afbd7c272 100644
  		pr_err("CPU#%d received unknown IPI (vector=%d)!\n", cpu, vector);
  		break;
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index ec61427d7..7ad362329 100644
+index ec61427d..7ad36232 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -25,6 +25,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
@@ -130,7 +130,7 @@ index ec61427d7..7ad362329 100644
  static inline void darwin_ipi_idle_drain(void) { }
  static inline unsigned int darwin_ipi_guest_snapshot(
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 00a5d2f34..6d15c566a 100644
+index 00a5d2f3..6d15c566 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
 @@ -193,6 +193,24 @@ static void drain_ipis(void)
@@ -184,7 +184,7 @@ index 00a5d2f34..6d15c566a 100644
  {
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 01b84a0bf..391cbe2ca 100644
+index 01b84a0b..391cbe2c 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
 @@ -316,6 +316,14 @@ void os_idle_sleep(void)
@@ -203,7 +203,7 @@ index 01b84a0bf..391cbe2ca 100644
  			      wake_fd >= 0 ? &read_fds : NULL, NULL, NULL,
  			      timeout_pointer, &mask);
 diff --git a/arch/um/os-Linux/smp.c b/arch/um/os-Linux/smp.c
-index 18d3858a7..77b150e1e 100644
+index 18d3858a..77b150e1 100644
 --- a/arch/um/os-Linux/smp.c
 +++ b/arch/um/os-Linux/smp.c
 @@ -96,6 +96,16 @@ int os_send_ipi(int cpu, int vector)

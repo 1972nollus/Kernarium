@@ -1,7 +1,7 @@
 From f5ed8b525aeb2f65479555c867c3af80b450ffd9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 17:37:25 +0900
-Subject: [PATCH 38/42] uml: single-step Darwin guests for ptrace
+Subject: [PATCH 38/43] uml: single-step Darwin guests for ptrace
 
 PTRACE_SINGLESTEP set TIF_SINGLESTEP, but only syscall exit honoured it,
 so a stepped task ran on until its next system call. gdb resumes past
@@ -19,7 +19,7 @@ on return so no saved or traced register carries it.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2c98e0fb2..05a138639 100644
+index 2c98e0fb..05a13863 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -60,6 +60,29 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

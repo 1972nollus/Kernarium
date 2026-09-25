@@ -105,6 +105,17 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-virtio-gpu-context-attach-policy
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_virtio_gpu_context_attach_policy.py
+        --mainline-series
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series
+        --android-series
+            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series
+    LABELS kernel;android;gpu;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME apple-shared-kernel-image-policy
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py

@@ -1,7 +1,7 @@
 From ad0681f6cec510e19d4a0df80c192a9950cecf93 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 09:06:53 +0900
-Subject: [PATCH 30/42] virtio: name a host-visible blob's shared-memory region
+Subject: [PATCH 30/43] virtio: name a host-visible blob's shared-memory region
 
 A host-visible Virtio-GPU blob lives in the device's shared-memory region
 rather than in guest pages, so a guest driver that imports its dma-buf has
@@ -23,7 +23,7 @@ This adds an accessor only; guest-page buffers are unaffected.
  3 files changed, 70 insertions(+)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_prime.c b/drivers/gpu/drm/virtio/virtgpu_prime.c
-index 2fedd5d3b..7334d253d 100644
+index 2fedd5d3..7334d253 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_prime.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_prime.c
 @@ -45,6 +45,37 @@ static int virtgpu_virtio_get_uuid(struct dma_buf *buf,
@@ -73,7 +73,7 @@ index 2fedd5d3b..7334d253d 100644
  
  int virtio_gpu_resource_assign_uuid(struct virtio_gpu_device *vgdev,
 diff --git a/drivers/virtio/virtio_dma_buf.c b/drivers/virtio/virtio_dma_buf.c
-index 95c10632f..db22a1e07 100644
+index 95c10632..db22a1e0 100644
 --- a/drivers/virtio/virtio_dma_buf.c
 +++ b/drivers/virtio/virtio_dma_buf.c
 @@ -87,6 +87,37 @@ int virtio_dma_buf_get_uuid(struct dma_buf *dma_buf,
@@ -115,7 +115,7 @@ index 95c10632f..db22a1e07 100644
  MODULE_LICENSE("GPL");
  MODULE_IMPORT_NS("DMA_BUF");
 diff --git a/include/linux/virtio_dma_buf.h b/include/linux/virtio_dma_buf.h
-index a2fdf217a..b6a0211c1 100644
+index a2fdf217..b6a0211c 100644
 --- a/include/linux/virtio_dma_buf.h
 +++ b/include/linux/virtio_dma_buf.h
 @@ -18,12 +18,17 @@

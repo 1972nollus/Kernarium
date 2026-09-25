@@ -1,7 +1,7 @@
 From 494d0b4a75a5693908b1cb0529b6fce988456f6e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:30 +0900
-Subject: [PATCH 22/42] UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
+Subject: [PATCH 22/43] UML-DARWIN-LOCAL: reclaim anonymous Darwin physical RAM
 
 Keep anonymous shared physical-memory backing and free-page range reclamation in one host-memory topic.
 ---
@@ -11,7 +11,7 @@ Keep anonymous shared physical-memory backing and free-page range reclamation in
  3 files changed, 130 insertions(+), 23 deletions(-)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 316574f49..b54cab5d1 100644
+index 316574f4..b54cab5d 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -193,6 +193,9 @@ extern void get_host_cpu_features(
@@ -25,7 +25,7 @@ index 316574f49..b54cab5d1 100644
  /* tlb.c */
  extern void report_enomem(void);
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index af02b5f99..20d326d8f 100644
+index af02b5f9..20d326d8 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
 @@ -6,7 +6,9 @@
@@ -135,7 +135,7 @@ index af02b5f99..20d326d8f 100644
  {
  	int fd = -1;
 diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
-index 968c0de1b..9d21f0a1a 100644
+index 968c0de1..9d21f0a1 100644
 --- a/arch/um/os-Darwin/mem.c
 +++ b/arch/um/os-Darwin/mem.c
 @@ -2,36 +2,20 @@

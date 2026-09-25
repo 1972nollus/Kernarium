@@ -1,14 +1,14 @@
 From 55383fd04a5e29af9e382b92f235dd6d03bcca87 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 28 Aug 2026 00:47:49 +0900
-Subject: [PATCH 24/42] UML-DARWIN-LOCAL: um: batch UBD discard ranges
+Subject: [PATCH 24/43] UML-DARWIN-LOCAL: um: batch UBD discard ranges
 
 ---
  arch/um/drivers/ubd_kern.c | 20 ++++++++++++++++++--
  1 file changed, 18 insertions(+), 2 deletions(-)
 
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
-index 6d235135a..5f824f425 100644
+index 6d235135..5f824f42 100644
 --- a/arch/um/drivers/ubd_kern.c
 +++ b/arch/um/drivers/ubd_kern.c
 @@ -45,8 +45,11 @@

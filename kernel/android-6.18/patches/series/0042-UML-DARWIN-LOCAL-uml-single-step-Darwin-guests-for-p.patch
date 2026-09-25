@@ -1,7 +1,7 @@
 From 2168d80cbc664843498211b487436eeb7c5979b8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 17:37:25 +0900
-Subject: [PATCH 42/46] UML-DARWIN-LOCAL: uml: single-step Darwin guests for
+Subject: [PATCH 42/47] UML-DARWIN-LOCAL: uml: single-step Darwin guests for
  ptrace
 
 PTRACE_SINGLESTEP set TIF_SINGLESTEP, but only syscall exit honoured it,

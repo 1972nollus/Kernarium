@@ -1,7 +1,7 @@
 From 43623235627d0bda9f99d6c9e2fdcd0f2237f7fe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 12/42] mm: handle zero-length cachestat ranges
+Subject: [PATCH 12/43] mm: handle zero-length cachestat ranges
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
@@ -9,7 +9,7 @@ Apply the reviewed final-state topic without intermediate churn.
  1 file changed, 14 insertions(+), 3 deletions(-)
 
 diff --git a/mm/filemap.c b/mm/filemap.c
-index 7c26e3735..ed8af7457 100644
+index 7c26e373..ed8af745 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
 @@ -4686,13 +4686,24 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,

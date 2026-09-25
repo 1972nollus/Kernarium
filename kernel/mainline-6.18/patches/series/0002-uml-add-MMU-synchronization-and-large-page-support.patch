@@ -1,7 +1,7 @@
 From 0ea147a3f7d532861a5eaa34343c72da2062a7a5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:20 +0900
-Subject: [PATCH 02/42] uml: add MMU synchronization and large-page support
+Subject: [PATCH 02/43] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, precise nested invalidation ranges, large-page handling, same-process address-space lifetime, and user-access behavior in one final-state MMU topic.
 ---
@@ -21,7 +21,7 @@ Keep page-table synchronization, precise nested invalidation ranges, large-page 
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
-index 0422467bd..ed4e77942 100644
+index 0422467b..ed4e7794 100644
 --- a/arch/um/include/asm/tlb.h
 +++ b/arch/um/include/asm/tlb.h
 @@ -8,4 +8,13 @@
@@ -40,7 +40,7 @@ index 0422467bd..ed4e77942 100644
  #endif
 diff --git a/arch/um/kernel/hugetlb.c b/arch/um/kernel/hugetlb.c
 new file mode 100644
-index 000000000..78b40df35
+index 00000000..78b40df3
 --- /dev/null
 +++ b/arch/um/kernel/hugetlb.c
 @@ -0,0 +1,250 @@
@@ -295,7 +295,7 @@ index 000000000..78b40df35
 +	return size == HPAGE_SIZE || size == PUD_SIZE;
 +}
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index 32e3b1972..94ab67fa3 100644
+index 32e3b197..94ab67fa 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
 @@ -72,6 +72,19 @@ void __init arch_mm_preinit(void)
@@ -319,7 +319,7 @@ index 32e3b1972..94ab67fa3 100644
  	memblock_free((void *)brk_end, uml_reserved - brk_end);
  	uml_reserved = brk_end;
 diff --git a/arch/um/kernel/skas/Makefile b/arch/um/kernel/skas/Makefile
-index 3384be426..4fabff5b9 100644
+index 3384be42..4fabff5b 100644
 --- a/arch/um/kernel/skas/Makefile
 +++ b/arch/um/kernel/skas/Makefile
 @@ -3,6 +3,9 @@
@@ -342,7 +342,7 @@ index 3384be426..4fabff5b9 100644
  
  # stub.o is in the stub, so it can't be built with profiling
 diff --git a/arch/um/kernel/skas/mmu.c b/arch/um/kernel/skas/mmu.c
-index afe9a2f25..009577885 100644
+index afe9a2f2..00957788 100644
 --- a/arch/um/kernel/skas/mmu.c
 +++ b/arch/um/kernel/skas/mmu.c
 @@ -23,17 +23,36 @@ static_assert(sizeof(struct stub_data) == STUB_DATA_PAGES * UM_KERN_PAGE_SIZE);
@@ -421,7 +421,7 @@ index afe9a2f25..009577885 100644
  				 * NOTE: Currently executing syscalls by
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
 new file mode 100644
-index 000000000..5ad85f4e0
+index 00000000..5ad85f4e
 --- /dev/null
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -0,0 +1,102 @@
@@ -528,7 +528,7 @@ index 000000000..5ad85f4e0
 +	id->pid = -1;
 +}
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 5881b17eb..b53004892 100644
+index 5881b17e..b5300489 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -4,14 +4,17 @@
@@ -680,7 +680,7 @@ index 5881b17eb..b53004892 100644
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e38..1b4ec301b 100644
+index 198269e3..1b4ec301 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -8,72 +8,197 @@
@@ -1094,7 +1094,7 @@ index 198269e38..1b4ec301b 100644
  }
  EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index cf7e0d440..ad0d6ab60 100644
+index cf7e0d44..ad0d6ab6 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -6,6 +6,7 @@
@@ -1816,7 +1816,7 @@ index cf7e0d440..ad0d6ab60 100644
 +	}
  }
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 5b80a3a89..1e6194ce5 100644
+index 5b80a3a8..1e6194ce 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -17,6 +17,11 @@
@@ -1957,7 +1957,7 @@ index 5b80a3a89..1e6194ce5 100644
  
  	if (err == -EACCES) {
 diff --git a/mm/mmu_gather.c b/mm/mmu_gather.c
-index 5619ee967..ac7842d2a 100644
+index 5619ee96..ac7842d2 100644
 --- a/mm/mmu_gather.c
 +++ b/mm/mmu_gather.c
 @@ -14,6 +14,10 @@

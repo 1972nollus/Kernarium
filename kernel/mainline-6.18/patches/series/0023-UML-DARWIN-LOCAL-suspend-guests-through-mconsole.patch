@@ -1,7 +1,7 @@
 From 4e938be55a7ab74d3f54d5431505109fb54d1afe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 12:54:23 +0900
-Subject: [PATCH 23/42] UML-DARWIN-LOCAL: suspend guests through mconsole
+Subject: [PATCH 23/43] UML-DARWIN-LOCAL: suspend guests through mconsole
 
 ---
  arch/um/Kconfig                    |  1 -
@@ -13,7 +13,7 @@ Subject: [PATCH 23/42] UML-DARWIN-LOCAL: suspend guests through mconsole
  6 files changed, 61 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/Kconfig b/arch/um/Kconfig
-index 1ec666f76..bb37228ec 100644
+index 1ec666f7..bb37228e 100644
 --- a/arch/um/Kconfig
 +++ b/arch/um/Kconfig
 @@ -313,7 +313,6 @@ source "arch/um/drivers/Kconfig"
@@ -25,7 +25,7 @@ index 1ec666f76..bb37228ec 100644
  menu "Power management options"
  
 diff --git a/arch/um/drivers/mconsole.h b/arch/um/drivers/mconsole.h
-index 635637830..b9b97d818 100644
+index 63563783..b9b97d81 100644
 --- a/arch/um/drivers/mconsole.h
 +++ b/arch/um/drivers/mconsole.h
 @@ -84,6 +84,8 @@ extern void mconsole_sysrq(struct mc_request *req);
@@ -38,7 +38,7 @@ index 635637830..b9b97d818 100644
  extern void mconsole_proc(struct mc_request *req);
  extern void mconsole_stack(struct mc_request *req);
 diff --git a/arch/um/drivers/mconsole_kern.c b/arch/um/drivers/mconsole_kern.c
-index ff4bda95b..740d58096 100644
+index ff4bda95..740d5809 100644
 --- a/arch/um/drivers/mconsole_kern.c
 +++ b/arch/um/drivers/mconsole_kern.c
 @@ -17,6 +17,7 @@
@@ -125,7 +125,7 @@ index ff4bda95b..740d58096 100644
  	if (notify_socket != NULL) {
  		notify_socket = kstrdup(notify_socket, GFP_KERNEL);
 diff --git a/arch/um/drivers/mconsole_user.c b/arch/um/drivers/mconsole_user.c
-index a04cd13c6..19b89ceb4 100644
+index a04cd13c..19b89ceb 100644
 --- a/arch/um/drivers/mconsole_user.c
 +++ b/arch/um/drivers/mconsole_user.c
 @@ -29,6 +29,8 @@ static struct mconsole_command commands[] = {
@@ -138,7 +138,7 @@ index a04cd13c6..19b89ceb4 100644
  	{ "proc", mconsole_proc, MCONSOLE_PROC },
  	{ "stack", mconsole_stack, MCONSOLE_INTR },
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 960950e40..d36d5b8f7 100644
+index 960950e4..d36d5b8f 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -72,6 +72,7 @@ extern void winch(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
@@ -150,7 +150,7 @@ index 960950e40..d36d5b8f7 100644
  void kasan_map_memory(void *start, size_t len);
  
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index d3c969b0c..9a865342c 100644
+index d3c969b0..9a865342 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -614,6 +614,7 @@ static int um_suspend_enter(suspend_state_t state)

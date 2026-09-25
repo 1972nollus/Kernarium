@@ -1,7 +1,7 @@
 From 81bbc3aca621e9949f5138bb720ce3c35c443e08 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 21 Sep 2026 09:08:06 +0900
-Subject: [PATCH 33/46] UML-DARWIN-LOCAL: virtio: name a host-visible blob's
+Subject: [PATCH 33/47] UML-DARWIN-LOCAL: virtio: name a host-visible blob's
  shared-memory region
 
 A host-visible Virtio-GPU blob lives in the device's shared-memory region

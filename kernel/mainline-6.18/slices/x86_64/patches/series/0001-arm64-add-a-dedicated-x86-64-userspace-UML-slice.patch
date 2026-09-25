@@ -1,4 +1,4 @@
-From e0400b2b0a5caa99119e569dbb8669ea6e7fdb2e Mon Sep 17 00:00:00 2001
+From db81f8843770b61fb8b7d46ba534e78401e9c169 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 30 Aug 2026 01:55:46 +0900
 Subject: [PATCH 1/5] arm64: add a dedicated x86-64 userspace UML slice
@@ -49,7 +49,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index b0603b124..a81eeaad7 100644
+index b0603b12..a81eeaad 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -20,6 +20,15 @@ config UML_ARM64
@@ -69,7 +69,7 @@ index b0603b124..a81eeaad7 100644
  	int
  	default 18
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index b3bbae6cd..eaf07b7cd 100644
+index b3bbae6c..eaf07b7c 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -1,7 +1,9 @@
@@ -84,7 +84,7 @@ index b3bbae6cd..eaf07b7cd 100644
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 42959d6df..57b834791 100644
+index 42959d6d..57b83479 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -22,31 +22,27 @@
@@ -183,7 +183,7 @@ index 42959d6df..57b834791 100644
  
  #define FIXADDR_USER_START 0
 diff --git a/arch/arm64/um/asm/mman.h b/arch/arm64/um/asm/mman.h
-index 2a075458f..f188b1fb4 100644
+index 2a075458..f188b1fb 100644
 --- a/arch/arm64/um/asm/mman.h
 +++ b/arch/arm64/um/asm/mman.h
 @@ -2,6 +2,11 @@
@@ -199,7 +199,7 @@ index 2a075458f..f188b1fb4 100644
  
  #ifdef UML_HOST_DARWIN
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index c113d51b8..9eb7d52d3 100644
+index c113d51b..9eb7d52d 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
 @@ -32,8 +32,9 @@ static inline void arch_copy_thread(struct arch_thread *from,
@@ -230,7 +230,7 @@ index c113d51b8..9eb7d52d3 100644
  
  #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index dd7a005f3..b34556b3b 100644
+index dd7a005f..b34556b3 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -16,8 +16,8 @@ enum {
@@ -245,7 +245,7 @@ index dd7a005f3..b34556b3b 100644
  #define PT_FIX_EXEC_STACK(sp) do { } while (0)
  #define PT_REGS_SET_SYSCALL_RETURN(state, result) \
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
-index 9dfdeb2cc..583e2b091 100644
+index 9dfdeb2c..583e2b09 100644
 --- a/arch/arm64/um/asm/syscall.h
 +++ b/arch/arm64/um/asm/syscall.h
 @@ -12,7 +12,17 @@ extern const sys_call_ptr_t sys_call_table[];
@@ -268,7 +268,7 @@ index 9dfdeb2cc..583e2b091 100644
 +
  #endif
 diff --git a/arch/arm64/um/asm/user.h b/arch/arm64/um/asm/user.h
-index 5a52cb113..df4bc4b93 100644
+index 5a52cb11..df4bc4b9 100644
 --- a/arch/arm64/um/asm/user.h
 +++ b/arch/arm64/um/asm/user.h
 @@ -3,10 +3,33 @@
@@ -310,7 +310,7 @@ index 5a52cb113..df4bc4b93 100644
  #endif
 diff --git a/arch/arm64/um/mmap.c b/arch/arm64/um/mmap.c
 new file mode 100644
-index 000000000..1a8b242f6
+index 00000000..1a8b242f
 --- /dev/null
 +++ b/arch/arm64/um/mmap.c
 @@ -0,0 +1,128 @@
@@ -443,7 +443,7 @@ index 000000000..1a8b242f6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 3dfd7a0a6..a4767ee81 100644
+index 3dfd7a0a..a4767ee8 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -9,30 +9,97 @@
@@ -612,7 +612,7 @@ index 3dfd7a0a6..a4767ee81 100644
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index f77c6e818..e9f2fa316 100644
+index f77c6e81..e9f2fa31 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,15 +22,25 @@
@@ -775,7 +775,7 @@ index f77c6e818..e9f2fa316 100644
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 5df9d3a0e..215c4616d 100644
+index 5df9d3a0..215c4616 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -9,14 +9,135 @@
@@ -1382,7 +1382,7 @@ index 5df9d3a0e..215c4616d 100644
  	if (restore_altstack(&frame->uc.uc_stack))
  		goto bad_frame;
 diff --git a/arch/arm64/um/tls.c b/arch/arm64/um/tls.c
-index 0bc12342e..cfbf7f47a 100644
+index 0bc12342..cfbf7f47 100644
 --- a/arch/arm64/um/tls.c
 +++ b/arch/arm64/um/tls.c
 @@ -1,6 +1,7 @@
@@ -1404,7 +1404,7 @@ index 0bc12342e..cfbf7f47a 100644
  
 diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
 new file mode 100644
-index 000000000..cf93d90d1
+index 00000000..cf93d90d
 --- /dev/null
 +++ b/arch/arm64/um/x86_64_syscalls.c
 @@ -0,0 +1,1088 @@
@@ -2497,7 +2497,7 @@ index 000000000..cf93d90d1
 +		-EFAULT : 0;
 +}
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 8d02b821d..ee771f98a 100644
+index 8d02b821..ee771f98 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -8,6 +8,11 @@
@@ -2513,7 +2513,7 @@ index 8d02b821d..ee771f98a 100644
  #include <linux/mm_types.h>
  
 diff --git a/arch/um/include/asm/syscall-generic.h b/arch/um/include/asm/syscall-generic.h
-index 215668ff8..0c0aae139 100644
+index 215668ff..0c0aae13 100644
 --- a/arch/um/include/asm/syscall-generic.h
 +++ b/arch/um/include/asm/syscall-generic.h
 @@ -61,7 +61,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
@@ -2526,7 +2526,7 @@ index 215668ff8..0c0aae139 100644
  	*args++ = UPT_SYSCALL_ARG1(r);
  	*args++ = UPT_SYSCALL_ARG2(r);
 diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
-index d0f443c19..54db27567 100644
+index d0f443c1..54db2756 100644
 --- a/arch/um/kernel/exec.c
 +++ b/arch/um/kernel/exec.c
 @@ -31,7 +31,12 @@ void flush_thread(void)
@@ -2543,7 +2543,7 @@ index d0f443c19..54db27567 100644
  	       sizeof(current_pt_regs()->regs.pointer_auth_keys));
  #endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
-index 838272e9b..d48d5ec6b 100644
+index 838272e9..d48d5ec6 100644
 --- a/arch/um/kernel/process.c
 +++ b/arch/um/kernel/process.c
 @@ -184,7 +184,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
@@ -2556,7 +2556,7 @@ index 838272e9b..d48d5ec6b 100644
  		handler = fork_handler;
  
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index ba7494f9b..f4f5b15ab 100644
+index ba7494f9..f4f5b15a 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
 @@ -20,7 +20,7 @@ void handle_syscall(struct uml_pt_regs *r)
@@ -2604,7 +2604,7 @@ index ba7494f9b..f4f5b15ab 100644
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 31575c43f..06008dda1 100644
+index 31575c43..06008dda 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -474,6 +474,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
@@ -2618,7 +2618,7 @@ index 31575c43f..06008dda1 100644
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index f8068b196..f4478d475 100644
+index f8068b19..f4478d47 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
@@ -2763,7 +2763,7 @@ index f8068b196..f4478d475 100644
  			unblock_signals_trace();
  			registers->is_user = 0;
 diff --git a/fs/eventpoll.c b/fs/eventpoll.c
-index 1c31ee84d..d0eb6bb80 100644
+index 1c31ee84..d0eb6bb8 100644
 --- a/fs/eventpoll.c
 +++ b/fs/eventpoll.c
 @@ -2675,7 +2675,7 @@ static int ep_check_params(struct file *file, struct epoll_event __user *evs,
@@ -2776,7 +2776,7 @@ index 1c31ee84d..d0eb6bb80 100644
  
  	/*
 diff --git a/fs/open.c b/fs/open.c
-index 3d64372ec..177008de5 100644
+index 3d64372e..177008de 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -1417,8 +1417,8 @@ struct file *file_open_root(const struct path *root,
@@ -2791,7 +2791,7 @@ index 3d64372ec..177008de5 100644
  	struct open_flags op;
  	struct filename *tmp;
 diff --git a/include/linux/eventpoll.h b/include/linux/eventpoll.h
-index ccb478eb1..806560152 100644
+index ccb478eb..80656015 100644
 --- a/include/linux/eventpoll.h
 +++ b/include/linux/eventpoll.h
 @@ -72,6 +72,29 @@ static inline void eventpoll_release(struct file *file) {}
@@ -2832,7 +2832,7 @@ index ccb478eb1..806560152 100644
  
  #endif /* #ifndef _LINUX_EVENTPOLL_H */
 diff --git a/include/linux/fs.h b/include/linux/fs.h
-index 14f5accc9..9b35d91c0 100644
+index 14f5accc..9b35d91c 100644
 --- a/include/linux/fs.h
 +++ b/include/linux/fs.h
 @@ -2878,6 +2878,8 @@ extern int vfs_fallocate(struct file *file, int mode, loff_t offset,

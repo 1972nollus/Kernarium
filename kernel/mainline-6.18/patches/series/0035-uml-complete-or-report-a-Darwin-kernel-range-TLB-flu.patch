@@ -1,7 +1,7 @@
 From da0277f365ff56081b7693783b32f04ae7fba9b2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 07:38:06 +0900
-Subject: [PATCH 35/42] uml: complete or report a Darwin kernel-range TLB flush
+Subject: [PATCH 35/43] uml: complete or report a Darwin kernel-range TLB flush
 
 flush_tlb_kernel_range() discarded um_tlb_sync()'s result. On Darwin
 flush_cache_vmap() and flush_cache_vunmap() are both that macro, so every
@@ -44,7 +44,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 119 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
-index f2010ae96..a854797ae 100644
+index f2010ae9..a854797a 100644
 --- a/arch/um/include/asm/tlbflush.h
 +++ b/arch/um/include/asm/tlbflush.h
 @@ -33,6 +33,7 @@
@@ -68,7 +68,7 @@ index f2010ae96..a854797ae 100644
  
  #endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 6c65b2b7b..ef849ea26 100644
+index 6c65b2b7..ef849ea2 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -323,6 +323,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,

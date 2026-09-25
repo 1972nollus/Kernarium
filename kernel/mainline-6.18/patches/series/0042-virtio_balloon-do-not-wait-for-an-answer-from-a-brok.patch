@@ -1,7 +1,7 @@
 From fea8ca86d3e89a9d29bf96c9cc6cc1a047613ca1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 12:31:36 +0900
-Subject: [PATCH 42/42] virtio_balloon: do not wait for an answer from a broken
+Subject: [PATCH 42/43] virtio_balloon: do not wait for an answer from a broken
  device
 
 tell_host() ignored the result of virtqueue_add_outbuf() and then waited,
@@ -21,7 +21,7 @@ balloon; a device that is gone cannot be told.
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
-index 1b93d8c64..240f6f83f 100644
+index 1b93d8c6..240f6f83 100644
 --- a/drivers/virtio/virtio_balloon.c
 +++ b/drivers/virtio/virtio_balloon.c
 @@ -187,8 +187,12 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
