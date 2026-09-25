@@ -452,43 +452,41 @@ def main() -> int:
     # reaches host-visible blob memory through the vhost-user shared-memory
     # aperture. That aperture lives in the Vulkan-experiment kernel line, so
     # the two experimental products are selected together, exactly as the
-    # macOS Venus integration selects them. The Simulator runtime publishes no
-    # GPU provider and stays on the accepted mainline artifact.
-    for platform in ("device", "simulator"):
-        profile_16k = configurations[f"kernarium-ios-{platform}"]
-        profile_4k = configurations[f"kernarium-ios-{platform}-4k"]
-        expected_product = (
-            "mainline-6.18-vulkan-experiment"
-            if platform == "device"
-            else "mainline-6.18"
-        )
+    # macOS Venus integration selects them. KosmicKrisp is a Metal 4 driver and
+    # the iOS Simulator exposes no Metal 4 device, so the device is the only
+    # Kernarium runtime.
+    profile_16k = configurations["kernarium-ios-device"]
+    profile_4k = configurations["kernarium-ios-device-4k"]
+    require(
+        profile_16k["cacheVariables"]["UML_KERNEL_PRODUCT"]
+        == "mainline-6.18-vulkan-experiment"
+        and profile_16k["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
+        "device 16 KiB runtime profile does not select "
+        "mainline-6.18-vulkan-experiment",
+    )
+    require(
+        profile_16k["cacheVariables"]["UML_APPLE_GPU_PRODUCT"]
+        == "apple-gpu-vulkan-experiment",
+        "the device runtime does not select both experimental products",
+    )
+    require(
+        profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
+        and "UML_KERNARIUM_KERNEL_IMAGE" not in profile_4k["cacheVariables"],
+        "device 4 KiB runtime profile bypasses artifact selection",
+    )
+    for suffix in ("", "-4k"):
         require(
-            profile_16k["cacheVariables"]["UML_KERNEL_PRODUCT"]
-            == expected_product
-            and profile_16k["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
-            f"{platform} 16 KiB runtime profile does not select "
-            f"{expected_product}",
+            f"kernarium-ios-device-venus{suffix}" not in configurations,
+            "device retains a Vulkan-experiment runtime preset",
         )
+    require(
+        profile_16k["binaryDir"] != profile_4k["binaryDir"],
+        "device page profiles share one CMake build tree",
+    )
+    for suffix in ("", "-4k", "-android"):
         require(
-            platform != "device"
-            or profile_16k["cacheVariables"]["UML_APPLE_GPU_PRODUCT"]
-            == "apple-gpu-vulkan-experiment",
-            "the device runtime does not select both experimental products",
-        )
-        require(
-            profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
-            and "UML_KERNARIUM_KERNEL_IMAGE"
-            not in profile_4k["cacheVariables"],
-            f"{platform} 4 KiB runtime profile bypasses artifact selection",
-        )
-        for suffix in ("", "-4k"):
-            require(
-                f"kernarium-ios-{platform}-venus{suffix}" not in configurations,
-                f"{platform} retains a Vulkan-experiment runtime preset",
-            )
-        require(
-            profile_16k["binaryDir"] != profile_4k["binaryDir"],
-            f"{platform} page profiles share one CMake build tree",
+            f"kernarium-ios-simulator{suffix}" not in configurations,
+            "the iOS Simulator retains a Kernarium runtime preset",
         )
 
     root_cmake = read(arguments.root_cmake)

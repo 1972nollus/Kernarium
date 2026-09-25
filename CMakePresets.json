@@ -295,40 +295,6 @@
       "cacheVariables": {
         "UML_KERNEL_PRODUCT": "android-17"
       }
-    },
-    {
-      "name": "kernarium-ios-simulator",
-      "displayName": "Kernarium iOS Simulator runtime (16 KiB)",
-      "inherits": "ios-simulator",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-16k",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "UML_BUILD_KERNEL_RUNNER": true,
-        "UML_BUILD_NETWORK_PROVIDER": true,
-        "UML_BUILD_GPU": true,
-        "UML_BUILD_KERNARIUM_RUNTIME": true,
-        "UML_GUEST_16K_PAGES": true,
-        "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/network",
-        "UML_KERNEL_PRODUCT": "mainline-6.18"
-      }
-    },
-    {
-      "name": "kernarium-ios-simulator-4k",
-      "displayName": "Kernarium iOS Simulator runtime (4 KiB)",
-      "inherits": "kernarium-ios-simulator",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-4k",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
-      }
-    },
-    {
-      "name": "kernarium-ios-simulator-android",
-      "displayName": "Kernarium iOS Simulator Android runtime (16 KiB)",
-      "inherits": "kernarium-ios-simulator",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-android-16k",
-      "cacheVariables": {
-        "UML_KERNEL_PRODUCT": "android-17"
-      }
     }
   ],
   "buildPresets": [
@@ -450,21 +416,6 @@
     {
       "name": "kernarium-ios-device-android",
       "configurePreset": "kernarium-ios-device-android",
-      "targets": ["KernariumRuntime", "architecture-audit"]
-    },
-    {
-      "name": "kernarium-ios-simulator",
-      "configurePreset": "kernarium-ios-simulator",
-      "targets": ["KernariumRuntime", "architecture-audit"]
-    },
-    {
-      "name": "kernarium-ios-simulator-4k",
-      "configurePreset": "kernarium-ios-simulator-4k",
-      "targets": ["KernariumRuntime", "architecture-audit"]
-    },
-    {
-      "name": "kernarium-ios-simulator-android",
-      "configurePreset": "kernarium-ios-simulator-android",
       "targets": ["KernariumRuntime", "architecture-audit"]
     }
   ],
