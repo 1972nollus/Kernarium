@@ -412,6 +412,32 @@ if(TARGET uml_gpu_service)
         LABELS gpu
         TIMEOUT 600)
 
+    # The native display samples the Metal texture that stores a Virgl
+    # scanout's GL texture, so the renderer must name the right one: its size,
+    # format, orientation, device, and fenced contents.
+    add_executable(uml_gpu_resource_metal_texture_tests
+        host_gl_resource_metal_texture_tests.mm)
+    target_link_libraries(uml_gpu_resource_metal_texture_tests PRIVATE
+        uml_gpu_renderer
+        UML::ThirdPartyVirglrenderer
+        UML::ThirdPartyEpoxy
+        "-framework Foundation"
+        "-framework Metal")
+    target_include_directories(uml_gpu_resource_metal_texture_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_features(uml_gpu_resource_metal_texture_tests PRIVATE
+        cxx_std_20)
+    set_target_properties(uml_gpu_resource_metal_texture_tests PROPERTIES
+        OBJCXX_STANDARD 20)
+    target_compile_options(uml_gpu_resource_metal_texture_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    uml_add_unit_test(NAME gpu-resource-metal-texture
+        COMMAND uml_gpu_resource_metal_texture_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu
+        TIMEOUT 600)
+
     # One thread drives every host GL context, so a read in one context of a
     # texture another context left unsubmitted has to finish without a second
     # thread. Blocking there parks the GPU thread and wedges the whole guest.

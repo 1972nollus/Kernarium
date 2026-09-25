@@ -1,7 +1,7 @@
 From 24d91cdcef2573e7b8f044cc4fa5fe19bcc65181 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 8 Sep 2026 02:18:00 +0900
-Subject: [PATCH 043/102] kosmickrisp: derive alpha to coverage without a
+Subject: [PATCH 043/103] kosmickrisp: derive alpha to coverage without a
  colour attachment
 
 Metal derives alpha to coverage from the alpha of colour attachment 0, so a

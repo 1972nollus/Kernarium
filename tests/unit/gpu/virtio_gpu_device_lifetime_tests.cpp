@@ -153,6 +153,13 @@ public:
             return EIO;
         try {
             resources.insert(resource.resourceId);
+            nativeTextures[resource.resourceId] = VirglRenderer::NativeTexture {
+                .texture = reinterpret_cast<void*>(
+                    static_cast<std::uintptr_t>(0x1234)),
+                .format = resource.format,
+                .width = resource.width,
+                .height = resource.height,
+            };
         } catch (...) {
             return ENOMEM;
         }
@@ -311,14 +318,20 @@ public:
 
     int resourceMetalTexture(
         std::uint32_t resourceId,
-        void*& texture) noexcept override
+        VirglRenderer::NativeTexture& texture) noexcept override
     {
         ++nativeResourceRequestCount;
-        if (!nativeResourceAvailable) {
-            texture = nullptr;
+        texture = {};
+        if (!nativeResourceAvailable)
             return ENOTSUP;
-        }
-        texture = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
+        /* A blob reports the GL texture its Virgl context created, which
+         * the test describes; a classic resource reports its own. */
+        const auto native = nativeTextures.find(resourceId);
+        texture = native != nativeTextures.end() ? native->second
+                                                 : blobNativeTexture;
+        if (texture.texture == nullptr)
+            return ENOTSUP;
+        texture.bottomUp = nativeTextureBottomUp;
         lastTextureResource = resourceId;
         ++resourceMetalTextureCount;
         return 0;
@@ -529,6 +542,10 @@ public:
     bool directPresentationEnabled {};
     bool directPresentationDrops {};
     bool nativeResourceAvailable {};
+    bool nativeTextureBottomUp {};
+    std::unordered_map<std::uint32_t, VirglRenderer::NativeTexture>
+        nativeTextures;
+    VirglRenderer::NativeTexture blobNativeTexture {};
     bool fullCpuFallback {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
@@ -1287,6 +1304,25 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.displayUpdateCount == updatesBeforeDrop);
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeDrop);
     dependencies.directPresentationDrops = false;
+
+    /* A resource the renderer stores bottom row first reaches the display
+     * with that orientation rather than through a readback. */
+    dependencies.nativeTextureBottomUp = true;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastMetalScanout.flipped);
+    require(dependencies.readResourceCount == readsBeforeDrop);
+    dependencies.nativeTextureBottomUp = false;
+
+    /* A texture that does not hold the resource at its own size is read back
+     * instead of shown. */
+    const auto presentsBeforeMismatch = dependencies.directPresentationCount;
+    dependencies.nativeTextures[resource.resourceId].height += 1U;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationCount == presentsBeforeMismatch);
+    require(dependencies.readResourceCount == readsBeforeDrop + 1U);
+    dependencies.nativeTextures[resource.resourceId].height -= 1U;
 
     /* An unsupported scanout still takes the readback path, and the display is
      * told so. */
@@ -2455,7 +2491,7 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(dependencies.lastUnmappedResource == scanout.resourceId);
 }
 
-void virglBlobScanoutPresentsThroughReadback()
+void virglBlobScanoutPresentsItsGlTexture()
 {
     FakeGpuDependencies dependencies;
     const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
@@ -2492,8 +2528,8 @@ void virglBlobScanoutPresentsThroughReadback()
         protocol::GpuFormat::r8g8b8x8Unorm);
     scanout.strides[0] = 8U * protocol::gpuBytesPerPixel;
 
-    /* A Virgl context's blob is a GL texture with no Metal texture, the
-     * framebuffer Android's gralloc allocates once blobs exist. */
+    /* A Virgl context's blob is a GL texture with no scanout texture of its
+     * own, the framebuffer Android's gralloc allocates once blobs exist. */
     dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
     requireFirstAllocationFailsBeforeCommit(device, scanout);
     require(dependencies.createBlobScanoutCount == 0);
@@ -2542,6 +2578,75 @@ void virglBlobScanoutPresentsThroughReadback()
     require(dependencies.lastReadY == 0);
     require(dependencies.lastReadWidth == scanout.rectangle.width);
     require(dependencies.lastReadHeight == scanout.rectangle.height);
+    dependencies.fullCpuFallback = false;
+
+    /* The Metal texture that stores the GL texture is presented directly
+     * when it holds exactly this scanout. Alpha and padding variants of one
+     * channel order store the same bytes. */
+    const auto blobTexture =
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x5678));
+    dependencies.nativeResourceAvailable = true;
+    dependencies.blobNativeTexture = VirglRenderer::NativeTexture {
+        .texture = blobTexture,
+        .format = static_cast<std::uint32_t>(
+            protocol::GpuFormat::r8g8b8a8Unorm),
+        .width = scanout.width,
+        .height = scanout.height,
+    };
+    const auto readsBeforeTexture = dependencies.readResourceCount;
+    const auto fallbacksBeforeTexture = dependencies.cpuFallbackFrameCount;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationCount == 1);
+    require(dependencies.lastTextureResource == scanout.resourceId);
+    require(dependencies.lastMetalScanout.texture == blobTexture);
+    require(dependencies.lastMetalScanout.sourceWidth == scanout.width);
+    require(dependencies.lastMetalScanout.sourceHeight == scanout.height);
+    require(dependencies.lastMetalScanout.width == scanout.rectangle.width);
+    require(dependencies.lastMetalScanout.height == scanout.rectangle.height);
+    require(dependencies.lastMetalScanout.damageX == flush.rectangle.x);
+    require(dependencies.lastMetalScanout.damageY == flush.rectangle.y);
+    require(dependencies.lastMetalScanout.damageWidth == flush.rectangle.width);
+    require(
+        dependencies.lastMetalScanout.damageHeight == flush.rectangle.height);
+    require(!dependencies.lastMetalScanout.flipped);
+    require(dependencies.readResourceCount == readsBeforeTexture);
+    require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture);
+
+    /* A texture stored bottom row first is presented turned the right way
+     * up, not read back. */
+    dependencies.nativeTextureBottomUp = true;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationCount == 2);
+    require(dependencies.lastMetalScanout.flipped);
+    require(dependencies.readResourceCount == readsBeforeTexture);
+    dependencies.nativeTextureBottomUp = false;
+
+    /* A dropped frame costs the guest what a presented one does. */
+    dependencies.directPresentationDrops = true;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationDropCount == 1);
+    require(dependencies.readResourceCount == readsBeforeTexture);
+    require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture);
+    dependencies.directPresentationDrops = false;
+
+    /* A texture that is not exactly this scanout is read back instead. */
+    const auto presentsBeforeMismatch = dependencies.directPresentationCount;
+    dependencies.blobNativeTexture.width = scanout.width * 2U;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == readsBeforeTexture + 1U);
+    dependencies.blobNativeTexture.width = scanout.width;
+    dependencies.blobNativeTexture.format =
+        static_cast<std::uint32_t>(protocol::GpuFormat::b8g8r8a8Unorm);
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == readsBeforeTexture + 2U);
+    require(dependencies.directPresentationCount == presentsBeforeMismatch);
+    require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture + 2U);
+    dependencies.nativeResourceAvailable = false;
 
     auto disable = scanout;
     disable.resourceId = protocol::invalidResourceId;
@@ -2549,9 +2654,10 @@ void virglBlobScanoutPresentsThroughReadback()
         protocol::GpuResponse::okNoData);
     require(dependencies.releaseBlobScanoutCount == 0);
     require(dependencies.unmapResourceCount == 0);
+    const auto readsAfterDisable = dependencies.readResourceCount;
     require(responseType(device.process(requestBytes(flush), false)) ==
         protocol::GpuResponse::okNoData);
-    require(dependencies.readResourceCount == 2);
+    require(dependencies.readResourceCount == readsAfterDisable);
 }
 
 void malformed3dCommandsUseSpecificErrors()
@@ -2635,7 +2741,7 @@ void runVirtioGpuDeviceTests()
     venusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
-    virglBlobScanoutPresentsThroughReadback();
+    virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
 }
 

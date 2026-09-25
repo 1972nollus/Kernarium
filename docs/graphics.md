@@ -158,11 +158,27 @@ private userspace ioctl or library must never become a production dependency.
 
 Hardware video decode is not advertised. It published frames through a Metal
 texture client buffer that only the retired ANGLE provider exposed, and the
-renderer is built without it. Scanouts of Virgl resources take the host
-readback path, while Venus scanouts keep their native Metal textures. A blob a
-Virgl context created is a GL texture with no Metal texture either, so its
-`SET_SCANOUT_BLOB` takes the same readback path; Android's gralloc allocates
-the compositor's framebuffers that way.
+renderer is built without it.
+
+A Virgl scanout reaches the native display as a Metal texture, not as pixels
+read back into CPU memory. Zink creates each GL texture's image as an
+exportable Metal texture, and virglrenderer names that texture through
+`virgl_renderer_resource_get_info_ext()`, asking Zink for it over
+`MESA_GLINTEROP`; a resource whose GL storage is not a single-sample,
+single-layer 2D texture has none. The device looks the texture up on every
+flush, for classic resources and for the blobs a Virgl context creates alike;
+Android's gralloc allocates the compositor's framebuffers as such blobs. It
+presents the texture only when it holds exactly the scanout, at the scanout's
+size and channel order, and a resource stored bottom row first
+(`VIRGL_RESOURCE_Y_0_TOP`) is turned the right way up by the presenting shader.
+Presentation needs no host fence of its own: the guest flushes a scanout only
+after the fence of the rendering it shows has retired, and a Virgl context
+fence retires only once Zink's GPU work has completed. Anything else takes the
+CPU readback path, which the activity log records as `path=readback` for a
+blob and `path=cpu` for a classic resource, and the frame counters as a
+CPU-fallback frame. VNC reads a bottom-up texture back the same way, because
+its asynchronous Metal readback copies rows in texture order. Venus scanouts
+keep their native Metal textures.
 
 The GPU advertises display geometry and density through EDID. Kernarium point
 mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and

@@ -222,7 +222,9 @@ private:
     std::uint32_t scanoutStride_ {};
     std::uint32_t scanoutOffset_ {};
     void* scanoutTexture_ {};
-    bool scanoutReadback_ {};
+    /* The scanout is a Virgl context's blob: each flush looks up the Metal
+     * texture that stores it and reads it back only when there is none. */
+    bool scanoutVirglBlob_ {};
     void* scanoutMapping_ {};
     std::uint64_t scanoutMappingSize_ {};
 };

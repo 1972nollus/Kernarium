@@ -93,7 +93,7 @@ public:
         std::uint32_t height) = 0;
     [[nodiscard]] virtual int resourceMetalTexture(
         std::uint32_t resourceId,
-        void*& texture) noexcept = 0;
+        VirglRenderer::NativeTexture& texture) noexcept = 0;
     [[nodiscard]] virtual PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept = 0;
     [[nodiscard]] virtual bool needsFullCpuFallback() const noexcept = 0;

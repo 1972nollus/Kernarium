@@ -97,6 +97,24 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
     return reinterpret_cast<const Structure*>(bytes.data());
 }
 
+/* Two formats that differ only in whether the fourth byte is alpha or
+ * padding store their colour channels identically. */
+[[nodiscard]] std::uint32_t formatLayout(std::uint32_t format) noexcept
+{
+    switch (static_cast<protocol::GpuFormat>(format)) {
+    case protocol::GpuFormat::b8g8r8x8Unorm:
+        return static_cast<std::uint32_t>(protocol::GpuFormat::b8g8r8a8Unorm);
+    case protocol::GpuFormat::x8r8g8b8Unorm:
+        return static_cast<std::uint32_t>(protocol::GpuFormat::a8r8g8b8Unorm);
+    case protocol::GpuFormat::r8g8b8x8Unorm:
+        return static_cast<std::uint32_t>(protocol::GpuFormat::r8g8b8a8Unorm);
+    case protocol::GpuFormat::x8b8g8r8Unorm:
+        return static_cast<std::uint32_t>(protocol::GpuFormat::a8b8g8r8Unorm);
+    default:
+        return format;
+    }
+}
+
 bool supportedFormat(std::uint32_t format)
 {
     switch (static_cast<protocol::GpuFormat>(format)) {
@@ -372,7 +390,7 @@ void VirtioGpuDevice::releaseBlobScanout() noexcept
         UML_GPU_RENDERER.releaseBlobScanout(scanoutTexture_);
         scanoutTexture_ = nullptr;
     }
-    scanoutReadback_ = false;
+    scanoutVirglBlob_ = false;
     scanoutFormat_ = {};
     scanoutWidth_ = 0;
     scanoutHeight_ = 0;
@@ -1837,11 +1855,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
         /*
-         * A Virgl context's blob is a GL texture, and the renderer publishes
-         * no Metal texture for one, just as for a classic Virgl resource.
-         * Android's gralloc allocates the compositor's framebuffers this way
-         * once blobs exist, so present such a scanout the classic way: read
-         * it back into the CPU framebuffer on each flush.
+         * A Virgl context's blob is a GL texture with no scanout texture of
+         * its own; Android's gralloc allocates the compositor's framebuffers
+         * this way once blobs exist. Each flush presents the Metal texture
+         * that stores the GL texture, and reads the blob back into the CPU
+         * framebuffer only when there is none, so keep that fallback's
+         * staging ready and the display sized to the scanout.
          */
         if (readback) {
             std::vector<std::uint8_t> replacementReadback;
@@ -1891,7 +1910,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             scanout->strides[0],
             scanout->offsets[0],
             texture,
-            readback ? "readback" : "metal");
+            readback ? "virgl" : "metal");
 
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
@@ -1902,7 +1921,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         scanoutStride_ = scanout->strides[0];
         scanoutOffset_ = scanout->offsets[0];
         scanoutTexture_ = texture;
-        scanoutReadback_ = readback;
+        scanoutVirglBlob_ = readback;
         return success;
     }
 
@@ -1976,12 +1995,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::okNoData);
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-            void* metalTexture = nullptr;
-            const int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
-                flush->resourceId, metalTexture);
+            /* The guest flushes a scanout only once the fence of the
+             * rendering it shows has retired, and a Virgl context fence
+             * retires only when the host GPU has finished that work, so the
+             * texture is complete whenever the display samples it. */
+            VirglRenderer::NativeTexture nativeTexture;
+            int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
+                flush->resourceId, nativeTexture);
+            if (textureResult == 0 &&
+                (nativeTexture.width != resource.width ||
+                 nativeTexture.height != resource.height)) {
+                textureResult = EINVAL;
+            }
             const auto outcome = textureResult == 0
                 ? UML_GPU_DISPLAY.presentMetal(MetalScanout {
-                      .texture = metalTexture,
+                      .texture = nativeTexture.texture,
                       .sourceWidth = resource.width,
                       .sourceHeight = resource.height,
                       .sourceX = scanoutRectangle_.x,
@@ -1992,18 +2020,20 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                       .damageY = damage->y,
                       .damageWidth = damage->width,
                       .damageHeight = damage->height,
+                      .flipped = nativeTexture.bottomUp,
                   })
                 : PresentOutcome::unsupported;
             displayActivityLog().record(
                 "flush kind=virgl resource=%u damage=%ux%u+%u+%u "
-                "texture=%p lookup=%d path=%s outcome=%s",
+                "texture=%p lookup=%d flipped=%d path=%s outcome=%s",
                 flush->resourceId,
                 damage->width,
                 damage->height,
                 damage->x,
                 damage->y,
-                metalTexture,
+                nativeTexture.texture,
                 textureResult,
+                nativeTexture.bottomUp ? 1 : 0,
                 presentAccepted(outcome) ? "metal" : "cpu",
                 presentOutcomeName(outcome));
             if (presentAccepted(outcome)) {
@@ -2034,15 +2064,54 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::okNoData);
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-            if (scanoutReadback_) {
+            if (scanoutVirglBlob_) {
+                /* A Virgl context's blob is a GL texture. Show the Metal
+                 * texture that stores it when it holds exactly this scanout,
+                 * under the same fence guarantee as a classic resource, and
+                 * read it back otherwise. */
+                VirglRenderer::NativeTexture nativeTexture;
+                int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
+                    flush->resourceId, nativeTexture);
+                if (textureResult == 0 &&
+                    (scanoutOffset_ != 0 ||
+                     nativeTexture.width != scanoutWidth_ ||
+                     nativeTexture.height != scanoutHeight_ ||
+                     formatLayout(nativeTexture.format) !=
+                         formatLayout(static_cast<std::uint32_t>(
+                             scanoutFormat_)))) {
+                    textureResult = EINVAL;
+                }
+                const auto outcome = textureResult == 0
+                    ? UML_GPU_DISPLAY.presentMetal(MetalScanout {
+                          .texture = nativeTexture.texture,
+                          .sourceWidth = scanoutWidth_,
+                          .sourceHeight = scanoutHeight_,
+                          .sourceX = scanoutRectangle_.x,
+                          .sourceY = scanoutRectangle_.y,
+                          .width = scanoutRectangle_.width,
+                          .height = scanoutRectangle_.height,
+                          .damageX = damage->x,
+                          .damageY = damage->y,
+                          .damageWidth = damage->width,
+                          .damageHeight = damage->height,
+                          .flipped = nativeTexture.bottomUp,
+                      })
+                    : PresentOutcome::unsupported;
                 displayActivityLog().record(
                     "flush kind=blob resource=%u damage=%ux%u+%u+%u "
-                    "path=readback",
+                    "texture=%p lookup=%d flipped=%d path=%s outcome=%s",
                     flush->resourceId,
                     damage->width,
                     damage->height,
                     damage->x,
-                    damage->y);
+                    damage->y,
+                    nativeTexture.texture,
+                    textureResult,
+                    nativeTexture.bottomUp ? 1 : 0,
+                    presentAccepted(outcome) ? "metal" : "readback",
+                    presentOutcomeName(outcome));
+                if (presentAccepted(outcome))
+                    return success;
                 const auto result = presentReadback(
                     flush->resourceId, scanoutFormat_, *damage);
                 if (result != protocol::GpuResponse::okNoData)

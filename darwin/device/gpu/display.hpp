@@ -30,6 +30,8 @@ struct MetalScanout {
     std::uint32_t damageY {};
     std::uint32_t damageWidth {};
     std::uint32_t damageHeight {};
+    /* The texture stores the image bottom row first. */
+    bool flipped {};
 };
 
 /* A direct presentation either cannot be expressed by this display at all, or

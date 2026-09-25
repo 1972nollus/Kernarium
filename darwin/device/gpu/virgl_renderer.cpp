@@ -606,9 +606,9 @@ int VirglRenderer::readResourceRectangle(
 
 int VirglRenderer::resourceMetalTexture(
     std::uint32_t resourceId,
-    void*& texture) noexcept
+    NativeTexture& texture) noexcept
 {
-    texture = nullptr;
+    texture = {};
     virgl_renderer_resource_info_ext information {};
     information.version = VIRGL_RENDERER_RESOURCE_INFO_EXT_VERSION;
     const int result = virgl_renderer_resource_get_info_ext(
@@ -620,7 +620,14 @@ int VirglRenderer::resourceMetalTexture(
         information.native_handle == nullptr) {
         return EINVAL;
     }
-    texture = information.native_handle;
+    texture = NativeTexture {
+        .texture = information.native_handle,
+        .format = information.base.virgl_format,
+        .width = information.base.width,
+        .height = information.base.height,
+        .bottomUp =
+            (information.base.flags & VIRGL_RESOURCE_Y_0_TOP) != 0,
+    };
     return 0;
 }
 

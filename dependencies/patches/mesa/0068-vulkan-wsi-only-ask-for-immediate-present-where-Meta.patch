@@ -1,7 +1,7 @@
 From ed45dc993286fb26ea0301a233bd2071517b44f0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 14 Sep 2026 02:12:09 +0900
-Subject: [PATCH 068/102] vulkan/wsi: only ask for immediate present where
+Subject: [PATCH 068/103] vulkan/wsi: only ask for immediate present where
  Metal offers it
 
 CAMetalLayer.displaySyncEnabled is macOS-only; every other Apple platform

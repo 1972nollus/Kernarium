@@ -48,17 +48,11 @@ vertex RasterData displayVertex(unsigned int vertexId [[vertex_id]])
     return output;
 }
 
-fragment float4 displayFragment(
-    RasterData input [[stage_in]],
-    texture2d<float> scanout [[texture(0)]],
-    constant uint& rotation [[buffer(0)]])
+// The low two bits of orientation rotate the guest image onto the display;
+// bit 2 says the texture stores that image bottom row first.
+float2 scanoutCoordinate(float2 coordinate, uint orientation)
 {
-    constexpr sampler textureSampler(
-        mag_filter::nearest,
-        min_filter::nearest,
-        address::clamp_to_edge);
-    float2 coordinate = input.textureCoordinate;
-    switch (rotation & 3u) {
+    switch (orientation & 3u) {
     case 1u:
         coordinate = float2(coordinate.y, 1.0 - coordinate.x);
         break;
@@ -71,21 +65,39 @@ fragment float4 displayFragment(
     default:
         break;
     }
-    const float4 color = scanout.sample(
-        textureSampler, coordinate);
-    return float4(color.rgb, 1.0);
+    if ((orientation & 4u) != 0u)
+        coordinate.y = 1.0 - coordinate.y;
+    return coordinate;
 }
 
-fragment float4 displayArrayFragment(
+fragment float4 displayFragment(
     RasterData input [[stage_in]],
-    texture2d_array<float> scanout [[texture(0)]])
+    texture2d<float> scanout [[texture(0)]],
+    constant uint& orientation [[buffer(0)]])
 {
     constexpr sampler textureSampler(
         mag_filter::nearest,
         min_filter::nearest,
         address::clamp_to_edge);
     const float4 color = scanout.sample(
-        textureSampler, input.textureCoordinate, 0);
+        textureSampler,
+        scanoutCoordinate(input.textureCoordinate, orientation));
+    return float4(color.rgb, 1.0);
+}
+
+fragment float4 displayArrayFragment(
+    RasterData input [[stage_in]],
+    texture2d_array<float> scanout [[texture(0)]],
+    constant uint& orientation [[buffer(0)]])
+{
+    constexpr sampler textureSampler(
+        mag_filter::nearest,
+        min_filter::nearest,
+        address::clamp_to_edge);
+    const float4 color = scanout.sample(
+        textureSampler,
+        scanoutCoordinate(input.textureCoordinate, orientation),
+        0);
     return float4(color.rgb, 1.0);
 }
 )metal";
@@ -210,6 +222,7 @@ struct MetalPresentationState final :
             std::lock_guard lock(presentationMutex);
             latestTexture = nil;
             latestIsCpu = true;
+            latestFlipped = false;
             ++latestContentGeneration;
             ++latestPresentationGeneration;
         }
@@ -271,6 +284,7 @@ struct MetalPresentationState final :
                     contentHeight = height;
                     latestTexture = nil;
                     latestIsCpu = true;
+                    latestFlipped = false;
                     ++latestContentGeneration;
                     ++latestPresentationGeneration;
                 }
@@ -345,6 +359,7 @@ struct MetalPresentationState final :
                     presentedContentGeneration;
                 latestTexture = texture;
                 latestIsCpu = false;
+                latestFlipped = scanout.flipped;
                 ++latestContentGeneration;
                 ++latestPresentationGeneration;
             }
@@ -392,6 +407,7 @@ struct MetalPresentationState final :
             std::uint32_t activeContentHeight = 0;
             DisplayRotation activeRotation = DisplayRotation::upright;
             bool useCpu = false;
+            bool flipped = false;
             id<MTLTexture> sourceTexture;
             try {
                 MTKView* view = (__bridge MTKView*)nativeView;
@@ -410,6 +426,7 @@ struct MetalPresentationState final :
                     activeContentHeight = contentHeight;
                     activeRotation = displayRotation;
                     useCpu = latestIsCpu;
+                    flipped = !useCpu && latestFlipped;
                     sourceTexture = useCpu ? fallbackTexture : latestTexture;
                     if (sourceTexture == nil)
                         return;
@@ -497,10 +514,11 @@ struct MetalPresentationState final :
                     [encoder setRenderPipelineState:arrayPipeline];
                 [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
-                const auto shaderRotation =
-                    static_cast<std::uint32_t>(activeRotation);
-                [encoder setFragmentBytes:&shaderRotation
-                                    length:sizeof(shaderRotation)
+                const auto shaderOrientation =
+                    static_cast<std::uint32_t>(activeRotation) |
+                    (flipped ? 4U : 0U);
+                [encoder setFragmentBytes:&shaderOrientation
+                                    length:sizeof(shaderOrientation)
                                    atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle
                             vertexStart:0
@@ -634,6 +652,7 @@ struct MetalPresentationState final :
     std::uint32_t contentHeight;
     DisplayRotation displayRotation {DisplayRotation::upright};
     bool latestIsCpu {true};
+    bool latestFlipped {};
     bool presentationInFlight {};
     std::atomic_bool running {true};
     std::atomic_bool directPathReported {};

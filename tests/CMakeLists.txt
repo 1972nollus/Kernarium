@@ -199,6 +199,10 @@ if(TARGET uml_gpu_transfer_context_error_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-transfer-context-error)
 endif()
+if(TARGET uml_gpu_resource_metal_texture_tests)
+    list(APPEND _uml_required_conditional_tests
+        gpu-resource-metal-texture)
+endif()
 if(TARGET uml_gpu_cross_context_readback_tests)
     list(APPEND _uml_required_conditional_tests
         gpu-cross-context-readback)
