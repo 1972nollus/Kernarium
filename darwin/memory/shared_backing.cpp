@@ -5,14 +5,17 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <memory>
 #include <mach/mach.h>
 #include <mutex>
+#include <new>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace uml::memory {
 
@@ -60,9 +63,80 @@ struct AnonymousSharedBacking final {
 	void *root{};
 	std::size_t size{};
 	bool registered{};
+	/* Views of the root that borrow its mapping rather than owning one. */
+	std::size_t borrowed_views{};
+	/* Host pages of the root whose retirement waits for the last borrowed
+	 * view, one bit per host page. */
+	std::vector<std::uint64_t> retained;
+	std::size_t retained_pages{};
 };
 
 AnonymousSharedBacking anonymous_backing;
+
+[[nodiscard]] bool root_page_index_locked(std::uintptr_t address,
+	std::size_t &index) noexcept
+{
+	const auto root = reinterpret_cast<std::uintptr_t>(anonymous_backing.root);
+	if (anonymous_backing.root == nullptr || address < root ||
+	    address - root >= anonymous_backing.size)
+		return false;
+	index = (address - root) / vm_page_size;
+	return true;
+}
+
+/* A new mapping over a retained page supersedes the retirement that retained
+ * it; the page is no longer the retired domain's to hand back. */
+void forget_retained_locked(const void *address, std::size_t length) noexcept
+{
+	if (anonymous_backing.retained_pages == 0 || length == 0)
+		return;
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	for (std::size_t offset = 0; offset < length; offset += vm_page_size) {
+		std::size_t index;
+		if (!root_page_index_locked(begin + offset, index))
+			continue;
+		auto &word = anonymous_backing.retained[index / 64];
+		const auto bit = std::uint64_t{1} << (index % 64);
+		if ((word & bit) == 0)
+			continue;
+		word &= ~bit;
+		--anonymous_backing.retained_pages;
+	}
+}
+
+/* Hand every retained page back to the window's reservation, as the
+ * retirement which retained it would have. */
+void release_retained_locked() noexcept
+{
+	const auto root = reinterpret_cast<std::uintptr_t>(anonymous_backing.root);
+	const std::size_t pages = anonymous_backing.retained.size() * 64;
+	std::size_t index = 0;
+	while (anonymous_backing.retained_pages != 0 && index < pages) {
+		const auto retained = [](std::size_t page) noexcept {
+			return (anonymous_backing.retained[page / 64] &
+				(std::uint64_t{1} << (page % 64))) != 0;
+		};
+		if (!retained(index)) {
+			++index;
+			continue;
+		}
+		const auto first = index;
+		while (index < pages && retained(index)) {
+			anonymous_backing.retained[index / 64] &=
+				~(std::uint64_t{1} << (index % 64));
+			--anonymous_backing.retained_pages;
+			++index;
+		}
+		auto *address = reinterpret_cast<void *>(root + first * vm_page_size);
+		const std::size_t length = (index - first) * vm_page_size;
+		if (reserve_host_range(address, length) != 0)
+			report_mapping_failure("retained guest RAM release", address,
+				length, errno);
+	}
+	anonymous_backing.retained.clear();
+	anonymous_backing.retained.shrink_to_fit();
+	anonymous_backing.retained_pages = 0;
+}
 
 struct AnonymousTail final {
 	void *address{};
@@ -274,6 +348,8 @@ int release_alias(void *address, std::size_t length, bool fixed) noexcept
 			address, length, offset, status);
 	}
 
+	if (fixed)
+		forget_retained_locked(address, length);
 	vm_address_t target = fixed ? reinterpret_cast<vm_address_t>(address) : 0;
 	const vm_address_t source =
 		reinterpret_cast<vm_address_t>(anonymous_backing.root) + offset;
@@ -383,6 +459,12 @@ void SharedBackingView::reset() noexcept
 {
 	if (owns_mapping_ && data_ != nullptr)
 		(void)munmap(data_, size_);
+	else if (data_ != nullptr) {
+		std::lock_guard lock{anonymous_backing.mutex};
+		if (anonymous_backing.borrowed_views != 0 &&
+		    --anonymous_backing.borrowed_views == 0)
+			release_retained_locked();
+	}
 	data_ = nullptr;
 	size_ = 0;
 	owns_mapping_ = false;
@@ -449,6 +531,7 @@ SharedBackingView acquire_shared_backing_view(int fd,
 			}
 			auto *data = static_cast<std::byte *>(
 				anonymous_backing.root) + offset;
+			++anonymous_backing.borrowed_views;
 			return SharedBackingView{data, length, false};
 		}
 	}
@@ -458,6 +541,40 @@ SharedBackingView acquire_shared_backing_view(int fd,
 	if (mapping == MAP_FAILED)
 		return {};
 	return SharedBackingView{mapping, length, true};
+}
+
+bool retain_borrowed_guest_ram(void *address, std::size_t length) noexcept
+{
+	if (length == 0)
+		return false;
+	std::lock_guard lock{anonymous_backing.mutex};
+	std::size_t first;
+	std::size_t last;
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	if (anonymous_backing.borrowed_views == 0 ||
+	    begin % vm_page_size != 0 || length % vm_page_size != 0 ||
+	    !root_page_index_locked(begin, first) ||
+	    !root_page_index_locked(begin + length - 1, last))
+		return false;
+	if (anonymous_backing.retained.empty()) {
+		const std::size_t pages =
+			(anonymous_backing.size + vm_page_size - 1) / vm_page_size;
+		try {
+			anonymous_backing.retained.assign((pages + 63) / 64, 0);
+		} catch (const std::bad_alloc &) {
+			/* Without room to remember the page, retire it now. */
+			return false;
+		}
+	}
+	for (auto index = first; index <= last; ++index) {
+		auto &word = anonymous_backing.retained[index / 64];
+		const auto bit = std::uint64_t{1} << (index % 64);
+		if ((word & bit) != 0)
+			continue;
+		word |= bit;
+		++anonymous_backing.retained_pages;
+	}
+	return true;
 }
 
 int reserve_host_range(void *address, std::size_t length) noexcept
@@ -493,6 +610,8 @@ void *map_shared_backing(void *address, std::size_t length,
 				errno = EOVERFLOW;
 				return MAP_FAILED;
 			}
+			if ((flags & MAP_FIXED) != 0)
+				forget_retained_locked(address, length);
 			return mmap(address, length, protection, flags, fd,
 				static_cast<off_t>(offset));
 		}

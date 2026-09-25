@@ -76,7 +76,10 @@ release removes live guest mappings the guest never asked to drop. The window's
 map entries are bounded by its geometry rather than by how often the guest maps,
 because re-mapping a released range replaces its entry instead of adding one.
 Domain retirement follows the same rule: it ends one address space, not the
-process, and a later one maps the same window.
+process, and a later one maps the same window. Guest RAM that a host-service
+view still borrows is the exception: it stays mapped until the last borrowed
+view of the root is released, because in-process backends are stopped only
+after the run returns, and a host stop leaves their queues started.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create

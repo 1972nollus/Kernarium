@@ -94,9 +94,30 @@ void test_ordinary_descriptor_view_owns_its_mapping(std::size_t page_size)
 	require(is_unmapped(released_address));
 }
 
-void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
+[[nodiscard]] vm_prot_t protection_of(void *address)
 {
-	TemporaryFile token;
+	mach_vm_address_t region_address =
+		reinterpret_cast<mach_vm_address_t>(address);
+	mach_vm_size_t region_size{};
+	vm_region_basic_info_data_64_t information{};
+	mach_msg_type_number_t information_count =
+		VM_REGION_BASIC_INFO_COUNT_64;
+	mach_port_t object_name = MACH_PORT_NULL;
+	const kern_return_t result = ::mach_vm_region(
+		::mach_task_self(), &region_address, &region_size,
+		VM_REGION_BASIC_INFO_64,
+		reinterpret_cast<vm_region_info_t>(&information),
+		&information_count, &object_name);
+	if (object_name != MACH_PORT_NULL)
+		(void)::mach_port_deallocate(::mach_task_self(), object_name);
+	require(result == KERN_SUCCESS &&
+		region_address <= reinterpret_cast<mach_vm_address_t>(address));
+	return information.protection;
+}
+
+void *test_anonymous_consumers_borrow_one_root(std::size_t page_size,
+	const TemporaryFile &token)
+{
 	require(::ftruncate(token.get(), static_cast<off_t>(page_size * 4)) == 0);
 	require(uml::memory::register_anonymous_shared_backing(token.get()));
 	require(uml::memory::is_anonymous_shared_backing(token.get()));
@@ -193,6 +214,57 @@ void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
 		token.get(), 0, 0, PROT_READ | PROT_WRITE);
 	require(!empty);
 	require(errno == EINVAL);
+	return root_address;
+}
+
+/* A backend still draining its queues when the run ends holds a borrowed view
+ * of guest RAM; retiring the run's domain must not revoke the page under it. */
+void test_borrowed_root_outlives_domain_retirement(std::size_t page_size,
+	const TemporaryFile &token, void *root_address)
+{
+	auto *page = static_cast<std::uint8_t *>(root_address) + page_size * 3;
+	require(!uml::memory::retain_borrowed_guest_ram(page, page_size));
+	{
+		auto consumer = uml::memory::acquire_shared_backing_view(
+			token.get(), page_size * 3, page_size,
+			PROT_READ | PROT_WRITE);
+		require(static_cast<bool>(consumer));
+		require(consumer.data() == page);
+		page[0] = 0x5a;
+		require(uml::memory::retain_borrowed_guest_ram(page, page_size));
+		require(uml::memory::retain_borrowed_guest_ram(page, page_size));
+		std::uint8_t outside{};
+		require(!uml::memory::retain_borrowed_guest_ram(
+			&outside, page_size));
+		require(!uml::memory::retain_borrowed_guest_ram(
+			page + 1, page_size));
+		require(protection_of(page) == (VM_PROT_READ | VM_PROT_WRITE));
+		require(static_cast<volatile std::uint8_t *>(consumer.data())[0] ==
+			0x5a);
+	}
+	require(protection_of(page) == VM_PROT_NONE);
+	require(!is_unmapped(page));
+
+	/* A later mapping over a retained page supersedes its release. */
+	void *remapped = uml::memory::map_shared_backing(page, page_size,
+		PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, token.get(),
+		page_size * 3);
+	require(remapped == page);
+	{
+		auto consumer = uml::memory::acquire_shared_backing_view(
+			token.get(), page_size * 3, page_size,
+			PROT_READ | PROT_WRITE);
+		require(static_cast<bool>(consumer));
+		require(uml::memory::retain_borrowed_guest_ram(page, page_size));
+		remapped = uml::memory::map_shared_backing(page, page_size,
+			PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, token.get(),
+			page_size * 3);
+		require(remapped == page);
+		page[0] = 0xc3;
+	}
+	require(protection_of(page) == (VM_PROT_READ | VM_PROT_WRITE));
+	require(page[0] == 0xc3);
+	require(!uml::memory::retain_borrowed_guest_ram(page, page_size));
 }
 
 } // namespace
@@ -203,7 +275,9 @@ int main()
 	require(configured_page_size > 0);
 	const auto page_size = static_cast<std::size_t>(configured_page_size);
 	test_ordinary_descriptor_view_owns_its_mapping(page_size);
-	test_anonymous_consumers_borrow_one_root(page_size);
+	TemporaryFile token;
+	void *root = test_anonymous_consumers_borrow_one_root(page_size, token);
+	test_borrowed_root_outlives_domain_retirement(page_size, token, root);
 	std::puts("shared backing view tests passed");
 	return EXIT_SUCCESS;
 }
