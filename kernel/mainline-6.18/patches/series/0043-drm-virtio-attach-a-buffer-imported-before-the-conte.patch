@@ -40,7 +40,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_context_attach.h b/drivers/gpu/drm/virtio/virtgpu_context_attach.h
 new file mode 100644
-index 00000000..a0609596
+index 000000000..a06095966
 --- /dev/null
 +++ b/drivers/gpu/drm/virtio/virtgpu_context_attach.h
 @@ -0,0 +1,23 @@
@@ -68,7 +68,7 @@ index 00000000..a0609596
 +
 +#endif
 diff --git a/drivers/gpu/drm/virtio/virtgpu_gem.c b/drivers/gpu/drm/virtio/virtgpu_gem.c
-index 015b5deb..4238aaf7 100644
+index 015b5debd..4238aaf75 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_gem.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_gem.c
 @@ -26,6 +26,7 @@
@@ -219,7 +219,7 @@ index 015b5deb..4238aaf7 100644
  	if (!objs)
  		return;
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-index c33c0573..b14254dd 100644
+index c33c05736..b14254dd5 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 @@ -32,13 +32,14 @@

@@ -80,7 +80,7 @@ one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
  7 files changed, 295 insertions(+), 111 deletions(-)
 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index ec490ced..8d02b821 100644
+index ec490ced2..8d02b821d 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -306,26 +306,28 @@ static inline void set_pte(pte_t *pteptr, pte_t pteval)
@@ -137,7 +137,7 @@ index ec490ced..8d02b821 100644
  static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
  			      pmd_t *pmdp, pmd_t pmd)
 diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
-index 1e759403..f2010ae9 100644
+index 1e7594036..f2010ae96 100644
 --- a/arch/um/include/asm/tlbflush.h
 +++ b/arch/um/include/asm/tlbflush.h
 @@ -34,7 +34,10 @@ extern int um_tlb_sync(struct mm_struct *mm);
@@ -153,7 +153,7 @@ index 1e759403..f2010ae9 100644
  					unsigned long start,
  					unsigned long end);
 diff --git a/arch/um/include/shared/skas/skas.h b/arch/um/include/shared/skas/skas.h
-index 15b8f71b..404b8008 100644
+index 15b8f71bf..404b80088 100644
 --- a/arch/um/include/shared/skas/skas.h
 +++ b/arch/um/include/shared/skas/skas.h
 @@ -20,6 +20,7 @@ extern void current_mm_sync(void);
@@ -165,7 +165,7 @@ index 15b8f71b..404b8008 100644
  void initial_jmpbuf_lock(void);
  void initial_jmpbuf_unlock(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 5ad85f4e..112d9734 100644
+index 5ad85f4e0..112d9734f 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -11,34 +11,6 @@
@@ -204,7 +204,7 @@ index 5ad85f4e..112d9734 100644
  {
  #ifndef CONFIG_PAGE_SIZE_16KB
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 64b45cee..0469be5b 100644
+index 64b45ceee..0469be5b9 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -92,21 +92,18 @@ void current_mm_sync(void)
@@ -319,7 +319,7 @@ index 64b45cee..0469be5b 100644
  	return 0;
  }
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index aefa0b50..6c65b2b7 100644
+index aefa0b506..6c65b2b7b 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -25,9 +25,33 @@ struct vm_ops {
@@ -685,7 +685,7 @@ index aefa0b50..6c65b2b7 100644
  #endif
  
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 15c41d52..2c98e0fb 100644
+index 15c41d52f..2c98e0fb2 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -566,12 +566,16 @@ void userspace(struct uml_pt_regs *registers)

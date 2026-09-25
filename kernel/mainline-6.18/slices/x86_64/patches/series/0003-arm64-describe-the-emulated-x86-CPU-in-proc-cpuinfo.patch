@@ -33,7 +33,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 81 insertions(+)
 
 diff --git a/arch/arm64/um/asm/cpufeatures.h b/arch/arm64/um/asm/cpufeatures.h
-index c224dfb5..3cb07f3b 100644
+index c224dfb5c..3cb07f3bc 100644
 --- a/arch/arm64/um/asm/cpufeatures.h
 +++ b/arch/arm64/um/asm/cpufeatures.h
 @@ -2,8 +2,19 @@
@@ -57,7 +57,7 @@ index c224dfb5..3cb07f3b 100644
  
  #endif
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 3c0e879c..e24f9d1d 100644
+index 3c0e879c2..e24f9d1d6 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -20,7 +20,13 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \
@@ -75,7 +75,7 @@ index 3c0e879c..e24f9d1d 100644
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index ce2f8bf2..25b6d55f 100644
+index ce2f8bf20..25b6d55f4 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -85,6 +85,57 @@ static const char *uml_cpu_model_name(void)

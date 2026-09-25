@@ -23,7 +23,7 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
 new file mode 100644
-index 00000000..0e219cae
+index 000000000..0e219caee
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -0,0 +1,146 @@
@@ -175,7 +175,7 @@ index 00000000..0e219cae
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 new file mode 100644
-index 00000000..cd75a3d1
+index 000000000..cd75a3d19
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -0,0 +1,9 @@
@@ -190,7 +190,7 @@ index 00000000..cd75a3d1
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_bridge.h b/arch/um/os-Darwin/uml_darwin_bridge.h
 new file mode 100644
-index 00000000..a28088cb
+index 000000000..a28088cbb
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_bridge.h
 @@ -0,0 +1,11 @@
@@ -207,7 +207,7 @@ index 00000000..a28088cb
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_cpu.h b/arch/um/os-Darwin/uml_darwin_cpu.h
 new file mode 100644
-index 00000000..8f0fc63b
+index 000000000..8f0fc63b8
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_cpu.h
 @@ -0,0 +1,23 @@
@@ -236,7 +236,7 @@ index 00000000..8f0fc63b
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_host.h b/arch/um/os-Darwin/uml_darwin_host.h
 new file mode 100644
-index 00000000..9f808c5d
+index 000000000..9f808c5dc
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_host.h
 @@ -0,0 +1,20 @@
@@ -262,7 +262,7 @@ index 00000000..9f808c5d
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_memory.h b/arch/um/os-Darwin/uml_darwin_memory.h
 new file mode 100644
-index 00000000..41008ceb
+index 000000000..41008cebc
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_memory.h
 @@ -0,0 +1,48 @@
@@ -316,7 +316,7 @@ index 00000000..41008ceb
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_network.h b/arch/um/os-Darwin/uml_darwin_network.h
 new file mode 100644
-index 00000000..e14c9c92
+index 000000000..e14c9c92c
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_network.h
 @@ -0,0 +1,18 @@

@@ -89,7 +89,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 93 insertions(+), 13 deletions(-)
 
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index 555b1029..cc2879c5 100644
+index 555b1029b..cc2879c5e 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
 @@ -67,6 +67,7 @@ struct virtio_uml_device {

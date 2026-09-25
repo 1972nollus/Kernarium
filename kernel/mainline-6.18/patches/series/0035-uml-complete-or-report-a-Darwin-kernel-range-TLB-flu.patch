@@ -44,7 +44,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 119 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
-index f2010ae9..a854797a 100644
+index f2010ae96..a854797ae 100644
 --- a/arch/um/include/asm/tlbflush.h
 +++ b/arch/um/include/asm/tlbflush.h
 @@ -33,6 +33,7 @@
@@ -68,7 +68,7 @@ index f2010ae9..a854797a 100644
  
  #endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 6c65b2b7..ef849ea2 100644
+index 6c65b2b7b..ef849ea26 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -323,6 +323,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,

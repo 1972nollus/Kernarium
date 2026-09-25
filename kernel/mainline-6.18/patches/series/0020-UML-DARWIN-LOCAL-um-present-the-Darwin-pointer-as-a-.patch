@@ -23,7 +23,7 @@ Change-Id: I29da7c53a5bd415d790b80a8ad5c2ec22dba3bae
  1 file changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
-index 6fafe8c1..7d72c222 100644
+index 6fafe8c1c..7d72c2226 100644
 --- a/arch/um/drivers/vnc_input.c
 +++ b/arch/um/drivers/vnc_input.c
 @@ -48,6 +48,8 @@ static void deliver_event(const struct uml_vnc_input_event *wire)

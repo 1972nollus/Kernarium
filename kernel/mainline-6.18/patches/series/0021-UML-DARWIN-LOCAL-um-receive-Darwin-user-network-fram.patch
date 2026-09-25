@@ -31,7 +31,7 @@ Change-Id: If1980b33f5489d259fbc2db0774272f162157558
  1 file changed, 33 insertions(+), 11 deletions(-)
 
 diff --git a/arch/um/drivers/darwin_net_kern.c b/arch/um/drivers/darwin_net_kern.c
-index 4291170b..0d0634b7 100644
+index 4291170b6..0d0634b77 100644
 --- a/arch/um/drivers/darwin_net_kern.c
 +++ b/arch/um/drivers/darwin_net_kern.c
 @@ -9,29 +9,38 @@

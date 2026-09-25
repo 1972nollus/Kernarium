@@ -30,7 +30,7 @@ exist to show.
  4 files changed, 113 insertions(+), 8 deletions(-)
 
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 7ad36232..7448cfbe 100644
+index 7ad362329..7448cfbee 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -17,6 +17,9 @@ void darwin_host_stop_checkpoint(void);
@@ -54,7 +54,7 @@ index 7ad36232..7448cfbe 100644
  static inline void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
-index 36ee1aa5..8ce3c3ec 100644
+index 36ee1aa58..8ce3c3ec4 100644
 --- a/arch/um/os-Darwin/process.c
 +++ b/arch/um/os-Darwin/process.c
 @@ -90,6 +90,11 @@ int can_drop_memory(void)
@@ -70,7 +70,7 @@ index 36ee1aa5..8ce3c3ec 100644
  	set_handler(SIGTRAP);
  	set_handler(SIGFPE);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 948a794a..6d2353ca 100644
+index 948a794aa..6d2353ca5 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
 @@ -15,6 +15,7 @@
@@ -169,7 +169,7 @@ index 948a794a..6d2353ca 100644
  	if (signal == SIGALRM) {
  		if (!previous || state->alarm_active) {
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 614f086a..c16721b6 100644
+index 614f086a7..c16721b61 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
 @@ -78,6 +78,39 @@ int uml_curr_cpu(void)

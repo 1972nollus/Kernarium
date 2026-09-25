@@ -35,7 +35,7 @@ darwin_uml_vm_invalidate_code() to the bridge, version 11.
  9 files changed, 68 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/asm/cacheflush.h b/arch/um/include/asm/cacheflush.h
-index 4c9858cd..b301339b 100644
+index 4c9858cd3..b301339be 100644
 --- a/arch/um/include/asm/cacheflush.h
 +++ b/arch/um/include/asm/cacheflush.h
 @@ -5,5 +5,25 @@
@@ -65,7 +65,7 @@ index 4c9858cd..b301339b 100644
  #include <asm-generic/cacheflush.h>
  #endif /* __UM_ASM_CACHEFLUSH_H */
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index da7f6996..e4f92c57 100644
+index da7f6996f..e4f92c572 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -273,6 +273,9 @@ extern int darwin_uml_vm_walker_lock(unsigned long generation);
@@ -79,7 +79,7 @@ index da7f6996..e4f92c57 100644
  					  void *address,
  					  unsigned long length);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index ef849ea2..7cccc32c 100644
+index ef849ea26..7cccc32c0 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -1025,6 +1025,27 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
@@ -111,7 +111,7 @@ index ef849ea2..7cccc32c 100644
  
  void flush_tlb_mm(struct mm_struct *mm)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 05a13863..8cfd9f19 100644
+index 05a138639..8cfd9f19c 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -24,8 +24,8 @@
@@ -126,7 +126,7 @@ index 05a13863..8cfd9f19 100644
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 5c7a6735..8d524eff 100644
+index 5c7a6735f..8d524efff 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {
@@ -141,7 +141,7 @@ index 5c7a6735..8d524eff 100644
  static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
  static_assert(DARWIN_UML_EVENT_STOP == 9);
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index 3aafae44..9353f8d8 100644
+index 3aafae44c..9353f8d82 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@
@@ -155,7 +155,7 @@ index 3aafae44..9353f8d8 100644
  
  #endif
 diff --git a/arch/um/os-Darwin/uml_darwin_memory.h b/arch/um/os-Darwin/uml_darwin_memory.h
-index 41008ceb..355527f5 100644
+index 41008cebc..355527f5c 100644
 --- a/arch/um/os-Darwin/uml_darwin_memory.h
 +++ b/arch/um/os-Darwin/uml_darwin_memory.h
 @@ -27,6 +27,8 @@ int darwin_uml_vm_walker_unlock(unsigned long generation);
@@ -168,7 +168,7 @@ index 41008ceb..355527f5 100644
  int darwin_uml_vm_sync_from_backing(unsigned long address);
  int darwin_uml_vm_sync_from_buffer(unsigned long address,
 diff --git a/include/asm-generic/cacheflush.h b/include/asm-generic/cacheflush.h
-index 7ee8a179..c477760b 100644
+index 7ee8a179d..c477760b0 100644
 --- a/include/asm-generic/cacheflush.h
 +++ b/include/asm-generic/cacheflush.h
 @@ -103,6 +103,19 @@ static inline void flush_cache_vunmap(unsigned long start, unsigned long end)
@@ -192,7 +192,7 @@ index 7ee8a179..c477760b 100644
  #define copy_to_user_page(vma, page, vaddr, dst, src, len)	\
  	do { \
 diff --git a/mm/process_vm_access.c b/mm/process_vm_access.c
-index 656d3e88..ced5b206 100644
+index 656d3e887..ced5b2064 100644
 --- a/mm/process_vm_access.c
 +++ b/mm/process_vm_access.c
 @@ -118,6 +118,9 @@ static int process_vm_rw_single_vec(unsigned long addr,

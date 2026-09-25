@@ -53,7 +53,7 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/um/os-Darwin/Makefile b/arch/um/os-Darwin/Makefile
 new file mode 100644
-index 00000000..5198f302
+index 000000000..5198f3022
 --- /dev/null
 +++ b/arch/um/os-Darwin/Makefile
 @@ -0,0 +1,15 @@
@@ -74,7 +74,7 @@ index 00000000..5198f302
 +include $(srctree)/arch/um/scripts/Makefile.rules
 diff --git a/arch/um/os-Darwin/bridge.h b/arch/um/os-Darwin/bridge.h
 new file mode 100644
-index 00000000..cc59ddcf
+index 000000000..cc59ddcf9
 --- /dev/null
 +++ b/arch/um/os-Darwin/bridge.h
 @@ -0,0 +1,8 @@
@@ -88,7 +88,7 @@ index 00000000..cc59ddcf
 +#endif
 diff --git a/arch/um/os-Darwin/compat.c b/arch/um/os-Darwin/compat.c
 new file mode 100644
-index 00000000..12d70d6c
+index 000000000..12d70d6cb
 --- /dev/null
 +++ b/arch/um/os-Darwin/compat.c
 @@ -0,0 +1,125 @@
@@ -219,7 +219,7 @@ index 00000000..12d70d6c
 +}
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
 new file mode 100644
-index 00000000..9e539843
+index 000000000..9e5398437
 --- /dev/null
 +++ b/arch/um/os-Darwin/file.c
 @@ -0,0 +1,544 @@
@@ -769,7 +769,7 @@ index 00000000..9e539843
 +}
 diff --git a/arch/um/os-Darwin/helper.c b/arch/um/os-Darwin/helper.c
 new file mode 100644
-index 00000000..540269e0
+index 000000000..540269e0b
 --- /dev/null
 +++ b/arch/um/os-Darwin/helper.c
 @@ -0,0 +1,204 @@
@@ -979,7 +979,7 @@ index 00000000..540269e0
 +}
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
 new file mode 100644
-index 00000000..40066826
+index 000000000..400668265
 --- /dev/null
 +++ b/arch/um/os-Darwin/internal.h
 @@ -0,0 +1,61 @@
@@ -1046,7 +1046,7 @@ index 00000000..40066826
 +#endif /* __UM_OS_DARWIN_INTERNAL_H */
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
 new file mode 100644
-index 00000000..45aa9db0
+index 000000000..45aa9db0b
 --- /dev/null
 +++ b/arch/um/os-Darwin/irq.c
 @@ -0,0 +1,351 @@
@@ -1403,7 +1403,7 @@ index 00000000..45aa9db0
 +}
 diff --git a/arch/um/os-Darwin/irq.h b/arch/um/os-Darwin/irq.h
 new file mode 100644
-index 00000000..026078d0
+index 000000000..026078d0e
 --- /dev/null
 +++ b/arch/um/os-Darwin/irq.h
 @@ -0,0 +1,10 @@
@@ -1419,7 +1419,7 @@ index 00000000..026078d0
 +#endif
 diff --git a/arch/um/os-Darwin/main.c b/arch/um/os-Darwin/main.c
 new file mode 100644
-index 00000000..cf597442
+index 000000000..cf597442f
 --- /dev/null
 +++ b/arch/um/os-Darwin/main.c
 @@ -0,0 +1,56 @@
@@ -1481,7 +1481,7 @@ index 00000000..cf597442
 +}
 diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
 new file mode 100644
-index 00000000..968c0de1
+index 000000000..968c0de1b
 --- /dev/null
 +++ b/arch/um/os-Darwin/mem.c
 @@ -0,0 +1,41 @@
@@ -1528,7 +1528,7 @@ index 00000000..968c0de1
 +}
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
 new file mode 100644
-index 00000000..36ee1aa5
+index 000000000..36ee1aa58
 --- /dev/null
 +++ b/arch/um/os-Darwin/process.c
 @@ -0,0 +1,105 @@
@@ -1639,7 +1639,7 @@ index 00000000..36ee1aa5
 +}
 diff --git a/arch/um/os-Darwin/sigio.c b/arch/um/os-Darwin/sigio.c
 new file mode 100644
-index 00000000..af15cfb1
+index 000000000..af15cfb1c
 --- /dev/null
 +++ b/arch/um/os-Darwin/sigio.c
 @@ -0,0 +1,34 @@
@@ -1679,7 +1679,7 @@ index 00000000..af15cfb1
 +}
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
 new file mode 100644
-index 00000000..297d5b15
+index 000000000..297d5b15b
 --- /dev/null
 +++ b/arch/um/os-Darwin/signal.c
 @@ -0,0 +1,315 @@
@@ -2000,7 +2000,7 @@ index 00000000..297d5b15
 +}
 diff --git a/arch/um/os-Darwin/skas/Makefile b/arch/um/os-Darwin/skas/Makefile
 new file mode 100644
-index 00000000..19c764bf
+index 000000000..19c764bff
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/Makefile
 @@ -0,0 +1,7 @@
@@ -2013,7 +2013,7 @@ index 00000000..19c764bf
 +include $(srctree)/arch/um/scripts/Makefile.rules
 diff --git a/arch/um/os-Darwin/skas/mem.c b/arch/um/os-Darwin/skas/mem.c
 new file mode 100644
-index 00000000..66322482
+index 000000000..66322482a
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/mem.c
 @@ -0,0 +1,33 @@
@@ -2052,7 +2052,7 @@ index 00000000..66322482
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 new file mode 100644
-index 00000000..8591d5a5
+index 000000000..8591d5a58
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -0,0 +1,1264 @@
@@ -3322,7 +3322,7 @@ index 00000000..8591d5a5
 +}
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
 new file mode 100644
-index 00000000..e05157ba
+index 000000000..e05157ba5
 --- /dev/null
 +++ b/arch/um/os-Darwin/smp.c
 @@ -0,0 +1,461 @@
@@ -3789,7 +3789,7 @@ index 00000000..e05157ba
 +}
 diff --git a/arch/um/os-Darwin/start_up.c b/arch/um/os-Darwin/start_up.c
 new file mode 100644
-index 00000000..62332109
+index 000000000..623321096
 --- /dev/null
 +++ b/arch/um/os-Darwin/start_up.c
 @@ -0,0 +1,72 @@
@@ -3867,7 +3867,7 @@ index 00000000..62332109
 +}
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
 new file mode 100644
-index 00000000..06199deb
+index 000000000..06199debb
 --- /dev/null
 +++ b/arch/um/os-Darwin/time.c
 @@ -0,0 +1,280 @@
@@ -4153,7 +4153,7 @@ index 00000000..06199deb
 +}
 diff --git a/arch/um/os-Darwin/tty.c b/arch/um/os-Darwin/tty.c
 new file mode 100644
-index 00000000..3c1f9f9b
+index 000000000..3c1f9f9b6
 --- /dev/null
 +++ b/arch/um/os-Darwin/tty.c
 @@ -0,0 +1,22 @@
@@ -4181,7 +4181,7 @@ index 00000000..3c1f9f9b
 +}
 diff --git a/arch/um/os-Darwin/umid.c b/arch/um/os-Darwin/umid.c
 new file mode 100644
-index 00000000..d00d373d
+index 000000000..d00d373d9
 --- /dev/null
 +++ b/arch/um/os-Darwin/umid.c
 @@ -0,0 +1,40 @@
@@ -4227,7 +4227,7 @@ index 00000000..d00d373d
 +}
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
 new file mode 100644
-index 00000000..3bdb9963
+index 000000000..3bdb99632
 --- /dev/null
 +++ b/arch/um/os-Darwin/util.c
 @@ -0,0 +1,133 @@

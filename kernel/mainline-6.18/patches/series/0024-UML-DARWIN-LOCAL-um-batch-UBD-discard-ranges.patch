@@ -8,7 +8,7 @@ Subject: [PATCH 24/43] UML-DARWIN-LOCAL: um: batch UBD discard ranges
  1 file changed, 18 insertions(+), 2 deletions(-)
 
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
-index 6d235135..5f824f42 100644
+index 6d235135a..5f824f425 100644
 --- a/arch/um/drivers/ubd_kern.c
 +++ b/arch/um/drivers/ubd_kern.c
 @@ -45,8 +45,11 @@

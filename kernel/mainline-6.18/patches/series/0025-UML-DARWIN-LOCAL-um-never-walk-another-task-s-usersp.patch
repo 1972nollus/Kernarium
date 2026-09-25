@@ -26,7 +26,7 @@ walk previously produced guest bytes, not kernel frames.
  1 file changed, 14 insertions(+), 2 deletions(-)
 
 diff --git a/arch/um/include/asm/stacktrace.h b/arch/um/include/asm/stacktrace.h
-index 436b5595..1bdad33f 100644
+index 436b55952..1bdad33f9 100644
 --- a/arch/um/include/asm/stacktrace.h
 +++ b/arch/um/include/asm/stacktrace.h
 @@ -20,7 +20,13 @@ get_frame_pointer(struct task_struct *task, struct pt_regs *segv_regs)

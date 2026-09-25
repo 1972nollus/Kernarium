@@ -43,7 +43,7 @@ that share one dma-buf follow one another at their negotiated sizes.
  create mode 100644 include/uapi/linux/virtio_video.h
 
 diff --git a/drivers/media/Kconfig b/drivers/media/Kconfig
-index 6abc9302..3d5a3e69 100644
+index 6abc9302c..3d5a3e690 100644
 --- a/drivers/media/Kconfig
 +++ b/drivers/media/Kconfig
 @@ -22,6 +22,8 @@ menuconfig MEDIA_SUPPORT
@@ -56,7 +56,7 @@ index 6abc9302..3d5a3e69 100644
  	bool "Filter media drivers"
  	default y if !EXPERT
 diff --git a/drivers/media/Makefile b/drivers/media/Makefile
-index 20fac24e..6ceee069 100644
+index 20fac24e4..6ceee069d 100644
 --- a/drivers/media/Makefile
 +++ b/drivers/media/Makefile
 @@ -32,3 +32,5 @@ obj-$(CONFIG_CEC_CORE) += cec/
@@ -67,7 +67,7 @@ index 20fac24e..6ceee069 100644
 +obj-$(CONFIG_VIRTIO_VIDEO) += virtio/
 diff --git a/drivers/media/virtio/Kconfig b/drivers/media/virtio/Kconfig
 new file mode 100644
-index 00000000..2ea4e1ae
+index 000000000..2ea4e1aec
 --- /dev/null
 +++ b/drivers/media/virtio/Kconfig
 @@ -0,0 +1,9 @@
@@ -82,7 +82,7 @@ index 00000000..2ea4e1ae
 +	  Stateful V4L2 decoding through the Virtio video queues.
 diff --git a/drivers/media/virtio/Makefile b/drivers/media/virtio/Makefile
 new file mode 100644
-index 00000000..674cca85
+index 000000000..674cca853
 --- /dev/null
 +++ b/drivers/media/virtio/Makefile
 @@ -0,0 +1,6 @@
@@ -94,7 +94,7 @@ index 00000000..674cca85
 +	virtio_video_blob.o
 diff --git a/drivers/media/virtio/README b/drivers/media/virtio/README
 new file mode 100644
-index 00000000..90e8a353
+index 000000000..90e8a3531
 --- /dev/null
 +++ b/drivers/media/virtio/README
 @@ -0,0 +1,11 @@
@@ -111,7 +111,7 @@ index 00000000..90e8a353
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 00000000..32fd5d87
+index 000000000..32fd5d87f
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
 @@ -0,0 +1,456 @@
@@ -573,7 +573,7 @@ index 00000000..32fd5d87
 +#endif /* _VIRTIO_VIDEO_H */
 diff --git a/drivers/media/virtio/virtio_video_blob.c b/drivers/media/virtio/virtio_video_blob.c
 new file mode 100644
-index 00000000..98fbb3c3
+index 000000000..98fbb3c33
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_blob.c
 @@ -0,0 +1,157 @@
@@ -736,7 +736,7 @@ index 00000000..98fbb3c3
 +}
 diff --git a/drivers/media/virtio/virtio_video_caps.c b/drivers/media/virtio/virtio_video_caps.c
 new file mode 100644
-index 00000000..b64b5a91
+index 000000000..b64b5a910
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_caps.c
 @@ -0,0 +1,466 @@
@@ -1208,7 +1208,7 @@ index 00000000..b64b5a91
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 00000000..8bfd2706
+index 000000000..8bfd2706d
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
 @@ -0,0 +1,485 @@
@@ -1699,7 +1699,7 @@ index 00000000..8bfd2706
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 00000000..23014aff
+index 000000000..23014affe
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
 @@ -0,0 +1,1534 @@
@@ -3239,7 +3239,7 @@ index 00000000..23014aff
 +}
 diff --git a/drivers/media/virtio/virtio_video_driver.c b/drivers/media/virtio/virtio_video_driver.c
 new file mode 100644
-index 00000000..79d2c8f5
+index 000000000..79d2c8f5a
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_driver.c
 @@ -0,0 +1,242 @@
@@ -3487,7 +3487,7 @@ index 00000000..79d2c8f5
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 00000000..1900b879
+index 000000000..1900b8797
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
 @@ -0,0 +1,308 @@
@@ -3801,7 +3801,7 @@ index 00000000..1900b879
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 00000000..abbabfaf
+index 000000000..abbabfafb
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
 @@ -0,0 +1,981 @@
@@ -4788,7 +4788,7 @@ index 00000000..abbabfaf
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h
 new file mode 100644
-index 00000000..6a66a95f
+index 000000000..6a66a95f3
 --- /dev/null
 +++ b/include/uapi/linux/virtio_video.h
 @@ -0,0 +1,539 @@

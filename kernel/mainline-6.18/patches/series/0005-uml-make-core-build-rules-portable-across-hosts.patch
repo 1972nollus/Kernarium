@@ -9,7 +9,7 @@ Wire the split core objects and use a host-portable configuration transform in o
  1 file changed, 13 insertions(+), 10 deletions(-)
 
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index b8f4e928..5777ded6 100644
+index b8f4e9281..5777ded66 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -17,14 +17,19 @@ always-$(KBUILD_BUILTIN) := vmlinux.lds

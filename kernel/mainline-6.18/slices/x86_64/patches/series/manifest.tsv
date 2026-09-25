@@ -2,8 +2,8 @@
 # Ordered final-state topic identity manifest. Fields are order, file, stable
 # patch-id, SHA-256 of the git-generated patch, and commit subject.
 order	filename	stable_patch_id	sha256	subject
-1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	3df6949cad2a2bbe56c7fe8948e369dd873ee828	5415dfb1b577dcaefd75525599ac0d1cd28c161e2bcb3d11f7d7f288cddec17b	arm64: add a dedicated x86-64 userspace UML slice
-2	0002-arm64-add-i386-userspace-task-support.patch	64da1375eaee4418b3ff06705a14325270096747	61eb1a6c7e1fd7a82d8892009354d5278fa62f61b6a2f79e526bf58472a87d4a	arm64: add i386 userspace task support
-3	0003-arm64-describe-the-emulated-x86-CPU-in-proc-cpuinfo.patch	72b892bc65702c0126facef878ac466b8afbbc07	b13ee998fd8278717b4fa648b1cbb9c308eb83d0e2085d65e4d46561c2dccfda	arm64: describe the emulated x86 CPU in /proc/cpuinfo
-4	0004-arm64-use-x86-layouts-for-x86-64-ptrace-register-acc.patch	f8e2def5232503bc7d0b3dda5a960ed083a4e8d9	d0eb5ce170349eb1e1b485106adf4e7e441d48fbd1381bb7c0f784febbd34967	arm64: use x86 layouts for x86-64 ptrace register access
-5	0005-arm64-single-step-x86-64-tasks-with-RFLAGS.TF.patch	c97302c05a5953ef19f5a3620b57ca131662c701	cfa950893e6b96f37ded36340725a54ba8e0c8e6eecfe8eeb94364444388a938	arm64: single-step x86-64 tasks with RFLAGS.TF
+1	0001-arm64-add-a-dedicated-x86-64-userspace-UML-slice.patch	3df6949cad2a2bbe56c7fe8948e369dd873ee828	3f98df274b1b636a18f5c7b58fdcc850bbcda5e1b53df5f61e70b7dbf2437e0d	arm64: add a dedicated x86-64 userspace UML slice
+2	0002-arm64-add-i386-userspace-task-support.patch	64da1375eaee4418b3ff06705a14325270096747	a54fd597673c24f7fd52c0b7ee96dd226bb82e0b2fe302660282f8acc9434f4c	arm64: add i386 userspace task support
+3	0003-arm64-describe-the-emulated-x86-CPU-in-proc-cpuinfo.patch	72b892bc65702c0126facef878ac466b8afbbc07	13c1e44a62dfef52d9691481cdbec8ba21ddf139743eb48e09aaf072c3a1b180	arm64: describe the emulated x86 CPU in /proc/cpuinfo
+4	0004-arm64-use-x86-layouts-for-x86-64-ptrace-register-acc.patch	f8e2def5232503bc7d0b3dda5a960ed083a4e8d9	0018ac94130783462c7142cc51e9ae1c86178d31299e55ae98ba1130cf8072f0	arm64: use x86 layouts for x86-64 ptrace register access
+5	0005-arm64-single-step-x86-64-tasks-with-RFLAGS.TF.patch	c97302c05a5953ef19f5a3620b57ca131662c701	24daee213b4ad69bddba194cd8c7d6f48488785b1325ce15e89175f1e0682221	arm64: single-step x86-64 tasks with RFLAGS.TF

@@ -103,7 +103,7 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/arm64/Makefile.um b/arch/arm64/Makefile.um
 new file mode 100644
-index 00000000..ecf8bbeb
+index 000000000..ecf8bbeb9
 --- /dev/null
 +++ b/arch/arm64/Makefile.um
 @@ -0,0 +1,64 @@
@@ -173,7 +173,7 @@ index 00000000..ecf8bbeb
 +endif
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
 new file mode 100644
-index 00000000..b0603b12
+index 000000000..b0603b124
 --- /dev/null
 +++ b/arch/arm64/um/Kconfig
 @@ -0,0 +1,41 @@
@@ -220,7 +220,7 @@ index 00000000..b0603b12
 +	def_bool y
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
 new file mode 100644
-index 00000000..b3bbae6c
+index 000000000..b3bbae6cd
 --- /dev/null
 +++ b/arch/arm64/um/Makefile
 @@ -0,0 +1,12 @@
@@ -238,7 +238,7 @@ index 00000000..b3bbae6c
 +include $(srctree)/arch/um/scripts/Makefile.rules
 diff --git a/arch/arm64/um/asm/barrier.h b/arch/arm64/um/asm/barrier.h
 new file mode 100644
-index 00000000..e8b2e059
+index 000000000..e8b2e0598
 --- /dev/null
 +++ b/arch/arm64/um/asm/barrier.h
 @@ -0,0 +1,15 @@
@@ -259,7 +259,7 @@ index 00000000..e8b2e059
 +#endif
 diff --git a/arch/arm64/um/asm/checksum.h b/arch/arm64/um/asm/checksum.h
 new file mode 100644
-index 00000000..c5cc0bef
+index 000000000..c5cc0bef8
 --- /dev/null
 +++ b/arch/arm64/um/asm/checksum.h
 @@ -0,0 +1,8 @@
@@ -273,7 +273,7 @@ index 00000000..c5cc0bef
 +#endif
 diff --git a/arch/arm64/um/asm/cpufeature.h b/arch/arm64/um/asm/cpufeature.h
 new file mode 100644
-index 00000000..351e0de1
+index 000000000..351e0de16
 --- /dev/null
 +++ b/arch/arm64/um/asm/cpufeature.h
 @@ -0,0 +1,8 @@
@@ -287,7 +287,7 @@ index 00000000..351e0de1
 +#endif
 diff --git a/arch/arm64/um/asm/cpufeatures.h b/arch/arm64/um/asm/cpufeatures.h
 new file mode 100644
-index 00000000..c224dfb5
+index 000000000..c224dfb5c
 --- /dev/null
 +++ b/arch/arm64/um/asm/cpufeatures.h
 @@ -0,0 +1,9 @@
@@ -302,7 +302,7 @@ index 00000000..c224dfb5
 +#endif
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
 new file mode 100644
-index 00000000..42959d6d
+index 000000000..42959d6df
 --- /dev/null
 +++ b/arch/arm64/um/asm/elf.h
 @@ -0,0 +1,79 @@
@@ -387,7 +387,7 @@ index 00000000..42959d6d
 +#endif
 diff --git a/arch/arm64/um/asm/lse.h b/arch/arm64/um/asm/lse.h
 new file mode 100644
-index 00000000..5d635724
+index 000000000..5d6357244
 --- /dev/null
 +++ b/arch/arm64/um/asm/lse.h
 @@ -0,0 +1,61 @@
@@ -454,7 +454,7 @@ index 00000000..5d635724
 +#endif /* __ASM_UM_ARM64_LSE_H */
 diff --git a/arch/arm64/um/asm/memory.h b/arch/arm64/um/asm/memory.h
 new file mode 100644
-index 00000000..3a2ae67e
+index 000000000..3a2ae67ea
 --- /dev/null
 +++ b/arch/arm64/um/asm/memory.h
 @@ -0,0 +1,8 @@
@@ -468,7 +468,7 @@ index 00000000..3a2ae67e
 +#endif
 diff --git a/arch/arm64/um/asm/mman.h b/arch/arm64/um/asm/mman.h
 new file mode 100644
-index 00000000..56ab3b42
+index 000000000..56ab3b424
 --- /dev/null
 +++ b/arch/arm64/um/asm/mman.h
 @@ -0,0 +1,7 @@
@@ -481,7 +481,7 @@ index 00000000..56ab3b42
 +#endif
 diff --git a/arch/arm64/um/asm/perf_event.h b/arch/arm64/um/asm/perf_event.h
 new file mode 100644
-index 00000000..26374c04
+index 000000000..26374c04b
 --- /dev/null
 +++ b/arch/arm64/um/asm/perf_event.h
 @@ -0,0 +1,19 @@
@@ -506,7 +506,7 @@ index 00000000..26374c04
 +#endif /* _ASM_UM_ARM64_PERF_EVENT_H */
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
 new file mode 100644
-index 00000000..3cf7106c
+index 000000000..3cf7106cc
 --- /dev/null
 +++ b/arch/arm64/um/asm/processor.h
 @@ -0,0 +1,55 @@
@@ -567,7 +567,7 @@ index 00000000..3cf7106c
 +#endif
 diff --git a/arch/arm64/um/asm/ptrace-abi.h b/arch/arm64/um/asm/ptrace-abi.h
 new file mode 100644
-index 00000000..3afa6ed8
+index 000000000..3afa6ed84
 --- /dev/null
 +++ b/arch/arm64/um/asm/ptrace-abi.h
 @@ -0,0 +1,15 @@
@@ -588,7 +588,7 @@ index 00000000..3afa6ed8
 +#endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 new file mode 100644
-index 00000000..dd7a005f
+index 000000000..dd7a005f3
 --- /dev/null
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -0,0 +1,48 @@
@@ -642,7 +642,7 @@ index 00000000..dd7a005f
 +#endif
 diff --git a/arch/arm64/um/asm/rqspinlock.h b/arch/arm64/um/asm/rqspinlock.h
 new file mode 100644
-index 00000000..5f53dc9d
+index 000000000..5f53dc9da
 --- /dev/null
 +++ b/arch/arm64/um/asm/rqspinlock.h
 @@ -0,0 +1,10 @@
@@ -658,7 +658,7 @@ index 00000000..5f53dc9d
 +#endif /* __ASM_UM_ARM64_RQSPINLOCK_H */
 diff --git a/arch/arm64/um/asm/segment.h b/arch/arm64/um/asm/segment.h
 new file mode 100644
-index 00000000..a95be13e
+index 000000000..a95be13e1
 --- /dev/null
 +++ b/arch/arm64/um/asm/segment.h
 @@ -0,0 +1,8 @@
@@ -672,7 +672,7 @@ index 00000000..a95be13e
 +#endif
 diff --git a/arch/arm64/um/asm/set_memory.h b/arch/arm64/um/asm/set_memory.h
 new file mode 100644
-index 00000000..6fa932ed
+index 000000000..6fa932ed0
 --- /dev/null
 +++ b/arch/arm64/um/asm/set_memory.h
 @@ -0,0 +1,53 @@
@@ -731,7 +731,7 @@ index 00000000..6fa932ed
 +#endif
 diff --git a/arch/arm64/um/asm/signal.h b/arch/arm64/um/asm/signal.h
 new file mode 100644
-index 00000000..99fd33b7
+index 000000000..99fd33b71
 --- /dev/null
 +++ b/arch/arm64/um/asm/signal.h
 @@ -0,0 +1,15 @@
@@ -752,7 +752,7 @@ index 00000000..99fd33b7
 +#endif
 diff --git a/arch/arm64/um/asm/spinlock.h b/arch/arm64/um/asm/spinlock.h
 new file mode 100644
-index 00000000..528c1166
+index 000000000..528c1166d
 --- /dev/null
 +++ b/arch/arm64/um/asm/spinlock.h
 @@ -0,0 +1,19 @@
@@ -777,7 +777,7 @@ index 00000000..528c1166
 +#endif /* __ASM_UM_ARM64_SPINLOCK_H */
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
 new file mode 100644
-index 00000000..9dfdeb2c
+index 000000000..9dfdeb2cc
 --- /dev/null
 +++ b/arch/arm64/um/asm/syscall.h
 @@ -0,0 +1,18 @@
@@ -801,7 +801,7 @@ index 00000000..9dfdeb2c
 +#endif
 diff --git a/arch/arm64/um/asm/user.h b/arch/arm64/um/asm/user.h
 new file mode 100644
-index 00000000..5a52cb11
+index 000000000..5a52cb113
 --- /dev/null
 +++ b/arch/arm64/um/asm/user.h
 @@ -0,0 +1,12 @@
@@ -819,7 +819,7 @@ index 00000000..5a52cb11
 +#endif
 diff --git a/arch/arm64/um/asm/vdso/clocksource.h b/arch/arm64/um/asm/vdso/clocksource.h
 new file mode 100644
-index 00000000..366bc01c
+index 000000000..366bc01cc
 --- /dev/null
 +++ b/arch/arm64/um/asm/vdso/clocksource.h
 @@ -0,0 +1,11 @@
@@ -836,7 +836,7 @@ index 00000000..366bc01c
 +#endif
 diff --git a/arch/arm64/um/asm/vdso/gettimeofday.h b/arch/arm64/um/asm/vdso/gettimeofday.h
 new file mode 100644
-index 00000000..d78e4d72
+index 000000000..d78e4d728
 --- /dev/null
 +++ b/arch/arm64/um/asm/vdso/gettimeofday.h
 @@ -0,0 +1,43 @@
@@ -885,7 +885,7 @@ index 00000000..d78e4d72
 +#endif
 diff --git a/arch/arm64/um/asm/vdso/processor.h b/arch/arm64/um/asm/vdso/processor.h
 new file mode 100644
-index 00000000..ba0b0872
+index 000000000..ba0b08726
 --- /dev/null
 +++ b/arch/arm64/um/asm/vdso/processor.h
 @@ -0,0 +1,7 @@
@@ -898,7 +898,7 @@ index 00000000..ba0b0872
 +#endif
 diff --git a/arch/arm64/um/asm/vdso/vsyscall.h b/arch/arm64/um/asm/vdso/vsyscall.h
 new file mode 100644
-index 00000000..d7229f50
+index 000000000..d7229f500
 --- /dev/null
 +++ b/arch/arm64/um/asm/vdso/vsyscall.h
 @@ -0,0 +1,7 @@
@@ -911,7 +911,7 @@ index 00000000..d7229f50
 +#endif
 diff --git a/arch/arm64/um/asm/vm-flags.h b/arch/arm64/um/asm/vm-flags.h
 new file mode 100644
-index 00000000..9e14ca1b
+index 000000000..9e14ca1b7
 --- /dev/null
 +++ b/arch/arm64/um/asm/vm-flags.h
 @@ -0,0 +1,7 @@
@@ -924,7 +924,7 @@ index 00000000..9e14ca1b
 +#endif
 diff --git a/arch/arm64/um/asm/word-at-a-time.h b/arch/arm64/um/asm/word-at-a-time.h
 new file mode 100644
-index 00000000..d7aa132e
+index 000000000..d7aa132e1
 --- /dev/null
 +++ b/arch/arm64/um/asm/word-at-a-time.h
 @@ -0,0 +1,35 @@
@@ -965,7 +965,7 @@ index 00000000..d7aa132e
 +#endif
 diff --git a/arch/arm64/um/bugs.c b/arch/arm64/um/bugs.c
 new file mode 100644
-index 00000000..87679e51
+index 000000000..87679e51b
 --- /dev/null
 +++ b/arch/arm64/um/bugs.c
 @@ -0,0 +1,12 @@
@@ -983,7 +983,7 @@ index 00000000..87679e51
 +}
 diff --git a/arch/arm64/um/delay.c b/arch/arm64/um/delay.c
 new file mode 100644
-index 00000000..d4648ec6
+index 000000000..d4648ec60
 --- /dev/null
 +++ b/arch/arm64/um/delay.c
 @@ -0,0 +1,32 @@
@@ -1021,7 +1021,7 @@ index 00000000..d4648ec6
 +EXPORT_SYMBOL(__ndelay);
 diff --git a/arch/arm64/um/fault.c b/arch/arm64/um/fault.c
 new file mode 100644
-index 00000000..c4c6c0ec
+index 000000000..c4c6c0ecb
 --- /dev/null
 +++ b/arch/arm64/um/fault.c
 @@ -0,0 +1,30 @@
@@ -1057,7 +1057,7 @@ index 00000000..c4c6c0ec
 +}
 diff --git a/arch/arm64/um/mem.c b/arch/arm64/um/mem.c
 new file mode 100644
-index 00000000..e4bf1f54
+index 000000000..e4bf1f541
 --- /dev/null
 +++ b/arch/arm64/um/mem.c
 @@ -0,0 +1,8 @@
@@ -1071,7 +1071,7 @@ index 00000000..e4bf1f54
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 new file mode 100644
-index 00000000..3dfd7a0a
+index 000000000..3dfd7a0a6
 --- /dev/null
 +++ b/arch/arm64/um/ptrace.c
 @@ -0,0 +1,125 @@
@@ -1202,7 +1202,7 @@ index 00000000..3dfd7a0a
 +}
 diff --git a/arch/arm64/um/registers.c b/arch/arm64/um/registers.c
 new file mode 100644
-index 00000000..4b621217
+index 000000000..4b6212171
 --- /dev/null
 +++ b/arch/arm64/um/registers.c
 @@ -0,0 +1,51 @@
@@ -1259,7 +1259,7 @@ index 00000000..4b621217
 +}
 diff --git a/arch/arm64/um/setjmp.S b/arch/arm64/um/setjmp.S
 new file mode 100644
-index 00000000..62840a35
+index 000000000..62840a35a
 --- /dev/null
 +++ b/arch/arm64/um/setjmp.S
 @@ -0,0 +1,43 @@
@@ -1308,7 +1308,7 @@ index 00000000..62840a35
 +	br	x16
 diff --git a/arch/arm64/um/shared/sysdep/archsetjmp.h b/arch/arm64/um/shared/sysdep/archsetjmp.h
 new file mode 100644
-index 00000000..4bd330e1
+index 000000000..4bd330e1c
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/archsetjmp.h
 @@ -0,0 +1,29 @@
@@ -1343,7 +1343,7 @@ index 00000000..4bd330e1
 +#endif
 diff --git a/arch/arm64/um/shared/sysdep/faultinfo.h b/arch/arm64/um/shared/sysdep/faultinfo.h
 new file mode 100644
-index 00000000..457f2410
+index 000000000..457f2410c
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/faultinfo.h
 @@ -0,0 +1,32 @@
@@ -1381,7 +1381,7 @@ index 00000000..457f2410
 +#endif
 diff --git a/arch/arm64/um/shared/sysdep/kernel-offsets.h b/arch/arm64/um/shared/sysdep/kernel-offsets.h
 new file mode 100644
-index 00000000..2e7f079f
+index 000000000..2e7f079f0
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/kernel-offsets.h
 @@ -0,0 +1,16 @@
@@ -1403,7 +1403,7 @@ index 00000000..2e7f079f
 +}
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
 new file mode 100644
-index 00000000..f77c6e81
+index 000000000..f77c6e818
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -0,0 +1,74 @@
@@ -1483,7 +1483,7 @@ index 00000000..f77c6e81
 +#endif
 diff --git a/arch/arm64/um/shared/sysdep/ptrace_user.h b/arch/arm64/um/shared/sysdep/ptrace_user.h
 new file mode 100644
-index 00000000..88d7debb
+index 000000000..88d7debba
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/ptrace_user.h
 @@ -0,0 +1,14 @@
@@ -1503,7 +1503,7 @@ index 00000000..88d7debb
 +#endif
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
 new file mode 100644
-index 00000000..5abf1641
+index 000000000..5abf1641a
 --- /dev/null
 +++ b/arch/arm64/um/signal.c
 @@ -0,0 +1,164 @@
@@ -1673,7 +1673,7 @@ index 00000000..5abf1641
 +}
 diff --git a/arch/arm64/um/subarch.c b/arch/arm64/um/subarch.c
 new file mode 100644
-index 00000000..8982857b
+index 000000000..8982857ba
 --- /dev/null
 +++ b/arch/arm64/um/subarch.c
 @@ -0,0 +1,29 @@
@@ -1708,7 +1708,7 @@ index 00000000..8982857b
 +#endif
 diff --git a/arch/arm64/um/syscall_table.c b/arch/arm64/um/syscall_table.c
 new file mode 100644
-index 00000000..a96d226d
+index 000000000..a96d226dc
 --- /dev/null
 +++ b/arch/arm64/um/syscall_table.c
 @@ -0,0 +1,25 @@
@@ -1739,7 +1739,7 @@ index 00000000..a96d226d
 +int syscall_table_size = sizeof(sys_call_table);
 diff --git a/arch/arm64/um/syscalls.c b/arch/arm64/um/syscalls.c
 new file mode 100644
-index 00000000..291b2bbc
+index 000000000..291b2bbca
 --- /dev/null
 +++ b/arch/arm64/um/syscalls.c
 @@ -0,0 +1,14 @@
@@ -1759,7 +1759,7 @@ index 00000000..291b2bbc
 +}
 diff --git a/arch/arm64/um/sysrq.c b/arch/arm64/um/sysrq.c
 new file mode 100644
-index 00000000..fa61ba0c
+index 000000000..fa61ba0c6
 --- /dev/null
 +++ b/arch/arm64/um/sysrq.c
 @@ -0,0 +1,18 @@
@@ -1783,7 +1783,7 @@ index 00000000..fa61ba0c
 +}
 diff --git a/arch/arm64/um/tls.c b/arch/arm64/um/tls.c
 new file mode 100644
-index 00000000..0bc12342
+index 000000000..0bc12342e
 --- /dev/null
 +++ b/arch/arm64/um/tls.c
 @@ -0,0 +1,22 @@
@@ -1811,7 +1811,7 @@ index 00000000..0bc12342
 +}
 diff --git a/arch/arm64/um/user-offsets.c b/arch/arm64/um/user-offsets.c
 new file mode 100644
-index 00000000..fad1abac
+index 000000000..fad1abac0
 --- /dev/null
 +++ b/arch/arm64/um/user-offsets.c
 @@ -0,0 +1,63 @@

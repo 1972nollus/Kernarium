@@ -20,7 +20,7 @@ Apply the reviewed final-state topic without intermediate churn.
  create mode 100644 arch/um/os-Linux/smp.c
 
 diff --git a/arch/um/os-Linux/Makefile b/arch/um/os-Linux/Makefile
-index fae83671..70c73c22 100644
+index fae836713..70c73c22f 100644
 --- a/arch/um/os-Linux/Makefile
 +++ b/arch/um/os-Linux/Makefile
 @@ -16,8 +16,10 @@ CFLAGS_main.o += -Wno-frame-larger-than
@@ -36,7 +36,7 @@ index fae83671..70c73c22 100644
  
  include $(srctree)/arch/um/scripts/Makefile.rules
 diff --git a/arch/um/os-Linux/file.c b/arch/um/os-Linux/file.c
-index 21f0e50f..f1b87000 100644
+index 21f0e50fb..f1b870001 100644
 --- a/arch/um/os-Linux/file.c
 +++ b/arch/um/os-Linux/file.c
 @@ -23,6 +23,11 @@
@@ -52,7 +52,7 @@ index 21f0e50f..f1b87000 100644
  {
  	*dst = ((struct uml_stat) {
 diff --git a/arch/um/os-Linux/internal.h b/arch/um/os-Linux/internal.h
-index 5d8d3b08..bac9fcc8 100644
+index 5d8d3b081..bac9fcc8c 100644
 --- a/arch/um/os-Linux/internal.h
 +++ b/arch/um/os-Linux/internal.h
 @@ -4,6 +4,7 @@
@@ -86,7 +86,7 @@ index 5d8d3b08..bac9fcc8 100644
 +
  #endif /* __UM_OS_LINUX_INTERNAL_H */
 diff --git a/arch/um/os-Linux/main.c b/arch/um/os-Linux/main.c
-index 3c63ce19..73072310 100644
+index 3c63ce19e..730723106 100644
 --- a/arch/um/os-Linux/main.c
 +++ b/arch/um/os-Linux/main.c
 @@ -171,7 +171,7 @@ int __init main(int argc, char **argv, char **envp)
@@ -99,7 +99,7 @@ index 3c63ce19..73072310 100644
  	/* disable SIGIO for the fds and set SIGIO to be ignored */
  	err = deactivate_all_fds();
 diff --git a/arch/um/os-Linux/process.c b/arch/um/os-Linux/process.c
-index 00b49e90..3a2a84ab 100644
+index 00b49e90d..3a2a84ab9 100644
 --- a/arch/um/os-Linux/process.c
 +++ b/arch/um/os-Linux/process.c
 @@ -10,6 +10,8 @@
@@ -134,7 +134,7 @@ index 00b49e90..3a2a84ab 100644
 +	return r < 0 ? -errno : r;
 +}
 diff --git a/arch/um/os-Linux/signal.c b/arch/um/os-Linux/signal.c
-index bebeb6b4..de372b93 100644
+index bebeb6b4b..de372b936 100644
 --- a/arch/um/os-Linux/signal.c
 +++ b/arch/um/os-Linux/signal.c
 @@ -20,6 +20,7 @@
@@ -241,7 +241,7 @@ index bebeb6b4..de372b93 100644
  {
  	int ret;
 diff --git a/arch/um/os-Linux/skas/process.c b/arch/um/os-Linux/skas/process.c
-index 0bc10cd4..2b06d400 100644
+index 0bc10cd4c..2b06d4003 100644
 --- a/arch/um/os-Linux/skas/process.c
 +++ b/arch/um/os-Linux/skas/process.c
 @@ -553,7 +553,7 @@ extern unsigned long tt_extra_sched_jiffies;
@@ -350,7 +350,7 @@ index 0bc10cd4..2b06d400 100644
  }
 diff --git a/arch/um/os-Linux/smp.c b/arch/um/os-Linux/smp.c
 new file mode 100644
-index 00000000..18d3858a
+index 000000000..18d3858a7
 --- /dev/null
 +++ b/arch/um/os-Linux/smp.c
 @@ -0,0 +1,148 @@
@@ -503,7 +503,7 @@ index 00000000..18d3858a
 +	cpu_threads[0] = pthread_self();
 +}
 diff --git a/arch/um/os-Linux/start_up.c b/arch/um/os-Linux/start_up.c
-index a827c2e0..9c5833f3 100644
+index a827c2e01..9c5833f31 100644
 --- a/arch/um/os-Linux/start_up.c
 +++ b/arch/um/os-Linux/start_up.c
 @@ -22,6 +22,7 @@
@@ -539,7 +539,7 @@ index a827c2e0..9c5833f3 100644
  	check_ptrace();
  
 diff --git a/arch/um/os-Linux/time.c b/arch/um/os-Linux/time.c
-index 4d5591d9..13ebc869 100644
+index 4d5591d96..13ebc8691 100644
 --- a/arch/um/os-Linux/time.c
 +++ b/arch/um/os-Linux/time.c
 @@ -11,12 +11,15 @@

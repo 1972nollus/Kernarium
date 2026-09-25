@@ -25,7 +25,7 @@ Apply the reviewed final-state topic without intermediate churn.
  create mode 100644 arch/um/drivers/vnc_input.c
 
 diff --git a/arch/um/drivers/Kconfig b/arch/um/drivers/Kconfig
-index 6a0354ca..32721e1b 100644
+index 6a0354ca0..32721e1b1 100644
 --- a/arch/um/drivers/Kconfig
 +++ b/arch/um/drivers/Kconfig
 @@ -2,6 +2,15 @@
@@ -113,7 +113,7 @@ index 6a0354ca..32721e1b 100644
  config UML_PCI
  	bool
 diff --git a/arch/um/drivers/Makefile b/arch/um/drivers/Makefile
-index 6bf8cbf7..91ce72a0 100644
+index 6bf8cbf71..91ce72a00 100644
 --- a/arch/um/drivers/Makefile
 +++ b/arch/um/drivers/Makefile
 @@ -23,11 +23,16 @@ vfio_uml-objs := vfio_kern.o vfio_user.o
@@ -143,7 +143,7 @@ index 6bf8cbf7..91ce72a0 100644
  obj-$(CONFIG_UML_PCI) += virt-pci.o
  obj-$(CONFIG_UML_PCI_OVER_VIRTIO) += virtio_pcidev.o
 diff --git a/arch/um/drivers/chan_user.c b/arch/um/drivers/chan_user.c
-index 35f9beeb..63c61416 100644
+index 35f9beeb1..63c614165 100644
 --- a/arch/um/drivers/chan_user.c
 +++ b/arch/um/drivers/chan_user.c
 @@ -14,6 +14,13 @@
@@ -193,7 +193,7 @@ index 35f9beeb..63c61416 100644
  		err = pid;
  		printk(UM_KERN_ERR "fork of winch_thread failed - errno = %d\n",
 diff --git a/arch/um/drivers/chan_user.h b/arch/um/drivers/chan_user.h
-index e158e16f..5591381e 100644
+index e158e16fb..5591381ef 100644
 --- a/arch/um/drivers/chan_user.h
 +++ b/arch/um/drivers/chan_user.h
 @@ -7,7 +7,13 @@
@@ -211,7 +211,7 @@ index e158e16f..5591381e 100644
  struct chan_opts {
  	void (*const announce)(char *dev_name, int dev);
 diff --git a/arch/um/drivers/cow_user.c b/arch/um/drivers/cow_user.c
-index dc1d1bcd..66150ced 100644
+index dc1d1bcd8..66150cedc 100644
 --- a/arch/um/drivers/cow_user.c
 +++ b/arch/um/drivers/cow_user.c
 @@ -11,7 +11,11 @@
@@ -228,7 +228,7 @@ index dc1d1bcd..66150ced 100644
  
 diff --git a/arch/um/drivers/darwin_net_kern.c b/arch/um/drivers/darwin_net_kern.c
 new file mode 100644
-index 00000000..4291170b
+index 000000000..4291170b6
 --- /dev/null
 +++ b/arch/um/drivers/darwin_net_kern.c
 @@ -0,0 +1,166 @@
@@ -399,7 +399,7 @@ index 00000000..4291170b
 +}
 +late_initcall(darwin_net_init);
 diff --git a/arch/um/drivers/rtc_kern.c b/arch/um/drivers/rtc_kern.c
-index 9158c936..77295f04 100644
+index 9158c936c..77295f044 100644
 --- a/arch/um/drivers/rtc_kern.c
 +++ b/arch/um/drivers/rtc_kern.c
 @@ -8,15 +8,18 @@
@@ -485,7 +485,7 @@ index 9158c936..77295f04 100644
  {
  	int err;
 diff --git a/arch/um/drivers/rtc_user.c b/arch/um/drivers/rtc_user.c
-index 67912fcf..e934f7f9 100644
+index 67912fcf7..e934f7f94 100644
 --- a/arch/um/drivers/rtc_user.c
 +++ b/arch/um/drivers/rtc_user.c
 @@ -11,10 +11,57 @@
@@ -641,7 +641,7 @@ index 67912fcf..e934f7f9 100644
 +#endif
  }
 diff --git a/arch/um/drivers/ssl.c b/arch/um/drivers/ssl.c
-index 8006a5bd..3818fce2 100644
+index 8006a5bd5..3818fce20 100644
 --- a/arch/um/drivers/ssl.c
 +++ b/arch/um/drivers/ssl.c
 @@ -19,7 +19,7 @@
@@ -654,7 +654,7 @@ index 8006a5bd..3818fce2 100644
  static void ssl_announce(char *dev_name, int dev)
  {
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
-index 37455e74..6d235135 100644
+index 37455e74d..6d235135a 100644
 --- a/arch/um/drivers/ubd_kern.c
 +++ b/arch/um/drivers/ubd_kern.c
 @@ -36,6 +36,7 @@
@@ -891,7 +891,7 @@ index 37455e74..6d235135 100644
  				req->error = map_error(-n);
  				return;
 diff --git a/arch/um/drivers/ubd_user.c b/arch/um/drivers/ubd_user.c
-index 8e8a8bf5..b79949ae 100644
+index 8e8a8bf51..b79949ae9 100644
 --- a/arch/um/drivers/ubd_user.c
 +++ b/arch/um/drivers/ubd_user.c
 @@ -16,9 +16,6 @@
@@ -910,7 +910,7 @@ index 8e8a8bf5..b79949ae 100644
  }
 -
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index de7867ae..18a66122 100644
+index de7867ae2..18a661221 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
 @@ -21,6 +21,7 @@
@@ -1014,7 +1014,7 @@ index de7867ae..18a66122 100644
  		return rc;
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
 new file mode 100644
-index 00000000..6fafe8c1
+index 000000000..6fafe8c1c
 --- /dev/null
 +++ b/arch/um/drivers/vnc_input.c
 @@ -0,0 +1,185 @@
@@ -1204,7 +1204,7 @@ index 00000000..6fafe8c1
 +}
 +__uml_exitcall(vnc_input_cleanup);
 diff --git a/drivers/video/console/Kconfig b/drivers/video/console/Kconfig
-index 12f54480..ee238467 100644
+index 12f54480f..ee238467e 100644
 --- a/drivers/video/console/Kconfig
 +++ b/drivers/video/console/Kconfig
 @@ -72,7 +72,7 @@ config DUMMY_CONSOLE_ROWS

@@ -10,7 +10,7 @@ Apply the reviewed final-state topic without intermediate churn.
  1 file changed, 8 insertions(+)
 
 diff --git a/security/smack/smack_lsm.c b/security/smack/smack_lsm.c
-index 7fd8a60b..b99be69f 100644
+index 7fd8a60b8..b99be69f7 100644
 --- a/security/smack/smack_lsm.c
 +++ b/security/smack/smack_lsm.c
 @@ -4033,6 +4033,14 @@ static int smack_socket_sendmsg(struct socket *sock, struct msghdr *msg,

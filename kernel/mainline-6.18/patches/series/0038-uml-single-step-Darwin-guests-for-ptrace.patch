@@ -19,7 +19,7 @@ on return so no saved or traced register carries it.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2c98e0fb..05a13863 100644
+index 2c98e0fb2..05a138639 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -60,6 +60,29 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

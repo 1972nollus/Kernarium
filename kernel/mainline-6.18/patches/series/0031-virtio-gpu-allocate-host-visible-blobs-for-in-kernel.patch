@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 include/linux/virtio_gpu_host_blob.h
 
 diff --git a/drivers/gpu/drm/virtio/Makefile b/drivers/gpu/drm/virtio/Makefile
-index d2e1788a..43740623 100644
+index d2e1788a8..437406234 100644
 --- a/drivers/gpu/drm/virtio/Makefile
 +++ b/drivers/gpu/drm/virtio/Makefile
 @@ -4,6 +4,7 @@
@@ -57,7 +57,7 @@ index d2e1788a..43740623 100644
  	virtgpu_fence.o virtgpu_object.o virtgpu_debugfs.o virtgpu_plane.o \
  	virtgpu_ioctl.o virtgpu_prime.o virtgpu_trace_points.o virtgpu_submit.o
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 2f353195..4bc50655 100644
+index 2f3531950..4bc506559 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
 @@ -497,6 +497,10 @@ int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
@@ -73,7 +73,7 @@ index 2f353195..4bc50655 100644
  int virtio_gpu_vram_create(struct virtio_gpu_device *vgdev,
 diff --git a/drivers/gpu/drm/virtio/virtgpu_host_blob.c b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
 new file mode 100644
-index 00000000..bbcdafdf
+index 000000000..bbcdafdf8
 --- /dev/null
 +++ b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
 @@ -0,0 +1,247 @@
@@ -325,7 +325,7 @@ index 00000000..bbcdafdf
 +}
 +EXPORT_SYMBOL_GPL(virtio_gpu_host_blob_export);
 diff --git a/drivers/gpu/drm/virtio/virtgpu_kms.c b/drivers/gpu/drm/virtio/virtgpu_kms.c
-index 1c15cbf3..18f15c69 100644
+index 1c15cbf32..18f15c693 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_kms.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_kms.c
 @@ -256,6 +256,13 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
@@ -352,7 +352,7 @@ index 1c15cbf3..18f15c69 100644
  	flush_work(&vgdev->cursorq.dequeue_work);
 diff --git a/include/linux/virtio_gpu_host_blob.h b/include/linux/virtio_gpu_host_blob.h
 new file mode 100644
-index 00000000..459fa6ca
+index 000000000..459fa6cab
 --- /dev/null
 +++ b/include/linux/virtio_gpu_host_blob.h
 @@ -0,0 +1,81 @@

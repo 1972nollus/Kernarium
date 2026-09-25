@@ -11,7 +11,7 @@ Apply the reviewed final-state topic without intermediate churn.
  3 files changed, 17 insertions(+), 2 deletions(-)
 
 diff --git a/scripts/Makefile.vmlinux b/scripts/Makefile.vmlinux
-index 276c3134..fbe545bd 100644
+index 276c3134a..fbe545bd4 100644
 --- a/scripts/Makefile.vmlinux
 +++ b/scripts/Makefile.vmlinux
 @@ -112,8 +112,13 @@ vmlinux: vmlinux.unstripped FORCE
@@ -30,7 +30,7 @@ index 276c3134..fbe545bd 100644
  
  OBJCOPYFLAGS_modules.builtin.modinfo := -j .modinfo -O binary
 diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
-index 433849ff..73b21ea8 100755
+index 433849ff7..73b21ea84 100755
 --- a/scripts/link-vmlinux.sh
 +++ b/scripts/link-vmlinux.sh
 @@ -80,7 +80,11 @@ vmlinux_link()
@@ -47,7 +47,7 @@ index 433849ff..73b21ea8 100755
  		wl=
  		ld="${LD}"
 diff --git a/scripts/mod/file2alias.c b/scripts/mod/file2alias.c
-index 4e99393a..5820eb1b 100644
+index 4e99393a3..5820eb1b8 100644
 --- a/scripts/mod/file2alias.c
 +++ b/scripts/mod/file2alias.c
 @@ -107,6 +107,9 @@ typedef struct {

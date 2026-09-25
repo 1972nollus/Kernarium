@@ -40,7 +40,7 @@ to the bridge, version 12, and retires the file hole-punch path.
  9 files changed, 190 insertions(+), 65 deletions(-)
 
 diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
-index 2c494720..fbf0e8e3 100644
+index 2c4947207..fbf0e8e34 100644
 --- a/arch/um/include/asm/page.h
 +++ b/arch/um/include/asm/page.h
 @@ -15,6 +15,17 @@
@@ -62,7 +62,7 @@ index 2c494720..fbf0e8e3 100644
  #include <linux/types.h>
  #include <asm/vm-flags.h>
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index e4f92c57..bf8c00f1 100644
+index e4f92c572..bf8c00f19 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -196,9 +196,10 @@ extern const char *os_guest_cpu_model_name(void);
@@ -80,7 +80,7 @@ index e4f92c57..bf8c00f1 100644
  /* tlb.c */
  extern void report_enomem(void);
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index 94ab67fa..e2b7dd38 100644
+index 94ab67fa3..e2b7dd380 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
 @@ -90,10 +90,12 @@ void __init arch_mm_preinit(void)
@@ -97,7 +97,7 @@ index 94ab67fa..e2b7dd38 100644
  }
  
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index 4862ee81..551df349 100644
+index 4862ee81c..551df3498 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
 @@ -4,6 +4,7 @@
@@ -324,7 +324,7 @@ index 4862ee81..551df349 100644
  	return 0;
  }
 diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
-index 9d21f0a1..12e4934f 100644
+index 9d21f0a1a..12e4934ff 100644
 --- a/arch/um/os-Darwin/mem.c
 +++ b/arch/um/os-Darwin/mem.c
 @@ -2,7 +2,6 @@
@@ -381,7 +381,7 @@ index 9d21f0a1..12e4934f 100644
  	return 0;
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8cfd9f19..f8068b19 100644
+index 8cfd9f19c..f8068b196 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -24,8 +24,8 @@
@@ -396,7 +396,7 @@ index 8cfd9f19..f8068b19 100644
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 8d524eff..0880cdb2 100644
+index 8d524efff..0880cdb2d 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {
@@ -411,7 +411,7 @@ index 8d524eff..0880cdb2 100644
  static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
  static_assert(DARWIN_UML_EVENT_STOP == 9);
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index 9353f8d8..e183d98c 100644
+index 9353f8d82..e183d98c2 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@
@@ -425,7 +425,7 @@ index 9353f8d8..e183d98c 100644
  
  #endif
 diff --git a/arch/um/os-Darwin/uml_darwin_memory.h b/arch/um/os-Darwin/uml_darwin_memory.h
-index 355527f5..e00d77ec 100644
+index 355527f5c..e00d77ecf 100644
 --- a/arch/um/os-Darwin/uml_darwin_memory.h
 +++ b/arch/um/os-Darwin/uml_darwin_memory.h
 @@ -43,6 +43,15 @@ int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write);

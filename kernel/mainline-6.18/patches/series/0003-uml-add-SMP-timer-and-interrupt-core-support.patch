@@ -13,7 +13,7 @@ nanosecond scheduler clock together as one reviewable final-state topic.
  create mode 100644 arch/um/kernel/smp.c
 
 diff --git a/arch/um/kernel/irq.c b/arch/um/kernel/irq.c
-index d69d137a..5f0f5df8 100644
+index d69d137a0..5f0f5df8b 100644
 --- a/arch/um/kernel/irq.c
 +++ b/arch/um/kernel/irq.c
 @@ -8,6 +8,7 @@
@@ -105,7 +105,7 @@ index d69d137a..5f0f5df8 100644
 +}
 diff --git a/arch/um/kernel/smp.c b/arch/um/kernel/smp.c
 new file mode 100644
-index 00000000..cc0c6c58
+index 000000000..cc0c6c58a
 --- /dev/null
 +++ b/arch/um/kernel/smp.c
 @@ -0,0 +1,371 @@
@@ -481,7 +481,7 @@ index 00000000..cc0c6c58
 +
 +EXPORT_SYMBOL(uml_curr_cpu);
 diff --git a/arch/um/kernel/time.c b/arch/um/kernel/time.c
-index 17da0a87..b46649f2 100644
+index 17da0a870..b46649f2e 100644
 --- a/arch/um/kernel/time.c
 +++ b/arch/um/kernel/time.c
 @@ -8,11 +8,13 @@

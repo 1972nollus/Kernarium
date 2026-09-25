@@ -58,7 +58,7 @@ Generate both x86-64 and i386 dispatch tables from the canonical Linux 6.18 sysc
  create mode 100644 arch/um/include/uapi/asm/signal.h
 
 diff --git a/arch/Kconfig b/arch/Kconfig
-index 61130b88..928494d9 100644
+index 61130b889..928494d9c 100644
 --- a/arch/Kconfig
 +++ b/arch/Kconfig
 @@ -105,9 +105,13 @@ config HOTPLUG_PARALLEL
@@ -76,7 +76,7 @@ index 61130b88..928494d9 100644
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index a81eeaad..e84cbbed 100644
+index a81eeaad7..e84cbbed4 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -23,11 +23,22 @@ config UML_ARM64
@@ -106,7 +106,7 @@ index a81eeaad..e84cbbed 100644
  config ARCH_MMAP_RND_BITS_MIN
  	int
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index eaf07b7c..ea7f7cb3 100644
+index eaf07b7cd..ea7f7cb33 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -3,7 +3,29 @@
@@ -141,7 +141,7 @@ index eaf07b7c..ea7f7cb3 100644
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 57b83479..61a22bf8 100644
+index 57b834791..61a22bf85 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -32,9 +32,14 @@
@@ -245,7 +245,7 @@ index 57b83479..61a22bf8 100644
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index b34556b3..2a4755e9 100644
+index b34556b3b..2a4755e9e 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -19,6 +19,12 @@ enum {
@@ -263,7 +263,7 @@ index b34556b3..2a4755e9 100644
  	(PT_REGS_SYSCALL_RET(state) = (result))
 diff --git a/arch/arm64/um/asm/seccomp.h b/arch/arm64/um/asm/seccomp.h
 new file mode 100644
-index 00000000..0a181465
+index 000000000..0a1814658
 --- /dev/null
 +++ b/arch/arm64/um/asm/seccomp.h
 @@ -0,0 +1,42 @@
@@ -310,7 +310,7 @@ index 00000000..0a181465
 +
 +#endif
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
-index 583e2b09..4562c633 100644
+index 583e2b091..4562c6338 100644
 --- a/arch/arm64/um/asm/syscall.h
 +++ b/arch/arm64/um/asm/syscall.h
 @@ -14,13 +14,19 @@ static inline int syscall_get_arch(struct task_struct *task)
@@ -338,7 +338,7 @@ index 583e2b09..4562c633 100644
  long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result);
 diff --git a/arch/arm64/um/asm/unistd.h b/arch/arm64/um/asm/unistd.h
 new file mode 100644
-index 00000000..1e174533
+index 000000000..1e1745333
 --- /dev/null
 +++ b/arch/arm64/um/asm/unistd.h
 @@ -0,0 +1,46 @@
@@ -389,7 +389,7 @@ index 00000000..1e174533
 +
 +#endif
 diff --git a/arch/arm64/um/asm/user.h b/arch/arm64/um/asm/user.h
-index df4bc4b9..c7e2d98d 100644
+index df4bc4b93..c7e2d98d5 100644
 --- a/arch/arm64/um/asm/user.h
 +++ b/arch/arm64/um/asm/user.h
 @@ -32,4 +32,31 @@ struct user_regs_struct {
@@ -425,7 +425,7 @@ index df4bc4b9..c7e2d98d 100644
 +
  #endif
 diff --git a/arch/arm64/um/mmap.c b/arch/arm64/um/mmap.c
-index 1a8b242f..3294381b 100644
+index 1a8b242f6..3294381b9 100644
 --- a/arch/arm64/um/mmap.c
 +++ b/arch/arm64/um/mmap.c
 @@ -1,6 +1,7 @@
@@ -459,7 +459,7 @@ index 1a8b242f..3294381b 100644
  		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
  						     vm_flags);
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index a4767ee8..03612f21 100644
+index a4767ee81..03612f211 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -79,6 +79,51 @@ static void set_user_regs(struct uml_pt_regs *guest,
@@ -578,7 +578,7 @@ index a4767ee8..03612f21 100644
  	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index e9f2fa31..0f237234 100644
+index e9f2fa316..0f2372349 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -71,6 +71,7 @@ struct uml_pt_regs {
@@ -611,7 +611,7 @@ index e9f2fa31..0f237234 100644
  upt_x86_64_segment_selector(const struct uml_pt_regs *regs, unsigned int index)
  {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 215c4616..c3fcb460 100644
+index 215c4616d..c3fcb4606 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,7 +1,9 @@
@@ -1232,7 +1232,7 @@ index 215c4616..c3fcb460 100644
 +	return 0;
 +}
 diff --git a/arch/arm64/um/tls.c b/arch/arm64/um/tls.c
-index cfbf7f47..b18a097e 100644
+index cfbf7f47a..b18a097e8 100644
 --- a/arch/arm64/um/tls.c
 +++ b/arch/arm64/um/tls.c
 @@ -2,6 +2,7 @@
@@ -1254,7 +1254,7 @@ index cfbf7f47..b18a097e 100644
  }
 diff --git a/arch/arm64/um/x86_32.h b/arch/arm64/um/x86_32.h
 new file mode 100644
-index 00000000..76a56e3e
+index 000000000..76a56e3ed
 --- /dev/null
 +++ b/arch/arm64/um/x86_32.h
 @@ -0,0 +1,9 @@
@@ -1269,7 +1269,7 @@ index 00000000..76a56e3e
 +#endif
 diff --git a/arch/arm64/um/x86_32_syscalls.c b/arch/arm64/um/x86_32_syscalls.c
 new file mode 100644
-index 00000000..f98f9422
+index 000000000..f98f94221
 --- /dev/null
 +++ b/arch/arm64/um/x86_32_syscalls.c
 @@ -0,0 +1,571 @@
@@ -1845,7 +1845,7 @@ index 00000000..f98f9422
 +	return copy_to_user(user_desc, &info, sizeof(info)) ? -EFAULT : 0;
 +}
 diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
-index cf93d90d..0a47c2a3 100644
+index cf93d90d1..0a47c2a37 100644
 --- a/arch/arm64/um/x86_64_syscalls.c
 +++ b/arch/arm64/um/x86_64_syscalls.c
 @@ -20,288 +20,7 @@
@@ -2426,7 +2426,7 @@ index cf93d90d..0a47c2a3 100644
  #define UML_ARCH_SET_GS 0x1001
 diff --git a/arch/arm64/um/x86_syscall_abi.h b/arch/arm64/um/x86_syscall_abi.h
 new file mode 100644
-index 00000000..b26014ca
+index 000000000..b26014cae
 --- /dev/null
 +++ b/arch/arm64/um/x86_syscall_abi.h
 @@ -0,0 +1,76 @@
@@ -2508,7 +2508,7 @@ index 00000000..b26014ca
 +#endif
 diff --git a/arch/arm64/um/x86_syscall_tables.c b/arch/arm64/um/x86_syscall_tables.c
 new file mode 100644
-index 00000000..0dbb3fe4
+index 000000000..0dbb3fe44
 --- /dev/null
 +++ b/arch/arm64/um/x86_syscall_tables.c
 @@ -0,0 +1,82 @@
@@ -2595,7 +2595,7 @@ index 00000000..0dbb3fe4
 +#undef __SYSCALL_COMPAT_NORETURN
 +#undef __SYSCALL_NORETURN
 diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
-index ef01d600..424190cc 100644
+index ef01d6006..424190cc8 100644
 --- a/arch/um/include/asm/Kbuild
 +++ b/arch/um/include/asm/Kbuild
 @@ -1,6 +1,5 @@
@@ -2607,7 +2607,7 @@ index ef01d600..424190cc 100644
  generic-y += emergency-restart.h
 diff --git a/arch/um/include/asm/compat.h b/arch/um/include/asm/compat.h
 new file mode 100644
-index 00000000..c0fc986f
+index 000000000..c0fc986f2
 --- /dev/null
 +++ b/arch/um/include/asm/compat.h
 @@ -0,0 +1,105 @@
@@ -2717,7 +2717,7 @@ index 00000000..c0fc986f
 +#endif
 +#endif
 diff --git a/arch/um/include/asm/pgtable-2level.h b/arch/um/include/asm/pgtable-2level.h
-index 14ec16f9..8706382a 100644
+index 14ec16f92..8706382ab 100644
 --- a/arch/um/include/asm/pgtable-2level.h
 +++ b/arch/um/include/asm/pgtable-2level.h
 @@ -21,7 +21,11 @@
@@ -2733,7 +2733,7 @@ index 14ec16f9..8706382a 100644
  
  #define pte_ERROR(e) \
 diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
-index 6b6712f2..6f82262f 100644
+index 6b6712f2c..6f82262f9 100644
 --- a/arch/um/include/asm/pgtable-3level.h
 +++ b/arch/um/include/asm/pgtable-3level.h
 @@ -24,7 +24,11 @@
@@ -2749,7 +2749,7 @@ index 6b6712f2..6f82262f 100644
  #define pte_ERROR(e) \
  	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
 diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
-index ac825e88..f5d6e828 100644
+index ac825e88e..f5d6e828e 100644
 --- a/arch/um/include/asm/pgtable-4level.h
 +++ b/arch/um/include/asm/pgtable-4level.h
 @@ -44,7 +44,11 @@
@@ -2765,7 +2765,7 @@ index ac825e88..f5d6e828 100644
  #define pte_ERROR(e) \
          printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
 diff --git a/arch/um/include/asm/processor-generic.h b/arch/um/include/asm/processor-generic.h
-index 9e9f2c7f..6b03af4c 100644
+index 9e9f2c7f1..6b03af4c1 100644
 --- a/arch/um/include/asm/processor-generic.h
 +++ b/arch/um/include/asm/processor-generic.h
 @@ -50,7 +50,17 @@ struct thread_struct {
@@ -2814,7 +2814,7 @@ index 9e9f2c7f..6b03af4c 100644
  #define TASK_UNMAPPED_BASE	(0x40000000)
  #endif
 diff --git a/arch/um/include/asm/thread_info.h b/arch/um/include/asm/thread_info.h
-index 7a6f4dc9..fb031ad1 100644
+index 7a6f4dc99..fb031ad15 100644
 --- a/arch/um/include/asm/thread_info.h
 +++ b/arch/um/include/asm/thread_info.h
 @@ -44,6 +44,10 @@ struct thread_info {
@@ -2840,7 +2840,7 @@ index 7a6f4dc9..fb031ad1 100644
  #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL | \
  				 _TIF_NOTIFY_RESUME)
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index d36d5b8f..27eade17 100644
+index d36d5b8f7..27eade173 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -56,6 +56,7 @@ extern void do_uml_exitcalls(void);
@@ -2853,7 +2853,7 @@ index d36d5b8f..27eade17 100644
  int uml_need_resched(void);
 diff --git a/arch/um/include/uapi/asm/fcntl.h b/arch/um/include/uapi/asm/fcntl.h
 new file mode 100644
-index 00000000..e3a57502
+index 000000000..e3a575028
 --- /dev/null
 +++ b/arch/um/include/uapi/asm/fcntl.h
 @@ -0,0 +1,8 @@
@@ -2867,7 +2867,7 @@ index 00000000..e3a57502
 +#endif
 diff --git a/arch/um/include/uapi/asm/signal.h b/arch/um/include/uapi/asm/signal.h
 new file mode 100644
-index 00000000..3548f941
+index 000000000..3548f941b
 --- /dev/null
 +++ b/arch/um/include/uapi/asm/signal.h
 @@ -0,0 +1,12 @@
@@ -2884,7 +2884,7 @@ index 00000000..3548f941
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index fdbb37b5..51b9576f 100644
+index fdbb37b5c..51b9576fc 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -4,6 +4,7 @@
@@ -2911,7 +2911,7 @@ index fdbb37b5..51b9576f 100644
  {
  	/* Send us the fake SIGTRAP */
 diff --git a/arch/um/kernel/signal.c b/arch/um/kernel/signal.c
-index a56b4452..6b47c070 100644
+index a56b44522..6b47c070b 100644
 --- a/arch/um/kernel/signal.c
 +++ b/arch/um/kernel/signal.c
 @@ -14,6 +14,10 @@
@@ -2936,7 +2936,7 @@ index a56b4452..6b47c070 100644
  			break;
  		}
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 0469be5b..ae64d6d9 100644
+index 0469be5b9..ae64d6d9a 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -67,6 +67,15 @@ unsigned long current_tls(void)
@@ -2956,7 +2956,7 @@ index 0469be5b..ae64d6d9 100644
  {
  	current->thread.arch.tpidr_el0 = tls;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index f4f5b15a..30003932 100644
+index f4f5b15ab..300039328 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
 @@ -6,6 +6,7 @@
@@ -3042,7 +3042,7 @@ index f4f5b15a..30003932 100644
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 7cccc32c..08ab5b2e 100644
+index 7cccc32c0..08ab5b2e0 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -11,6 +11,9 @@
@@ -3076,7 +3076,7 @@ index 7cccc32c..08ab5b2e 100644
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index f4478d47..8d59e86d 100644
+index f4478d475..8d59e86d2 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -474,6 +474,10 @@ void userspace(struct uml_pt_regs *registers)
@@ -3091,7 +3091,7 @@ index f4478d47..8d59e86d 100644
  		/* Snapshot before polling so an IPI racing with the poll remains
  		 * visible to the translated-block check.  Polling may migrate this
 diff --git a/include/linux/syscall_user_dispatch.h b/include/linux/syscall_user_dispatch.h
-index 3858a6ff..39bd90f1 100644
+index 3858a6ffd..39bd90f16 100644
 --- a/include/linux/syscall_user_dispatch.h
 +++ b/include/linux/syscall_user_dispatch.h
 @@ -8,7 +8,11 @@
@@ -3116,7 +3116,7 @@ index 3858a6ff..39bd90f1 100644
  
  #endif /* _SYSCALL_USER_DISPATCH_H */
 diff --git a/include/linux/syscall_user_dispatch_types.h b/include/linux/syscall_user_dispatch_types.h
-index 3be36b06..c0bdd4f7 100644
+index 3be36b06c..c0bdd4f76 100644
 --- a/include/linux/syscall_user_dispatch_types.h
 +++ b/include/linux/syscall_user_dispatch_types.h
 @@ -4,7 +4,7 @@
@@ -3129,7 +3129,7 @@ index 3be36b06..c0bdd4f7 100644
  struct syscall_user_dispatch {
  	char __user	*selector;
 diff --git a/kernel/entry/Makefile b/kernel/entry/Makefile
-index 2333d708..403023f3 100644
+index 2333d7080..403023f33 100644
 --- a/kernel/entry/Makefile
 +++ b/kernel/entry/Makefile
 @@ -13,5 +13,6 @@ CFLAGS_REMOVE_common.o	 = -fstack-protector -fstack-protector-strong
@@ -3141,7 +3141,7 @@ index 2333d708..403023f3 100644
 +obj-$(CONFIG_SYSCALL_USER_DISPATCH) 	+= syscall_user_dispatch.o
  obj-$(CONFIG_VIRT_XFER_TO_GUEST_WORK)	+= virt.o
 diff --git a/net/ethtool/ioctl.c b/net/ethtool/ioctl.c
-index 9431e305..27f7331a 100644
+index 9431e305b..27f7331a7 100644
 --- a/net/ethtool/ioctl.c
 +++ b/net/ethtool/ioctl.c
 @@ -844,6 +844,7 @@ ethtool_rxnfc_copy_from_compat(struct ethtool_rxnfc *rxnfc,
