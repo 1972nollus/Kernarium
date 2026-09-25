@@ -1,4 +1,4 @@
-From 02d19333cf8bbdef607aabc58f39c8a8c2c3d4e2 Mon Sep 17 00:00:00 2001
+From 51754ab68fec9e0cf903ceed295213692578befe Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:45:53 +0900
 Subject: [PATCH 032/104] kosmickrisp: lower clip/cull outputs after software

@@ -1,4 +1,4 @@
-From 10507c7ec2fe2d0e6eab42f533af03df8c9f3d8d Mon Sep 17 00:00:00 2001
+From bd77f5bacdb839ca6d13bfef85f7a6b88fb3c007 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:12:40 +0900
 Subject: [PATCH 003/104] kosmickrisp: own feedback options per Metal commit

@@ -1,4 +1,4 @@
-From 8b26853d489f2654b23d6b9ef169bb7845f6c6da Mon Sep 17 00:00:00 2001
+From cdf5762369cd82787ec0a62992e6ebba2f43a4fd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 23:38:05 +0900
 Subject: [PATCH 017/104] kosmickrisp: implement GPU geometry shaders and

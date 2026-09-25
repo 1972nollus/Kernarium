@@ -1,4 +1,4 @@
-From cbe8508e1a6b0663aa21ba07875a2bbda4bca657 Mon Sep 17 00:00:00 2001
+From aad1a24a458cc0ba583475091db3eaf86f4aa1a9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 17:24:57 +0900
 Subject: [PATCH 042/104] kosmickrisp: restrict the coherency workaround to

@@ -1,4 +1,4 @@
-From 52f809491cddeae1711b9b8741515be3bed81092 Mon Sep 17 00:00:00 2001
+From f48ffa03e06fa23a65081bd881e8287f7966c7a6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 20:44:48 +0900
 Subject: [PATCH 091/104] kosmickrisp: use wide buffer accesses where NIR

@@ -1,4 +1,4 @@
-From 6c7acbfd96eff1d8045b1b1d662772e588372596 Mon Sep 17 00:00:00 2001
+From 6cc8a1a3a20e0ec42aa71f44b50a5dbca1059d63 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 05:43:58 +0900
 Subject: [PATCH 028/104] kosmickrisp: implement legacy vertex attributes

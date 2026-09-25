@@ -1,4 +1,4 @@
-From f0953d0dd7bf5825d9056e9836cb5a9035a9b9eb Mon Sep 17 00:00:00 2001
+From 5db71c461581db15fadc7666d5b6775f2db3e621 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 19:28:45 +0900
 Subject: [PATCH 030/104] vulkan: preserve trailing bytes when lowering

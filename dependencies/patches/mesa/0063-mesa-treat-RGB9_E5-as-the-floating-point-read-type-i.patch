@@ -1,4 +1,4 @@
-From 4ddc31d9c0dde45aa0af647147221a91325fe5a6 Mon Sep 17 00:00:00 2001
+From 8c31ad6a8c1fc9ffa3c0937bdf00973091250757 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 05:11:39 +0900
 Subject: [PATCH 063/104] mesa: treat RGB9_E5 as the floating-point read type

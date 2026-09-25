@@ -1,4 +1,4 @@
-From 7345fdb5807b24f8661e9d59af82bc8feff3724b Mon Sep 17 00:00:00 2001
+From 47961224bfd3d87bf733e4638c6eb479b5a56fc8 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 14:50:52 +0900
 Subject: [PATCH 052/104] kosmickrisp: present a single-invocation subgroup

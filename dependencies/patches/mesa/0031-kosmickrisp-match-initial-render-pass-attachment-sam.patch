@@ -1,4 +1,4 @@
-From 43a350432f44c1552fcb82088de7972f548cfa67 Mon Sep 17 00:00:00 2001
+From 23225e00456d7e8663d66f5c11a163a6440dbfa0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 20:35:40 +0900
 Subject: [PATCH 031/104] kosmickrisp: match initial render pass attachment

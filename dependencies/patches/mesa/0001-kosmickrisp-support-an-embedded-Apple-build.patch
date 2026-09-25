@@ -1,4 +1,4 @@
-From 6d25547ae2e056dbe26afb055d6966de79886898 Mon Sep 17 00:00:00 2001
+From b5ec2f08e630439e308b420d0c73d7f11e1322c2 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 12:52:08 +0900
 Subject: [PATCH 001/104] kosmickrisp: support an embedded Apple build

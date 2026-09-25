@@ -1,4 +1,4 @@
-From 7b93615985fe9b5cc0041c2a3eb453ca92cff8d0 Mon Sep 17 00:00:00 2001
+From b515460f83adc2ec3a6132cc14d7d6e1dc3cadc7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 13 Sep 2026 15:34:12 +0900
 Subject: [PATCH 054/104] kosmickrisp: apply the static sample mask before

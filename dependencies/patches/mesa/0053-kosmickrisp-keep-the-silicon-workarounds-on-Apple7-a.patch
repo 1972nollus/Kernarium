@@ -1,4 +1,4 @@
-From f4747b31948218d8cf0d12b3849a69b3dc60d103 Mon Sep 17 00:00:00 2001
+From 85816ba7b8331ba6925f55b325e9d9c9c8230a9a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 23:59:32 +0900
 Subject: [PATCH 053/104] kosmickrisp: keep the silicon workarounds on Apple7

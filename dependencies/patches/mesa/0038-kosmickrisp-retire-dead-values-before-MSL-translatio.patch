@@ -1,4 +1,4 @@
-From e8850dd68c20f2c9625847968a7d7a79f236974b Mon Sep 17 00:00:00 2001
+From db04eae93025af99de331df1f34881a611c1ef00 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 18:21:12 +0900
 Subject: [PATCH 038/104] kosmickrisp: retire dead values before MSL

@@ -1,4 +1,4 @@
-From 3e06e5b4a4d956dd43663a53d5ae5bf4db027565 Mon Sep 17 00:00:00 2001
+From 4697892d1571438f851fcc6d580c9df233892cb0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 14:57:25 +0900
 Subject: [PATCH 013/104] kosmickrisp: satisfy the Zink OpenGL 2.1 profile

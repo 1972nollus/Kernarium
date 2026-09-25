@@ -1,4 +1,4 @@
-From aa3b942949e32a53bd4509e639e80ee198ef2041 Mon Sep 17 00:00:00 2001
+From 68a69bbeba58f056b913b0cb717e40bb7c4f9893 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 01:28:14 +0900
 Subject: [PATCH 022/104] kosmickrisp: implement non-seamless cube maps

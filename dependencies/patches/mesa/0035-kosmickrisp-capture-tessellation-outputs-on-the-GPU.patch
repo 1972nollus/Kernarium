@@ -1,4 +1,4 @@
-From 054a9b4460b0a19f5f6f9b592b8166eb46fde585 Mon Sep 17 00:00:00 2001
+From 338d026b6b3685f456953460449e1552a30b4bae Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 6 Sep 2026 07:09:27 +0900
 Subject: [PATCH 035/104] kosmickrisp: capture tessellation outputs on the GPU

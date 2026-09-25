@@ -1,4 +1,4 @@
-From 9fa0dd5e4f7516543e26aa30ec658e5b013b7061 Mon Sep 17 00:00:00 2001
+From 52039e78b4bf3d0f9d425a7b914fbe4fd7f8d23d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 17 Sep 2026 14:11:49 +0900
 Subject: [PATCH 086/104] kosmickrisp: offer only the texture capabilities the

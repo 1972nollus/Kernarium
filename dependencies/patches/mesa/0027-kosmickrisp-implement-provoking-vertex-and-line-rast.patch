@@ -1,4 +1,4 @@
-From 8779cca4810f758bfb997b817556c896621d2da5 Mon Sep 17 00:00:00 2001
+From b155b189d1f10f35a1d9dd6e2b3c7c390860c68a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 03:00:37 +0900
 Subject: [PATCH 027/104] kosmickrisp: implement provoking vertex and line
