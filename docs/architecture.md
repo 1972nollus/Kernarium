@@ -76,7 +76,10 @@ release removes live guest mappings the guest never asked to drop. The window's
 map entries are bounded by its geometry rather than by how often the guest maps,
 because re-mapping a released range replaces its entry instead of adding one.
 Domain retirement follows the same rule: it ends one address space, not the
-process, and a later one maps the same window.
+process, and a later one maps the same window. Guest RAM that a host-service
+view still borrows is the exception: it stays mapped until the last borrowed
+view of the root is released, because in-process backends are stopped only
+after the run returns, and a host stop leaves their queues started.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
@@ -195,6 +198,17 @@ Early UML calibration uses process-directed `SIGALRM`. Application and launcher
 threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
 deadlines take over. Kernarium runs the guest on its named `uml-launcher`
 thread, never the main thread.
+
+Darwin gives a process-directed signal to one thread when it is raised and
+never moves it, so a tick raised while every thread blocks `SIGALRM` stays
+pending on the main thread until that thread unblocks it, which the macOS
+AppKit thread does only after the guest has stopped. The embedded kernel's
+host signal handlers and interval timer also outlive its entry. The loader
+therefore takes them back before it releases the image: it disarms
+`ITIMER_REAL`, passes every signal whose handler lies in the image through
+`SIG_IGN`, which discards its pending instances on every thread, reinstalls
+the disposition the host had before the run, and restores the launcher
+thread's signal mask. No signal the kernel owned is delivered after it stops.
 
 The product has two selectable engines. The gadget engine executes arrays of
 precompiled function pointers and data. The JIT emits native blocks through its

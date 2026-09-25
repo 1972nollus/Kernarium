@@ -874,7 +874,8 @@ public:
 
 	/* Retirement ends one domain, not the process, and a later domain maps
 	 * the same window. Its pages go back to the window's reservation for the
-	 * same reason an ordinary unmap's do. */
+	 * same reason an ordinary unmap's do, except guest RAM a host-service
+	 * view still borrows, which goes back when that view is released. */
 	void retire(std::uint64_t owner) noexcept
 	{
 		std::lock_guard lock{mutex_};
@@ -888,9 +889,12 @@ public:
 			#endif
 				(void)msync(reinterpret_cast<void *>(position->first),
 					host_page_size(), MS_SYNC);
-			(void)reserve_host_range(
-				reinterpret_cast<void *>(position->first),
-				host_page_size());
+			if (!retain_borrowed_guest_ram(
+				    reinterpret_cast<void *>(position->first),
+				    host_page_size()))
+				(void)reserve_host_range(
+					reinterpret_cast<void *>(position->first),
+					host_page_size());
 			position = owners_.erase(position);
 		}
 	}

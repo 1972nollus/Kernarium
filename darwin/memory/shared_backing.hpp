@@ -77,6 +77,21 @@ struct AnonymousBackingMemory final {
 [[nodiscard]] int reserve_host_range(
 	void *address, std::size_t length) noexcept;
 
+/* Keep a retiring domain's guest RAM page mapped while a view borrows it.
+ *
+ * A view of the anonymous root borrows the root's own mapping, and its holder
+ * may dereference it until the view is released. In-process backends hold
+ * such views for as long as they serve a connection, which can outlast the
+ * run whose domain owned the pages: a host stop leaves their queues started,
+ * and they are stopped only after the run has returned. When the range lies in
+ * the root and any borrowed view is live, the range stays mapped and is handed
+ * back to the window's reservation when the last borrowed view is released;
+ * the call then returns true and the caller must not release the range
+ * itself. A later mapping over the range supersedes the deferred release.
+ * Otherwise it returns false and the caller releases the range as usual. */
+[[nodiscard]] bool retain_borrowed_guest_ram(
+	void *address, std::size_t length) noexcept;
+
 /* Translate a Mach failure into the errno the kernel reads. An exhausted host
  * must arrive as ENOMEM, which is the only value that makes the kernel say the
  * host ran out rather than retry an address it believes is merely bad. */

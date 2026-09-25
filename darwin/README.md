@@ -51,7 +51,10 @@ Every configured guest CPU has one persistent `uml-vcpu-N-carrier` pthread.
 Linux tasks migrate on guest stacks rather than creating host threads. Host
 signals wake carriers, and pending IPIs run only at IRQ-enabled checkpoints.
 The early process-directed `SIGALRM` calibration signal remains blocked on
-application and launcher threads and is temporarily owned by vCPU0.
+application and launcher threads and is temporarily owned by vCPU0. Before the
+loader releases an embedded kernel image, it takes back the signal handlers
+and interval timer the kernel left pointing into it; see
+[the scheduling contract](../docs/architecture.md#cpu-execution-and-scheduling).
 
 Kernarium starts the synchronous guest run on the named `uml-launcher` thread.
 The main thread remains available for UIKit and MetalKit.

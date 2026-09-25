@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include "elf_loader.h"
+#include "kernel_signal_scope.hpp"
 #include "uml_elf64.h"
 
 #include <libkern/OSCacheControl.h>
@@ -694,6 +695,10 @@ private:
 		return 126;
 	const auto entry = reinterpret_cast<int (*)(int, char **, char **)>(
 		entry_address);
+	/* The kernel leaves its signal handlers and interval timer installed
+	 * when it returns. Declared after the reservation, this scope takes them
+	 * back before the image they point into is released. */
+	const ::uml::runtime::KernelSignalScope kernel_signals{minimum, maximum};
 	return entry(argc, argv, envp);
 }
 
