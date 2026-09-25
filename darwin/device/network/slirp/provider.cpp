@@ -273,6 +273,12 @@ void SlirpProvider::stop() noexcept
 	transmit_pause_condition_.notify_all();
 #endif
 	wake();
+	/* Release writers waiting for transmit space. Taking the mutex orders
+	 * the started_ store before any waiter's next predicate check. */
+	{
+		std::lock_guard transmit_lock{transmit_mutex_};
+	}
+	transmit_space_.notify_all();
 	if (worker_.joinable())
 		worker_.join();
 #if UML_SLIRP_TESTING
@@ -313,6 +319,22 @@ bool SlirpProvider::wait_for_transmit_pause_for_testing() noexcept
 		lock, std::chrono::seconds{2}, [this] {
 			return transmit_pause_reached_for_testing_;
 		});
+}
+
+void SlirpProvider::resume_transmit_for_testing() noexcept
+{
+	{
+		std::lock_guard lock{transmit_pause_mutex_};
+		transmit_pause_requested_for_testing_.store(
+			false, std::memory_order_release);
+	}
+	transmit_pause_condition_.notify_all();
+}
+
+std::size_t SlirpProvider::transmit_space_waiters_for_testing() noexcept
+{
+	std::lock_guard lock{transmit_mutex_};
+	return transmit_space_waiters_;
 }
 
 void SlirpProvider::pause_next_write_before_commit_for_testing() noexcept

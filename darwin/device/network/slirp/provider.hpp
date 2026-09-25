@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <condition_variable>
@@ -27,6 +28,11 @@ namespace uml::network {
 inline constexpr std::size_t frame_size = 2048;
 inline constexpr std::size_t ring_size = 256;
 inline constexpr std::size_t max_poll_descriptors = 512;
+/* How long a guest transmit waits for the event loop to free a ring slot
+ * before the frame is refused (see SlirpProvider::write). The loop frees one
+ * within its next pass; the bound only stops a wedged loop holding a vCPU, so
+ * it must stay well above any scheduling delay a loaded host imposes. */
+inline constexpr std::chrono::milliseconds transmit_space_wait{500};
 
 /* The user-mode network the guest sees. `guest_address` is the single DHCP
  * lease, so it is also the default target of a host forward. */
@@ -117,6 +123,8 @@ public:
 #if UML_SLIRP_TESTING
 	void pause_transmit_for_testing() noexcept;
 	[[nodiscard]] bool wait_for_transmit_pause_for_testing() noexcept;
+	void resume_transmit_for_testing() noexcept;
+	[[nodiscard]] std::size_t transmit_space_waiters_for_testing() noexcept;
 	void pause_next_write_before_commit_for_testing() noexcept;
 	[[nodiscard]] bool wait_for_write_pause_for_testing() noexcept;
 	void release_write_for_testing() noexcept;
@@ -174,6 +182,10 @@ private:
 	mutable std::mutex start_mutex_;
 	std::mutex receive_mutex_;
 	std::mutex transmit_mutex_;
+	/* Signalled when the event loop frees a transmit slot while a writer
+	 * waits; guarded by transmit_mutex_. */
+	std::condition_variable transmit_space_;
+	std::size_t transmit_space_waiters_{};
 #if UML_SLIRP_TESTING
 	std::mutex transmit_pause_mutex_;
 	std::condition_variable transmit_pause_condition_;

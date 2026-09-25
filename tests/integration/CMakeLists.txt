@@ -220,6 +220,17 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+uml_add_guest_integration_test(
+    NAME guest-slirp-network-transfer
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_transfer.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;network;slirp
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 set(UML_GUEST_SHARED_MMAP_STRESS
     "${CMAKE_CURRENT_BINARY_DIR}/guest-shared-mmap-stress")
 add_custom_command(
