@@ -53,6 +53,12 @@ holds a user-initiated, latency-critical `NSProcessInfo` activity for as long as
 its run loop runs; the activity still allows idle system sleep. No other macOS
 display mode registers the process with AppKit.
 
+The emulator exits when the guest stops even if a menu of the native window is
+open. An open menu runs its own event loop, which drains neither the main
+dispatch queue nor `-[NSApplication stop:]`, so the display ends any menu
+that is tracking, or that starts tracking, once the guest has finished, and
+only then leaves its run loop.
+
 A guest cannot tell a presented frame from a discarded one: every scanout
 flush succeeds whether the host presented it, dropped it, refused the native
 texture, or read it back out of memory that holds no pixels. Setting
