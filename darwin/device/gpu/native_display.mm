@@ -149,6 +149,80 @@ void stopApplication() noexcept
     [application postEvent:wake atStart:NO];
 }
 
+void performInEveryMode(void (^block)()) noexcept
+{
+    CFRunLoopRef mainLoop = CFRunLoopGetMain();
+    CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, block);
+    CFRunLoopWakeUp(mainLoop);
+}
+
+/* A menu the user holds open runs its own event loop nested inside
+ * -[NSApplication run], in the run loop's event-tracking mode. That loop
+ * drains neither the main dispatch queue nor -stop:, so the stop the worker
+ * queues when the guest finishes would wait for the user to dismiss the menu,
+ * and the emulator would linger with no guest. Run loop blocks scheduled in
+ * the common modes do run inside it: once the guest has finished, every
+ * tracking menu is ended that way, and so is a menu whose tracking begins
+ * afterwards. The queued stop then runs on the next pass of the default mode,
+ * in its usual order behind the display's own teardown. */
+class MenuTrackingRelease final {
+public:
+    MenuTrackingRelease()
+    {
+        NSHashTable<NSMenu*>* menus = menus_;
+        const auto releasing = releasing_;
+        NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+        began_ = [center
+            addObserverForName:NSMenuDidBeginTrackingNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification* notification) {
+                        NSMenu* menu = notification.object;
+                        [menus addObject:menu];
+                        if (releasing->load(std::memory_order_acquire)) {
+                            performInEveryMode(^{
+                                [menu cancelTrackingWithoutAnimation];
+                            });
+                        }
+                    }];
+        ended_ = [center
+            addObserverForName:NSMenuDidEndTrackingNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification* notification) {
+                        [menus removeObject:notification.object];
+                    }];
+    }
+
+    MenuTrackingRelease(const MenuTrackingRelease&) = delete;
+    MenuTrackingRelease& operator=(const MenuTrackingRelease&) = delete;
+
+    ~MenuTrackingRelease()
+    {
+        NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+        [center removeObserver:began_];
+        [center removeObserver:ended_];
+    }
+
+    // Callable from any thread; the menus are only touched on the main one.
+    void release() noexcept
+    {
+        releasing_->store(true, std::memory_order_release);
+        NSHashTable<NSMenu*>* menus = menus_;
+        performInEveryMode(^{
+            for (NSMenu* menu in menus.allObjects)
+                [menu cancelTrackingWithoutAnimation];
+        });
+    }
+
+private:
+    NSHashTable<NSMenu*>* menus_ = [NSHashTable weakObjectsHashTable];
+    std::shared_ptr<std::atomic_bool> releasing_ =
+        std::make_shared<std::atomic_bool>(false);
+    id began_ = nil;
+    id ended_ = nil;
+};
+
 class ScopedSignalMask final {
 public:
     ScopedSignalMask()
@@ -1409,6 +1483,7 @@ int runNativeDisplayApplication(
     std::atomic_bool finished {};
     int result = 1;
     std::exception_ptr failure;
+    MenuTrackingRelease menuTracking;
     const sigset_t workerMask = mainThreadSignalMask.previous();
     std::thread worker([&] {
         (void)::pthread_sigmask(SIG_SETMASK, &workerMask, nullptr);
@@ -1418,6 +1493,7 @@ int runNativeDisplayApplication(
             failure = std::current_exception();
         }
         finished.store(true, std::memory_order_release);
+        menuTracking.release();
         dispatch_async(dispatch_get_main_queue(), ^{
             stopApplication();
         });

@@ -53,6 +53,12 @@ holds a user-initiated, latency-critical `NSProcessInfo` activity for as long as
 its run loop runs; the activity still allows idle system sleep. No other macOS
 display mode registers the process with AppKit.
 
+The emulator exits when the guest stops even if a menu of the native window is
+open. An open menu runs its own event loop, which drains neither the main
+dispatch queue nor `-[NSApplication stop:]`, so the display ends any menu
+that is tracking, or that starts tracking, once the guest has finished, and
+only then leaves its run loop.
+
 A guest cannot tell a presented frame from a discarded one: every scanout
 flush succeeds whether the host presented it, dropped it, refused the native
 texture, or read it back out of memory that holds no pixels. Setting
@@ -352,19 +358,22 @@ a single-queue device over unified memory, and implements
 modifier, because Metal describes no tiling an agent outside the driver could
 agree on. A modifier image is therefore exactly a linear image with a name for
 its layout and inherits nearly every linear limit: one 2D level and layer, a
-dedicated allocation, no depth or stencil attachment, no input attachment, and
-an explicit plane layout accepted only where it matches the layout Metal's own
-alignment rule produces. The one capability it carries that plain linear tiling
-does not is a colour attachment, because a swapchain image is one and Mesa's
-common WSI has no fallback when no modifier can hold one: it filters the
-modifier list with `vkGetPhysicalDeviceImageFormatProperties2` and, when nothing
+dedicated allocation, no depth or stencil attachment, and an explicit plane
+layout accepted only where it matches the layout Metal's own alignment rule
+produces. What it carries that plain linear tiling does not is a colour and an
+input attachment, because a swapchain image is one: Mesa's common WSI has no
+fallback when no modifier can hold a colour attachment (it filters the modifier
+list with `vkGetPhysicalDeviceImageFormatProperties2` and, when nothing
 survives, fails `vkCreateSwapchainKHR` with `VK_ERROR_OUT_OF_HOST_MEMORY`, which
-dEQP records as a `ResourceError` that ends the whole CTS session. Metal renders
-into a linear texture; what it refuses, by an assertion that ends the host
-process, is a linear texture of any type but `MTLTextureType2D`, and this driver
-binds every input attachment as a 2D array. An input attachment is therefore
-what a linear layout has to refuse, and a layout Metal could not represent
-becomes a Vulkan error before Metal sees the descriptor.
+dEQP records as a `ResourceError` that ends the whole CTS session), and
+Android's loader offers `VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT` on every surface,
+which Unity requests. Metal renders into a linear texture; what it refuses, by
+an assertion that ends the host process, is a linear texture of any type but
+`MTLTextureType2D`. The driver reads every input attachment as a 2D array, so
+a linear image stays a 2D texture and its input attachment is read through a 2D
+array view of it, which Metal does make of a texture over a buffer. A layout
+Metal could not represent becomes a Vulkan error before Metal sees the
+descriptor.
 
 The guest's common WSI does not take that path where the renderer can share a
 native Metal heap. A surface offers DRM format modifiers only when there is no

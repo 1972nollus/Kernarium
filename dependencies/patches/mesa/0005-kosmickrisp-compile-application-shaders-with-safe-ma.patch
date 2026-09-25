@@ -1,7 +1,7 @@
-From 55a1742d8fc440edb2dd8b72d80d1feba1cf0283 Mon Sep 17 00:00:00 2001
+From e2e9b0a39d18f14a82c44135687dd0880f9adf0d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:42:15 +0900
-Subject: [PATCH 005/103] kosmickrisp: compile application shaders with safe
+Subject: [PATCH 005/104] kosmickrisp: compile application shaders with safe
  math
 
 ---

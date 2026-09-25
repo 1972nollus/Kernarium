@@ -1,7 +1,7 @@
-From 1bffe573249bc9b2fc5a6303c1f8fba9154fd616 Mon Sep 17 00:00:00 2001
+From 1db2c800d56eabc53066eba3476c50179cbc1471 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 17:33:07 +0900
-Subject: [PATCH 004/103] kosmickrisp: classify half NaNs with integer
+Subject: [PATCH 004/104] kosmickrisp: classify half NaNs with integer
  operations
 
 ---

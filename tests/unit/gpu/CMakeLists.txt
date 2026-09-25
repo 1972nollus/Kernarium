@@ -759,6 +759,32 @@ if(TARGET uml_gpu_display)
             COMMAND uml_gpu_vnc_product_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"
             LABELS gpu)
+
+        # The shipped display must return when the guest finishes while a
+        # menu is open. It needs a window server session and skips without
+        # one.
+        add_executable(uml_gpu_native_display_menu_teardown_tests
+            native_display_menu_teardown_tests.mm)
+        target_link_libraries(uml_gpu_native_display_menu_teardown_tests PRIVATE
+            uml_gpu_display
+            "-framework AppKit"
+            "-framework CoreGraphics")
+        target_include_directories(uml_gpu_native_display_menu_teardown_tests
+            PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        target_compile_features(uml_gpu_native_display_menu_teardown_tests
+            PRIVATE cxx_std_20)
+        set_target_properties(uml_gpu_native_display_menu_teardown_tests
+            PROPERTIES OBJCXX_STANDARD 20)
+        target_compile_options(uml_gpu_native_display_menu_teardown_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+            -Wall -Wextra -Werror)
+        uml_add_unit_test(NAME gpu-native-display-menu-teardown
+            COMMAND uml_gpu_native_display_menu_teardown_tests
+            WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+            LABELS gpu
+            TIMEOUT 90)
+        set_tests_properties(gpu-native-display-menu-teardown PROPERTIES
+            SKIP_RETURN_CODE 77)
     endif()
 endif()
 

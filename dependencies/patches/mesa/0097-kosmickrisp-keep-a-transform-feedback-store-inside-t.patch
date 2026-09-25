@@ -1,7 +1,7 @@
-From eed060e77ca86f7d7fcd441950582ad0242fd387 Mon Sep 17 00:00:00 2001
+From f2c91f9e8bed09e0588f2402e05ea7e385dad049 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 01:05:11 +0900
-Subject: [PATCH 097/103] kosmickrisp: keep a transform feedback store inside
+Subject: [PATCH 097/104] kosmickrisp: keep a transform feedback store inside
  the bound buffer
 
 A transform feedback store is addressed by a vertex index the pre-GS

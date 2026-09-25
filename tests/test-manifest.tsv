@@ -40,6 +40,7 @@ gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp
 gpu-display-resize	tests/unit/gpu/display_resize_tests.cpp	unit	conditional
 gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional
 gpu-vnc-product-readback	tests/unit/gpu/vnc_display_product_tests.mm	unit	conditional
+gpu-native-display-menu-teardown	tests/unit/gpu/native_display_menu_teardown_tests.mm	unit	conditional
 gpu-kosmickrisp-unused-attachments-capabilities	tests/unit/gpu/kosmickrisp_unused_attachments_capability_tests.cpp	unit	conditional
 gpu-kosmickrisp-device-address-commands-capabilities	tests/unit/gpu/kosmickrisp_device_address_commands_capability_tests.cpp	unit	conditional
 gpu-vulkan-device-address-commands	tests/unit/gpu/vulkan_device_address_commands_tests.cpp	unit	conditional

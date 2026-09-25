@@ -1,7 +1,7 @@
-From 9298db93fe09b5701caaac2cadc62294a9662474 Mon Sep 17 00:00:00 2001
+From 7f77d523d3375a92c819baff7b165a25377ad15e Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 04:52:53 +0900
-Subject: [PATCH 051/103] kosmickrisp: restart the render encoder for layered
+Subject: [PATCH 051/104] kosmickrisp: restart the render encoder for layered
  draws
 
 A Metal render command encoder that has already run one draw drops most of
