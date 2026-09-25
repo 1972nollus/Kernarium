@@ -269,6 +269,12 @@ set(UML_GADGET_INDIRECT_ENTRIES "2" CACHE STRING
 # percent on a quiet host with the aggregate inside the shared-host band.
 option(UML_GADGET_RETURN_STACK
     "Predict cached returns through a private return-record ring" ON)
+# After a site's cells (and for a return the ring) miss, look the target up in
+# a direct-mapped {target, BlockLink} table the address space's misses fill,
+# instead of returning to the executor. Most Geekbench 6 single-core round
+# trips are misses at sites with more targets than any cell array covers.
+option(UML_GADGET_TARGET_TIER
+    "Follow indirect-site misses through a per-address-space target table" ON)
 option(UML_GADGET_ELIDE_NOPS
     "Emit no gadget for guest instructions that translate to NOP" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
@@ -348,6 +354,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
     UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
+    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
 
 # The gadget library is still many translation units, and the selection tables
@@ -537,6 +544,7 @@ target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
+    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 set_target_properties(uml_arm64_gadget_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)

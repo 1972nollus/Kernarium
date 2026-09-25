@@ -1122,6 +1122,8 @@
 		${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_options(uml_arm64_gadget_indirect_link_tests PRIVATE
 		-Wall -Wextra -Werror)
+    target_compile_definitions(uml_arm64_gadget_indirect_link_tests PRIVATE
+		UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>)
     uml_add_unit_test(NAME arm64-gadget-indirect-links
 		COMMAND uml_arm64_gadget_indirect_link_tests)
 
