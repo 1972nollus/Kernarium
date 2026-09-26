@@ -501,6 +501,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.if !\base_sp
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_unsigned_tagged\@
+.Lvector_unsigned_translate\@:
 	.endif
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
@@ -532,6 +533,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\base_sp
 .Lvector_unsigned_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w9, #0, .Lvector_unsigned_checked\@
+	ubfx x7, x7, #0, #56
+	b .Lvector_unsigned_translate\@
+.Lvector_unsigned_checked\@:
 	sub sp, sp, #32
 	stp x1, x2, [sp, #16]
 	.if \load
@@ -1033,6 +1040,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_immediate_tagged\@
 	.endif
+.Lvector_other_immediate_translate\@:
 	mov x7, x26
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
@@ -1070,6 +1078,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\base_sp || \mode != 0
 .Lvector_other_immediate_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w9, #0, .Lvector_other_immediate_checked\@
+	ubfx x26, x26, #0, #56
+	b .Lvector_other_immediate_translate\@
+.Lvector_other_immediate_checked\@:
 	sub sp, sp, #32
 	stp x1, x2, [sp, #16]
 	.if \load
@@ -1168,6 +1182,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 	add x26, x24, x26
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_register_tagged\@
+.Lvector_other_register_translate\@:
 	mov x7, x26
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
@@ -1198,6 +1213,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 	next_gadget
 
 .Lvector_other_register_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w9, #0, .Lvector_other_register_checked\@
+	ubfx x26, x26, #0, #56
+	b .Lvector_other_register_translate\@
+.Lvector_other_register_checked\@:
 	sub sp, sp, #32
 	stp x1, x2, [sp, #16]
 	.if \load
@@ -1551,6 +1572,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.if !\sp_base || \mode != 0
 	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_pair_tagged\@
+.Lvector_pair_translate\@:
 	.endif
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, .Ltt_cold\@, .Ltt_resume\@, .Lvector_pair_cross\@, \forward
@@ -1610,6 +1632,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\sp_base || \mode != 0
 .Lvector_pair_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w9, #0, .Lvector_pair_checked\@
+	ubfx x19, x19, #0, #56
+	b .Lvector_pair_translate\@
+.Lvector_pair_checked\@:
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
 	.if \load

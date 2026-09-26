@@ -333,6 +333,19 @@
     uml_add_unit_test(NAME arm64-static-translation
         COMMAND uml_arm64_static_translation_tests)
 
+    add_executable(uml_arm64_tlb_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_tlb_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    target_include_directories(uml_arm64_tlb_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_tlb_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-tlb COMMAND uml_arm64_tlb_tests)
+
     add_executable(uml_arm64_jit_cache_geometry_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp)
     target_link_libraries(uml_arm64_jit_cache_geometry_tests PRIVATE

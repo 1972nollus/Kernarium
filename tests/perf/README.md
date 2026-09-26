@@ -239,6 +239,15 @@ arm's emulator environment; `--guest-samples PATH` profiles the boot with the
 guest code sampler below. Guests are not serialized by the tool: take the GPU
 lock and a guest slot around each run, and alternate arms (ABBA) across runs.
 
+`--scenario android_scenarios/NAME.json` follows each successful launch with a
+fixed sequence of sleeps and taps and waits for the scenario's completion line;
+the record adds the guest seconds to that line, the emulator's CPU seconds, and
+the values the scenario's patterns extract from it, such as the phase times an
+application logs. Taps are display coordinates, so a scenario states the
+display size it was written for. `--display vnc --vnc-port N` boots on a VNC
+display instead of the native window, which lets a person watch or steer an
+unattended run.
+
 ## Gadget forwarding controls
 
 Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
@@ -320,9 +329,11 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Guest entry and exit
-store one flag each; the translated code is unchanged. Only the gadgets engine
-is sampled, so a macOS run, whose default engine is the JIT, needs
+symbol (the guest kernel, the executor, translation, MMU). Each block sample
+also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
+one busy guest thread from a pool. Guest entry and exit store one flag each;
+the translated code is unchanged. Only the gadgets engine is sampled, so a
+macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
 
 `symbolize_guest_samples.py PROFILE ELF_OR_DIR...` finds each block's words in
@@ -331,7 +342,10 @@ and function regardless of where the guest loaded it. For an Android
 application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
 `/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
 builds). A block is attributed at its first instruction, so time in a block
-that falls through a function boundary counts against the first function.
+that falls through a function boundary counts against the first function. The
+report ranks guest threads; `--thread TPIDR` restricts it to one of them. The
+profile is cumulative, so copy it at a phase boundary and pass that copy as
+`--baseline` to report only the interval after it.
 
 ## Cache census
 
@@ -374,6 +388,23 @@ registrations and do not enter ordinary suite aggregates.
 The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
 assembler support for that extension. Other probes declare any restriction in
 the manifest.
+
+## Loader corpus
+
+A probe isolates one mechanism; an application's load phase is ordinary
+scalar code spread across many. [`guest_loader_corpus.sh`](guest_loader_corpus.sh)
+runs real programs from the Debian rootfs whose work resembles one: gzip,
+xz and bzip2 decompression, a bind-now dynamic link of a large library,
+Python imports, sort, glibc regular expressions, a C front end, Perl hash
+churn, JVM start-up and Node start-up. It runs inside the guest under any
+console runner (on the iPad through `KERNARIUM_GUEST_SCRIPT`), prepares its
+inputs from rootfs files, runs every workload once to warm the page and
+translation caches, and prints `CORPUS:<name>:<round>:<runs>:<centiseconds>`
+per workload and round. A workload the rootfs cannot run prints
+`CORPUS_SKIP:<name>` once and is left out; the iPad image has no `cc1`, so it
+skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
+Each workload is sized to about two seconds on a gadgets guest, so compare
+arms round by round rather than across launches.
 
 ## Ideal gadget ceiling
 

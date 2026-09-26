@@ -55,6 +55,21 @@ class BootAndroidTests(unittest.TestCase):
         self.assertFalse(options.build)
         self.assertTrue(boot_android.parse_arguments(["--build"]).build)
 
+    def test_vnc_display_names_its_port(self) -> None:
+        options = boot_android.parse_arguments(
+            ["--display", "vnc", "--vnc-port", "5931"]
+        )
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--gpu-display=vnc", command)
+        self.assertIn("--gpu-vnc-port=5931", command)
+        self.assertNotIn("--gpu-display=native", command)
+        native = boot_android.emulator_command(
+            boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertFalse(any("vnc" in argument for argument in native))
+
     def test_adb_forward_is_loopback_only(self) -> None:
         options = boot_android.parse_arguments(["--adb-port", "15555"])
         command = boot_android.emulator_command(

@@ -1748,6 +1748,8 @@ void GadgetExecutor::select_cpu(CpuState &cpu) noexcept
 	 * execution reuse; end_execution() resets current_cpu_ at every exit. */
 	cpu.gadget_indirect_miss = nullptr;
 	current_cpu_ = &cpu;
+	if (sampling_ != nullptr)
+		diagnostics::guest_sampling_thread(*sampling_, &cpu.tls);
 }
 
 void *GadgetExecutor::execution_context(unsigned long generation)
