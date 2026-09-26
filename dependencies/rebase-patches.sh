@@ -27,6 +27,11 @@ PATH must be a clean Git checkout whose HEAD is the pinned upstream commit
 followed by the dependency's topic commits. Amend, reorder, add, or drop
 topics there (`git rebase -i <pinned-commit>`), then run this command to
 export the series and record its tree.
+
+A layered series ("lower+owned" in the manifest) exports only its owned,
+last layer. Its topics follow the lower layers' topics in the checkout, which
+end at the one commit whose tree the lower layers record; export a changed
+lower layer with its owner's tool first.
 EOF
 }
 
@@ -58,7 +63,10 @@ case "$DEPENDENCY" in
 *[!A-Za-z0-9._+-]*|'') fail "unsafe dependency name: $DEPENDENCY" ;;
 esac
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
-[ -d "$SOURCE/.git" ] || fail "source is not a Git working tree: $SOURCE"
+[ "$(git -C "$SOURCE" rev-parse --is-inside-work-tree 2>/dev/null || true)" = true ] &&
+	[ "$(CDPATH= cd -- "$SOURCE" && pwd -P)" = \
+		"$(CDPATH= cd -- "$(git -C "$SOURCE" rev-parse --show-toplevel)" && pwd -P)" ] ||
+	fail "source is not a Git working tree: $SOURCE"
 
 row=$(awk -F '\t' -v wanted="$DEPENDENCY" '$1 == wanted { print; exit }' \
 	"$MANIFEST")
@@ -69,15 +77,42 @@ $row
 EOF
 [ "$name" = "$DEPENDENCY" ] || fail "could not parse dependency row"
 [ "$series" != '-' ] || fail "$DEPENDENCY has no maintained patch series"
-case "$series" in
+owned=${series##*+}
+lower=
+[ "$owned" = "$series" ] || lower=${series%+*}
+case "$owned" in
 rootfs-vulkan:*)
 	fail "$DEPENDENCY is owned by tools/rootfs/vulkan/rebase-patches.sh"
 	;;
-*:*) fail "unknown patch-series owner: $series" ;;
+*:*) fail "unknown patch-series owner: $owned" ;;
 esac
 
-series_directory=$(dirname -- "$METADATA_ROOT/$series")
+series_tool()
+{
+	python3 -B "$ROOT_DIR/scripts/patch_series.py" "$@"
+}
+
+export_base=$base
+if [ -n "$lower" ]; then
+	# The lower layers belong to the paired Vulkan guest, which owns the only
+	# layer the manifest may name below a dependency's own.
+	case "$DEPENDENCY:$lower" in
+	mesa:rootfs-vulkan:patches/mesa/series.tsv) ;;
+	*) fail "$DEPENDENCY has an unsupported lower patch-series layer: $lower" ;;
+	esac
+	lower_directory=$(dirname -- \
+		"$METADATA_ROOT/../tools/rootfs/vulkan/${lower#rootfs-vulkan:}")
+	lower_tree=$(series_tool recorded-tree --series-dir "$lower_directory") ||
+		fail "the lower layer records no tree: $lower"
+	boundaries=$(git -C "$SOURCE" rev-list --format='%T %H' --no-commit-header \
+		"$base..HEAD" | awk -v tree="$lower_tree" '$1 == tree { print $2 }')
+	[ -n "$boundaries" ] && [ "$(printf '%s\n' "$boundaries" | wc -l | tr -d ' ')" = 1 ] ||
+		fail "exactly one commit of $SOURCE must end the lower layer with tree $lower_tree"
+	export_base=$boundaries
+fi
+
+series_directory=$(dirname -- "$METADATA_ROOT/$owned")
 [ -d "$series_directory" ] || fail "patch directory is missing: $series_directory"
-python3 -B "$ROOT_DIR/scripts/patch_series.py" export --source "$SOURCE" \
-	--base "$base" --head HEAD --series-dir "$series_directory" --tree >/dev/null
+series_tool export --source "$SOURCE" \
+	--base "$export_base" --head HEAD --series-dir "$series_directory" --tree >/dev/null
 printf '%s\n' "regenerated $DEPENDENCY patch series from $SOURCE"

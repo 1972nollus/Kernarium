@@ -292,6 +292,17 @@ The regenerator exports the pinned commit's descendants through
 changed and records the resulting tree in `series.tsv`. Never edit patch bytes
 or `series.tsv` by hand.
 
+A manifest series field may join ordered layers with `+`. Each layer applies
+to the tree the layers before it produce, and the last layer, which
+`patches/` owns, records the tree of the whole stack. The only lower layer
+allowed is the paired guest's Mesa series, named
+`rootfs-vulkan:patches/mesa/series.tsv`, whose source pin must equal the
+host's. One topic checkout then carries the guest topics followed by the host
+topics. Regenerate a changed guest layer first with
+`tools/rootfs/vulkan/rebase-patches.sh --head GUEST_END`. This regenerator
+exports only the topics after the single commit whose tree the lower layer
+records, and it refuses a checkout without that commit.
+
 Changing `manifest.tsv` or a build recipe invalidates the corresponding
 installed receipt, and so does a series change that produces a different tree.
 A series change that keeps the tree, such as a reworded message or a folded
