@@ -110,8 +110,6 @@ if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
         "The fixed x86_64 userspace product does not use the arm64 unit or "
         "integration suites")
 endif()
-option(UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS
-    "Share relocatable JIT translations between concurrent executors" ON)
 option(UML_ENABLE_RUNTIME_PROFILING
     "Compile optional runtime, MMU, and device profiling into products" OFF)
 
@@ -119,9 +117,7 @@ add_library(uml_jit_profile_configuration INTERFACE)
 add_library(UML::JitProfileConfiguration ALIAS
     uml_jit_profile_configuration)
 target_compile_definitions(uml_jit_profile_configuration INTERFACE
-    UML_ENABLE_JIT_PROFILE=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>
-    UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS=$<BOOL:${UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS}>
-)
+    UML_ENABLE_JIT_PROFILE=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 
 if(UML_GUEST_16K_PAGES)
     set(UML_GUEST_PAGE_SIZE 16384)

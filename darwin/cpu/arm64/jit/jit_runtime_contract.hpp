@@ -115,18 +115,6 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
  * only their neutral guest keys. Recording the cells lets every executor
  * recreate its private link state while reusing decode and emission work.
  */
-/* The guest-GPR link profiler also embeds executor-owned counter pointers.
- * Those diagnostic pointers are intentionally not part of the production
- * relocation ABI, so a profiling build must keep translations private to the
- * executor that owns the counters.
- */
-#ifndef UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS
-#define UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS 1
-#endif
-
-inline constexpr bool share_translations_between_executors =
-    UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS != 0;
-
 enum class JitRelocationKind : std::uint8_t {
   direct_link,
   indirect_link,

@@ -324,8 +324,6 @@ JitExecutor::Implementation::materialize_shared_translation(
 JitExecutor::Implementation::install_shared_translation(
     unsigned long generation, std::uint64_t changes, std::uint64_t pc,
     std::span<const std::uint32_t> guest_words) {
-  if constexpr (!share_translations_between_executors)
-    return nullptr;
 #if UML_ENABLE_JIT_PROFILE
   const auto materialization_started = jit_profile_timestamp_ns();
 #endif
@@ -378,8 +376,6 @@ std::shared_ptr<const SharedTranslation>
 JitExecutor::Implementation::publish_shared_translation(
     std::uint64_t pc, std::span<const std::uint32_t> guest_words,
     const JitCompiler::Result &compiled) {
-  if constexpr (!share_translations_between_executors)
-    return nullptr;
   auto &cache = SharedTranslationCache::instance();
   if (!compiled.relocatable)
     return nullptr;

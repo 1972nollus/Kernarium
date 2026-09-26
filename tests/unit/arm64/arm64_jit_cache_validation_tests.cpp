@@ -186,9 +186,6 @@ void publication_allocation_failure_installs_private_code(
 
 void publication_allocation_failures_install_private_code()
 {
-	if constexpr (!arm64::share_translations_between_executors)
-		return;
-
 	/* A two-instruction SVC block performs exactly three candidate allocations:
 	 * the shared object/control block, validation array, and nonempty host-word
 	 * vector. Offset zero fails construction; offset three first reaches a new
@@ -998,15 +995,9 @@ void a_second_executor_reuses_the_first_translation_safely()
 	}
 	const auto published =
 		arm64::SharedTranslationCache::instance().statistics();
-	if constexpr (arm64::share_translations_between_executors) {
-		require(published.insertions > before.insertions);
-		require(first_shared_installs > 0);
-		require(first_private_installs == 0);
-	} else {
-		require(published.insertions == before.insertions);
-		require(first_shared_installs == 0);
-		require(first_private_installs > 0);
-	}
+	require(published.insertions > before.insertions);
+	require(first_shared_installs > 0);
+	require(first_private_installs == 0);
 
 	const auto cold = run_to_system_call(second);
 	require(cold.invocations == 2);
@@ -1028,17 +1019,10 @@ void a_second_executor_reuses_the_first_translation_safely()
 	require(second_diagnostics.direct_link_table_high_water > 0);
 	require(second_diagnostics.direct_link_table_high_water <=
 		second_diagnostics.direct_link_table_capacity);
-	if constexpr (arm64::share_translations_between_executors) {
-		require(reused.matches > published.matches);
-		require(reused.reuses > published.reuses);
-		require(second_diagnostics.shared_validation_word_installs > 0);
-		require(second_diagnostics.private_validation_word_installs == 0);
-	} else {
-		require(reused.matches == published.matches);
-		require(reused.reuses == published.reuses);
-		require(second_diagnostics.shared_validation_word_installs == 0);
-		require(second_diagnostics.private_validation_word_installs > 0);
-	}
+	require(reused.matches > published.matches);
+	require(reused.reuses > published.reuses);
+	require(second_diagnostics.shared_validation_word_installs > 0);
+	require(second_diagnostics.private_validation_word_installs == 0);
 	std::fprintf(stderr,
 		"JIT shared translations: %llu published, %llu reused by the "
 		"second executor\n",
@@ -1132,25 +1116,15 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 		require(links.trains == 1);
 		const auto cache = first.cache_validation_diagnostics();
 		require(cache.translations == 2);
-		if constexpr (arm64::share_translations_between_executors) {
-			require(cache.shared_validation_word_installs == 2);
-			require(cache.private_validation_word_installs == 0);
-		} else {
-			require(cache.shared_validation_word_installs == 0);
-			require(cache.private_validation_word_installs == 2);
-		}
+		require(cache.shared_validation_word_installs == 2);
+		require(cache.private_validation_word_installs == 0);
 		first.end_execution();
 	}
 
 	const auto published =
 		arm64::SharedTranslationCache::instance().statistics();
-	if constexpr (arm64::share_translations_between_executors) {
-		require(published.insertions == before.insertions + 2);
-		require(published.misses == before.misses + 2);
-	} else {
-		require(published.insertions == before.insertions);
-		require(published.misses == before.misses);
-	}
+	require(published.insertions == before.insertions + 2);
+	require(published.misses == before.misses + 2);
 
 	arm64::CpuState cpu{};
 	cpu.pc = base;
@@ -1204,19 +1178,11 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 		arm64::SharedTranslationCache::instance().statistics();
 	const auto cache = second.cache_validation_diagnostics();
 	require(cache.translations == 2);
-	if constexpr (arm64::share_translations_between_executors) {
-		require(reused.matches == published.matches + 2);
-		require(reused.reuses == published.reuses + 2);
-		require(reused.misses == published.misses);
-		require(cache.shared_validation_word_installs == 2);
-		require(cache.private_validation_word_installs == 0);
-	} else {
-		require(reused.matches == published.matches);
-		require(reused.reuses == published.reuses);
-		require(reused.misses == published.misses);
-		require(cache.shared_validation_word_installs == 0);
-		require(cache.private_validation_word_installs == 2);
-	}
+	require(reused.matches == published.matches + 2);
+	require(reused.reuses == published.reuses + 2);
+	require(reused.misses == published.misses);
+	require(cache.shared_validation_word_installs == 2);
+	require(cache.private_validation_word_installs == 0);
 	std::fprintf(stderr,
 		"JIT shared indirect translation: %llu published, %llu reused, "
 		"%llu PIC miss, %llu PIC train\n",
@@ -1277,32 +1243,25 @@ void arena_adjacent_direct_links_degrade_without_blocking_reuse()
 		consumer_cpu.registers[9] == 26);
 	const auto after =
 		arm64::SharedTranslationCache::instance().statistics();
-	if constexpr (arm64::share_translations_between_executors) {
-		require(after.matches > published.matches);
-		require(after.materialization_direct_link_failures ==
-			published.materialization_direct_link_failures);
-		require(after.materialization_indirect_link_failures ==
-			published.materialization_indirect_link_failures);
-		require(after.degraded_rejected == published.degraded_rejected);
-		require(after.reuses == published.reuses + 2U);
-	} else {
-		require(after.matches == published.matches);
-		require(after.reuses == published.reuses);
-	}
+	require(after.matches > published.matches);
+	require(after.materialization_direct_link_failures ==
+		published.materialization_direct_link_failures);
+	require(after.materialization_indirect_link_failures ==
+		published.materialization_indirect_link_failures);
+	require(after.degraded_rejected == published.degraded_rejected);
+	require(after.reuses == published.reuses + 2U);
 	const auto diagnostics = consumer.cache_validation_diagnostics();
 	require(diagnostics.direct_link_table_capacity == 0);
 	require(diagnostics.direct_link_table_high_water == 0);
 	require(diagnostics.target_link_refusals > 0);
 	require(diagnostics.direct_link_refusals > 0);
-	if constexpr (arm64::share_translations_between_executors) {
-		/* A refused reverse-index registration leaves the adjacent descriptor
-		 * cold, so its generated exit takes the semantic fallback. Code shape
-		 * and relocation metadata remain valid and both canonical blocks can
-		 * still be materialized without recompilation.
-		 */
-		require(diagnostics.private_validation_word_installs == 0);
-		require(diagnostics.shared_validation_word_installs > 0);
-	}
+	/* A refused reverse-index registration leaves the adjacent descriptor
+	 * cold, so its generated exit takes the semantic fallback. Code shape
+	 * and relocation metadata remain valid and both canonical blocks can
+	 * still be materialized without recompilation.
+	 */
+	require(diagnostics.private_validation_word_installs == 0);
+	require(diagnostics.shared_validation_word_installs > 0);
 }
 
 void an_indirect_link_capacity_match_is_not_counted_as_reuse()
@@ -1353,17 +1312,12 @@ void an_indirect_link_capacity_match_is_not_counted_as_reuse()
 		consumer_cpu.registers[9] == 26);
 	const auto after =
 		arm64::SharedTranslationCache::instance().statistics();
-	if constexpr (arm64::share_translations_between_executors) {
-		require(after.matches > published.matches);
-		require(after.materialization_indirect_link_failures ==
-			published.materialization_indirect_link_failures + 1U);
-		require(after.materialization_direct_link_failures ==
-			published.materialization_direct_link_failures);
-		require(after.reuses < after.matches);
-	} else {
-		require(after.matches == published.matches);
-		require(after.reuses == published.reuses);
-	}
+	require(after.matches > published.matches);
+	require(after.materialization_indirect_link_failures ==
+		published.materialization_indirect_link_failures + 1U);
+	require(after.materialization_direct_link_failures ==
+		published.materialization_direct_link_failures);
+	require(after.reuses < after.matches);
 	const auto links = consumer.indirect_link_diagnostics();
 	require(links.table_capacity == 0);
 	require(links.table_high_water == 0);
@@ -1396,15 +1350,10 @@ void an_arena_capacity_match_is_not_counted_as_reuse()
 		::uml::cpu::EngineEvent::system_call);
 	const auto after =
 		arm64::SharedTranslationCache::instance().statistics();
-	if constexpr (arm64::share_translations_between_executors) {
-		require(after.matches == published.matches + 1U);
-		require(after.reuses == published.reuses);
-		require(after.materialization_arena_failures ==
-			published.materialization_arena_failures + 1U);
-	} else {
-		require(after.matches == published.matches);
-		require(after.reuses == published.reuses);
-	}
+	require(after.matches == published.matches + 1U);
+	require(after.reuses == published.reuses);
+	require(after.materialization_arena_failures ==
+		published.materialization_arena_failures + 1U);
 	const auto diagnostics = consumer.cache_validation_diagnostics();
 	require(diagnostics.arena_resets == 1);
 	require(diagnostics.translations == 0);
@@ -1412,8 +1361,6 @@ void an_arena_capacity_match_is_not_counted_as_reuse()
 
 void defensive_install_rejects_mutated_canonical_metadata()
 {
-	if constexpr (!arm64::share_translations_between_executors)
-		return;
 	constexpr unsigned long generation = 8117;
 	constexpr std::uint64_t base = 0x154'0000;
 	const std::array guest_words{system_call};
@@ -1524,8 +1471,6 @@ void native_translation_preserves_fault_prefixes(bool pointer_authentication)
 
 void peer_translation_reuse_requires_current_code()
 {
-	if constexpr (!arm64::share_translations_between_executors)
-		return;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr unsigned long generation = 19'703U;
 	constexpr std::uint64_t base = 0x430'0000U;
