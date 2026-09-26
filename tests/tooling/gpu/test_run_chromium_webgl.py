@@ -234,12 +234,12 @@ class AquariumProbePolicyTests(unittest.TestCase):
             "ANGLE (Mesa, virgl (zink Vulkan 1.4(Apple M1 Ultra "
             "(MESA_KOSMICKRISP))), OpenGL ES 3.2)",
         )
-        # Guest Zink on Venus, as a GL CTS session header records it; no zink
-        # Aquarium run has yet reported Chromium's ANGLE form of it.
+        # Guest Zink on Venus, as a zink Aquarium run on the Vulkan
+        # derivative reported it.
         zink = line.replace(
             "ANGLE (Mesa, virgl, OpenGL ES 3.0)",
-            "zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) "
-            "(MESA_KOSMICKRISP))",
+            "ANGLE (Mesa, zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) "
+            "(MESA_KOSMICKRISP)), OpenGL ES 3.2)",
         )
         run_chromium_webgl.validate_renderer(virgl, "virgl")
         run_chromium_webgl.validate_renderer(zink, "zink")
