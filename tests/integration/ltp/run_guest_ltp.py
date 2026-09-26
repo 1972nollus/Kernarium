@@ -93,6 +93,9 @@ MODULES_BUILTIN_ENTRY = re.compile(
     r"^kernel/(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+\.ko$"
 )
 KERNEL_RELEASE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+# Where modules.builtin's kernel release lives: beside it in a kernel artifact,
+# or under include/config in a Kbuild output tree.
+KERNEL_RELEASE_SIBLINGS = ("kernel.release", "include/config/kernel.release")
 # Keep every ordinary guest single-vCPU.  Workloads which intentionally
 # exercise more than one CPU are manifest-tagged host-pressure, retain the full
 # guest topology, and run alone at the end of the suite.
@@ -124,13 +127,34 @@ def validate_modules_builtin(data: bytes) -> tuple[str, ...]:
 
 
 def load_modules_builtin(path: pathlib.Path) -> tuple[bytes, str]:
-    """Load Kbuild metadata and its exact sibling kernel release."""
+    """Load Kbuild metadata and its exact sibling kernel release.
+
+    A kernel artifact ships ``kernel.release`` beside ``modules.builtin``; a
+    Kbuild output tree keeps it in ``include/config``. Exactly one must exist.
+    """
     try:
         data = path.read_bytes()
     except OSError as error:
         raise ValueError(f"cannot read modules.builtin: {path}: {error}") from error
     validate_modules_builtin(data)
-    release_path = path.parent / "include/config/kernel.release"
+    candidates = [
+        path.parent / name for name in KERNEL_RELEASE_SIBLINGS
+    ]
+    present = [
+        candidate for candidate in candidates if os.path.lexists(candidate)
+    ]
+    if not present:
+        raise ValueError(
+            "cannot read sibling kernel release: neither "
+            + " nor ".join(str(candidate) for candidate in candidates)
+            + " exists"
+        )
+    if len(present) > 1:
+        raise ValueError(
+            "ambiguous sibling kernel release: "
+            + " and ".join(str(candidate) for candidate in present)
+        )
+    release_path = present[0]
     try:
         release_text = release_path.read_text(encoding="utf-8")
     except OSError as error:
@@ -1045,8 +1069,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         type=pathlib.Path,
         help=(
-            "authoritative modules.builtin from the exact kernel build; "
-            "include/config/kernel.release must be present beside it"
+            "authoritative modules.builtin from the exact kernel build: a "
+            "kernel artifact's, with kernel.release beside it, or a Kbuild "
+            "tree's, with include/config/kernel.release"
         ),
     )
     parser.add_argument(

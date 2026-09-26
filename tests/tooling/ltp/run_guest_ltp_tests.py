@@ -498,6 +498,39 @@ class ResultParsingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid sibling"):
                 runner.load_modules_builtin(modules_builtin)
 
+    def test_modules_builtin_loader_accepts_the_kernel_artifact_layout(
+        self,
+    ) -> None:
+        # KernelArtifact.cmake's UML_KERNEL_MODULES_BUILTIN is
+        # <artifact>/kernel/modules.builtin, with kernel/kernel.release.
+        with tempfile.TemporaryDirectory() as directory:
+            kernel = pathlib.Path(directory) / "artifact/kernel"
+            kernel.mkdir(parents=True)
+            modules_builtin = kernel / "modules.builtin"
+            data = b"kernel/fs/binfmt_misc.ko\n"
+            modules_builtin.write_bytes(data)
+            release = kernel / "kernel.release"
+            release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
+            self.assertEqual(
+                runner.load_modules_builtin(modules_builtin),
+                (data, "6.18.54-uml-darwin"),
+            )
+            release.write_text("6.18.54\n6.18.54\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid sibling"):
+                runner.load_modules_builtin(modules_builtin)
+            release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
+            kbuild_release = kernel / "include/config/kernel.release"
+            kbuild_release.parent.mkdir(parents=True)
+            kbuild_release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                runner.load_modules_builtin(modules_builtin)
+            release.unlink()
+            kbuild_release.unlink()
+            with self.assertRaisesRegex(
+                ValueError, "neither .*kernel.release nor .*include/config"
+            ):
+                runner.load_modules_builtin(modules_builtin)
+
     def test_ltp_builtin_driver_metadata_feeds_complete_kbuild_output(self) -> None:
         entries = (
             "kernel/fs/binfmt_misc.ko",
