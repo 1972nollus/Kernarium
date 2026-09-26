@@ -215,9 +215,10 @@ shell.
 
 `guest-bpf-callbacks` runs hand-assembled BPF programs through `bpf()` from the
 rootfs Python: `bpf_loop`, inlined and through the helper,
-`bpf_for_each_map_elem`, nested callbacks, and tail calls into callback
-programs, checks that the verifier's frame, stack, and tail-call limits still
-reject, and exhausts and refills the interpreter's callback entry-point pool.
+`bpf_for_each_map_elem`, a self-rearming BPF timer, nested callbacks, and tail
+calls into callback programs. It checks that the verifier's frame, stack, and
+tail-call limits still reject, and exhausts and refills the interpreter's
+callback entry-point pool.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through

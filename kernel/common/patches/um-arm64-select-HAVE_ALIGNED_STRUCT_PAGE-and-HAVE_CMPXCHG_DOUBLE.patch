@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 02:34:05 +0900
+Subject: [PATCH] um: arm64: select HAVE_ALIGNED_STRUCT_PAGE and
+ HAVE_CMPXCHG_DOUBLE
+
+SLUB updates a slab's freelist and counters together with a double-word
+cmpxchg when the architecture provides one and struct page is aligned
+for it. mm/slab.h drops system_has_freelist_aba() unless
+HAVE_ALIGNED_STRUCT_PAGE is set, so arm64 UML fell back to the bit-lock
+slow path, and kmalloc_nolock() returned NULL for every non-debug cache.
+BPF timers allocate through kmalloc_nolock(), so bpf_timer_init()
+failed with -ENOMEM.
+
+UML arm64 builds the native arm64 cmpxchg128() and runs kernel code
+directly on the host CPU, where it is a CASP instruction, and the x86-64
+userspace slice keeps that arm64 kernel. Select the same two symbols
+native arm64 does. HAVE_CMPXCHG_DOUBLE has no C users; it records the
+capability.
+
+struct page is already 64 bytes, so its size does not change. The FLATMEM
+memory map is allocated with SMP_CACHE_BYTES alignment; assert at build
+time that this covers struct page, and check the map at boot.
+---
+ arch/arm64/um/Kconfig |  2 ++
+ arch/um/kernel/mem.c  | 11 +++++++++++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
+index 2b518b23fbe29da511c84051c58db647b1a80734..06086feb226da3a2012f1ca2cfb0dec9bb63f69d 100644
+--- a/arch/arm64/um/Kconfig
++++ b/arch/arm64/um/Kconfig
+@@ -13,7 +13,9 @@ config UML_ARM64
+ 	select GENERIC_HWEIGHT
+ 	select GENERIC_TIME_VSYSCALL
+ 	select HAVE_GENERIC_VDSO
++	select HAVE_ALIGNED_STRUCT_PAGE
+ 	select HAVE_ARCH_MMAP_RND_BITS
++	select HAVE_CMPXCHG_DOUBLE
+ 	select HAVE_EFFICIENT_UNALIGNED_ACCESS
+ 	select HAVE_PERF_EVENTS
+ 	select MODULES_USE_ELF_RELA
+diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
+index e2b7dd38000bebf08b907bfc21eabd75655f557d..a0aaf2751aaee3fd81bc6ee7a52788fddfe4b5c9 100644
+--- a/arch/um/kernel/mem.c
++++ b/arch/um/kernel/mem.c
+@@ -215,6 +215,17 @@ void __init paging_init(void)
+ 	max_zone_pfn[ZONE_NORMAL] = end_iomem >> PAGE_SHIFT;
+ 	free_area_init(max_zone_pfn);
+ 
++#ifdef CONFIG_FLATMEM
++	/*
++	 * SLUB updates a slab's freelist and counters with one double-word
++	 * cmpxchg on its struct page, which HAVE_ALIGNED_STRUCT_PAGE aligns
++	 * for that.  The memory map is allocated with SMP_CACHE_BYTES
++	 * alignment, so that must cover it.
++	 */
++	BUILD_BUG_ON(SMP_CACHE_BYTES < __alignof__(struct page));
++	WARN_ON(!IS_ALIGNED((unsigned long)mem_map, __alignof__(struct page)));
++#endif
++
+ #if IS_ENABLED(CONFIG_ARCH_REUSE_HOST_VSYSCALL_AREA)
+ 	fixaddr_user_init();
+ #endif
