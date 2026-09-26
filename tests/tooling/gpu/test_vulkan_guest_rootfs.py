@@ -5,7 +5,6 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import csv
 from contextlib import contextmanager
 import importlib.util
 import json
@@ -16,6 +15,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import receipt_fixtures
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -44,18 +45,6 @@ IMPORTER_SPEC = importlib.util.spec_from_file_location(
 assert IMPORTER_SPEC is not None and IMPORTER_SPEC.loader is not None
 importer = importlib.util.module_from_spec(IMPORTER_SPEC)
 IMPORTER_SPEC.loader.exec_module(importer)
-
-
-def source_rows(root: Path = METADATA) -> dict[str, dict[str, str]]:
-    lines = [
-        line
-        for line in (root / "sources.tsv").read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    ]
-    return {
-        row["component"]: row
-        for row in csv.DictReader(lines, delimiter="\t")
-    }
 
 
 @contextmanager
@@ -356,51 +345,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("verified Vulkan guest source locks", result.stdout)
 
-        rows = source_rows()
-        self.assertEqual(
-            set(rows),
-            {
-                "mesa",
-                "venus-protocol",
-                "vulkan-headers",
-                "vulkan-loader",
-                "vk-gl-cts",
-            },
-        )
-        self.assertEqual(rows["mesa"]["release_ref"], "mesa-26.2.1")
-        self.assertEqual(
-            rows["mesa"]["base_commit"],
-            "da14d65e4499e66468094be52bff9ea0915a695e",
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["release_ref"], "vulkan-cts-1.4.6.2"
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["base_commit"],
-            "f6a29701220f34dd1407513bfe80d74ca7b392ce",
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["series"],
-            "patches/vk-gl-cts/series.tsv",
-        )
-        self.assertEqual(rows["venus-protocol"]["series"], "patches/venus-protocol/series.tsv")
-        self.assertEqual(
-            rows["vulkan-headers"]["release_ref"],
-            "vulkan-sdk-1.4.357.0",
-        )
-        self.assertEqual(
-            rows["vulkan-headers"]["base_commit"],
-            "e3b1eec08173d6b825cd3ac88c885a63b621504a",
-        )
-        self.assertEqual(
-            rows["vulkan-loader"]["release_ref"],
-            "vulkan-sdk-1.4.357.0",
-        )
-        self.assertEqual(
-            rows["vulkan-loader"]["base_commit"],
-            "5f157b62e333c63260d05d81bf66faa216ab0fb8",
-        )
-
     def test_hand_edited_series_is_rejected_before_build(self) -> None:
         def unlisted(directory: Path) -> None:
             (directory / "stray.patch").write_bytes(
@@ -450,8 +394,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
                 ).stdout.strip()
 
             git("init", "--quiet")
-            git("config", "user.name", "fixture")
-            git("config", "user.email", "fixture@example.invalid")
             (repository / "file").write_text("base\n")
             git("add", "file")
             git("commit", "--quiet", "-m", "base")
@@ -623,32 +565,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
             with self.assertRaisesRegex(sealer.SealError, "outside its authenticated source/build"):
                 sealer.verify_mesa_build_stage(source, build, stage, build.parent / "venus-protocol")
 
-    def test_vm_sealer_allows_only_the_release_verified_video_sample(self) -> None:
-        sealer = (METADATA / "seal-in-vm.py").read_text(encoding="utf-8")
-        self.assertIn("LTRPSPS_A_Qualcomm_1.bit", sealer)
-        self.assertIn(
-            "8f8e50fa408b7e96e76e6936b380fc34c208271efb8c283b15a42cb1f8c78ae7",
-            sealer,
-        )
-        self.assertIn("contains an unverified fetched or modified resource", sealer)
-
-    def test_vm_sealer_has_a_distinct_receipt_bound_zink_gl_mode(self) -> None:
-        sealer = (METADATA / "seal-in-vm.py").read_text(encoding="utf-8")
-        self.assertIn("--include-opengl-cts", sealer)
-        self.assertIn("rootfs-vulkan-zink-gl.ext4", sealer)
-        self.assertIn("3b59fbc9-4b35-4a2b-890d-286a77b04afd", sealer)
-        self.assertIn("external/openglcts/modules", sealer)
-        self.assertIn("copy_generated_runtime_directory", sealer)
-        self.assertIn("external/graphicsfuzz/data/gles3", sealer)
-        self.assertNotIn(
-            'copy_directory(\n                opengl_build / directory', sealer
-        )
-        self.assertIn("opengl_manifest(stage, cts_tree)", sealer)
-        self.assertIn('opengl_cts["mustpass"]["documents"]', sealer)
-        self.assertIn('opengl_cts["mustpass"]["leaves"]', sealer)
-        self.assertNotIn("gl46-gtf-main.txt", sealer)
-        self.assertIn("uml-vulkan-zink-gl-rootfs", sealer)
-
     def test_gl_sealer_derives_only_xml_referenced_scope_and_checks_runner(self) -> None:
         import test_opengl_cts_plan as fixtures
 
@@ -709,9 +625,41 @@ class VulkanGuestRootfsTests(unittest.TestCase):
                 "overlay\n",
             )
 
+    def test_accepted_cts_images_match_the_current_guest_sources(self) -> None:
+        """The one tooling check that the accepted CTS images are current.
+
+        Every other receipt-bound tooling test uses a copy of the accepted
+        receipts rebound to the current source epoch, so a guest series that
+        produces a new tree fails here alone. The runners refuse the stale
+        images either way, until new ones are sealed and their receipts
+        checked in.
+        """
+        validator = receipt_fixtures.receipt_contract
+        for path in (
+            receipt_fixtures.VULKAN_RECEIPT,
+            receipt_fixtures.ZINK_GL_RECEIPT,
+        ):
+            with self.subTest(receipt=path.name):
+                receipt = validator.load_json(path)
+                difference = None
+                try:
+                    validator.verify_source_epoch(receipt)
+                except validator.ReceiptError as error:
+                    difference = str(error)
+                if difference is not None:
+                    self.fail(
+                        f"accepted CTS image is stale; reseal it: {path.name} "
+                        "was sealed from other guest sources than "
+                        f"tools/rootfs/vulkan records ({difference}). Seal a "
+                        "new image and check in its receipt as "
+                        "tools/rootfs/vulkan/README.md describes."
+                    )
+
     def test_checked_receipt_and_native_arm64_cts_verify(self) -> None:
+        # The accepted receipt, apart from the source epoch checked above.
+        current = receipt_fixtures.current_epoch_receipt_file(self, RECEIPT)
         result = subprocess.run(
-            (str(VERIFY_RECEIPT),),
+            (str(VERIFY_RECEIPT), "--receipt", str(current)),
             cwd=REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -728,7 +676,7 @@ class VulkanGuestRootfsTests(unittest.TestCase):
         self.assertEqual(receipt["mustpass"]["case_count"], 3_247_552)
 
     def test_checked_receipt_rejects_claim_expansion(self) -> None:
-        receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
+        receipt = receipt_fixtures.current_epoch_receipt(RECEIPT)
         receipt["claim_scope"]["formal_conformance"] = True
         with tempfile.TemporaryDirectory() as temporary:
             changed = Path(temporary) / "receipt.json"

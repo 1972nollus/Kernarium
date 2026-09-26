@@ -119,7 +119,7 @@ changes only when its own topic does.
 
 The installed public API and the host/Linux bridge are independent domains.
 Follow [`kernel/common/abi/README.md`](kernel/common/abi/README.md) and update
-only the affected domain's identity and history.
+only the affected domain's `identity.env`.
 
 - Canonical public declarations live under `darwin/api/include/uml/`.
 - Canonical bridge declarations live under `kernel/common/abi/`.
@@ -154,7 +154,6 @@ skip, exclude, or route around a workload that encounters `SIGILL`; diagnose
 and implement the missing instruction semantics before continuing the campaign.
 
 Every CTest has exactly one primary suite: `unit`, `tooling`, or `integration`.
-Keep the current-state `tests/test-manifest.tsv` synchronized.
 
 Every wait on a long-running run, agent, or external service has a hard time
 bound: `timeout` on the process, or a deadline inside the polling loop, chosen

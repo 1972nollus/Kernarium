@@ -17,9 +17,7 @@ if(NOT DEFINED PRODUCT)
 endif()
 # Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
 # the KosmicKrisp Vulkan driver.
-if(PRODUCT STREQUAL "apple-gpu")
-    message(FATAL_ERROR "apple-gpu is retired; build apple-gpu-vulkan-experiment")
-elseif(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+if(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     message(FATAL_ERROR "Unsupported Apple GPU product: ${PRODUCT}")
 endif()
 
@@ -287,13 +285,12 @@ function(_receipt_expect _field _expected)
             "Apple GPU build receipt ${_field} is ${_actual}, expected ${_expected}")
     endif()
 endfunction()
+# The manifest rows and source trees above identify what the prefix was built
+# from, and the platform contract is compared byte for byte. The receipt's
+# manifest, contract, and base-commit fields remain for older checkouts only.
 _receipt_expect(format 2)
 _receipt_expect(product apple-gpu-vulkan-experiment)
 _receipt_expect(platform "${PLATFORM}")
-_receipt_expect(mesa_base_commit
-    da14d65e4499e66468094be52bff9ea0915a695e)
-_receipt_expect(vulkan_headers_base_commit
-    e3b1eec08173d6b825cd3ac88c885a63b621504a)
 foreach(_row IN LISTS _receipt_rows)
     if(_row MATCHES "^venus_protocol_generated_sha256\t(.*)$")
         string(LENGTH "${CMAKE_MATCH_1}" _length)
@@ -303,12 +300,6 @@ foreach(_row IN LISTS _receipt_rows)
         endif()
     endif()
 endforeach()
-file(SHA256 "${SOURCE_ROOT}/dependencies/manifest.tsv" _manifest_sha256)
-file(SHA256
-    "${SOURCE_ROOT}/dependencies/platforms/${_platform_contract}"
-    _contract_sha256)
-_receipt_expect(source_manifest_sha256 "${_manifest_sha256}")
-_receipt_expect(platform_contract_sha256 "${_contract_sha256}")
 foreach(_required_field IN ITEMS sdk_name sdk_version sdk_path compiler built_at_utc)
     set(_matches)
     foreach(_row IN LISTS _receipt_rows)

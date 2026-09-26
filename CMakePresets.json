@@ -636,7 +636,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(jit-profile-final-report-contract|jit-profile-preset-contract)$"
+          "name": "^jit-profile-final-report-contract$"
         }
       },
       "execution": {

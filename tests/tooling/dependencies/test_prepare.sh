@@ -119,8 +119,6 @@ FAILURE_NUMBER=0
 mkdir -p "$CACHE/git" "$METADATA/patches" "$UPSTREAM"
 
 git -C "$UPSTREAM" init --quiet
-git -C "$UPSTREAM" config user.name fixture
-git -C "$UPSTREAM" config user.email fixture@example.invalid
 printf '%s\n' baseline >"$UPSTREAM/payload.txt"
 mkdir -p "$UPSTREAM/sub"
 printf '#!/bin/sh\nexit 0\n' >"$UPSTREAM/sub/tool.sh"

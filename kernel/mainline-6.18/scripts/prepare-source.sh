@@ -12,7 +12,6 @@ MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
 KERNEL_SERIES="$COMMON_ROOT/tooling/kernel_series.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 fail()
 {
@@ -89,10 +88,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
-[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'kernel/mainline-6.18/scripts/prepare-source.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
@@ -118,7 +113,7 @@ fi
 command -v git >/dev/null 2>&1 || fail "git is required"
 [ -x "$MATERIALIZER" ] || fail "missing Git materializer: $MATERIALIZER"
 [ -r "$KERNEL_SERIES" ] || fail "missing kernel series helper: $KERNEL_SERIES"
-"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" --verify ||
+"$COMMON_ROOT/abi/sync.sh" --verify ||
 	fail "host ABI copies are stale; run kernel/common/abi/sync.sh"
 
 kernel_series()
@@ -185,8 +180,7 @@ verify_managed_branch()
 	[ "$VERIFY_ONLY" -eq 0 ] || mark=
 	kernel_series verify-branch --source "$SOURCE_DIR" --tip "$managed_branch" $mark ||
 		fail "managed branch $managed_branch is not the checked-in series (use --recreate only after reviewing it)"
-	"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" \
-		--kernel-source "$SOURCE_DIR" --verify ||
+	"$COMMON_ROOT/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
 		fail "managed Linux ABI copies are stale"
 	printf '%s\n' "verified $UML_KERNEL_SLICE slice ref $managed_branch HEAD $actual_head against canonical tree $UML_KERNEL_FINAL_TREE" >&2
 }
@@ -297,7 +291,7 @@ if [ "$branch_exists" -eq 0 ]; then
 	git -C "$SOURCE_DIR" switch -c "$CREATE_BRANCH" "$BASE_COMMIT"
 fi
 # Patch authors and author dates come from the checked-in mail patches. The
-# replay committer identity comes from the environment and its timestamp is
+# replay committer is whoever Git resolves for the caller and its timestamp is
 # the real replay time; neither generated commit ID is treated as a source
 # identity.
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE

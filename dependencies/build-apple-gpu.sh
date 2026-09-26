@@ -13,7 +13,7 @@ PREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX:-}
 WORK_ROOT=${UML_APPLE_GPU_DEPENDENCY_BUILD_ROOT:-}
 JOBS=${UML_APPLE_GPU_DEPENDENCY_JOBS:-8}
 PLATFORM=macos
-PRODUCT=apple-gpu
+PRODUCT=apple-gpu-vulkan-experiment
 VERIFY_ONLY=0
 
 fail()
@@ -29,7 +29,7 @@ usage()
 		"" \
 		"Options:" \
 		"  --platform NAME      macos (default) or ios" \
-		"  --product NAME       apple-gpu (default) or apple-gpu-vulkan-experiment" \
+		"  --product NAME       apple-gpu-vulkan-experiment (default)" \
 		"  --source-root PATH   Verified dependency source trees" \
 		"  --prefix PATH        Output prefix" \
 		"  --work-root PATH     Build parent directory" \
@@ -90,8 +90,8 @@ case "$JOBS" in
 esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
 case "$PRODUCT" in
-apple-gpu|apple-gpu-vulkan-experiment) ;;
-*) fail "product must be apple-gpu or apple-gpu-vulkan-experiment" ;;
+apple-gpu-vulkan-experiment) ;;
+*) fail "product must be apple-gpu-vulkan-experiment" ;;
 esac
 [ "$(uname -s)" = Darwin ] || fail "the Apple GPU build requires macOS"
 case "$(uname -m)" in
@@ -133,10 +133,6 @@ apple-gpu-vulkan-experiment)
 	fi
 	DEPLOYMENT_TARGET=26.0
 	;;
-apple-gpu)
-	fail "apple-gpu is retired; build apple-gpu-vulkan-experiment"
-	;;
-*) fail "product must be apple-gpu or apple-gpu-vulkan-experiment" ;;
 esac
 
 # An iOS prefix is cross compiled: its binaries cannot run on the build
@@ -658,7 +654,7 @@ CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 	printf 'source_manifest_sha256\t%s\n' "$MANIFEST_SHA256"
 	printf 'platform_contract_sha256\t%s\n' "$CONTRACT_SHA256"
 	printf 'mesa_base_commit\t%s\n' \
-		da14d65e4499e66468094be52bff9ea0915a695e
+		"$(awk -F '\t' '$1 == "mesa" { print $5 }' "$MANIFEST")"
 	printf 'vulkan_headers_base_commit\t%s\n' \
 		"$(git -C "$VULKAN_HEADERS_SOURCE" rev-parse HEAD)"
 	printf 'venus_protocol_generated_sha256\t%s\n' \

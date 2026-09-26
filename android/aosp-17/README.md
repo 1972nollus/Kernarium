@@ -67,7 +67,9 @@ Never edit generated patch files. Amend clean Git topic branches and run the
 matching regenerator under `tools/`; it exports the series and records its
 final tree. OrangeFox routes have no dedicated regenerator: export a route with
 `scripts/patch_series.py export --license GPL-3.0-or-later` and record the tree
-it prints as that route's `final_tree`.
+it prints as that route's `final_tree`. Export refuses a topic whose author is
+a placeholder; amend it as described in
+[`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/README.md).
 
 ## Android product
 

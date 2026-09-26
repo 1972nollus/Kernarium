@@ -31,13 +31,11 @@ DOMAINS = {
     "kernel": {
         "files": KERNEL_ABI_FILES,
         "identity": "kernel/common/abi/identity.env",
-        "history": "kernel/common/abi/declaration-history.tsv",
         "prefix": "DARWIN_UML_ABI",
     },
     "public": {
         "files": PUBLIC_ABI_FILES,
         "identity": "darwin/api/abi/identity.env",
-        "history": "darwin/api/abi/declaration-history.tsv",
         "prefix": "UML_EMULATOR_ABI",
     },
 }
@@ -148,53 +146,18 @@ def identity(root: Path, domain: str) -> tuple[int, str]:
     path = root / configuration["identity"]
     source = path.read_text(encoding="utf-8")
     prefix = configuration["prefix"]
-    version = re.search(rf"^{prefix}_VERSION=([0-9]+)$", source, re.MULTILINE)
+    # sync.sh writes both values verbatim into C headers.
+    version = re.search(
+        rf"^{prefix}_VERSION=([1-9][0-9]*)$", source, re.MULTILINE
+    )
     fingerprint = re.search(
-        rf"^{prefix}_FINGERPRINT='(0x[0-9A-Fa-f]+)'$",
+        rf"^{prefix}_FINGERPRINT='(0x[0-9a-f]{{16}})'$",
         source,
         re.MULTILINE,
     )
     if version is None or fingerprint is None:
         fail(f"cannot parse {path}")
-    return int(version.group(1)), fingerprint.group(1).lower()
-
-
-def history(root: Path, domain: str) -> list[tuple[int, str, str]]:
-    path = root / DOMAINS[domain]["history"]
-    if not path.is_file():
-        fail(f"missing declaration history: {path}")
-    rows: list[tuple[int, str, str]] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line or line.startswith("#") or line.startswith("version\t"):
-            continue
-        fields = line.split("\t")
-        if len(fields) != 4:
-            fail(f"{path}:{number}: expected four tab-separated fields")
-        try:
-            version = int(fields[0])
-        except ValueError:
-            fail(f"{path}:{number}: invalid ABI version")
-        fingerprint = fields[1].lower()
-        digest = fields[2].lower()
-        if not re.fullmatch(r"0x[0-9a-f]{16}", fingerprint):
-            fail(f"{path}:{number}: invalid ABI fingerprint")
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            fail(f"{path}:{number}: invalid declaration SHA-256")
-        if not fields[3].strip():
-            fail(f"{path}:{number}: missing change rationale")
-        rows.append((version, fingerprint, digest))
-    if not rows:
-        fail("declaration history is empty")
-    for previous, current in zip(rows, rows[1:]):
-        if current[0] != previous[0] + 1:
-            fail("declaration history versions must be consecutive")
-    if len({row[0] for row in rows}) != len(rows):
-        fail("declaration history repeats an ABI version")
-    if len({row[1] for row in rows}) != len(rows):
-        fail("declaration history repeats an ABI fingerprint")
-    if len({row[2] for row in rows}) != len(rows):
-        fail("declaration history repeats a declaration digest")
-    return rows
+    return int(version.group(1)), fingerprint.group(1)
 
 
 def main() -> int:
@@ -218,22 +181,12 @@ def main() -> int:
             continue
 
         version, configured_fingerprint = identity(root, domain)
-        rows = history(root, domain)
-        recorded_version, recorded_fingerprint, recorded_digest = rows[-1]
-        if (version != recorded_version or
-                configured_fingerprint != recorded_fingerprint):
+        if configured_fingerprint != fingerprint:
             fail(
-                f"{domain} identity does not select its final history row"
-            )
-        if digest != recorded_digest:
-            fail(
-                f"{domain} ABI declarations changed without appending a new "
-                f"identity row (computed {digest}, recorded {recorded_digest})"
-            )
-        if fingerprint != recorded_fingerprint:
-            fail(
-                f"{domain} ABI fingerprint is not derived from its normalized "
-                f"declarations (expected {fingerprint})"
+                f"{domain} ABI declarations do not match "
+                f"{DOMAINS[domain]['identity']} (configured "
+                f"{configured_fingerprint}, derived {fingerprint}); advance "
+                "its version and set the derived fingerprint"
             )
         print(
             f"verified {domain} ABI declarations version {version}, "

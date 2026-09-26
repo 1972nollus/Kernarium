@@ -50,8 +50,6 @@ def commit(topic: Path, path: str, payload: str, subject: str, timestamp: int) -
     environment["GIT_COMMITTER_DATE"] = date
     run(
         "git",
-        "-c",
-        "user.useConfigOnly=true",
         "commit",
         "-q",
         "-m",
@@ -102,8 +100,7 @@ def write_fixture(
     shutil.copy2(verifier, tools / "verify-jelly-source.py")
     os.chmod(tools / "verify-jelly-source.py", 0o755)
     (root / "scripts").mkdir()
-    for name in ("patch_series.py", "git_identity.py"):
-        shutil.copy2(scripts / name, root / "scripts" / name)
+    shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     (jelly / "metadata.env").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
         "JELLY_SOURCE_SCHEMA=1\n"
@@ -124,15 +121,6 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    # The fixture topic and its deterministic replay commit with whatever
-    # identity the environment supplies. Stop with the shared advice rather
-    # than pass silently when none is configured.
-    sys.path.insert(0, str(source_root / "scripts"))
-    import git_identity
-
-    git_identity.require_git_identity(
-        "tests/tooling/android/test_jelly_source_contract.py"
-    )
     generator = source_root / "android/aosp-17/tools/regenerate-jelly-patches.py"
     verifier = source_root / "android/aosp-17/tools/verify-jelly-source.py"
 

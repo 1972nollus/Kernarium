@@ -51,8 +51,6 @@ def commit(topic: Path, path: str, payload: str, subject: str, timestamp: int) -
     environment["GIT_COMMITTER_DATE"] = date
     run(
         "git",
-        "-c",
-        "user.useConfigOnly=true",
         "commit",
         "-q",
         "-m",
@@ -80,8 +78,7 @@ def write_guest_series(
     fixture_scripts = source_root / "scripts"
     fixture_scripts.mkdir()
     (source_root / GUEST_SERIES).mkdir(parents=True)
-    for name in ("patch_series.py", "git_identity.py"):
-        shutil.copy2(scripts / name, fixture_scripts / name)
+    shutil.copy2(scripts / "patch_series.py", fixture_scripts / "patch_series.py")
     run(
         sys.executable, "-B", str(fixture_scripts / "patch_series.py"), "export",
         "--source", str(topic), "--base", base, "--head", head,
@@ -149,12 +146,6 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    sys.path.insert(0, str(source_root / "scripts"))
-    import git_identity
-
-    git_identity.require_git_identity(
-        "tests/tooling/android/test_mesa_venus_source_contract.py"
-    )
     generator = source_root / "android/aosp-17/tools/regenerate-mesa-venus-patches.py"
     verifier = source_root / "android/aosp-17/tools/verify-mesa-venus-source.py"
 

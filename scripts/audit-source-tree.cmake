@@ -5,162 +5,12 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
-# OS metadata and interpreter caches are generated independently of the source
-# graph. They are already ignored by Git and must not make a structural build
-# depend on whether Finder or Python happened to visit the checkout.
-set(UML_STRUCTURAL_AUDIT_GENERATED_IGNORE_REGEXES
-    "(^|/)\\.DS_Store$"
-    "(^|/)__pycache__($|/)"
-    "\\.py[co]$")
-
-function(uml_source_tree_generated_path_is_ignored PATH OUT_IGNORED)
-    set(IGNORED FALSE)
-    foreach(PATTERN IN LISTS UML_STRUCTURAL_AUDIT_GENERATED_IGNORE_REGEXES)
-        if(PATH MATCHES "${PATTERN}")
-            set(IGNORED TRUE)
-            break()
-        endif()
-    endforeach()
-    set(${OUT_IGNORED} ${IGNORED} PARENT_SCOPE)
-endfunction()
-
-function(uml_collect_direct_quoted_includes PATH OUT_INCLUDES)
-    if(NOT EXISTS "${PATH}")
-        set(${OUT_INCLUDES} "" PARENT_SCOPE)
-        return()
-    endif()
-    file(READ "${PATH}" CONTENT)
-    string(REGEX MATCHALL
-        "(^|\n)[ \t]*#[ \t]*include[ \t]+\"[^\"]+\""
-        INCLUDE_DIRECTIVES "${CONTENT}")
-    set(INCLUDES)
-    foreach(INCLUDE_DIRECTIVE IN LISTS INCLUDE_DIRECTIVES)
-        string(REGEX REPLACE
-            ".*\"([^\"]+)\".*" "\\1" INCLUDE_NAME
-            "${INCLUDE_DIRECTIVE}")
-        list(APPEND INCLUDES "${INCLUDE_NAME}")
-    endforeach()
-    set(${OUT_INCLUDES} "${INCLUDES}" PARENT_SCOPE)
-endfunction()
-
-function(uml_audit_protected_engine_source_contracts ROOT OUT_VIOLATIONS)
-    set(CONTRACT_VIOLATIONS)
-
-    # G100 keeps the five measured decode families in one compiler-visible
-    # translation unit without turning .ipp into a general implementation-
-    # include convention. Check source ownership directly; object and archive
-    # composition are intentionally outside this audit.
-    set(GADGET_ROOT "${ROOT}/darwin/cpu/arm64/gadgets")
-    set(GADGET_COMPOSER "${GADGET_ROOT}/program_builder.cpp")
-    set(GADGET_INTERFACE "${GADGET_ROOT}/program_builder_decode.hpp")
-    set(GADGET_FUNCTIONS
-        decode_branch_system
-        decode_data_processing
-        decode_exception
-        decode_floating_simd
-        decode_load_store)
-    set(GADGET_FRAGMENTS
-        program_builder_branch_system_impl.ipp
-        program_builder_data_processing_impl.ipp
-        program_builder_exception_impl.ipp
-        program_builder_floating_simd_impl.ipp
-        program_builder_load_store_impl.ipp)
-
-    file(GLOB_RECURSE DARWIN_IPP_FILES RELATIVE "${ROOT}"
-        "${ROOT}/darwin/*.ipp")
-    list(SORT DARWIN_IPP_FILES)
-    set(EXPECTED_DARWIN_IPP_FILES)
-    foreach(FRAGMENT IN LISTS GADGET_FRAGMENTS)
-        list(APPEND EXPECTED_DARWIN_IPP_FILES
-            "darwin/cpu/arm64/gadgets/${FRAGMENT}")
-    endforeach()
-    list(SORT EXPECTED_DARWIN_IPP_FILES)
-    if(NOT "${DARWIN_IPP_FILES}" STREQUAL "${EXPECTED_DARWIN_IPP_FILES}")
-        list(APPEND CONTRACT_VIOLATIONS
-            "${GADGET_ROOT}: G100 permits exactly its five decode-family .ipp files")
-    endif()
-
-    if(NOT EXISTS "${GADGET_COMPOSER}")
-        list(APPEND CONTRACT_VIOLATIONS
-            "${GADGET_COMPOSER}: G100 composer is missing")
-        set(GADGET_COMPOSER_CONTENT "")
-        set(GADGET_COMPOSER_INCLUDES)
-    else()
-        file(READ "${GADGET_COMPOSER}" GADGET_COMPOSER_CONTENT)
-        uml_collect_direct_quoted_includes(
-            "${GADGET_COMPOSER}" GADGET_COMPOSER_INCLUDES)
-    endif()
-    if(NOT EXISTS "${GADGET_INTERFACE}")
-        list(APPEND CONTRACT_VIOLATIONS
-            "${GADGET_INTERFACE}: G100 decode interface is missing")
-        set(GADGET_INTERFACE_CONTENT "")
-    else()
-        file(READ "${GADGET_INTERFACE}" GADGET_INTERFACE_CONTENT)
-    endif()
-
-    set(COMPOSED_GADGET_FRAGMENTS)
-    foreach(INCLUDE_NAME IN LISTS GADGET_COMPOSER_INCLUDES)
-        if(INCLUDE_NAME MATCHES
-           "^program_builder_[A-Za-z0-9_]+_impl\\.ipp$")
-            list(APPEND COMPOSED_GADGET_FRAGMENTS "${INCLUDE_NAME}")
-        endif()
-    endforeach()
-    list(SORT COMPOSED_GADGET_FRAGMENTS)
-    set(SORTED_GADGET_FRAGMENTS ${GADGET_FRAGMENTS})
-    list(SORT SORTED_GADGET_FRAGMENTS)
-    if(NOT "${COMPOSED_GADGET_FRAGMENTS}" STREQUAL
-           "${SORTED_GADGET_FRAGMENTS}")
-        list(APPEND CONTRACT_VIOLATIONS
-            "${GADGET_COMPOSER}: G100 composer does not include exactly the five decode-family fragments")
-    endif()
-
-    list(LENGTH GADGET_FUNCTIONS GADGET_FUNCTION_COUNT)
-    if(GADGET_FUNCTION_COUNT GREATER 0)
-        math(EXPR GADGET_FUNCTION_LAST "${GADGET_FUNCTION_COUNT} - 1")
-        foreach(INDEX RANGE 0 ${GADGET_FUNCTION_LAST})
-            list(GET GADGET_FUNCTIONS ${INDEX} FUNCTION_NAME)
-            list(GET GADGET_FRAGMENTS ${INDEX} FRAGMENT_NAME)
-            set(FRAGMENT_PATH "${GADGET_ROOT}/${FRAGMENT_NAME}")
-            set(DEFINITION_PATTERN
-                "DecodeResult[ \t\r\n]+${FUNCTION_NAME}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*[{]")
-            set(DECLARATION_PATTERN
-                "\\[\\[nodiscard\\]\\][ \t\r\n]+DecodeResult[ \t\r\n]+${FUNCTION_NAME}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*;")
-            if(NOT GADGET_INTERFACE_CONTENT MATCHES "${DECLARATION_PATTERN}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${GADGET_INTERFACE}: G100 interface does not declare ${FUNCTION_NAME}")
-            endif()
-            if(GADGET_INTERFACE_CONTENT MATCHES "${DEFINITION_PATTERN}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${GADGET_INTERFACE}: G100 interface implements ${FUNCTION_NAME}")
-            endif()
-            if(GADGET_COMPOSER_CONTENT MATCHES "${DEFINITION_PATTERN}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${GADGET_COMPOSER}: G100 composer defines ${FUNCTION_NAME} directly")
-            endif()
-            if(NOT EXISTS "${FRAGMENT_PATH}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${FRAGMENT_PATH}: G100 decode-family fragment is missing")
-                continue()
-            endif()
-            file(READ "${FRAGMENT_PATH}" FRAGMENT_CONTENT)
-            if(NOT FRAGMENT_CONTENT MATCHES "${DEFINITION_PATTERN}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${FRAGMENT_PATH}: G100 fragment does not own ${FUNCTION_NAME}")
-            endif()
-            foreach(OTHER_FUNCTION IN LISTS GADGET_FUNCTIONS)
-                if(OTHER_FUNCTION STREQUAL FUNCTION_NAME)
-                    continue()
-                endif()
-                set(OTHER_DEFINITION_PATTERN
-                    "DecodeResult[ \t\r\n]+${OTHER_FUNCTION}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*[{]")
-                if(FRAGMENT_CONTENT MATCHES "${OTHER_DEFINITION_PATTERN}")
-                    list(APPEND CONTRACT_VIOLATIONS
-                        "${FRAGMENT_PATH}: G100 fragment also defines ${OTHER_FUNCTION}")
-                endif()
-            endforeach()
-        endforeach()
-    endif()
-
+# The gadget composer is the one C++ file that includes implementation
+# fragments: its .ipp decode families stay in one compiler-visible translation
+# unit without making .ipp a general convention.
+function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
+    set(COMPOSER "${ROOT}/darwin/cpu/arm64/gadgets/program_builder.cpp")
+    set(FRAGMENT_VIOLATIONS)
     file(GLOB_RECURSE FIRST_PARTY_CXX_FILES LIST_DIRECTORIES false
         "${ROOT}/darwin/*.cpp"
         "${ROOT}/darwin/*.cc"
@@ -177,117 +27,17 @@ function(uml_audit_protected_engine_source_contracts ROOT OUT_VIOLATIONS)
         "${ROOT}/tests/*.hpp"
         "${ROOT}/tests/*.ipp")
     foreach(PATH IN LISTS FIRST_PARTY_CXX_FILES)
-        if(PATH STREQUAL GADGET_COMPOSER)
+        if(PATH STREQUAL COMPOSER)
             continue()
         endif()
         file(READ "${PATH}" CONTENT)
         if(CONTENT MATCHES
-           "(^|\n)[ \t]*#[ \t]*include[ \t]+[<\"]program_builder_[A-Za-z0-9_]+_impl\\.ipp[>\"]")
-            list(APPEND CONTRACT_VIOLATIONS
-                "${PATH}: G100 decode-family fragments may be included only by program_builder.cpp")
+           "(^|\n)[ \t]*#[ \t]*include[ \t]+[<\"][^\">]+\\.ipp[>\"]")
+            list(APPEND FRAGMENT_VIOLATIONS
+                "${PATH}: only program_builder.cpp may include .ipp fragments")
         endif()
     endforeach()
-
-    # The common conformance harness observes leaked engine state; it must not
-    # repair engine-specific state after the public run boundary.
-    set(HARNESS
-        "${ROOT}/tests/unit/arm64/arm64_engine_test_support.cpp")
-    if(NOT EXISTS "${HARNESS}")
-        list(APPEND CONTRACT_VIOLATIONS
-            "${HARNESS}: common engine conformance harness is missing")
-    else()
-        file(READ "${HARNESS}" HARNESS_CONTENT)
-        if(HARNESS_CONTENT MATCHES "restore_native_fp_environment")
-            list(APPEND CONTRACT_VIOLATIONS
-                "${HARNESS}: common conformance performs engine-specific state restoration")
-        endif()
-        foreach(MARKER IN ITEMS
-                gadget_fp_active gadget_fpmr_active gadget_indirect_miss)
-            if(NOT HARNESS_CONTENT MATCHES "${MARKER}")
-                list(APPEND CONTRACT_VIOLATIONS
-                    "${HARNESS}: common conformance does not reject leaked ${MARKER} state")
-            endif()
-        endforeach()
-    endif()
-
-    # Keep executor, publication, translation, and test contracts explicit by
-    # auditing direct source includes rather than built object membership.
-    set(JIT_ROOT "${ROOT}/darwin/cpu/arm64/jit")
-    set(REQUIRED_JIT_FILES
-        jit_linking.hpp
-        jit_publication.hpp
-        jit_compiler.hpp
-        jit_cache.hpp
-        jit_compiler.cpp
-        jit_semantic_memory.cpp
-        jit_executor_execution.cpp
-        jit_test_support.cpp)
-    foreach(JIT_FILE IN LISTS REQUIRED_JIT_FILES)
-        if(NOT EXISTS "${JIT_ROOT}/${JIT_FILE}")
-            list(APPEND CONTRACT_VIOLATIONS
-                "${JIT_ROOT}/${JIT_FILE}: protected JIT source contract is missing")
-        endif()
-    endforeach()
-
-    uml_collect_direct_quoted_includes(
-        "${JIT_ROOT}/jit_linking.hpp" JIT_LINKING_INCLUDES)
-    if(JIT_LINKING_INCLUDES)
-        list(APPEND CONTRACT_VIOLATIONS
-            "${JIT_ROOT}/jit_linking.hpp: link records have unreviewed direct dependencies: ${JIT_LINKING_INCLUDES}")
-    endif()
-
-    uml_collect_direct_quoted_includes(
-        "${JIT_ROOT}/jit_publication.hpp" JIT_PUBLICATION_INCLUDES)
-    if(NOT "cpu/arm64/cpu_state.hpp" IN_LIST JIT_PUBLICATION_INCLUDES OR
-       "jit_linking.hpp" IN_LIST JIT_PUBLICATION_INCLUDES)
-        list(APPEND CONTRACT_VIOLATIONS
-            "${JIT_ROOT}/jit_publication.hpp: store publication must own CpuState directly without link records")
-    endif()
-
-    uml_collect_direct_quoted_includes(
-        "${JIT_ROOT}/jit_compiler.hpp" JIT_COMPILER_INCLUDES)
-    if("jit_linking.hpp" IN_LIST JIT_COMPILER_INCLUDES OR
-       "jit_publication.hpp" IN_LIST JIT_COMPILER_INCLUDES)
-        list(APPEND CONTRACT_VIOLATIONS
-            "${JIT_ROOT}/jit_compiler.hpp: translation interface depends on executor publication/link records")
-    endif()
-
-    uml_collect_direct_quoted_includes(
-        "${JIT_ROOT}/jit_cache.hpp" JIT_CACHE_INCLUDES)
-    if(NOT "jit_linking.hpp" IN_LIST JIT_CACHE_INCLUDES)
-        list(APPEND CONTRACT_VIOLATIONS
-            "${JIT_ROOT}/jit_cache.hpp: cache does not own its link-record dependency directly")
-    endif()
-
-    set(JIT_BRIDGE_SOURCES
-        jit_compiler.cpp
-        jit_semantic_memory.cpp
-        jit_executor_execution.cpp)
-    set(JIT_BRIDGE_INCLUDES
-        cpu/arm64/code_synchronization.hpp
-        cpu/arm64/memory_transfer.hpp
-        jit_semantic_reservation.hpp)
-    foreach(INDEX RANGE 0 2)
-        list(GET JIT_BRIDGE_SOURCES ${INDEX} JIT_BRIDGE_SOURCE)
-        list(GET JIT_BRIDGE_INCLUDES ${INDEX} JIT_BRIDGE_INCLUDE)
-        uml_collect_direct_quoted_includes(
-            "${JIT_ROOT}/${JIT_BRIDGE_SOURCE}" JIT_SOURCE_INCLUDES)
-        if(NOT "${JIT_BRIDGE_INCLUDE}" IN_LIST JIT_SOURCE_INCLUDES)
-            list(APPEND CONTRACT_VIOLATIONS
-                "${JIT_ROOT}/${JIT_BRIDGE_SOURCE}: relies transitively on ${JIT_BRIDGE_INCLUDE}")
-        endif()
-    endforeach()
-
-    uml_collect_direct_quoted_includes(
-        "${JIT_ROOT}/jit_test_support.cpp" JIT_TEST_SUPPORT_INCLUDES)
-    foreach(REQUIRED_INCLUDE IN ITEMS jit_publication.hpp jit_test_api.hpp)
-        if(NOT "${REQUIRED_INCLUDE}" IN_LIST JIT_TEST_SUPPORT_INCLUDES)
-            list(APPEND CONTRACT_VIOLATIONS
-                "${JIT_ROOT}/jit_test_support.cpp: test support does not include ${REQUIRED_INCLUDE} directly")
-        endif()
-    endforeach()
-
-    set(${OUT_VIOLATIONS} "${CONTRACT_VIOLATIONS}" PARENT_SCOPE)
+    set(${OUT_VIOLATIONS} "${FRAGMENT_VIOLATIONS}" PARENT_SCOPE)
 endfunction()
 
 set(VIOLATIONS)
@@ -380,17 +130,22 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND VIOLATIONS
             "${PATH}: platform layer includes a CPU-owned contract")
     endif()
-    if(PATH MATCHES "/darwin/cpu/arm64/gadgets/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/arm64/jit/")
-            list(APPEND VIOLATIONS
-                "${PATH}: gadget engine includes another engine implementation")
-        endif()
-    elseif(PATH MATCHES "/darwin/cpu/arm64/jit/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/gadgets/")
-            list(APPEND VIOLATIONS
-                "${PATH}: JIT includes another engine implementation")
-        endif()
+    # Engines do not include one another and shared CPU code includes neither.
+    # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
+    # x86_64/, and the engine factory is the one source that composes both.
+    set(FOREIGN_ENGINE_INCLUDE "")
+    if(PATH MATCHES "/darwin/cpu/arm64/jit/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/gadgets|x86_64)/")
+    elseif(PATH MATCHES "/darwin/cpu/(arm64/gadgets|x86_64)/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/arm64/jit/")
+    elseif(PATH MATCHES "/darwin/cpu/" AND
+           NOT PATH MATCHES "/darwin/cpu/engine_factory\\.cpp$")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64)/")
+    endif()
+    if(FOREIGN_ENGINE_INCLUDE AND NORMALIZED_INCLUDE_TEXT MATCHES
+       "(^|\n)(darwin/)?${FOREIGN_ENGINE_INCLUDE}")
+        list(APPEND VIOLATIONS
+            "${PATH}: CPU source includes an engine implementation it does not own")
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and
@@ -440,13 +195,13 @@ foreach(PATH IN LISTS CXX_SOURCES)
     endif()
 endforeach()
 
-uml_audit_protected_engine_source_contracts(
-    "${SOURCE_ROOT}" PROTECTED_ENGINE_SOURCE_VIOLATIONS)
-list(APPEND VIOLATIONS ${PROTECTED_ENGINE_SOURCE_VIOLATIONS})
+uml_audit_implementation_fragments(
+    "${SOURCE_ROOT}" IMPLEMENTATION_FRAGMENT_VIOLATIONS)
+list(APPEND VIOLATIONS ${IMPLEMENTATION_FRAGMENT_VIOLATIONS})
 
 # All first-party CTest registrations must pass through the suite helpers so
-# manifest ownership, labels, fixture policy, and aggregate binary dependencies
-# cannot be bypassed by a raw add_test() in another directory.
+# suite labels, fixture policy, and aggregate binary dependencies cannot be
+# bypassed by a raw add_test() in another directory.
 include("${SOURCE_ROOT}/cmake/TestRegistrationPolicy.cmake")
 uml_find_raw_test_registrations(
     SOURCE_ROOT "${SOURCE_ROOT}"
@@ -473,178 +228,6 @@ foreach(PATH IN LISTS GUEST_RUNNER_PYTHON)
        "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?run_guest_(ltp|smp|jit|network|gpu)")
         list(APPEND VIOLATIONS
             "${PATH}: guest suites must share helpers through tests/integration/support")
-    endif()
-endforeach()
-
-# Standalone assembly benchmarks are intentionally outside CTest, but they are
-# still maintained source. Require an exact inventory, an explicit runner and
-# retention purpose, and a canonical opt-in build target so probes cannot turn
-# into anonymous debris after an optimization experiment ends.
-set(PERFORMANCE_PROBE_ROOT "${SOURCE_ROOT}/tests/perf")
-set(PERFORMANCE_PROBE_MANIFEST "${PERFORMANCE_PROBE_ROOT}/probes.tsv")
-set(PERFORMANCE_PROBE_CMAKE "${PERFORMANCE_PROBE_ROOT}/CMakeLists.txt")
-# APFS normally matches the two suffix globs without regard to case, whereas a
-# Linux checkout does not. Classify the preserved filename spelling explicitly
-# so the freestanding guest manifest has the same meaning on both hosts.
-file(GLOB PERFORMANCE_ASSEMBLY_SOURCES RELATIVE "${PERFORMANCE_PROBE_ROOT}"
-    "${PERFORMANCE_PROBE_ROOT}/*.S"
-    "${PERFORMANCE_PROBE_ROOT}/*.s")
-list(REMOVE_DUPLICATES PERFORMANCE_ASSEMBLY_SOURCES)
-set(PERFORMANCE_PROBE_SOURCES)
-set(PERFORMANCE_CEILING_ASSEMBLY gadget_ceiling_workload.S)
-foreach(PERFORMANCE_ASSEMBLY_SOURCE IN LISTS PERFORMANCE_ASSEMBLY_SOURCES)
-    if(PERFORMANCE_ASSEMBLY_SOURCE MATCHES "^guest_[a-z0-9_]+\\.S$")
-        list(APPEND PERFORMANCE_PROBE_SOURCES
-            "${PERFORMANCE_ASSEMBLY_SOURCE}")
-    elseif(NOT PERFORMANCE_ASSEMBLY_SOURCE STREQUAL
-           "${PERFORMANCE_CEILING_ASSEMBLY}")
-        list(APPEND VIOLATIONS
-            "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_ASSEMBLY_SOURCE}: performance assembly has no explicit owner")
-    endif()
-endforeach()
-list(SORT PERFORMANCE_PROBE_SOURCES)
-set(PERFORMANCE_PROBE_MANIFEST_SOURCES)
-if(NOT EXISTS "${PERFORMANCE_PROBE_MANIFEST}")
-    list(APPEND VIOLATIONS
-        "${PERFORMANCE_PROBE_MANIFEST}: performance probe inventory is missing")
-else()
-    file(STRINGS "${PERFORMANCE_PROBE_MANIFEST}" PERFORMANCE_PROBE_ROWS)
-    if(PERFORMANCE_PROBE_ROWS)
-        list(POP_FRONT PERFORMANCE_PROBE_ROWS PERFORMANCE_PROBE_HEADER)
-    else()
-        set(PERFORMANCE_PROBE_HEADER "")
-    endif()
-    if(NOT PERFORMANCE_PROBE_HEADER STREQUAL
-       "source\tcategory\trequired_feature\trunner\tretention")
-        list(APPEND VIOLATIONS
-            "${PERFORMANCE_PROBE_MANIFEST}: invalid performance probe header")
-    endif()
-    foreach(PERFORMANCE_PROBE_ROW IN LISTS PERFORMANCE_PROBE_ROWS)
-        if(PERFORMANCE_PROBE_ROW STREQUAL "" OR
-           PERFORMANCE_PROBE_ROW MATCHES "^#")
-            continue()
-        endif()
-        string(REPLACE "\t" ";" PERFORMANCE_PROBE_FIELDS
-            "${PERFORMANCE_PROBE_ROW}")
-        list(LENGTH PERFORMANCE_PROBE_FIELDS PERFORMANCE_PROBE_FIELD_COUNT)
-        if(NOT PERFORMANCE_PROBE_FIELD_COUNT EQUAL 5)
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: malformed row '${PERFORMANCE_PROBE_ROW}'")
-            continue()
-        endif()
-        list(GET PERFORMANCE_PROBE_FIELDS 0 PERFORMANCE_PROBE_SOURCE)
-        list(GET PERFORMANCE_PROBE_FIELDS 1 PERFORMANCE_PROBE_CATEGORY)
-        list(GET PERFORMANCE_PROBE_FIELDS 2 PERFORMANCE_PROBE_FEATURE)
-        list(GET PERFORMANCE_PROBE_FIELDS 3 PERFORMANCE_PROBE_RUNNER)
-        list(GET PERFORMANCE_PROBE_FIELDS 4 PERFORMANCE_PROBE_RETENTION)
-        list(FIND PERFORMANCE_PROBE_MANIFEST_SOURCES
-            "${PERFORMANCE_PROBE_SOURCE}" PERFORMANCE_PROBE_DUPLICATE)
-        if(NOT PERFORMANCE_PROBE_DUPLICATE EQUAL -1)
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: duplicate probe ${PERFORMANCE_PROBE_SOURCE}")
-        else()
-            list(APPEND PERFORMANCE_PROBE_MANIFEST_SOURCES
-                "${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(NOT PERFORMANCE_PROBE_SOURCE MATCHES
-           "^guest_[a-z0-9_]+\\.S$" OR
-           NOT EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}")
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: invalid probe source ${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(NOT PERFORMANCE_PROBE_CATEGORY MATCHES "^[a-z][a-z0-9-]+$")
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: invalid category for ${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(NOT PERFORMANCE_PROBE_FEATURE MATCHES "^(base|lse)$")
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: invalid feature for ${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(NOT PERFORMANCE_PROBE_RUNNER STREQUAL
-           "run_guest_link_bench.py" OR
-           NOT EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_RUNNER}")
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: invalid runner for ${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(PERFORMANCE_PROBE_RETENTION STREQUAL "")
-            list(APPEND VIOLATIONS
-                "${PERFORMANCE_PROBE_MANIFEST}: missing retention rationale for ${PERFORMANCE_PROBE_SOURCE}")
-        endif()
-        if(EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}")
-            file(READ "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}"
-                PERFORMANCE_PROBE_CONTENT)
-            if(NOT PERFORMANCE_PROBE_CONTENT MATCHES
-               "(^|\n)[ \t]*\\.global[ \t]+_start" OR
-               NOT PERFORMANCE_PROBE_CONTENT MATCHES "success_message")
-                list(APPEND VIOLATIONS
-                    "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}: probe lacks the self-checking freestanding contract")
-            endif()
-        endif()
-    endforeach()
-endif()
-list(SORT PERFORMANCE_PROBE_MANIFEST_SOURCES)
-if(NOT PERFORMANCE_PROBE_SOURCES STREQUAL
-   PERFORMANCE_PROBE_MANIFEST_SOURCES)
-    list(APPEND VIOLATIONS
-        "${PERFORMANCE_PROBE_MANIFEST}: inventory does not exactly own every tests/perf assembly probe")
-endif()
-if(NOT EXISTS "${PERFORMANCE_PROBE_CMAKE}")
-    list(APPEND VIOLATIONS
-        "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is missing")
-else()
-    file(READ "${PERFORMANCE_PROBE_CMAKE}" PERFORMANCE_PROBE_CMAKE_CONTENT)
-    string(REGEX REPLACE "#[^\n]*" ""
-        PERFORMANCE_PROBE_CMAKE_CODE "${PERFORMANCE_PROBE_CMAKE_CONTENT}")
-    if(NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
-       "add_custom_target\\([ \t\r\n]*performance-probe-binaries" OR
-       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES "probes\\.tsv" OR
-       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
-           "add_custom_target\\([ \t\r\n]*gadget-ceiling-binaries" OR
-       NOT PERFORMANCE_PROBE_CMAKE_CODE MATCHES
-           "gadget_ceiling_workload\\.S")
-        list(APPEND VIOLATIONS
-            "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is incomplete")
-    endif()
-endif()
-
-# CTest already exports PYTHONDONTWRITEBYTECODE, but the same runners are also
-# invoked directly by developers and release scripts. Make standalone
-# no-cache behavior a source-level contract. Incidental interpreter caches are
-# ignored as generated paths rather than turning a build into a cleanup task.
-file(GLOB_RECURSE FIRST_PARTY_PYTHON LIST_DIRECTORIES false
-	"${SOURCE_ROOT}/dependencies/*.py"
-	"${SOURCE_ROOT}/kernel/*.py"
-    "${SOURCE_ROOT}/scripts/*.py"
-    "${SOURCE_ROOT}/tests/*.py"
-    "${SOURCE_ROOT}/tools/*.py")
-foreach(PATH IN LISTS FIRST_PARTY_PYTHON)
-    file(READ "${PATH}" CONTENT)
-    if(NOT CONTENT MATCHES "dont_write_bytecode[ \t]*=[ \t]*True")
-        list(APPEND VIOLATIONS
-            "${PATH}: standalone Python runner does not disable bytecode caches")
-    endif()
-endforeach()
-
-# One-off investigation inputs, probe binaries, source clones, and superseded
-# dependency prefixes are not repository inputs or durable evidence.
-set(FORBIDDEN_DEBRIS
-    "${SOURCE_ROOT}/.DS_Store"
-    "${SOURCE_ROOT}/external/libvncserver"
-    "${SOURCE_ROOT}/external/virglrenderer"
-    "${SOURCE_ROOT}/tmp"
-    "${SOURCE_ROOT}/.build/darwin/network-probe"
-    "${SOURCE_ROOT}/.build/run_renderer_probe.py")
-file(GLOB ROOT_PDF_DEBRIS LIST_DIRECTORIES false "${SOURCE_ROOT}/*.pdf")
-file(GLOB PREFIX_BACKUP_DEBRIS LIST_DIRECTORIES true
-    "${SOURCE_ROOT}/.build/dependencies/*.pre-*")
-list(APPEND FORBIDDEN_DEBRIS ${ROOT_PDF_DEBRIS} ${PREFIX_BACKUP_DEBRIS})
-foreach(PATH IN LISTS FORBIDDEN_DEBRIS)
-    uml_source_tree_generated_path_is_ignored("${PATH}" GENERATED_IGNORED)
-    if(GENERATED_IGNORED)
-        continue()
-    endif()
-    if(EXISTS "${PATH}" OR IS_SYMLINK "${PATH}")
-        list(APPEND VIOLATIONS "${PATH}: obsolete ignored audit debris")
     endif()
 endforeach()
 
@@ -683,22 +266,6 @@ foreach(PATH IN LISTS IMPLEMENTATION_SOURCES)
     if(NOT OWNED)
         list(APPEND VIOLATIONS
             "${PATH}: implementation source has no CMake owner")
-    endif()
-endforeach()
-
-# Empty architecture directories tend to leave behind misleading ownership
-# claims after a move.  Headers, source, or the directory CMake manifest all
-# count as substantive ownership.
-file(GLOB_RECURSE ARCHITECTURE_ENTRIES LIST_DIRECTORIES true
-    "${SOURCE_ROOT}/darwin/*")
-foreach(FULL_DIRECTORY IN LISTS ARCHITECTURE_ENTRIES)
-    if(IS_DIRECTORY "${FULL_DIRECTORY}")
-        file(GLOB DIRECTORY_CHILDREN LIST_DIRECTORIES true
-            "${FULL_DIRECTORY}/*")
-        if(NOT DIRECTORY_CHILDREN)
-            list(APPEND VIOLATIONS
-                "${FULL_DIRECTORY}: empty residual architecture directory")
-        endif()
     endif()
 endforeach()
 
@@ -745,14 +312,6 @@ foreach(QUOTED_PATH IN LISTS ARCHITECTURE_INLINE_PATHS)
     endif()
 endforeach()
 
-include("${SOURCE_ROOT}/cmake/SourceSizeReport.cmake")
-set(SOURCE_SIZE_ARGUMENTS
-    SOURCE_ROOT "${SOURCE_ROOT}")
-if(DEFINED SOURCE_SIZE_REPORT AND NOT SOURCE_SIZE_REPORT STREQUAL "")
-    list(APPEND SOURCE_SIZE_ARGUMENTS REPORT_PATH "${SOURCE_SIZE_REPORT}")
-endif()
-uml_report_source_sizes(${SOURCE_SIZE_ARGUMENTS})
-
 # Keep project documentation together. The root retains only the agent guide,
 # its compatibility link, and the conventional human-facing README.
 file(GLOB ROOT_MARKDOWN_DOCUMENTS LIST_DIRECTORIES false
@@ -767,22 +326,6 @@ foreach(ROOT_MARKDOWN_DOCUMENT IN LISTS ROOT_MARKDOWN_DOCUMENTS)
     if(NOT ROOT_MARKDOWN_NAME IN_LIST ROOT_MARKDOWN_ALLOWLIST)
         list(APPEND VIOLATIONS
             "${ROOT_MARKDOWN_DOCUMENT}: project documentation belongs under docs/")
-    endif()
-endforeach()
-
-# Active implementation and documentation must use the neutral module vocabulary.
-file(GLOB_RECURSE TERMINOLOGY_FILES LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/*"
-    "${SOURCE_ROOT}/cmake/*"
-    "${SOURCE_ROOT}/docs/*.md")
-foreach(PATH IN LISTS TERMINOLOGY_FILES)
-    if(IS_DIRECTORY "${PATH}")
-        continue()
-    endif()
-    file(READ "${PATH}" CONTENT)
-    if(CONTENT MATCHES "darwin/backend|darwin/frontend")
-        list(APPEND VIOLATIONS
-            "${PATH}: active documentation/source uses the retired backend/frontend layout")
     endif()
 endforeach()
 

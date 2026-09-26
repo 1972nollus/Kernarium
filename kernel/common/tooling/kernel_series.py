@@ -30,7 +30,6 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import git_identity  # noqa: E402
 import patch_series  # noqa: E402
 from patch_series import SeriesError, git  # noqa: E402
 
@@ -298,7 +297,6 @@ def refresh(line: Line, repository: Path) -> str:
     new_parent = _branch_commit(repository, parent.branch)
     git(repository, "checkout", "--quiet", line.tip_branch)
     if new_parent != old_parent:
-        git_identity.require_git_identity(Path(__file__).name)
         result = subprocess.run(
             ["git", "-C", str(repository), *patch_series.GIT_OPTIONS,
              "rebase", "--onto", new_parent, old_parent, line.tip_branch],

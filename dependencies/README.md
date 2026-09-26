@@ -86,8 +86,8 @@ dependencies/prepare.sh --product x86-conformance
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
 read-only checks. Each script's `--help` owns non-default paths and options.
 
-Series replay commits with the Git identity the environment supplies and
-refuses to run when none is configured. See
+Series replay commits as whoever Git resolves for the caller, and export
+refuses a topic whose author is a placeholder. See
 [`kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) for the
 shared contract.
 
@@ -102,9 +102,11 @@ architecture, Apple platform and deployment target, expected static payloads,
 framework install names, and the absence of undeclared or legacy providers.
 Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
 
-Product-specific prefixes compare only the manifest rows consumed by that
-product. Adding an unrelated dependency does not invalidate an accepted
-prefix, while any change to one of its own rows still requires a rebuild.
+Every prefix installs the manifest it was built from and compares only the
+rows its product consumes, ignoring the products column, which records only
+which prefixes share a row. Adding, removing, or sharing another product's
+dependency does not invalidate a prefix, while any change to one of its own
+rows still requires a rebuild.
 
 ## Experimental Vulkan composition
 

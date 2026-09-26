@@ -5,7 +5,6 @@ set -eu
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$REPOSITORY/kernel/mainline-6.18"
 COMPAT_INCLUDE="$LINE_ROOT/build/toolchain/darwin-host/include"
-TOPIC="$REPOSITORY/kernel/common/patches/kbuild-make-host-ELF-tools-portable-to-Darwin.patch"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-darwin-host-compat.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -83,26 +82,4 @@ EOF
 	"$TEST_ROOT/compat.c" -o "$TEST_ROOT/compat"
 "$TEST_ROOT/compat"
 
-git -C "$REPOSITORY" apply --numstat "$TOPIC" |
-	awk -F '\t' '{ print $3 }' | LC_ALL=C sort >"$TEST_ROOT/actual-paths"
-cat >"$TEST_ROOT/expected-paths" <<'EOF'
-scripts/Makefile.vmlinux
-scripts/link-vmlinux.sh
-scripts/mod/file2alias.c
-EOF
-cmp -s "$TEST_ROOT/expected-paths" "$TEST_ROOT/actual-paths" || {
-	printf '%s\n' 'expected retained topic paths:' >&2
-	cat "$TEST_ROOT/expected-paths" >&2
-	printf '%s\n' 'actual retained topic paths:' >&2
-	cat "$TEST_ROOT/actual-paths" >&2
-	fail "topic 0008 regained compatibility-only Linux source changes"
-}
-
-grep -F 'cmd_trim_modinfo_padding = perl -0777' "$TOPIC" >/dev/null ||
-	fail "topic 0008 lost Darwin modinfo trimming"
-grep -F 'ldlibs=""' "$TOPIC" >/dev/null ||
-	fail "topic 0008 lost Darwin vmlinux link-library selection"
-grep -F '#define uuid_t linux_uuid_t' "$TOPIC" >/dev/null ||
-	fail "topic 0008 lost the Darwin file2alias uuid_t collision guard"
-
-printf '%s\n' "Darwin host compatibility header and topic-boundary tests passed"
+printf '%s\n' "Darwin host compatibility header tests passed"

@@ -42,7 +42,7 @@ printf '%s\n' 'int darwin_uml_unrecorded_bridge_change(void);' >> \
 if "$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain kernel \
 	>/dev/null 2>&1; then
 	printf '%s\n' \
-		"kernel declaration mutation passed without a kernel history update" >&2
+		"kernel declaration mutation passed without a kernel identity update" >&2
 	exit 1
 fi
 cp "$REPOSITORY/kernel/common/abi/darwin_uml_host.h" \
@@ -61,9 +61,61 @@ printf '%s\n' 'int uml_emulator_unrecorded_api_change(void);' >> \
 if "$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain public \
 	>/dev/null 2>&1; then
 	printf '%s\n' \
-		"public declaration mutation passed without a public history update" >&2
+		"public declaration mutation passed without a public identity update" >&2
 	exit 1
 fi
+
+# sync.sh writes each identity header from its identity.env and --verify
+# rejects a header that no longer matches. Run the copied tool so it resolves
+# the fixture tree as its repository root.
+SYNC_ROOT="$WORK_DIRECTORY/sync"
+mkdir -p "$SYNC_ROOT/kernel/common" "$SYNC_ROOT/darwin/api/include/uml" \
+	"$SYNC_ROOT/linux"
+cp -R "$REPOSITORY/kernel/common/abi" "$SYNC_ROOT/kernel/common/abi"
+cp -R "$REPOSITORY/darwin/api/abi" "$SYNC_ROOT/darwin/api/abi"
+cp "$REPOSITORY/darwin/api/include/uml/emulator.h" \
+	"$REPOSITORY/darwin/api/include/uml/abi_identity.h" \
+	"$SYNC_ROOT/darwin/api/include/uml/"
+SYNC="$SYNC_ROOT/kernel/common/abi/sync.sh"
+"$SYNC" --host-dir "$SYNC_ROOT/host" --kernel-source "$SYNC_ROOT/linux" \
+	>/dev/null
+"$SYNC" --host-dir "$SYNC_ROOT/host" --kernel-source "$SYNC_ROOT/linux" \
+	--verify >/dev/null
+cmp -s "$SYNC_ROOT/darwin/api/include/uml/abi_identity.h" \
+	"$REPOSITORY/darwin/api/include/uml/abi_identity.h" &&
+	cmp -s "$SYNC_ROOT/host/uml_darwin_abi_identity.h" \
+		"$REPOSITORY/darwin/include/uml_darwin_abi_identity.h" &&
+	cmp -s "$SYNC_ROOT/linux/arch/um/os-Darwin/uml_darwin_abi_identity.h" \
+		"$REPOSITORY/darwin/include/uml_darwin_abi_identity.h" || {
+	printf '%s\n' "sync.sh did not reproduce the checked-in identity headers" >&2
+	exit 1
+}
+for identity in \
+	"$SYNC_ROOT/kernel/common/abi/identity.env:DARWIN_UML_ABI_VERSION" \
+	"$SYNC_ROOT/darwin/api/abi/identity.env:UML_EMULATOR_ABI_VERSION"; do
+	path=${identity%%:*}
+	key=${identity#*:}
+	cp "$path" "$path.saved"
+	sed "s/^$key=.*/$key=999/" "$path.saved" > "$path"
+	if "$SYNC" --host-dir "$SYNC_ROOT/host" \
+		--kernel-source "$SYNC_ROOT/linux" --verify >/dev/null 2>&1; then
+		printf '%s\n' "sync.sh --verify accepted a stale $key header" >&2
+		exit 1
+	fi
+	"$SYNC" --host-dir "$SYNC_ROOT/host" --kernel-source "$SYNC_ROOT/linux" \
+		>/dev/null
+	"$SYNC" --host-dir "$SYNC_ROOT/host" --kernel-source "$SYNC_ROOT/linux" \
+		--verify >/dev/null
+	grep -Fx "#define $key 999U" \
+		"$SYNC_ROOT/darwin/api/include/uml/abi_identity.h" \
+		"$SYNC_ROOT/host/uml_darwin_abi_identity.h" \
+		"$SYNC_ROOT/linux/arch/um/os-Darwin/uml_darwin_abi_identity.h" \
+		>/dev/null || {
+		printf '%s\n' "sync.sh did not regenerate $key from identity.env" >&2
+		exit 1
+	}
+	mv "$path.saved" "$path"
+done
 
 IMPORT_VERIFY="$REPOSITORY/kernel/common/abi/verify-linux-imports.sh"
 sed -n -E 's/.*(darwin_uml_[A-Za-z0-9_]+)\(.*/\1/p' \

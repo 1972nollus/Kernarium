@@ -40,7 +40,6 @@ done
 [ -d "$PREFIX" ] || fail "prefix is missing: $PREFIX"
 [ ! -L "$PREFIX" ] || fail "prefix must not be a symbolic link: $PREFIX"
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
-command -v shasum >/dev/null 2>&1 || fail "shasum build tool is required"
 command -v xcrun >/dev/null 2>&1 || fail "xcrun build tool is required"
 [ -x "$PREPARE_SCRIPT" ] || fail "source preparation policy is missing: $PREPARE_SCRIPT"
 
@@ -83,10 +82,21 @@ receipt_value()
 	printf '%s\n' "$value"
 }
 
-expected_manifest=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
+# The prefix is current while the macos rows it was built from are unchanged.
+# The products column only records which prefixes share a row.
+product_rows()
+{
+	awk -F '\t' -v OFS='\t' '
+		/^#/ || /^[[:space:]]*$/ { next }
+		$1 == "name" || index("," $3 ",", ",macos,") { $3 = ""; print }
+	' "$1"
+}
+INSTALLED_MANIFEST="$PREFIX/share/uml-dependencies/manifest.tsv"
+[ -f "$INSTALLED_MANIFEST" ] && [ ! -L "$INSTALLED_MANIFEST" ] ||
+	fail "prefix records no dependency manifest; rebuild it with dependencies/build.sh"
+[ "$(product_rows "$INSTALLED_MANIFEST")" = "$(product_rows "$MANIFEST")" ] ||
+	fail "prefix was built from different macos dependency rows; rebuild it"
 [ "$(receipt_value schema)" = 2 ] || fail "unsupported receipt schema"
-[ "$(receipt_value manifest_sha256)" = "$expected_manifest" ] ||
-	fail "prefix was built from a different dependency manifest"
 [ "$(receipt_value platform)" = macos ] || fail "prefix is not a macOS build"
 [ "$(receipt_value architecture)" = arm64 ] || fail "prefix is not arm64"
 [ "$(receipt_value linkage)" = static ] || fail "prefix is not static"

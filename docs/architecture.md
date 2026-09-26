@@ -15,7 +15,9 @@ device -> memory / platform
 
 `darwin/CMakeLists.txt` composes owning subdirectories. Each module owns its
 targets and source manifest. The neutral CPU factory selects the gadget or JIT
-adapter; engines do not depend on one another.
+adapter; engines do not depend on one another, and shared CPU code depends on
+neither. `architecture-audit` enforces this on each CPU target's declared
+engine kind and on textual includes between the engine directories.
 
 An emulator archive is a self-contained final product. CMake merges object
 libraries and interface-carried objects into it but never a linked static
@@ -496,17 +498,12 @@ receive unique run identities so management-console paths do not collide.
 ## Tests and structural audit
 
 Every first-party CTest has one primary suite: `unit`, `tooling`, or
-`integration`. `tests/test-manifest.tsv` is the exact registration and owner
-inventory.
+`integration`, set by the `cmake/UmlTesting.cmake` helper that registers it.
 
 `architecture-audit` checks the CMake File API graph, dependency cycles,
-implementation includes, source ownership, test manifests, and advisory
-source-size metadata. It does not prove performance, generated code shape, a
-kernel boot, or guest behavior; those require their owning validation.
-
-Production files above 800 lines, test/support files above 600, and CMake files
-above 300 are reported as advisory review points; they are not acceptance
-failures or a request for a dated review ledger.
+implementation includes, source ownership, and test registration. It does not
+prove performance, generated code shape, a kernel boot, or guest behavior;
+those require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

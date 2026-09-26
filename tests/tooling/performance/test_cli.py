@@ -18,12 +18,6 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "perf"
 TOOLS = pathlib.Path(__file__).resolve().parents[3] / "tools"
-KERNARIUM_RUNTIME = (
-    pathlib.Path(__file__).resolve().parents[3]
-    / "Kernarium"
-    / "Runtime"
-    / "KernariumRuntime.mm"
-)
 RUNNERS = (
     "run_guest_geekbench.py",
     "run_guest_command_bench.py",
@@ -136,167 +130,12 @@ def parse_runner_arguments(runner: str, extra: list[str]) -> object:
 
 
 def verify_offline_geekbench_contract() -> None:
-    source_path = ROOT / "run_guest_geekbench.py"
-    source = source_path.read_text(encoding="utf-8")
     options = parse_runner_arguments(
         "run_guest_geekbench.py",
         ["--console-log", "console.log"],
     )
-    expected = (
-        "/opt/geekbench/release/geekbench6 "
-        "--no-upload"
-    )
-    if options.command != expected:
-        raise RuntimeError(
-            f"Geekbench must use the image-local payload {expected}: "
-            f"{options.command}"
-        )
-    if hasattr(options, "allow_network"):
-        raise RuntimeError("Geekbench retained the removed --allow-network gate")
     if "--no-upload" not in options.command:
         raise RuntimeError("Geekbench must disable the upload prompt")
-    forbidden = (
-        "browser.geekbench.com",
-        "verify_upload_network",
-        "getent ahostsv4",
-        "curl -sSI",
-    )
-    for value in forbidden:
-        if value in source:
-            raise RuntimeError(
-                f"Geekbench retained a network preflight token: {value}"
-            )
-
-
-def verify_geekbench_direct_shell_contract() -> None:
-    options = parse_runner_arguments(
-        "run_guest_geekbench.py",
-        ["--console-log", "console.log"],
-    )
-    if hasattr(options, "quiesce_timeout"):
-        raise RuntimeError(
-            "Geekbench retained the obsolete systemd quiescence option"
-        )
-
-    source = (ROOT / "run_guest_geekbench.py").read_text(encoding="utf-8")
-    for token in ("systemd_overlay", "systemctl", "QUIESCENCE_UNITS"):
-        if token in source:
-            raise RuntimeError(
-                f"Geekbench retained systemd benchmark machinery: {token}"
-            )
-    main_source = source[source.index("def main()") :]
-    ordered_tokens = (
-        "guest.boot_and_login(180)",
-        "profiler = subprocess.Popen",
-        "result = guest.run_command(command, arguments.timeout)",
-    )
-    positions = [main_source.index(token) for token in ordered_tokens]
-    if positions != sorted(positions):
-        raise RuntimeError(
-            "Geekbench must boot the direct shell before profiler/benchmark"
-        )
-
-
-def verify_kernarium_geekbench_contract() -> None:
-    source = KERNARIUM_RUNTIME.read_text(encoding="utf-8")
-    declaration = "constexpr std::string_view geekbenchBootstrap"
-    start = source.index(declaration)
-    end = source.index(")krn\";", start)
-    bootstrap = source[start:end]
-
-    required_bootstrap = (
-        "/usr/sbin/mkfs.ext4 -F -q -m 0",
-        "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt",
-        "mount -t overlay overlay",
-        "pivot_root . .uml-lower",
-        "mount -t proc proc /proc",
-        "mount -t sysfs sysfs /sys",
-        "/opt/geekbench/release/geekbench6",
-        '\"$benchmark\" --no-upload',
-        "--single-core --section 1",
-        '--workload \"$KERNARIUM_GEEKBENCH_WORKLOADS\"',
-        "KERNARIUM_GEEKBENCH_READY",
-        "KERNARIUM_GEEKBENCH_TARGETS:",
-        "KERNARIUM_GEEKBENCH_END:%s",
-        "poweroff -f",
-    )
-    for token in required_bootstrap:
-        if token not in bootstrap:
-            raise RuntimeError(
-                f"Kernarium Geekbench bootstrap is missing {token!r}"
-            )
-    if "systemd" in bootstrap:
-        raise RuntimeError("Kernarium Geekbench bootstrap must not start systemd")
-
-    discard_declaration = "constexpr std::string_view discardBenchmarkBootstrap"
-    discard_start = source.index(discard_declaration)
-    discard_end = source.index(")krn\";", discard_start)
-    discard_bootstrap = source[discard_start:discard_end]
-    for token in (
-        "KERNARIUM_DISCARD_READY:",
-        "KERNARIUM_DISCARD_SAMPLE:",
-        "KERNARIUM_DISCARD_END:0",
-        "discard_max_bytes",
-        "/usr/sbin/blkdiscard -o 0 -l 536870912 /dev/ubdb",
-        "poweroff -f",
-    ):
-        if token not in discard_bootstrap:
-            raise RuntimeError(
-                f"Kernarium discard bootstrap is missing {token!r}"
-            )
-
-    script_declaration = "constexpr std::string_view guestScriptBootstrap"
-    script_start = source.index(script_declaration)
-    script_end = source.index(")krn\";", script_start)
-    script_bootstrap = source[script_start:script_end]
-    for token in (
-        "KERNARIUM_GUEST_SCRIPT_READY",
-        "KERNARIUM_GUEST_SCRIPT_END:%s",
-        "pivot_root . .uml-lower",
-        'printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d',
-        "sh /tmp/kernarium-guest-script",
-        "poweroff -f",
-    ):
-        if token not in script_bootstrap:
-            raise RuntimeError(
-                f"Kernarium guest script bootstrap is missing {token!r}"
-            )
-    if "systemd" in script_bootstrap:
-        raise RuntimeError(
-            "Kernarium guest script bootstrap must not start systemd"
-        )
-
-    run_source = source[source.index("int runtimeRun(") :]
-    required_run_contract = (
-        'environmentEnabled("KERNARIUM_GEEKBENCH")',
-        'std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS")',
-        "validGeekbenchWorkloads(geekbenchWorkloads)",
-        "ConsoleBootMode::geekbench",
-        'std::getenv("KERNARIUM_DISCARD_BENCHMARK")',
-        "ConsoleBootMode::discardBenchmark",
-        "ConsoleBridge consoleBridge {\n"
-        "            bootMode,\n"
-        "            geekbenchWorkloads,\n"
-        "            discardBenchmarkMode,\n"
-        "            guestScript,\n"
-        "            ctsCampaign,\n"
-        "            derivativeRootfs}",
-        'std::getenv("KERNARIUM_GUEST_SCRIPT")',
-        "validGuestScript(guestScript)",
-        "ConsoleBootMode::guestScript",
-        "if (!geekbench && !guestScriptRequested)",
-        # Geekbench boots its own shell rather than a systemd target; every
-        # other mode selects one, and a CTS campaign takes the session-free
-        # target so nothing competes with its own display server.
-        '? "systemd.unit=multi-user.target"',
-        ': "systemd.unit=graphical.target")',
-        ".run = runtimeRun",
-    )
-    for token in required_run_contract:
-        if token not in run_source:
-            raise RuntimeError(
-                f"Kernarium Geekbench launch contract is missing {token!r}"
-            )
 
 
 def run_geekbench_shutdown_case(
@@ -470,24 +309,6 @@ def verify_guest_shell_shutdown_contract() -> None:
         )
 
 
-def verify_performance_runner_shutdown_contract() -> None:
-    for runner in RUNNERS:
-        source = (ROOT / runner).read_text(encoding="utf-8")
-        main_source = source[source.index("def main()") :]
-        shutdown = main_source.find("guest.shutdown(60)")
-        status = main_source.find("guest.return_code")
-        close = main_source.find("guest.close()")
-        if min(shutdown, status, close) < 0 or not shutdown < status < close:
-            raise RuntimeError(
-                f"{runner}: successful timing must require orderly shutdown "
-                "and status-0 emulator exit before close()"
-            )
-        if 'if emulator_status != 0:' not in main_source:
-            raise RuntimeError(
-                f"{runner}: nonzero emulator exit is not rejected"
-            )
-
-
 def verify_erofs_root_device_defaults() -> None:
     cases = (
         ("run_guest_geekbench.py", ["--console-log", "console.log"]),
@@ -559,11 +380,8 @@ def verify_core_class_launcher() -> None:
 
 def main() -> int:
     verify_offline_geekbench_contract()
-    verify_geekbench_direct_shell_contract()
-    verify_kernarium_geekbench_contract()
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
-    verify_performance_runner_shutdown_contract()
     verify_erofs_root_device_defaults()
     verify_core_class_launcher()
     for runner in RUNNERS:

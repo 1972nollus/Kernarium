@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 04:16:53 +0000
-Subject: [PATCH] UML-DARWIN-LOCAL: um: present the Darwin pointer as a direct
- touchscreen
+Subject: [PATCH] um: present the Darwin pointer as a direct touchscreen
 
 The host frontend delivers absolute window coordinates plus mouse buttons,
 and the guest exposed them as an INPUT_PROP_POINTER tablet with ABS_X/ABS_Y.

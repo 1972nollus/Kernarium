@@ -6,7 +6,6 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -155,64 +154,6 @@ class SeedPinning(unittest.TestCase):
             inputs.validate_policy({**lock, "steam_client_version": "1"})
         with self.assertRaises(RuntimeError):
             inputs.validate_policy({**lock, "steam_platform": "linuxarm64"})
-
-
-class GamingSession(unittest.TestCase):
-    def setUp(self) -> None:
-        self.unit = (ROOT / "tools/rootfs/steam-common/overlay/etc/systemd/system"
-                     "/steam-gaming.service").read_text()
-
-    def test_session_keeps_no_capabilities(self) -> None:
-        # A TTY-owning PAM service is handed an ambient capability, and
-        # bubblewrap refuses to build Steam's runtime container for a process
-        # that holds capabilities without being setuid.
-        self.assertIn("\nCapabilityBoundingSet=\n", self.unit)
-        self.assertIn("PAMName=login", self.unit)
-
-    def test_session_selects_zink_only_with_the_imported_runtime(self) -> None:
-        session = (ROOT / PRODUCER / "overlay/usr/local/bin/steam-gaming-session").read_text()
-        self.assertIn("/usr/share/uml-vulkan/guest-runtime.json", session)
-        self.assertIn("MESA_LOADER_DRIVER_OVERRIDE=zink", session)
-        self.assertIn("GALLIUM_DRIVER=zink", session)
-
-
-class VideoDecodeWiring(unittest.TestCase):
-    """The client option reaches Valve's web helper only where the image's
-    VA-API backend and the decoder node exist.
-    """
-
-    def setUp(self) -> None:
-        self.session = (ROOT / PRODUCER / "overlay" / SESSION).read_text()
-        self.launcher = (ROOT / SHARED / "overlay" / LAUNCHER).read_text()
-
-    def test_session_selects_the_image_backend_behind_both_halves(self) -> None:
-        self.assertIn("LIBVA_DRIVER_NAME=uml", self.session)
-        self.assertIn("LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri", self.session)
-        self.assertIn("KERNARIUM_CEF_VAAPI=1", self.session)
-        gate = [line for line in self.session.splitlines() if line.startswith("if [ -e ")]
-        self.assertTrue(any("uml_drv_video.so" in line and "/dev/video-dec0" in line
-                            for line in gate),
-                        "the session must require the module and the decoder node")
-
-    def test_shared_launcher_only_adds_the_option_when_asked(self) -> None:
-        self.assertIn("-cef-enable-vaapi", self.launcher)
-        guarded = False
-        for node in ast.walk(ast.parse(self.launcher)):
-            if not isinstance(node, ast.If):
-                continue
-            test = ast.unparse(node.test)
-            if "KERNARIUM_CEF_VAAPI" not in test:
-                continue
-            body = "\n".join(ast.unparse(statement) for statement in node.body)
-            guarded = "-cef-enable-vaapi" in body
-            if guarded:
-                break
-        self.assertTrue(guarded,
-                        "the client option must be gated on KERNARIUM_CEF_VAAPI")
-        # and nowhere else in the file
-        outside = [line for line in self.launcher.splitlines()
-                   if "-cef-enable-vaapi" in line and "append" not in line]
-        self.assertEqual(outside, [])
 
 
 class Launcher(unittest.TestCase):

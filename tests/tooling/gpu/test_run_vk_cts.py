@@ -25,6 +25,11 @@ INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_cts as cts  # noqa: E402
 import run_ios_device_vk_cts as device  # noqa: E402
+import receipt_fixtures  # noqa: E402
+
+
+def setUpModule() -> None:
+    receipt_fixtures.bind_vulkan_receipt(cts)
 
 
 def qpa_result(case: str, status: str = "Pass", identity: str = "") -> str:

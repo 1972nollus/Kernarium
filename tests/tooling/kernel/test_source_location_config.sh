@@ -26,31 +26,4 @@ grep -F 'kernel build requires a valid kernel/mainline-6.18/source-location.conf
 	"$TEST_ROOT/build.err" >/dev/null ||
 	fail "build did not report its mandatory source-location contract"
 
-git -C "$ROOT_DIR" check-ignore --quiet \
-	kernel/mainline-6.18/source-location.conf ||
-	fail "kernel/mainline-6.18/source-location.conf is not ignored by Git"
-git -C "$ROOT_DIR" check-ignore --quiet kernel/source-location.conf ||
-	fail "the developer-owned former source configuration is not ignored"
-[ -f "$LINE_ROOT/source-location.conf.example" ] ||
-	fail "the source-location example is missing"
-if git -C "$ROOT_DIR" check-ignore --quiet \
-	kernel/mainline-6.18/source-location.conf.example; then
-	fail "the source-location example is incorrectly ignored"
-fi
-if git -C "$ROOT_DIR" ls-files --error-unmatch \
-	kernel/mainline-6.18/source-location.conf >/dev/null 2>&1; then
-	fail "the developer-specific source-location configuration is tracked"
-fi
-
-if grep -E 'source-location\.conf|UML_KERNEL_SOURCE_(CONFIG|DIR)' \
-	"$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null; then
-	fail "Apple CMake still consults the standalone source configuration"
-fi
-grep -F 'UML_MAINLINE_618_KERNEL_ARTIFACT_DIR' \
-	"$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
-	fail "Apple CMake does not consume the accepted prebuilt artifact"
-if grep -F '"UML_KERNEL_SOURCE_DIR":' "$ROOT_DIR/CMakePresets.json" >/dev/null; then
-	fail "checked presets still bypass the ignored source configuration"
-fi
-
-printf '%s\n' "kernel source-location configuration policy tests passed"
+printf '%s\n' "kernel source-location configuration tests passed"

@@ -133,8 +133,7 @@ source_tree=$(git -C "$KERNEL_SOURCE" rev-parse HEAD^{tree})
 git -C "$KERNEL_SOURCE" merge-base --is-ancestor \
 	"$UML_KERNEL_UPSTREAM_COMMIT" HEAD || fail "kernel source is not based on pinned ACK"
 
-"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA" \
-	--kernel-source "$KERNEL_SOURCE" --verify >/dev/null
+"$COMMON_ROOT/abi/sync.sh" --kernel-source "$KERNEL_SOURCE" --verify >/dev/null
 mkdir -p -- "$BUILD_DIR"
 KERNEL_SOURCE=$(CDPATH= cd -- "$KERNEL_SOURCE" && pwd -P)
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)

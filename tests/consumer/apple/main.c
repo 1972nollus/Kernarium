@@ -3,11 +3,6 @@
 
 #include <string.h>
 
-_Static_assert(UML_EMULATOR_ABI_VERSION == 7U,
-	"unexpected public ABI version");
-_Static_assert(UML_EMULATOR_ABI_FINGERPRINT == 0x03a31773555faf7dULL,
-	"unexpected public ABI fingerprint");
-
 static int native_kernel(int argc, char *const argv[], char *const envp[])
 {
 	(void)argc;

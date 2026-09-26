@@ -11,7 +11,6 @@ JELLY_METADATA="$ROOT_DIR/android/aosp-17/third_party/jelly/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
 MESA_VENUS_METADATA="$ROOT_DIR/android/aosp-17/third_party/mesa-venus/metadata.env"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -210,10 +209,6 @@ esac
 	fail "missing Mesa Venus metadata: $MESA_VENUS_METADATA"
 [ -x "$MESA_VENUS_VERIFIER" ] ||
 	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
-[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'android/aosp-17/build/prepare-sources.sh'
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
 # shellcheck disable=SC1090

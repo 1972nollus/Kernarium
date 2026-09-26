@@ -1,8 +1,9 @@
 # Android Common Kernel 6.18 source policy
 
 This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream
-identity, the ordered series, the final tree they produce, and ABI live in
-[`patches/metadata.env`](patches/metadata.env).
+identity, the ordered series, and the final tree they produce live in
+[`patches/metadata.env`](patches/metadata.env); the bridge ABI identity is
+[`../common/abi/identity.env`](../common/abi/identity.env).
 
 It is independent of both mainline page profiles. It applies the shared
 [`kernel/common/patches`](../common/patches) series to its ACK base and then

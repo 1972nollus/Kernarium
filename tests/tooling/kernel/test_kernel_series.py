@@ -10,7 +10,6 @@ through an explicit refresh.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "kernel/common/tooling"))
 
-import git_identity  # noqa: E402
 import kernel_series  # noqa: E402
 import patch_series  # noqa: E402
 
@@ -35,9 +33,8 @@ LINES = (
 
 
 def git(repository: Path, *arguments: str) -> str:
-    environment = dict(os.environ)
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
-    environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    # Fixture commits are made as the caller, like the replays under test.
+    environment = patch_series.isolated_environment()
     result = subprocess.run(
         ["git", "-C", str(repository), *arguments],
         stdout=subprocess.PIPE,
@@ -86,7 +83,6 @@ def write_line(path: Path, base: str, series: list[tuple[Path, str]], owned: lis
 def main() -> int:
     for relative in LINES:
         kernel_series.check(kernel_series.load_line(ROOT / relative))
-    git_identity.require_git_identity("kernel series contract")
     scratch = Path(tempfile.mkdtemp(prefix="uml-kernel-series."))
     try:
         run(scratch)

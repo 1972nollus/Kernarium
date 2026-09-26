@@ -5,15 +5,10 @@ include_guard(GLOBAL)
 set(UML_APPLE_GPU_PRODUCT "apple-gpu-vulkan-experiment" CACHE STRING
     "Verified Apple GPU dependency product")
 set_property(CACHE UML_APPLE_GPU_PRODUCT PROPERTY STRINGS
-    apple-gpu apple-gpu-vulkan-experiment)
+    apple-gpu-vulkan-experiment)
 # Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
 # the KosmicKrisp Vulkan driver.
-if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu")
-    message(FATAL_ERROR
-        "The apple-gpu product carries only the upstream libepoxy and "
-        "virglrenderer inputs and publishes no host GL provider. Select "
-        "apple-gpu-vulkan-experiment.")
-elseif(NOT UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+if(NOT UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     message(FATAL_ERROR
         "Unsupported Apple GPU dependency product: ${UML_APPLE_GPU_PRODUCT}")
 endif()

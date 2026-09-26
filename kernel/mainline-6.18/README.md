@@ -4,8 +4,9 @@ This directory owns the maintained stable Linux 6.18 source identity, local
 Darwin UML patch series, complete kernel configuration, standalone build
 policy, and accepted artifact descriptors.
 
-Exact upstream commit/tree, the ordered series, the final tree they produce,
-and ABI identity live in [`patches/metadata.env`](patches/metadata.env). The
+Exact upstream commit/tree, the ordered series, and the final tree they
+produce live in [`patches/metadata.env`](patches/metadata.env); the bridge ABI
+identity is [`../common/abi/identity.env`](../common/abi/identity.env). The
 normal arm64 slices apply the shared
 [`kernel/common/patches`](../common/patches) series, which the Android line
 also applies, and then this line's overlay in `patches/series`. The dedicated
@@ -45,11 +46,14 @@ Preparation uses the pinned Git cache and creates the managed replay branch.
 replace only a clean stale managed replay; it never replaces an arbitrary
 checkout.
 
-Replay, rebase, and next-base commits are made with the Git identity the
-environment supplies, through `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` or a
-configured `user.name`/`user.email`. These tools carry no identity of their own
-and refuse to run before doing any work when none is configured, rather than
-letting Git invent one from the account and host names.
+Replay, rebase, and next-base commits keep each topic's author and are
+committed by whoever Git resolves for the caller; that committer never reaches
+a patch file. A patch's only identity is its topic's author, so
+`scripts/patch_series.py export` refuses a placeholder author or one Git
+invented from the host name, such as a `localhost`, `.local`, `.invalid`, or
+`example.com` address. The topic's owner fixes it with an ordinary amend such
+as `git commit --amend --reset-author`. Tools never name or rewrite an
+identity.
 
 `verify-replay.sh` starts from the pinned upstream commit, verifies the shared
 series, branches and verifies the x86_64 overlay, and by default builds arm64
@@ -221,12 +225,35 @@ again, with a timer, IPI and scheduling checkpoint after every full batch and
 every sixteenth rejection, so a whole-`mm` replay after a fork makes progress
 while siblings keep invalidating. `init_mm` keeps its serialized walker.
 
+`init_mm` has one synchronizing owner at a time and walks without a batch
+budget. A synchronization its owner requests fails at once instead of
+blocking, and the entry for callers that already hold an `mmap` lock accepts
+only a user `mm`. Every synchronization takes and clears the pending ranges
+under one lock hold, applies all of them, and requeues all of them when any
+part fails, so no pending range is lost. Under 4 KiB pages one 16 KiB host
+slot carries four `init_mm` PTEs: they are sampled under the PTE lock, the
+whole host slot is dropped before the present quarters are mapped and the
+absent ones unmapped, and the first failure stops the slot. The four samples
+are not one atomic snapshot; a writer publishes its range after it changes a
+PTE, so a later walk reapplies it. A kernel-mode fault publishes exactly its
+Linux page, synchronizes `init_mm`, and resumes only when the host confirms
+the access is backed; any other outcome panics instead of faulting again. On
+both page profiles a nested mmu-gather flush keeps the range it collected
+instead of becoming a whole-`mm` flush, because a Darwin range invalidation
+already quiesces the generation's executors and advances its epoch.
+
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
 Linux task. A synchronous fault enters the guest path only from a virtual CPU
 carrier, or from the boot thread while it still owns CPU0. Every other fault is
 reported with its real host thread and literal addresses before the default
 host disposition terminates the faulting instruction.
+
+A public stop reaches every carrier: one leaving translated guest code honours
+it before its task continues, and an idle carrier's wait includes the stop
+descriptor. The last-ditch handler for a fatal host signal exits at once
+without Linux exitcalls, because the carrier that receives a process-directed
+signal may be running its vCPU's idle task.
 
 The Darwin network receive path uses NAPI, and the display-mapped absolute
 pointer is a direct touchscreen.

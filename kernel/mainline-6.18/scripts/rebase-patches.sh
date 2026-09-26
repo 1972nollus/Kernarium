@@ -11,7 +11,6 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 REQUESTED_SOURCE=
 SLICE=arm64
 
@@ -54,10 +53,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
-[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'kernel/mainline-6.18/scripts/rebase-patches.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||

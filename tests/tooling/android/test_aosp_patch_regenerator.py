@@ -35,8 +35,6 @@ def write_fixture(
     root: Path, android_root: Path, topic: Path, verifier: Path, scripts: Path
 ) -> None:
     run("git", "init", "-q", str(topic))
-    run("git", "config", "user.name", "Android fixture", cwd=topic)
-    run("git", "config", "user.email", "android-fixture@example.invalid", cwd=topic)
     (topic / "base.txt").write_text("base\n")
     run("git", "add", "base.txt", cwd=topic)
     run("git", "commit", "-q", "-m", "fixture base", cwd=topic)
@@ -56,8 +54,7 @@ def write_fixture(
     shutil.copy2(verifier, android_root / "tools/verify-aosp-patches.py")
     os.chmod(android_root / "tools/verify-aosp-patches.py", 0o755)
     (root / "scripts").mkdir()
-    for name in ("patch_series.py", "git_identity.py"):
-        shutil.copy2(scripts / name, root / "scripts" / name)
+    shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     manifest = (
         '<manifest><project name="fixture/project" path="fixture/project" '
         f'revision="{base_commit}" upstream="refs/tags/fixture"/></manifest>\n'

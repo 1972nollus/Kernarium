@@ -26,97 +26,29 @@ function(uml_watch_artifact_inputs)
     endforeach()
 endfunction()
 
-function(uml_cache_accepted_artifact_path VARIABLE DEFAULT_VALUE MANAGED_ROOT DESCRIPTION)
-    set(options)
-    set(oneValueArgs)
-    set(multiValueArgs LEGACY_DEFAULTS)
-    cmake_parse_arguments(ARTIFACT_CACHE
-        "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-    if(ARTIFACT_CACHE_UNPARSED_ARGUMENTS)
-        message(FATAL_ERROR
-            "Unknown accepted-artifact cache arguments: "
-            "${ARTIFACT_CACHE_UNPARSED_ARGUMENTS}")
-    endif()
-    if(NOT IS_ABSOLUTE "${DEFAULT_VALUE}" OR NOT IS_ABSOLUTE "${MANAGED_ROOT}")
-        message(FATAL_ERROR
-            "Accepted artifact defaults and managed roots must be absolute")
-    endif()
-
-    set(_uml_managed_artifact_root "${MANAGED_ROOT}")
-    cmake_path(IS_PREFIX _uml_managed_artifact_root "${DEFAULT_VALUE}"
-        NORMALIZE _uml_default_is_managed)
-    if(NOT _uml_default_is_managed)
-        message(FATAL_ERROR
-            "Accepted artifact defaults must be below the managed root")
-    endif()
-    foreach(_uml_legacy_default IN LISTS ARTIFACT_CACHE_LEGACY_DEFAULTS)
-        if(NOT IS_ABSOLUTE "${_uml_legacy_default}")
-            message(FATAL_ERROR
-                "Legacy accepted-artifact defaults must be absolute")
-        endif()
-        set(_uml_legacy_artifact_path "${_uml_legacy_default}")
-        cmake_path(IS_PREFIX _uml_managed_artifact_root
-            "${_uml_legacy_artifact_path}"
-            NORMALIZE _uml_legacy_default_is_managed)
-        if(NOT _uml_legacy_default_is_managed)
-            message(FATAL_ERROR
-                "Legacy accepted-artifact defaults must be below the managed root")
-        endif()
-    endforeach()
-
+# The cached path follows the accepted default until a caller sets it to
+# another path, which then stays pinned across later acceptance changes.
+# Clearing the value opts back into the accepted default.
+function(uml_cache_accepted_artifact_path VARIABLE DEFAULT_VALUE DESCRIPTION)
     set(_uml_default_tracker "${VARIABLE}_ACCEPTED_DEFAULT")
     set(_uml_follow_tracker "${VARIABLE}_FOLLOW_ACCEPTED")
-    set(_uml_had_default_tracker OFF)
-    if(DEFINED ${_uml_default_tracker})
-        set(_uml_had_default_tracker ON)
-        set(_uml_previous_default "${${_uml_default_tracker}}")
-    endif()
-
-    if(DEFINED ${_uml_follow_tracker})
-        if(NOT "${${_uml_follow_tracker}}" STREQUAL "ON" AND
-           NOT "${${_uml_follow_tracker}}" STREQUAL "OFF")
-            message(FATAL_ERROR
-                "Accepted artifact follow state must be ON or OFF")
-        endif()
-        set(_uml_follow_accepted "${${_uml_follow_tracker}}")
-    elseif(_uml_had_default_tracker)
-        # Migrate the equality-only tracker used by earlier build trees.
-        if(NOT DEFINED ${VARIABLE} OR "${${VARIABLE}}" STREQUAL "" OR
-           "${${VARIABLE}}" STREQUAL "${_uml_previous_default}")
+    if(NOT DEFINED ${VARIABLE} OR "${${VARIABLE}}" STREQUAL "")
+        set(_uml_follow_accepted ON)
+    elseif(DEFINED ${_uml_follow_tracker})
+        # A value that no longer equals the last generated default was set by
+        # a caller and is pinned from then on.
+        if(${_uml_follow_tracker} AND
+           "${${VARIABLE}}" STREQUAL "${${_uml_default_tracker}}")
             set(_uml_follow_accepted ON)
         else()
             set(_uml_follow_accepted OFF)
         endif()
+    elseif("${${VARIABLE}}" STREQUAL "${DEFAULT_VALUE}")
+        set(_uml_follow_accepted ON)
     else()
-        set(_uml_recognized_legacy_default OFF)
-        foreach(_uml_legacy_default IN LISTS ARTIFACT_CACHE_LEGACY_DEFAULTS)
-            if(DEFINED ${VARIABLE} AND
-               "${${VARIABLE}}" STREQUAL "${_uml_legacy_default}")
-                set(_uml_recognized_legacy_default ON)
-            endif()
-        endforeach()
-        if(NOT DEFINED ${VARIABLE} OR "${${VARIABLE}}" STREQUAL "" OR
-           "${${VARIABLE}}" STREQUAL "${DEFAULT_VALUE}" OR
-           _uml_recognized_legacy_default)
-            # A trackerless value follows only when it is empty, already names
-            # the current default, or matches the caller's finite legacy list.
-            set(_uml_follow_accepted ON)
-        else()
-            set(_uml_follow_accepted OFF)
-        endif()
-    endif()
-
-    if(_uml_follow_accepted AND _uml_had_default_tracker AND
-       DEFINED ${VARIABLE} AND NOT "${${VARIABLE}}" STREQUAL "" AND
-       NOT "${${VARIABLE}}" STREQUAL "${_uml_previous_default}")
-        # A caller replaced a previously generated default. Remember that it
-        # is pinned even if a future accepted default happens to equal it.
         set(_uml_follow_accepted OFF)
     endif()
 
-    if(NOT DEFINED ${VARIABLE} OR "${${VARIABLE}}" STREQUAL "")
-        set(_uml_follow_accepted ON)
-    endif()
     if(_uml_follow_accepted)
         set(_uml_selected_artifact "${DEFAULT_VALUE}")
     else()

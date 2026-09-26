@@ -94,8 +94,6 @@ def main() -> None:
             "UML_KERNEL_UPSTREAM_COMMIT",
             "UML_KERNEL_UPSTREAM_TREE",
             "UML_KERNEL_BASE_REF",
-            "UML_KERNEL_ABI_VERSION",
-            "UML_KERNEL_ABI_FINGERPRINT",
         )
         mismatched = [
             key

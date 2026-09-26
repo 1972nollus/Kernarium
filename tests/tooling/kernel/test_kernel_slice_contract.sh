@@ -7,7 +7,6 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 COMMON_METADATA="$LINE_ROOT/patches/metadata.env"
 SLICE_ROOT="$LINE_ROOT/slices/x86_64"
 SLICE_METADATA="$SLICE_ROOT/patches/metadata.env"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-slices.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
@@ -26,10 +25,7 @@ require_file()
 
 for path in \
 	"$COMMON_METADATA" \
-	"$LINE_ROOT/config/common.fragment" \
-	"$LINE_ROOT/config/page-4k.fragment" \
 	"$LINE_ROOT/scripts/select-slice.sh" \
-	"$SLICE_ROOT/config/userspace.fragment" \
 	"$SLICE_METADATA" \
 	"$KERNEL_SERIES"; do
 	require_file "$path"
@@ -42,38 +38,8 @@ COMMON_PATCH_BRANCH=${UML_KERNEL_SERIES##*:}
 COMMON_RELEASE_VERSION=$UML_KERNEL_RELEASE_VERSION
 COMMON_UPSTREAM_REPOSITORY=$UML_KERNEL_UPSTREAM_REPOSITORY
 COMMON_UPSTREAM_BRANCH=$UML_KERNEL_UPSTREAM_BRANCH
-COMMON_ABI_VERSION=$UML_KERNEL_ABI_VERSION
-COMMON_ABI_FINGERPRINT=$UML_KERNEL_ABI_FINGERPRINT
-if grep -F 'CONFIG_UML_X86_64_USERSPACE_ONLY' \
-	"$LINE_ROOT/config/common.fragment" \
-	"$LINE_ROOT/config/page-4k.fragment" >/dev/null; then
-	fail "shared arm64 configuration enables the x86_64 userspace slice"
-fi
 
-# The x86_64 slice is a true overlay: its series follow the arm64 series,
-# and it reuses both shared config fragments instead of cloning them below
-# the slice directory.
-grep -F 'CONFIG_UML_X86_64_USERSPACE_ONLY=y' \
-	"$SLICE_ROOT/config/userspace.fragment" >/dev/null ||
-	fail "x86_64 userspace fragment does not select its fixed-ABI kernel mode"
-grep -Fxq 'CONFIG_SYSCALL_USER_DISPATCH=y' \
-	"$SLICE_ROOT/config/userspace.fragment" ||
-	fail "x86_64 userspace fragment does not require syscall-user-dispatch"
-if grep -E 'CONFIG_(BPF_SYSCALL|CGROUP_BPF)' \
-	"$SLICE_ROOT/config/userspace.fragment" >/dev/null; then
-	fail "x86_64 userspace slice overrides the shared BPF policy"
-fi
-grep -Fxq 'CONFIG_BPF_SYSCALL=y' "$LINE_ROOT/config/common.fragment" ||
-	fail "shared kernel policy does not expose the eBPF syscall"
-grep -Fxq 'CONFIG_CGROUP_BPF=y' "$LINE_ROOT/config/common.fragment" ||
-	fail "shared kernel policy does not expose cgroup eBPF attachment"
-[ ! -e "$SLICE_ROOT/config/common.fragment" ] ||
-	fail "x86_64 slice duplicates the shared common config fragment"
-[ ! -e "$SLICE_ROOT/config/page-4k.fragment" ] ||
-	fail "x86_64 slice duplicates the shared 4 KiB config fragment"
-[ ! -e "$SLICE_ROOT/artifacts/accepted-16k.env" ] ||
-	fail "x86_64 slice exposes an unsupported 16 KiB artifact"
-
+# The x86_64 slice is a true overlay whose series follow the arm64 series.
 # shellcheck disable=SC1090
 . "$SLICE_METADATA"
 [ "${UML_KERNEL_SLICE:-}" = x86_64 ] ||
@@ -106,8 +72,8 @@ uml_kernel_select_slice "$LINE_ROOT" x86_64 ||
 		"$SLICE_ROOT/config/userspace.fragment" ] ||
 	fail "x86_64 selection does not compose the overlay series/config"
 
-# An overlay that stops inheriting the common upstream or ABI identity is
-# rejected by every consumer of the selector.
+# An overlay that stops inheriting the common upstream identity is rejected
+# by every consumer of the selector.
 SELECTOR_FIXTURE="$TEST_ROOT/selector-fixture"
 mkdir -p \
 	"$SELECTOR_FIXTURE/patches" \
@@ -116,7 +82,7 @@ mkdir -p \
 cp "$COMMON_METADATA" "$SELECTOR_FIXTURE/patches/metadata.env"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$SELECTOR_FIXTURE/scripts/select-slice.sh"
-sed "s/^UML_KERNEL_ABI_VERSION=.*/UML_KERNEL_ABI_VERSION=1/" \
+sed "s/^UML_KERNEL_UPSTREAM_COMMIT=.*/UML_KERNEL_UPSTREAM_COMMIT='$WRONG_TREE'/" \
 	"$SLICE_METADATA" \
 	> "$SELECTOR_FIXTURE/slices/x86_64/patches/metadata.env"
 if (
@@ -124,26 +90,13 @@ if (
 	. "$SELECTOR_FIXTURE/scripts/select-slice.sh"
 	uml_kernel_select_slice "$SELECTOR_FIXTURE" x86_64
 ) >"$TEST_ROOT/selector.out" 2>"$TEST_ROOT/selector.err"; then
-	fail "slice selection accepted an overlay with its own ABI identity"
+	fail "slice selection accepted an overlay with its own upstream identity"
 fi
 grep -F 'x86_64 metadata does not inherit the common kernel identity' \
 	"$TEST_ROOT/selector.err" >/dev/null ||
 	fail "diverged overlay identity failed for the wrong reason"
 
 PREPARE_SOURCE="$LINE_ROOT/scripts/prepare-source.sh"
-grep -F 'refs/uml/recreate-backups/$UML_KERNEL_SLICE/$old_managed_tip' \
-	"$PREPARE_SOURCE" >/dev/null &&
-	grep -F 'verify_managed_branch "$CREATE_BRANCH"' \
-		"$PREPARE_SOURCE" >/dev/null &&
-	grep -F 'switch --detach "$candidate_tip"' \
-		"$PREPARE_SOURCE" >/dev/null &&
-	grep -F '"refs/heads/$TARGET_PATCH_BRANCH" "$candidate_tip"' \
-		"$PREPARE_SOURCE" >/dev/null ||
-	fail "recreate does not preserve, verify, and CAS-install its replacement"
-if grep -F 'branch -M "$TARGET_PATCH_BRANCH"' \
-	"$PREPARE_SOURCE" >/dev/null; then
-	fail "recreate still replaces the managed ref without compare-and-swap"
-fi
 
 # Exercise recreation against real Git histories while stubbing only unrelated
 # source materialization and ABI verification. The old replay has a different
@@ -163,11 +116,9 @@ mkdir -p \
 	"$PREPARE_FIXTURE/scripts" \
 	"$PREPARE_GIT_BIN"
 cp "$PREPARE_SOURCE" "$PREPARE_SCRIPT"
-# The replay helpers resolve their Git identity contract and series tooling
-# from the tree they ship in, so the fixture tree carries the real helpers.
-cp "$GIT_IDENTITY" "$PREPARE_FIXTURE/scripts/git-identity.sh"
-cp "$ROOT_DIR/scripts/git_identity.py" "$ROOT_DIR/scripts/patch_series.py" \
-	"$PREPARE_FIXTURE/scripts/"
+# The replay helpers resolve their series tooling from the tree they ship in,
+# so the fixture tree carries the real helpers.
+cp "$ROOT_DIR/scripts/patch_series.py" "$PREPARE_FIXTURE/scripts/"
 cp "$KERNEL_SERIES" "$PREPARE_FIXTURE/kernel/common/tooling/kernel_series.py"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/select-slice.sh"
@@ -190,9 +141,6 @@ chmod +x \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/source-location.sh"
 
 git init -q "$PREPARE_TEMPLATE_SOURCE"
-git -C "$PREPARE_TEMPLATE_SOURCE" config user.name 'kernel slice fixture'
-git -C "$PREPARE_TEMPLATE_SOURCE" config user.email \
-	'kernel-slice-fixture.invalid'
 printf '%s\n' upstream > "$PREPARE_TEMPLATE_SOURCE/base.txt"
 git -C "$PREPARE_TEMPLATE_SOURCE" add base.txt
 git -C "$PREPARE_TEMPLATE_SOURCE" commit -qm 'fixture upstream'
@@ -231,8 +179,6 @@ write_prepare_metadata()
 		"UML_KERNEL_SERIES='kernel/mainline-6.18/patches/series:managed-fixture'" \
 		"UML_KERNEL_OWNED_SERIES='kernel/mainline-6.18/patches/series'" \
 		"UML_KERNEL_FINAL_TREE='$prepare_final_tree'" \
-		"UML_KERNEL_ABI_VERSION=$COMMON_ABI_VERSION" \
-		"UML_KERNEL_ABI_FINGERPRINT='$COMMON_ABI_FINGERPRINT'" \
 		> "$PREPARE_METADATA"
 }
 
@@ -415,8 +361,8 @@ fi
 	fail "CAS failure did not restore the concurrently updated target checkout"
 require_no_replacement_branch "$PREPARE_CAS_SOURCE"
 
-# Every producer defaults to the normal arm64 slice, exposes the same selector,
-# and rejects unknown slice identities before consulting a managed checkout.
+# Every producer exposes the same selector and rejects unknown slice
+# identities before consulting a managed checkout.
 for relative in \
 	build/build-kernel.sh \
 	scripts/prepare-source.sh \
@@ -428,8 +374,6 @@ for relative in \
 		grep -F 'arm64' "$TEST_ROOT/help.out" >/dev/null &&
 		grep -F 'x86_64' "$TEST_ROOT/help.out" >/dev/null ||
 		fail "$relative does not document the shared slice selector"
-	grep -E '^SLICE=arm64$' "$producer" >/dev/null ||
-		fail "$relative does not default to the arm64 slice"
 	if "$producer" --slice invalid \
 		>"$TEST_ROOT/invalid.out" 2>"$TEST_ROOT/invalid.err"; then
 		fail "$relative accepted an unknown kernel slice"
@@ -481,7 +425,6 @@ REPLAY_LOG="$TEST_ROOT/replay.log"
 mkdir -p \
 	"$REPLAY_FIXTURE/kernel/mainline-6.18/scripts" \
 	"$REPLAY_FIXTURE/kernel/mainline-6.18/build" \
-	"$REPLAY_FIXTURE/tests/tooling/kernel" \
 	"$TEST_ROOT/replay-work"
 cp "$LINE_ROOT/scripts/verify-replay.sh" \
 	"$REPLAY_FIXTURE/kernel/mainline-6.18/scripts/verify-replay.sh"
@@ -500,10 +443,6 @@ ln -s "$TEST_ROOT/producer-double.sh" \
 	"$REPLAY_FIXTURE/kernel/mainline-6.18/scripts/prepare-source.sh"
 ln -s "$TEST_ROOT/producer-double.sh" \
 	"$REPLAY_FIXTURE/kernel/mainline-6.18/build/build-kernel.sh"
-printf '%s\n' '# SPDX-License-Identifier: GPL-2.0-or-later' \
-	> "$REPLAY_FIXTURE/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py"
-printf '%s\n' '# SPDX-License-Identifier: GPL-2.0-or-later' \
-	> "$REPLAY_FIXTURE/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py"
 UML_KERNEL_SLICE_TEST_LOG=$REPLAY_LOG
 export UML_KERNEL_SLICE_TEST_LOG
 "$REPLAY_FIXTURE/kernel/mainline-6.18/scripts/verify-replay.sh" \

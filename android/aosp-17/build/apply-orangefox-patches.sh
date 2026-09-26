@@ -6,7 +6,6 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/third_party/orangefox/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
@@ -61,10 +60,6 @@ esac
 [ -f "$PROJECTS" ] || fail "OrangeFox route table is missing"
 [ -x "$VERIFIER" ] || fail "OrangeFox source verifier is missing"
 [ -x "$DEVICE_SYNC" ] || fail "OrangeFox device sync tool is missing"
-[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'android/aosp-17/build/apply-orangefox-patches.sh'
 
 "$VERIFIER" --android-root "$ANDROID_ROOT"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 07:22:39 +0000
-Subject: [PATCH] UML-DARWIN-LOCAL: um: receive Darwin user network frames with
- NAPI
+Subject: [PATCH] um: receive Darwin user network frames with NAPI
 
 The driver drained up to 64 frames straight from the interrupt handler. The
 host readiness descriptor is level triggered, so a sustained inbound stream
