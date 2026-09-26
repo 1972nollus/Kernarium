@@ -30,7 +30,7 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index e17815079ec671413e3bd386454cf8bd96b5aaa8..363dbf8fb177aaf742aba61f95e904463108d2f1 100644
+index 88d87b8bfa2a7c76f2d0ac02c3fdf0e76a63e596..509ac80de576024c9ceb4a34868215f523c194c6 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -1613,10 +1613,10 @@ zink_bind_vertex_buffers(struct zink_context *ctx, const struct pipe_vertex_buff
@@ -99,10 +99,10 @@ index 5cdb36e91e2c476b842d7fd32f20a9e1425264ca..43979ac150e0e7110ae9a9ebbd6ad83c
               DYNAMIC_STATE == ZINK_NO_DYNAMIC_STATE || !ctx->gfx_pipeline_state.uses_dynamic_stride)
              zink_bind_vertex_buffers(ctx, ctx->vertex_buffers);
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index c11c6a2cabeb72f060acb61c3eecc91b0c0c47e7..97bea0404e79ef080b4772db3fc141a2df00c444 100644
+index 9ef460398cefca47fb312c49129ca8479bcd472b..0b2342c445d344fffbea0625fbe94644b877be7b 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
-@@ -3189,7 +3189,7 @@ init_driver_workarounds(struct zink_screen *screen)
+@@ -3190,7 +3190,7 @@ init_driver_workarounds(struct zink_screen *screen)
     if (zink_debug & ZINK_DEBUG_NOGENERAL)
        screen->driver_workarounds.general_layout = false;
  

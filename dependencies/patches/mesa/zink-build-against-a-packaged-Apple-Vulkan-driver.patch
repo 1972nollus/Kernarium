@@ -37,10 +37,10 @@ index b2b81422b2c0ef07e4c05cd1e714ee49b1754870..7a04d7f7a12a031a7ba978002518ddfd
  with_tests = get_option('build-tests')
  with_glcpp_tests = get_option('enable-glcpp-tests')
 diff --git a/meson.options b/meson.options
-index 93a60e3047b91efb89394fddacacf927009f26d6..aa6a114ad63d553b8dedbd8275d56eafb0afbcb9 100644
+index 92dfd10dafecbc5850eee3fde73e9ca648ea2a7b..4716f09d8666c9124c32afce34b20808cf6ee40f 100644
 --- a/meson.options
 +++ b/meson.options
-@@ -314,6 +314,16 @@ option(
+@@ -321,6 +321,16 @@ option(
                  'Defaults to /usr/local/lib since that is where the Vulkan SDK installs it to by default.'
  )
  
@@ -139,7 +139,7 @@ index 234d0ec02cd6e754aae0127ea33595a3167f9400..79dee0f117e189fdae626d58e1ea3bb3
             mesa_loge("ZINK: vkEnumerateInstanceLayerProperties failed");
      } else {
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index c37fa55f3a1fbb0402445a39cd6594da6c12ee0d..206cc1192987c000c730c80e0559c895b3df2424 100644
+index 48201b53b8f076c705c5734b862e4f7ed2e1717b..296683f6ad06e6858e55d8781dd9233a1f804262 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -60,11 +60,11 @@
@@ -157,7 +157,7 @@ index c37fa55f3a1fbb0402445a39cd6594da6c12ee0d..206cc1192987c000c730c80e0559c895
  #define ZINK_EXTERNAL_MEMORY_HANDLE 999
  
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index 97bea0404e79ef080b4772db3fc141a2df00c444..f2197a33212e5e2a77614e9b78dc0d8ee919bd3c 100644
+index 0b2342c445d344fffbea0625fbe94644b877be7b..d0de69cd4f6bee320002141399cf009b2b3dd54a 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -80,14 +80,14 @@ bool zink_tracing = false;
@@ -177,7 +177,7 @@ index 97bea0404e79ef080b4772db3fc141a2df00c444..f2197a33212e5e2a77614e9b78dc0d8e
  
  #ifdef HAVE_LIBDRM
  #include "drm-uapi/dma-buf.h"
-@@ -3422,6 +3422,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3423,6 +3423,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
  
     u_trace_state_init();
  
@@ -192,7 +192,7 @@ index 97bea0404e79ef080b4772db3fc141a2df00c444..f2197a33212e5e2a77614e9b78dc0d8e
     screen->loader_lib = util_dl_open(VK_LIBNAME);
     if (!screen->loader_lib) {
        if (!screen->driver_name_is_inferred)
-@@ -3437,6 +3445,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3438,6 +3446,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
           mesa_loge("ZINK: failed to get proc address");
        goto fail;
     }
@@ -200,7 +200,7 @@ index 97bea0404e79ef080b4772db3fc141a2df00c444..f2197a33212e5e2a77614e9b78dc0d8e
  
     if (config) {
        driParseConfigFiles(config->options, config->options_info,
-@@ -3464,6 +3473,16 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3465,6 +3474,16 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
     screen->instance_info = &instance_info;
     simple_mtx_unlock(&instance_lock);
  

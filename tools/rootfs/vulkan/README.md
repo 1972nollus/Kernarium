@@ -145,6 +145,13 @@ tools/rootfs/vulkan/rebase-patches.sh \
   --component mesa --source /path/to/mesa-topic
 ```
 
+The Mesa series is also the lower segment of the host's Mesa series in
+[`../../../dependencies/patches/mesa`](../../../dependencies/README.md): one
+topic branch carries these guest topics followed by the host-only topics.
+Export this segment with `--head` naming its last commit, then the host layer
+with `dependencies/rebase-patches.sh`. A guest Mesa change therefore also
+invalidates the host prefixes.
+
 The accepted CTS images and their receipts name one patched tree per component,
 and each component's `series.tsv` records the tree its patches produce. A
 series edit that keeps that tree, such as a reworded message or a folded

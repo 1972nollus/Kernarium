@@ -152,6 +152,15 @@ The Venus protocol series is owned by
 parent-directory paths, unknown owners, or symlink traversal; no second copy
 exists under `patches/`.
 
+Host and guest build Mesa from one topic branch on the same pinned commit.
+The guest's Mesa series, `tools/rootfs/vulkan/patches/mesa`, is its lower
+segment, and `patches/mesa` holds only the host topics that follow it; the
+manifest names both layers, and the host series records the tree of the
+whole stack. A topic both need belongs in the guest segment and a host-only
+topic in the host segment, so a KosmicKrisp change never alters the guest
+tree its CTS receipts name. Every guest segment change also changes the host
+tree and needs new host prefixes.
+
 That series is patch-managed like every other dependency, and its editable
 source is a replay clone of the pinned generator repository whose history is
 the pinned commit followed by the maintained topic commits.
@@ -311,8 +320,8 @@ to the tree the layers before it produce, and the last layer, which
 `patches/` owns, records the tree of the whole stack. The only lower layer
 allowed is the paired guest's Mesa series, named
 `rootfs-vulkan:patches/mesa/series.tsv`, whose source pin must equal the
-host's. One topic checkout then carries the guest topics followed by the host
-topics. Regenerate a changed guest layer first with
+host's; Mesa's row uses it. Its topic checkout carries the guest topics
+followed by the host topics. Regenerate a changed guest layer first with
 `tools/rootfs/vulkan/rebase-patches.sh --head GUEST_END`. This regenerator
 exports only the topics after the single commit whose tree the lower layer
 records, and it refuses a checkout without that commit.

@@ -40,7 +40,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 112 insertions(+), 20 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 57eb289e68831d8980e48097f663469ac4eaf249..b9eeb6d2905c9dd4ee819f5bf28288a2592e607d 100644
+index e984830ef7f5852ee8a3238bb2d3e3650166323c..058e80dccf2126a194a1ad7dc0708a749bcc8f93 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -939,7 +939,7 @@ zink_end_batch(struct zink_context *ctx)
@@ -53,7 +53,7 @@ index 57eb289e68831d8980e48097f663469ac4eaf249..b9eeb6d2905c9dd4ee819f5bf28288a2
  
        for (; res; res = zink_resource(res->base.b.next)) {
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 18e145399310161ab15f3b121bef903ad5896b49..a70a7540796fa9bc3f22ebae77d10f4870538a3f 100644
+index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b3c44129c 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -97,6 +97,8 @@ check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res

@@ -247,10 +247,10 @@ index 9eae218fd402b162eb1229b626e494568bd6dced..1001d28f3dca67d4a2029ccf6e9d4e6e
     EGLBoolean ProtectedContent;
  };
 diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
-index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..ed4025b77867a71e14cbb86b4f9e574280198931 100644
+index f3ff7e5f9b39cbe310f54ec1a01ac68f8e2c6490..79bc9593978a763ea53270718452e41d3f44c6d4 100644
 --- a/src/gallium/frontends/dri/dri2.c
 +++ b/src/gallium/frontends/dri/dri2.c
-@@ -1038,6 +1038,90 @@ dri_create_image(struct dri_screen *screen,
+@@ -1061,6 +1061,90 @@ dri_create_image(struct dri_screen *screen,
     return img;
  }
  
