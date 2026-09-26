@@ -96,8 +96,10 @@ esac
 [ ! -e "$final_output_dir" ] && [ ! -L "$final_output_dir" ] || \
 	fail "refusing to replace output directory: $final_output_dir"
 staging_output_dir=$(mktemp -d "$output_parent/.$output_name.partial.XXXXXX")
+chroot_proc=
 cleanup_output()
 {
+	unmount_chroot_proc || true
 	[ -n "$staging_output_dir" ] || return
 	rm -rf -- "$staging_output_dir"
 }
@@ -127,6 +129,22 @@ reset_root_directory()
 		as_root rm -rf -- "$directory"
 	fi
 	as_root mkdir -p -- "$directory"
+}
+
+# Package maintainer scripts need /proc in the chroot. Without it,
+# systemd-hwdb cannot replace hwdb.bin, and the udev hardware database
+# silently misses the entries of every later package.
+mount_chroot_proc()
+{
+	as_root mount -t proc proc "$1/proc"
+	chroot_proc=$1/proc
+}
+
+unmount_chroot_proc()
+{
+	[ -n "$chroot_proc" ] || return 0
+	as_root umount -- "$chroot_proc"
+	chroot_proc=
 }
 
 write_root_file()
@@ -440,11 +458,13 @@ build_debian_minimal()
 	printf '%s\n' "==> Building Debian 13 minimal GPT image"
 	root=$roots_dir/debian-minimal
 	debootstrap_root "$root"
+	mount_chroot_proc "$root"
 	configure_debian_base "$root" debian root
 	as_root chroot "$root" /usr/bin/passwd -d root
 	as_root systemctl --root="$root" set-default multi-user.target
 	as_root chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | \
 		sort > "$work_dir/debian-minimal.packages.tsv"
+	unmount_chroot_proc
 	cat "$root/etc/debian_version" > "$work_dir/debian.version"
 	prune_debian "$root"
 	destination=$(artifact_path debian-13-minimal.img)
@@ -504,10 +524,12 @@ build_debian_plasma()
 	printf '%s\n' "==> Building Debian 13 minimal Plasma Wayland GPT image"
 	root=$roots_dir/debian-plasma
 	debootstrap_root "$root"
+	mount_chroot_proc "$root"
 	configure_debian_base "$root" debian debian
 	configure_plasma_user "$root"
 	as_root chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | \
 		sort > "$work_dir/debian-plasma.packages.tsv"
+	unmount_chroot_proc
 	prune_debian "$root"
 	destination=$(artifact_path debian-13-plasma-wayland.img)
 	as_root python3 "$SCRIPT_DIR/make-gpt-image.py" \
