@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -224,6 +225,22 @@ class AquariumProbePolicyTests(unittest.TestCase):
                 mock.call(1234, run_chromium_webgl.signal.SIGKILL),
             ],
         )
+
+    def test_guest_starts_as_the_leader_of_its_own_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            with log_path.open("wb") as log:
+                process = run_chromium_webgl.start_guest(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os; print(os.getpgid(0), os.getsid(0))",
+                    ],
+                    log,
+                )
+                self.assertEqual(process.wait(timeout=30), 0)
+            group, session = map(int, log_path.read_text().split())
+        self.assertEqual((group, session), (process.pid, process.pid))
 
     def test_renderer_policy_distinguishes_virgl_and_zink(self) -> None:
         line = metric_line([20.0] * 30)

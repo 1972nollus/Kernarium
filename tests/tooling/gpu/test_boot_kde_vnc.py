@@ -6,11 +6,14 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import importlib.util
+import os
 from pathlib import Path
 import re
+import signal
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "boot_kde_vnc.py"
@@ -225,6 +228,59 @@ class KdeVncLauncherTests(unittest.TestCase):
                 run_webgl_samples.graphics_failure(clean + "\n" + line),
                 line,
             )
+
+    def test_webgl_samples_reap_their_guest_harness(self) -> None:
+        # The stand-in harness reports a guest failure, then keeps running
+        # the way a --no-auto-poweroff guest does until it is signalled.
+        harness = (
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+            "with open(sys.argv[1], 'w') as record:\n"
+            "    print(os.getpid(), os.getpgid(0), os.getsid(0), file=record)\n"
+            "print('UML_WEBGL_RUNNER_ERROR: stand-in guest failed', flush=True)\n"
+            "time.sleep(60)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "harness"
+            command = [sys.executable, "-c", harness, str(record), "--"]
+            arguments = [
+                "run_webgl_samples.py",
+                "--artifact-root", str(root / "artifacts"),
+                "--end-at", "1",
+            ]
+            samples_launcher = run_webgl_samples.boot_kde_vnc
+            with (
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(
+                    run_webgl_samples.kernarium_common, "validate_rootfs"
+                ),
+                mock.patch.object(samples_launcher, "parse_arguments"),
+                mock.patch.object(
+                    samples_launcher,
+                    "build_harness_command",
+                    return_value=command,
+                ),
+                mock.patch.object(
+                    run_webgl_samples, "git_state", return_value={}
+                ),
+            ):
+                try:
+                    with self.assertRaisesRegex(
+                        RuntimeError, "stand-in guest failed"
+                    ):
+                        run_webgl_samples.main()
+                finally:
+                    pid, group, session = map(int, record.read_text().split())
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        leaked = False
+                    else:
+                        leaked = True
+                        os.kill(pid, signal.SIGKILL)
+        self.assertFalse(leaked, "the runner left its guest harness running")
+        self.assertEqual((group, session), (pid, pid))
 
     def test_guest_harness_runs_directly(self) -> None:
         options = boot_kde_vnc.parse_arguments(
