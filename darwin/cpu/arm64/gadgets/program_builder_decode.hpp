@@ -3,7 +3,6 @@
 
 #include "gadget_selection_api.hpp"
 #include "program.hpp"
-#include "simd_operand_histogram.hpp"
 
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/id_registers.hpp"
@@ -32,18 +31,10 @@ inline constexpr bool inline_conditional_fallthrough =
 
 /* The byte offset of a guest vector register inside CpuState, which every
  * SIMD and floating-point operand word in the decode fragments is built from.
- *
- * This was written out by hand in twenty-seven separate places, each one
- * redeclaring the same lambda. Beyond the duplication, that left the engine
- * with no single point where a guest vector operand is named, so G-4 could not
- * measure which registers translated code actually uses without editing every
- * copy - and G129 reverted an attempt that hooked the two helpers which do have
- * a shared form and captured almost nothing. One helper gives the measurement a
- * choke point and the bank a place to consult a mapping.
+ * One helper is the single point where a guest vector operand is named.
  */
 [[nodiscard]] inline std::size_t vector_operand_offset(unsigned index) noexcept
 {
-	diagnostics::record_simd_operand(index);
 	return offsetof(CpuState, vectors) + index * sizeof(VectorRegister);
 }
 

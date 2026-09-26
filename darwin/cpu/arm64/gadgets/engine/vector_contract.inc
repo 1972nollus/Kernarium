@@ -6,7 +6,7 @@
 .set vector_register8, 0x4000 | 8
 .set vector_register16, 0x4000 | 16
 
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 #if __APPLE__
 .pushsection __DATA_CONST,__gadget_vector
 #else
@@ -33,7 +33,7 @@ NAME(uml_arm64_vector_contract_begin):
 .macro vector_entry name, forward, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
  .set .Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
 #if __APPLE__
  .pushsection __DATA_CONST,__gadget_vector

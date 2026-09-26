@@ -356,7 +356,7 @@ NAME(uml_arm64_gadget_enter):
 	stp x26, x27, [sp, #0x40]
 	stp x28, x29, [sp, #0x50]
 	str lr, [sp, #0x60]
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_EXECUTION_HISTOGRAM
 	str x4, [sp, #0x70]
 #endif
 	str wzr, [sp, #0x84]

@@ -250,15 +250,14 @@ unattended run.
 
 ## Gadget forwarding controls
 
-Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
+Scalar and SIMD/FP forwarding default to ON.
 Set the two forwarding options explicitly for A/B controls. Existing CMake
 caches retain their selected values when source defaults change.
 
 Build the manual `uml_scalar_ceiling_bench` target with
-`UML_GADGET_SCALAR_FORWARDING=ON` and dependency coverage disabled. Its sources
-live in `scalar_ceiling/`, separately from the freestanding guest probes. The
-production builder translates the identical A64 bodies used by the native
-control. Same-binary forwarding-off/on runs share the stream, CPU-state, TLB,
+`UML_GADGET_SCALAR_FORWARDING=ON`. Its sources live in `scalar_ceiling/`,
+separately from the freestanding guest probes. The production builder
+translates the identical A64 bodies used by the native control. Same-binary forwarding-off/on runs share the stream, CPU-state, TLB,
 and link addresses; independent controls require byte-identical streams.
 This isolates operand forwarding from code and data layout changes. The
 default sample executes 800 million useful
@@ -274,36 +273,12 @@ AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
 
 `UML_GADGET_VECTOR_FORWARDING=ON` independently enables adjacent SIMD/FP
-forwarding. For application-speed comparisons, keep dependency coverage and
-sampling disabled and compare matched builds with neither option, scalar only,
-and scalar plus vector forwarding. `run_guest_geekbench.py --cpus 4` runs both
+forwarding. For application-speed comparisons, keep sampling disabled and
+compare matched builds with neither option, scalar only, and scalar plus vector
+forwarding. `run_guest_geekbench.py --cpus 4` runs both
 single-core and multi-core sets by default; omit an iteration override for
 Geekbench's default workload sizing. Alternate or reverse run order and retain
 individual results rather than interpreting one score as a stable gain.
-
-For execution-weighted coverage, use a separate
-`UML_GADGET_DEPENDENCY_COVERAGE=ON` build. The Geekbench runner's
-`--coverage-file` records counters and workload events; use each installed
-version's full single-core set with `--iterations 1 --no-upload`. Aquarium
-uses `DARWIN_UML_GADGET_DEPENDENCY_COVERAGE` with its ordinary runner. Analyze
-the corresponding files with `analyze_gadget_dependencies.py --help`. The
-analyzer separates single-core and multi-core sections when both are present.
-Use both forwarding options when measuring the enabled combined policy;
-coverage alone records the same declared opportunities without selecting
-forwarding variants.
-
-Counters are per entered decoder group and declared source accessor. Scalar
-sources include memory addresses; SIMD/FP sources follow the vector contracts.
-Each group belongs to one catalog or the unsupported bucket, so combined
-percentages divide summed counts without double-counting. Reports show scalar,
-SIMD/FP, and combined coverage against all entered guest words and declared
-eligible sources. Older scalar-only captures report SIMD coverage as unavailable,
-not zero. Window attribution uses nominal 100-ms counter snapshots and host
-polls (100 ms for Geekbench console markers, 500 ms for Aquarium); carrier
-snapshots are not globally atomic. Conditional reads are potential accesses,
-and no cross-block dependency is inferred. Report both all-guest-word coverage
-and the declared-source denominator. Never use instrumented scores as speed
-evidence.
 
 ## Execution histogram
 

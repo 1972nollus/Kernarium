@@ -44,7 +44,7 @@ _scalar_w16 .req w16
 .set scalar_register16, (3 << 12) | (5 << 6) | 16
 .set scalar_sp, 0x8000 | UML_GADGET_CPU_SP
 
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_SCALAR_FORWARDING
 #if __APPLE__
 .pushsection __DATA_CONST,__gadget_scalar
 #else
@@ -106,7 +106,7 @@ NAME(uml_arm64_scalar_contract_begin):
 .macro scalar_entry name, forward, family, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_SCALAR_FORWARDING
  .set .Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
 #if __APPLE__
  .pushsection __DATA_CONST,__gadget_scalar

@@ -2,10 +2,6 @@
 #include "gadget_entry.hpp"
 #include "program.hpp"
 
-#if UML_GADGET_DEPENDENCY_COVERAGE && UML_GADGET_EXECUTION_HISTOGRAM
-#error "select one gadget counting diagnostic at a time"
-#endif
-
 #include <algorithm>
 #include <utility>
 
@@ -77,9 +73,7 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count()
-#if UML_GADGET_DEPENDENCY_COVERAGE
-			, diagnostics::dependency_counters()
-#elif UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_EXECUTION_HISTOGRAM
 			, diagnostics::execution_counters()
 #endif
 			);
@@ -101,9 +95,7 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count()
-#if UML_GADGET_DEPENDENCY_COVERAGE
-			, diagnostics::dependency_counters()
-#elif UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_EXECUTION_HISTOGRAM
 			, diagnostics::execution_counters()
 #endif
 			);

@@ -1,14 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 uml_add_tooling_test(
-    NAME gadget-dependency-analysis
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/analyze_gadget_dependencies_tests.py
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    LABELS performance
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME performance-runner-cli
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/performance/test_cli.py

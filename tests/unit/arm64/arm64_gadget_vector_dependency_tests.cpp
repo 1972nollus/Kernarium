@@ -118,16 +118,15 @@ g::ScalarAccess access(std::uint32_t instruction)
 {
 	const auto built = g::Builder{}.build(pc, std::array{instruction}, {},
 		std::pmr::get_default_resource(), {}, {.vector_forwarding = false});
-	constexpr auto prefix = UML_GADGET_DEPENDENCY_COVERAGE ? 3U : 0U;
-	for (unsigned words = 2; words <= 4 && prefix + words <= built.program.words().size(); ++words) {
-		const auto result = g::vector_access(built.program.words().subspan(prefix, words));
+	for (unsigned words = 2; words <= 4 && words <= built.program.words().size(); ++words) {
+		const auto result = g::vector_access(built.program.words().first(words));
 		if (result.contract) return result;
 	}
 	return {};
 }
 #endif
 
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 void catalog()
 {
 	std::set<std::uintptr_t> pointers;
@@ -150,7 +149,7 @@ void catalog()
 #endif
 		}
 	}
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_SCALAR_FORWARDING
 	// A shared ordinary entry would need a combined variant contract, not
 	// two independent pointer substitutions by the builder.
 	for (const auto &entry : g::scalar_contracts())
@@ -201,8 +200,7 @@ void broad_matrix(uml::memory::Tlb &tlb)
 		const auto on = g::Builder{}.build(pc, code);
 		const auto off = g::Builder{}.build(pc, code, {}, std::pmr::get_default_resource(), {},
 			{.vector_forwarding = false});
-		constexpr auto prefix = UML_GADGET_DEPENDENCY_COVERAGE ? 3U : 0U;
-		constexpr auto position = 2U + 2U * prefix;
+		constexpr auto position = 2U;
 		require(on.program.words().size() == off.program.words().size());
 		require(off.program.words()[position] == entry);
 		require(on.program.words()[position] == selected.contract->entries[mask]);
@@ -210,7 +208,7 @@ void broad_matrix(uml::memory::Tlb &tlb)
 		require(consumer.contract != nullptr);
 		const auto consumer_mask = consumer.source_mask(selected.destination);
 		require(consumer_mask != 0);
-		require(on.program.words()[position + 1U + selected.contract->operand_words + prefix] ==
+		require(on.program.words()[position + 1U + selected.contract->operand_words] ==
 			consumer.contract->entries[consumer_mask]);
 		for (auto fpcr : {0U, 4U, 3U, 7U, 0x0340'0000U}) {
 			compare(code, static_cast<unsigned>(comparisons * 4), fpcr, tlb, false);
@@ -245,7 +243,7 @@ void boundaries(uml::memory::Tlb &tlb)
 	}) {
 		const std::array code{producer, middle, consumer, svc};
 		compare(code, 124, 0, tlb);
-#if UML_GADGET_VECTOR_FORWARDING && !UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 		const auto on = g::Builder{}.build(pc, code);
 		const auto off = g::Builder{}.build(pc, code, {}, std::pmr::get_default_resource(), {},
 			{.vector_forwarding = false});
@@ -291,7 +289,7 @@ void run_gadget_vector_dependency_tests()
 {
 	const uml::cpu::HostCapabilitiesScope host{uml::platform::apple::probed_host_capabilities()};
 	auto tlb = std::make_unique<uml::memory::Tlb>();
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 	catalog();
 #endif
 #if UML_GADGET_VECTOR_FORWARDING

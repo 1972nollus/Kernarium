@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-if(UML_TARGET_MACOS AND NOT UML_GADGET_DEPENDENCY_COVERAGE)
+if(UML_TARGET_MACOS)
     add_executable(uml_scalar_ceiling_bench EXCLUDE_FROM_ALL
         bench.cpp workloads.S
         $<TARGET_OBJECTS:uml_static_mmu>

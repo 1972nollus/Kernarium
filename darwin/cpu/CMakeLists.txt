@@ -126,20 +126,7 @@ target_compile_options(uml_arm64_execution_helpers PRIVATE
 set_target_properties(uml_arm64_execution_helpers PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-# Off by default so ordinary translation has no diagnostic instrumentation.
-# Build a separate tree with -DUML_GADGET_PAIR_HISTOGRAM=ON and set
-# DARWIN_UML_GADGET_PAIR_HISTOGRAM to a path to capture which adjacent gadget
-# pairs a workload actually translates, which is what G-2's remaining step needs
-# in order to choose fusion candidates by frequency rather than by eye.
-option(UML_GADGET_PAIR_HISTOGRAM
-    "Count adjacent gadget pairs during translation (diagnostic builds only)"
-    OFF)
-
-option(UML_GADGET_DEPENDENCY_COVERAGE
-    "Count executed scalar and SIMD/FP dependency opportunities (diagnostic builds only)"
-    OFF)
-
-# Also default-off and mutually exclusive with dependency coverage: the same
+# Off by default so ordinary translation has no diagnostic instrumentation. A
 # threaded counter gadget indexes a table keyed by the exact selected entry,
 # which is what a static host-instruction cost per entry must be weighted by.
 option(UML_GADGET_EXECUTION_HISTOGRAM
@@ -153,13 +140,6 @@ option(UML_GADGET_SCALAR_FORWARDING
 option(UML_GADGET_VECTOR_FORWARDING
     "Forward adjacent write-through SIMD/FP results within gadget blocks"
     ON)
-
-# Also off by default, and for the same reason. G-4 needs to know how far a
-# fixed guest-to-host vector bank would reach, and that is decided by how
-# concentrated translated code's vector operand registers are.
-option(UML_GADGET_SIMD_OPERAND_HISTOGRAM
-    "Count guest SIMD operand registers during translation (diagnostic only)"
-    OFF)
 
 # G107's bounded successor fetch applies only to the 32 non-faulting
 # ADD/SUB-immediate entries whose register and stream contract can safely load
@@ -305,12 +285,9 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
-    arm64/gadgets/pair_histogram.cpp
-    arm64/gadgets/dependency_coverage.cpp
     arm64/gadgets/execution_histogram.cpp
     arm64/gadgets/guest_sampler.cpp
     arm64/gadgets/scalar_forwarding.cpp
-    arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
     # their *_impl.ipp fragments so the whole per-instruction decode chain
     # inlines as one unit; see the comment at the top of that file.
@@ -333,12 +310,9 @@ target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
-    UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
-    UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
-    UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
     UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}

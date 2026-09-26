@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program_builder_decode.hpp"
 #include "gadget_selection.hpp"
-#include "pair_histogram.hpp"
-#include "dependency_coverage.hpp"
 #include "execution_histogram.hpp"
 #include "scalar_forwarding.hpp"
 
@@ -138,10 +136,10 @@ BuildResult Builder::build(
 	};
 	bool program_accesses_fp_state = false;
 	[[maybe_unused]] const void *previous_gadget = nullptr;
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+#if UML_GADGET_SCALAR_FORWARDING
 	std::uint16_t previous_scalar = scalar_no_register;
 #endif
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 	std::uint16_t previous_vector = scalar_no_register;
 #endif
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
@@ -154,7 +152,7 @@ BuildResult Builder::build(
 			uml::cpu::arm64::detail::
 				instruction_accesses_fp_state(instruction);
 		const auto address = run_base + compiled * sizeof(instruction);
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_EXECUTION_HISTOGRAM
 		const auto coverage_word = words.size();
 		emit(words, diagnostics::uml_arm64_gadget_dependency_coverage);
 		emit(words, std::uintptr_t{sizeof(std::uint64_t)});
@@ -171,7 +169,7 @@ BuildResult Builder::build(
 				true, address, instruction};
 		}
 
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING || UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING || UML_GADGET_EXECUTION_HISTOGRAM
 		const auto compiled_before = compiled;
 #endif
 		DecodeContext context{
@@ -218,28 +216,20 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
-#if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
+#if UML_GADGET_VECTOR_FORWARDING
 		const auto current_vector = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?
 			vector_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
 		const auto vector_mask = current_vector.source_mask(previous_vector);
 		previous_vector = current_vector.destination;
 #endif
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_SCALAR_FORWARDING
+#if UML_GADGET_SCALAR_FORWARDING
 		// The selected assembly entry owns its access description. Do not
 		// infer it again from opcode bits: aliases and fused groups differ.
 		const auto current_scalar = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?
 			scalar_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
 		const auto source_mask = current_scalar.source_mask(previous_scalar);
-#if UML_GADGET_DEPENDENCY_COVERAGE
-		const auto bucket = current_vector.contract ? current_vector.coverage_bucket(
-			vector_mask, diagnostics::vector_coverage_family) :
-			current_scalar.coverage_bucket(source_mask);
-		words[coverage_word + 1] = bucket * sizeof(std::uint64_t);
-		words[coverage_word + 2] = std::max<std::size_t>(1,
-			compiled - compiled_before + (decoded == DecodeResult::decoded));
-#endif
 #if UML_GADGET_SCALAR_FORWARDING
 		if (source_mask != 0 && options.scalar_forwarding)
 			words[emitted_start] = current_scalar.contract->entries[source_mask];
@@ -261,16 +251,11 @@ BuildResult Builder::build(
 				(decoded == DecodeResult::decoded));
 		}
 #endif
-		/* The first word a decode emits is its gadget pointer, which is
-		 * what makes the adjacent-pair record cheap: no separate pass and
-		 * no knowledge of operand shapes. Compiled out entirely unless the
-		 * histogram build is selected. */
-		if (words.size() > emitted_start) {
-			const auto *emitted = reinterpret_cast<const void *>(
+		/* The first word a decode emits is its gadget pointer, which the
+		 * execution histogram pairs with its predecessor. */
+		if (words.size() > emitted_start)
+			previous_gadget = reinterpret_cast<const void *>(
 				words[emitted_start]);
-			diagnostics::record_gadget_pair(previous_gadget, emitted);
-			previous_gadget = emitted;
-		}
 		if (decoded == DecodeResult::continue_elsewhere) {
 			/* The run ends here and the next one starts wherever the
 			 * decoder pointed. A window it cannot read, or a fourth

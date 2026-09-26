@@ -11,12 +11,10 @@
 /*
  * Execution-weighted histogram of gadget entries (diagnostic builds only).
  *
- * The dependency-coverage build counts entered decode groups by forwarding
- * shape. This build counts them by the exact gadget entry the translator
- * selected, including forwarding variants, so a static host-instruction cost
- * per entry can be weighted by how often the entry actually runs. The same
- * threaded counter gadget is reused; only the table it indexes differs. Slot
- * zero accumulates guest words in entered groups, slot one counts groups whose
+ * A threaded counter gadget counts entered decode groups by the exact gadget
+ * entry the translator selected, including forwarding variants, so a static
+ * host-instruction cost per entry can be weighted by how often the entry
+ * actually runs. Slot zero accumulates guest words in entered groups, slot one counts groups whose
  * entry could not be indexed, and slot 2 + i counts executions of the entry
  * with dense index i, where an index names one (predecessor, entry) pair so
  * that executed adjacent pairs are exact as well. Counting is per carrier and

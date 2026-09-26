@@ -174,25 +174,17 @@ memory values and templates producing results in other scratch registers are
 not exported. This is not a persistent guest-vector register cache.
 
 Both forwarding options can be disabled independently for controls or code-size
-tradeoffs. With both options and coverage disabled, the original gadget text is
-unchanged. The default policy does not imply a general application speedup:
-measured gains are workload-dependent and the forwarding bank is larger.
+tradeoffs. With both options disabled, the original gadget text is unchanged.
+The default policy does not imply a general application speedup: measured
+gains are workload-dependent and the forwarding bank is larger.
 
-`UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
-Its entered-group counters describe opportunities in both scalar and SIMD/FP
-contracts, independently of whether forwarding is enabled. Each group occupies
-one scalar, vector, or unsupported bucket; combined totals do not double-count.
-They do not measure retirement, conditional operand use, or speed. The
-measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
-
-`UML_GADGET_EXECUTION_HISTOGRAM` is the other default-off diagnostic build and
-excludes dependency coverage. The same counter gadget indexes a table keyed by
-the exact (predecessor, entry) pair the translator selected, so executed
-entries, executed adjacent pairs, and entered guest words are exact. Its dump
-also reports why each linked chain returned to the executor and how many
-distinct targets the missing indirect sites had. Instrumented streams carry
-one extra dispatch per guest instruction, so the build is evidence for
-instruction mix and static cost, never for speed.
+`UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build. A threaded
+counter gadget indexes a table keyed by the exact (predecessor, entry) pair the
+translator selected, so executed entries, executed adjacent pairs, and entered
+guest words are exact. Its dump also reports why each linked chain returned to
+the executor and how many distinct targets the missing indirect sites had.
+Instrumented streams carry one extra dispatch per guest instruction, so the
+build is evidence for instruction mix and static cost, never for speed.
 
 The JIT derives private and shared cache geometry from one process budget,
 defaulting to half of guest RAM. A managed run keeps at most one executor per
