@@ -6,7 +6,7 @@ The products are one common initramfs and three raw GPT disks:
 - `uml-resize-initramfs.cpio.gz` checks `/dev/ubda1`, grows a sole ext4
   filesystem to the already enlarged partition while it is still unmounted,
   mounts it, and enters the image's init;
-- `alpine-3.24.1-minimal.img` is an Alpine OpenRC root with an automatically
+- `alpine-3.24.2-minimal.img` is an Alpine OpenRC root with an automatically
   logged-in root shell on `hvc0`;
 - `debian-13-minimal.img` is a Debian systemd root with an automatically
   logged-in root shell on `hvc0`; and
@@ -58,7 +58,7 @@ through the common initramfs grows ext4 before mounting it:
 
 ```sh
 python3 tools/rootfs/starter/grow-image.py \
-  --image alpine-3.24.1-minimal.img --size-gib 4
+  --image alpine-3.24.2-minimal.img --size-gib 4
 ```
 
 Boot the resulting disk as `ubd0`, load the common initramfs, and use

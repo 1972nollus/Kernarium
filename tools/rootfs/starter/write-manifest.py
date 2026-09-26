@@ -17,7 +17,7 @@ from gpt import inspect
 
 ARTIFACTS = (
     "uml-resize-initramfs.cpio.gz",
-    "alpine-3.24.1-minimal.img",
+    "alpine-3.24.2-minimal.img",
     "debian-13-minimal.img",
     "debian-13-plasma-wayland.img",
 )
@@ -76,16 +76,16 @@ def main() -> int:
         },
         "sources": {
             "buildroot": {
-                "version": "2026.05.2",
-                "sha256": "7cd0b79e657b8a1760cef0a68d083265726efe96a17f7f0cb9c10dd6d29b7107",
+                "version": "2026.05.3",
+                "sha256": "f43f1627082a45848f73083b3b8d59f32bb4c77a449a8ead8a2a1f91849dea00",
             },
             "busybox": {
                 "version": "1.38.0",
                 "sha256": "34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2",
             },
             "alpine": {
-                "version": "3.24.1",
-                "sha256": "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259",
+                "version": "3.24.2",
+                "sha256": "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773",
             },
             "debian": {
                 "suite": "trixie",
