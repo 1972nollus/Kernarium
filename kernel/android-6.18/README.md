@@ -134,7 +134,9 @@ kernel-build-tools musl sysroot and libraries, including the `libelf` that
 
 `android/aosp-17/tools/publish-kernel-artifact.py` publishes an already-built
 clean ACK result into the common compact artifact format. It strips DWARF from
-the published `vmlinux` and keeps `.BTF`, the symbol tables, and `System.map`.
+the published `vmlinux`. That drops only the `STT_FILE` symbols and
+debug-section locals, and keeps `.BTF`, every function and data symbol,
+`.dynsym`, and `System.map`.
 [`artifacts/accepted-16k.env`](artifacts/accepted-16k.env) selects the reviewed
 local bundle below `.build/kernel/artifacts`.
 
