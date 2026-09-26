@@ -7,7 +7,6 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
@@ -132,14 +131,6 @@ done
 case "$PRODUCT" in
 *[!A-Za-z0-9._+-]*|'') fail "unsafe dependency product: $PRODUCT" ;;
 esac
-
-[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-if [ -z "$ARCHIVE_MANIFEST" ] && [ -z "$RESOLVE_REPOSITORY" ] &&
-	[ -z "$TAG_REPOSITORY" ]; then
-	uml_require_git_identity 'dependencies/prepare.sh'
-fi
 
 sha256_file()
 {

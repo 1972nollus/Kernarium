@@ -45,11 +45,14 @@ Preparation uses the pinned Git cache and creates the managed replay branch.
 replace only a clean stale managed replay; it never replaces an arbitrary
 checkout.
 
-Replay, rebase, and next-base commits are made with the Git identity the
-environment supplies, through `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` or a
-configured `user.name`/`user.email`. These tools carry no identity of their own
-and refuse to run before doing any work when none is configured, rather than
-letting Git invent one from the account and host names.
+Replay, rebase, and next-base commits keep each topic's author and are
+committed by whoever Git resolves for the caller; that committer never reaches
+a patch file. A patch's only identity is its topic's author, so
+`scripts/patch_series.py export` refuses a placeholder author or one Git
+invented from the host name, such as a `localhost`, `.local`, `.invalid`, or
+`example.com` address. The topic's owner fixes it with an ordinary amend such
+as `git commit --amend --reset-author`. Tools never name or rewrite an
+identity.
 
 `verify-replay.sh` starts from the pinned upstream commit, verifies the shared
 series, branches and verifies the x86_64 overlay, and by default builds arm64

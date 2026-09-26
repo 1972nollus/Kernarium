@@ -53,7 +53,7 @@ absolute_path()
 	esac
 }
 
-require_git_identity()
+require_pinned_checkout()
 {
 	repository=$1
 	expected_commit=$2
@@ -152,10 +152,10 @@ command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
 [ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
-require_git_identity "$AOSP_SOURCE/.repo/manifests" \
+require_pinned_checkout "$AOSP_SOURCE/.repo/manifests" \
 	"$ANDROID17_MANIFEST_COMMIT" "$ANDROID17_MANIFEST_TREE" \
 	"AOSP manifest"
-require_git_identity "$ACK_WORKSPACE/common" \
+require_pinned_checkout "$ACK_WORKSPACE/common" \
 	"$UML_KERNEL_UPSTREAM_COMMIT" "$UML_KERNEL_UPSTREAM_TREE" \
 	"ACK common"
 dirty_projects=$(dirty_repo_projects)

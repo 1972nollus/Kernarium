@@ -86,8 +86,8 @@ dependencies/prepare.sh --product x86-conformance
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
 read-only checks. Each script's `--help` owns non-default paths and options.
 
-Series replay commits with the Git identity the environment supplies and
-refuses to run when none is configured. See
+Series replay commits as whoever Git resolves for the caller, and export
+refuses a topic whose author is a placeholder. See
 [`kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) for the
 shared contract.
 

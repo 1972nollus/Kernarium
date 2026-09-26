@@ -18,11 +18,18 @@ A series is identified by the tree it produces from its base. An owner either
 records that tree as the optional ``tree`` row of ``series.tsv`` or keeps it
 in its own metadata. :func:`series_tree` recomputes it without a checkout, and
 ``export --check`` proves that a replay reproduces the checked-in bytes.
+
+A patch's only identity is the author of its topic commit: ``git am`` takes the
+author from each patch and a rebase keeps it, so a replay's committer never
+reaches a patch file. Export therefore refuses a topic whose author is a
+placeholder or one Git invented from the account and host names, and leaves
+fixing it to the person who owns the topic.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import os
 import re
@@ -34,9 +41,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-import git_identity  # noqa: E402
 
 SERIES_FILE = "series.tsv"
 DEFAULT_LICENSE = "GPL-2.0-or-later"
@@ -44,6 +48,20 @@ ZERO_FROM = b"From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 
 PATCH_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.patch$")
 OBJECT_ID = re.compile(r"^[0-9a-f]{40}$")
 FILENAME_MAX_LENGTH = 80
+IDENT = re.compile(r"^(?P<name>.*) <(?P<email>[^>]*)> [^ ]+ [^ ]+$")
+# Domains that name no mailbox: the reserved example and test names, and the
+# host-local names Git builds an email from when none is configured. An author
+# email in or under one of them is a placeholder, as is any "(none)" Git
+# appends to a host name it cannot qualify.
+PLACEHOLDER_DOMAINS = (
+    "localhost",
+    "local",
+    "localdomain",
+    "invalid",
+    "example.com",
+    "example.org",
+    "example.net",
+)
 
 # Options that fix every formatting choice Git would otherwise take from the
 # caller's configuration, so the same commits export to the same bytes for
@@ -69,9 +87,8 @@ AM_OPTIONS = (
 )
 
 
-# Replays never run hooks, and Git never invents a committer from the account
-# and host names: the identity comes from git_identity.require_git_identity.
-GIT_OPTIONS = ("-c", "core.hooksPath=" + os.devnull, "-c", "user.useConfigOnly=true")
+# Replays never run hooks.
+GIT_OPTIONS = ("-c", "core.hooksPath=" + os.devnull)
 
 
 class SeriesError(Exception):
@@ -89,8 +106,33 @@ class Series:
         return tuple(self.directory / name for name in self.names)
 
 
+@functools.cache
+def _caller_identity() -> tuple[tuple[str, str], ...]:
+    """Return the author and committer Git resolves for the caller.
+
+    The isolated environment hides the caller's configuration, which is also
+    where Git finds its identity. Commits made there (replayed, rebased, or a
+    fixture's) carry forward whatever Git resolved outside it; when Git
+    resolves nothing, nothing is carried and Git reports it.
+    """
+    identity: list[tuple[str, str]] = []
+    for role in ("AUTHOR", "COMMITTER"):
+        result = subprocess.run(
+            ["git", "var", f"GIT_{role}_IDENT"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        match = IDENT.match(result.stdout.decode(errors="replace").strip())
+        if result.returncode == 0 and match is not None:
+            identity.append((f"GIT_{role}_NAME", match.group("name")))
+            identity.append((f"GIT_{role}_EMAIL", match.group("email")))
+    return tuple(identity)
+
+
 def isolated_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ)
+    environment.update(_caller_identity())
     environment["GIT_CONFIG_NOSYSTEM"] = "1"
     environment["GIT_CONFIG_GLOBAL"] = os.devnull
     environment.pop("GIT_INDEX_FILE", None)
@@ -225,7 +267,6 @@ def apply_series(
     """Commit every patch onto the clean checkout's HEAD with ``git am``."""
     if git(repository, "status", "--porcelain", "--untracked-files=all").strip():
         raise SeriesError(f"{repository}: checkout is not clean")
-    git_identity.require_git_identity(Path(__file__).name)
     patches = [str(patch) for directory in directories for patch in read_series(directory).patches]
     if patches:
         result = subprocess.run(
@@ -244,6 +285,32 @@ def apply_series(
     if expected_tree is not None and tree != expected_tree:
         raise SeriesError(f"{repository}: replayed tree is {tree}, expected {expected_tree}")
     return tree
+
+
+def placeholder_email(email: str) -> bool:
+    """Whether an author email is a placeholder or a host-derived default."""
+    address = email.strip().lower()
+    if "(none)" in address or "@" not in address:
+        return True
+    domain = address.rsplit("@", 1)[1]
+    return not domain or any(
+        domain == reserved or domain.endswith("." + reserved)
+        for reserved in PLACEHOLDER_DOMAINS
+    )
+
+
+def _check_authors(source: Path, base: str, head: str) -> None:
+    log = git(source, "log", "--reverse", "--format=%H%x00%an%x00%ae%x00%s",
+              f"{base}..{head}")
+    for line in log.splitlines():
+        commit, name, email, subject = line.split("\0", 3)
+        if placeholder_email(email):
+            raise SeriesError(
+                f"{source}: topic commit {commit[:12]} ({subject}) has the placeholder "
+                f"author {name} <{email}>; the person who owns the topic must fix it "
+                "with 'git commit --amend --reset-author' (or --author) and export "
+                "again. Tooling never rewrites authors."
+            )
 
 
 def _series_text(license_id: str, tree: str | None, names: list[str]) -> str:
@@ -324,6 +391,7 @@ def export_series(
         if tree_of(source, commit) == tree_of(source, f"{commit}^"):
             subject = git(source, "show", "-s", "--format=%s", commit).strip()
             raise SeriesError(f"{source}: topic commit changes nothing: {subject}")
+    _check_authors(source, base_commit, head_commit)
     if directory.is_symlink() or not directory.is_dir():
         raise SeriesError(f"series directory is not a real directory: {directory}")
     license_id = license_id or _existing_license(directory) or DEFAULT_LICENSE

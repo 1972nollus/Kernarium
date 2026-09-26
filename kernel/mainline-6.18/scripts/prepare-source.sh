@@ -12,7 +12,6 @@ MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
 KERNEL_SERIES="$COMMON_ROOT/tooling/kernel_series.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 fail()
 {
@@ -89,10 +88,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
-[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'kernel/mainline-6.18/scripts/prepare-source.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
@@ -297,7 +292,7 @@ if [ "$branch_exists" -eq 0 ]; then
 	git -C "$SOURCE_DIR" switch -c "$CREATE_BRANCH" "$BASE_COMMIT"
 fi
 # Patch authors and author dates come from the checked-in mail patches. The
-# replay committer identity comes from the environment and its timestamp is
+# replay committer is whoever Git resolves for the caller and its timestamp is
 # the real replay time; neither generated commit ID is treated as a source
 # identity.
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE

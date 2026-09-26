@@ -9,7 +9,6 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
 fail()
 {
@@ -66,10 +65,6 @@ done
 [ -n "$WORK_ROOT" ] || fail "--work-root is required"
 [ -n "$UPSTREAM_REF" ] || fail "--ref is required"
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
-[ -r "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
-# shellcheck disable=SC1090
-. "$GIT_IDENTITY"
-uml_require_git_identity 'kernel/mainline-6.18/scripts/check-next-version.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
@@ -92,9 +87,18 @@ trap cleanup 0 HUP INT TERM
 audit_git()
 {
 	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git \
-		-c user.useConfigOnly=true \
 		-c core.hooksPath=/dev/null "$@"
 }
+
+# The audit clone ignores the caller's Git configuration, where Git also finds
+# its identity. The rebase keeps every topic's author; carry forward the
+# committer Git resolves for the caller, or nothing when it resolves none.
+if committer=$(git var GIT_COMMITTER_IDENT 2>/dev/null); then
+	GIT_COMMITTER_NAME=${committer%% <*}
+	committer=${committer#*<}
+	GIT_COMMITTER_EMAIL=${committer%%>*}
+	export GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+fi
 
 LINUX="$CHECK_ROOT/linux"
 audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_UPSTREAM_REPOSITORY" "$LINUX"

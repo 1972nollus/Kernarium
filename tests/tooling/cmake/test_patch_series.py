@@ -3,13 +3,12 @@
 """Pin the shared patch-series contract.
 
 A series exports to the same bytes every time, changes only where its topics
-change, replays with ``git am`` to the tree it records, and rejects anything
-that did not come from its topic branch.
+change, replays with ``git am`` to the tree it records, rejects anything
+that did not come from its topic branch, and refuses a placeholder author.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -20,7 +19,6 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import git_identity  # noqa: E402
 import patch_series  # noqa: E402
 
 SeriesError = patch_series.SeriesError
@@ -28,9 +26,8 @@ TOOL = ROOT / "scripts" / "patch_series.py"
 
 
 def git(repository: Path, *arguments: str, date: str | None = None) -> str:
-    environment = dict(os.environ)
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
-    environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    # Fixture commits are made as the caller, like the replays under test.
+    environment = patch_series.isolated_environment()
     if date is not None:
         environment["GIT_AUTHOR_DATE"] = date
         environment["GIT_COMMITTER_DATE"] = date
@@ -83,7 +80,6 @@ def export(source: Path, base: str, head: str, directory: Path, **options) -> st
 
 
 def main() -> int:
-    git_identity.require_git_identity("patch-series contract")
     scratch = Path(tempfile.mkdtemp(prefix="uml-patch-series."))
     try:
         run(scratch)
@@ -219,6 +215,43 @@ def run(scratch: Path) -> None:
     commit(source, "fix: change a", {"a.txt": b"ALPHA\n" * 20}, 10)
     expect_error("colliding subjects", "two topics export to fix-change-a.patch",
                  lambda: export(source, base, "twins", scratch / "twins"))
+
+    # A topic's author is the only identity a series records, so export refuses
+    # a placeholder or a host-derived default, names the commit, and leaves the
+    # fix to an ordinary amend by the topic's owner.
+    for email in ("dev@users.noreply.github.com", "dev@kernel.org",
+                  "dev@example.community", "dev@localhost.dev", "dev@locality.org"):
+        assert not patch_series.placeholder_email(email), email
+    for email in ("dev@localhost", "dev@build.localhost", "dev@Mac.local",
+                  "dev@HOST.LOCAL", "dev@box.localdomain", "dev@example.invalid",
+                  "dev@host.(none)", "(none)", "dev@example.com",
+                  "dev@mail.example.org", "dev@example.net", "dev", "dev@"):
+        assert patch_series.placeholder_email(email), email
+    git(source, "checkout", "-q", "-b", "placeholder", "topic")
+    (source / "f.txt").write_bytes(b"foxtrot\n")
+    git(source, "add", "f.txt")
+    git(source, "commit", "-q", "-m", "fix: add f",
+        "--author", "Placeholder <placeholder@example.invalid>",
+        date="2026-01-11T12:00:00+0900")
+    placeholder = scratch / "placeholder"
+    shutil.copytree(series, placeholder)
+    before = snapshot(placeholder)
+    rejection = "(fix: add f) has the placeholder author Placeholder <placeholder@example.invalid>"
+    expect_error("placeholder author", rejection,
+                 lambda: export(source, base, "placeholder", placeholder, record_tree=True))
+    expect_error("placeholder author check", rejection,
+                 lambda: export(source, base, "placeholder", placeholder, check=True))
+    assert snapshot(placeholder) == before
+    command = [sys.executable, "-B", str(TOOL), "export", "--source", str(source),
+               "--base", base, "--head", "placeholder", "--series-dir", str(placeholder)]
+    rejected = subprocess.run(command, capture_output=True, check=False)
+    assert rejected.returncode == 1 and b"--reset-author" in rejected.stderr, rejected.stderr
+    assert snapshot(placeholder) == before
+    git(source, "commit", "-q", "--amend", "--no-edit", "--reset-author",
+        date="2026-01-11T12:00:00+0900")
+    export(source, base, "placeholder", placeholder, record_tree=True)
+    fixed = (placeholder / "fix-add-f.patch").read_text()
+    assert "placeholder@example.invalid" not in fixed and "\nFrom: " in fixed, fixed
 
     # The command line reports tree mismatches with a non-zero status.
     verify = [sys.executable, "-B", str(TOOL), "verify", "--series-dir", str(series),

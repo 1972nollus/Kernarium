@@ -7,7 +7,6 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 COMMON_METADATA="$LINE_ROOT/patches/metadata.env"
 SLICE_ROOT="$LINE_ROOT/slices/x86_64"
 SLICE_METADATA="$SLICE_ROOT/patches/metadata.env"
-GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-slices.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
@@ -119,11 +118,9 @@ mkdir -p \
 	"$PREPARE_FIXTURE/scripts" \
 	"$PREPARE_GIT_BIN"
 cp "$PREPARE_SOURCE" "$PREPARE_SCRIPT"
-# The replay helpers resolve their Git identity contract and series tooling
-# from the tree they ship in, so the fixture tree carries the real helpers.
-cp "$GIT_IDENTITY" "$PREPARE_FIXTURE/scripts/git-identity.sh"
-cp "$ROOT_DIR/scripts/git_identity.py" "$ROOT_DIR/scripts/patch_series.py" \
-	"$PREPARE_FIXTURE/scripts/"
+# The replay helpers resolve their series tooling from the tree they ship in,
+# so the fixture tree carries the real helpers.
+cp "$ROOT_DIR/scripts/patch_series.py" "$PREPARE_FIXTURE/scripts/"
 cp "$KERNEL_SERIES" "$PREPARE_FIXTURE/kernel/common/tooling/kernel_series.py"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/select-slice.sh"
@@ -146,9 +143,6 @@ chmod +x \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/source-location.sh"
 
 git init -q "$PREPARE_TEMPLATE_SOURCE"
-git -C "$PREPARE_TEMPLATE_SOURCE" config user.name 'kernel slice fixture'
-git -C "$PREPARE_TEMPLATE_SOURCE" config user.email \
-	'kernel-slice-fixture.invalid'
 printf '%s\n' upstream > "$PREPARE_TEMPLATE_SOURCE/base.txt"
 git -C "$PREPARE_TEMPLATE_SOURCE" add base.txt
 git -C "$PREPARE_TEMPLATE_SOURCE" commit -qm 'fixture upstream'

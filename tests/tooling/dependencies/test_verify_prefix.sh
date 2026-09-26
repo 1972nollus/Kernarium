@@ -11,11 +11,9 @@ mkdir -p "$DEPENDENCY_DIR" "$TEST_ROOT/scripts"
 cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$SOURCE_DEPENDENCY_DIR/prepare.sh" \
 	"$DEPENDENCY_DIR/"
-# Preparation resolves its Git identity contract from the tree it ships in,
-# so the fixture tree carries the real helper too.
-cp "$SOURCE_DEPENDENCY_DIR/../scripts/git-identity.sh" \
-	"$SOURCE_DEPENDENCY_DIR/../scripts/git_identity.py" \
-	"$SOURCE_DEPENDENCY_DIR/../scripts/patch_series.py" "$TEST_ROOT/scripts/"
+# Preparation resolves its series tooling from the tree it ships in, so the
+# fixture tree carries the real helper too.
+cp "$SOURCE_DEPENDENCY_DIR/../scripts/patch_series.py" "$TEST_ROOT/scripts/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
 
@@ -75,8 +73,6 @@ mkdir -p "$BASE_PREFIX/include/glib-2.0" \
 PATCH_REPOSITORY="$TEST_ROOT/patch-repository"
 mkdir -p "$PATCH_REPOSITORY"
 git -C "$PATCH_REPOSITORY" init --quiet
-git -C "$PATCH_REPOSITORY" config user.name fixture
-git -C "$PATCH_REPOSITORY" config user.email fixture@example.invalid
 printf '%s\n' upstream >"$PATCH_REPOSITORY/fixture.txt"
 git -C "$PATCH_REPOSITORY" add fixture.txt
 git -C "$PATCH_REPOSITORY" commit --quiet -m 'fixture: upstream base'

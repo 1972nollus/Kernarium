@@ -18,8 +18,6 @@ METADATA="$TEST_ROOT/dependencies"
 MANIFEST="$METADATA/manifest.tsv"
 mkdir -p "$SOURCE" "$METADATA/patches/fixture"
 git -C "$SOURCE" init --quiet
-git -C "$SOURCE" config user.name fixture
-git -C "$SOURCE" config user.email fixture@example.invalid
 printf '%s\n' base >"$SOURCE/payload.txt"
 git -C "$SOURCE" add payload.txt
 git -C "$SOURCE" commit --quiet -m 'fixture: upstream base'
