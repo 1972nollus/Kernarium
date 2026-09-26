@@ -480,7 +480,7 @@ index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff92
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a929e0602f7 100644
+index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a2275841f4f6de8 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -11,8 +11,12 @@
@@ -502,10 +502,10 @@ index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a92
     timeline->pending_value = initial_value;
 +   timeline->overdue_value = 0u;
 +   timeline->overdue_since = 0u;
+    timeline->moved_from = NULL;
  
     return VK_SUCCESS;
- }
-@@ -79,6 +85,59 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -80,6 +86,59 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
     return VK_SUCCESS;
  }
  
@@ -565,7 +565,7 @@ index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a92
  static VkResult
  kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
                   uint64_t wait_value, enum vk_sync_wait_flags wait_flags,
-@@ -86,6 +145,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -87,6 +146,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
  {
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
@@ -573,7 +573,7 @@ index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a92
  
     for (;;) {
        if (vk_device_is_lost_no_report(device))
-@@ -105,6 +165,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -106,6 +166,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
            p_atomic_read(&timeline->pending_value) >= wait_value)
           return VK_SUCCESS;
  
@@ -585,7 +585,7 @@ index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a92
        /* Metal takes relative milliseconds; Vulkan provides an absolute
         * nanosecond deadline. Recompute after every pending-wait slice. */
        uint64_t timeout_ms;
-@@ -149,6 +214,11 @@ kk_sync_binary_move(struct vk_device *device, struct vk_sync *dst_sync,
+@@ -150,6 +215,11 @@ kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
      * headers. Reset the recycled destination payload for future source use. */
     SWAP(dst_timeline->mtl_handle, src_timeline->mtl_handle);
     SWAP(dst_timeline->pending_value, src_timeline->pending_value);
@@ -598,7 +598,7 @@ index 4f03bf30db25a0b71c92b70fa7878cc79c18e335..91435c90e5203112521c73c4b75e1a92
     return vk_sync_reset(device, src_sync);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index a045d8aea51648b2f4fea7b39306e7c3ad195383..68947b99db6784678f0e2b3dace3d3140d0f9843 100644
+index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..08b99c127e7c3c084aaf5a47f35044dcb928efb1 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
 @@ -20,6 +20,12 @@ struct kk_sync_timeline {
@@ -611,9 +611,9 @@ index a045d8aea51648b2f4fea7b39306e7c3ad195383..68947b99db6784678f0e2b3dace3d314
 +    * nothing is outstanding. */
 +   uint64_t overdue_value;
 +   uint64_t overdue_since;
- };
- 
- extern const struct vk_sync_type kk_sync_type;
+    /* The permanent binary semaphore a temporary still has to take its
+     * payload from, once the submit worker reaches it; see
+     * kk_sync_binary_move(). Null everywhere else. */
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_completion.m b/src/kosmickrisp/vulkan/tests/test_command_completion.m
 index 64fe5be52a0f9eef421d96436cee089040af8520..66bf5fd313c15c11024f646f2f5be68a7d8ed707 100644
 --- a/src/kosmickrisp/vulkan/tests/test_command_completion.m

@@ -13,10 +13,6 @@
 #include <source_location>
 #include <span>
 
-#ifndef UML_GADGET_SIMD_DESTINATION_RESIDENCY
-#error "SIMD destination-residency test needs the configured selector"
-#endif
-
 namespace test = arm64_simd_three_same_test;
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
@@ -61,7 +57,6 @@ void exact_run_shape()
 	require(built.complete);
 	require(built.program.instruction_count() == run.size());
 
-#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
 	require(words.size() == 14U);
 	require(words[0] == address(
 		selection::uml_arm64_gadget_simd_destination_resident_load));
@@ -71,13 +66,6 @@ void exact_run_shape()
 	require(words[10] == address(
 		selection::uml_arm64_gadget_simd_destination_resident_flush));
 	require(words[12] == address(selection::uml_arm64_gadget_interrupt));
-#else
-	require(words.size() == 10U);
-	for (std::size_t index = 0; index < run.size(); ++index)
-		require(words[index * 2U] == address(
-			selection::uml_arm64_gadget_simd_three_same_mla_4s));
-	require(words[8] == address(selection::uml_arm64_gadget_interrupt));
-#endif
 }
 
 void unsafe_or_short_runs_use_ordinary_gadgets()
@@ -115,13 +103,9 @@ void dirty_destination_is_flushed_before_linking()
 		[&](std::uint64_t) { return &target; },
 		std::pmr::get_default_resource());
 	const auto words = built.program.words();
-#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
 	require(words[10] == address(
 		selection::uml_arm64_gadget_simd_destination_resident_flush));
 	require(words[12] == address(selection::uml_arm64_gadget_branch_linked));
-#else
-	require(words[8] == address(selection::uml_arm64_gadget_branch_linked));
-#endif
 }
 
 void runtime_result_is_visible_to_the_next_instruction()

@@ -147,12 +147,11 @@ that differs by product: macOS defaults to 262,144 slots and iOS and the iOS
 Simulator to 65,536, because a slot is committed whether or not it is occupied
 and the iOS app runs under a jetsam limit. Their payloads and mutable branch
 links remain ISA-specific. Cached x86 programs
-release spare decoder and native-stream capacity before publication. The
-optional arm64 cross-executor translation store remains disabled by default;
-its measured memory/performance tradeoff is recorded in G166.
+release spare decoder and native-stream capacity before publication. Gadget
+executors do not share translations; G166 records why.
 
-The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
-result in host `x0` between adjacent declared gadgets. Assembly templates emit
+Scalar forwarding keeps one write-through scalar result in host `x0` between
+adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the
 builder selects a variant from the actual decoded entry, not an opcode-pair
 whitelist. Canonical GPR/SP stores remain unchanged. Arithmetic, logical,
@@ -162,10 +161,10 @@ register. Unsupported entries, fused decoder groups, branches, and block
 boundaries end the chain. Pair results and writeback-load results are not
 exported. There are no runtime register tags or executable-memory writes.
 
-The independent, default-on `UML_GADGET_VECTOR_FORWARDING` option applies the same
-template-owned selection to SIMD/FP results naturally produced in host `v2`.
-Arithmetic, logic, comparisons, widening/narrowing, reductions, and
-accumulator templates declare their source masks. Consumers capture all
+Vector forwarding applies the same template-owned selection to SIMD/FP results
+naturally produced in host `v2`. Arithmetic, logic, comparisons,
+widening/narrowing, reductions, and accumulator templates declare their source
+masks. Consumers capture all
 forwarded inputs before overwriting `v2`; narrow reads retain architectural
 upper-bit clearing, and canonical vector stores remain write-through. Declared
 software fallbacks restore the complete result in `v2` on their cold return
@@ -173,26 +172,18 @@ path. Undeclared entries and block/link boundaries invalidate residency. Vector
 memory values and templates producing results in other scratch registers are
 not exported. This is not a persistent guest-vector register cache.
 
-Both forwarding options can be disabled independently for controls or code-size
-tradeoffs. With both options and coverage disabled, the original gadget text is
-unchanged. The default policy does not imply a general application speedup:
-measured gains are workload-dependent and the forwarding bank is larger.
+`BuildOptions` can disable either kind per program, which is how tests and the
+scalar ceiling bench compare forwarding in one binary. Forwarding does not imply
+a general application speedup: measured gains are workload-dependent and the
+forwarding bank is larger.
 
-`UML_GADGET_DEPENDENCY_COVERAGE` is a separate, default-off diagnostic build.
-Its entered-group counters describe opportunities in both scalar and SIMD/FP
-contracts, independently of whether forwarding is enabled. Each group occupies
-one scalar, vector, or unsupported bucket; combined totals do not double-count.
-They do not measure retirement, conditional operand use, or speed. The
-measurement controls are owned by [`../tests/perf/README.md`](../tests/perf/README.md).
-
-`UML_GADGET_EXECUTION_HISTOGRAM` is the other default-off diagnostic build and
-excludes dependency coverage. The same counter gadget indexes a table keyed by
-the exact (predecessor, entry) pair the translator selected, so executed
-entries, executed adjacent pairs, and entered guest words are exact. Its dump
-also reports why each linked chain returned to the executor and how many
-distinct targets the missing indirect sites had. Instrumented streams carry
-one extra dispatch per guest instruction, so the build is evidence for
-instruction mix and static cost, never for speed.
+`UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build. A threaded
+counter gadget indexes a table keyed by the exact (predecessor, entry) pair the
+translator selected, so executed entries, executed adjacent pairs, and entered
+guest words are exact. Its dump also reports why each linked chain returned to
+the executor and how many distinct targets the missing indirect sites had.
+Instrumented streams carry one extra dispatch per guest instruction, so the
+build is evidence for instruction mix and static cost, never for speed.
 
 The JIT derives private and shared cache geometry from one process budget,
 defaulting to half of guest RAM. A managed run keeps at most one executor per

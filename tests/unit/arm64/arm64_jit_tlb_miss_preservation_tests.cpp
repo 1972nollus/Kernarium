@@ -213,23 +213,11 @@ void miss_call_is_cold_and_has_no_resident_spills() {
           "TLB miss call did not pass the guest address directly");
   require(all[arguments + 2] == move_wide(2, 1),
           "TLB miss call did not materialize write access in x2");
-  constexpr std::uint32_t bank_store = 0xa904'5df6U;
-  constexpr std::uint32_t bank_load = 0xa944'5df6U;
   auto call_setup = arguments + 3U;
-  if (jit_test::linked_x8_x9_bank_enabled()) {
-    require(call_setup < call && all[call_setup] == bank_store,
-            "TLB miss call did not publish the fixed x8/x9 bank");
-    ++call_setup;
-  }
   for (std::size_t index = call_setup; index < call; ++index)
     require((all[index] & 31U) == 16U,
             "TLB miss call contains an inline spill or reload");
   auto result = call + 1U;
-  if (jit_test::linked_x8_x9_bank_enabled()) {
-    require(result < all.size() && all[result] == bank_load,
-            "TLB miss call did not reload the fixed x8/x9 bank");
-    ++result;
-  }
   require(result + 2U < all.size() && all[result] == move_x(8, 0) &&
               is_compare_zero_x(all[result + 1U], 8),
           "TLB miss result was not consumed without a context reload");
@@ -245,15 +233,10 @@ void miss_call_is_cold_and_has_no_resident_spills() {
    * 25-word single-store hot body. The two-word tagged-address-state gate
    * selects the exact semantic path for TBI or MTE without changing the
    * preserving miss bridge. The persistent linked-block ABI contributes seven
-   * fixed prologue/epilogue words. The opt-in bank adds four hot words and ten
-   * total words: outer save/load/store/restore, the returning TLB pair, and one
-   * pair at each terminal cold exit. Keep the control ceiling exact while
-   * allowing only those structurally pinned additions.
+   * fixed prologue/epilogue words.
    */
-  const std::size_t persistent_hot_frame_words =
-      7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
-  const std::size_t persistent_total_frame_words =
-      13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
+  const std::size_t persistent_hot_frame_words = 7U;
+  const std::size_t persistent_total_frame_words = 13U;
   require(compiled.hot_words <= 28 + persistent_hot_frame_words,
           "single-store JIT hot expansion lost the deferred-translation budget");
   require(compiled.words.size() <= 68 + persistent_total_frame_words,
@@ -262,15 +245,11 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 #else
   /*
    * The 4K translation has no second-way probe, and its deferred miss leaves a
-   * 27-word single-store hot body. The fixed-bank allowances match the 16K
-   * shape: four outer hot words and ten total words across the returning and
-   * terminal cold boundaries. The two-word tagged-address-state gate matches
-   * the 16K profile, while the control arm retains its original ceiling.
+   * 27-word single-store hot body. The two-word tagged-address-state gate
+   * matches the 16K profile.
    */
-  const std::size_t persistent_hot_frame_words =
-      7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
-  const std::size_t persistent_total_frame_words =
-      13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
+  const std::size_t persistent_hot_frame_words = 7U;
+  const std::size_t persistent_total_frame_words = 13U;
   require(compiled.hot_words <= 30 + persistent_hot_frame_words,
           "single-store 4K JIT hot expansion lost the "
           "deferred-translation budget");

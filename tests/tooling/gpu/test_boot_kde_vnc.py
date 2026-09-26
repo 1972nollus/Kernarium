@@ -242,6 +242,30 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("Autolock=false", commands)
         self.assertIn("LockOnResume=false", commands)
 
+    def test_overlay_home_directories_name_every_parent(self) -> None:
+        # install -d leaves unnamed parents owned by root, which the session
+        # user then cannot write, so each parent must be named before its
+        # children.
+        for commands in (
+            boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS,
+            boot_kde_vnc.LEGACY_EROFS_KDE_OVERLAY_COMMANDS,
+        ):
+            install = next(
+                command
+                for command in commands
+                if command.startswith("install -d -m 0755 -o ")
+            )
+            directories = install.split()[8:]
+            home = directories[0].rsplit("/", 1)[0]
+            named: set[str] = set()
+            for directory in directories:
+                parent = directory.rsplit("/", 1)[0]
+                self.assertTrue(
+                    parent == home or parent in named,
+                    f"{directory} is named before its parent",
+                )
+                named.add(directory)
+
     def test_starter_image_owns_account_and_login_policy(self) -> None:
         commands = "\n".join(boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS)
         self.assertIn("getent passwd debian", commands)
@@ -275,6 +299,18 @@ class KdeVncLauncherTests(unittest.TestCase):
         separator = boot_kde_vnc.guest_argument_separator(command)
         kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=serial-getty@hvc0.service", kernel_arguments)
+        # The starter Plasma session starts from its getty@tty1 autologin.
+        self.assertNotIn("systemd.mask=getty@tty0.service", kernel_arguments)
+        self.assertNotIn("systemd.mask=getty@tty1.service", kernel_arguments)
+
+    def test_legacy_erofs_kernel_arguments_mask_display_manager_getties(
+        self,
+    ) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
 

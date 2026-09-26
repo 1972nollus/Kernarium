@@ -14,8 +14,4 @@ namespace uml::cpu::arm64 {
 void report_jit_runtime_profiles() noexcept;
 #endif
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-void report_global_gpr_link_profile() noexcept;
-#endif
-
 } // namespace uml::cpu::arm64

@@ -7833,6 +7833,102 @@ case	arm64-simd-lane-move-allocation	23
 # entry uml_arm64_gadget_simd_insert_general_zero_d
 # fault poison uml_arm64_gadget_simd_insert_general_zero_d
 case	arm64-simd-lane-move-insert	30
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip rejoins the translated transfer (store-s unsigned)
+case	arm64-simd-ordinary-memory-immediate	16151
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore enabled, untagged stack base (store-s unsigned)
+case	arm64-simd-ordinary-memory-immediate	16152
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip, then the cross-page transfer (store-s unsigned)
+case	arm64-simd-ordinary-memory-immediate	16153
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-s unscaled)
+case	arm64-simd-ordinary-memory-immediate	16154
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-s unscaled)
+case	arm64-simd-ordinary-memory-immediate	16155
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-s unscaled)
+case	arm64-simd-ordinary-memory-immediate	16156
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-s post)
+case	arm64-simd-ordinary-memory-immediate	16157
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-s post)
+case	arm64-simd-ordinary-memory-immediate	16158
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-s post)
+case	arm64-simd-ordinary-memory-immediate	16159
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-s pre)
+case	arm64-simd-ordinary-memory-immediate	16160
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-s pre)
+case	arm64-simd-ordinary-memory-immediate	16161
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-s pre)
+case	arm64-simd-ordinary-memory-immediate	16162
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip rejoins the translated transfer (load-d unsigned)
+case	arm64-simd-ordinary-memory-immediate	16163
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore enabled, untagged stack base (load-d unsigned)
+case	arm64-simd-ordinary-memory-immediate	16164
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip, then the cross-page transfer (load-d unsigned)
+case	arm64-simd-ordinary-memory-immediate	16165
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-d unscaled)
+case	arm64-simd-ordinary-memory-immediate	16166
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-d unscaled)
+case	arm64-simd-ordinary-memory-immediate	16167
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-d unscaled)
+case	arm64-simd-ordinary-memory-immediate	16168
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-d post)
+case	arm64-simd-ordinary-memory-immediate	16169
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-d post)
+case	arm64-simd-ordinary-memory-immediate	16170
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-d post)
+case	arm64-simd-ordinary-memory-immediate	16171
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-d pre)
+case	arm64-simd-ordinary-memory-immediate	16172
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-d pre)
+case	arm64-simd-ordinary-memory-immediate	16173
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-d pre)
+case	arm64-simd-ordinary-memory-immediate	16174
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip rejoins the translated transfer (store-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16175
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore enabled, untagged stack base (store-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16176
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip, then the cross-page transfer (store-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16177
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16178
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16179
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16180
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-q post)
+case	arm64-simd-ordinary-memory-immediate	16181
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-q post)
+case	arm64-simd-ordinary-memory-immediate	16182
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-q post)
+case	arm64-simd-ordinary-memory-immediate	16183
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (store-q pre)
+case	arm64-simd-ordinary-memory-immediate	16184
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (store-q pre)
+case	arm64-simd-ordinary-memory-immediate	16185
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (store-q pre)
+case	arm64-simd-ordinary-memory-immediate	16186
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip rejoins the translated transfer (load-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16187
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore enabled, untagged stack base (load-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16188
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_unsigned top-byte-ignore strip, then the cross-page transfer (load-q unsigned)
+case	arm64-simd-ordinary-memory-immediate	16189
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16190
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16191
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-q unscaled)
+case	arm64-simd-ordinary-memory-immediate	16192
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-q post)
+case	arm64-simd-ordinary-memory-immediate	16193
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-q post)
+case	arm64-simd-ordinary-memory-immediate	16194
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-q post)
+case	arm64-simd-ordinary-memory-immediate	16195
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip rejoins the translated transfer (load-q pre)
+case	arm64-simd-ordinary-memory-immediate	16196
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore enabled, untagged stack base (load-q pre)
+case	arm64-simd-ordinary-memory-immediate	16197
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_immediate top-byte-ignore strip, then the cross-page transfer (load-q pre)
+case	arm64-simd-ordinary-memory-immediate	16198
 # entry uml_arm64_gadget_vector_other_load8_uxtw_1
 case	arm64-simd-ordinary-memory-register	73
 # entry uml_arm64_gadget_vector_other_load8_sxtw_0
@@ -7858,6 +7954,46 @@ case	arm64-simd-ordinary-memory-register	553
 # entry uml_arm64_gadget_vector_other_load128_sxtw_0
 # fault poison uml_arm64_gadget_vector_other_load128_sxtw_0
 case	arm64-simd-ordinary-memory-register	609
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-s tagged base lsl)
+case	arm64-simd-ordinary-memory-register	981
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-s tagged index lsl)
+case	arm64-simd-ordinary-memory-register	982
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-s tagged base sxtw)
+case	arm64-simd-ordinary-memory-register	983
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore enabled, untagged stack base (store-s sp lsl)
+case	arm64-simd-ordinary-memory-register	984
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip, then the cross-page transfer (store-s tagged base cross-page)
+case	arm64-simd-ordinary-memory-register	985
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-d tagged base lsl)
+case	arm64-simd-ordinary-memory-register	986
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-d tagged index lsl)
+case	arm64-simd-ordinary-memory-register	987
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-d tagged base sxtw)
+case	arm64-simd-ordinary-memory-register	988
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore enabled, untagged stack base (load-d sp lsl)
+case	arm64-simd-ordinary-memory-register	989
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip, then the cross-page transfer (load-d tagged base cross-page)
+case	arm64-simd-ordinary-memory-register	990
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-q tagged base lsl)
+case	arm64-simd-ordinary-memory-register	991
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-q tagged index lsl)
+case	arm64-simd-ordinary-memory-register	992
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (store-q tagged base sxtw)
+case	arm64-simd-ordinary-memory-register	993
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore enabled, untagged stack base (store-q sp lsl)
+case	arm64-simd-ordinary-memory-register	994
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip, then the cross-page transfer (store-q tagged base cross-page)
+case	arm64-simd-ordinary-memory-register	995
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-q tagged base lsl)
+case	arm64-simd-ordinary-memory-register	996
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-q tagged index lsl)
+case	arm64-simd-ordinary-memory-register	997
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip rejoins the translated transfer (load-q tagged base sxtw)
+case	arm64-simd-ordinary-memory-register	998
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore enabled, untagged stack base (load-q sp lsl)
+case	arm64-simd-ordinary-memory-register	999
+# branch cpu/arm64/gadgets/engine/load_store.inc:vector_other_register top-byte-ignore strip, then the cross-page transfer (load-q tagged base cross-page)
+case	arm64-simd-ordinary-memory-register	1000
 # entry uml_arm64_gadget_simd_xar_soft_1
 case	arm64-simd-sha3-behavior	3105
 # entry uml_arm64_gadget_simd_xar_soft_2
@@ -8454,6 +8590,294 @@ case	arm64-simd-shift-immediate-left	10905
 case	arm64-simd-shift-immediate-left	10913
 # entry uml_arm64_gadget_simd_shift_left_sqshlu_d_61
 case	arm64-simd-shift-immediate-left	10921
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9089
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9090
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9091
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9092
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9093
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9094
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9095
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9096
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9097
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9098
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9099
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9100
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9101
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9102
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9103
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9104
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9105
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9106
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9107
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9108
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9109
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9110
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9111
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9112
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9113
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9114
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9115
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9116
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9117
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9118
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9119
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9120
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9121
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=1 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9122
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=1 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9123
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=1 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9124
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9125
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9126
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 store no-offset)
+case	arm64-simd-structure-lane-behavior	9127
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9128
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9129
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9130
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9131
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9132
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 store post-register)
+case	arm64-simd-structure-lane-behavior	9133
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9134
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9135
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 load no-offset)
+case	arm64-simd-structure-lane-behavior	9136
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9137
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9138
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9139
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9140
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9141
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=1 load post-register)
+case	arm64-simd-structure-lane-behavior	9142
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9143
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9144
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 store no-offset)
+case	arm64-simd-structure-lane-behavior	9145
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9146
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9147
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 store post-immediate)
+case	arm64-simd-structure-lane-behavior	9148
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9149
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9150
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 store post-register)
+case	arm64-simd-structure-lane-behavior	9151
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9152
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9153
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 load no-offset)
+case	arm64-simd-structure-lane-behavior	9154
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9155
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9156
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 load post-immediate)
+case	arm64-simd-structure-lane-behavior	9157
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip rejoins the translated transfer (count=4 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9158
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore enabled, untagged stack base (count=4 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9159
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_lane top-byte-ignore strip, then the cross-page transfer (count=4 width=8 load post-register)
+case	arm64-simd-structure-lane-behavior	9160
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	3981
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	3982
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	3983
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	3984
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	3985
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	3986
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register store post-register)
+case	arm64-simd-structure-multiple-behavior	3987
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register store post-register)
+case	arm64-simd-structure-multiple-behavior	3988
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register store post-register)
+case	arm64-simd-structure-multiple-behavior	3989
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	3990
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	3991
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	3992
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	3993
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	3994
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	3995
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 one-register load post-register)
+case	arm64-simd-structure-multiple-behavior	3996
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 one-register load post-register)
+case	arm64-simd-structure-multiple-behavior	3997
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 one-register load post-register)
+case	arm64-simd-structure-multiple-behavior	3998
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	3999
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	4000
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register store no-offset)
+case	arm64-simd-structure-multiple-behavior	4001
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4002
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4003
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4004
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register store post-register)
+case	arm64-simd-structure-multiple-behavior	4005
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register store post-register)
+case	arm64-simd-structure-multiple-behavior	4006
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register store post-register)
+case	arm64-simd-structure-multiple-behavior	4007
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	4008
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	4009
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register load no-offset)
+case	arm64-simd-structure-multiple-behavior	4010
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4011
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4012
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4013
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD1/ST1 four-register load post-register)
+case	arm64-simd-structure-multiple-behavior	4014
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD1/ST1 four-register load post-register)
+case	arm64-simd-structure-multiple-behavior	4015
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD1/ST1 four-register load post-register)
+case	arm64-simd-structure-multiple-behavior	4016
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4017
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4018
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4019
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4020
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4021
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4022
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 store post-register)
+case	arm64-simd-structure-multiple-behavior	4023
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 store post-register)
+case	arm64-simd-structure-multiple-behavior	4024
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 store post-register)
+case	arm64-simd-structure-multiple-behavior	4025
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4026
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4027
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4028
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4029
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4030
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4031
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD2/ST2 load post-register)
+case	arm64-simd-structure-multiple-behavior	4032
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD2/ST2 load post-register)
+case	arm64-simd-structure-multiple-behavior	4033
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD2/ST2 load post-register)
+case	arm64-simd-structure-multiple-behavior	4034
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4035
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4036
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 store no-offset)
+case	arm64-simd-structure-multiple-behavior	4037
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4038
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4039
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 store post-immediate)
+case	arm64-simd-structure-multiple-behavior	4040
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 store post-register)
+case	arm64-simd-structure-multiple-behavior	4041
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 store post-register)
+case	arm64-simd-structure-multiple-behavior	4042
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 store post-register)
+case	arm64-simd-structure-multiple-behavior	4043
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4044
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4045
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 load no-offset)
+case	arm64-simd-structure-multiple-behavior	4046
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4047
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4048
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 load post-immediate)
+case	arm64-simd-structure-multiple-behavior	4049
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip rejoins the translated transfer (LD4/ST4 load post-register)
+case	arm64-simd-structure-multiple-behavior	4050
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore enabled, untagged stack base (LD4/ST4 load post-register)
+case	arm64-simd-structure-multiple-behavior	4051
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_structure top-byte-ignore strip, then the cross-page transfer (LD4/ST4 load post-register)
+case	arm64-simd-structure-multiple-behavior	4052
 # entry uml_arm64_gadget_simd_structure_interleaved_d_h_4_store_s0
 case	arm64-simd-structure-multiple-fault	1803
 # entry uml_arm64_gadget_simd_structure_interleaved_d_s_4_store_s0
@@ -8466,6 +8890,78 @@ case	arm64-simd-structure-multiple-fault	1821
 case	arm64-simd-structure-multiple-fault	1824
 # entry uml_arm64_gadget_simd_structure_interleaved_q_s_4_load_s0
 case	arm64-simd-structure-multiple-fault	1830
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4193
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4194
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4195
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4196
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4197
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4198
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4199
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4200
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4201
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4202
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4203
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4204
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4205
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4206
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4207
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=1 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4208
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=1 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4209
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=1 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4210
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4211
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4212
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=1 no-offset)
+case	arm64-simd-structure-replicate-behavior	4213
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4214
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4215
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=1 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4216
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4217
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4218
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=1 post-register)
+case	arm64-simd-structure-replicate-behavior	4219
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4220
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4221
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=8 no-offset)
+case	arm64-simd-structure-replicate-behavior	4222
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4223
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4224
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=8 post-immediate)
+case	arm64-simd-structure-replicate-behavior	4225
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip rejoins the translated transfer (count=4 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4226
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore enabled, untagged stack base (count=4 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4227
+# branch cpu/arm64/gadgets/engine/system_atomic.inc:simd_replicate top-byte-ignore strip, then the cross-page transfer (count=4 width=8 post-register)
+case	arm64-simd-structure-replicate-behavior	4228
 # entry uml_arm64_gadget_simd_replicate_h_d_4_s0
 case	arm64-simd-structure-replicate-fault	366
 # entry uml_arm64_gadget_simd_replicate_s_d_4_s0

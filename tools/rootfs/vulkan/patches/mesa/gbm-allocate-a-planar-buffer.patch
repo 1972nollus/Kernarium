@@ -141,7 +141,7 @@ index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..f3ff7e5f9b39cbe310f54ec1a01ac68f
     default:
        return false;
 diff --git a/src/gallium/frontends/dri/dri_helpers.c b/src/gallium/frontends/dri/dri_helpers.c
-index 68e9ae6395a804a67e1008ef4b6792bdec32f557..1fb5a6835624aea9a27d6a735fca85897832a0b3 100644
+index b335721e1a1256a71b1e8194002f309b18199d9f..2e84e38dcea8ccf426dca59f176867bad91febb5 100644
 --- a/src/gallium/frontends/dri/dri_helpers.c
 +++ b/src/gallium/frontends/dri/dri_helpers.c
 @@ -583,7 +583,12 @@ static const struct dri2_format_mapping dri2_format_table[] = {

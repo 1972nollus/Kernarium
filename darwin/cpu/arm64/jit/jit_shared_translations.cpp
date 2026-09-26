@@ -275,7 +275,6 @@ bool SharedTranslationCache::CodegenProfile::operator==(
          pointer_authentication == other.pointer_authentication &&
          persistent_linked_block_abi ==
              other.persistent_linked_block_abi &&
-         linked_x8_x9_bank == other.linked_x8_x9_bank &&
          capabilities.supported == other.capabilities.supported &&
          capabilities.floating_point == other.capabilities.floating_point &&
          capabilities.advanced_simd == other.capabilities.advanced_simd &&

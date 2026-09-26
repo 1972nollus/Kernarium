@@ -25,7 +25,7 @@ as optional rather than refusing to create the instance without it.
  6 files changed, 53 insertions(+), 13 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index 0b9b3b62a2244aad30f6d90d978db7f72d4fbd67..ab0f80051334f45ad72c0077baa0c55c94492998 100644
+index b2b81422b2c0ef07e4c05cd1e714ee49b1754870..7a04d7f7a12a031a7ba978002518ddfd0699fa46 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -101,6 +101,7 @@ cpp_args = []

@@ -24,9 +24,6 @@ struct CompiledBlock final {
   JitFunction tracked_function{};
   std::uintptr_t internal_entry{};
   JitBlockLink *link{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  JitBlockLink *profile_link{};
-#endif
   std::uint64_t stamp{};
   std::uint64_t link_epoch{};
   std::uint64_t memory_write_mask{};
@@ -44,110 +41,7 @@ struct CompiledBlock final {
   bool native_fp{};
   bool native_fpmr{};
   bool guest_illegal{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t profile_read_before_write{};
-#endif
 };
-
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-struct JitGprDirectLinkSample final {
-  alignas(std::uint64_t) std::uint64_t successes{};
-  const JitBlockLink *target{};
-  std::uint64_t source_pc{};
-  std::uint32_t dirty_live_out{};
-};
-
-struct JitGprIndirectLinkSample final {
-  alignas(std::uint64_t) std::array<std::uint64_t, 2> successes{};
-  const JitIndirectLink *site{};
-  std::uint64_t source_pc{};
-  std::uint32_t dirty_live_out{};
-};
-
-struct JitGprProfileEdgeKey final {
-  std::uint64_t source_pc{};
-  std::uint64_t target_pc{};
-  std::uint32_t dirty_live_out{};
-  std::uint32_t read_before_write{};
-  bool indirect{};
-
-  [[nodiscard]] bool
-  operator==(const JitGprProfileEdgeKey &) const noexcept = default;
-};
-
-struct JitGprProfileEdgeHash final {
-  [[nodiscard]] std::size_t
-  operator()(const JitGprProfileEdgeKey &key) const noexcept;
-};
-
-class JitGprLinkProfileGlobal final {
-public:
-  using Edges = std::unordered_map<JitGprProfileEdgeKey, std::uint64_t,
-                                   JitGprProfileEdgeHash>;
-  using LiveCollector =
-      void (*)(void *, JitGprLinkProfileDiagnostics &, Edges &) noexcept;
-
-  struct LiveProfile final {
-    void *context{};
-    LiveCollector collect{};
-  };
-
-  [[nodiscard]] static JitGprLinkProfileGlobal &instance() noexcept;
-  void merge(const JitGprLinkProfileDiagnostics &totals,
-             const Edges &edges) noexcept;
-  void register_live(void *context, LiveCollector collect);
-  void unregister_live(void *context) noexcept;
-  [[nodiscard]] JitGprLinkProfileDiagnostics diagnostics() noexcept;
-  void report() noexcept;
-
-private:
-  static void report_at_exit() noexcept;
-
-  std::mutex mutex_;
-  Edges edges_;
-  std::vector<LiveProfile> live_;
-  JitGprLinkProfileDiagnostics totals_{};
-  bool reported_{};
-};
-
-class JitGprLinkProfiler final {
-public:
-  JitGprLinkProfiler() noexcept;
-  ~JitGprLinkProfiler();
-
-  [[nodiscard]] std::uint64_t *
-  add_direct(const JitBlockLink *target, std::uint64_t source_pc,
-             std::uint32_t dirty_live_out);
-  [[nodiscard]] jit::JitIndirectLinkProfileCounters
-  add_indirect(const JitIndirectLink *site, std::uint64_t source_pc,
-               std::uint32_t dirty_live_out);
-  void record_outer_invocation() noexcept;
-  void drain_direct() noexcept;
-  void drain_indirect_slot(const JitIndirectLink &site,
-                           std::size_t slot) noexcept;
-  void drain_indirect_site(const JitIndirectLink &site) noexcept;
-  void drain_all() noexcept;
-  void clear_code() noexcept;
-  [[nodiscard]] JitGprLinkProfileDiagnostics diagnostics() noexcept;
-  void publish() noexcept;
-
-private:
-  void collect(JitGprLinkProfileDiagnostics &totals,
-               JitGprLinkProfileGlobal::Edges &edges) noexcept;
-  void drain(std::uint64_t &counter, const JitBlockLink *target,
-             std::uint64_t source_pc, std::uint32_t dirty_live_out,
-             bool indirect) noexcept;
-
-  std::vector<std::unique_ptr<JitGprDirectLinkSample>> direct_;
-  std::vector<std::unique_ptr<JitGprIndirectLinkSample>> indirect_;
-  std::unordered_map<const JitIndirectLink *,
-                     std::vector<JitGprIndirectLinkSample *>>
-      indirect_by_site_;
-  JitGprLinkProfileGlobal::Edges pending_edges_;
-  JitGprLinkProfileDiagnostics lifetime_totals_{};
-  JitGprLinkProfileDiagnostics pending_totals_{};
-};
-#endif
 
 struct CacheSet final {
   std::array<CompiledBlock, cache_ways> ways{};

@@ -181,60 +181,6 @@ std::size_t JitBlockLinkTable::allocation_bytes(
          2U * allocation_allowance;
 }
 
-JitProfileBlockLinkTable::JitProfileBlockLinkTable(std::size_t capacity)
-    : capacity_{capacity}, index_capacity_{index_capacity_for(capacity)} {
-  if (capacity_ != 0 && allocation_bytes(capacity_) == 0)
-    throw std::length_error{"JIT profile block-link table is too large"};
-  if (index_capacity_ != 0) {
-    index_ = std::make_unique_for_overwrite<std::uint32_t[]>(index_capacity_);
-    std::fill_n(index_.get(), index_capacity_, std::uint32_t{0});
-    records_ = allocate_records<JitBlockLink>(capacity_);
-  }
-}
-
-JitProfileBlockLinkTable::~JitProfileBlockLinkTable() {
-  destroy_records(records_, size_);
-  deallocate_records(records_);
-}
-
-JitBlockLink *
-JitProfileBlockLinkTable::find_or_create(
-    std::uint64_t pc, unsigned long generation) {
-  if (index_capacity_ == 0)
-    return nullptr;
-  const auto mask = index_capacity_ - 1U;
-  auto slot = hash_link_key(pc ^ generation, mask);
-  while (index_[slot] != 0) {
-    auto &record = records_[index_[slot] - 1U];
-    if (record.guest_pc == pc && record.generation == generation)
-      return &record;
-    slot = (slot + 1U) & mask;
-  }
-  if (size_ >= capacity_)
-    return nullptr;
-  auto *result = std::construct_at(records_ + size_, JitBlockLink{});
-  result->guest_pc = pc;
-  result->generation = generation;
-  index_[slot] = static_cast<std::uint32_t>(++size_);
-  return result;
-}
-
-void JitProfileBlockLinkTable::clear() noexcept {
-  destroy_records(records_, size_);
-  size_ = 0;
-  if (index_ != nullptr)
-    std::fill_n(index_.get(), index_capacity_, std::uint32_t{0});
-}
-
-std::size_t JitProfileBlockLinkTable::size() const noexcept {
-  return size_;
-}
-
-std::size_t JitProfileBlockLinkTable::allocation_bytes(
-    std::size_t capacity) noexcept {
-  return fixed_table_allocation_bytes<JitBlockLink>(capacity);
-}
-
 JitIndirectLinkTable::JitIndirectLinkTable(
     std::size_t capacity, const JitBlockLink *empty_link)
     : capacity_{capacity}, index_capacity_{index_capacity_for(capacity)},
@@ -297,9 +243,6 @@ void JitIndirectLinkTable::reset(JitIndirectLink &site) const noexcept {
     entry.guest_pc = 1;
     entry.link = empty_link_;
   }
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  site.profile_targets.fill(empty_link_);
-#endif
   site.next_replacement = 0;
   site.activation_epoch = 0;
 }

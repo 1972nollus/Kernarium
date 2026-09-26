@@ -55,6 +55,11 @@ struct GuestSamplingSlot;
 /* Bracket guest execution on the calling thread. */
 void guest_sampling_enter(GuestSamplingSlot &slot) noexcept;
 void guest_sampling_leave(GuestSamplingSlot &slot) noexcept;
+/* Attribute this execution's samples to the guest thread whose TPIDR_EL0
+ * lives at thread. The CPU state must outlive the execution; leaving clears
+ * it. */
+void guest_sampling_thread(
+	GuestSamplingSlot &slot, const std::uint64_t *thread) noexcept;
 /* Returns once no sampling pass can still use the executor. */
 void guest_sampling_unregister(GuestSamplingSlot &slot) noexcept;
 

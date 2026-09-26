@@ -68,9 +68,6 @@
 		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
-	target_compile_definitions(
-		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
-		UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>)
 	target_compile_options(
 		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
 		-Wall -Wextra -Werror)
@@ -232,9 +229,6 @@
 			uml_arm64_fused_floating_${fused_floating_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
-		target_compile_definitions(
-			uml_arm64_fused_floating_${fused_floating_suite}_tests PRIVATE
-			UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>)
 		target_compile_options(
 			uml_arm64_fused_floating_${fused_floating_suite}_tests PRIVATE
 			-Wall -Wextra -Werror)

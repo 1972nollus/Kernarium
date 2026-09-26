@@ -918,10 +918,11 @@ gadget simd_structure_\name
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
-	cbnz w8, .Lsimd_structure_slow\@
+	cbnz w8, .Lsimd_structure_tagged\@
 	.endif
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
 	mov x7, x20
+.Lsimd_structure_translate\@:
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	simd_structure_memory_load \count, \elements, \q, \size
@@ -942,6 +943,16 @@ gadget simd_structure_\name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if \base_sp == 0 || \mode != 0
+.Lsimd_structure_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w8, #0, .Lsimd_structure_slow\@
+	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
+	ubfx x7, x20, #0, #56
+	b .Lsimd_structure_translate\@
+	.endif
 
 .Lsimd_structure_slow\@:
 	sub sp, sp, #80
@@ -1110,12 +1121,13 @@ gadget simd_replicate_\name
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
-	cbnz w8, .Lsimd_replicate_slow\@
+	cbnz w8, .Lsimd_replicate_tagged\@
 	.endif
 	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
 	.endif
 	mov x7, x21
+.Lsimd_replicate_translate\@:
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	and w26, w19, #31
 	simd_replicate_one \width, \q
@@ -1145,6 +1157,18 @@ gadget simd_replicate_\name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if \base_sp == 0 || \mode != 0
+.Lsimd_replicate_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w8, #0, .Lsimd_replicate_slow\@
+	.if \count * \width > 1
+	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
+	.endif
+	ubfx x7, x21, #0, #56
+	b .Lsimd_replicate_translate\@
+	.endif
 
 .Lsimd_replicate_slow\@:
 	sub sp, sp, #48
@@ -1303,12 +1327,13 @@ gadget simd_lane_\name
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
-	cbnz w8, .Lsimd_lane_slow\@
+	cbnz w8, .Lsimd_lane_tagged\@
 	.endif
 	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
 	.endif
 	mov x7, x21
+.Lsimd_lane_translate\@:
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	.else
@@ -1326,6 +1351,18 @@ gadget simd_lane_\name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if \base_sp == 0 || \mode != 0
+.Lsimd_lane_tagged\@:
+	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
+	 * alone strips the logical tag and rejoins the fast path. */
+	tbnz w8, #0, .Lsimd_lane_slow\@
+	.if \count * \width > 1
+	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
+	.endif
+	ubfx x7, x21, #0, #56
+	b .Lsimd_lane_translate\@
+	.endif
 
 .Lsimd_lane_slow\@:
 	sub sp, sp, #48

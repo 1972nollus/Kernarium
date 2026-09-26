@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -46,9 +47,13 @@ def clone(source: Path, destination: Path) -> None:
     for command in attempts:
         result = subprocess.run(command, check=False, capture_output=True)
         if result.returncode == 0:
-            return
+            break
         destination.unlink(missing_ok=True)
-    shutil.copyfile(source, destination)
+    else:
+        shutil.copyfile(source, destination)
+    # cp keeps the source mode, and published images are read-only. The copy
+    # is the disk being enlarged, so its owner must be able to write it.
+    destination.chmod(stat.S_IMODE(destination.stat().st_mode) | stat.S_IWUSR)
 
 
 def main() -> int:

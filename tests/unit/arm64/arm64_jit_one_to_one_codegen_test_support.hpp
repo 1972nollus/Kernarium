@@ -413,17 +413,11 @@ struct OperandRoleCheck final {
 			/*
 			 * x14/x15 carry the TLB/CpuState context. x18 is the
 			 * Darwin platform register. x19-x21 carry linked-block
-			 * state. The opt-in linked bank saves x22/x23 and maps only
-			 * guest x8/x9 there; x24-x28 remain untouched host
-			 * callee-saved registers. x29/x30/SP retain their frame,
-			 * link, and stack roles.
+			 * state. x22-x28 remain untouched host callee-saved
+			 * registers. x29/x30/SP retain their frame, link, and stack
+			 * roles.
 			 */
-			const bool linked_bank_operand =
-				jit_test::linked_x8_x9_bank_enabled() &&
-				((operand.guest == 8U && host == 22U) ||
-				 (operand.guest == 9U && host == 23U));
-			if (!linked_bank_operand &&
-			    !(host < 14U || host == 16U || host == 17U))
+			if (!(host < 14U || host == 16U || host == 17U))
 				return {
 					false,
 					"ordinary guest GPR used a host-reserved register"};

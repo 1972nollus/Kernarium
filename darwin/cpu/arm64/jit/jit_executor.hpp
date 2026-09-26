@@ -7,9 +7,6 @@
 #include "memory/tlb.hpp"
 #include "memory/static_guest_memory.hpp"
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-#include <array>
-#endif
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -79,21 +76,6 @@ struct JitIndirectLinkDiagnostics final {
 };
 #endif
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-struct JitGprLinkProfileDiagnostics final {
-	std::uint64_t successful_links{};
-	std::uint64_t unattributed_links{};
-	std::uint64_t outer_invocations{};
-	std::array<std::uint64_t, 32> live_in_saves{};
-	std::array<std::uint64_t, 32> dirty_out_saves{};
-	std::array<std::uint64_t, 32> full_handoffs{};
-};
-
-[[nodiscard]] JitGprLinkProfileDiagnostics
-global_gpr_link_profile_diagnostics() noexcept;
-void report_global_gpr_link_profile() noexcept;
-#endif
-
 class JitExecutor final {
 public:
 	explicit JitExecutor(bool enable_guarded_control_flow = false);
@@ -131,10 +113,6 @@ public:
 	cache_validation_diagnostics() const noexcept;
 	[[nodiscard]] JitIndirectLinkDiagnostics
 	indirect_link_diagnostics() const noexcept;
-#endif
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-	[[nodiscard]] JitGprLinkProfileDiagnostics
-	gpr_link_profile_diagnostics() noexcept;
 #endif
 
 private:

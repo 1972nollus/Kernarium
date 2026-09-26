@@ -4,7 +4,8 @@
  * Two leaf functions run the same number of instructions per iteration with
  * different instruction words, and hot_loop runs nine times as many
  * iterations as cold_loop, so a correct profile gives it about nine tenths of
- * the guest samples.
+ * the guest samples. The thread pointer is set to THREAD_POINTER so the
+ * profile can be checked for per-thread attribution.
  */
 
 	.equ NR_WRITE,		64
@@ -12,11 +13,14 @@
 	.equ ROUNDS,		32
 	.equ COLD_ITERATIONS,	1000000
 	.equ HOT_ITERATIONS,	9000000
+	.equ THREAD_POINTER,	0x5a5a0000
 
 	.section .text
 	.global _start
 	.type _start, %function
 _start:
+	movz	x0, #(THREAD_POINTER >> 16), lsl #16
+	msr	tpidr_el0, x0
 	mov	x19, #ROUNDS
 1:	bl	hot_loop
 	bl	cold_loop

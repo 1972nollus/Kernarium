@@ -289,7 +289,7 @@ index 383eea694b9d2f77dc7906bdd24b38ec3667b6ce..3944c4051f9911688eb8b67dae6fa4e3
  #include "vn_device.h"
  #include "vn_feedback.h"
 diff --git a/src/virtio/vulkan/vn_queue.c b/src/virtio/vulkan/vn_queue.c
-index a4497b0d2161110d3bb9b83c6f6441b711519ca1..d85e9312626ac3a54acce6fa669380ac7162b539 100644
+index 057842a524e248335a080755455b0e5bdf21d833..8fd0b7d69abbffbfa399c2a4f99b6001d1fcb473 100644
 --- a/src/virtio/vulkan/vn_queue.c
 +++ b/src/virtio/vulkan/vn_queue.c
 @@ -10,8 +10,8 @@

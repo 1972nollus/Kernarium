@@ -74,9 +74,6 @@ struct SharedTranslation final {
   bool native_fp{};
   bool native_fpmr{};
   bool guest_illegal{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t profile_read_before_write{};
-#endif
 };
 
 struct SharedTranslationStatistics final {
@@ -171,7 +168,6 @@ public:
     bool guarded_control_flow{};
     bool pointer_authentication{};
     bool persistent_linked_block_abi{persistent_linked_block_abi_default};
-    bool linked_x8_x9_bank{carry_x8_x9_across_links};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.
