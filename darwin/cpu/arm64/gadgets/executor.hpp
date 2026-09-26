@@ -111,9 +111,6 @@ private:
 	bool single_step_{};
 	std::uint32_t floating_point_syndrome_{};
 	BuildOptions build_options_;
-	/* The memory a build may read a callee's instructions through, set for
-	 * the duration of one run_block. */
-	::uml::memory::StaticGuestMemory *build_memory_{};
 	GadgetCacheDiagnostics cache_diagnostics_{};
 	/* Null unless DARWIN_UML_GUEST_SAMPLES is set. */
 	diagnostics::GuestSamplingSlot *sampling_{};

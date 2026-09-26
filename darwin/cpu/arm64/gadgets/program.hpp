@@ -21,19 +21,6 @@
 
 namespace uml::cpu::arm64::gadgets {
 
-/* One contiguous stretch of guest instructions a program translated.
- *
- * A block is a single run unless a call was inlined into it, when it becomes
- * the caller's run, the callee's, and the continuation after the return. The
- * run list is what lets a guest PC still be converted to a position in the
- * block once the addresses stop being contiguous, which both the retirement
- * corrections and the stale-program check depend on.
- */
-struct GuestRun final {
-	std::uint64_t address{};
-	std::uint32_t instructions{};
-};
-
 /* Most translated streams are small, but a pmr::vector gives every one its
  * own pool allocation. Keep the common prefix in the Program itself and use
  * the same allocator, with the builder's former 34-word reservation, only
@@ -196,34 +183,17 @@ private:
 
 class Program final {
 public:
-	/* Caller, callee, and the continuation after the inlined return. */
-	static constexpr std::size_t maximum_runs = 3;
-
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		ProgramWords words,
-		bool accesses_fp_state) noexcept;
-	Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 		ProgramWords words,
 		bool accesses_fp_state) noexcept;
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		std::pmr::vector<std::uintptr_t> words,
 		bool accesses_fp_state);
-	Program(std::span<const GuestRun> runs, std::size_t instruction_count,
-		std::pmr::vector<std::uintptr_t> words,
-		bool accesses_fp_state);
 
-	/* Where the block starts, which is the first run's address. */
+	/* Where the block starts; its instructions are contiguous from here. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
 	{
-		return runs_[0].address;
-	}
-	[[nodiscard]] std::span<const GuestRun> runs() const noexcept
-	{
-		return {runs_.data(), run_count_};
-	}
-	[[nodiscard]] bool contiguous() const noexcept
-	{
-		return run_count_ == 1;
+		return guest_address_;
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
@@ -239,10 +209,9 @@ public:
 	}
 
 private:
-	std::array<GuestRun, maximum_runs> runs_{};
+	std::uint64_t guest_address_{};
 	std::size_t instruction_count_{};
 	ProgramWords words_;
-	std::uint8_t run_count_{1};
 	bool accesses_fp_state_{};
 };
 
@@ -252,20 +221,14 @@ private:
 [[nodiscard]] inline std::optional<std::size_t> program_position(
 	const Program &program, std::uint64_t pc) noexcept
 {
-	std::size_t base = 0;
-	for (const auto &run : program.runs()) {
-		const auto span = std::uint64_t{run.instructions} *
-			sizeof(std::uint32_t);
-		if (pc >= run.address && pc - run.address < span) {
-			const auto offset = pc - run.address;
-			if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
-				return std::nullopt;
-			return base + static_cast<std::size_t>(
-				offset / sizeof(std::uint32_t));
-		}
-		base += run.instructions;
-	}
-	return std::nullopt;
+	const auto span = std::uint64_t{program.instruction_count()} *
+		sizeof(std::uint32_t);
+	if (pc < program.guest_address() || pc - program.guest_address() >= span)
+		return std::nullopt;
+	const auto offset = pc - program.guest_address();
+	if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
+		return std::nullopt;
+	return static_cast<std::size_t>(offset / sizeof(std::uint32_t));
 }
 
 /* Whether `stream` is one of this program's own words, which is how the
@@ -293,14 +256,9 @@ inline void resolve_fault_position(
 {
 	if ((pc & (sizeof(std::uint32_t) - 1U)) != 1U)
 		return;
-	auto position = pc >> 2;
-	for (const auto &run : program.runs()) {
-		if (position < run.instructions) {
-			pc = run.address + position * sizeof(std::uint32_t);
-			return;
-		}
-		position -= run.instructions;
-	}
+	const auto position = pc >> 2;
+	if (position < program.instruction_count())
+		pc = program.guest_address() + position * sizeof(std::uint32_t);
 }
 
 struct BuildResult final {
@@ -449,14 +407,6 @@ static_assert(UML_GADGET_TARGET_TIER_BITS == 10,
 		(target_tier_entries - 1));
 }
 
-/* What a build needs in order to translate a callee inline: permission for this
- * particular callee, and a way to read guest instructions at an address other
- * than the one the build started from. Absent, calls end the block as before. */
-struct InlineCalls final {
-	std::function<bool(std::uint64_t)> may_inline;
-	std::function<std::size_t(std::uint64_t, std::span<std::uint32_t>)> fetch;
-};
-
 class Builder final {
 public:
 	using LinkResolver =
@@ -471,10 +421,7 @@ public:
 		std::pmr::memory_resource *storage =
 			std::pmr::get_default_resource(),
 		IndirectLinkResolver resolve_indirect_link = {},
-		BuildOptions options = {},
-		const InlineCalls *inline_calls = nullptr,
-		std::span<std::uint32_t> consumed = {},
-		std::size_t *consumed_count = nullptr) const;
+		BuildOptions options = {}) const;
 };
 
 [[nodiscard]] ::uml::cpu::EngineEvent execute(

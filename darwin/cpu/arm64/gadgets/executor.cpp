@@ -37,15 +37,6 @@ namespace {
 #ifndef UML_GADGET_BLOCK_INSTRUCTIONS
 #define UML_GADGET_BLOCK_INSTRUCTIONS 64
 #endif
-/* Translating a direct call's callee inline behind it, so the call and its
- * return stop being block boundaries. Calls end 48.9% of blocks once
- * conditional fall-throughs are inlined, and a return is an indirect branch
- * through a two-entry link that any callee reached from more than two sites
- * thrashes. See G163. */
-#ifndef UML_GADGET_INLINE_CALLS
-#define UML_GADGET_INLINE_CALLS 1
-#endif
-constexpr bool inline_calls_enabled = UML_GADGET_INLINE_CALLS != 0;
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
@@ -130,16 +121,13 @@ void correct_fpcr_enable_instruction_count(
 		return;
 
 	/* The exit is the fallthrough of the FPCR write, so it is either inside
-	 * the program or one past its end. Only the final run can end a program:
-	 * an earlier run ends at the call whose callee was inlined after it, and
-	 * a call is never an FPCR write.
-	 */
+	 * the program or one past its end. */
 	std::size_t retired = 0;
 	if (const auto position = program_position(program, cpu.pc); position) {
 		retired = *position;
 	} else {
-		const auto &last = program.runs().back();
-		if (cpu.pc != last.address + std::uint64_t{last.instructions} *
+		if (cpu.pc != program.guest_address() +
+				std::uint64_t{program.instruction_count()} *
 				sizeof(std::uint32_t))
 			return;
 		retired = program.instruction_count();
@@ -573,7 +561,6 @@ public:
 
 	void invalidate() noexcept
 	{
-		inlined_callees_.clear();
 		resident_.clear();
 		generations_.clear();
 		current_ = nullptr;
@@ -708,9 +695,7 @@ public:
 	}
 
 	/* The same lookup for the guest sampler, which runs while this
-	 * executor's thread is suspended in gadget code: reads only. A block
-	 * with an inlined callee is described by its first run, the only words
-	 * contiguous in guest memory. */
+	 * executor's thread is suspended in gadget code: reads only. */
 	[[nodiscard]] bool sample_block(const void *stream,
 		diagnostics::SampledBlock &block) const noexcept
 	{
@@ -721,14 +706,10 @@ public:
 		if (word < body->link_entry() ||
 		    word >= body->words() + body->word_count)
 			return false;
-		const auto runs = body->extra_runs();
-		const std::uint32_t contiguous = runs.empty() ?
-			body->source_word_count : runs.front().instructions;
 		block.guest_address = body->guest_address;
 		block.instruction_count = body->instruction_count;
-		block.word_count = std::min<std::uint32_t>(
-			{contiguous, body->source_word_count,
-			 static_cast<std::uint32_t>(diagnostics::sampled_block_words)});
+		block.word_count = std::min<std::uint32_t>(body->source_word_count,
+			static_cast<std::uint32_t>(diagnostics::sampled_block_words));
 		std::copy_n(body->source_words(), block.word_count, block.words);
 		return true;
 	}
@@ -854,8 +835,8 @@ public:
 			}
 		}
 		/* The words a validating find() will compare against guest
-		 * memory: the program's runs concatenated, plus the word a
-		 * stopped build read without retiring. */
+		 * memory: the program's instructions, plus the word a stopped
+		 * build read without retiring. */
 		std::span<const std::uint32_t> validation;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		const auto validation_words =
@@ -907,22 +888,6 @@ public:
 		return slot.body->result();
 	}
 
-	/* Whether a callee may be translated inline here.
-	 *
-	 * A callee reached from one site costs nothing to inline; one reached
-	 * from many would be translated once per site. Admitting each callee
-	 * once caps that at a single extra copy without needing to know how many
-	 * sites exist, which translation cannot see. */
-	[[nodiscard]] bool admit_inlined_call(std::uint64_t callee)
-	{
-		if (inlined_callees_.size() >= maximum_inlined_callees)
-			return false;
-		/* Only the first site to reach a callee inlines it. Admitting
-		 * it again on a later site is what "inline everywhere" means,
-		 * and duplicates the callee once per site. */
-		return inlined_callees_.emplace(callee, epoch_).second;
-	}
-
 	/* Where a build assembles its stream.
 	 *
 	 * store() copies the finished words into the body it allocates, so the
@@ -960,22 +925,20 @@ private:
 	 * body's allocation.
 	 *
 	 * The body is also paid for by every translation the cache holds, so it
-	 * keeps only what a stored block cannot recompute. A BuildResult is 136
-	 * bytes -- three runs, a words object able to own and grow its storage,
-	 * and padding -- against a mean stream of about 225; a stored block has
-	 * one run unless a call was inlined into it, and its words are the ones
-	 * behind this header. result() rebuilds the builder's type from these
+	 * keeps only what a stored block cannot recompute. A BuildResult carries
+	 * a words object able to own and grow its storage, against a mean
+	 * stream of about 225 bytes; a stored block's words are the ones behind
+	 * this header. result() rebuilds the builder's type from these
 	 * fields whenever a caller needs one, which is once per entry from C++.
 	 */
 	struct Body final {
-		/* Where the block starts, which is its first run's address. */
+		/* Where the block starts. */
 		std::uint64_t guest_address{};
 		std::uint64_t stop_address{};
 		std::uint32_t stop_instruction{};
 		std::uint32_t word_count{};
 		std::uint16_t instruction_count{};
 		std::uint8_t source_word_count{};
-		std::uint8_t run_count{1};
 		bool complete{};
 		bool accesses_fp_state{};
 
@@ -983,8 +946,7 @@ private:
 		 * validated against follow the stream. A block that accesses
 		 * FP/SIMD state is linked to through one fp_link_entry word in
 		 * front of its stream, which falls through into it, so its link
-		 * record needs no prefix of its own. A block with more than one
-		 * run keeps the list last. */
+		 * record needs no prefix of its own. */
 		[[nodiscard]] std::size_t entry_words() const noexcept
 		{
 			return accesses_fp_state ? 1U : 0U;
@@ -1012,44 +974,19 @@ private:
 			return reinterpret_cast<const std::uint32_t *>(
 				words() + word_count);
 		}
-		/* `words` counts an FP block's entry word with its stream. */
-		[[nodiscard]] static std::size_t runs_offset(
+		/* What the arena must be given back follows from the counts, so
+		 * neither the body nor the slot that indexes it stores it.
+		 * `words` counts an FP block's entry word with its stream. */
+		[[nodiscard]] static std::size_t allocation_bytes(
 			std::size_t words, std::size_t sources) noexcept
 		{
-			const auto end = sizeof(Body) +
-				words * sizeof(std::uintptr_t) +
+			return sizeof(Body) + words * sizeof(std::uintptr_t) +
 				sources * sizeof(std::uint32_t);
-			return (end + alignof(arm64::gadgets::GuestRun) - 1) &
-				~(alignof(arm64::gadgets::GuestRun) - 1);
-		}
-		/* What the arena must be given back follows from the counts, so
-		 * neither the body nor the slot that indexes it stores it. */
-		[[nodiscard]] static std::size_t allocation_bytes(
-			std::size_t words, std::size_t sources,
-			std::size_t runs) noexcept
-		{
-			if (runs <= 1)
-				return sizeof(Body) +
-					words * sizeof(std::uintptr_t) +
-					sources * sizeof(std::uint32_t);
-			return runs_offset(words, sources) +
-				runs * sizeof(arm64::gadgets::GuestRun);
 		}
 		[[nodiscard]] std::size_t allocation_bytes() const noexcept
 		{
 			return allocation_bytes(entry_words() + word_count,
-				source_word_count, run_count);
-		}
-		[[nodiscard]] std::span<const arm64::gadgets::GuestRun>
-		extra_runs() const noexcept
-		{
-			if (run_count <= 1)
-				return {};
-			return {reinterpret_cast<const arm64::gadgets::GuestRun *>(
-					reinterpret_cast<const std::byte *>(this) +
-					runs_offset(entry_words() + word_count,
-						source_word_count)),
-				run_count};
+				source_word_count);
 		}
 		[[nodiscard]] std::span<const std::uintptr_t> stream() const noexcept
 		{
@@ -1065,23 +1002,16 @@ private:
 				arm64::gadgets::ProgramWords::Borrowed{
 					const_cast<std::uintptr_t *>(words()),
 					word_count}};
-			return run_count <= 1 ?
-				BuildResult{arm64::gadgets::Program{guest_address,
+			return BuildResult{arm64::gadgets::Program{guest_address,
 					instruction_count, std::move(view),
 					accesses_fp_state},
-					complete, stop_address, stop_instruction} :
-				BuildResult{arm64::gadgets::Program{extra_runs(),
-					instruction_count, std::move(view),
-					accesses_fp_state},
-					complete, stop_address, stop_instruction};
+				complete, stop_address, stop_instruction};
 		}
 	};
 	static_assert(sizeof(Body) == 32 &&
 		sizeof(Body) % alignof(std::uintptr_t) == 0,
 		"the stream tail follows the body at pointer alignment");
-	static_assert(block_instruction_count *
-			arm64::gadgets::Program::maximum_runs <= 0xffffU &&
-		block_instruction_count < 0xffU,
+	static_assert(block_instruction_count < 0xffU,
 		"a stored block's counts fit the body's narrow fields");
 
 	struct Slot final {
@@ -1329,17 +1259,10 @@ private:
 	{
 		const auto &program = built.program;
 		const auto words = program.words();
-		const auto runs = program.runs();
-		/* The builder gives a single-run block exactly its instruction
-		 * count as the run's length, which is what lets result() rebuild
-		 * that run from the header alone. */
-		assert(runs.size() > 1 ||
-			runs[0].instructions == program.instruction_count());
-		assert(program.instruction_count() <=
-			block_instruction_count * arm64::gadgets::Program::maximum_runs);
+		assert(program.instruction_count() <= block_instruction_count);
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
 		const auto bytes = Body::allocation_bytes(
-			entry + words.size(), validation.size(), runs.size());
+			entry + words.size(), validation.size());
 		auto *body = new (bodies_.allocate(bytes)) Body{
 			.guest_address = program.guest_address(),
 			.stop_address = built.stop_address,
@@ -1349,7 +1272,6 @@ private:
 				program.instruction_count()),
 			.source_word_count =
 				static_cast<std::uint8_t>(validation.size()),
-			.run_count = static_cast<std::uint8_t>(runs.size()),
 			.complete = built.complete,
 			.accesses_fp_state = program.accesses_fp_state(),
 		};
@@ -1359,12 +1281,6 @@ private:
 		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
 			body->source_words());
-		if (runs.size() > 1)
-			std::copy(runs.begin(), runs.end(),
-				reinterpret_cast<arm64::gadgets::GuestRun *>(
-					reinterpret_cast<std::byte *>(body) +
-					Body::runs_offset(entry + words.size(),
-						validation.size())));
 		return body;
 	}
 
@@ -1431,50 +1347,34 @@ private:
 			return false;
 		}
 
-		/* The saved words are the program's runs concatenated in order,
-		 * so each is compared against the addresses its own run covers.
-		 * The word a stopped build read without retiring belongs to the
-		 * last run, which is where the build stopped. */
+		/* The saved words are the block's instructions and, for a build
+		 * that stopped, the word it read without retiring. */
 		std::array<std::uint32_t, block_instruction_count> fetched;
-		const auto result = slot.body->result();
-		const auto &program = result.program;
-		const auto runs = program.runs();
-		std::size_t saved = 0;
-		for (std::size_t index = 0; index < runs.size(); ++index) {
-			auto remaining = std::size_t{runs[index].instructions};
-			if (index + 1 == runs.size())
-				remaining += slot.body->source_word_count -
-					program.instruction_count();
-			std::size_t offset = 0;
-			while (offset < remaining) {
-				const auto address = runs[index].address +
-					offset * sizeof(std::uint32_t);
-				const auto page_remaining = guest_page_size -
-					(address & (guest_page_size - 1));
-				auto run = std::min<std::size_t>(
-					remaining - offset,
-					page_remaining / sizeof(std::uint32_t));
-				if (run == 0)
-					run = 1;
-				auto words = std::span{fetched}.subspan(
-					saved + offset, run);
-				if (!memory.fetch(address,
-						std::as_writable_bytes(words))) {
-					++diagnostics.validation_faults;
-					discard(slot);
-					return false;
-				}
-				if (std::memcmp(words.data(),
-						slot.body->source_words() +
-							saved + offset,
-						run * sizeof(std::uint32_t)) != 0) {
-					++diagnostics.validation_mismatches;
-					discard(slot);
-					return false;
-				}
-				offset += run;
+		const std::size_t remaining = slot.body->source_word_count;
+		std::size_t offset = 0;
+		while (offset < remaining) {
+			const auto address = slot.body->guest_address +
+				offset * sizeof(std::uint32_t);
+			const auto page_remaining = guest_page_size -
+				(address & (guest_page_size - 1));
+			auto run = std::min<std::size_t>(remaining - offset,
+				page_remaining / sizeof(std::uint32_t));
+			if (run == 0)
+				run = 1;
+			auto words = std::span{fetched}.subspan(offset, run);
+			if (!memory.fetch(address, std::as_writable_bytes(words))) {
+				++diagnostics.validation_faults;
+				discard(slot);
+				return false;
 			}
-			saved += remaining;
+			if (std::memcmp(words.data(),
+					slot.body->source_words() + offset,
+					run * sizeof(std::uint32_t)) != 0) {
+				++diagnostics.validation_mismatches;
+				discard(slot);
+				return false;
+			}
+			offset += run;
 		}
 
 		const auto current =
@@ -1558,10 +1458,6 @@ private:
 	 * scratch on the way. */
 	std::array<std::byte, 32U << 10> scratch_;
 	std::pmr::monotonic_buffer_resource build_scratch_;
-	/* Bounded: a guest that keeps generating code would otherwise accumulate
-	 * every callee it ever called. */
-	static constexpr std::size_t maximum_inlined_callees = 1U << 16;
-	std::unordered_map<std::uint64_t, std::uint64_t> inlined_callees_;
 	/* At most uml_gadget_resident_generations + 1 entries, so finding one is
 	 * cheap; the state each holds is what makes retiring it proportional. */
 	std::unordered_map<unsigned long, Generation> generations_;
@@ -1718,19 +1614,6 @@ BuildResult GadgetExecutor::translate(
 BuildResult GadgetExecutor::build(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
-	/* Translating a callee inline needs to read guest instructions somewhere
-	 * other than where the build started, which only the executor can do. */
-	const arm64::gadgets::InlineCalls inline_calls{
-		[this](std::uint64_t callee) {
-			return programs_->admit_inlined_call(callee);
-		},
-		[this](std::uint64_t address, std::span<std::uint32_t> into) {
-			return fetch_instruction_window(*build_memory_, address,
-				into);
-		},
-	};
-	std::array<std::uint32_t, block_instruction_count> consumed;
-	std::size_t consumed_count = 0;
 	auto decoded = arm64::gadgets::Builder{}.build(
 		pc, window,
 		[this](std::uint64_t target) {
@@ -1740,15 +1623,8 @@ BuildResult GadgetExecutor::build(
 		[this](std::uint64_t source_pc) {
 			return programs_->indirect_link(source_pc);
 		},
-		build_options_,
-		inline_calls_enabled && build_memory_ != nullptr ?
-			&inline_calls : nullptr,
-		std::span{consumed}, &consumed_count);
-	/* With a callee inlined the words the build read are no longer a prefix
-	 * of the caller's window, so the stale-program check is given what the
-	 * build actually read, in run order. */
-	return store(pc, decoded,
-		std::span<const std::uint32_t>{consumed}.first(consumed_count));
+		build_options_);
+	return store(pc, decoded, window);
 }
 
 BuildResult GadgetExecutor::store(
@@ -1811,9 +1687,7 @@ BuildResult GadgetExecutor::store(
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		const auto window = std::span{instructions}.first(count);
-		build_memory_ = &memory;
 		selected.emplace(translate(cpu.pc, window));
-		build_memory_ = nullptr;
 	}
 	const auto &built = *selected;
 	if (built.program.instruction_count() == 0) {

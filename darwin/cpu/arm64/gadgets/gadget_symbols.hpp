@@ -2735,8 +2735,6 @@ UML_DECLARE_CMPBR_R_SIZE(x)
 #undef UML_DECLARE_CMPBR_R_MODES
 void uml_arm64_gadget_branch_always();
 void uml_arm64_gadget_branch_always_linked();
-void uml_arm64_gadget_call_inline();
-void uml_arm64_gadget_return_guarded();
 void uml_arm64_gadget_branch_eq_inline();
 void uml_arm64_gadget_branch_ne_inline();
 void uml_arm64_gadget_branch_hs_inline();

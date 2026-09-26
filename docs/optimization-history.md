@@ -171,7 +171,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | G160 | Keep several tagged address spaces in one gadget cache | Accepted; whole-cache switching was removed. |
 | G161 | Share gadget translations across executors | Mechanism retained as bounded data sharing, but the speed/memory optimization claim was rejected: adopting tiny programs cost more than rebuilding them. |
 | G162 | Inline a conditional branch's fall-through | Accepted and materially beneficial; broader noncontiguous continuation was rejected. |
-| G163 | Inline one direct-call callee | Accepted with one site per callee. |
+| G163 | Inline one direct-call callee | Not demonstrated, and removed. Once conditional fall-throughs were inlined, 48.9 percent of blocks ended at a direct call; inlining one site per callee measured +1.7 percent at p = 0.43 over eight runs an arm, and inlining at every site was an exact wash, its 3.43x duplication cancelling the removed boundaries. The switch stayed off, and removing it made every program a single contiguous run. |
 | G164 | Recheck cache and block-length work on Simulator | Measured; confirmed the retained direction. |
 | G165 | Profile Simulator Aquarium cache and CPU time | Measured; boot was cache/CPU-sensitive while steady frames were host-round-trip-limited. |
 | G166 | Add or fund a 512 MiB shared gadget tier | Rejected in both forms, and the tier removed. |

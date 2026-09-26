@@ -960,8 +960,7 @@
         ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(
         uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
-        UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>)
+        UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>)
     target_compile_options(
         uml_arm64_gadget_inline_fallthrough_tests PRIVATE
         -Wall -Wextra -Werror)

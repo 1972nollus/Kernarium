@@ -59,34 +59,10 @@ gadget link_exit
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-/* A direct call whose callee was translated inline behind it.
- *
- * All that remains of the call is the link register it sets; control simply
- * continues into the callee's translation, which follows in the stream.
- */
-gadget call_inline
-	ldr x8, [_stream], #8
-	str x8, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	next_gadget
-
-/* The return of an inlined callee.
- *
- * The link register is what the guest will actually branch through, and
- * nothing guarantees the callee left it alone, so the inlined continuation is
- * taken only when it still holds the address the call pushed. Otherwise the
- * block gives back the precharge for everything translated behind this point
- * and falls into the ordinary cached return, whose operands follow.
- */
-gadget return_guarded
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	cmp x10, x8
-	b.ne 99f
-	add _stream, _stream, #16
-	next_gadget
-99:
-	sub x29, x29, x9
-	b NAME(uml_arm64_gadget_return_cached)
+/* Unreachable padding where the inlined-call entries were, so every later
+ * entry keeps the address it was measured at. */
+	.p2align 4
+	.space 64
 
 /*
  * A block that accesses FP/SIMD state keeps this entry word in front of its
