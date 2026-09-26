@@ -6,11 +6,11 @@ identity, the ordered series, the final tree they produce, and ABI live in
 
 It is independent of both mainline page profiles. It applies the shared
 [`kernel/common/patches`](../common/patches) series to its ACK base and then
-its own overlay in `patches/series`: the topics only Android builds (Rust
-targeting, kernel API headers, PM trace exports, generic SIMD, system-mapping
-sealing, initrd ranges, and the host battery), a touchscreen-only input
-presentation for Android and recovery, and ACK ports of the balloon and
-drm-attach fixes whose context differs on this base.
+its own overlay in `patches/series`: build fixes for code only ACK carries (its
+PM callback tracepoint exports, its `asm/simd.h` callers, and its Rust ashmem
+driver's personality binding), a touchscreen-only input presentation for
+Android and recovery, and ACK ports of the balloon and drm-attach fixes whose
+context differs on this base.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the

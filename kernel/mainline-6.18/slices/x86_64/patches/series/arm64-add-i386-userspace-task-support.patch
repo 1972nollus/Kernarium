@@ -76,10 +76,10 @@ index 61130b88964b94eda9be06fc06c58a7b63e251ca..928494d9c6c6a395a15c6b27ba701c39
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index a81eeaad72ab149ba26bc11c51c696aef2421026..e84cbbed4d906ebccb5e2ef932009f4ec13c5f45 100644
+index fbcbda0dd46d2799cd7d98a2abd895810bd4925e..cab8434b45a1a31d018fba18d78c7bfb34213648 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -23,11 +23,22 @@ config UML_ARM64
+@@ -24,11 +24,22 @@ config UML_ARM64
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB

@@ -42,3 +42,8 @@ patch	uml-single-step-Darwin-guests-for-ptrace.patch
 patch	uml-invalidate-Darwin-translations-after-kernel-text-writes.patch
 patch	uml-commit-Darwin-guest-RAM-on-demand.patch
 patch	uml-trim-page-cache-the-host-already-caches.patch
+patch	um-generate-arm64-kernel-API-headers.patch
+patch	um-target-arm64-Rust-kernel-code.patch
+patch	arm64-expose-system-mapping-sealing.patch
+patch	um-load-an-initrd-from-a-host-file-range.patch
+patch	power-add-Kernarium-host-battery.patch

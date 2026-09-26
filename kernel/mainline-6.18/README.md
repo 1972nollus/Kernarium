@@ -19,6 +19,13 @@ line. Its [wire contract](../common/video/README.md) is synchronized from the
 canonical header and its implementation is a topic in the shared series.
 The host exposes hardware decoding through V4L2 independently of the GPU.
 
+The shared series also carries topics Android relies on: an initrd read from a
+byte range of a host file (`initrd_offset=` and `initrd_size=`), arm64 kernel
+API header generation, arm64 Rust target flags, the arm64 system-mapping
+sealing capability, and the Kernarium Virtio battery driver. This line's
+configuration leaves Rust, `MSEAL_SYSTEM_MAPPINGS` (which `CHECKPOINT_RESTORE`
+excludes), and the battery driver disabled.
+
 ## Source preparation and replay
 
 Linux must be checked out on a case-sensitive filesystem. Copy
