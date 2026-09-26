@@ -25,7 +25,6 @@ target_include_directories(uml_static_runtime PRIVATE
 target_compile_features(uml_static_runtime PUBLIC cxx_std_20)
 target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_runtime PRIVATE
-    UML_JIT_PUBLICATION_GATE_TESTING=0
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

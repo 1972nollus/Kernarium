@@ -259,8 +259,6 @@ target_include_directories(uml_arm64_jit_executor PRIVATE
 target_compile_features(uml_arm64_jit_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_jit_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_jit_executor PRIVATE
-    UML_JIT_PUBLICATION_GATE_TESTING=0
-    UML_JIT_TEST_SUPPORT=0
     UML_JIT_RUNTIME_DIAGNOSTICS=0)
 set_target_properties(uml_arm64_jit_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
@@ -287,8 +285,6 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_options(uml_arm64_jit_diagnostics_executor PRIVATE
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
-        UML_JIT_PUBLICATION_GATE_TESTING=0
-        UML_JIT_TEST_SUPPORT=0
         UML_JIT_RUNTIME_DIAGNOSTICS=1)
     set_target_properties(uml_arm64_jit_diagnostics_executor PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
@@ -333,9 +329,6 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_features(uml_arm64_jit_test_support PUBLIC cxx_std_20)
     target_compile_options(uml_arm64_jit_test_support PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
-    target_compile_definitions(uml_arm64_jit_test_support PRIVATE
-        UML_JIT_PUBLICATION_GATE_TESTING=1
-        UML_JIT_TEST_SUPPORT=1)
     set_target_properties(uml_arm64_jit_test_support PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()

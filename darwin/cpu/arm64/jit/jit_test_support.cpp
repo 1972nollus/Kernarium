@@ -17,7 +17,6 @@
 
 namespace uml::cpu::arm64 {
 
-#if UML_JIT_TEST_SUPPORT
 namespace jit::testing {
 
 namespace {
@@ -48,7 +47,6 @@ namespace {
 
 } // namespace
 
-#if UML_JIT_PUBLICATION_GATE_TESTING
 namespace {
 
 [[nodiscard]] bool jit_exclusive_gate_is_quiescent_for_testing() {
@@ -655,7 +653,6 @@ bool publication_participant_lifetime_is_idempotent_for_testing() {
   }
   return exactly_once && visible_while_registered && fully_removed;
 }
-#endif
 
 CompiledCode compile_block(
     std::uint64_t pc,
@@ -996,6 +993,5 @@ bool indirect_link_table_is_bounded(std::size_t capacity) {
 }
 
 } // namespace jit::testing
-#endif
 
 } // namespace uml::cpu::arm64
